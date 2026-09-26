@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.218] — 2026-09-26
+
+**The machine named is the machine built for**: `aarch64-linux` is a target,
+the default is the machine the compiler runs on, and the triple reaches Cargo
+as `--target` ([ADR-037](docs/specification/adr/adr-037.md) D1).
+
+- **A defect, not a decision.** D1's table says the triple is *passed to the
+  backend*, and it never was: `Target::triple()` appeared only in a refusal
+  message, and Cargo was run without `--target`. Every build was for the host,
+  so on an ARM machine the default `x86_64-linux` built ARM code under an x86
+  name - the one thing D1 says a target never does - and a build could not be
+  for any other machine than the one it ran on.
+- Cargo is now handed `--target <triple>` for every project build, at the host
+  too, so there is one path. The built program's path was already read from
+  Cargo's own messages, so the `<triple>/` directory Cargo adds moves nothing.
+- `aarch64-linux` (`aarch64-unknown-linux-gnu`) has threads and the runtime,
+  and unwinds on a panic, as `x86_64-linux` does; `[build.aarch64-linux]` is a
+  codegen table a manifest may carry.
+- **The default is the host** where it is one of the targets, rather than
+  `x86_64-linux` everywhere: a build that names nothing needs no toolchain but
+  its own. `std`'s committed Rust is lowered at a named `x86_64-linux`, so it
+  does not depend on where it was lowered.
+- A target the toolchain has no `std` for is refused before Cargo runs, with
+  the `rustup target add` that installs it and a word about the linker a
+  foreign machine needs; Cargo's own answer names `core`.
+- Checked: `nikaia build --target aarch64-linux` on x86_64 builds an aarch64
+  binary that prints the program's line under QEMU, and the refusal appears
+  with the target removed. Two tests: the triple's directory appears under
+  `CARGO_TARGET_DIR`, and `aarch64-linux` parses with the host as default.
+- The specification's version line, which 0.0.217 left at 0.0.216, is raised
+  with the rest.
+
 ## [0.0.217] — 2026-09-26
 
 **The whole suite runs on 64-bit ARM in CI**: a new `arm64` job on

@@ -680,7 +680,7 @@ and abort; the target's executor over described crates with interrupts as
 wakers and `irq::on(vector, fn() sync)`; a heap by default and an
 `allocation = "startup"` profile over a derived `allocates` column; locks as
 critical sections; runtime settings baked at build time. **Nothing of it is
-built**: the compiler knows `x86_64-linux` and `wasm32-unknown`, and `std`
+built**: the compiler knows `x86_64-linux`, `aarch64-linux` and `wasm32-unknown`, and `std`
 has one Rust half. Scheduled after the HTTP server.
 
 *What it needs, in the record's order (§5):* the target and the pin;

@@ -28,7 +28,8 @@ use anyhow::{Context, Result, anyhow};
 use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use orchestrator::project::{
     Cargo, CargoProject, CrateKind, Invocation, Package, Profile, Workspace,
-    record_extra_dependencies, resolved_versions, toolchain_is_new_enough, write_if_changed,
+    record_extra_dependencies, resolved_versions, toolchain_can_build_for, toolchain_is_new_enough,
+    write_if_changed,
 };
 
 use crate::contracts::{Ledger, STD, sync};
@@ -103,7 +104,7 @@ impl Settings {
         user_parallelism: Option<&str>,
     ) -> Result<Settings> {
         let target = manifest
-            .setting("target", target, "x86_64-linux")
+            .setting("target", target, Target::default().name())
             .to_string();
         let user_parallelism = manifest
             .setting("user-parallelism", user_parallelism, "no")
@@ -147,7 +148,7 @@ impl Settings {
     fn from_env() -> Result<Settings> {
         let word =
             |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
-        let target = word(TARGET_VAR, "x86_64-linux");
+        let target = word(TARGET_VAR, Target::default().name());
         let user_parallelism = word(PARALLELISM_VAR, "no");
         let reentrancy_check = word(REENTRANCY_VAR, "yes");
         Ok(Settings {
@@ -185,7 +186,7 @@ impl Settings {
     /// there would be asking for something the machine does not have.
     fn panic_strategy(&self) -> &'static str {
         match self.build.target {
-            Target::X86_64Linux => "unwind",
+            Target::X86_64Linux | Target::Aarch64Linux => "unwind",
             Target::Wasm32Unknown => "abort",
         }
     }
@@ -1894,6 +1895,16 @@ impl Project {
         // about the floor names a package the author never wrote, which is
         // Part III C.1's class.
         toolchain_is_new_enough(crate::emit::RUST_FLOOR)?;
+        // **The machine named is the machine built for** (ADR-037 D1): the
+        // triple goes to Cargo as `--target`, at the host too, so there is one
+        // path and not a second one that only a cross build takes. Where it is
+        // not the host, the toolchain may not have its `std`, and Cargo's own
+        // answer is `can't find crate for core` - so that is asked first.
+        let target = self.settings.build.target;
+        if Some(target) != Target::host() {
+            toolchain_can_build_for(target.triple())?;
+        }
+        let target_args = ["--target".to_string(), target.triple().to_string()];
 
         let manifest = self
             .cargo_workspace(&members, &rust)?
@@ -1946,7 +1957,7 @@ impl Project {
         // So a `nikaia run` is a build and then a run, and the run is a no-op
         // rebuild. That is the same shape the lowering already has (above): the
         // work happens once, and the decision is made where it can be reported.
-        let (mut code, messages) = cargo.messages("build", &[])?;
+        let (mut code, messages) = cargo.messages("build", &target_args)?;
         self.report(&messages, allowlist)?;
         if code == 0 && subcommand == "run" {
             // **The built program is run directly, and that is Part III C.1
@@ -1969,7 +1980,7 @@ impl Project {
             // only remove a duplicate and never lose a run.
             code = match executable_in(&messages) {
                 Some(binary) => run_directly(&binary, program_args)?,
-                None => cargo.run("run", &[], program_args)?,
+                None => cargo.run("run", &target_args, program_args)?,
             };
         }
 

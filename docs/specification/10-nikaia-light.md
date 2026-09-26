@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.216 (Draft)
+**Version:** 0.0.218 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -31,7 +31,9 @@ the order they are written; a program that wants overlap writes
 `target` names the machine a program is built for. The target decides what the
 standard library offers on it (Part III 17.2) and what a `panic` does: the
 stack unwinds where the machine unwinds, and the program traps where the
-machine traps (Part III, Appendix A). The default is `x86_64-linux`.
+machine traps (Part III, Appendix A). The targets are `x86_64-linux`,
+`aarch64-linux` and `wasm32-unknown`; the default is the machine the compiler
+runs on.
 
 #### `user_parallelism` — whether user code may run concurrently
 `user_parallelism` is a permission, not a thread count.

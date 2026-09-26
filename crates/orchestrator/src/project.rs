@@ -328,6 +328,50 @@ pub fn toolchain_is_new_enough(floor: &str) -> Result<()> {
     ))
 }
 
+/// **Refuse a target the toolchain has no `std` for, in this compiler's words**
+/// ([ADR-037](../../../docs/specification/adr/adr-037.md) D1).
+///
+/// Cargo's own answer is *can't find crate for `core`*, about a crate the
+/// author never named - the same class as the floor above. The answer that
+/// helps is the command that installs it.
+///
+/// **Only a missing `std` is a refusal.** A `rustc` that does not run, or does
+/// not know the triple, says nothing here, and the build goes on for Cargo to
+/// answer: refusing on a reading failure would refuse a toolchain that works.
+/// Neither is a linker, which a machine other than the host also needs and
+/// which nothing here can see.
+pub fn toolchain_can_build_for(triple: &str) -> Result<()> {
+    let Ok(out) = Command::new("rustc")
+        .args(["--print", "target-libdir", "--target", triple])
+        .output()
+    else {
+        return Ok(());
+    };
+    let Ok(text) = String::from_utf8(out.stdout) else {
+        return Ok(());
+    };
+    let libdir = text.trim();
+    if !out.status.success() || libdir.is_empty() {
+        return Ok(());
+    }
+    let has_std = std::fs::read_dir(libdir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("libstd-"))
+        })
+        .unwrap_or(false);
+    if has_std {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "cannot build for `{triple}`: this toolchain has no `std` for it.\n\
+         Install it with `rustup target add {triple}`. A machine other than the one \
+         this runs on also needs a linker for it, named to Cargo in \
+         `.cargo/config.toml` as `[target.{triple}] linker = \"…\"`."
+    ))
+}
+
 /// `rustc --version`'s major and minor, where both can be read.
 fn installed_rustc() -> Option<(u32, u32)> {
     let out = Command::new("rustc").arg("--version").output().ok()?;

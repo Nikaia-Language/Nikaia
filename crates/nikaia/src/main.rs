@@ -39,12 +39,12 @@ pub struct Cli {
     #[arg(long, default_value = "rust")]
     pub backend: String,
 
-    /// The machine to build for (ADR-037 D1): `x86_64-linux` or
-    /// `wasm32-unknown`. It decides what `std` can offer and what a panic
-    /// does, and nothing about what a program means.
+    /// The machine to build for (ADR-037 D1): `x86_64-linux`,
+    /// `aarch64-linux` or `wasm32-unknown`. It decides what `std` can offer and
+    /// what a panic does, and nothing about what a program means.
     ///
     /// Overrides `nikaia.toml`'s `[build] target` for this one build; the
-    /// default is `x86_64-linux` where neither says (D5).
+    /// default is the machine the compiler runs on where neither says (D5).
     #[arg(long, global = true)]
     pub target: Option<String>,
 
