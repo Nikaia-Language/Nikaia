@@ -618,6 +618,22 @@ impl Out {
         Ok(out)
     }
 
+    /// Insert text just inside the first `{`, moving the map entries after it.
+    fn insert_after_first_brace(&mut self, text: &str) {
+        let Some(at) = self.buf.find('{').map(|at| at + 1) else {
+            return;
+        };
+        self.buf.insert_str(at, text);
+        for entry in &mut self.map.entries {
+            if entry.generated.start >= at {
+                entry.generated.start += text.len();
+            }
+            if entry.generated.end >= at {
+                entry.generated.end += text.len();
+            }
+        }
+    }
+
     /// Append a scratch buffer, moving its map entries into place. Order is
     /// preserved, so "innermost first" survives.
     fn append(&mut self, other: Out) {
@@ -1070,6 +1086,10 @@ struct Emitter<'p> {
     filter_patterns: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::kept_lambdas`.
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
+    /// The first lines of the function body being written: a published
+    /// parameter both kinds of text flow into, taken as it goes in
+    /// (ADR-232 D1).
+    either_prelude: std::cell::RefCell<Vec<String>>,
     /// `check::Checked::kept_hulls` (ADR-230 D4).
     kept_hulls: std::collections::BTreeMap<(usize, String), Vec<String>>,
     /// `check::Checked::kept_calls`.
@@ -2186,6 +2206,7 @@ impl<'p> Emitter<'p> {
             filter_patterns: propagation.filter_patterns,
             kept_lambdas: propagation.kept_lambdas,
             kept_hulls: propagation.kept_hulls,
+            either_prelude: std::cell::RefCell::new(Vec::new()),
             field_calls: propagation.field_calls,
             kept_calls: propagation.kept_calls,
             kept_args: propagation.kept_args,
@@ -3645,6 +3666,7 @@ impl<'p> Emitter<'p> {
                 any.then(|| format!("{LENGTH_PARAMETER}{at}"))
             })
             .collect();
+        let mut either_first: Vec<String> = Vec::new();
         params.extend(args.iter().enumerate().map(|(at, a)| {
             // The **source** name is what a `Shared` position is counted by
             // (`count_at`), and the **escaped** one is what is written: two uses
@@ -3731,6 +3753,23 @@ impl<'p> Emitter<'p> {
                 ("&", true) => "str".to_string(),
                 _ => written,
             };
+            // **A published parameter both kinds of text flow into takes
+            // whatever hands over as either** (ADR-232 D1): a caller elsewhere
+            // hands over text of its own, as the ledger says, and this
+            // package's own calls hand over what they have. It is taken as it
+            // goes in on the body's first line.
+            if *is_public && a.ty.either && a.ty.generics.is_empty() && reference.is_empty() {
+                let (by, into) = match a.ty.is_nullable {
+                    true => ("IntoEitherMaybe", "into_either_maybe"),
+                    false => ("IntoEither", "into_either"),
+                };
+                let name = escaped(name);
+                either_first.push(format!("let {name} = {name}.{into}();"));
+                return format!(
+                    "{name}: impl nikaia_std::either_text::{by}<Either = \
+                     nikaia_std::either_text::EitherText<'e>>"
+                );
+            }
             format!("{}: {reference}{written}", escaped(name))
         }));
         // Kap 5.1: the language below has neither named arguments nor defaults,
@@ -3805,6 +3844,12 @@ impl<'p> Emitter<'p> {
             true => std::iter::once("'a".to_string()).chain(declared).collect(),
             false => declared,
         };
+        // The lifetime a published parameter's `EitherText` is of (ADR-232 D1).
+        let declared: Vec<String> = match either_first.is_empty() {
+            true => declared,
+            false => std::iter::once("'e".to_string()).chain(declared).collect(),
+        };
+        *self.either_prelude.borrow_mut() = either_first;
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
         // `Box<dyn Error>` because Nikaia's own error types are not lowered
@@ -3878,6 +3923,23 @@ impl<'p> Emitter<'p> {
                     }
                     (true, _) => Lifetimes::STATIC,
                     (false, _) if inner_views.is_some() => Lifetimes::NAMED,
+                    // **A published parameter's `'e` is the one lifetime there
+                    // is** (ADR-232 D1): the elision does not read one out of
+                    // an `impl` bound, so it is named.
+                    (false, _)
+                        if lifetimes == Lifetimes::ELIDED
+                            && receiver.is_none()
+                            && !self.either_prelude.borrow().is_empty()
+                            && !args.iter().any(|a| {
+                                self.carries_a_view(&a.ty)
+                                    && !(a.ty.either && a.ty.generics.is_empty())
+                            }) =>
+                    {
+                        Lifetimes {
+                            reference: "&'e ",
+                            params: "'e",
+                        }
+                    }
                     (false, _) => lifetimes,
                 };
                 self.ty_counted(ty, result, self.count_at(&key, SHARED_RESULT))
@@ -4048,14 +4110,26 @@ impl<'p> Emitter<'p> {
             Tail::Statement
         };
 
+        // A published parameter taken as it goes in (ADR-232 D1), first.
+        let first = std::mem::take(&mut *self.either_prelude.borrow_mut());
         if !throws {
-            return self.block(out, body, depth, flow, tail);
+            if first.is_empty() {
+                return self.block(out, body, depth, flow, tail);
+            }
+            // Inside the body's own brace, so there is one block and not two.
+            let mut written = Out::scratch(|out| self.block(out, body, depth, flow, tail))?;
+            written.insert_after_first_brace(&format!(" {}", first.join(" ")));
+            out.append(written);
+            return Ok(());
         }
 
         let pad = "    ".repeat(depth);
         let inner_pad = "    ".repeat(depth + 1);
 
         out.push("{\n");
+        for line in &first {
+            out.push(&format!("{inner_pad}{line}\n"));
+        }
         let last = body.stmts.len().saturating_sub(1);
         let mut i = 0;
         while i < body.stmts.len() {

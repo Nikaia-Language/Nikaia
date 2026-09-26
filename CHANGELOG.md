@@ -4,7 +4,7 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.216] — 2026-09-26
+## [0.0.217] — 2026-09-26
 
 **The whole suite runs on 64-bit ARM in CI**: a new `arm64` job on
 `ubuntu-24.04-arm`.
@@ -25,6 +25,25 @@ open. The version is the specification's; the compiler's crates carry their own.
   ARM machine names the wrong one while building the right one. io_uring is
   not exercised under QEMU (it answers `ENOSYS`, and the runtime falls back),
   so the job on real ARM hardware is the first to run it there.
+
+## [0.0.216] — 2026-09-26
+
+**A published parameter takes either kind of text from its own package** —
+[ADR-232](docs/specification/adr/adr-232.md), the README's row about handing a
+view to a `pub` function.
+
+- A package handing its own `pub fn` a view and text of its own for the same
+  `String` parameter was refused, naming `.clone()`. The ledger still says
+  `String`, so another package hands over text of its own as before; below,
+  the parameter is `impl IntoEither<Either = EitherText>` and the package's
+  view is borrowed. Nothing copied, and no caller elsewhere can tell.
+- A parameter whose value leaves through a published result or field stays
+  text of its own, as those do.
+- What is still refused: a view put into a published field or result that also
+  gets text of its own.
+- **CI was red on main since 0.0.214**, on `clippy` alone (a doc comment read
+  as a list, a redundant slice), which hid the test step behind it. Fixed; the
+  Rust-floor job had run the whole suite green on those commits meanwhile.
 
 ## [0.0.215] — 2026-09-26
 
