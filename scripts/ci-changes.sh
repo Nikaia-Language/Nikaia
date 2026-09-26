@@ -10,6 +10,11 @@
 #   to main and on the weekly schedule; on a pull request only where the change
 #   is to a manifest, the lock file, the toolchain or the floor itself - the
 #   places a floor is declared.
+# * `arm64` - the whole suite on a 64-bit ARM machine. Nothing in the tree
+#   names that architecture, so what it can break is what differs between
+#   machines underneath: the runtime and its `unsafe` crates (atomics, memory
+#   ordering, io_uring, mmap), and the dependencies. It runs on every push to
+#   main and weekly; on a pull request only where one of those changed.
 #
 # Everything is on for a manual run, a scheduled one, a first push of a branch
 # (nothing to compare against), and when the workflow itself changed.
@@ -18,6 +23,7 @@ out=${GITHUB_OUTPUT:-/dev/stdout}
 all() {
     echo "unsafe=true" >>"$out"
     echo "floor=true" >>"$out"
+    echo "arm64=true" >>"$out"
     exit 0
 }
 case "$EVENT" in
@@ -45,4 +51,11 @@ elif git diff "$BASE" HEAD -- crates/nikaia/src/emit/mod.rs | grep -q '^[+-]pub 
     echo "floor=true" >>"$out"
 else
     echo "floor=false" >>"$out"
+fi
+if [ "$REF" = "refs/heads/main" ] && [ "$EVENT" = "push" ]; then
+    echo "arm64=true" >>"$out"
+elif echo "$changed" | grep -q '^crates/nikaia-std/\|^crates/unsafe/\|Cargo\.toml$\|^Cargo\.lock$\|^rust-toolchain\.toml$'; then
+    echo "arm64=true" >>"$out"
+else
+    echo "arm64=false" >>"$out"
 fi

@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.216] — 2026-09-26
+
+**The whole suite runs on 64-bit ARM in CI**: a new `arm64` job on
+`ubuntu-24.04-arm`.
+
+- Nothing in the tree names an architecture: no `asm!`, no `target_arch`, and
+  the triple the `target` switch names (`x86_64-unknown-linux-gnu`) is only
+  ever printed, never handed to `rustc` - so a build on an aarch64 machine is a
+  native aarch64 build. Measured under QEMU before adding the job: the
+  workspace builds for `aarch64-unknown-linux-gnu` unchanged, the interpreter
+  prints the same as on x86_64 for every sample, `nikaia-std` passes 132 of
+  132, the orchestrator 30 of 30, and every `unsafe` crate passes its tests.
+- The job builds and tests the workspace and the `unsafe` crates. It runs on
+  every push to main, weekly and by hand; on a pull request only where
+  `nikaia-std`, an `unsafe` crate or a dependency changed
+  (`scripts/ci-changes.sh`) - atomics, memory ordering, io_uring and mmap are
+  what differ between the machines.
+- Left open: the `target` switch still only knows `x86_64-linux`, which on an
+  ARM machine names the wrong one while building the right one. io_uring is
+  not exercised under QEMU (it answers `ENOSYS`, and the runtime falls back),
+  so the job on real ARM hardware is the first to run it there.
+
 ## [0.0.215] — 2026-09-26
 
 **The target-info probe test runs in every sweep again**, closing
