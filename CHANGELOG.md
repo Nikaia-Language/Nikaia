@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.214] — 2026-09-26
+
+**A value read through a view is the value** —
+[ADR-231](docs/specification/adr/adr-231.md), closing `open-work.md` §1's
+`filter` defect and the class it belonged to.
+
+- `"a-b".chars().filter(fn(c) { c != '-' })`, `for x in xs.iter() { if x > 2
+  … }`, `xs.iter().map(fn(x) { x > 2 })` and `h.keys().filter(fn(k) { k != "b"
+  })` all failed in `rustc`: a view is a reference below, and a number read
+  through one does not compare with a number.
+- A walk over views of numbers, truth values or characters yields the values
+  (`.copied()` below); `filter`'s lambda takes an item that copies by pattern;
+  `keys()` and `values()` say they hand back views.
+- `open-work.md` §1 is empty again.
+
 ## [0.0.213] — 2026-09-26
 
 **A function field is reached through what is stored in it** —

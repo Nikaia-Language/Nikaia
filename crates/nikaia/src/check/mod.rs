@@ -371,6 +371,15 @@ pub struct Checked {
     /// without `::<Vec<_>>`, so the declared type is what the language below
     /// builds.
     pub collected_into: BTreeSet<(usize, String)>,
+    /// Method calls that hand back a sequence of **views of values that copy**
+    /// - numbers, truth values, characters - by statement and the call's shape
+    /// ([ADR-231](../../docs/specification/adr/adr-231.md) D1): written with
+    /// `.copied()`, so each item is the value.
+    pub copied_walks: BTreeSet<(usize, String)>,
+    /// `filter` lambdas whose item copies, by statement and the lambda's shape
+    /// (ADR-231 D2): the language below hands the lambda a reference to the
+    /// item, and the parameter is written `|&x|` so it is the item.
+    pub filter_patterns: BTreeSet<(usize, String)>,
     /// **Lambdas put where a function value is kept** - a field, a result, an
     /// annotated `let`, an assignment, a parameter the callee keeps - by
     /// statement and shape, and whether the function type may pause. Written
@@ -1428,6 +1437,10 @@ pub struct Propagation {
     pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::collected_into`].
     pub collected_into: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_walks`].
+    pub copied_walks: BTreeSet<(usize, String)>,
+    /// [`Checked::filter_patterns`].
+    pub filter_patterns: BTreeSet<(usize, String)>,
     /// [`Checked::kept_lambdas`].
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::kept_hulls`].
@@ -1637,6 +1650,8 @@ pub fn propagation_against(
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         collected_into: checked.collected_into,
+        copied_walks: checked.copied_walks,
+        filter_patterns: checked.filter_patterns,
         kept_lambdas: checked.kept_lambdas,
         kept_hulls: checked.kept_hulls,
         field_calls: checked.field_calls,
@@ -7139,6 +7154,48 @@ impl<'a> Checker<'a> {
                 self.at_a_write_door = outer_door;
                 self.inside_a_door = outer_inside;
                 self.set_receiver = outer_receiver;
+                // **A walk over views of values that copy yields the values**
+                // ([ADR-231](../../docs/specification/adr/adr-231.md) D1): a
+                // view of an `i64` is a reference below, and a number read
+                // through one compared with a number was `rustc`'s error.
+                // Copying one costs less than pointing at it.
+                let value = match value {
+                    Ty::Seq {
+                        item,
+                        is_sync,
+                        pauses,
+                        throws,
+                        parallel,
+                        shape,
+                    } if copies_as_a_view(&item) => {
+                        self.checked
+                            .copied_walks
+                            .insert((span.start, argument_shape(expr)));
+                        Ty::Seq {
+                            item: Box::new(unviewed(&item)),
+                            is_sync,
+                            pauses,
+                            throws,
+                            parallel,
+                            shape,
+                        }
+                    }
+                    other => other,
+                };
+                // **`filter` is handed a reference to the item** below
+                // (ADR-231 D2); where the item copies, the parameter takes it
+                // by pattern and is the item.
+                if self.parsed.text(*method) == "filter"
+                    && let (Ty::Seq { item, .. }, [lambda @ Expr::Closure { params, .. }]) =
+                        (&on_for_the_stamp, &args[..])
+                    && params.len() == 1
+                    && !item.is_unknown()
+                    && (item.is_a_view() || !crate::contracts::keeps::moves(item))
+                {
+                    self.checked
+                        .filter_patterns
+                        .insert((span.start, argument_shape(lambda)));
+                }
                 // **And what `access` hands back came out of a lock** (D1).
 
                 match self.parsed.text(*method) == "access"
@@ -17172,6 +17229,25 @@ fn indented(text: &str) -> String {
 /// certainty: everything else it has not read a declaration for fails open.
 fn is_one_of_part_one_2_2(name: &str) -> bool {
     is_number(name) || matches!(name, "bool" | "char" | "String" | "str")
+}
+
+/// A view of a value that copies - a number, a truth value, a character - and
+/// nothing else (ADR-231 D1).
+fn copies_as_a_view(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, view: true }
+        if args.is_empty() && (is_number(name) || name == "bool" || name == "char"))
+}
+
+/// The value a view is of.
+fn unviewed(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named { name, args, .. } => Ty::Named {
+            name: name.clone(),
+            args: args.clone(),
+            view: false,
+        },
+        other => other.clone(),
+    }
 }
 
 fn is_number(name: &str) -> bool {

@@ -141,8 +141,9 @@ fn the_chain_off_keys_resolves() {
         .as_ref()
         .and_then(|s| s.result.clone())
         .expect("a result");
-    // `sized` since ADR-212 D1: a map knows how many keys it holds.
-    assert_eq!(result.text(), "Seq[$K] sync sized");
+    // `sized` since ADR-212 D1: a map knows how many keys it holds. And views
+    // since ADR-231 D3: a key points into the map.
+    assert_eq!(result.text(), "Seq[ref $K] sync sized");
 
     // And the consumer entries are found under the receiver's own word.
     for method in ["collect", "count", "nth", "join", "map", "filter"] {

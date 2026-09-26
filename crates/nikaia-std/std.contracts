@@ -639,7 +639,7 @@ doc = "Put a value in the map under this key, and hand back the one it replaced,
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[$K] sync sized"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $K] sync sized"
 doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
 [fn."collections::HashMap::len"]
@@ -660,7 +660,7 @@ doc = "A map with nothing in it. It is written `HashMap()`."
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[$V] sync sized"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $V] sync sized"
 doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which

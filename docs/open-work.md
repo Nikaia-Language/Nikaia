@@ -34,17 +34,7 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.3. A `filter` lambda that compares its item fails in `rustc`
-
-```nika
-let xs = "a-b".chars().filter(fn(c) { c != '-' }).collect()
-```
-
-lowers to `.filter(|c| { c != '-' })`, and `rustc` says *can't compare `&char`
-with `char`*: the language below hands `filter`'s lambda a reference to the
-item, and this language's lambda reads it as the item. Part III C.1, about a
-file nobody wrote. Evidence: the program above through `nikaia -i`, on 0.0.209
-and 0.0.210 alike; found writing `crates/nikaia/tests/collect_into.rs`.
+**This section is empty.**
 
 ## 2. Decided and unbuilt
 

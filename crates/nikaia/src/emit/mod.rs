@@ -1064,6 +1064,10 @@ struct Emitter<'p> {
     text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// `collect()` into a declared map, set or text (ADR-227 D1).
     collected_into: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::copied_walks` (ADR-231 D1).
+    copied_walks: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::filter_patterns` (ADR-231 D2).
+    filter_patterns: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::kept_lambdas`.
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_hulls` (ADR-230 D4).
@@ -2178,6 +2182,8 @@ impl<'p> Emitter<'p> {
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             collected_into: propagation.collected_into,
+            copied_walks: propagation.copied_walks,
+            filter_patterns: propagation.filter_patterns,
             kept_lambdas: propagation.kept_lambdas,
             kept_hulls: propagation.kept_hulls,
             field_calls: propagation.field_calls,
@@ -6462,7 +6468,15 @@ impl<'p> Emitter<'p> {
                 match long_form {
                     true => out.push(&format!("{SITE}.full_of(&{CAUGHT})")),
                     false => {
-                        self.method_call(out, Some(receiver), *method, args, config, depth, flow)?
+                        self.method_call(out, Some(receiver), *method, args, config, depth, flow)?;
+                        // **Views of values that copy are the values**
+                        // (ADR-231 D1).
+                        if self
+                            .copied_walks
+                            .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                        {
+                            out.push(".copied()");
+                        }
                     }
                 }
             }
@@ -7051,7 +7065,15 @@ impl<'p> Emitter<'p> {
                     }
                     return Ok(());
                 }
-                out.push(&format!("|{}| ", names.join(", ")));
+                // **`filter` is handed a reference to its item** (ADR-231 D2):
+                // where the item copies, the pattern takes it out.
+                let pattern = self
+                    .filter_patterns
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                match (pattern, names.as_slice()) {
+                    (true, [one]) => out.push(&format!("|&{one}| ")),
+                    _ => out.push(&format!("|{}| ", names.join(", "))),
+                }
                 // **The `mut` ones reach inward** (ADR-110 D1), and the list is
                 // the enclosing one plus this lambda's rather than this
                 // lambda's alone: a lambda written inside an `update` block
