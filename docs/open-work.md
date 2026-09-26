@@ -34,15 +34,17 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.1. `collect()` into a declared map passes the checker and fails in `rustc`
+### 1.3. A `filter` lambda that compares its item fails in `rustc`
 
-`let m: collections::HashMap[String, i64] = text.lines().map(fn(l) { (l, 1) }).collect()`
-is accepted, and lowers to `.collect::<Vec<_>>()` into a `TrustedMap` —
-`rustc`'s *mismatched types*, about a file nobody wrote (Part III C.1). Nikaia's
-`collect` builds a list (the emitter's comment says so), so either the checker
-refuses it where the target is not one, or `collect` builds what the target
-declares; the second is a language question for `open-decisions.md`. Evidence:
-found probing ADR-224 §3; the program above, run through `nikaia -i`.
+```nika
+let xs = "a-b".chars().filter(fn(c) { c != '-' }).collect()
+```
+
+lowers to `.filter(|c| { c != '-' })`, and `rustc` says *can't compare `&char`
+with `char`*: the language below hands `filter`'s lambda a reference to the
+item, and this language's lambda reads it as the item. Part III C.1, about a
+file nobody wrote. Evidence: the program above through `nikaia -i`, on 0.0.209
+and 0.0.210 alike; found writing `crates/nikaia/tests/collect_into.rs`.
 
 ## 2. Decided and unbuilt
 

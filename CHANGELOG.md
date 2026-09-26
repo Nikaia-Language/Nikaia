@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.210] — 2026-09-26
+
+**`collect()` builds what the place it goes into declares** —
+[ADR-227](docs/specification/adr/adr-227.md), closing `open-work.md` §1's
+*`collect()` into a declared map*, with the owner's choice over a refusal.
+
+- A list where nothing says otherwise; a map from pairs, a set, or `String`
+  where a `let`, a field or a result declares one the items fit. The emitter
+  used to write `.collect::<Vec<_>>()` into a map, which `rustc` refused.
+- Into a map whose key or value is text both kinds flow into, the pairs go
+  through `either_keys()`, `either_values()` or `either_pairs()`
+  (`nikaia_std::either_text::EitherPairs`).
+- The tier pass reads what `map` makes as what its lambda hands back, and no
+  longer counts a number, a truth value or `null` as text of its own.
+- **Found on the way**, recorded in `open-work.md` §1: a `filter` lambda that
+  compares its item fails in `rustc` (`&char` against `char`).
+
 ## [0.0.209] — 2026-09-26
 
 **A view handed back out of a parameter that holds views is the buffer's** —

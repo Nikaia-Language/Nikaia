@@ -341,6 +341,12 @@ enum Hand {
     /// `iterator.either_items()`: before a `collect` into a list whose
     /// element is mixed, each item handed over as it is.
     Items,
+    /// `pairs.either_keys()`, `either_values()`, `either_pairs()`: before a
+    /// `collect` into a map whose key, value or both are mixed
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D2).
+    Keys,
+    Values,
+    Pairs,
 }
 
 /// One local, as far as this walk needs it.
@@ -494,6 +500,38 @@ impl Walk<'_, '_> {
                 args,
                 ..
             } if self.text(*method) == "collect" && args.is_empty() => {
+                // A map is collected from pairs: its key and its value are two
+                // positions, and each is handed over as it is where it is mixed.
+                if container(parsed, ty).is_some_and(|name| MAPS.contains(&name)) {
+                    let mixed = |walk: &mut Self, at: usize| {
+                        let Some(part) = ty.generics.get(at) else {
+                            return false;
+                        };
+                        if !plain_string(parsed, part) {
+                            return false;
+                        }
+                        let mut path = path.clone();
+                        path.push(at);
+                        let position = Position {
+                            owner: owner.clone(),
+                            path,
+                        };
+                        if walk.in_hole {
+                            walk.flows.unwrappable.insert(position);
+                            return false;
+                        }
+                        walk.tier_of(&position) == Tier::Mixed
+                    };
+                    let hand = match (mixed(self, 0), mixed(self, 1)) {
+                        (true, true) => Hand::Pairs,
+                        (true, false) => Hand::Keys,
+                        (false, true) => Hand::Values,
+                        (false, false) => return,
+                    };
+                    let at = receiver.as_ref() as *const Expr as usize;
+                    self.flows.wraps.insert(at, hand);
+                    return;
+                }
                 let Some(element) = element else { return };
                 let mut at = path.clone();
                 at.push(0);
@@ -880,7 +918,8 @@ impl Walk<'_, '_> {
     fn expr(&mut self, expr: &Expr) -> Kinds {
         match expr {
             Expr::LitStr { .. } => one(Kind::Static),
-            Expr::LitNull => Kinds::new(),
+            // `null`, a number, a truth value and a character are no text.
+            Expr::LitNull | Expr::LitInt(_) | Expr::LitFloat(_) | Expr::LitBool(_) => Kinds::new(),
             // **A hole is code** (ADR-032): what it passes to a function of
             // this program is a flow like any other.
             Expr::LitInterpolated(_) => {
@@ -953,6 +992,38 @@ impl Walk<'_, '_> {
                     if ELEMENTS.contains(&method.as_str()) {
                         return self.element_kinds(&owner, &ty, method == "keys");
                     }
+                }
+                // **What `map` makes is what its lambda hands back**, with the
+                // lambda's parameter bound to what came in (ADR-227 D2):
+                // `lines.map(fn(l) { (l, 1) })` is pairs keyed by views.
+                if method == "map"
+                    && let [Expr::Closure { params, body, .. }] = args.as_slice()
+                {
+                    let result = self.result.take();
+                    self.scopes.push(BTreeMap::new());
+                    let names: Vec<String> = match params.as_slice() {
+                        [] => vec!["a".to_string()],
+                        named => named.iter().map(|p| self.text(*p).to_string()).collect(),
+                    };
+                    for name in names {
+                        self.bind(
+                            name,
+                            Local {
+                                kinds: received.clone(),
+                                ..Local::default()
+                            },
+                        );
+                    }
+                    let made = self.block(body);
+                    self.scopes.pop();
+                    self.result = result;
+                    return made;
+                }
+                if matches!(
+                    method.as_str(),
+                    "filter" | "rev" | "skip" | "take" | "step_by"
+                ) {
+                    return received;
                 }
                 if OWNS.contains(&method.as_str()) {
                     return one(Kind::Owned);
@@ -1313,6 +1384,9 @@ pub fn refine(parsed: &mut Parsed) {
         parsed.interner.intern_string("into_either"),
         parsed.interner.intern_string("into_either_maybe"),
         parsed.interner.intern_string("either_items"),
+        parsed.interner.intern_string("either_keys"),
+        parsed.interner.intern_string("either_values"),
+        parsed.interner.intern_string("either_pairs"),
     ];
     rewrite(parsed, &tiers, &lets, text, &flows.wraps, into);
     parsed.text_tiers = said;
@@ -1341,7 +1415,7 @@ fn rewrite(
     lets: &BTreeSet<usize>,
     text_type: Option<Type>,
     wraps: &BTreeMap<usize, Hand>,
-    into: [winnow_grammar::Symbol; 3],
+    into: [winnow_grammar::Symbol; 6],
 ) {
     // Values first: a value's address is where the walk saw it, and nothing
     // has moved yet.
@@ -1626,7 +1700,7 @@ fn visit_expr_mut(
 /// **A value going into a mixed position is handed over as `value.into_either()`**
 /// (ADR-223 D2): `EitherText` borrows a view and moves text of its own in,
 /// and which it is the language below reads off the value's type.
-fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 3]) {
+fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 6]) {
     if wraps.is_empty() {
         return;
     }

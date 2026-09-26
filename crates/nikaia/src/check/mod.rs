@@ -349,6 +349,12 @@ pub struct Checked {
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// `collect()` calls whose target declares what they build - a map, a
+    /// set, text - by statement and receiver shape
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
+    /// without `::<Vec<_>>`, so the declared type is what the language below
+    /// builds.
+    pub collected_into: BTreeSet<(usize, String)>,
     /// **Lambdas put where a function value is kept** - a field, a result, an
     /// annotated `let`, an assignment, a parameter the callee keeps - by
     /// statement and shape, and whether the function type may pause. Written
@@ -1390,6 +1396,8 @@ pub struct Propagation {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// [`Checked::collected_into`].
+    pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::kept_lambdas`].
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::field_calls`].
@@ -1594,6 +1602,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
+        collected_into: checked.collected_into,
         kept_lambdas: checked.kept_lambdas,
         field_calls: checked.field_calls,
         kept_calls: checked.kept_calls,
@@ -6723,7 +6732,25 @@ impl<'a> Checker<'a> {
                                 other => Ty::Nullable(Box::new(other)),
                             };
                         }
-                        "either_items" => {
+                        "either_items" | "either_keys" | "either_values" | "either_pairs" => {
+                            let which = self.parsed.text(*method);
+                            // Of a pair, only the half the name says.
+                            let own = |item: Ty| match (which, item) {
+                                ("either_items", item) => own(item),
+                                (_, Ty::Tuple(parts)) => Ty::Tuple(
+                                    parts
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(at, part)| match (which, at) {
+                                            ("either_keys", 0)
+                                            | ("either_values", 1)
+                                            | ("either_pairs", _) => own(part),
+                                            _ => part,
+                                        })
+                                        .collect(),
+                                ),
+                                (_, item) => item,
+                            };
                             return match on {
                                 Ty::Seq {
                                     item,
@@ -12630,6 +12657,67 @@ impl<'a> Checker<'a> {
         self.array_literal(found, want, value, span)
             .or_else(|| self.text_literal(want, value, true))
             .or_else(|| self.tuple_literal(found, want, value))
+            .or_else(|| self.collect_by_use(found, want, value, span))
+    }
+
+    /// **`collect()` builds what the place it goes into declares**
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map from
+    /// pairs, a set from items, text from characters or pieces of text. The ledger says `Vec[$T]`, which is what it builds where nothing
+    /// says otherwise; where a `let`, a field or a result declares another
+    /// container the items fit, that is the value's type, and the language
+    /// below is told nothing more - its own `collect` builds the declared type.
+    fn collect_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+        let Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } = value
+        else {
+            return None;
+        };
+        if self.parsed.text(*method) != "collect" || !args.is_empty() {
+            return None;
+        }
+        let Ty::Named {
+            name, args: made, ..
+        } = found
+        else {
+            return None;
+        };
+        let [item] = made.as_slice() else {
+            return None;
+        };
+        if ty::base(name) != "Vec" {
+            return None;
+        }
+        let Ty::Named {
+            name: wanted,
+            args: parts,
+            view: false,
+        } = want
+        else {
+            return None;
+        };
+        let fits = match (ty::base(wanted), parts.as_slice()) {
+            ("HashMap" | "BTreeMap" | "TrustedMap", [key, value]) => {
+                item.fits(&Ty::Tuple(vec![key.clone(), value.clone()]))
+            }
+            ("HashSet" | "BTreeSet" | "TrustedSet", [element]) => item.fits(element),
+            ("String", []) => {
+                *item == Ty::named("char")
+                    || *item == Ty::view("str")
+                    || *item == Ty::named("String")
+            }
+            _ => false,
+        };
+        if !fits {
+            return None;
+        }
+        self.checked
+            .collected_into
+            .insert((span.start, argument_shape(receiver)));
+        Some(want.clone())
     }
 
     /// **A lambda where a function value is kept** is one shared closure

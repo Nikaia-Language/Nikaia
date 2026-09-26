@@ -1062,6 +1062,8 @@ struct Emitter<'p> {
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
+    /// `collect()` into a declared map, set or text (ADR-227 D1).
+    collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::kept_lambdas`.
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_calls`.
@@ -2168,6 +2170,7 @@ impl<'p> Emitter<'p> {
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
+            collected_into: propagation.collected_into,
             kept_lambdas: propagation.kept_lambdas,
             field_calls: propagation.field_calls,
             kept_calls: propagation.kept_calls,
@@ -9417,7 +9420,20 @@ impl<'p> Emitter<'p> {
         // `Iterator::collect` never pauses, so the site pausing is exactly the
         // difference. Guessed from the method's name alone this would have
         // been a turbofish on a method that takes no type at all.
-        if self.text(method) == "collect" && args.is_empty() && !self.method_pauses(flow, method) {
+        //
+        // **And except where the place it goes declares what it builds**
+        // ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map, a
+        // set or text, which the language below's own `collect`
+        // builds when nothing overrides the type it reads off that place.
+        let declared = receiver.is_some_and(|receiver| {
+            self.collected_into
+                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+        });
+        if self.text(method) == "collect"
+            && args.is_empty()
+            && !declared
+            && !self.method_pauses(flow, method)
+        {
             out.push("::<Vec<_>>");
         }
         out.push("(");

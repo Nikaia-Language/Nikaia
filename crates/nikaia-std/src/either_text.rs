@@ -203,6 +203,39 @@ where
     }
 }
 
+/// **The same for pairs going into a map** ([ADR-227](../../../docs/specification/adr/adr-227.md)
+/// D2): the key, the value or both handed over as either kind, whichever of the
+/// map's two is text both kinds flow into.
+#[allow(clippy::type_complexity)]
+pub trait EitherPairs<K, V>: Iterator<Item = (K, V)> + Sized {
+    /// Each key as it goes in.
+    fn either_keys(self) -> std::iter::Map<Self, fn((K, V)) -> (K::Either, V)>
+    where
+        K: IntoEither,
+    {
+        self.map(|(k, v)| (k.into_either(), v))
+    }
+
+    /// Each value as it goes in.
+    fn either_values(self) -> std::iter::Map<Self, fn((K, V)) -> (K, V::Either)>
+    where
+        V: IntoEither,
+    {
+        self.map(|(k, v)| (k, v.into_either()))
+    }
+
+    /// Both, as they go in.
+    fn either_pairs(self) -> std::iter::Map<Self, fn((K, V)) -> (K::Either, V::Either)>
+    where
+        K: IntoEither,
+        V: IntoEither,
+    {
+        self.map(|(k, v)| (k.into_either(), v.into_either()))
+    }
+}
+
+impl<K, V, I: Iterator<Item = (K, V)>> EitherPairs<K, V> for I {}
+
 /// What [`EitherItems`] does to each item.
 pub type HandOver<T> = fn(T) -> <T as IntoEither>::Either;
 
@@ -281,6 +314,9 @@ mod tests {
         assert_eq!(some.as_deref(), Some("y"));
         assert_eq!(absent, None);
         let lines: Vec<EitherText<'_>> = buffer.lines().either_items().collect();
+        let counted: std::collections::HashMap<EitherText<'_>, i64> =
+            buffer.lines().map(|l| (l, 1)).either_keys().collect();
+        assert!(counted.keys().all(EitherText::is_view));
         assert!(lines.iter().all(EitherText::is_view));
     }
 }
