@@ -4,6 +4,67 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.212] — 2026-09-26
+
+**A value handed over inside an `f"…"` hole is handed over there** —
+[ADR-229](docs/specification/adr/adr-229.md), closing `open-work.md` §2.19.
+
+- A key put into a map, a list literal handed to a function, or a `collect`
+  written inside a hole now goes into a position both kinds flow into as it
+  does anywhere else. The hole used to keep that position text of its own,
+  which refused the lines outside it that put a view into the same list or map.
+- The tier pass records the wrap by the hole's text and the value's shape, and
+  every reader applies it as it parses the hole.
+- `open-work.md` §2.19 is closed: what remains of the text wall is ADR-222 D2's
+  rule for a published position.
+
+## [0.0.211] — 2026-09-26
+
+**A `?.` view out of a temporary is held for the rest of the block** —
+[ADR-228](docs/specification/adr/adr-228.md), closing `open-work.md` §2.23.
+
+- `let a = find(1)?.label() ?? "none"`, where `label` hands back a view of
+  the `User`, failed in `rustc` with *temporary value dropped while
+  borrowed*. `find(1)` is now bound on the line before and the reach reads the
+  binding: nothing copied, nothing run that did not run.
+- Where binding it first would change what runs - the lazy side of `??`, `&&`
+  or `||`, a `match` arm, after another call in the same statement, a block's
+  value - the program is refused, naming the `let` it can write.
+- The reaches that take their temporary (`find(1)?.name`, `?.home?.x`) were
+  already right, and are unchanged.
+
+## [0.0.210] — 2026-09-26
+
+**`collect()` builds what the place it goes into declares** —
+[ADR-227](docs/specification/adr/adr-227.md), closing `open-work.md` §1's
+*`collect()` into a declared map*, with the owner's choice over a refusal.
+
+- A list where nothing says otherwise; a map from pairs, a set, or `String`
+  where a `let`, a field or a result declares one the items fit. The emitter
+  used to write `.collect::<Vec<_>>()` into a map, which `rustc` refused.
+- Into a map whose key or value is text both kinds flow into, the pairs go
+  through `either_keys()`, `either_values()` or `either_pairs()`
+  (`nikaia_std::either_text::EitherPairs`).
+- The tier pass reads what `map` makes as what its lambda hands back, and no
+  longer counts a number, a truth value or `null` as text of its own.
+- **Found on the way**, recorded in `open-work.md` §1: a `filter` lambda that
+  compares its item fails in `rustc` (`&char` against `char`).
+
+## [0.0.209] — 2026-09-26
+
+**A view handed back out of a parameter that holds views is the buffer's** —
+[ADR-226](docs/specification/adr/adr-226.md), closing ADR-222 §3's last row.
+
+- `fn first(xs: Vec[String]) -> String { return xs[0] }` over a list of views,
+  a view field of a struct handed back, and a field both kinds flow into handed
+  back all failed in `rustc` with *missing lifetime specifier*. The first two
+  name the buffer's lifetime on the parameter and the result (`fn first<'a>(xs:
+  &Vec<&'a str>) -> &'a str`); the third takes its struct, as a `String` field
+  does, because `EitherText` cannot leave a loan without an allocation.
+- **A program's own `struct Seen` overflowed the compiler's stack**: the
+  lock's stamp `Seen[T]` was erased even with no argument, to itself. The stamp
+  now needs its argument, and a bare `Seen` is the program's type.
+
 ## [0.0.208] — 2026-09-26
 
 **A view cut from text is typed as one** —

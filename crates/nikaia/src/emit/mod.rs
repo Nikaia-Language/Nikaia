@@ -1062,6 +1062,8 @@ struct Emitter<'p> {
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
+    /// `collect()` into a declared map, set or text (ADR-227 D1).
+    collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::kept_lambdas`.
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_calls`.
@@ -1289,6 +1291,11 @@ struct Emitter<'p> {
     /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
     /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
     lent_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::held_reaches` (ADR-228 D1).
+    held_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// The receivers held before the statement being written, by address, and
+    /// the name each is held under.
+    held: std::cell::RefCell<HashMap<usize, String>>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
     nullable_fields: std::collections::BTreeMap<
@@ -2168,6 +2175,7 @@ impl<'p> Emitter<'p> {
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
+            collected_into: propagation.collected_into,
             kept_lambdas: propagation.kept_lambdas,
             field_calls: propagation.field_calls,
             kept_calls: propagation.kept_calls,
@@ -2215,6 +2223,8 @@ impl<'p> Emitter<'p> {
             copied_reaches: propagation.copied,
             viewed_reaches: propagation.viewed,
             lent_reaches: propagation.lent_reaches,
+            held_reaches: propagation.held_reaches,
+            held: std::cell::RefCell::new(HashMap::new()),
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
             mut_args: propagation.mut_args,
@@ -3538,9 +3548,49 @@ impl<'p> Emitter<'p> {
         // its views leave through with the keep's lifetime, so `rustc` holds
         // the body to exactly what the plan says.
         let kept = self.kept_lifetimes(&key, lifetimes);
+        // **A view handed back out of a parameter that holds views**
+        // ([ADR-226](../../docs/specification/adr/adr-226.md) D1):
+        // `fn first(xs: Vec[ref String]) -> ref String` lends `xs`, and the
+        // result is one of the views inside it, not a borrow of the list. Two
+        // lifetimes are in that parameter - the loan and the buffer - and the
+        // result's is the buffer's, so it is named: `fn first<'a>(xs:
+        // &Vec<&'a str>) -> &'a str`. Only where that one parameter is all
+        // there is to borrow from; with two, which buffer is ADR-209's
+        // question and already its refusal.
+        let inner_views = match (lifetimes, receiver, kept, ret_type) {
+            (Lifetimes::ELIDED, None, None, Some(ty))
+                if self.carries_a_view(ty) && carries_input.is_none_or(|set| set.is_empty()) =>
+            {
+                let carrying: Vec<_> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| self.carries_a_view(&a.ty))
+                    .collect();
+                // **Lent**, by the declaration's own test below: a parameter
+                // handed over is one lifetime, which the elision names.
+                let lent = |at: usize| {
+                    self.own_contracts.functions.get(&key).is_some_and(|c| {
+                        crate::contracts::keeps::lends(c, at)
+                            && !c
+                                .signature
+                                .as_ref()
+                                .and_then(|s| s.params.get(at))
+                                .is_some_and(|(_, ty)| ty.is_a_view())
+                    })
+                };
+                match carrying.as_slice() {
+                    [(at, one)] if !one.ty.is_view && !one.ty.either && lent(*at) => Some(one.name),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let how = |name: Symbol| {
             if let Some(kept) = kept.filter(|_| self.tethered_position(&key, self.text(name))) {
                 return kept;
+            }
+            if inner_views == Some(name) {
+                return Lifetimes::NAMED;
             }
             let viewed = args.iter().any(|a| a.name == name && a.ty.is_view);
             match (carries_input.is_some_and(|set| set.contains(&name)), viewed) {
@@ -3741,7 +3791,7 @@ impl<'p> Emitter<'p> {
         // **The buffer a struct parameter carries is named on the function**
         // where no `impl` names it already.
         let declared: Vec<String> = match lifetimes == Lifetimes::ELIDED
-            && carries_input.is_some_and(|set| !set.is_empty())
+            && (carries_input.is_some_and(|set| !set.is_empty()) || inner_views.is_some())
         {
             true => std::iter::once("'a".to_string()).chain(declared).collect(),
             false => declared,
@@ -3818,6 +3868,7 @@ impl<'p> Emitter<'p> {
                         kept
                     }
                     (true, _) => Lifetimes::STATIC,
+                    (false, _) if inner_views.is_some() => Lifetimes::NAMED,
                     (false, _) => lifetimes,
                 };
                 self.ty_counted(ty, result, self.count_at(&key, SHARED_RESULT))
@@ -4833,19 +4884,15 @@ impl<'p> Emitter<'p> {
         // Written where the name is read rather than at every position that
         // takes a type, so that a `Vec[Seen[i64]]` and a `Seen[i64]?` come out
         // right for the same reason `Shared` does one paragraph down.
-        if self.text(ty.name) == crate::contracts::ty::SEEN {
-            let inner = ty.generics.first().cloned().unwrap_or_else(|| Type {
-                name: ty.name,
-                generics: Vec::new(),
-                is_view: false,
-                is_nullable: false,
-                is_tuple: false,
-                code: None,
-                count: None,
-                is_mut: false,
-                is_slice: false,
-                either: false,
-            });
+        //
+        // **Only with its argument.** A bare `Seen` is not the stamp - the stamp
+        // always says what it stamps - and a program may declare a type of that
+        // name; erasing it to itself recursed until the compiler's stack ran
+        // out, on `struct Seen { … }` and a parameter of it.
+        if self.text(ty.name) == crate::contracts::ty::SEEN
+            && let [inner] = ty.generics.as_slice()
+        {
+            let inner = inner.clone();
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
                 is_view: ty.is_view || inner.is_view,
@@ -5206,6 +5253,148 @@ impl<'p> Emitter<'p> {
     /// Nikaia's blocks are expressions (Part I, 3.1), so a block's last
     /// statement is its value and keeps no semicolon - and where that value is
     /// the *function's*, a `return x` is written as `x`.
+    /// **A `?.` view out of a temporary is held for the rest of the block**
+    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1).
+    ///
+    /// `let a = find(1)?.label() ?? "none"` hands back a view of the `User`
+    /// `find(1)` made, and that value dies at the `;` - `rustc`'s *temporary
+    /// value dropped while borrowed* about a file nobody wrote. So the receiver
+    /// is bound first, `let __nikaia_held_0 = find(1);`, and the reach reads
+    /// the binding. Nothing is copied and nothing runs that did not run.
+    ///
+    /// **Only where binding it first changes nothing about what runs** (D2):
+    /// not on the lazy side of `??`, `&&` or `||`, not in a `match` arm, not
+    /// after a call earlier in the same statement, and not where the view is
+    /// the block's value, which would outlive the binding. There the program is
+    /// refused, with the `let` it can write.
+    fn hold_temporaries(
+        &self,
+        out: &mut Out,
+        stmt: &Stmt,
+        span: &Span,
+        depth: usize,
+        tail: Tail,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if self.held_reaches.is_empty() {
+            return Ok(());
+        }
+        let (value, holdable) = match stmt {
+            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => (value, true),
+            Stmt::Expr(value) => (value, tail == Tail::Statement),
+            Stmt::Return(Some(value)) => (value, false),
+            _ => return Ok(()),
+        };
+        let mut found = Vec::new();
+        let mut called = false;
+        self.held_in(value, span.start, false, &mut called, &mut found);
+        for (receiver, safe) in found {
+            if !safe || !holdable {
+                return Err(refused_at!(
+                    span.start,
+                    "this `?.` hands back a view of a value that ends at this line, and \
+                     holding that value first would change what this line runs - bind it \
+                     with a `let` on the line before, and reach through the name"
+                ));
+            }
+            let name = format!("__nikaia_held_{}", self.held.borrow().len());
+            out.push(&format!("let {name} = "));
+            self.expr(out, receiver, depth, flow)?;
+            out.push(&format!(";\n{}", "    ".repeat(depth)));
+            self.held
+                .borrow_mut()
+                .insert(receiver as *const Expr as usize, name);
+        }
+        Ok(())
+    }
+
+    /// The receivers of held reaches in `expr`, in the order they run, each
+    /// with whether holding it first is safe: not lazy, and no call ran before
+    /// it in this statement.
+    fn held_in<'e>(
+        &self,
+        expr: &'e Expr,
+        statement: usize,
+        lazy: bool,
+        called: &mut bool,
+        found: &mut Vec<(&'e Expr, bool)>,
+    ) {
+        match expr {
+            Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let held = self
+                    .held_reaches
+                    .contains(&(statement, self.text(*method).to_string()))
+                    && !matches!(receiver.as_ref(), Expr::Variable(_));
+                if held {
+                    found.push((receiver, !lazy && !*called));
+                }
+                self.held_in(receiver, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::Call { func, args, .. } => {
+                self.held_in(func, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.held_in(receiver, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::Coalesce { value, fallback } => {
+                self.held_in(value, statement, lazy, called, found);
+                self.held_in(fallback, statement, true, called, found);
+            }
+            Expr::Binary { lhs, rhs, op, .. } => {
+                self.held_in(lhs, statement, lazy, called, found);
+                let short = matches!(op, crate::ast::BinaryOp::And | crate::ast::BinaryOp::Or);
+                self.held_in(rhs, statement, lazy || short, called, found);
+            }
+            Expr::Match { value, arms } => {
+                self.held_in(value, statement, lazy, called, found);
+                for arm in arms {
+                    self.held_in(&arm.body, statement, true, called, found);
+                }
+            }
+            Expr::If { cond, .. } => self.held_in(cond, statement, lazy, called, found),
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
+                self.held_in(base, statement, lazy, called, found)
+            }
+            Expr::Index { base, index } => {
+                self.held_in(base, statement, lazy, called, found);
+                self.held_in(index, statement, lazy, called, found);
+            }
+            Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
+                self.held_in(expr, statement, lazy, called, found)
+            }
+            Expr::Tuple(parts) | Expr::ListLit { items: parts, .. } => {
+                for part in parts {
+                    self.held_in(part, statement, lazy, called, found);
+                }
+            }
+            Expr::StructLit { fields, .. } => {
+                for value in fields.iter().filter_map(|f| f.value.as_ref()) {
+                    self.held_in(value, statement, lazy, called, found);
+                }
+            }
+            // A block, a lambda, a string's holes: statements of their own, or
+            // code this walk cannot hold anything for.
+            _ => {}
+        }
+    }
+
     fn stmt(
         &self,
         out: &mut Out,
@@ -5222,6 +5411,7 @@ impl<'p> Emitter<'p> {
         // is actually in.
         let flow = flow.at(span.start);
         self.write_keep_prelude(out, flow.function, span.start, depth);
+        self.hold_temporaries(out, stmt, span, depth, tail, flow)?;
         match stmt {
             Stmt::Let {
                 names,
@@ -6292,7 +6482,15 @@ impl<'p> Emitter<'p> {
                     false => "",
                 };
                 out.push("match ");
-                self.postfix_base(out, receiver, depth, flow)?;
+                let held = self
+                    .held
+                    .borrow()
+                    .get(&(receiver.as_ref() as *const Expr as usize))
+                    .cloned();
+                match held {
+                    Some(name) => out.push(&name),
+                    None => self.postfix_base(out, receiver, depth, flow)?,
+                }
                 out.push(lent);
                 out.push(&format!(
                     " {{
@@ -9128,9 +9326,14 @@ impl<'p> Emitter<'p> {
         out.push(&format!("\"{format}\""));
 
         for hole in holes {
-            let expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
+            let mut expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
                 refused_at!(flow.statement, "in the interpolated `{{{hole}}}`: {e}")
             })?;
+            // What the tier pass hands over inside it (ADR-229 D1), as every
+            // other reader of a hole sees it (`literal_expressions`).
+            if let Some(wraps) = self.parsed.hole_wraps.get(&hole) {
+                crate::text_tiers::wrap_hole(&mut expr, wraps);
+            }
             out.push(", ");
             let hole = (flow.statement, crate::check::argument_shape(&expr));
             let outer = self.hole.replace(Some(hole));
@@ -9380,7 +9583,20 @@ impl<'p> Emitter<'p> {
         // `Iterator::collect` never pauses, so the site pausing is exactly the
         // difference. Guessed from the method's name alone this would have
         // been a turbofish on a method that takes no type at all.
-        if self.text(method) == "collect" && args.is_empty() && !self.method_pauses(flow, method) {
+        //
+        // **And except where the place it goes declares what it builds**
+        // ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map, a
+        // set or text, which the language below's own `collect`
+        // builds when nothing overrides the type it reads off that place.
+        let declared = receiver.is_some_and(|receiver| {
+            self.collected_into
+                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+        });
+        if self.text(method) == "collect"
+            && args.is_empty()
+            && !declared
+            && !self.method_pauses(flow, method)
+        {
             out.push("::<Vec<_>>");
         }
         out.push("(");
@@ -10912,10 +11128,17 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
 
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
+        // Each with what the tier pass hands over inside it (ADR-229 D1).
         Expr::LitInterpolated(literal) => match interpolation(literal) {
             Ok((_, holes)) => holes
                 .iter()
-                .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
+                .filter_map(|hole| {
+                    let mut expr = parse_expression(&parsed.interner, hole).ok()?;
+                    if let Some(wraps) = parsed.hole_wraps.get(hole) {
+                        crate::text_tiers::wrap_hole(&mut expr, wraps);
+                    }
+                    Some(expr)
+                })
                 .collect(),
             Err(_) => Vec::new(),
         },

@@ -318,6 +318,9 @@ struct Flows {
     /// Values that go into a mixed position at a line whose lowering does not
     /// wrap them itself, by address, and how each is handed over.
     wraps: BTreeMap<usize, Hand>,
+    /// The same inside an `f"…"` hole, by the hole's text and the value's
+    /// shape (ADR-229 D1).
+    hole_wraps: BTreeMap<String, BTreeSet<(String, Hand)>>,
     /// Two positions a whole value goes between - a list handed back, handed
     /// over, or bound - which are therefore one representation below, and get
     /// one tier (ADR-224 D3).
@@ -332,7 +335,7 @@ struct Flows {
 
 /// How a value is handed into a mixed position: the method this pass writes
 /// after it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Hand {
     /// `value.into_either()`: into a `String`.
     Either,
@@ -341,6 +344,12 @@ enum Hand {
     /// `iterator.either_items()`: before a `collect` into a list whose
     /// element is mixed, each item handed over as it is.
     Items,
+    /// `pairs.either_keys()`, `either_values()`, `either_pairs()`: before a
+    /// `collect` into a map whose key, value or both are mixed
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D2).
+    Keys,
+    Values,
+    Pairs,
 }
 
 /// One local, as far as this walk needs it.
@@ -365,6 +374,9 @@ struct Walk<'d, 'p> {
     result: Option<String>,
     /// Inside an `f"…"` hole (see [`Flows::unwrappable`]).
     in_hole: bool,
+    /// The text of the hole being walked, where it is one this pass can hand
+    /// a value over in (ADR-229 D1).
+    hole_text: Option<String>,
 }
 
 impl Walk<'_, '_> {
@@ -438,7 +450,11 @@ impl Walk<'_, '_> {
         if !linked {
             self.flow_type(owner, ty, &mut path, kinds);
         }
-        if self.in_hole && wrap && plain_string(self.declared.parsed, ty) {
+        if self.in_hole
+            && self.hole_text.is_none()
+            && wrap
+            && plain_string(self.declared.parsed, ty)
+        {
             self.flows.unwrappable.insert(Position {
                 owner: owner.clone(),
                 path: path.clone(),
@@ -459,7 +475,7 @@ impl Walk<'_, '_> {
                     true => Hand::Maybe,
                     false => Hand::Either,
                 };
-                self.flows.wraps.insert(value as *const Expr as usize, hand);
+                self.hand_over(value, hand);
             }
             self.kept_literal(value, owner, &path, ty);
             if container(self.declared.parsed, ty).is_some() {
@@ -494,6 +510,37 @@ impl Walk<'_, '_> {
                 args,
                 ..
             } if self.text(*method) == "collect" && args.is_empty() => {
+                // A map is collected from pairs: its key and its value are two
+                // positions, and each is handed over as it is where it is mixed.
+                if container(parsed, ty).is_some_and(|name| MAPS.contains(&name)) {
+                    let mixed = |walk: &mut Self, at: usize| {
+                        let Some(part) = ty.generics.get(at) else {
+                            return false;
+                        };
+                        if !plain_string(parsed, part) {
+                            return false;
+                        }
+                        let mut path = path.clone();
+                        path.push(at);
+                        let position = Position {
+                            owner: owner.clone(),
+                            path,
+                        };
+                        if walk.in_hole && walk.hole_text.is_none() {
+                            walk.flows.unwrappable.insert(position);
+                            return false;
+                        }
+                        walk.tier_of(&position) == Tier::Mixed
+                    };
+                    let hand = match (mixed(self, 0), mixed(self, 1)) {
+                        (true, true) => Hand::Pairs,
+                        (true, false) => Hand::Keys,
+                        (false, true) => Hand::Values,
+                        (false, false) => return,
+                    };
+                    self.hand_over(receiver, hand);
+                    return;
+                }
                 let Some(element) = element else { return };
                 let mut at = path.clone();
                 at.push(0);
@@ -504,11 +551,10 @@ impl Walk<'_, '_> {
                 if !plain_string(parsed, element) {
                     return;
                 }
-                if self.in_hole {
+                if self.in_hole && self.hole_text.is_none() {
                     self.flows.unwrappable.insert(position);
                 } else if self.tier_of(&position) == Tier::Mixed {
-                    let at = receiver.as_ref() as *const Expr as usize;
-                    self.flows.wraps.insert(at, Hand::Items);
+                    self.hand_over(receiver, Hand::Items);
                 }
             }
             _ => {
@@ -584,6 +630,24 @@ impl Walk<'_, '_> {
             self.link(from, f, from_path, to, t, to_path);
             from_path.pop();
             to_path.pop();
+        }
+    }
+
+    /// Mark a value to be handed over as `hand` says: by address where this
+    /// pass can rewrite the program, by the hole's text and the value's shape
+    /// inside an `f"…"` hole (ADR-229 D1).
+    fn hand_over(&mut self, value: &Expr, hand: Hand) {
+        match &self.hole_text {
+            Some(text) if self.in_hole => {
+                self.flows
+                    .hole_wraps
+                    .entry(text.clone())
+                    .or_default()
+                    .insert((crate::check::argument_shape(value), hand));
+            }
+            _ => {
+                self.flows.wraps.insert(value as *const Expr as usize, hand);
+            }
         }
     }
 
@@ -880,13 +944,28 @@ impl Walk<'_, '_> {
     fn expr(&mut self, expr: &Expr) -> Kinds {
         match expr {
             Expr::LitStr { .. } => one(Kind::Static),
-            Expr::LitNull => Kinds::new(),
+            // `null`, a number, a truth value and a character are no text.
+            Expr::LitNull | Expr::LitInt(_) | Expr::LitFloat(_) | Expr::LitBool(_) => Kinds::new(),
             // **A hole is code** (ADR-032): what it passes to a function of
             // this program is a flow like any other.
-            Expr::LitInterpolated(_) => {
+            //
+            // **And a value handed over inside one is handed over there**
+            // ([ADR-229](../../docs/specification/adr/adr-229.md) D1): each hole
+            // is walked with its text, which is what the wrap is recorded by.
+            Expr::LitInterpolated(literal) => {
                 let outer = std::mem::replace(&mut self.in_hole, true);
-                for hole in crate::emit::literal_expressions(self.declared.parsed, expr) {
+                let holes = crate::emit::interpolation(literal)
+                    .map(|(_, holes)| holes)
+                    .unwrap_or_default();
+                for text in holes {
+                    let Ok(hole) =
+                        crate::parser::parse_expression(&self.declared.parsed.interner, &text)
+                    else {
+                        continue;
+                    };
+                    let held = self.hole_text.replace(text);
                     self.expr(&hole);
+                    self.hole_text = held;
                 }
                 self.in_hole = outer;
                 one(Kind::Owned)
@@ -953,6 +1032,38 @@ impl Walk<'_, '_> {
                     if ELEMENTS.contains(&method.as_str()) {
                         return self.element_kinds(&owner, &ty, method == "keys");
                     }
+                }
+                // **What `map` makes is what its lambda hands back**, with the
+                // lambda's parameter bound to what came in (ADR-227 D2):
+                // `lines.map(fn(l) { (l, 1) })` is pairs keyed by views.
+                if method == "map"
+                    && let [Expr::Closure { params, body, .. }] = args.as_slice()
+                {
+                    let result = self.result.take();
+                    self.scopes.push(BTreeMap::new());
+                    let names: Vec<String> = match params.as_slice() {
+                        [] => vec!["a".to_string()],
+                        named => named.iter().map(|p| self.text(*p).to_string()).collect(),
+                    };
+                    for name in names {
+                        self.bind(
+                            name,
+                            Local {
+                                kinds: received.clone(),
+                                ..Local::default()
+                            },
+                        );
+                    }
+                    let made = self.block(body);
+                    self.scopes.pop();
+                    self.result = result;
+                    return made;
+                }
+                if matches!(
+                    method.as_str(),
+                    "filter" | "rev" | "skip" | "take" | "step_by"
+                ) {
+                    return received;
                 }
                 if OWNS.contains(&method.as_str()) {
                     return one(Kind::Owned);
@@ -1188,6 +1299,7 @@ fn walk(declared: &Declared<'_>, tiers: &Tiers) -> Flows {
             scopes: vec![BTreeMap::new()],
             result: Some(key.clone()),
             in_hole: false,
+            hole_text: None,
         };
         for (at, arg) in args.iter().enumerate() {
             let owner = Owner::Param(key.clone(), at);
@@ -1313,7 +1425,21 @@ pub fn refine(parsed: &mut Parsed) {
         parsed.interner.intern_string("into_either"),
         parsed.interner.intern_string("into_either_maybe"),
         parsed.interner.intern_string("either_items"),
+        parsed.interner.intern_string("either_keys"),
+        parsed.interner.intern_string("either_values"),
+        parsed.interner.intern_string("either_pairs"),
     ];
+    parsed.hole_wraps = flows
+        .hole_wraps
+        .iter()
+        .map(|(text, wraps)| {
+            let wraps = wraps
+                .iter()
+                .map(|(shape, hand)| (shape.clone(), into[*hand as usize]))
+                .collect();
+            (text.clone(), wraps)
+        })
+        .collect();
     rewrite(parsed, &tiers, &lets, text, &flows.wraps, into);
     parsed.text_tiers = said;
 }
@@ -1341,7 +1467,7 @@ fn rewrite(
     lets: &BTreeSet<usize>,
     text_type: Option<Type>,
     wraps: &BTreeMap<usize, Hand>,
-    into: [winnow_grammar::Symbol; 3],
+    into: [winnow_grammar::Symbol; 6],
 ) {
     // Values first: a value's address is where the walk saw it, and nothing
     // has moved yet.
@@ -1626,7 +1752,7 @@ fn visit_expr_mut(
 /// **A value going into a mixed position is handed over as `value.into_either()`**
 /// (ADR-223 D2): `EitherText` borrows a view and moves text of its own in,
 /// and which it is the language below reads off the value's type.
-fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 3]) {
+fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 6]) {
     if wraps.is_empty() {
         return;
     }
@@ -1724,4 +1850,35 @@ fn said(tiers: &Tiers) -> Vec<String> {
             Some(format!("{place}{inside} is {what}"))
         })
         .collect()
+}
+
+/// **Apply a hole's wraps to it as it is parsed** (ADR-229 D1): each value
+/// whose shape was recorded becomes `value.<method>()`, innermost first, as
+/// [`wrap_item`] does to the program.
+pub fn wrap_hole(hole: &mut Expr, wraps: &[(String, winnow_grammar::Symbol)]) {
+    let mut marked: Vec<(*mut Expr, winnow_grammar::Symbol)> = Vec::new();
+    let mut mark = |expr: &mut Expr| {
+        let shape = crate::check::argument_shape(expr);
+        if let Some((_, method)) = wraps.iter().find(|(s, _)| *s == shape) {
+            marked.push((expr as *mut Expr, *method));
+        }
+    };
+    visit_expr_mut(hole, &mut mark, &mut |_, _| {});
+    for (at, method) in marked {
+        visit_expr_mut(
+            hole,
+            &mut |expr| {
+                if std::ptr::eq(expr as *const Expr, at as *const Expr) {
+                    let value = std::mem::replace(expr, Expr::Break);
+                    *expr = Expr::MethodCall {
+                        receiver: Box::new(value),
+                        method,
+                        args: Vec::new(),
+                        config: Vec::new(),
+                    };
+                }
+            },
+            &mut |_, _| {},
+        );
+    }
 }

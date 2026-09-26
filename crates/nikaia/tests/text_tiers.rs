@@ -601,3 +601,106 @@ fn main() throws {
         "{found:#?}"
     );
 }
+
+/// **A view handed back out of a parameter that holds views**
+/// ([ADR-226](../../../docs/specification/adr/adr-226.md)): an element of a
+/// list of views, a view field of a struct - the result is the buffer's, not a
+/// borrow of the parameter - and a field both kinds flow into, which is handed
+/// over with its struct as a `String` field is.
+const OUT_OF_A_PARAMETER: &str = r##"use std::fs
+
+struct Entry {
+    key: String,
+}
+
+struct Seen {
+    at: String,
+}
+
+fn label(e: Entry) -> String {
+    return e.key
+}
+
+fn place(s: Seen) -> String {
+    return s.at
+}
+
+fn first(xs: Vec[String]) -> String {
+    return xs[0]
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let a = Entry { key: text.trim() }
+    let b = Entry { key: f"own" }
+    let s = Seen { at: text.lines().next() ?? "" }
+    let mut names: Vec[String] = Vec()
+    for line in text.lines() {
+        names.push(line.trim())
+    }
+    println(f"{label(b)} {place(s)} {first(names)} {names.len()} {label(a).len()}")
+}
+"##;
+
+#[test]
+fn a_view_handed_back_out_of_a_parameter_that_holds_views_is_the_buffers() {
+    runs(
+        "out-of-a-parameter",
+        OUT_OF_A_PARAMETER,
+        "own # settings # settings 4 62",
+    );
+    let rust = lowered(OUT_OF_A_PARAMETER, Build::default());
+    assert!(
+        rust.contains("fn first<'a>(xs: &Vec<&'a str>) -> &'a str"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("fn place<'a>(s: &Seen<'a>) -> &'a str"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("fn label(e: Entry<'_>) -> nikaia_std::either_text::EitherText<'_>"),
+        "{rust}"
+    );
+}
+
+/// **A value handed over inside an `f"…"` hole is handed over there**
+/// ([ADR-229](../../../docs/specification/adr/adr-229.md)): a key put into a
+/// map, and a list literal handed to a function, both written in a hole, into
+/// positions both kinds flow into. The hole used to keep its position text of
+/// its own, which refused the lines outside it as well.
+const IN_A_HOLE: &str = r##"use std::fs
+use std::collections
+
+fn count(xs: Vec[String]) -> i64 {
+    let mut n = 0
+    for x in xs {
+        n = n + x.len()
+    }
+    return n
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    for line in text.lines() {
+        m[line] = line.len()
+    }
+    m[f"own"] = 3
+    println(f"{m.insert(text.trim(), 1) ?? 0} {m.len()} {count([text.trim(), f\"x\"])} {count([f\"ab\"])}")
+}
+"##;
+
+#[test]
+fn a_value_handed_over_inside_a_hole_is_handed_over_there() {
+    runs("in-a-hole", IN_A_HOLE, "0 6 63 2");
+    let rust = lowered(IN_A_HOLE, Build::default());
+    assert!(
+        rust.contains("m.insert(text.trim().into_either(), 1)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("vec![text.trim().into_either(), \"x\".to_string().into_either()]"),
+        "{rust}"
+    );
+}

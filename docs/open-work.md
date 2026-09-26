@@ -34,15 +34,17 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.1. `collect()` into a declared map passes the checker and fails in `rustc`
+### 1.3. A `filter` lambda that compares its item fails in `rustc`
 
-`let m: collections::HashMap[String, i64] = text.lines().map(fn(l) { (l, 1) }).collect()`
-is accepted, and lowers to `.collect::<Vec<_>>()` into a `TrustedMap` —
-`rustc`'s *mismatched types*, about a file nobody wrote (Part III C.1). Nikaia's
-`collect` builds a list (the emitter's comment says so), so either the checker
-refuses it where the target is not one, or `collect` builds what the target
-declares; the second is a language question for `open-decisions.md`. Evidence:
-found probing ADR-224 §3; the program above, run through `nikaia -i`.
+```nika
+let xs = "a-b".chars().filter(fn(c) { c != '-' }).collect()
+```
+
+lowers to `.filter(|c| { c != '-' })`, and `rustc` says *can't compare `&char`
+with `char`*: the language below hands `filter`'s lambda a reference to the
+item, and this language's lambda reads it as the item. Part III C.1, about a
+file nobody wrote. Evidence: the program above through `nikaia -i`, on 0.0.209
+and 0.0.210 alike; found writing `crates/nikaia/tests/collect_into.rs`.
 
 ## 2. Decided and unbuilt
 
@@ -640,24 +642,6 @@ demand it of, and nothing in `examples/`, in `tests/` or in `std` calls it —
 the **word** is in the type language and binds, so the entry is one line the day
 something asks for it, and the demand is the line after.
 
-### 2.19. Text is one type, and `ref String` is the assertion
-
-[ADR-107](specification/adr/adr-107.md). `String` is the one text type and
-its state — borrowed, tethered, owned — is the compiler's per use; a copy is
-`.clone()` or a refusal, never inserted. **Built for literals**
-([ADR-207](specification/adr/adr-207.md)), **for a view handed to a reader**
-([ADR-208](specification/adr/adr-208.md) D1), and **for fields and results**
-([ADR-222](specification/adr/adr-222.md)): a `String` field or result is text
-of its own, a view, or either per value, by what flows into it.
-
-**And for parameters, annotated `let`s and the elements of a list or a map**
-([ADR-223](specification/adr/adr-223.md)), **for `String?`, calls inside a
-hole, lists going in whole, and the foreign boundary**
-([ADR-224](specification/adr/adr-224.md)). *What is left:* a `push`, `insert`
-or `m[k] = v` written inside an `f"…"` hole, which keeps its position text of
-its own (ADR-224 §3). Evidence: `crates/nikaia/tests/text_tiers.rs`,
-`crates/nikaia/tests/described_entries.rs`.
-
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 
 [ADR-110](specification/adr/adr-110.md). `update fn(mut v) { … }` is the one
@@ -712,37 +696,6 @@ nothing about the status changes.
 `panic = "abort"` the process is gone with the abort's own status before the
 exit code can be set. The hook has already run and said what happened, so
 that profile loses the status and not the message.
-
-### 2.23. A `?.` whose receiver is a **temporary** still takes it
-
-[ADR-113](specification/adr/adr-113.md), **all but one shape built**
-([ADR-189](specification/adr/adr-189.md),
-[ADR-191](specification/adr/adr-191.md)). `?.` takes nothing: it reaches through
-a view of its receiver, and the result is a copy where the member copies and a
-view of the receiver otherwise.
-
-*What is built.* A reached **method** that changes nothing lends its scrutinee;
-a field that **copies** lends its receiver; and a field that does **not** copy
-comes out as a **view** of the receiver where that receiver *roots in a
-binding* — a name, a field of one, an index of one. All three leave the receiver
-usable on the next line, and all three **run** in
-`crates/nikaia/tests/nullable.rs` with it read on both sides.
-
-*What is left is one shape:* a receiver that **roots in a call**.
-`find(1)?.name` would be a view of a value that dies at the `;`, and binding one
-is `rustc`'s *temporary value dropped while borrowed* about a file nobody wrote
-— so the reach takes the value, as it always did, and
-[ADR-052](specification/adr/adr-052.md) D8's translation stays for it alone.
-[ADR-113](specification/adr/adr-113.md) D1's promise is kept where it means
-anything: a temporary has no next line to stay usable on.
-
-*What it needs is a **lowering** and not a state*
-([ADR-191](specification/adr/adr-191.md) D3). `rustc`'s own help is *consider
-using a `let` binding to create a longer lived value*, and this emitter can
-write one — it is [ADR-185](specification/adr/adr-185.md) D2's trick one
-construct over. **It is not free**: a `??`'s right side is lazy, so hoisting a
-receiver out of `a ?? find(1)?.name` would run `find(1)` where today it does
-not. Deciding where a hoist is safe is the work.
 
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 

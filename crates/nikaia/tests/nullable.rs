@@ -1196,3 +1196,64 @@ fn main() {
         "the way out is a program"
     );
 }
+
+/// **A `?.` view out of a temporary is held for the rest of the block**
+/// ([ADR-228](../../../docs/specification/adr/adr-228.md) D1): `find(1)` is
+/// bound on the line before, and the view the reach hands back points into
+/// that binding. It used to be `rustc`'s *temporary value dropped while
+/// borrowed*.
+const HELD: &str = "\
+struct User {
+    name: String,
+    tags: Vec[String],
+}
+
+impl User {
+    fn first(ref self) -> ref String {
+        return self.tags[0]
+    }
+    fn label(ref self) -> ref String {
+        return self.name
+    }
+}
+
+fn find(id: i64) -> User? {
+    if id == 1 {
+        return User { name: f\"ada\", tags: [f\"a\", f\"b\"] }
+    }
+    return null
+}
+
+fn main() {
+    let a = find(1)?.label() ?? \"none\"
+    let b = find(2)?.first() ?? \"none\"
+    let c = find(1)?.first()
+    println(f\"{a} {b} {c ?? \\\"-\\\"}\")
+}
+";
+
+#[test]
+fn a_view_out_of_a_temporary_is_held_for_the_rest_of_the_block() {
+    assert_eq!(ran("held", HELD).trim(), "ada none a");
+    let rust = lowered(HELD);
+    assert!(rust.contains("let __nikaia_held_0 = find(1);"), "{rust}");
+}
+
+/// **Where holding it first would change what runs, the program is refused**
+/// (ADR-228 D2): on the lazy side of `??`, `find` would run where it did not.
+#[test]
+fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
+    let source = HELD.replace(
+        "let a = find(1)?.label() ?? \"none\"",
+        "let given: String? = null\n    let a = given ?? find(1)?.label() ?? \"none\"",
+    );
+    let parsed = nikaia::parser::parse_to_ast(&source).expect("parses");
+    let refused =
+        nikaia::emit::emit_program(&parsed, nikaia::emit::Build::default()).expect_err("refused");
+    assert!(
+        refused
+            .to_string()
+            .contains("bind it with a `let` on the line before"),
+        "{refused}"
+    );
+}

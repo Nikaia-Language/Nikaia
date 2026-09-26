@@ -349,6 +349,12 @@ pub struct Checked {
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// `collect()` calls whose target declares what they build - a map, a
+    /// set, text - by statement and receiver shape
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
+    /// without `::<Vec<_>>`, so the declared type is what the language below
+    /// builds.
+    pub collected_into: BTreeSet<(usize, String)>,
     /// **Lambdas put where a function value is kept** - a field, a result, an
     /// annotated `let`, an assignment, a parameter the callee keeps - by
     /// statement and shape, and whether the function type may pause. Written
@@ -534,6 +540,12 @@ pub struct Checked {
     /// rule `NK1138` already uses one construct over: a name this compiler
     /// cannot resolve is not claimed about, and the reach lowers as it did.
     pub lent_reaches: BTreeSet<(usize, String)>,
+    /// A lent `?.` method reach whose result is a **view** and whose receiver
+    /// is a temporary - rooted in a call - by statement and method name
+    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1). The receiver is
+    /// held in a binding of its own before the statement, so the view has
+    /// something to point into past the `;`.
+    pub held_reaches: BTreeSet<(usize, String)>,
     /// The **struct-literal fields** where a plain value stands in a nullable
     /// slot, as the byte the statement starts at and the field's name
     /// (Part I 2.3).
@@ -1390,6 +1402,8 @@ pub struct Propagation {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// [`Checked::collected_into`].
+    pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::kept_lambdas`].
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
     /// [`Checked::field_calls`].
@@ -1424,6 +1438,8 @@ pub struct Propagation {
     pub viewed: BTreeMap<(usize, String), Viewed>,
     /// [`Checked::lent_reaches`].
     pub lent_reaches: BTreeSet<(usize, String)>,
+    /// [`Checked::held_reaches`].
+    pub held_reaches: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
     pub nullable_in_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
     /// [`Checked::nullable_args`].
@@ -1594,6 +1610,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
+        collected_into: checked.collected_into,
         kept_lambdas: checked.kept_lambdas,
         field_calls: checked.field_calls,
         kept_calls: checked.kept_calls,
@@ -1611,6 +1628,7 @@ pub fn propagation_against(
         copied: checked.copied_reaches,
         viewed: checked.viewed_reaches,
         lent_reaches: checked.lent_reaches,
+        held_reaches: checked.held_reaches,
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
@@ -6723,7 +6741,25 @@ impl<'a> Checker<'a> {
                                 other => Ty::Nullable(Box::new(other)),
                             };
                         }
-                        "either_items" => {
+                        "either_items" | "either_keys" | "either_values" | "either_pairs" => {
+                            let which = self.parsed.text(*method);
+                            // Of a pair, only the half the name says.
+                            let own = |item: Ty| match (which, item) {
+                                ("either_items", item) => own(item),
+                                (_, Ty::Tuple(parts)) => Ty::Tuple(
+                                    parts
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(at, part)| match (which, at) {
+                                            ("either_keys", 0)
+                                            | ("either_values", 1)
+                                            | ("either_pairs", _) => own(part),
+                                            _ => part,
+                                        })
+                                        .collect(),
+                                ),
+                                (_, item) => item,
+                            };
                             return match on {
                                 Ty::Seq {
                                     item,
@@ -7111,10 +7147,21 @@ impl<'a> Checker<'a> {
                     .into_iter()
                     .chain(self.library.candidates(&name))
                     .collect();
-                if !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates) {
+                let lent = !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates);
+                if lent {
                     self.checked.lent_reaches.insert((span.start, name.clone()));
                 }
-                match self.call_on(*inner, *method, args, &written, span) {
+                let reached = self.call_on(*inner, *method, args, &written, span);
+                // **A view out of a temporary needs something to point into**
+                // (ADR-228 D1): the receiver is held for the rest of the block.
+                let a_view = match &reached {
+                    Ty::Nullable(inner) => inner.is_a_view(),
+                    other => other.is_a_view(),
+                };
+                if lent && a_view && !roots_in_a_binding(receiver) {
+                    self.checked.held_reaches.insert((span.start, name.clone()));
+                }
+                match reached {
                     // The `and_then` case, recorded by name for the emitter
                     // exactly as a nullable field is (ADR-028: the emitter has
                     // no types and this is a question about one).
@@ -12630,6 +12677,67 @@ impl<'a> Checker<'a> {
         self.array_literal(found, want, value, span)
             .or_else(|| self.text_literal(want, value, true))
             .or_else(|| self.tuple_literal(found, want, value))
+            .or_else(|| self.collect_by_use(found, want, value, span))
+    }
+
+    /// **`collect()` builds what the place it goes into declares**
+    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map from
+    /// pairs, a set from items, text from characters or pieces of text. The ledger says `Vec[$T]`, which is what it builds where nothing
+    /// says otherwise; where a `let`, a field or a result declares another
+    /// container the items fit, that is the value's type, and the language
+    /// below is told nothing more - its own `collect` builds the declared type.
+    fn collect_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+        let Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } = value
+        else {
+            return None;
+        };
+        if self.parsed.text(*method) != "collect" || !args.is_empty() {
+            return None;
+        }
+        let Ty::Named {
+            name, args: made, ..
+        } = found
+        else {
+            return None;
+        };
+        let [item] = made.as_slice() else {
+            return None;
+        };
+        if ty::base(name) != "Vec" {
+            return None;
+        }
+        let Ty::Named {
+            name: wanted,
+            args: parts,
+            view: false,
+        } = want
+        else {
+            return None;
+        };
+        let fits = match (ty::base(wanted), parts.as_slice()) {
+            ("HashMap" | "BTreeMap" | "TrustedMap", [key, value]) => {
+                item.fits(&Ty::Tuple(vec![key.clone(), value.clone()]))
+            }
+            ("HashSet" | "BTreeSet" | "TrustedSet", [element]) => item.fits(element),
+            ("String", []) => {
+                *item == Ty::named("char")
+                    || *item == Ty::view("str")
+                    || *item == Ty::named("String")
+            }
+            _ => false,
+        };
+        if !fits {
+            return None;
+        }
+        self.checked
+            .collected_into
+            .insert((span.start, argument_shape(receiver)));
+        Some(want.clone())
     }
 
     /// **A lambda where a function value is kept** is one shared closure

@@ -409,7 +409,8 @@ impl Ty {
     /// is still what the lock said.
     pub fn is_seen(&self) -> bool {
         match self {
-            Ty::Named { name, .. } if name == SEEN => true,
+            // With its argument: a bare `Seen` is a type the program declared.
+            Ty::Named { name, args, .. } if name == SEEN => args.len() == 1,
             Ty::Nullable(inner) => inner.is_seen(),
             _ => false,
         }
@@ -422,9 +423,7 @@ impl Ty {
     /// whole thing, and for a fit that has to compare what is underneath.
     pub fn unseen(&self) -> Ty {
         match self {
-            Ty::Named { name, args, .. } if name == SEEN => {
-                args.first().cloned().unwrap_or(Ty::Unknown)
-            }
+            Ty::Named { name, args, .. } if name == SEEN && args.len() == 1 => args[0].clone(),
             Ty::Nullable(inner) => Ty::Nullable(Box::new(inner.unseen())),
             other => other.clone(),
         }

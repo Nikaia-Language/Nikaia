@@ -397,7 +397,13 @@ fn uses_of(
     // **A result that is a view keeps nothing by returning.** `-> &str` hands
     // back a view of a parameter, which `borrows` already records; it is
     // `-> String` that moves the value out of the call.
-    let returns_a_view = ret_type.as_ref().is_some_and(super::holds_view);
+    // **Text both kinds flow into is not a view to hand back**
+    // ([ADR-226](../../../docs/specification/adr/adr-226.md) D2): an
+    // `EitherText` may own its text, so returning a field of one takes it out
+    // of the parameter, as returning a `String` field does.
+    let returns_a_view = ret_type
+        .as_ref()
+        .is_some_and(|ty| super::holds_view(ty) && !holds_either(ty));
 
     // **The fields of each parameter whose type this file declares.** A
     // parameter of a type from a package or from `std` has none here, and
@@ -956,4 +962,9 @@ fn note_name(parsed: &Parsed, expr: &Expr, found: &mut Named) {
         Expr::Spawn { .. } => found.exhaustive = false,
         _ => {}
     }
+}
+
+/// Whether a declared type has text both kinds flow into anywhere in it.
+fn holds_either(ty: &crate::ast::Type) -> bool {
+    ty.either || ty.generics.iter().any(holds_either)
 }

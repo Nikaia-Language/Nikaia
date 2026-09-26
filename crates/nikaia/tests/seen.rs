@@ -241,3 +241,16 @@ fn what_access_hands_back_is_stamped() {
         1
     );
 }
+
+/// **A bare `Seen` is the program's own type**: the stamp always says what it
+/// stamps, and erasing a `struct Seen` to itself recursed until the compiler's
+/// stack ran out - on a declaration and one parameter of it.
+#[test]
+fn a_type_the_program_calls_seen_is_its_own() {
+    let source = "struct Seen {\n    at: i64,\n}\n\n\
+                  fn place(s: Seen) -> i64 {\n    return s.at\n}\n\n\
+                  fn main() {\n    println(f\"{place(Seen { at: 4 })}\")\n}\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("fn place(s: &Seen) -> i64"), "{rust}");
+}
