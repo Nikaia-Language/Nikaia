@@ -1066,6 +1066,8 @@ struct Emitter<'p> {
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::kept_lambdas`.
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
+    /// `check::Checked::kept_hulls` (ADR-230 D4).
+    kept_hulls: std::collections::BTreeMap<(usize, String), Vec<String>>,
     /// `check::Checked::kept_calls`.
     kept_calls: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// `check::Checked::kept_args`.
@@ -2177,6 +2179,7 @@ impl<'p> Emitter<'p> {
             text_as_is: propagation.text_as_is,
             collected_into: propagation.collected_into,
             kept_lambdas: propagation.kept_lambdas,
+            kept_hulls: propagation.kept_hulls,
             field_calls: propagation.field_calls,
             kept_calls: propagation.kept_calls,
             kept_args: propagation.kept_args,
@@ -6391,7 +6394,24 @@ impl<'p> Emitter<'p> {
                     crate::check::argument_shape(receiver),
                     self.text(*method)
                 );
-                if let Some(pauses) = self.field_calls.get(&(flow.statement, called)).copied() {
+                if let Some(pauses) = self
+                    .field_calls
+                    .get(&(flow.statement, called.clone()))
+                    .copied()
+                {
+                    // **Inside a lambda, as a pausing function is**
+                    // ([ADR-230](../../docs/specification/adr/adr-230.md) D3):
+                    // the closure below is synchronous, and an `.await` in it
+                    // was `rustc`'s error about a file nobody wrote.
+                    if pauses && flow.in_lambda {
+                        let named = match receiver.as_ref() {
+                            Expr::Variable(name) => {
+                                format!("{}.{}", self.text(*name), self.text(*method))
+                            }
+                            _ => self.text(*method).to_string(),
+                        };
+                        return Err(pausing_in_a_lambda(flow.statement, &named));
+                    }
                     out.push("(");
                     self.postfix_base(out, receiver, depth, flow)?;
                     out.push(&format!(".{})(", self.name(*method)));
@@ -6981,6 +7001,21 @@ impl<'p> Emitter<'p> {
                     .get(&(flow.statement, crate::check::argument_shape(expr)))
                     .copied();
                 if let Some((pauses, fails)) = kept {
+                    // Each hull it captures is a handle of its own
+                    // (ADR-230 D4): cloned in a block around the closure, so
+                    // the name outside is not moved into it.
+                    let hulls = self
+                        .kept_hulls
+                        .get(&(flow.statement, crate::check::argument_shape(expr)))
+                        .cloned()
+                        .unwrap_or_default();
+                    if !hulls.is_empty() {
+                        out.push("{ ");
+                        for hull in &hulls {
+                            let hull = escaped(hull);
+                            out.push(&format!("let {hull} = {hull}.clone(); "));
+                        }
+                    }
                     out.push(&format!(
                         "nikaia_std::func::Kept(std::sync::Arc::new(move |{}| ",
                         names.join(", ")
@@ -7011,6 +7046,9 @@ impl<'p> Emitter<'p> {
                         out.push(&format!(") as {}<_>", self.boxed_future()));
                     }
                     out.push("))");
+                    if !hulls.is_empty() {
+                        out.push(" }");
+                    }
                     return Ok(());
                 }
                 out.push(&format!("|{}| ", names.join(", ")));

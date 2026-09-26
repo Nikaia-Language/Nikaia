@@ -151,50 +151,6 @@ it looks like, and that is written the day a program asks for it — D4's *it
 waits for a program*, which is [ADR-105](specification/adr/adr-105.md)'s rule
 for the same file.
 
-### 2.3. The lock is built and every rule around it is not
-
-[ADR-057](specification/adr/adr-057.md) decided what the lock **is**,
-[ADR-059](specification/adr/adr-059.md) what a program writes to reach one, and
-[ADR-064](specification/adr/adr-064.md) gave the shared mutable type its name, its
-constructor and its single spelling. Part II 12.2's counter compiles and runs at
-both settings, so the type is not what anything here waits on — what is left is
-the section's own rules, and they are refusals nothing raises. **The
-re-entrancy check is off this list** ([ADR-168](specification/adr/adr-168.md)):
-`reentrancy-check` is a `[build]` key now, a dimension of the build cache and
-of the compiled `std`'s own tree, and Part I 1.2's note — which said the check
-was not emitted and the nesting not refused, both false — says what is true.
-**And so is `NK2503`**: a lock reachable through a call's arguments is refused
-under its own code, with Part III C.6's sentences and its way out.
-
-*That one is worth a line, because of what stood in front of it.* The walk had
-found the lock all along and printed `NK2502`'s message about it, and the last
-thing needed was telling a lock from a count in the verdict. Looking for the
-count turned up something else: [ADR-061](specification/adr/adr-061.md) D1 — *a
-`Shared` may not go into code nothing describes* — was **decided and not
-built**. `Shared` sat in `contracts::send`'s `CHOSEN` row and in its
-`CONTAINERS` row, the container row answered first, and the row that would have
-refused was reached by nothing. The test that should have caught it asserted the
-silence instead and passed. Both are built now, and the corpus is unmoved.
-
-What is left:
-
-* **D7's *stored* lambda**, the one part of [ADR-039](specification/adr/adr-039.md)
-  D3 the `locks` column does not answer for. The column itself is built
-  (`contracts::locks`, a least fixpoint over the call graph `sync` uses, with a
-  `spawn`'s body excluded and a trailing lambda's counted).
-
-  *It has three values and not two, and the corpus is what bought the third.*
-  D3 says fail-closed, and it says it about `sync`, where the cost of doubt is
-  a caller writing `.await`. Taken literally here it gave the property to **16
-  of 59** functions in `examples/` — almost all of them `main`, and **not one
-  of those programs opens a lock**. A refusal reading that column would have
-  refused correct programs. So `Undecided` is its own answer: not permission,
-  and not a refusal either. The corpus reads **0 hold, 24 undecided, 35
-  clear**, and what shrinks the middle is entries existing for the methods it
-  calls — *a foreign crate is described before it is called*, below — rather
-  than a change here. That number is what any refusal reading the column has to
-  be read against, which is why it is kept.
-
 ### 2.4. Part II 12.8's supervision syntax
 
 `supervisor::start_link(fn { … }; restart_policy: …)` is specified and there is no

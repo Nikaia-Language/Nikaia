@@ -90,6 +90,18 @@ const DOORS: &[&str] = &[
 /// here rather than found among the resolved receivers.
 const MULTI: &[&str] = &["access_all", "update_all"];
 
+/// The prefix a function field's node is keyed by in the graph: no function's
+/// key starts with it.
+const FIELD: &str = "field:";
+
+/// The free calls a lambda's body makes, for the checker to remember with the
+/// function field it is stored in (ADR-230 D1).
+pub fn free_calls(parsed: &Parsed, body: &Block) -> BTreeSet<String> {
+    let mut reaches = Reaches::default();
+    walk(parsed, body, &mut reaches);
+    reaches.callees
+}
+
 /// What one body reaches, before the fixpoint.
 #[derive(Clone, Debug, Default)]
 struct Reaches {
@@ -109,8 +121,28 @@ pub fn infer(
     units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, crate::check::MethodCalls>,
+    stored: &BTreeMap<String, crate::check::StoredCode>,
 ) {
     let mut graph: BTreeMap<String, Reaches> = BTreeMap::new();
+
+    // **Code stored in a function field is a node of its own**
+    // ([ADR-230](../../../../docs/specification/adr/adr-230.md) D1), keyed
+    // `field:Type.field`: what every lambda and function put there reaches, and
+    // a call through the field reaches it.
+    for (field, code) in stored {
+        let mut reaches = Reaches::default();
+        if code.unresolved {
+            reaches.itself = reaches.itself.or(Lock::Undecided);
+        }
+        if code.resolved.iter().any(|to| DOORS.contains(&to.as_str()))
+            || code.free.iter().any(|to| MULTI.contains(&to.as_str()))
+        {
+            reaches.itself = reaches.itself.or(Lock::Holds);
+        }
+        reaches.callees.extend(code.resolved.iter().cloned());
+        reaches.callees.extend(code.free.iter().cloned());
+        graph.insert(format!("{FIELD}{field}"), reaches);
+    }
 
     for parsed in units.iter().copied() {
         for item in &parsed.program.items {
@@ -219,7 +251,20 @@ pub fn infer(
     }
 
     for (name, holds) in touches {
-        if let Some(contract) = ledger.functions.get_mut(&name) {
+        if let Some(field) = name.strip_prefix(FIELD) {
+            // **A published field is stored into by packages that do not exist
+            // yet** (ADR-230 D1), so what this one stores is not all there is.
+            let published = field.split_once('.').is_some_and(|(owner, field)| {
+                ledger.types.get(owner).is_some_and(|t| {
+                    t.public && t.fields.iter().any(|f| f.name == field && f.public)
+                })
+            });
+            let holds = match published {
+                true => holds.or(Lock::Undecided),
+                false => holds,
+            };
+            ledger.code_locks.insert(field.to_string(), holds);
+        } else if let Some(contract) = ledger.functions.get_mut(&name) {
             contract.touches_a_lock = holds;
         }
     }
@@ -270,6 +315,12 @@ fn reaches_of(
         reaches
             .callees
             .extend(calls.resolved.iter().filter(|to| outside(to)).cloned());
+        reaches.callees.extend(
+            calls
+                .fields_called
+                .iter()
+                .map(|field| format!("{FIELD}{field}")),
+        );
     }
     walk(parsed, body, &mut reaches);
     Some((key, reaches))

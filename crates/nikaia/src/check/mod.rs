@@ -125,6 +125,10 @@ pub struct MethodCalls {
     /// pause, or may fail: the answer is the type's, not a callee's.
     pub code_pauses: bool,
     pub code_fails: bool,
+    /// The function fields it calls through, `Type.field`, outside a `spawn`
+    /// ([ADR-230](../../docs/specification/adr/adr-230.md) D1): what the code
+    /// stored there does is reached from here.
+    pub fields_called: BTreeSet<String>,
     /// Which of `resolved` were reached from inside a **`spawn`** body, and
     /// whether any unresolvable call was
     /// ([ADR-039](../../docs/specification/adr/adr-039.md) D3).
@@ -150,6 +154,18 @@ pub struct CallsInATask {
     pub resolved: BTreeSet<String>,
     /// A call inside a task's body that could not be resolved.
     pub unresolved: bool,
+}
+
+/// **What code stored in a function field reaches**
+/// ([ADR-230](../../docs/specification/adr/adr-230.md) D1): the methods a
+/// lambda put there resolves to, whether one of its calls did not resolve, and
+/// the free calls it makes - one entry per `Type.field`, over everything the
+/// package stores there.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoredCode {
+    pub resolved: BTreeSet<String>,
+    pub unresolved: bool,
+    pub free: BTreeSet<String>,
 }
 
 /// Whether an expression names a **place that outlives the statement**
@@ -360,6 +376,11 @@ pub struct Checked {
     /// statement and shape, and whether the function type may pause. Written
     /// below as one shared closure, `nikaia_std::func::Kept`.
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    /// The names a kept lambda captures that are **hulls** - a `Shared`, a
+    /// `SharedMut`, a `Locked` - by the same key
+    /// ([ADR-230](../../docs/specification/adr/adr-230.md) D4): the lambda
+    /// takes its own handle, and the one it was written beside stays usable.
+    pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
     /// **Calls of a field that holds a function**, `button.on_click(4)`, by
     /// statement and `receiver.field`, and whether the call may pause.
     pub field_calls: BTreeMap<(usize, String), bool>,
@@ -785,6 +806,8 @@ pub struct Checked {
     /// `sync` on the strength of the `spawn`, so nothing is decided by what the
     /// task's body calls.
     pub methods: BTreeMap<String, MethodCalls>,
+    /// [`StoredCode`] by `Type.field`.
+    pub stored_code: BTreeMap<String, StoredCode>,
 }
 
 /// Every type mistake the ledgers are enough to see, and every loop that can
@@ -941,6 +964,7 @@ fn walked<'a>(
         set_receiver: None,
         stamped_condition: None,
         inside_a_door: false,
+        stored_frames: Vec::new(),
         inside_an_action: None,
         inside_a_sync_function: None,
         std_in_scope: parsed
@@ -1406,6 +1430,8 @@ pub struct Propagation {
     pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::kept_lambdas`].
     pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    /// [`Checked::kept_hulls`].
+    pub kept_hulls: BTreeMap<(usize, String), Vec<String>>,
     /// [`Checked::field_calls`].
     pub field_calls: BTreeMap<(usize, String), bool>,
     /// [`Checked::kept_calls`].
@@ -1612,6 +1638,7 @@ pub fn propagation_against(
         text_as_is: checked.text_as_is,
         collected_into: checked.collected_into,
         kept_lambdas: checked.kept_lambdas,
+        kept_hulls: checked.kept_hulls,
         field_calls: checked.field_calls,
         kept_calls: checked.kept_calls,
         kept_args: checked.kept_args,
@@ -2522,6 +2549,10 @@ struct Checker<'a> {
     /// the lock is open in either of them no code of the program's runs, so
     /// there is nothing that could take a second one.
     inside_a_door: bool,
+    /// The lambdas being walked on their way into a function field, innermost
+    /// last (ADR-230 D1): every method call resolved inside one is recorded in
+    /// each.
+    stored_frames: Vec<StoredCode>,
     /// The rule whose action is being walked, for
     /// [ADR-142](../../docs/specification/adr/adr-142.md) D1's refusal - which
     /// needs the rule's name, because a grammar is a page of rules and a caret
@@ -6129,6 +6160,40 @@ impl<'a> Checker<'a> {
             Stmt::Assign {
                 target, op, value, ..
             } => {
+                // **Code assigned into a function field** (ADR-230 D1): the
+                // lock column does not read it, so the field is undecided.
+                if let Expr::Field { base, name } = target {
+                    let field = self.parsed.text(*name).to_string();
+                    // The owner where the base is a name; every struct with a
+                    // function field of that name where it is not.
+                    let owners: Vec<String> = match base.as_ref() {
+                        Expr::Variable(bound) => match self.lookup(self.parsed.text(*bound)) {
+                            Some(Ty::Named { name: owner, .. }) => vec![owner],
+                            _ => Vec::new(),
+                        },
+                        _ => self
+                            .parsed
+                            .program
+                            .items
+                            .iter()
+                            .filter_map(|item| match &item.node {
+                                Item::Struct { name, .. } => {
+                                    Some(self.parsed.text(*name).to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                    };
+                    for owner in owners {
+                        let code = self.fields_of(&owner).is_some_and(|d| {
+                            d.iter()
+                                .any(|f| f.name == field && matches!(f.ty, Ty::Fn { .. }))
+                        });
+                        if code {
+                            self.a_field_whose_code_is_not_seen(&owner, &field);
+                        }
+                    }
+                }
                 // `NK2101`: an assignment **revives** a name a task took with
                 // it - `message = "other"` after the `spawn` is a correct
                 // program - so the target is recorded before it is walked, and
@@ -6982,6 +7047,30 @@ impl<'a> Checker<'a> {
                 {
                     self.arguments_given(args, &params, false, None, span);
                     self.kept_arguments_are_its_own(args, &params);
+                    // **A call through a function field reaches what was
+                    // stored there** (ADR-230 D1, D2): recorded for the lock
+                    // column, and asked here where a lock is already open.
+                    if let Ty::Named { name: owner, .. } = &on {
+                        let key = format!("{owner}.{}", self.parsed.text(*method));
+                        if let Some(current) = &self.current
+                            && self.task_bindings.is_empty()
+                        {
+                            self.checked
+                                .methods
+                                .entry(current.clone())
+                                .or_default()
+                                .fields_called
+                                .insert(key.clone());
+                        }
+                        // The door this call stands in, not this call: the flag
+                        // was set above for the call's own block.
+                        let holds = self.own.code_locks.get(&key).copied();
+                        if let Some(holds) = holds {
+                            let own = std::mem::replace(&mut self.inside_a_door, outer_inside);
+                            self.a_lock_inside_a_lock(&key, holds, span);
+                            self.inside_a_door = own;
+                        }
+                    }
                     self.checked.field_calls.insert(
                         (
                             span.start,
@@ -7386,11 +7475,53 @@ impl<'a> Checker<'a> {
                     if !seen.insert(field.clone()) {
                         self.a_field_written_twice(&name, &field, span);
                     }
+                    // **Code put into a function field is remembered with the
+                    // field** (ADR-230 D1): what it calls is what a call
+                    // through the field reaches, wherever that call is.
+                    let code_field = declared.as_ref().is_some_and(|d| {
+                        d.iter()
+                            .any(|f| f.name == field && matches!(f.ty, Ty::Fn { .. }))
+                    });
+                    if code_field {
+                        self.stored_frames.push(StoredCode::default());
+                    }
                     // `Reading { name, temp }` is shorthand for `name: name`.
                     let found = match &init.value {
                         Some(value) => self.expr(value, span),
                         None => self.lookup(&field).unwrap_or(Ty::Unknown),
                     };
+                    if code_field {
+                        let mut stored = self.stored_frames.pop().unwrap_or_default();
+                        match &init.value {
+                            Some(Expr::Closure { body, .. }) => {
+                                stored
+                                    .free
+                                    .extend(crate::contracts::locks::free_calls(self.parsed, body));
+                            }
+                            // A function of this program, named: it is what
+                            // runs.
+                            Some(Expr::Variable(named)) => {
+                                let named = self.parsed.text(*named).to_string();
+                                match self.lookup(&named).is_none() {
+                                    true => {
+                                        stored.free.insert(named);
+                                    }
+                                    false => stored.unresolved = true,
+                                }
+                            }
+                            // Anything else - a value computed somewhere else -
+                            // is code this walk did not see.
+                            _ => stored.unresolved = true,
+                        }
+                        let entry = self
+                            .checked
+                            .stored_code
+                            .entry(format!("{name}.{field}"))
+                            .or_default();
+                        entry.resolved.extend(stored.resolved);
+                        entry.unresolved |= stored.unresolved;
+                        entry.free.extend(stored.free);
+                    }
                     let Some(declared) = &declared else { continue };
                     match declared.iter().find(|f| f.name == field) {
                         Some(found_field) => {
@@ -7587,6 +7718,15 @@ impl<'a> Checker<'a> {
                         Some(value) => self.expr(value, span),
                         None => self.lookup(&field).unwrap_or(Ty::Unknown),
                     };
+                    // **Code put into a function field here is code the lock
+                    // column does not read** (ADR-230 D1): the field is
+                    // undecided rather than quiet.
+                    if declared
+                        .iter()
+                        .any(|f| f.name == field && matches!(f.ty, Ty::Fn { .. }))
+                    {
+                        self.a_field_whose_code_is_not_seen(&name, &field);
+                    }
                     match declared.iter().find(|f| f.name == field) {
                         Some(held) => {
                             // **D4: a field may be named only where a literal
@@ -9550,6 +9690,16 @@ impl<'a> Checker<'a> {
                 (node, None) => either(node),
                 _ => false,
             })
+    }
+
+    /// A function field code is put into where the lock column cannot read it
+    /// (ADR-230 D1): undecided, never quiet.
+    fn a_field_whose_code_is_not_seen(&mut self, owner: &str, field: &str) {
+        self.checked
+            .stored_code
+            .entry(format!("{owner}.{field}"))
+            .or_default()
+            .unresolved = true;
     }
 
     /// Whether a struct's field is text both kinds of which flow into
@@ -12758,6 +12908,33 @@ impl<'a> Checker<'a> {
                 .kept_lambdas
                 .insert((span.start, argument_shape(value)), (!is_sync, *throws));
             self.a_lambdas_text_is_its_own(want, value);
+            // **A hull it captures, it captures a handle of** (ADR-230 D4,
+            // ADR-040 D5): handing a hull on duplicates the count, so the name
+            // outside is still there on the next line.
+            if let Expr::Closure { params, body, .. } = value {
+                let mut named: BTreeSet<String> = BTreeSet::new();
+                crate::emit::visit_block(body, &mut |e| {
+                    if let Expr::Variable(name) = e {
+                        named.insert(self.parsed.text(*name).to_string());
+                    }
+                });
+                let own: BTreeSet<String> = params
+                    .iter()
+                    .map(|p| self.parsed.text(*p).to_string())
+                    .collect();
+                let hulls: Vec<String> = named
+                    .into_iter()
+                    .filter(|name| !own.contains(name))
+                    .filter(|name| {
+                        matches!(self.lookup(name), Some(Ty::Named { name, .. }) if is_hull(ty::base(&name)))
+                    })
+                    .collect();
+                if !hulls.is_empty() {
+                    self.checked
+                        .kept_hulls
+                        .insert((span.start, argument_shape(value)), hulls);
+                }
+            }
         }
         // **A function of this program, named**, is the closure that calls it:
         // the call is typed here so that it is lowered as a written one is.
@@ -16209,6 +16386,14 @@ impl<'a> Checker<'a> {
         // ([ADR-091](../../../docs/specification/adr/adr-091.md)).
         if key.is_none() {
             self.guard_has_no_answer();
+        }
+        for frame in &mut self.stored_frames {
+            match key {
+                Some(key) => {
+                    frame.resolved.insert(key.to_string());
+                }
+                None => frame.unresolved = true,
+            }
         }
         let Some(current) = &self.current else {
             return;

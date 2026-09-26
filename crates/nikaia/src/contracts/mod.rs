@@ -1074,6 +1074,12 @@ pub struct Ledger {
     pub sources: BTreeMap<String, String>,
     pub functions: BTreeMap<String, FnContract>,
     pub types: BTreeMap<String, TypeContract>,
+    /// **Whether the code stored in a function field touches a lock**, by
+    /// `Type.field` ([ADR-230](../../../docs/specification/adr/adr-230.md) D1):
+    /// over everything this package stores there. The package's own answer and
+    /// not written to the ledger file - a published field is stored into by
+    /// packages that do not exist yet, so the file has nothing to say about it.
+    pub code_locks: BTreeMap<String, Lock>,
     /// Kap 4.7: every `trait` declared here, with the names of its methods.
     ///
     /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
@@ -1289,6 +1295,17 @@ impl Ledger {
         other: Ledger,
     ) {
         let declared: std::collections::BTreeSet<String> = other.types.keys().cloned().collect();
+        // **What a function field's stored code reaches** (ADR-230 D1), under
+        // the name a caller writes the type with.
+        for (field, holds) in &other.code_locks {
+            let key = match module {
+                Some(module) if declared.contains(field.split('.').next().unwrap_or("")) => {
+                    format!("{module}::{field}")
+                }
+                _ => field.clone(),
+            };
+            self.code_locks.insert(key, *holds);
+        }
         // **This package's own word for itself is never renamed.** Qualifying has
         // just put `module::` in front of every type this package declares, and a
         // package may perfectly well key one of its dependencies with the word a
@@ -1783,7 +1800,17 @@ impl Ledger {
         keeps::infer(&mut ledger, units, library, &resolved);
         // Beside `keeps`, and for the same reason it runs here: it reads the
         // checker's method answers and the entries the item loop wrote.
-        locks::infer(&mut ledger, units, library, &resolved);
+        let stored: BTreeMap<String, crate::check::StoredCode> = checked
+            .iter()
+            .flat_map(|c| c.stored_code.iter().map(|(k, v)| (k.clone(), v.clone())))
+            .fold(BTreeMap::new(), |mut all, (key, code)| {
+                let entry: &mut crate::check::StoredCode = all.entry(key).or_default();
+                entry.resolved.extend(code.resolved);
+                entry.unresolved |= code.unresolved;
+                entry.free.extend(code.free);
+                all
+            });
+        locks::infer(&mut ledger, units, library, &resolved, &stored);
         // **Last, and it reads none of the columns above**
         // ([ADR-008](../../../docs/specification/adr/adr-008.md) D7): what it
         // asks is about a signature's shape and about which buffer a returned

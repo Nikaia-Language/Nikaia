@@ -177,3 +177,63 @@ fn no_example_meets_the_rule() {
         );
     }
 }
+
+/// **A lambda stored in a function field and called inside a door**
+/// ([ADR-230](../../../docs/specification/adr/adr-230.md) D1, D2): what the
+/// field holds is what the call reaches, so a lock the stored lambda takes is a
+/// lock inside a lock - called here, or through a function that calls it.
+#[test]
+fn a_stored_lambda_that_takes_a_lock_is_refused_where_it_is_called_inside_one() {
+    let stored = "struct Button {\n    on_click: fn() sync,\n}\n\n";
+    assert!(refused(&format!(
+        "{stored}fn main() {{\n\
+         \x20   let a = SharedMut(0)\n\
+         \x20   let n = SharedMut(1)\n\
+         \x20   let button = Button {{ on_click: fn() {{ let y = n.get() }} }}\n\
+         \x20   a.access fn(x) {{ button.on_click() }}\n\
+         }}\n"
+    )));
+    assert!(refused(&format!(
+        "{stored}fn press(b: ref Button) {{\n    b.on_click()\n}}\n\n\
+         fn main() {{\n\
+         \x20   let a = SharedMut(0)\n\
+         \x20   let n = SharedMut(1)\n\
+         \x20   let button = Button {{ on_click: fn() {{ let y = n.get() }} }}\n\
+         \x20   a.access fn(x) {{ press(button) }}\n\
+         }}\n"
+    )));
+}
+
+/// **And only where one does**: a field only quiet code is stored in is called
+/// inside a door as any quiet function is.
+#[test]
+fn a_field_only_quiet_code_is_stored_in_is_not_refused() {
+    assert!(!refused(
+        "struct Button {\n    on_click: fn() sync,\n}\n\n\
+         fn main() {\n\
+         \x20   let a = SharedMut(0)\n\
+         \x20   let button = Button { on_click: fn() { let y = 1 } }\n\
+         \x20   a.access fn(x) { button.on_click() }\n\
+         }\n"
+    ));
+}
+
+/// **Code put into a function field where the column cannot read it** - by an
+/// assignment - leaves the field undecided rather than quiet (ADR-230 D1): a
+/// quiet literal elsewhere does not speak for it.
+#[test]
+fn a_field_code_is_assigned_into_is_not_answered_by_the_literal_alone() {
+    let found = findings(
+        "struct Button {\n    on_click: fn() sync,\n}\n\n\
+         fn main() {\n\
+         \x20   let a = SharedMut(0)\n\
+         \x20   let n = SharedMut(1)\n\
+         \x20   let mut button = Button { on_click: fn() { let y = 1 } }\n\
+         \x20   button.on_click = fn() { let y = n.get() }\n\
+         \x20   a.access fn(x) { button.on_click() }\n\
+         }\n",
+    );
+    // Undecided is not a refusal (ADR-039 D3's third value): the runtime check
+    // is where this program stands, as every undecided one does.
+    assert!(!found.iter().any(|f| f.code == "NK2203"), "{found:#?}");
+}

@@ -284,3 +284,44 @@ fn the_read_door_is_untouched() {
         "{found:#?}"
     );
 }
+
+/// **A lambda kept in a function field takes a handle of the lock it uses**
+/// ([ADR-230](../../../docs/specification/adr/adr-230.md) D4, ADR-040 D5): the
+/// name it was written beside stays usable on the next line. The capture used
+/// to move it, and `rustc` said *use of moved value* about a file nobody wrote.
+#[test]
+fn a_kept_lambda_takes_its_own_handle_of_a_lock() {
+    let printed = ran(
+        "kept-handle",
+        "struct Button {\n    on_click: fn() sync,\n}\n\n\
+         fn main() {\n\
+         \x20   let a = SharedMut(0)\n\
+         \x20   let button = Button { on_click: fn() { a.update fn(mut n) { n += 1 } } }\n\
+         \x20   button.on_click()\n\
+         \x20   button.on_click()\n\
+         \x20   println(f\"{a.get()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "2");
+}
+
+/// **A function field that may pause, called inside a lambda**, is refused as a
+/// pausing function is there (ADR-230 D3), and names the field.
+#[test]
+fn a_pausing_field_called_inside_a_lambda_is_refused_by_name() {
+    let source = "struct Button {\n    on_click: fn(),\n}\n\n\
+                  fn main() {\n\
+                  \x20   let a = SharedMut(0)\n\
+                  \x20   let button = Button { on_click: fn() { let y = 1 } }\n\
+                  \x20   a.access fn(x) { button.on_click() }\n\
+                  }\n";
+    let parsed = nikaia::parser::parse_to_ast(source).expect("parses");
+    let refused =
+        nikaia::emit::emit_program(&parsed, nikaia::emit::Build::default()).expect_err("refused");
+    assert!(
+        refused
+            .to_string()
+            .contains("this lambda calls `button.on_click`, which can pause"),
+        "{refused}"
+    );
+}

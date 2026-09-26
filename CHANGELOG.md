@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.213] — 2026-09-26
+
+**A function field is reached through what is stored in it** —
+[ADR-230](docs/specification/adr/adr-230.md), closing `open-work.md` §2.3
+(ADR-039 D7's stored lambda).
+
+- A lambda that takes a lock, stored in a function field and called inside
+  another lock, was accepted - a lock inside a lock. Each field is now a node
+  of the lock column over everything the package stores in it, and `NK2203`
+  asks a call through it, directly or through a chain of calls. Where the
+  column cannot read what is stored (an assignment, a `with`, a published
+  field), the field is undecided, never quiet.
+- A function field that may pause, called inside a lambda, wrote an `.await`
+  into a synchronous closure (`rustc`'s error); it is now the refusal a pausing
+  function gets there, naming the field.
+- A lambda kept in a function field moved a lock handle it used, so the lock
+  was gone on the next line (`rustc`'s *use of moved value*); it takes its own
+  handle now, as handing a hull on does.
+
 ## [0.0.212] — 2026-09-26
 
 **A value handed over inside an `f"…"` hole is handed over there** —
