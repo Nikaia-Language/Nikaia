@@ -1902,19 +1902,13 @@ fn a_hand_edited_dependency_ledger_is_repaired_before_it_is_read() {
 /// pipe: a file is already there when the child starts, so nothing about this
 /// test depends on the order two processes reach a write.
 ///
-/// **Ignored by default, and that is `docs/open-work.md` §3.1 speaking.** Run
-/// on its own — `cargo test -p nikaia --test project -- --ignored` — it passes
-/// every time, and without [ADR-166](../../../docs/specification/adr/adr-166.md)
-/// D1 it reproduces the original error every time, which is what makes it a
-/// test. Run inside a **fully parallel** `-p nikaia` sweep it fails, with this
-/// file's own bytes reaching `rustc` although the wrapper hands the probe
-/// `/dev/null` — and that is the second mechanism §3.1 still carries, seen from
-/// closer than it has been seen before. A test that flakes in CI is worth less
-/// than a red build costs, so the gate keeps the two deterministic halves of
-/// D1 (`orchestrator`'s own tests) and this one waits for the entry that
-/// explains it.
+/// **It runs in every sweep again** (0.0.215). It was `#[ignore]`d while
+/// `docs/open-work.md` §3.1 said it flaked inside a fully parallel `-p nikaia`
+/// run; measured again, it passed in two full parallel sweeps, in the first run
+/// after a rebuild and beside the tests that share Cargo's package cache, and
+/// without [ADR-166](../../../docs/specification/adr/adr-166.md) D1 it still
+/// reproduces the original error every time.
 #[test]
-#[ignore = "flakes inside a fully parallel `-p nikaia` run; docs/open-work.md §3.1"]
 fn the_target_info_probe_ignores_what_is_on_standard_input() {
     let dir = common::scratch_dir("probe-stdin");
     let contaminant = dir.join("stdin.txt");

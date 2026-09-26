@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.215] — 2026-09-26
+
+**The target-info probe test runs in every sweep again**, closing
+`open-work.md` §3.1.
+
+- `the_target_info_probe_ignores_what_is_on_standard_input` was `#[ignore]`d
+  because it flaked inside a fully parallel `-p nikaia` run, and §3.1 also
+  recorded Cargo's package-cache lock showing up in two project tests' output.
+  Measured again: the test passed in two full parallel `-p nikaia` sweeps, in
+  the first run after a rebuild, and three times beside `one_name`; the lock
+  message did not appear. The entry described mechanisms that no longer
+  reproduce, and a test that covers ADR-166 D1 end to end is worth having in
+  the gate.
+
 ## [0.0.214] — 2026-09-26
 
 **A value read through a view is the value** —
