@@ -540,6 +540,12 @@ pub struct Checked {
     /// rule `NK1138` already uses one construct over: a name this compiler
     /// cannot resolve is not claimed about, and the reach lowers as it did.
     pub lent_reaches: BTreeSet<(usize, String)>,
+    /// A lent `?.` method reach whose result is a **view** and whose receiver
+    /// is a temporary - rooted in a call - by statement and method name
+    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1). The receiver is
+    /// held in a binding of its own before the statement, so the view has
+    /// something to point into past the `;`.
+    pub held_reaches: BTreeSet<(usize, String)>,
     /// The **struct-literal fields** where a plain value stands in a nullable
     /// slot, as the byte the statement starts at and the field's name
     /// (Part I 2.3).
@@ -1432,6 +1438,8 @@ pub struct Propagation {
     pub viewed: BTreeMap<(usize, String), Viewed>,
     /// [`Checked::lent_reaches`].
     pub lent_reaches: BTreeSet<(usize, String)>,
+    /// [`Checked::held_reaches`].
+    pub held_reaches: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
     pub nullable_in_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
     /// [`Checked::nullable_args`].
@@ -1620,6 +1628,7 @@ pub fn propagation_against(
         copied: checked.copied_reaches,
         viewed: checked.viewed_reaches,
         lent_reaches: checked.lent_reaches,
+        held_reaches: checked.held_reaches,
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
@@ -7138,10 +7147,21 @@ impl<'a> Checker<'a> {
                     .into_iter()
                     .chain(self.library.candidates(&name))
                     .collect();
-                if !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates) {
+                let lent = !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates);
+                if lent {
                     self.checked.lent_reaches.insert((span.start, name.clone()));
                 }
-                match self.call_on(*inner, *method, args, &written, span) {
+                let reached = self.call_on(*inner, *method, args, &written, span);
+                // **A view out of a temporary needs something to point into**
+                // (ADR-228 D1): the receiver is held for the rest of the block.
+                let a_view = match &reached {
+                    Ty::Nullable(inner) => inner.is_a_view(),
+                    other => other.is_a_view(),
+                };
+                if lent && a_view && !roots_in_a_binding(receiver) {
+                    self.checked.held_reaches.insert((span.start, name.clone()));
+                }
+                match reached {
                     // The `and_then` case, recorded by name for the emitter
                     // exactly as a nullable field is (ADR-028: the emitter has
                     // no types and this is a question about one).

@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.211] — 2026-09-26
+
+**A `?.` view out of a temporary is held for the rest of the block** —
+[ADR-228](docs/specification/adr/adr-228.md), closing `open-work.md` §2.23.
+
+- `let a = find(1)?.label() ?? "none"`, where `label` hands back a view of
+  the `User`, failed in `rustc` with *temporary value dropped while
+  borrowed*. `find(1)` is now bound on the line before and the reach reads the
+  binding: nothing copied, nothing run that did not run.
+- Where binding it first would change what runs - the lazy side of `??`, `&&`
+  or `||`, a `match` arm, after another call in the same statement, a block's
+  value - the program is refused, naming the `let` it can write.
+- The reaches that take their temporary (`find(1)?.name`, `?.home?.x`) were
+  already right, and are unchanged.
+
 ## [0.0.210] — 2026-09-26
 
 **`collect()` builds what the place it goes into declares** —

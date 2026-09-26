@@ -1291,6 +1291,11 @@ struct Emitter<'p> {
     /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
     /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
     lent_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::held_reaches` (ADR-228 D1).
+    held_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// The receivers held before the statement being written, by address, and
+    /// the name each is held under.
+    held: std::cell::RefCell<HashMap<usize, String>>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
     nullable_fields: std::collections::BTreeMap<
@@ -2218,6 +2223,8 @@ impl<'p> Emitter<'p> {
             copied_reaches: propagation.copied,
             viewed_reaches: propagation.viewed,
             lent_reaches: propagation.lent_reaches,
+            held_reaches: propagation.held_reaches,
+            held: std::cell::RefCell::new(HashMap::new()),
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
             mut_args: propagation.mut_args,
@@ -5246,6 +5253,148 @@ impl<'p> Emitter<'p> {
     /// Nikaia's blocks are expressions (Part I, 3.1), so a block's last
     /// statement is its value and keeps no semicolon - and where that value is
     /// the *function's*, a `return x` is written as `x`.
+    /// **A `?.` view out of a temporary is held for the rest of the block**
+    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1).
+    ///
+    /// `let a = find(1)?.label() ?? "none"` hands back a view of the `User`
+    /// `find(1)` made, and that value dies at the `;` - `rustc`'s *temporary
+    /// value dropped while borrowed* about a file nobody wrote. So the receiver
+    /// is bound first, `let __nikaia_held_0 = find(1);`, and the reach reads
+    /// the binding. Nothing is copied and nothing runs that did not run.
+    ///
+    /// **Only where binding it first changes nothing about what runs** (D2):
+    /// not on the lazy side of `??`, `&&` or `||`, not in a `match` arm, not
+    /// after a call earlier in the same statement, and not where the view is
+    /// the block's value, which would outlive the binding. There the program is
+    /// refused, with the `let` it can write.
+    fn hold_temporaries(
+        &self,
+        out: &mut Out,
+        stmt: &Stmt,
+        span: &Span,
+        depth: usize,
+        tail: Tail,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if self.held_reaches.is_empty() {
+            return Ok(());
+        }
+        let (value, holdable) = match stmt {
+            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => (value, true),
+            Stmt::Expr(value) => (value, tail == Tail::Statement),
+            Stmt::Return(Some(value)) => (value, false),
+            _ => return Ok(()),
+        };
+        let mut found = Vec::new();
+        let mut called = false;
+        self.held_in(value, span.start, false, &mut called, &mut found);
+        for (receiver, safe) in found {
+            if !safe || !holdable {
+                return Err(refused_at!(
+                    span.start,
+                    "this `?.` hands back a view of a value that ends at this line, and \
+                     holding that value first would change what this line runs - bind it \
+                     with a `let` on the line before, and reach through the name"
+                ));
+            }
+            let name = format!("__nikaia_held_{}", self.held.borrow().len());
+            out.push(&format!("let {name} = "));
+            self.expr(out, receiver, depth, flow)?;
+            out.push(&format!(";\n{}", "    ".repeat(depth)));
+            self.held
+                .borrow_mut()
+                .insert(receiver as *const Expr as usize, name);
+        }
+        Ok(())
+    }
+
+    /// The receivers of held reaches in `expr`, in the order they run, each
+    /// with whether holding it first is safe: not lazy, and no call ran before
+    /// it in this statement.
+    fn held_in<'e>(
+        &self,
+        expr: &'e Expr,
+        statement: usize,
+        lazy: bool,
+        called: &mut bool,
+        found: &mut Vec<(&'e Expr, bool)>,
+    ) {
+        match expr {
+            Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let held = self
+                    .held_reaches
+                    .contains(&(statement, self.text(*method).to_string()))
+                    && !matches!(receiver.as_ref(), Expr::Variable(_));
+                if held {
+                    found.push((receiver, !lazy && !*called));
+                }
+                self.held_in(receiver, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::Call { func, args, .. } => {
+                self.held_in(func, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                self.held_in(receiver, statement, lazy, called, found);
+                for arg in args {
+                    self.held_in(arg, statement, lazy, called, found);
+                }
+                *called = true;
+            }
+            Expr::Coalesce { value, fallback } => {
+                self.held_in(value, statement, lazy, called, found);
+                self.held_in(fallback, statement, true, called, found);
+            }
+            Expr::Binary { lhs, rhs, op, .. } => {
+                self.held_in(lhs, statement, lazy, called, found);
+                let short = matches!(op, crate::ast::BinaryOp::And | crate::ast::BinaryOp::Or);
+                self.held_in(rhs, statement, lazy || short, called, found);
+            }
+            Expr::Match { value, arms } => {
+                self.held_in(value, statement, lazy, called, found);
+                for arm in arms {
+                    self.held_in(&arm.body, statement, true, called, found);
+                }
+            }
+            Expr::If { cond, .. } => self.held_in(cond, statement, lazy, called, found),
+            Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
+                self.held_in(base, statement, lazy, called, found)
+            }
+            Expr::Index { base, index } => {
+                self.held_in(base, statement, lazy, called, found);
+                self.held_in(index, statement, lazy, called, found);
+            }
+            Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
+                self.held_in(expr, statement, lazy, called, found)
+            }
+            Expr::Tuple(parts) | Expr::ListLit { items: parts, .. } => {
+                for part in parts {
+                    self.held_in(part, statement, lazy, called, found);
+                }
+            }
+            Expr::StructLit { fields, .. } => {
+                for value in fields.iter().filter_map(|f| f.value.as_ref()) {
+                    self.held_in(value, statement, lazy, called, found);
+                }
+            }
+            // A block, a lambda, a string's holes: statements of their own, or
+            // code this walk cannot hold anything for.
+            _ => {}
+        }
+    }
+
     fn stmt(
         &self,
         out: &mut Out,
@@ -5262,6 +5411,7 @@ impl<'p> Emitter<'p> {
         // is actually in.
         let flow = flow.at(span.start);
         self.write_keep_prelude(out, flow.function, span.start, depth);
+        self.hold_temporaries(out, stmt, span, depth, tail, flow)?;
         match stmt {
             Stmt::Let {
                 names,
@@ -6332,7 +6482,15 @@ impl<'p> Emitter<'p> {
                     false => "",
                 };
                 out.push("match ");
-                self.postfix_base(out, receiver, depth, flow)?;
+                let held = self
+                    .held
+                    .borrow()
+                    .get(&(receiver.as_ref() as *const Expr as usize))
+                    .cloned();
+                match held {
+                    Some(name) => out.push(&name),
+                    None => self.postfix_base(out, receiver, depth, flow)?,
+                }
                 out.push(lent);
                 out.push(&format!(
                     " {{

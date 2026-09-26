@@ -715,37 +715,6 @@ nothing about the status changes.
 exit code can be set. The hook has already run and said what happened, so
 that profile loses the status and not the message.
 
-### 2.23. A `?.` whose receiver is a **temporary** still takes it
-
-[ADR-113](specification/adr/adr-113.md), **all but one shape built**
-([ADR-189](specification/adr/adr-189.md),
-[ADR-191](specification/adr/adr-191.md)). `?.` takes nothing: it reaches through
-a view of its receiver, and the result is a copy where the member copies and a
-view of the receiver otherwise.
-
-*What is built.* A reached **method** that changes nothing lends its scrutinee;
-a field that **copies** lends its receiver; and a field that does **not** copy
-comes out as a **view** of the receiver where that receiver *roots in a
-binding* — a name, a field of one, an index of one. All three leave the receiver
-usable on the next line, and all three **run** in
-`crates/nikaia/tests/nullable.rs` with it read on both sides.
-
-*What is left is one shape:* a receiver that **roots in a call**.
-`find(1)?.name` would be a view of a value that dies at the `;`, and binding one
-is `rustc`'s *temporary value dropped while borrowed* about a file nobody wrote
-— so the reach takes the value, as it always did, and
-[ADR-052](specification/adr/adr-052.md) D8's translation stays for it alone.
-[ADR-113](specification/adr/adr-113.md) D1's promise is kept where it means
-anything: a temporary has no next line to stay usable on.
-
-*What it needs is a **lowering** and not a state*
-([ADR-191](specification/adr/adr-191.md) D3). `rustc`'s own help is *consider
-using a `let` binding to create a longer lived value*, and this emitter can
-write one — it is [ADR-185](specification/adr/adr-185.md) D2's trick one
-construct over. **It is not free**: a `??`'s right side is lazy, so hoisting a
-receiver out of `a ?? find(1)?.name` would run `find(1)` where today it does
-not. Deciding where a hoist is safe is the work.
-
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 
 [ADR-115](specification/adr/adr-115.md) D1 and D2 are **built**
