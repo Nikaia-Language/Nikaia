@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.212] — 2026-09-26
+
+**A value handed over inside an `f"…"` hole is handed over there** —
+[ADR-229](docs/specification/adr/adr-229.md), closing `open-work.md` §2.19.
+
+- A key put into a map, a list literal handed to a function, or a `collect`
+  written inside a hole now goes into a position both kinds flow into as it
+  does anywhere else. The hole used to keep that position text of its own,
+  which refused the lines outside it that put a view into the same list or map.
+- The tier pass records the wrap by the hole's text and the value's shape, and
+  every reader applies it as it parses the hole.
+- `open-work.md` §2.19 is closed: what remains of the text wall is ADR-222 D2's
+  rule for a published position.
+
 ## [0.0.211] — 2026-09-26
 
 **A `?.` view out of a temporary is held for the rest of the block** —

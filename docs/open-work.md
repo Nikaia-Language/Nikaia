@@ -642,24 +642,6 @@ demand it of, and nothing in `examples/`, in `tests/` or in `std` calls it —
 the **word** is in the type language and binds, so the entry is one line the day
 something asks for it, and the demand is the line after.
 
-### 2.19. Text is one type, and `ref String` is the assertion
-
-[ADR-107](specification/adr/adr-107.md). `String` is the one text type and
-its state — borrowed, tethered, owned — is the compiler's per use; a copy is
-`.clone()` or a refusal, never inserted. **Built for literals**
-([ADR-207](specification/adr/adr-207.md)), **for a view handed to a reader**
-([ADR-208](specification/adr/adr-208.md) D1), and **for fields and results**
-([ADR-222](specification/adr/adr-222.md)): a `String` field or result is text
-of its own, a view, or either per value, by what flows into it.
-
-**And for parameters, annotated `let`s and the elements of a list or a map**
-([ADR-223](specification/adr/adr-223.md)), **for `String?`, calls inside a
-hole, lists going in whole, and the foreign boundary**
-([ADR-224](specification/adr/adr-224.md)). *What is left:* a `push`, `insert`
-or `m[k] = v` written inside an `f"…"` hole, which keeps its position text of
-its own (ADR-224 §3). Evidence: `crates/nikaia/tests/text_tiers.rs`,
-`crates/nikaia/tests/described_entries.rs`.
-
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 
 [ADR-110](specification/adr/adr-110.md). `update fn(mut v) { … }` is the one

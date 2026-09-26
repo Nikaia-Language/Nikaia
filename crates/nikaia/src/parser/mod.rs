@@ -361,6 +361,12 @@ pub struct Parsed {
     /// that is not text of its own below, one line each, for `--tethers`
     /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D5).
     pub text_tiers: Vec<String>,
+    /// **What goes into a mixed position from inside an `f"…"` hole**, by the
+    /// hole's text: the shape of each value and the method it is handed over
+    /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). A hole
+    /// is parsed again by every reader, so the wrap is applied where it is
+    /// parsed - [`crate::emit::literal_expressions`] - and every reader sees it.
+    pub hole_wraps: std::collections::BTreeMap<String, Vec<(String, winnow_grammar::Symbol)>>,
 }
 
 impl Parsed {
@@ -386,6 +392,7 @@ impl Parsed {
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
+            hole_wraps: self.hole_wraps.clone(),
         }
     }
 
@@ -458,6 +465,7 @@ impl Parsed {
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
+            hole_wraps: self.hole_wraps.clone(),
         }
     }
 
@@ -886,6 +894,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         interner,
         aliases,
         text_tiers: Vec::new(),
+        hole_wraps: std::collections::BTreeMap::new(),
     };
     // **What a `String` field or result is below is decided here, once**
     // ([ADR-222](../../../../docs/specification/adr/adr-222.md)): by what flows

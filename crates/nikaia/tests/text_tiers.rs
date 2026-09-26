@@ -663,3 +663,44 @@ fn a_view_handed_back_out_of_a_parameter_that_holds_views_is_the_buffers() {
         "{rust}"
     );
 }
+
+/// **A value handed over inside an `f"…"` hole is handed over there**
+/// ([ADR-229](../../../docs/specification/adr/adr-229.md)): a key put into a
+/// map, and a list literal handed to a function, both written in a hole, into
+/// positions both kinds flow into. The hole used to keep its position text of
+/// its own, which refused the lines outside it as well.
+const IN_A_HOLE: &str = r##"use std::fs
+use std::collections
+
+fn count(xs: Vec[String]) -> i64 {
+    let mut n = 0
+    for x in xs {
+        n = n + x.len()
+    }
+    return n
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let mut m: collections::HashMap[String, i64] = collections::HashMap()
+    for line in text.lines() {
+        m[line] = line.len()
+    }
+    m[f"own"] = 3
+    println(f"{m.insert(text.trim(), 1) ?? 0} {m.len()} {count([text.trim(), f\"x\"])} {count([f\"ab\"])}")
+}
+"##;
+
+#[test]
+fn a_value_handed_over_inside_a_hole_is_handed_over_there() {
+    runs("in-a-hole", IN_A_HOLE, "0 6 63 2");
+    let rust = lowered(IN_A_HOLE, Build::default());
+    assert!(
+        rust.contains("m.insert(text.trim().into_either(), 1)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("vec![text.trim().into_either(), \"x\".to_string().into_either()]"),
+        "{rust}"
+    );
+}

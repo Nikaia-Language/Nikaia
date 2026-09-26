@@ -9326,9 +9326,14 @@ impl<'p> Emitter<'p> {
         out.push(&format!("\"{format}\""));
 
         for hole in holes {
-            let expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
+            let mut expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
                 refused_at!(flow.statement, "in the interpolated `{{{hole}}}`: {e}")
             })?;
+            // What the tier pass hands over inside it (ADR-229 D1), as every
+            // other reader of a hole sees it (`literal_expressions`).
+            if let Some(wraps) = self.parsed.hole_wraps.get(&hole) {
+                crate::text_tiers::wrap_hole(&mut expr, wraps);
+            }
             out.push(", ");
             let hole = (flow.statement, crate::check::argument_shape(&expr));
             let outer = self.hole.replace(Some(hole));
@@ -11123,10 +11128,17 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
 
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
+        // Each with what the tier pass hands over inside it (ADR-229 D1).
         Expr::LitInterpolated(literal) => match interpolation(literal) {
             Ok((_, holes)) => holes
                 .iter()
-                .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
+                .filter_map(|hole| {
+                    let mut expr = parse_expression(&parsed.interner, hole).ok()?;
+                    if let Some(wraps) = parsed.hole_wraps.get(hole) {
+                        crate::text_tiers::wrap_hole(&mut expr, wraps);
+                    }
+                    Some(expr)
+                })
                 .collect(),
             Err(_) => Vec::new(),
         },
