@@ -318,6 +318,10 @@ struct Flows {
     /// Values that go into a mixed position at a line whose lowering does not
     /// wrap them itself, by address, and how each is handed over.
     wraps: BTreeMap<usize, Hand>,
+    /// A parameter's own value going into another position (ADR-232 D2): a
+    /// published parameter whose value leaves through something fixed is
+    /// fixed with it.
+    param_into: BTreeSet<(Position, Position)>,
     /// The same inside an `f"…"` hole, by the hole's text and the value's
     /// shape (ADR-229 D1).
     hole_wraps: BTreeMap<String, BTreeSet<(String, Hand)>>,
@@ -437,6 +441,26 @@ impl Walk<'_, '_> {
         wrap: bool,
     ) {
         let mut path = path;
+        // **A parameter handed on as it is** (ADR-232 D2), remembered so that
+        // what it goes into can hold it to text of its own.
+        if let Some(Expr::Variable(name)) = value
+            && plain_string(self.declared.parsed, ty)
+            && let Some(Local {
+                declared: Some((from @ Owner::Param(..), from_ty)),
+                ..
+            }) = self.local(self.text(*name))
+            && plain_string(self.declared.parsed, from_ty)
+        {
+            let from = Position {
+                owner: from.clone(),
+                path: Vec::new(),
+            };
+            let to = Position {
+                owner: owner.clone(),
+                path: path.clone(),
+            };
+            self.flows.param_into.insert((from, to));
+        }
         // A list that comes whole from a position is linked to it below
         // (`flow_whole`), and the link is all that flows: what it reads as
         // is only what this walk has decided so far, and linked positions
@@ -1351,9 +1375,17 @@ fn decide(declared: &Declared<'_>, flows: &Flows) -> Tiers {
     // Linked positions are one representation: each gets what flows into any
     // of them, and none is mixed where one of them cannot be.
     let mut positions = flows.positions.clone();
+    // **A published parameter's text may be either kind**
+    // ([ADR-232](../../docs/specification/adr/adr-232.md) D1): below it takes
+    // whatever hands over as `EitherText`, so a caller elsewhere still hands
+    // over text of its own as the ledger says. Its elements, a published
+    // field and a published result stay what they are published as.
+    let fixed_by_publishing = |p: &Position| {
+        declared.published(&p.owner) && !matches!(p.owner, Owner::Param(..) if p.path.is_empty())
+    };
     let mut fixed: BTreeSet<Position> = positions
         .keys()
-        .filter(|p| declared.published(&p.owner) || flows.unwrappable.contains(p))
+        .filter(|p| fixed_by_publishing(p) || flows.unwrappable.contains(p))
         .cloned()
         .collect();
     let mut changed = true;
@@ -1372,6 +1404,16 @@ fn decide(declared: &Declared<'_>, flows: &Flows) -> Tiers {
             if fixed.contains(a) != fixed.contains(b) {
                 fixed.insert(a.clone());
                 fixed.insert(b.clone());
+                changed = true;
+            }
+        }
+        // **A parameter whose value leaves through something fixed is fixed**
+        // (ADR-232 D2): `pub fn greet(who: String) -> String { return who }`
+        // hands its parameter back through a published result, which is text
+        // of its own, so the parameter is too.
+        for (from, to) in &flows.param_into {
+            if fixed.contains(to) && !fixed.contains(from) {
+                fixed.insert(from.clone());
                 changed = true;
             }
         }

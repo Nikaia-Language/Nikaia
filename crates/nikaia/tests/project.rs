@@ -2555,3 +2555,41 @@ fn a_packages_own_bound_and_its_own_types_are_answered_in_its_own_namespace() {
     assert!(ran.status.success(), "{}", said(&ran));
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "its own");
 }
+
+/// **A published parameter both kinds of text flow into**
+/// ([ADR-232](../../../docs/specification/adr/adr-232.md) D1): the package
+/// hands its own `pub fn` a view and text of its own, and a program in
+/// another package hands it text of its own as the ledger says. Refused
+/// before, with `.clone()` named for the package's view.
+#[test]
+fn a_published_parameter_takes_either_kind_from_its_package_and_its_own_from_others() {
+    let dir = a_program_and_a_package(
+        "published-either",
+        "tags",
+        &[
+            (
+                "tags/src/main.nika",
+                "pub struct Tag {\n    label: String,\n}\n\n\
+                 impl Tag {\n    pub fn label(ref self) -> String {\n        return f\"[{self.label}]\"\n    }\n}\n\n\
+                 pub fn tag(s: String) -> Tag {\n    return Tag { label: s }\n}\n\n\
+                 pub fn both(text: ref String) -> String {\n\
+                 \x20   let a = tag(text.trim())\n\
+                 \x20   let b = tag(f\"own\")\n\
+                 \x20   return f\"{a.label()} {b.label()}\"\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use tags\n\nfn main() {\n\
+                 \x20   let t = tags::tag(f\"app\")\n\
+                 \x20   println(f\"{t.label()} {tags::both(\\\"  x  \\\")}\")\n}\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "[app] [x] [own]"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

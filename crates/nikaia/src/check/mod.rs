@@ -371,8 +371,8 @@ pub struct Checked {
     /// without `::<Vec<_>>`, so the declared type is what the language below
     /// builds.
     pub collected_into: BTreeSet<(usize, String)>,
-    /// Method calls that hand back a sequence of **views of values that copy**
-    /// - numbers, truth values, characters - by statement and the call's shape
+    /// Method calls that hand back a sequence of **views of values that copy**,
+    /// numbers, truth values and characters, by statement and the call's shape
     /// ([ADR-231](../../docs/specification/adr/adr-231.md) D1): written with
     /// `.copied()`, so each item is the value.
     pub copied_walks: BTreeSet<(usize, String)>,
@@ -7187,7 +7187,7 @@ impl<'a> Checker<'a> {
                 // by pattern and is the item.
                 if self.parsed.text(*method) == "filter"
                     && let (Ty::Seq { item, .. }, [lambda @ Expr::Closure { params, .. }]) =
-                        (&on_for_the_stamp, &args[..])
+                        (&on_for_the_stamp, args)
                     && params.len() == 1
                     && !item.is_unknown()
                     && (item.is_a_view() || !crate::contracts::keeps::moves(item))
