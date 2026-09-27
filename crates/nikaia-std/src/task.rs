@@ -79,13 +79,44 @@ impl Cancelled {
 /// bounded by the `cleanup-deadline`
 /// ([ADR-006](../../../docs/specification/adr/adr-006.md) D3), and nobody waits
 /// for any of it.
-struct Cancellable<F, T> {
+struct Cancellable<F, T, Q: TaskQueues> {
     body: Option<std::pin::Pin<Box<F>>>,
     slot: std::sync::Arc<crate::rt::exec::Slot<T>>,
     asked: std::sync::Arc<Cancelled>,
+    /// **The cleanups this task parked**
+    /// ([ADR-239](../../../docs/specification/adr/adr-239.md) D1): swapped in
+    /// while it is polled, so that what it parks and what it settles are its
+    /// own, and handed to the runtime as orphans when it is over.
+    queues: Q,
 }
 
-impl<F: std::future::Future<Output = T>, T> std::future::Future for Cancellable<F, T> {
+/// A task's cleanup queues, of whichever kind its setting needs.
+trait TaskQueues {
+    fn swap(&mut self);
+    fn orphan(&mut self);
+}
+
+impl TaskQueues for crate::cleanup::Queues {
+    fn swap(&mut self) {
+        crate::cleanup::Queues::swap(self)
+    }
+    fn orphan(&mut self) {
+        crate::cleanup::Queues::orphan(self)
+    }
+}
+
+impl TaskQueues for crate::cleanup::SendQueues {
+    fn swap(&mut self) {
+        crate::cleanup::SendQueues::swap(self)
+    }
+    fn orphan(&mut self) {
+        crate::cleanup::SendQueues::orphan(self)
+    }
+}
+
+impl<F: std::future::Future<Output = T>, T, Q: TaskQueues + Unpin> std::future::Future
+    for Cancellable<F, T, Q>
+{
     type Output = ();
 
     fn poll(
@@ -93,24 +124,56 @@ impl<F: std::future::Future<Output = T>, T> std::future::Future for Cancellable<
         context: &mut std::task::Context<'_>,
     ) -> std::task::Poll<()> {
         let me = self.get_mut();
-        if me.asked.asked.load(std::sync::atomic::Ordering::Acquire) {
+        me.queues.swap();
+        let polled = me.step(context);
+        me.queues.swap();
+        // **What is still parked when the task is over is nobody's to settle**:
+        // a cancelled task's values, and one that died after the last settle
+        // point. The runtime finishes them before the program ends (ADR-239
+        // D5).
+        if polled.is_ready() {
+            me.queues.orphan();
+        }
+        polled
+    }
+}
+
+/// **A task dropped before it was over** - the runtime abandoning it at the
+/// deadline, or a queue that goes with its thread - tears its values down in
+/// its own queues too, so what they park is an orphan like a cancelled task's
+/// and not a stranger's to settle (ADR-239 D5).
+impl<F, T, Q: TaskQueues> Drop for Cancellable<F, T, Q> {
+    fn drop(&mut self) {
+        if self.body.is_some() {
+            self.queues.swap();
+            self.body = None;
+            self.queues.swap();
+        }
+        self.queues.orphan();
+    }
+}
+
+impl<F: std::future::Future<Output = T>, T, Q: TaskQueues> Cancellable<F, T, Q> {
+    /// One poll of the body, with the task's own queues in place.
+    fn step(&mut self, context: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        if self.asked.asked.load(std::sync::atomic::Ordering::Acquire) {
             // **The teardown is the drop**, and it happens here rather than in
             // `cancel` because this is the task's own thread and its pause
             // point.
-            me.body = None;
+            self.body = None;
             return std::task::Poll::Ready(());
         }
-        let Some(body) = me.body.as_mut() else {
+        let Some(body) = self.body.as_mut() else {
             return std::task::Poll::Ready(());
         };
         match body.as_mut().poll(context) {
             std::task::Poll::Ready(value) => {
-                me.body = None;
-                me.slot.fill(value);
+                self.body = None;
+                self.slot.fill(value);
                 std::task::Poll::Ready(())
             }
             std::task::Poll::Pending => {
-                *me.asked.waking.lock().unwrap_or_else(|e| e.into_inner()) =
+                *self.asked.waking.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some(context.waker().clone());
                 std::task::Poll::Pending
             }
@@ -132,6 +195,7 @@ impl<T: 'static> TaskHandle<T> {
             body: Some(Box::pin(body)),
             slot: slot.clone(),
             asked: asked.clone(),
+            queues: crate::cleanup::Queues::default(),
         });
         TaskHandle { slot, asked }
     }
@@ -194,6 +258,7 @@ impl<T: Send + 'static> TaskHandle<T> {
             body: Some(Box::pin(body)),
             slot: slot.clone(),
             asked: asked.clone(),
+            queues: crate::cleanup::SendQueues::default(),
         });
         TaskHandle { slot, asked }
     }

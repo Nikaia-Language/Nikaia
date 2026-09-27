@@ -378,27 +378,6 @@ itself had to be one **nothing** describes — which is
 and built through 0.0.163: a described call is asked now, and what is left of
 that record is the I/O half, §2.44 below.
 
-### 2.22. A cleanup the deadline cut off names the resource
-
-[ADR-112](specification/adr/adr-112.md). **Steps 2 and 3 are built**: an
-expired `cleanup-deadline` ends the program with exit status 70, and the
-message goes the panic path — standard error and the program's panic hook,
-never standard output — with a test that runs a second process, expires its
-deadline and reads both. `cleanup-deadline = "0"` does not drain and
-therefore never expires, which is D3 and needed no code.
-
-*What is left is step 1, and it is [ADR-006](specification/adr/adr-006.md)
-D3's.* The parked-cleanup queue does not exist, so what expires today is the
-drain of pending **I/O operations**: the message counts them rather than
-naming the resources whose cleanup was cut off, which is what D2 asks for.
-When the queue lands the names go in the same message on the same path, and
-nothing about the status changes.
-
-*One limit of the build, named rather than left to be found:* under
-`panic = "abort"` the process is gone with the abort's own status before the
-exit code can be set. The hook has already run and said what happened, so
-that profile loses the status and not the message.
-
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 
 [ADR-115](specification/adr/adr-115.md) D1 and D2 are **built**
@@ -410,11 +389,14 @@ envelope — was answered **A**: a body that joins puts one on.
 
 *What is left, in the record's order:*
 
-* **D3's cleanup attachment.** The shape is there — a secondary with
-  secondaries of its own is the tree that record wants — and the attachment is
-  not: a cleanup that fails while a branch is already failing should join
-  **that branch's** error, and today it is attached below in the language
-  below's own way with nothing a program can read.
+* **D3's cleanup attachment, for a branch written inline.** A branch that is
+  a call joins its cleanup's failure to its own error at the function's settle
+  point ([ADR-239](specification/adr/adr-239.md) D3), which is D3 as the
+  record wants it. A branch written as a block in place settles at the end of
+  that block only when it succeeds; when it fails, what died in it is settled
+  at the function's settle point and joins the **function's** error rather
+  than that branch's. The error it joins is readable; which branch it came
+  from is not.
 * **Whether the list survives a hop to a caller with a bare channel of its
   own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
   is written in and says so: the block, its `catch` and the function around

@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.224] — 2026-09-27
+
+**Ownership says when a value dies, and the compiler settles its cleanup
+there** — [ADR-239](docs/specification/adr/adr-239.md), refining and building
+[ADR-006](docs/specification/adr/adr-006.md), closing `open-work.md` §2.22 and
+the call half of §2.25's cleanup attachment.
+
+- `impl Cleanup for T` is the one method `fn cleanup(ref mut self)`, `throws`
+  where it can fail; the synchronous fallback is the type's own `impl Drop`.
+  Anything else in it, a `drop` included, is `NK2601`, pointed at `impl Drop`.
+- `nikaia_std::cleanup`: a value with a cleanup is held in `Cleaned<T>`
+  (`CleanedSend<T>` at `yes`), whose `Drop` parks the cleanup in the running
+  task. The compiler writes settle points after a block where one is bound and
+  around a function body where one may die — a `let`, a literal, a call, a kept
+  parameter, a field or element that holds one. Values are cleaned up in the
+  order they die; a pausing lambda's body and a task's body settle as blocks.
+- A failing cleanup is the function's failure, or joins the failure already on
+  its way as a secondary. `x.close()` runs it at the call and hands its failure
+  back there.
+- No code of its own: the settle is a call the checker records, so `NK2605`
+  (*this function can fail because the cleanup of `f` can fail*), `NK2202`,
+  `NK2209` and `NK2206` answer it with the value named. `NK2602` is retired.
+- A cancelled task's cleanups, and those that die after a task's last settle
+  point, are orphans the drain at the end of `main` runs in order under
+  `cleanup-deadline`; one the deadline cuts off is named, exit status 70, on
+  the panic path. A panic parks nothing.
+- `fs::create(path, root)` hands back a buffered `fs::Writer` (`write`,
+  `flush`), whose cleanup writes what it holds.
+- Fixed on the way: once `main` was done, the drain never reached its park, so
+  a task nobody joined that slept afterwards waited out the whole deadline;
+  and `NK2106` named a field twice (`self.path.path`) where the argument of a
+  `std` call was walked twice.
+
 ## [0.0.223] — 2026-09-27
 
 **A word-sized value that crosses is the word, and `update` is a

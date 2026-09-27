@@ -26,6 +26,7 @@
 pub mod abort;
 pub mod bytes;
 pub mod channel;
+pub mod cleanup;
 pub mod cli;
 pub mod concat;
 pub mod count;

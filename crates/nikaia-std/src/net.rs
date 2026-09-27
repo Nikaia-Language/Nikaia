@@ -56,9 +56,10 @@ pub struct Listener {
 /// One connection, open until it is dropped.
 ///
 /// **Dropping it closes it**, which is Rust's own answer and not a decision
-/// this makes: a language-level `Cleanup` is
-/// [ADR-006](../../../docs/specification/adr/adr-006.md)'s and unbuilt, so a
-/// program that wants the close at a named moment writes `close`.
+/// this makes. A plain TCP close hands the socket to the kernel and waits for
+/// nothing, so this needs no pausable `Cleanup`
+/// ([ADR-239](../../../docs/specification/adr/adr-239.md)); a program that
+/// wants the close at a named moment writes `close`.
 pub struct Connection {
     inner: TcpStream,
 }

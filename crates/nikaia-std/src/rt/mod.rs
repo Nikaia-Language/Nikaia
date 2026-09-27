@@ -279,17 +279,35 @@ impl Started {
 /// a build for that profile cannot have, and it is named here rather than left
 /// to be discovered.
 ///
-/// **What it cannot yet name is *which* resource.** D2 asks for every one that
-/// did not finish, and the parked-cleanup queue that would hold them is
-/// [ADR-006](../../../docs/specification/adr/adr-006.md) D3's and does not
-/// exist; this counts the I/O operations the drain abandoned, which is what
-/// there is to count.
+/// **A cleanup is named** where one was cut off
+/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D5,
+/// [`cleanups_expired`]); what is left after every cleanup finished is I/O
+/// nobody waits for by name, and that is counted.
 fn expired(left: usize, deadline: std::time::Duration) {
-    let said = format!(
+    ended_by_the_deadline(format!(
         "nikaia: {left} pending I/O operation(s) did not finish within the {}s cleanup \
          deadline and were abandoned",
         deadline.as_secs_f64()
-    );
+    ));
+}
+
+/// **The cleanups an expired deadline cut off, each by name** (ADR-239 D5,
+/// ADR-112 D2): the same status and the same path as [`expired`].
+pub(crate) fn cleanups_expired(cut: &[String], deadline: std::time::Duration) {
+    let named: Vec<String> = cut
+        .iter()
+        .map(|what| {
+            format!(
+                "nikaia: the cleanup of {what} did not finish within the {}s cleanup \
+                 deadline and was abandoned",
+                deadline.as_secs_f64()
+            )
+        })
+        .collect();
+    ended_by_the_deadline(named.join("\n"));
+}
+
+fn ended_by_the_deadline(said: String) {
     // The hook runs on the way out of this, which is the whole reason for the
     // panic: it is the program's own, and a crash-report collector's if one is
     // installed.

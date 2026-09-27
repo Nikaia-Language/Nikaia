@@ -368,6 +368,109 @@ pub async fn write(
         .map_err(|e| crate::io::IoError::of(e, &asked))
 }
 
+/// **A file written through a buffer, flushed when it is done with**
+/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D6): what `create`
+/// hands back, and the first type in `std` whose cleanup needs I/O.
+///
+/// `write` adds to the buffer and does no I/O; `flush` writes what is held; and
+/// a writer nobody flushed is flushed by its cleanup, at the end of the scope
+/// that owned it last. That write can fail, so the function that owns one can
+/// fail with it — the decades-old `stdio` data-loss bug, told the truth about
+/// (D3). `close()` does it at a named moment and hands the failure back
+/// as that call's.
+pub type Writer = crate::cleanup::CleanedSend<Buffered>;
+
+/// What a [`Writer`] holds: where the bytes go, and those not written yet.
+pub struct Buffered {
+    path: std::path::PathBuf,
+    shown: String,
+    held: Vec<u8>,
+}
+
+impl Buffered {
+    /// Add text to what the file will hold. No I/O.
+    pub fn write(&mut self, data: impl AsRef<[u8]>) {
+        self.held.extend_from_slice(data.as_ref());
+    }
+
+    /// Write what is held to the file, pausing while it is written.
+    pub async fn flush(&mut self) -> Result<(), crate::io::IoError> {
+        if self.held.is_empty() {
+            return Ok(());
+        }
+        crate::rt::io::writing(&self.path, &self.held, true, true)
+            .await
+            .map_err(|e| crate::io::IoError::of(e, &self.shown))?;
+        self.held.clear();
+        Ok(())
+    }
+}
+
+impl crate::cleanup::CleanupSend for Buffered {
+    fn cleanup(
+        &mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async move { self.flush().await.map_err(|e| e.to_string()) })
+    }
+
+    fn describe(&self) -> String {
+        format!("the file `{}`", self.shown)
+    }
+}
+
+/// **A file to write, empty**: made where it is not there, emptied where it
+/// is. What is written to it is held until it is flushed, closed, or done
+/// with.
+pub async fn create(path: impl AsRef<Path>, root: &Root) -> Result<Writer, crate::io::IoError> {
+    let shown = path.as_ref().display().to_string();
+    let path = resolve(path.as_ref(), root)?;
+    crate::rt::io::writing(&path, b"", false, true)
+        .await
+        .map_err(|e| crate::io::IoError::of(e, &shown))?;
+    Ok(crate::cleanup::CleanedSend::new(Buffered {
+        path,
+        shown,
+        held: Vec::new(),
+    }))
+}
+
+#[cfg(test)]
+mod writer {
+    use super::*;
+
+    /// **What a writer holds reaches the file when it dies and its task
+    /// settles**, and not before.
+    #[test]
+    fn a_writer_is_flushed_by_its_cleanup() {
+        let dir = std::env::temp_dir().join(format!("nikaia-writer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = dir.join("out.txt");
+        crate::rt::exec::block_on(async {
+            {
+                let mut w = create(&file, &Root::Anywhere).await.expect("created");
+                w.write("eins\n");
+                w.write("zwei\n");
+            }
+            assert_eq!(std::fs::read_to_string(&file).expect("there"), "");
+            crate::cleanup::settle::<crate::cleanup::Local>()
+                .await
+                .expect("flushed");
+        });
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("there"),
+            "eins\nzwei\n"
+        );
+
+        crate::rt::exec::block_on(async {
+            let mut w = create(&file, &Root::Anywhere).await.expect("created");
+            w.write("drei");
+            w.close().await.expect("closed");
+        });
+        assert_eq!(std::fs::read_to_string(&file).expect("there"), "drei");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

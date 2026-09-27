@@ -475,6 +475,32 @@ fn a_part_of_a_loan_is_not_handed_over() {
     }
 }
 
+/// **The part is named once**: an argument of a `std` call is walked more than
+/// once, and each walk extended the read, so the message said `self.path.path`
+/// and its help wrote a copy of a field that does not exist.
+#[test]
+fn a_part_handed_to_std_is_named_once() {
+    let source = "use std::fs\n\n\
+                  struct Log {\n    path: String,\n}\n\n\
+                  impl Log {\n\
+                  \x20   fn save(ref self) throws {\n\
+                  \x20       fs::write(self.path, fs::Root::Anywhere, \"x\")\n\
+                  \x20   }\n\
+                  }\n\
+                  fn main() {}\n";
+    let found = findings(source);
+    let part: Vec<_> = found.iter().filter(|f| f.code == "NK2106").collect();
+    assert_eq!(part.len(), 1, "{found:#?}");
+    assert!(
+        part[0].message.starts_with("`self.path` is handed"),
+        "{found:#?}"
+    );
+    assert_eq!(
+        part[0].help.as_deref(),
+        Some("hand over a copy: `self.path.clone()`")
+    );
+}
+
 /// **A read through the brackets carries no parentheses of its own**: they
 /// stood around every read, and `m[k] ?? 0` and `let x = xs[1]` were
 /// `rustc`'s *unnecessary parentheses* about a file nobody wrote (ADR-214 D3).

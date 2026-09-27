@@ -712,6 +712,16 @@ pub struct Checked {
     /// ([ADR-233](../../docs/specification/adr/adr-233.md) D4). The emitter
     /// writes the `*` that copies it out.
     pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// **The functions in which a value with a cleanup may die**, by key, and
+    /// whether their settle point can fail them - a cleanup that can fail, in
+    /// a function that says `throws`
+    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D2, D3): their body
+    /// is written as a settle point's.
+    pub settle_fns: BTreeMap<String, bool>,
+    /// **The `let`s that bind a value with a cleanup**, by the byte the
+    /// statement starts at, and whether its cleanup can fail (ADR-239 D2): the
+    /// block they stand in is settled where it ends.
+    pub settle_lets: BTreeMap<usize, bool>,
     /// What each `spawn` body **binds and then holds across a pause**, by the
     /// byte the `spawn` starts at and the name
     /// ([ADR-055](../../docs/specification/adr/adr-055.md) §2 D6).
@@ -1600,6 +1610,10 @@ pub struct Propagation {
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
     pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// [`Checked::settle_fns`].
+    pub settle_fns: BTreeMap<String, bool>,
+    /// [`Checked::settle_lets`].
+    pub settle_lets: BTreeMap<usize, bool>,
     /// [`Checked::method_options`].
     pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
 }
@@ -1763,6 +1777,8 @@ pub fn propagation_against(
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
+        settle_fns: checked.settle_fns,
+        settle_lets: checked.settle_lets,
         method_options: checked.method_options,
     }
 }
@@ -3343,8 +3359,13 @@ impl<'a> Checker<'a> {
                 Item::Comptime { .. } => {}
                 Item::Fn { .. } => self.function(&item.node, None),
                 Item::Impl {
-                    target, methods, ..
+                    target,
+                    methods,
+                    trait_name,
                 } => {
+                    if trait_name.is_some_and(|t| self.parsed.text(t) == "Cleanup") {
+                        self.a_cleanup_shaped(self.parsed.text(target.name), methods, &item.span);
+                    }
                     // `impl Stack[T]` puts `T` in scope for every method in it,
                     // exactly as the ledger reads it (`Ledger::of`), so a method
                     // body sees the same names its signature was recorded with -
@@ -3897,6 +3918,20 @@ impl<'a> Checker<'a> {
             .and_then(|key| self.own.functions.get(key))
             .map(|contract| contract.keeps.clone())
             .unwrap_or_default();
+        // **A parameter the function keeps dies in it**, unless it is handed
+        // on, as a value bound by a `let` does (ADR-239 D2).
+        for arg in args {
+            let name = self.parsed.text(arg.name).to_string();
+            let kept = keeps.contains(&name).then(|| {
+                frame
+                    .iter()
+                    .find(|local| local.name == name)
+                    .map(|local| local.ty.clone())
+            });
+            if let Some(Some(ty)) = kept {
+                self.a_value_with_a_cleanup_dying(&name, &ty, &arg.span);
+            }
+        }
         let run_code: BTreeSet<String> = frame
             .iter()
             .filter(|local| matches!(local.ty, Ty::Fn { .. }) && !keeps.contains(&local.name))
@@ -4912,25 +4947,229 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **What is changed says `mut`** — `NK1138` for a parameter
-    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3) and `NK1139` for
-    /// a `let` ([Part I 2.1](../../docs/specification/10-nikaia-light.md)).
-    ///
-    /// One rule reached from two sides, and two codes because the word goes in
-    /// a different place and a reader is doing a different thing. A parameter's
-    /// `mut` also decides what the **caller** sees — the value it hands over is
-    /// the one that changes — where a `let`'s is only about this body.
-    ///
-    /// **Both were `rustc`'s until now.** Part I 2.1 writes
-    /// `// x = 20  <-- This would cause a Compiler Error` and this compiler was
-    /// not the one giving it: the binding lowered without its `mut` and the
-    /// answer came back about a file nobody wrote, which is [Part III
-    /// C.1](../../docs/specification/30-nikaia-tooling.md).
-    ///
-    /// **Only where the change is certain.** A method whose entry no ledger
-    /// has, or whose candidates do not agree, is not one to refuse on;
-    /// answering *it might change* would refuse a correct program, which is C.4
-    /// and the worse of the two mistakes.
+    /// **Whether a type's values have a cleanup**, and whether it can fail
+    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D1): an `impl
+    /// Cleanup` for it in any ledger this build reads - or for what it holds,
+    /// in a field, an element or a nullable, which dies with it. A view is not
+    /// the value, and dies nowhere. The type named is the one with the
+    /// cleanup; the answer fails where any cleanup it holds can.
+    fn cleanup_of(&self, ty: &Ty) -> Option<(String, bool)> {
+        self.cleanup_within(ty, &mut BTreeSet::new())
+    }
+
+    fn cleanup_within(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> Option<(String, bool)> {
+        let held: Vec<Ty> = match ty.unseen() {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } => {
+                let base = crate::contracts::ty::base(&name).to_string();
+                if !seen.insert(base.clone()) {
+                    return None;
+                }
+                let owner = [self.own, self.library].into_iter().find_map(|ledger| {
+                    ledger
+                        .implementations
+                        .get("Cleanup")?
+                        .iter()
+                        .find(|t| crate::contracts::ty::base(t) == base)
+                        .cloned()
+                });
+                if let Some(owner) = owner {
+                    let fails = [self.own, self.library].into_iter().any(|ledger| {
+                        ledger
+                            .functions
+                            .get(&format!("{owner}::cleanup"))
+                            .is_some_and(|contract| !contract.throws.is_empty())
+                    });
+                    return Some((owner, fails));
+                }
+                let fields = [self.own, self.library].into_iter().flat_map(|ledger| {
+                    ledger
+                        .types
+                        .iter()
+                        .filter(|(key, _)| crate::contracts::ty::base(key) == base)
+                        .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
+                });
+                args.into_iter().chain(fields).collect()
+            }
+            Ty::Nullable(inner) => vec![*inner],
+            Ty::Tuple(parts) => parts,
+            _ => return None,
+        };
+        held.iter()
+            .filter_map(|inner| self.cleanup_within(inner, seen))
+            .reduce(|(owner, fails), (_, more)| (owner, fails || more))
+    }
+
+    /// **A value with a cleanup may die in the function being walked**
+    /// (ADR-239 D2): its body becomes a settle point's, and the settle is a call
+    /// every analysis reads - one that pauses, and one that fails where the
+    /// function says `throws` and the cleanup can fail.
+    fn a_settle_in_this_function(&mut self, fails: bool) {
+        let Some(current) = self.current.clone() else {
+            return;
+        };
+        // **Whether the function's settle point can fail it**: only where a
+        // cleanup can fail and the function says `throws`. Its channel is
+        // otherwise whatever its body raises, and the settle point hands the
+        // body's result back untouched.
+        let failing = fails && self.throwing;
+        *self.checked.settle_fns.entry(current).or_insert(false) |= failing;
+        let key = match failing {
+            true => "cleanup::settle_failing",
+            false => "cleanup::settle",
+        };
+        self.reached_method(Some(key));
+    }
+
+    /// A value with a cleanup, made by a call or a literal (ADR-239 D2).
+    fn a_value_with_a_cleanup_made(&mut self, ty: &Ty) {
+        if let Some((_, fails)) = self.cleanup_of(ty) {
+            self.a_settle_in_this_function(fails);
+        }
+    }
+
+    /// **A value with a cleanup, bound by a `let`** (ADR-239 D2, D4): the
+    /// block is settled where it ends, the settle is a pause wherever pausing
+    /// is refused, and a cleanup that can fail is the function's to declare.
+    fn a_value_with_a_cleanup_bound(&mut self, name: &str, ty: &Ty, span: &Span) {
+        if let Some(fails) = self.a_value_with_a_cleanup_dying(name, ty, span) {
+            self.checked.settle_lets.insert(span.start, fails);
+        }
+    }
+
+    /// **A value with a cleanup dies in this function**, a `let`'s or a kept
+    /// parameter's: the function settles it, the settle is a pause, and a
+    /// cleanup that can fail is the function's to declare. Whether it can fail,
+    /// where it has a cleanup at all.
+    fn a_value_with_a_cleanup_dying(&mut self, name: &str, ty: &Ty, span: &Span) -> Option<bool> {
+        let (owner, fails) = self.cleanup_of(ty)?;
+        self.a_settle_in_this_function(fails);
+        self.a_cleanup_that_may_pause(name, span);
+        let is = match ty.unseen() {
+            Ty::Named { name, .. }
+                if crate::contracts::ty::base(&name) == crate::contracts::ty::base(&owner) =>
+            {
+                "is"
+            }
+            _ => "holds",
+        };
+        if fails && !self.throwing && !self.caught && self.current.is_some() {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2605",
+                message: format!("this function can fail because the cleanup of `{name}` can fail"),
+                notes: vec![format!(
+                    "`{name}` {is} a `{owner}`, whose cleanup runs where it dies - at the \
+                     end of this block - and can fail, so the function that owns it can \
+                     fail with it (Part I 6.4, ADR-239 D3)"
+                )],
+                help: Some(match is {
+                    "is" => format!(
+                        "declare it with `throws`, or close it where the failure should be \
+                         handled: `{name}.close() catch {{ … }}`"
+                    ),
+                    _ => format!(
+                        "declare it with `throws`, or close the `{owner}` it holds where the \
+                         failure should be handled, with `close() catch {{ … }}`"
+                    ),
+                }),
+            });
+        }
+        Some(fails)
+    }
+
+    /// **`NK2601`: an `impl Cleanup` is the one method `fn cleanup(ref mut
+    /// self)`** ([ADR-239](../../docs/specification/adr/adr-239.md) D1). The
+    /// synchronous fallback a type may also have is its own `impl Drop`, which
+    /// runs after the cleanup, or alone where the cleanup cannot run - so a
+    /// `drop` written here is named and pointed there.
+    fn a_cleanup_shaped(
+        &mut self,
+        target: &str,
+        methods: &[crate::ast::Spanned<Item>],
+        span: &Span,
+    ) {
+        let mut wrote_cleanup = false;
+        for method in methods {
+            let Item::Fn {
+                name,
+                receiver,
+                args,
+                config,
+                spread,
+                ret_type,
+                ..
+            } = &method.node
+            else {
+                continue;
+            };
+            let written = name.map(|n| self.parsed.text(n)).unwrap_or("");
+            let (message, help) = match written {
+                "cleanup" => {
+                    wrote_cleanup = true;
+                    let shaped = receiver.is_some_and(|r| r.is_ref && r.is_mut)
+                        && args.is_empty()
+                        && config.is_empty()
+                        && spread.is_none()
+                        && ret_type.is_none();
+                    if shaped {
+                        continue;
+                    }
+                    (
+                        format!(
+                            "`cleanup` of `{target}` takes `ref mut self` and nothing else, and \
+                             hands nothing back"
+                        ),
+                        "write it `fn cleanup(ref mut self)`, with `throws` where it can fail"
+                            .to_string(),
+                    )
+                }
+                "drop" => (
+                    format!("`drop` does not belong in `impl Cleanup for {target}`"),
+                    format!(
+                        "the synchronous fallback is its own `impl Drop for {target} {{ fn \
+                         drop(ref mut self) {{ … }} }}`, which runs after `cleanup`, or alone \
+                         where `cleanup` cannot run"
+                    ),
+                ),
+                other => (
+                    format!("`{other}` does not belong in `impl Cleanup for {target}`"),
+                    format!("write it in `impl {target}`, where the type's own methods stand"),
+                ),
+            };
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: method.span.clone(),
+                code: "NK2601",
+                message,
+                notes: vec![
+                    "`impl Cleanup` has one method, `fn cleanup(ref mut self)`, which may \
+                     pause and may fail (Part I 6.4)"
+                        .to_string(),
+                ],
+                help: Some(help),
+            });
+        }
+        if !wrote_cleanup {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2601",
+                message: format!("`impl Cleanup for {target}` does not write `cleanup`"),
+                notes: vec![
+                    "`impl Cleanup` has one method, `fn cleanup(ref mut self)`, which may \
+                     pause and may fail (Part I 6.4)"
+                        .to_string(),
+                ],
+                help: Some("write `fn cleanup(ref mut self) { … }`".to_string()),
+            });
+        }
+    }
+
     /// **`NK2107`: a lambda that runs on several cores at once changes a name
     /// they all share** (Part II 12.6,
     /// [ADR-235](../../docs/specification/adr/adr-235.md) D2).
@@ -4975,6 +5214,25 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **What is changed says `mut`** — `NK1138` for a parameter
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3) and `NK1139` for
+    /// a `let` ([Part I 2.1](../../docs/specification/10-nikaia-light.md)).
+    ///
+    /// One rule reached from two sides, and two codes because the word goes in
+    /// a different place and a reader is doing a different thing. A parameter's
+    /// `mut` also decides what the **caller** sees — the value it hands over is
+    /// the one that changes — where a `let`'s is only about this body.
+    ///
+    /// **Both were `rustc`'s until now.** Part I 2.1 writes
+    /// `// x = 20  <-- This would cause a Compiler Error` and this compiler was
+    /// not the one giving it: the binding lowered without its `mut` and the
+    /// answer came back about a file nobody wrote, which is [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md).
+    ///
+    /// **Only where the change is certain.** A method whose entry no ledger
+    /// has, or whose candidates do not agree, is not one to refuse on;
+    /// answering *it might change* would refuse a correct program, which is C.4
+    /// and the worse of the two mistakes.
     fn a_changed_binding_says_mut(&mut self, name: &str, how: &str) {
         let Some(at) = self
             .binding(name)
@@ -5266,6 +5524,17 @@ impl<'a> Checker<'a> {
             Ty::Named { name, .. } if ty::base(name) == "Vec" => {
                 self.method(&format!("list::ListExt::{entry}"))
             }
+            // **A value with a cleanup closes under std's one `close`**
+            // ([ADR-239](../../docs/specification/adr/adr-239.md) D3): it
+            // runs the cleanup now and hands its failure back at the call.
+            Ty::Named { name, .. }
+                if entry == "close"
+                    && self.cleanup_of(&on).is_some_and(|(owner, _)| {
+                        crate::contracts::ty::base(&owner) == crate::contracts::ty::base(name)
+                    }) =>
+            {
+                self.method("cleanup::close")
+            }
             _ => None,
         });
         let Some((key, contract)) = found else {
@@ -5312,6 +5581,13 @@ impl<'a> Checker<'a> {
             && let Some(name) = self.receiver_name.clone()
         {
             self.hands_over_name(&name, "taken by `map`", span);
+        }
+        // **And `close` takes the value**: nothing of it is left to clean up
+        // afterwards, and nothing of it to read.
+        if key == "cleanup::close"
+            && let Some(name) = self.receiver_name.clone()
+        {
+            self.hands_over_name(&name, "closed by `close`", span);
         }
         // ADR-023 D8: the failure leaves at the call, and the emitter
         // is what writes that. Recorded whether or not the function
@@ -6264,6 +6540,12 @@ impl<'a> Checker<'a> {
             } => {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 let found = self.expr(value, span);
+                // **A value with a cleanup, bound here, dies where this block
+                // ends** (ADR-239 D2).
+                if let [single] = names.as_slice() {
+                    let name = self.parsed.text(*single).to_string();
+                    self.a_value_with_a_cleanup_bound(&name, &found, span);
+                }
                 // **`let t = s` is a rename, and a rename moves** (ADR-094 D4,
                 // ADR-213 D3) - except `let _ = s`, which binds nothing and so
                 // takes nothing.
@@ -6642,6 +6924,23 @@ impl<'a> Checker<'a> {
     // --- expressions --------------------------------------------------------
 
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
+        let ty = self.value_of(expr, span);
+        // **A value with a cleanup made here may die in this function**
+        // (ADR-239 D2): by a call or a literal, which is where one comes from.
+        // A read of a name or a field is not a death, and is not asked.
+        if matches!(
+            expr,
+            Expr::Call { .. }
+                | Expr::MethodCall { .. }
+                | Expr::SafeMethod { .. }
+                | Expr::StructLit { .. }
+        ) {
+            self.a_value_with_a_cleanup_made(&ty);
+        }
+        ty
+    }
+
+    fn value_of(&mut self, expr: &Expr, span: &Span) -> Ty {
         match expr {
             // A bare number fits every numeric type, exactly as it does in the
             // language below. Committing it to one here would make `add(3)`
@@ -10573,6 +10872,44 @@ impl<'a> Checker<'a> {
         if !pauses {
             return;
         }
+        let pause = Pause {
+            what: format!("`{callee}`"),
+            before_walk: format!(
+                "call `{callee}` before the walk and hand the values in, or walk with \
+                 `iter()`, whose lambda may pause"
+            ),
+            before_door: format!(
+                "call `{callee}` before the door and hand its value in, or after it \
+                 with what the block handed out"
+            ),
+        };
+        self.a_pause(pause, span);
+    }
+
+    /// **A value's cleanup is a pause where the value dies**
+    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D4): the same rules
+    /// as a written call, and the message names the value.
+    fn a_cleanup_that_may_pause(&mut self, name: &str, span: &Span) {
+        let pause = Pause {
+            what: format!("the cleanup of `{name}`"),
+            before_walk: format!(
+                "bind `{name}` outside the walk and hand it in, or walk with `iter()`, \
+                 whose lambda may pause"
+            ),
+            before_door: format!(
+                "bind `{name}` outside the door, where it dies after the lock is released, \
+                 or close it there"
+            ),
+        };
+        self.a_pause(pause, span);
+    }
+
+    fn a_pause(&mut self, pause: Pause, span: &Span) {
+        let Pause {
+            what,
+            before_walk,
+            before_door,
+        } = pause;
         if let Some(handed) = &mut self.handed_over {
             handed.pauses = true;
         }
@@ -10584,17 +10921,14 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: span.clone(),
                 code: "NK2209",
-                message: format!("`{callee}` can pause, and this runs on several cores at once"),
+                message: format!("{what} can pause, and this runs on several cores at once"),
                 notes: vec![
                     "a lambda handed to a `par_iter()` walk is split across every core, \
                      and a core that waits holds its share of the work with it - so the \
                      lambda may not pause (Part II, 12.6)"
                         .to_string(),
                 ],
-                help: Some(format!(
-                    "call `{callee}` before the walk and hand the values in, or walk with \
-                     `iter()`, whose lambda may pause"
-                )),
+                help: Some(before_walk),
             });
         }
         if !self.inside_a_door {
@@ -10604,17 +10938,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK2202",
-            message: format!("`{callee}` can pause, and this runs with a lock held"),
+            message: format!("{what} can pause, and this runs with a lock held"),
             notes: vec![
                 "a door's block runs with the lock open, and a pause there keeps it \
                  open for as long as the wait takes - every task that wants the \
                  value waits with it (Part II, 12.2)"
                     .to_string(),
             ],
-            help: Some(format!(
-                "call `{callee}` before the door and hand its value in, or after it \
-                 with what the block handed out"
-            )),
+            help: Some(before_door),
         });
     }
 
@@ -11148,6 +11479,11 @@ impl<'a> Checker<'a> {
     /// `p.name` extends the read of `p` it stands on: what is read is the part
     /// ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
     fn a_read_of_a_part(&mut self, base: &Expr, expr: &Expr, field: &str, span: &Span) {
+        // Once per expression, as the read it extends: an argument walked a
+        // second time would otherwise read `self.path.path`.
+        if self.read_index.contains_key(&(address(expr), span.start)) {
+            return;
+        }
         let Some(&at) = self.read_index.get(&(address(base), span.start)) else {
             return;
         };
@@ -18271,4 +18607,12 @@ fn brace_groups(text: &str) -> Vec<String> {
     }
     found.retain(|g| !g.trim().is_empty());
     found
+}
+
+/// A pause the checker was told of, in the words its refusals use: what
+/// pauses, and the way out of a walk and of a door.
+struct Pause {
+    what: String,
+    before_walk: String,
+    before_door: String,
 }

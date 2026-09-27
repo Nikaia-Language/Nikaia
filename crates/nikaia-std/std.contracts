@@ -174,6 +174,71 @@ locks = true
 signature = "(text: ?)"
 doc = "Write text to standard error, and end the line."
 
+# **A file written through a buffer** ([ADR-239](../../docs/specification/adr/adr-239.md)
+# D5): the first type here whose cleanup needs I/O. `write` holds, `flush`
+# writes, and a writer nobody flushed is flushed by its cleanup where it dies -
+# which can fail, so the function that owns one can fail with it.
+[fn."fs::create"]
+pub = true
+touches = ["file(path) write"]
+throws = ["io::IoError"]
+signature = "(path: ?, root: ref Root) -> Writer"
+doc = "A file to write, empty: made where it is not there, emptied where it is.\n\nWhat is written to it is held until it is flushed, closed, or done with; being\ndone with it flushes it, and that can fail, so a function that owns one can\nfail with it."
+
+[type."fs::Writer"]
+pub = true
+crosses = true
+doc = "A file being written, through a buffer."
+
+[impl."Cleanup for fs::Writer"]
+
+[fn."fs::Writer::write"]
+pub = true
+sync = true
+touches = []
+mutates = true
+signature = "(ref Writer, text: ?)"
+doc = "Add text to what the file will hold. No I/O: it is written when the writer\nis flushed, closed or done with."
+
+[fn."fs::Writer::flush"]
+pub = true
+touches = ["file(path) write"]
+throws = ["io::IoError"]
+mutates = true
+signature = "(ref Writer)"
+doc = "Write what is held to the file now."
+
+[fn."fs::Writer::cleanup"]
+pub = true
+touches = ["file(path) write"]
+throws = ["io::IoError"]
+mutates = true
+signature = "(ref Writer)"
+doc = "What being done with a writer does: it is flushed."
+
+# **Where a value with a cleanup dies** ([ADR-239](../../docs/specification/adr/adr-239.md)
+# D2). The compiler records one of these as a call wherever such a value may
+# die, and the analyses read it as they read any call: it pauses, and - where
+# the value's cleanup can fail - it fails with something handed on without its
+# type. No program writes either.
+[fn."cleanup::settle"]
+touches = []
+signature = "()"
+
+[fn."cleanup::settle_failing"]
+touches = []
+throws = ["?"]
+signature = "()"
+
+# **`close()`**, on any value with a cleanup (ADR-006 D4): the cleanup now, its
+# failure this call's, and nothing owed afterwards.
+[fn."cleanup::close"]
+pub = true
+touches = []
+throws = ["?"]
+signature = "(?)"
+doc = "Run the value's cleanup now, and hand back its failure as this call's.\n\nNothing is owed afterwards: the value is gone."
+
 [fn."fs::map"]
 pub = true
 touches = ["file(path) read"]

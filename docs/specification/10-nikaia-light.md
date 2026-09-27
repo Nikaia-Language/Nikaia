@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.223 (Draft)
+**Version:** 0.0.224 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -1598,42 +1598,68 @@ rolling back, a TLS connection closing) implements `Cleanup`. I/O may pause
 (Chapter 8), and `drop` cannot pause.
 
 ```nika
+use std::fs
+
+struct BufferedFile {
+    path: String,
+    held: String,
+}
+
 impl Cleanup for BufferedFile {
     // Pausable teardown. May pause, may fail.
-    // The compiler calls it automatically at the end of the scope —
-    // on normal exit AND while an error is bubbling up.
+    // Runs where the value dies - on normal exit AND while an error is
+    // bubbling up.
     fn cleanup(ref mut self) throws {
-        self.flush()
-    }
-
-    // Synchronous last resort. Must not pause, must not fail.
-    // Runs after cleanup(), or alone if cleanup() cannot run
-    // (see "When cleanup cannot run" below).
-    fn drop(ref mut self) {
-        // release the handle — nothing that waits
+        fs::write(self.path.clone(), fs::Root::Anywhere, self.held.clone(); append: true)
     }
 }
 ```
 
-User code never calls `cleanup`. The compiler inserts the call at the end of
-the block, as it does for `drop`. The end of the block is then a place where
-the function may pause and where a failure surfaces.
+`impl Cleanup` has the one method, `fn cleanup(ref mut self)`, with `throws`
+where it can fail. A type that also needs a synchronous last resort writes it
+as its own `impl Drop`: `drop` runs after `cleanup`, or alone where `cleanup`
+cannot run (below). Anything else written in `impl Cleanup`, a `drop`
+included, is refused with `NK2601`, and the message points at `impl Drop`.
 
-**A cleanup error is an error.** If `cleanup` declares `throws`, the function
-that owns the resource declares `throws` too. A function that does not is
-refused with `NK2601`, and the message names the resource:
+User code never calls `cleanup`. **The value dies where ownership says it
+does**: at the closing brace of the block that owns it, or in the function it
+was handed to when that function keeps it. The compiler runs `cleanup` there:
+the end of that block is a place where the function may pause and where a
+failure surfaces. Values that die together are cleaned up in the order they
+die, the last one bound first. What holds such a value (a struct field, a list
+element) has its cleanup too, because the value dies with it.
+
+`std` has one of its own: `fs::create(path, root)` hands back a buffered
+`fs::Writer`, whose `write` holds the text and whose cleanup writes what it
+holds.
+
+```nika
+use std::fs
+
+fn report(lines: Vec[String]) throws {
+    let mut out = fs::create("report.txt", fs::Root::Anywhere)
+    for line in lines {
+        out.write(f"{line}\n")
+    }
+}   // `out` dies here, and what it holds is written
+```
+
+**A cleanup error is an error.** The cleanup is a call the compiler writes, and
+it is answered like one. If `cleanup` declares `throws`, the function where the
+value dies can fail, and one that does not declare `throws` is refused with
+`NK2605`, the code of every call that can fail there. The message names the
+resource:
 
 ```text
-error[NK2601]: this function can fail because closing `f` can fail
+error[NK2605]: this function can fail because the cleanup of `f` can fail
   --> report.nika:2
    |
- 2 |     let f = fs::create("report.txt")
-   |         ^ `f` is a buffered file; writing its remaining data
-   |           to disk at the end of this function can fail
-   |
-  help: declare the error:  fn save_report(text: String) throws
-  help: or handle it precisely by closing explicitly:
-        f.close() catch { ... }
+ 2 |     let f = fs::create("report.txt", fs::Root::Anywhere)
+   |     ^
+   = `f` is a `fs::Writer`, whose cleanup runs where it dies - at the end of
+     this block - and can fail, so the function that owns it can fail with it
+  help: declare it with `throws`, or close it where the failure should be
+        handled: `f.close() catch { … }`
 ```
 
 Two refinements:
@@ -1641,25 +1667,28 @@ Two refinements:
   does not replace it. It is attached to the original error as a *secondary
   error* (7.1).
 * A program that handles the close error specifically calls **`close()`**.
-  `close()` consumes the resource and returns the error normally, and no
-  implicit cleanup runs afterwards.
+  `close()` consumes the resource, runs its cleanup there and hands the error
+  back at the call, and no implicit cleanup runs afterwards.
 
-**A `sync` function never pauses**, so a resource with a pausable `cleanup`
-may not go out of scope inside one. Such a program is refused with `NK2602`,
-and the message names the ways out: return the resource to the caller, close it
-before the `sync` part, or use a non-buffering variant.
+**Where nothing may pause, nothing with a pausable cleanup may die.** The
+cleanup is a pause, and the rules for pauses apply to it as written: a value
+that would die inside a door's block is refused with `NK2202` (Part II 12.2),
+inside a `par_iter` lambda with `NK2209`, and inside a lambda handed to a
+`sync` function type with `NK2206`. The message names the cleanup of the
+value; the way out is binding it outside, where it dies after the lock is
+released, or closing it there.
 
 **When `cleanup` cannot run.** When a task is *cancelled* (it lost a `select`
-race, or a supervisor restarts it), the runtime adopts its pending `cleanup`
-runs and finishes them in the background before the program exits ("parked
-cleanup"). The runtime configuration `cleanup-deadline` bounds them (Part III
-13.3b). A cleanup the deadline cut off is a failure of the program: exit status
-70, with the resource named on the panic path. A **panic** runs no pausable
-cleanup: during panic teardown only the synchronous `drop` fallback runs, and
-**on a target that traps rather than unwinds, a panic ends the process
-immediately, so no destructors run at all** (Part III, Appendix A). The **panic
-hook** (7.2) runs on every panic. A panic is for an unrecoverable bug; a
-recoverable failure uses `throws`, where full cleanup is guaranteed.
+race, or a supervisor restarts it), what died in it and was not yet cleaned up
+is adopted by the runtime, which finishes it in the background before the
+program exits ("parked cleanup"). The runtime configuration `cleanup-deadline`
+bounds them (Part III 13.3b). A cleanup the deadline cut off is a failure of
+the program: exit status 70, with the resource named on the panic path. A
+**panic** runs no pausable cleanup: during panic teardown only the synchronous
+`drop` runs, and **on a target that traps rather than unwinds, a panic ends the
+process immediately, so no destructors run at all** (Part III, Appendix A). The
+**panic hook** (7.2) runs on every panic. A panic is for an unrecoverable bug;
+a recoverable failure uses `throws`, where full cleanup is guaranteed.
 
 There is no `defer` keyword. Cleanup happens at the end of the block through
 `Drop`. A lock's `.access()` releases the lock; there is no manual
@@ -2113,16 +2142,15 @@ person can read out. `nikaia explain NK-2C7` leads from `(NK-2C7)` to the line
 that threw it, with no log file, also when the working tree has moved on.
 
 **A call the language performs can fail.** Two places perform a call user code
-did not write: the end of a block, where a resource is cleaned up (6.4,
-`NK2601`), and a loop's step over a fallible stream (`NK2701`). In both the
-enclosing function declares `throws`, and the compiler names the resource or
-the loop.
+did not write: the end of a block, where a resource is cleaned up (6.4), and a
+loop's step over a fallible stream (`NK2701`). In both the enclosing function
+declares `throws`, and the compiler names the resource or the loop.
 
-**It is one rule with three sites.** Where a call can fail, written by user
-code or performed by the language, the failure fails the enclosing function,
-the function declares `throws`, and the compiler names the call that is the
-reason. `NK2605` is the written call, `NK2601` the closing brace, `NK2701` the
-loop's step.
+**It is one rule with two codes.** Where a call can fail, written by user code
+or performed by the language, the failure fails the enclosing function, the
+function declares `throws`, and the compiler names the call that is the
+reason. `NK2605` is the written call and the cleanup at a closing brace, which
+the message names as the cleanup of the value; `NK2701` is the loop's step.
 
 ### 7.2. Unrecoverable Errors (`panic`)
 An unrecoverable error is a logic bug, such as reading the tenth item of a

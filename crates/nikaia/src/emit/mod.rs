@@ -1265,6 +1265,16 @@ struct Emitter<'p> {
     /// `async` closure rather than a boxed future
     /// (`check::Checked::run_lambdas`).
     run_lambdas: std::collections::BTreeSet<(usize, usize)>,
+    /// **The functions whose body is a settle point's**, and whether the settle
+    /// point can fail each ([ADR-239](../../docs/specification/adr/adr-239.md)
+    /// D2, D3).
+    settle_fns: std::collections::BTreeMap<String, bool>,
+    /// **The `let`s whose block is settled where it ends**, and whether what
+    /// they bind can fail its cleanup (ADR-239 D2).
+    settle_lets: std::collections::BTreeMap<usize, bool>,
+    /// **This program's types with a cleanup that can pause** (ADR-239 D1):
+    /// written as `Cleaned<T>`, whose `Drop` parks it.
+    cleaned_types: std::collections::BTreeSet<String>,
     /// The lambdas that pause, handed to a `std` entry, and what the call is
     /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
     pausing_lambdas: std::collections::BTreeMap<(usize, String), PausingEntry>,
@@ -2289,6 +2299,13 @@ impl<'p> Emitter<'p> {
             witnessed_sets: propagation.witnessed_sets,
             future_lambdas: propagation.future_lambdas,
             run_lambdas: propagation.run_lambdas,
+            settle_fns: propagation.settle_fns,
+            settle_lets: propagation.settle_lets,
+            cleaned_types: own_contracts
+                .implementations
+                .get("Cleanup")
+                .cloned()
+                .unwrap_or_default(),
             pausing_lambdas: propagation.pausing_lambdas,
             narrowing_casts: propagation.narrowing,
             shared,
@@ -2986,6 +3003,47 @@ impl<'p> Emitter<'p> {
                         .map(|g| self.ty(g, Lifetimes::ELIDED)),
                 );
                 let applied = angled(&target_parts);
+                // **`impl Cleanup for T` is the type's own `cleanup` and a
+                // one-line bridge to std's trait** (ADR-239 D1): the method
+                // is written as the author wrote it, paused and failing as the
+                // ledger says, and `Cleaned<T>` reaches it through the bridge
+                // when the value dies.
+                let is_cleanup = trait_name.is_some_and(|t| self.text(t) == "Cleanup");
+                if is_cleanup {
+                    out.push(&format!("impl{declares} {target_name}{applied} {{\n"));
+                    for method in methods {
+                        let carries = self.carries_input.get(&method.span.start);
+                        out.from(&method.span, |out| {
+                            out.push("    ");
+                            self.function(
+                                out,
+                                &method.node,
+                                1,
+                                lifetimes,
+                                carries,
+                                Some(MethodOf {
+                                    target: &target_name,
+                                    declared_by: None,
+                                }),
+                            )
+                        })?;
+                    }
+                    out.push("}\n");
+                    let key = format!("{target_name}::cleanup");
+                    let awaited = if self.pauses(&key) { ".await" } else { "" };
+                    let (bridge, send) = match self.build.overlaps_user_code() {
+                        true => ("CleanupSend", " + Send"),
+                        false => ("Cleanup", ""),
+                    };
+                    out.push(&format!(
+                        "impl{declares} nikaia_std::cleanup::{bridge} for {target_name}{applied} {{\n\
+                         \x20   fn cleanup(&mut self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>>{send} + '_>> {{\n\
+                         \x20       Box::pin(async move {{ nikaia_std::cleanup::Outcome::reported({target_name}::cleanup(self){awaited}) }})\n\
+                         \x20   }}\n\
+                         }}\n"
+                    ));
+                    return Ok(());
+                }
                 let head = match trait_name {
                     Some(t) => format!(
                         "impl{declares} {} for {target_name}{applied}",
@@ -4117,18 +4175,36 @@ impl<'p> Emitter<'p> {
             .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| !code.is_sync))
             .map(|arg| arg.name)
             .collect();
-        self.function_body(
-            out,
-            body,
-            depth,
-            Declared {
-                throws: *throws,
-                returns_value: ret_type.is_some(),
-                awaited: &awaited,
-                key: &key,
-                channel: &channel,
-            },
-        )?;
+        let declared = Declared {
+            throws: *throws,
+            returns_value: ret_type.is_some(),
+            awaited: &awaited,
+            key: &key,
+            channel: &channel,
+        };
+        match self.settle_fns.get(&key) {
+            // **A body where a value with a cleanup may die ends at a settle
+            // point** ([ADR-239](../../docs/specification/adr/adr-239.md) D2):
+            // the body runs to its end as a block of its own - a `return` and
+            // a failing call end the block and not the function - and what
+            // died in it is settled before the function hands its value back.
+            Some(&failing) => {
+                let body = Out::scratch(|inner| self.function_body(inner, body, depth, declared))?;
+                let settle = match failing {
+                    true => "nikaia_std::cleanup::settle_after",
+                    false => "nikaia_std::cleanup::settle_with",
+                };
+                let kind = self.settle_kind();
+                let rest = match failing {
+                    true => "_, _, _",
+                    false => "_, _",
+                };
+                out.push(&format!("{{ {settle}::<{kind}, {rest}>(async "));
+                out.append(body);
+                out.push(").await }");
+            }
+            None => self.function_body(out, body, depth, declared)?,
+        }
         out.push("\n");
         Ok(())
     }
@@ -4191,11 +4267,18 @@ impl<'p> Emitter<'p> {
         // A published parameter taken as it goes in (ADR-232 D1), first.
         let first = std::mem::take(&mut *self.either_prelude.borrow_mut());
         if !throws {
+            // The function's own settle point stands around the body, so the
+            // body is not settled a second time as a block (ADR-239 D2).
+            let settled = self.settle_fns.contains_key(key);
+            let body_block = |out: &mut Out| match settled {
+                true => self.block_plain(out, body, depth, flow, tail, None),
+                false => self.block(out, body, depth, flow, tail),
+            };
             if first.is_empty() {
-                return self.block(out, body, depth, flow, tail);
+                return body_block(out);
             }
             // Inside the body's own brace, so there is one block and not two.
-            let mut written = Out::scratch(|out| self.block(out, body, depth, flow, tail))?;
+            let mut written = Out::scratch(body_block)?;
             written.insert_after_first_brace(&format!(" {}", first.join(" ")));
             out.append(written);
             return Ok(());
@@ -5191,8 +5274,32 @@ impl<'p> Emitter<'p> {
         if !params.is_empty() {
             out.push_str(&format!("<{}>", params.join(", ")));
         }
+        // **A type with a cleanup that can pause is its value in a `Cleaned`**
+        // (ADR-239 D1), whose `Drop` parks the cleanup where the value dies.
+        if self.cleaned_types.contains(self.text(ty.name)) {
+            return format!("{}<{out}>", self.cleaned());
+        }
 
         out
+    }
+
+    /// The queues a settle point drains: at `user_parallelism = yes` only the
+    /// one whose work may cross threads, so the settle point may too
+    /// (ADR-239 D2).
+    fn settle_kind(&self) -> &'static str {
+        match self.build.overlaps_user_code() {
+            true => "nikaia_std::cleanup::Sent",
+            false => "nikaia_std::cleanup::Local",
+        }
+    }
+
+    /// The wrapper a value with a cleanup is held in: the one whose parked work
+    /// may move with its task where tasks run on threads (ADR-239 D1).
+    fn cleaned(&self) -> &'static str {
+        match self.build.overlaps_user_code() {
+            true => "nikaia_std::cleanup::CleanedSend",
+            false => "nikaia_std::cleanup::Cleaned",
+        }
     }
 
     // --- Statements and expressions ---
@@ -5303,6 +5410,44 @@ impl<'p> Emitter<'p> {
     /// because an extra brace level in the emitted Rust is a level the source
     /// map has to explain and the reader has to skip.
     fn block_opening_with(
+        &self,
+        out: &mut Out,
+        block: &Block,
+        depth: usize,
+        flow: Flow<'_>,
+        tail: Tail,
+        opening: Option<&str>,
+    ) -> Result<()> {
+        // **A block where a value with a cleanup dies is settled where it
+        // ends** ([ADR-239](../../docs/specification/adr/adr-239.md) D2): the
+        // value dies at its closing brace and parks its cleanup, and the
+        // settle point right after runs it. Not inside a closure that cannot
+        // pause - there the function's own settle point runs it.
+        let settles = block
+            .stmts
+            .iter()
+            .filter_map(|stmt| self.settle_lets.get(&stmt.span.start).copied())
+            .reduce(|a, b| a || b);
+        if let Some(fails) = settles
+            && !flow.in_lambda
+        {
+            let inner =
+                Out::scratch(|inner| self.block_plain(inner, block, depth, flow, tail, opening))?;
+            let kind = self.settle_kind();
+            let settle = match fails && flow.throws && !flow.caught {
+                true => format!("nikaia_std::cleanup::settle::<{kind}>().await?"),
+                false => format!("nikaia_std::cleanup::settle_quietly::<{kind}>().await"),
+            };
+            out.push("{ let __nikaia_block = ");
+            out.append(inner);
+            out.push(&format!("; {settle}; __nikaia_block }}"));
+            return Ok(());
+        }
+        self.block_plain(out, block, depth, flow, tail, opening)
+    }
+
+    /// A block as it is written, with no settle point after it.
+    fn block_plain(
         &self,
         out: &mut Out,
         block: &Block,
@@ -7044,6 +7189,11 @@ impl<'p> Emitter<'p> {
                 // `unaliased`, the same as a type: `h::Request(path: …)` builds
                 // `http::Request` (ADR-046 D3).
                 let owner = self.parsed.unaliased(self.text(*name));
+                // A value with a cleanup is made in its `Cleaned` (ADR-239 D1).
+                let cleaned = self.cleaned_types.contains(&owner);
+                if cleaned {
+                    out.push(&format!("{}::new(", self.cleaned()));
+                }
                 out.push(&format!("{owner} {{ "));
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {
@@ -7105,6 +7255,9 @@ impl<'p> Emitter<'p> {
                     }
                 }
                 out.push(" }");
+                if cleaned {
+                    out.push(")");
+                }
             }
             // **`p with { x: p.x + 1 }`** is Rust's functional update
             // ([ADR-118](../../docs/specification/adr/adr-118.md) D1, D3): the

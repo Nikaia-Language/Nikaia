@@ -54,29 +54,30 @@
 10-nikaia-light.md #54 fragment (as written)  keep(Shared(connect(url)))                      // an a…
 10-nikaia-light.md #55 fragment (as written) [sketch]  let kasse: SharedMut[i32] = ...
 10-nikaia-light.md #56 lowered (as written) [sketch]  struct FileHandle {
-10-nikaia-light.md #57 lowered (as written)  impl Cleanup for BufferedFile {
-10-nikaia-light.md #58 refused (as written) [sketch NK1135,NK2605]  use std::fs
-10-nikaia-light.md #59 fragment (as written) [sketch]  struct Token {
-10-nikaia-light.md #60 lowered (as written)  struct Reading { name: ref String, temp: i32 }
-10-nikaia-light.md #61 fragment (as written) [sketch]  struct Reading { name: ref String, temp: i32 }
-10-nikaia-light.md #62 lowered (a body)  let mut users = load_users()
-10-nikaia-light.md #63 lowered (as written)  use std::fs
-10-nikaia-light.md #64 refused (as written) [NK1135]  enum ConfigError {
-10-nikaia-light.md #65 refused (a body) [NK1117]  if !fs::exists(path) {
-10-nikaia-light.md #66 refused (a body) [NK1117]  let user = find(id) ?? throw NotFound(id)
-10-nikaia-light.md #67 refused (as written) [NK1135]  fn load() -> Config throws {
-10-nikaia-light.md #68 lowered (a body)  let config = load() catch {
-10-nikaia-light.md #69 refused (a body) [NK1181]  let config = load() catch {
-10-nikaia-light.md #70 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
-10-nikaia-light.md #71 refused (as written) [NK1117]  use std::panic
-10-nikaia-light.md #72 refused (a body) [NK1117]  let (user, rights, prefs) = overlap {
-10-nikaia-light.md #73 lowered (a body)  spawn fn { println("I am running in the background!") }
-10-nikaia-light.md #74 lowered (a body) [about-a-refusal]  let message = "Hello"
-10-nikaia-light.md #75 lowered (a body)  let message = "Hello"
-10-nikaia-light.md #76 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
-10-nikaia-light.md #77 refused (as written) [NK1135]  // file: src/main.nika
-10-nikaia-light.md #78 lowered (as written)  use http
-10-nikaia-light.md #79 lowered (as written)  // file: network.nika
+10-nikaia-light.md #57 lowered (as written)  use std::fs
+10-nikaia-light.md #58 lowered (as written)  use std::fs
+10-nikaia-light.md #59 refused (as written) [sketch NK1135,NK2605]  use std::fs
+10-nikaia-light.md #60 fragment (as written) [sketch]  struct Token {
+10-nikaia-light.md #61 lowered (as written)  struct Reading { name: ref String, temp: i32 }
+10-nikaia-light.md #62 fragment (as written) [sketch]  struct Reading { name: ref String, temp: i32 }
+10-nikaia-light.md #63 lowered (a body)  let mut users = load_users()
+10-nikaia-light.md #64 lowered (as written)  use std::fs
+10-nikaia-light.md #65 refused (as written) [NK1135]  enum ConfigError {
+10-nikaia-light.md #66 refused (a body) [NK1117]  if !fs::exists(path) {
+10-nikaia-light.md #67 refused (a body) [NK1117]  let user = find(id) ?? throw NotFound(id)
+10-nikaia-light.md #68 refused (as written) [NK1135]  fn load() -> Config throws {
+10-nikaia-light.md #69 lowered (a body)  let config = load() catch {
+10-nikaia-light.md #70 refused (a body) [NK1181]  let config = load() catch {
+10-nikaia-light.md #71 refused (a body) [NK1117]  eprintln(f"{error}")           // the message, and noth…
+10-nikaia-light.md #72 refused (as written) [NK1117]  use std::panic
+10-nikaia-light.md #73 refused (a body) [NK1117]  let (user, rights, prefs) = overlap {
+10-nikaia-light.md #74 lowered (a body)  spawn fn { println("I am running in the background!") }
+10-nikaia-light.md #75 lowered (a body) [about-a-refusal]  let message = "Hello"
+10-nikaia-light.md #76 lowered (a body)  let message = "Hello"
+10-nikaia-light.md #77 lowered (as written)  // file: src/parse.nika      (the same package as src/m…
+10-nikaia-light.md #78 refused (as written) [NK1135]  // file: src/main.nika
+10-nikaia-light.md #79 lowered (as written)  use http
+10-nikaia-light.md #80 lowered (as written)  // file: network.nika
 20-nikaia-advance.md #1 refused (as written) [NK1135]  grammar Json {
 20-nikaia-advance.md #2 refused (as written) [NK1175]  // The compiler runs the Json grammar at build time.
 20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {

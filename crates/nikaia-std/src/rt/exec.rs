@@ -244,6 +244,14 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             .unwrap_or(0);
         let waiting = STARTED.with(|started| started.borrow().len()) + on_the_pool;
         if outcome.is_some() {
+            // **The cleanups nobody will settle go first**
+            // ([ADR-239](../../../../docs/specification/adr/adr-239.md) D5):
+            // a cancelled task's, and one that died after a task's last
+            // settle point. They are started here as tasks of this thread,
+            // so the drain below waits for them under the same deadline.
+            if crate::cleanup::start_orphans() > 0 {
+                continue;
+            }
             if waiting == 0 {
                 return outcome.take().expect("checked just above");
             }
@@ -256,6 +264,14 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             }
             let since = *draining_since.get_or_insert_with(std::time::Instant::now);
             if since.elapsed() >= deadline {
+                // **A cleanup the deadline cut off is a failure of the
+                // program**, and each is named
+                // ([ADR-239](../../../../docs/specification/adr/adr-239.md)
+                // D5, ADR-112 D1 and D2): exit 70, on the panic path.
+                let cut = crate::cleanup::unfinished();
+                if !cut.is_empty() {
+                    crate::rt::cleanups_expired(&cut, deadline);
+                }
                 // D5: the remainder are abandoned, and the program says so
                 // rather than exiting quietly. A task has no name to give, so
                 // what is named is how many and what the bound was.
@@ -277,8 +293,12 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         }
         // Or `main` was woken while the tasks were being polled - by a task
         // filling the slot it is waiting on, which is exactly what a `.join()`
-        // is.
-        if alarm.take() {
+        // is. **Only while `main` is still running**: once its value is in,
+        // nothing takes its alarm at the top of the round, and asking it here
+        // would go round for ever without reaching the park below - where
+        // the clock a sleeping task waits for is read (ADR-239 D5 found it: an
+        // adopted cleanup that sleeps waited out the whole deadline).
+        if outcome.is_none() && alarm.take() {
             alarm.ring();
             continue;
         }
