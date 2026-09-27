@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.228 (Draft)
+**Version:** 0.0.229 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -784,6 +784,13 @@ bare name binds. `Quit` is a variant *of* `Message`, never on its own.
 
 **`..` means two different things**: in a range pattern it is the range, and
 in a struct pattern it is *the rest of the fields*. The position says which.
+
+**A `match` reads what it binds.** Over a name the function owns, an arm that
+only reads a part it binds takes a view of it (6.5), and the name is whole
+after the `match`: it may be matched again, printed, or handed on. An arm that
+keeps the part — pushes it into a list, returns it, hands it back as the arm's
+value, changes it — takes it, and the name is gone afterwards, as it is after
+any hand-over. A number, a `bool` and a `char` are copied either way.
 
 **Every case is covered.** A `match` over an **enum** is complete when every
 variant is named, and needs no `else`. A `match` over anything else needs an

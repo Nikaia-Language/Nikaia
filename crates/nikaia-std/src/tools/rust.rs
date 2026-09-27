@@ -598,7 +598,7 @@ fn joined(pieces: Vec<Called<'_>>) -> Vec<&str> {
     for piece in pieces.into_iter() {
         match piece {
             Called::One(one) => { all.push(one) },
-            Called::Many(many) => { for one in many.iter() { all.push(one); } },
+            Called::Many(ref many) => { for one in many.iter() { all.push(one); } },
             Called::Nothing => { },
         };
     }

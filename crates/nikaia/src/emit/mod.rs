@@ -1138,6 +1138,9 @@ struct Emitter<'p> {
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
     /// gets the conversion a length gets (Part I 2.2).
     counted: std::collections::BTreeSet<(usize, String)>,
+    /// **The names a `match` arm binds as a view**, by the arm's pattern
+    /// (ADR-242): written `ref name`, so the scrutinee stays whole.
+    lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
     /// `collect()` into a declared map, set or text (ADR-227 D1).
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
@@ -2271,6 +2274,7 @@ impl<'p> Emitter<'p> {
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             counted: propagation.counted,
+            lent_bindings: propagation.lent_bindings,
             collected_into: propagation.collected_into,
             copied_walks: propagation.copied_walks,
             filter_patterns: propagation.filter_patterns,
@@ -9772,24 +9776,46 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        let lent = self
+            .lent_bindings
+            .get(&(pattern as *const MatchPattern as usize));
+        self.pattern_lending(out, pattern, lent, depth, flow)
+    }
+
+    /// A pattern, with the names the arm only reads bound as views: `ref n`
+    /// leaves the scrutinee whole, where a plain `n` would take the part out of
+    /// it (ADR-242).
+    fn pattern_lending(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        lent: Option<&std::collections::BTreeSet<String>>,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let bound = |s: &Symbol| {
+            let name = self.text(*s);
+            match lent.is_some_and(|lent| lent.contains(name)) {
+                true => format!("ref {name}"),
+                false => name.to_string(),
+            }
+        };
         let path = |p: &[Symbol]| {
             p.iter()
                 .map(|s| self.text(*s).to_string())
                 .collect::<Vec<_>>()
                 .join("::")
         };
-        let names = |b: &[Symbol]| {
-            b.iter()
-                .map(|s| self.text(*s).to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
+        let names = |b: &[Symbol]| b.iter().map(bound).collect::<Vec<_>>().join(", ");
         match pattern {
             // Rust's own catch-all, which is what the arm was before
             // ([ADR-145](../../docs/specification/adr/adr-145.md) D3).
             MatchPattern::Otherwise => out.push("_"),
             MatchPattern::Literal(value) => self.expr(out, value, depth, flow)?,
-            MatchPattern::Path(p) => out.push(&path(p)),
+            MatchPattern::Path(p) => match p.as_slice() {
+                [one] => out.push(&bound(one)),
+                _ => out.push(&path(p)),
+            },
             // **The parts are patterns**, so this recurses — which is the whole
             // of what *nested* means
             // ([ADR-137](../../docs/specification/adr/adr-137.md) D1). An empty
@@ -9801,7 +9827,7 @@ impl<'p> Emitter<'p> {
                     if i > 0 {
                         out.push(", ");
                     }
-                    self.match_pattern(out, part, depth, flow)?;
+                    self.pattern_lending(out, part, lent, depth, flow)?;
                 }
                 out.push(")");
             }
@@ -9822,7 +9848,7 @@ impl<'p> Emitter<'p> {
                     if i > 0 {
                         out.push(" | ");
                     }
-                    self.match_pattern(out, alternative, depth, flow)?;
+                    self.pattern_lending(out, alternative, lent, depth, flow)?;
                 }
             }
             // **`..=`, because a pattern's range includes both ends** (D3) and

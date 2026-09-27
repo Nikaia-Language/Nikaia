@@ -207,16 +207,18 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&src).expect("a sysroot to work in");
 
-    // A grammar whose action calls something that can pause — the shape the
-    // real one had. `flat` calls a method on what a **`match` arm** bound, and
-    // this compiler gives a pattern binding no type, so the call resolves to
-    // nothing and takes the `sync` claim away (the fail-closed direction). A
-    // grammar's action may not pause (ADR-142 D1), because the generated parser
-    // is an ordinary function.
+    // A grammar whose action calls something that can pause. A grammar's
+    // action may not pause (ADR-142 D1), because the generated parser is an
+    // ordinary function. The probe used to reach the pause through a method on
+    // what a **`match` arm** bound, which resolved to nothing while a pattern
+    // binding had no type; since `open-work.md` §1.16 such a binding is typed
+    // from its variant and resolves, so `flat` pauses where it says it does.
     let module = src.join("probe.nika");
     std::fs::write(
         &module,
-        "enum Piece {\n\
+        "use std::time\n\
+         \n\
+         enum Piece {\n\
              Many(Vec[ref String]),\n\
              Nothing,\n\
          }\n\
@@ -227,6 +229,7 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
          }\n\
          \n\
          fn flat(ps: Vec[Piece]) -> Vec[ref String] {\n\
+             time::sleep(1.millis())\n\
              let mut out = Vec()\n\
              for p in ps.drain() {\n\
                  match p {\n\

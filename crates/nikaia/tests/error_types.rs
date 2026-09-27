@@ -508,11 +508,11 @@ fn a_joined_failure_survives_a_caller_that_propagates_it() {
          \x20       f\"\"\n\
          \x20   }\n\
          \x20   let b = relay() catch {\n\
-         \x20       println(f\"{error.full()}\")\n\
          \x20       match error {\n\
          \x20           io::IoError::NotFound(what) => println(f\"relay: not found {what}\")\n\
          \x20           else => println(\"relay: other\")\n\
          \x20       }\n\
+         \x20       println(f\"{error.full()}\")\n\
          \x20       f\"\"\n\
          \x20   }\n\
          \x20   println(f\"{a}{b}\")\n\

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.229] — 2026-09-27
+
+**A `match` over a place lends what an arm only reads** —
+[ADR-242](docs/specification/adr/adr-242.md), closing `open-work.md` §1.16.
+
+- A `match` over a name the function owns types each arm's bindings from the
+  variant, and binds a part that does not copy as `ref` where the arm only
+  reads it. The name is whole after the `match`: matched again, printed, or
+  handed on — where `rustc` said *use of moved value*, and in a handler
+  *borrow of partially moved value: `error`*.
+- A part the arm keeps is taken as before: handed to something that keeps it,
+  changed or taken by a method (`push`, `drain`), assigned, returned, or the
+  arm's value. Numbers are copied as before.
+- A method on a bound part now resolves, so its pause and failure are counted;
+  `tools/rust.nika`'s lowering changed by one `ref`, and the sysroot test's
+  probe pauses through `time::sleep` instead of through the old gap.
+
 ## [0.0.228] — 2026-09-27
 
 **A library's error travels in an envelope too** —

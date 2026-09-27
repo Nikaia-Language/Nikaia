@@ -386,6 +386,11 @@ pub struct Checked {
     /// and receiver shape: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
     pub counted: BTreeSet<(usize, String)>,
+    /// **The names a `match` arm binds as a view of its scrutinee**, by the
+    /// arm's pattern: the scrutinee is a place this function owns, the part
+    /// does not copy, and the arm does not keep it - so the name stays whole
+    /// after the `match` (Part I 6.5, ADR-242).
+    pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// `collect()` calls whose target declares what they build - a map, a
     /// set, text - by statement and receiver shape
     /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
@@ -1026,6 +1031,7 @@ fn walked<'a>(
         structs: BTreeMap::new(),
         enums: BTreeMap::new(),
         enum_payloads: BTreeMap::new(),
+        variant_parts: BTreeMap::new(),
         variant_owner: BTreeMap::new(),
         walks_fields: BTreeMap::new(),
         unrolling: None,
@@ -1131,6 +1137,7 @@ fn walked<'a>(
         read_index: std::collections::HashMap::new(),
         lent_lets: BTreeSet::new(),
         handed: Vec::new(),
+        changed: Vec::new(),
         writing_index: false,
         read_a_map: false,
         hole: None,
@@ -1518,6 +1525,8 @@ pub struct Propagation {
     pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::counted`].
     pub counted: BTreeSet<(usize, String)>,
+    /// [`Checked::lent_bindings`].
+    pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::collected_into`].
     pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::copied_walks`].
@@ -1741,6 +1750,7 @@ pub fn propagation_against(
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         counted: checked.counted,
+        lent_bindings: checked.lent_bindings,
         collected_into: checked.collected_into,
         copied_walks: checked.copied_walks,
         filter_patterns: checked.filter_patterns,
@@ -2261,6 +2271,11 @@ struct Checker<'a> {
     /// does every part of this type compare — so it is a map of its own rather
     /// than a second meaning for `structs`.
     enum_payloads: BTreeMap<String, Vec<Ty>>,
+    /// **What each positional variant of a declared `enum` holds**, by
+    /// `Enum::Variant` and in order: what a `match` arm binds by position
+    /// (`Shape::Named(n)` binds a `String`). A variant with named fields is in
+    /// `structs`, as a library's variants are.
+    variant_parts: BTreeMap<String, Vec<Ty>>,
     /// **The functions whose body walks a type's fields**, and which type
     /// parameter each one walks ([ADR-181](../../docs/specification/adr/adr-181.md)
     /// D1): `describe` → `T`.
@@ -2557,6 +2572,10 @@ struct Checker<'a> {
     /// type, the byte the handing statement ends on, the branch, and the words
     /// for what took it. `NK2105` is a later read on the same path.
     handed: Vec<Taken>,
+    /// **Names a method changed or took, or an assignment wrote**, in the
+    /// order they were met: what a `match` arm does to a part other than
+    /// read it (ADR-242).
+    changed: Vec<String>,
     /// Set by an assignment whose target is an index, for the one `Index` it
     /// walks: a key **written** is handed to the map, a key read is lent
     /// (ADR-213 D1).
@@ -3065,6 +3084,16 @@ impl<'a> Checker<'a> {
                         let key = format!("{own}::{}", self.parsed.text(variant.name));
                         self.variant_owner.insert(key.clone(), own.clone());
                         self.structs.insert(key, held);
+                    }
+                    for variant in variants {
+                        if let ast::VariantFields::Tuple(types) = &variant.fields {
+                            let key = format!("{own}::{}", self.parsed.text(variant.name));
+                            let parts = types
+                                .iter()
+                                .map(|ty| Ty::from_ast(self.parsed, ty))
+                                .collect();
+                            self.variant_parts.insert(key, parts);
+                        }
                     }
                     // **Every kind of payload**, positional included — see
                     // [`Checker::enum_payloads`] for why a map of its own.
@@ -5241,6 +5270,7 @@ impl<'a> Checker<'a> {
     /// answering *it might change* would refuse a correct program, which is C.4
     /// and the worse of the two mistakes.
     fn a_changed_binding_says_mut(&mut self, name: &str, how: &str) {
+        self.changed.push(name.to_string());
         let Some(at) = self
             .binding(name)
             .and_then(|local| local.immutable.clone())
@@ -5569,6 +5599,18 @@ impl<'a> Checker<'a> {
         };
         self.reached_method(Some(&key));
         self.last_resolved = Some(key.clone());
+        // **A receiver the method changes or takes is not only read**: a
+        // `match` arm that does this to a part it bound needs the part itself.
+        if let Some(name) = self.receiver_name.clone() {
+            let takes = contract
+                .signature
+                .as_ref()
+                .and_then(|s| s.params.first())
+                .is_some_and(|(_, ty)| matches!(ty, Ty::Seq { .. }) || moves_away(ty));
+            if contract.mutates || takes {
+                self.changed.push(name);
+            }
+        }
         // **A method that walks a produced sequence consumes it**
         // ([ADR-105](../../docs/specification/adr/adr-105.md) D2): every `Seq`
         // entry writes its receiver `(Seq[$T], …)` and not `&Seq[$T]`, so the
@@ -7214,6 +7256,17 @@ impl<'a> Checker<'a> {
 
             Expr::Match { value, arms } => {
                 let on = self.expr(value, span);
+                // `error` in a handler is untyped at its binding; where one
+                // type arrives, that is what its parts are read from.
+                let typed = match (&on, &**value) {
+                    (Ty::Unknown, Expr::Variable(name))
+                        if self.parsed.text(*name) == "error" && !self.caught_several =>
+                    {
+                        self.caught_one.clone().unwrap_or(Ty::Unknown)
+                    }
+                    _ => on.clone(),
+                };
+                let lendable = self.an_owned_place(value, &typed);
                 // **A `match` is a condition too** (ADR-111 D4).
                 let outer_condition = self.stamped_condition;
                 if on.is_seen() {
@@ -7237,10 +7290,25 @@ impl<'a> Checker<'a> {
                     // missing rather than the name that is wrong — and with an
                     // `else` arm beside it, nothing at all.
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
-                    let frame = self.pattern_bindings(&arm.pattern);
+                    // **Over a place this function owns, a part is lent**
+                    // (ADR-242): the bindings are typed from the
+                    // variant, so that what the arm keeps is seen as kept.
+                    let parts = match lendable {
+                        true => self.pattern_parts(&arm.pattern, &typed),
+                        false => BTreeMap::new(),
+                    };
+                    let frame = self
+                        .pattern_bindings(&arm.pattern)
+                        .into_iter()
+                        .map(|local| match parts.get(&local.name) {
+                            Some(ty) => Local::free(local.name, ty.clone()),
+                            None => local,
+                        })
+                        .collect();
                     self.scope.push(frame);
                     self.branch.push((choice, taken));
                     let from = self.taken_so_far();
+                    let changed_from = self.changed.len();
                     // **The guard is walked inside the arm's scope** (D2): it
                     // reads the names the pattern bound, and a condition is a
                     // `bool` here exactly as anywhere else.
@@ -7249,6 +7317,13 @@ impl<'a> Checker<'a> {
                         self.expect_bool(&found, span, "a `match` arm's guard is a condition");
                     }
                     let ty = self.expr(&arm.body, span);
+                    self.a_part_lent_where_it_is_not_kept(
+                        &arm.pattern,
+                        &arm.body,
+                        &parts,
+                        from,
+                        changed_from,
+                    );
                     self.a_branch_that_leaves(from, exits(&arm.body), span);
                     self.branch.pop();
                     self.scope.pop();
@@ -17411,6 +17486,104 @@ impl<'a> Checker<'a> {
             .is_some_and(|variants| variants.contains(variant))
     }
 
+    /// **Whether a `match` is over a place this function owns**: a name, or a
+    /// field of one, that is not itself a view. Only there can a part be lent
+    /// and the whole stay: a temporary is gone after the `match` anyway, and a
+    /// view's parts are views already.
+    fn an_owned_place(&self, value: &Expr, on: &Ty) -> bool {
+        if on.is_a_view() || !matches!(on, Ty::Named { .. }) {
+            return false;
+        }
+        let mut root = value;
+        while let Expr::Field { base, .. } = root {
+            root = base;
+        }
+        let Expr::Variable(name) = root else {
+            return false;
+        };
+        let name = self.parsed.text(*name);
+        self.binding(name)
+            .is_some_and(|local| !local.lent && !local.ty.is_a_view())
+            && !self.lent_here(name)
+    }
+
+    /// **The types of the names an arm binds**, where the variant says them:
+    /// a positional variant's parts in order, a variant with named fields by
+    /// name. Nested patterns and or-patterns are left untyped, which leaves
+    /// their names bound as they always were.
+    fn pattern_parts(&self, pattern: &MatchPattern, on: &Ty) -> BTreeMap<String, Ty> {
+        let Ty::Named { name: owner, .. } = on else {
+            return BTreeMap::new();
+        };
+        let variant = |path: &[Ident]| -> String {
+            let written: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+            match written.as_slice() {
+                [one] => format!("{owner}::{one}"),
+                _ => written.join("::"),
+            }
+        };
+        let mut out = BTreeMap::new();
+        match pattern {
+            MatchPattern::Tuple { path, parts } if !path.is_empty() => {
+                let key = variant(path);
+                let types: Vec<Ty> = match self.variant_parts.get(&key) {
+                    Some(types) => types.clone(),
+                    None => self
+                        .structs
+                        .get(&key)
+                        .map(|fields| fields.iter().map(|f| f.ty.clone()).collect())
+                        .unwrap_or_default(),
+                };
+                for (part, ty) in parts.iter().zip(types) {
+                    if let MatchPattern::Path(one) = part
+                        && let [name] = one.as_slice()
+                    {
+                        out.insert(self.parsed.text(*name).to_string(), ty);
+                    }
+                }
+            }
+            MatchPattern::Named { path, bindings, .. } => {
+                let fields = self.structs.get(&variant(path));
+                for binding in bindings {
+                    let name = self.parsed.text(*binding);
+                    if let Some(field) = fields.and_then(|f| f.iter().find(|f| f.name == name)) {
+                        out.insert(name.to_string(), field.ty.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// **The parts an arm only reads are lent** (ADR-242): a part
+    /// that does not copy, which nothing in the arm took, returned or handed
+    /// back as the arm's value, is bound as a view, and the scrutinee stays
+    /// whole for what comes after the `match`.
+    fn a_part_lent_where_it_is_not_kept(
+        &mut self,
+        pattern: &MatchPattern,
+        body: &Expr,
+        parts: &BTreeMap<String, Ty>,
+        (_, from): (usize, usize),
+        changed_from: usize,
+    ) {
+        let lent: BTreeSet<String> = parts
+            .iter()
+            .filter(|(name, ty)| {
+                let taken = self.handed[from..].iter().any(|taken| {
+                    taken.path == **name || taken.path.starts_with(&format!("{name}."))
+                }) || self.changed[changed_from..].iter().any(|n| n == *name);
+                moves_away(ty) && !taken && !gives_back(body, name, self.parsed)
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        if !lent.is_empty() {
+            let at = pattern as *const MatchPattern as usize;
+            self.checked.lent_bindings.insert(at, lent);
+        }
+    }
+
     /// The names a `match` arm brings into scope, all of them unknown: what a
     /// variant carries is not in the ledger yet.
     fn pattern_bindings(&self, pattern: &MatchPattern) -> Vec<Local> {
@@ -18030,6 +18203,73 @@ fn is_literal(expr: &Expr) -> bool {
             | Expr::LitChar(_)
             | Expr::LitBool(_)
     )
+}
+
+/// **Whether an arm hands a name back by value**: as its own value, or through
+/// a `return`. Either needs the part itself and not a view of it.
+fn gives_back(body: &Expr, name: &str, parsed: &Parsed) -> bool {
+    fn is_name(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
+        matches!(expr, Expr::Variable(n) if parsed.text(*n) == name)
+    }
+    fn tail(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
+        match expr {
+            Expr::Block(block) => block_tail(block, name, parsed),
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                block_tail(then_branch, name, parsed)
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|b| block_tail(b, name, parsed))
+            }
+            Expr::Match { arms, .. } => arms.iter().any(|arm| tail(&arm.body, name, parsed)),
+            other => is_name(other, name, parsed),
+        }
+    }
+    fn block_tail(block: &Block, name: &str, parsed: &Parsed) -> bool {
+        matches!(block.stmts.last().map(|s| &s.node), Some(Stmt::Expr(e)) if tail(e, name, parsed))
+    }
+    fn block_returns(block: &Block, name: &str, parsed: &Parsed) -> bool {
+        block.stmts.iter().any(|stmt| match &stmt.node {
+            Stmt::Return(Some(value)) => {
+                is_name(value, name, parsed) || returns(value, name, parsed)
+            }
+            Stmt::For { iter, body, .. } => {
+                returns(iter, name, parsed) || block_returns(body, name, parsed)
+            }
+            Stmt::While { cond, body } => {
+                returns(cond, name, parsed) || block_returns(body, name, parsed)
+            }
+            Stmt::Let { value, .. } | Stmt::Comptime { value, .. } => returns(value, name, parsed),
+            Stmt::Assign { value, .. } => returns(value, name, parsed),
+            Stmt::Expr(value) => returns(value, name, parsed),
+            _ => false,
+        })
+    }
+    fn returns(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
+        let mut found = false;
+        crate::emit::visit_expr(expr, &mut |inner| match inner {
+            Expr::Return(Some(value)) if is_name(value, name, parsed) => found = true,
+            Expr::Block(block) | Expr::Unsafe(block) => {
+                found |= block_returns(block, name, parsed);
+            }
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                found |= block_returns(then_branch, name, parsed)
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|b| block_returns(b, name, parsed));
+            }
+            _ => {}
+        });
+        found
+    }
+    tail(body, name, parsed) || returns(body, name, parsed)
 }
 
 /// Whether taking a value of this type takes it **away** (`NK2101`).

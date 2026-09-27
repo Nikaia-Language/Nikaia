@@ -34,38 +34,7 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.16. A `match` that binds a field of a name moves the name
-
-A `match` over a local whose type does not copy, with an arm that binds a part
-of it, takes the part by value; the name is gone afterwards, and a second read
-of it is `rustc`'s *use of moved value* about a file nobody wrote.
-
-```nika
-enum Shape {
-    Named(String),
-    Empty,
-}
-
-fn main() {
-    let s = Shape::Named(f"box")
-    match s {
-        Shape::Named(n) => println(f"named {n}")
-        Shape::Empty => println("empty")
-    }
-    match s {
-        Shape::Named(n) => println(f"again {n}")
-        Shape::Empty => println("empty")
-    }
-}
-```
-
-The same in a `catch` handler: `match error { ConfigError::NotFound(p) => … }`
-followed by `{error}` is *borrow of partially moved value: `error`*. Evidence:
-both programs, lowered at 0.0.228 and handed to `rustc`. Part I 6.5 says a
-reader takes a view; an arm that only reads its binding is one, and the fix is
-the scrutinee lent where no arm keeps what it binds — which arms keep is the
-`keeps` question [ADR-094](specification/adr/adr-094.md) already answers for
-calls.
+**This section is empty.**
 
 ## 2. Decided and unbuilt
 
