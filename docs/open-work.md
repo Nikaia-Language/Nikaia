@@ -61,7 +61,7 @@ measured, and in both `rustc` refuses a file nobody wrote
 and goes through `check::KeyForm`, which is the mechanism a method's key needs
 too.
 
-### 1.23. A `Shared` field of a type and the value put in it disagree on the count
+### 1.24. A `Shared` field of a type and the value put in it disagree on the count
 
 Found at 0.0.234, measuring how a type can hold itself. In
 

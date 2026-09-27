@@ -28,7 +28,7 @@ Nikaia.
   stands between Nikaia and a parser written in Nikaia — and it is on
   `open-decisions.md` with a recommendation: the compiler puts the box in.
 - Recorded: a `Shared` field and the value put in it disagree on the count
-  (`open-work.md` §1.23). `open-work.md` §1.22 is closed.
+  (`open-work.md` §1.24). `open-work.md` §1.22 is closed.
 - Tests: `tests/list_operators.rs`, `tests/recursive_types.rs`.
 
 ## [0.0.233] — 2026-09-27

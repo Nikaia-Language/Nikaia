@@ -29,7 +29,7 @@ the grammar language Nikaia's `grammar` blocks lower to (275 rules in
 `struct Node { next: Node? }` have no size, and nothing in the language says
 how a type holds another of itself. Measured at 0.0.234: `Vec[Expr]` in place
 of `Expr` works and is what `NK1192` now names; `Shared[Expr]` does not (the
-field and the value disagree on the count, `open-work.md` §1.23); a written
+field and the value disagree on the count, `open-work.md` §1.24); a written
 `Box[T]` does not exist — Part I 4.6's `Box[T]` is an example struct, not an
 indirection.
 
