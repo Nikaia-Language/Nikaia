@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!--
+  The home page's layout: the same head, header and footer as every other
+  page (`_layouts/default.html`), and no sidebar. The page itself is
+  `index.html`, which takes `/` from the README: the README is written for
+  GitHub, badges and all, and this page is written for the site.
+-->
+<html lang="{{ site.lang | default: "en-US" }}">
+  <head>
+{% include site-head.html %}
+  </head>
+  <body class="home">
+    {% include site-header.html %}
+
+    <main>
+      {{ content }}
+    </main>
+
+    {% include site-footer.html %}
+    <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
+    <script src="{{ "/assets/js/nav.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
+  </body>
+</html>

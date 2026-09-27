@@ -1,0 +1,179 @@
+---
+layout: home
+title: Nikaia
+description: >-
+  A programming language where you write what should happen and the compiler
+  decides how: no async/await, no garbage collector, data races refused
+  before the program runs.
+---
+<!--
+  The home page. The words are the README's "The idea" and "Hello, world",
+  shortened for a first screen; where the two disagree, the README is the
+  one to fix first and this page follows it.
+-->
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-text">
+      <p class="hero-eyebrow">A programming language · pre-alpha</p>
+      <h1>Write what should happen.<br><span>The compiler decides how.</span></h1>
+      <p class="hero-lead">
+        Nikaia reads like a scripting language and compiles like a systems language.
+        No <code>async</code>/<code>await</code>, no garbage collector, no manual memory
+        management, and data races are refused before the program runs.
+      </p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="{{ "/guide/getting-started.html" | relative_url }}">Get started</a>
+        <a class="button button-secondary" href="{{ "/guide/syntax.html" | relative_url }}">Tour the syntax</a>
+        <a class="button button-ghost" href="https://github.com/Nikaia-Language/Nikaia">View on GitHub</a>
+      </div>
+      <p class="hero-motto">Good wins.</p>
+    </div>
+    <div class="hero-art">
+      <img src="{{ "/assets/hero.jpg" | relative_url }}" alt="The Nikaia logo: a wing turning into a blue letter N" width="900" height="764">
+    </div>
+  </div>
+</section>
+
+<section class="home-section home-code-section">
+  <div class="home-inner home-split">
+    <div class="home-split-text">
+      <h2>Two files at once. No <code>async</code> in sight.</h2>
+      <p>
+        Reading a file pauses the function without blocking the program, and you write it as
+        an ordinary call. Where you <em>want</em> things to happen together, you say so:
+        <code>overlap</code> runs its lines at the same time and waits for all of them.
+      </p>
+      <p>
+        Whether this runs on one core or on all of them is one line in
+        <code>nikaia.toml</code>. The code does not change.
+      </p>
+      <p><a href="{{ "/guide/syntax.html" | relative_url }}">The whole language on one page →</a></p>
+    </div>
+    <div class="home-code markdown-body">
+<pre><code class="language-nika">use std::fs
+
+fn size_of(path: ref String) -&gt; i64 throws {
+    let text = fs::read_to_string(path, fs::Root::Anywhere)
+    return text.len()
+}
+
+fn main() throws {
+    let (a, b) = overlap {
+        size_of("a.txt")
+        size_of("b.txt")
+    }
+    println(f"{a + b} characters in both files")
+}
+</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="home-section">
+  <div class="home-inner">
+    <h2 class="home-heading">Most languages ask you to pick a side</h2>
+    <div class="compare">
+      <div class="compare-card">
+        <h3>Easy languages</h3>
+        <p class="compare-examples">Python, JavaScript</p>
+        <p>You write what you mean, quickly, and pay later: slower programs, more machines, and
+        mistakes that show up in production, under load, at night.</p>
+      </div>
+      <div class="compare-card">
+        <h3>Fast languages</h3>
+        <p class="compare-examples">C++, Rust</p>
+        <p>You get the whole machine, and pay up front: much of every program explains to the
+        compiler how memory, waiting and sharing should work.</p>
+      </div>
+      <div class="compare-card compare-card-nikaia">
+        <h3>Nikaia</h3>
+        <p class="compare-examples">the explaining is the compiler's job</p>
+        <p>A compiler that sees the whole program can work that out itself. You write straight,
+        readable code; it translates to Rust and lets Rust's compiler guarantee the rest.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="home-section home-section-alt">
+  <div class="home-inner">
+    <h2 class="home-heading">What that looks like</h2>
+    <div class="features">
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12M6 22h12M7 2c0 5 5 6 5 10S7 17 7 22M17 2c0 5-5 6-5 10s5 5 5 10"/></svg>
+        <h3>Waiting is not your problem</h3>
+        <p>Code that reads files or talks to the network looks like any other code. No keyword
+        says "this might wait", and the program never sits idle while it does.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+        <h3>Mistakes caught before it runs</h3>
+        <p>Two tasks changing the same data, a value that might be missing, an error nobody
+        handles: refused at compile time, with a message that says what to write instead.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+        <h3>No garbage collector, no <code>free</code></h3>
+        <p>Memory and files are released at a point you can see in the code. No pauses, and
+        nothing to clean up by hand.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+        <h3>One core or all of them</h3>
+        <p>Whether your code uses one core or every core is one line of configuration, not a
+        rewrite. The same source is correct either way.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4c-2 0-3 1-3 3v2c0 2-1 3-2 3 1 0 2 1 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 2 1 3 2 3-1 0-2 1-2 3v2c0 2-1 3-3 3"/></svg>
+        <h3>Formats are part of the language</h3>
+        <p>Logs, protocols, your own little language: describe the format as a grammar and get
+        a parser, instead of splitting strings by hand.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+        <h3>Errors in plain words</h3>
+        <p><code>error[NK1139]: `x` is changed, and a `let` that is changed says `mut`</code> —
+        and then <code>help: write `let mut x`</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="home-section">
+  <div class="home-inner home-status">
+    <div>
+      <h2>Pre-alpha, and honest about it</h2>
+      <p>
+        The compiler builds real programs today: a calculator, a JSON parser, a log analyser, a
+        small HTTP server, the One Billion Row Challenge. There is no package registry, test
+        runner or editor integration yet. The roadmap lists what works, the walls you will hit,
+        and where a bug report helps most.
+      </p>
+    </div>
+    <div class="home-status-actions">
+      <a class="button button-secondary" href="{{ "/docs/project_status_and_roadmap.html#where-the-project-actually-stands" | relative_url }}">Status &amp; roadmap</a>
+      <a class="button button-ghost" href="{{ "/examples/" | relative_url }}">See the examples</a>
+    </div>
+  </div>
+</section>
+
+<section class="home-section home-section-alt">
+  <div class="home-inner">
+    <h2 class="home-heading">Where to go next</h2>
+    <div class="next">
+      <a class="next-card" href="{{ "/guide/getting-started.html" | relative_url }}">
+        <h3>Getting started</h3><p>Install the compiler and run your first project.</p></a>
+      <a class="next-card" href="{{ "/guide/syntax.html" | relative_url }}">
+        <h3>A tour of the syntax</h3><p>The language on one page, for readers of other languages.</p></a>
+      <a class="next-card" href="{{ "/manifesto.html" | relative_url }}">
+        <h3>Manifesto</h3><p>Why the project exists, and the case behind every claim.</p></a>
+      <a class="next-card" href="{{ "/docs/specification/" | relative_url }}">
+        <h3>Specification</h3><p>The full rules, from variables to the concurrency model.</p></a>
+      <a class="next-card" href="{{ "/docs/specification/adr/" | relative_url }}">
+        <h3>Decisions</h3><p>Every design decision, with the evidence that settled it.</p></a>
+      <a class="next-card" href="https://github.com/Nikaia-Language/Nikaia">
+        <h3>GitHub</h3><p>The source, the issues, and "this cannot work because…" arguments.</p></a>
+    </div>
+  </div>
+</section>

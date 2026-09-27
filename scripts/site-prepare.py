@@ -196,7 +196,7 @@ def menu(root):
             "pages": [
                 # The README opens with a banner rather than a heading, so this
                 # is the one label that is not a page's own first line.
-                entry(root, root / "README.md", "Overview"),
+                entry(root, root / "README.md", "Home"),
                 entry(root, root / "guide" / "getting-started.md"),
                 entry(root, root / "guide" / "syntax.md"),
                 entry(root, root / "manifesto.md"),
@@ -269,6 +269,15 @@ def llms_txt(root, sections):
     return "\n".join(out) + "\n"
 
 
+def project(root):
+    """What the header says about the project: the version, from the same
+    `**Version:**` line of the specification that `badges.py` reads, so the
+    header and the badge cannot disagree."""
+    part = root / "docs" / "specification" / "10-nikaia-light.md"
+    found = re.search(r"^\*\*Version:\*\* ([\w.]+)", part.read_text(encoding="utf-8"), re.M)
+    return {"version": found.group(1) if found else ""}
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 
@@ -278,6 +287,7 @@ def main():
 
     sections = menu(root)
     write(root / "_data" / "nav.json", json.dumps(sections, indent=2) + "\n")
+    write(root / "_data" / "project.json", json.dumps(project(root), indent=2) + "\n")
     write(root / "llms.txt", llms_txt(root, sections))
     write(root / "_redirects", redirects(root, written))
 

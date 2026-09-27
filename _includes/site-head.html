@@ -1,0 +1,35 @@
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Both, so the browser paints its own furniture — scrollbars, form
+         controls, the canvas behind the page — to match whichever the reader
+         ends up with. `assets/css/nikaia.css` narrows it per theme. -->
+    <meta name="color-scheme" content="light dark">
+
+{% seo %}
+    <!-- The wing of the logo (`1768075880760.jpg`), cut square. The `.ico`
+         sits at the root too, where a browser looks for one unasked. -->
+    <link rel="icon" href="{{ "/favicon.ico" | relative_url }}" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="{{ "/assets/apple-touch-icon.png" | relative_url }}">
+    <link rel="stylesheet" href="{{ "/assets/css/style.css?v=" | append: site.github.build_revision | relative_url }}">
+    <link rel="stylesheet" href="{{ "/assets/css/nikaia.css?v=" | append: site.github.build_revision | relative_url }}">
+
+    <!--
+      Inline and before the stylesheets are applied, because this is the one
+      thing that cannot wait for a file to load: a reader who chose dark and
+      whose system says light would otherwise see a white page flash first.
+      Everything else the picker does is in `assets/js/theme.js`.
+    -->
+    <script>
+      (function () {
+        try {
+          var choice = window.localStorage.getItem("nikaia-theme");
+          if (choice === "light" || choice === "dark" || choice === "sepia") {
+            document.documentElement.setAttribute("data-theme", choice);
+          }
+        } catch (e) {
+          /* Storage can be denied outright. The system theme still applies. */
+        }
+      })();
+    </script>
