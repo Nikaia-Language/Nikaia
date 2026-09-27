@@ -1,24 +1,19 @@
-// ADR-038 D7, question 2, first rule - the other side of it.
+// A compiler experiment, expected to be refused: the same crossing as
+// `../crossing`, through a Rust function that claims its value is safe to send
+// to another thread (`unsafe impl Send`) when it is not.
 //
-// Identical to `../crossing` except for the name of the function called, which
-// is the same crossing through a foreign API whose author wrote
-// `unsafe impl Send` for a type that is not. **This one builds and runs**, and
-// increments an `Rc` refcount on a thread the foreign runtime owns - the
-// foreign crate's `Rc`, not one this language wrote. `Shared` is an atomic
-// count at both settings since ADR-037 D6, and ADR-061 D1 refuses one handed
-// to code nothing describes, so a Nikaia value cannot be smuggled this way:
-// what is smuggled here came from the other side of the boundary.
+//     cd examples/foreign-runtime/smuggled
+//     nikaia build
+//     error[NK2502]: `handle` may not cross a thread, and
+//     `hyper_shim::across_a_thread_unchecked` may put it on one
 //
-// **And this program is refused now**, which it was not when the comment above
-// was written. Not by a `Send` bound - `unsafe impl Send` is exactly what
-// defeats one - but by two things a person wrote down in the description
-// (ADR-193 D1, D2): `crosses = false` on `LocalHandle`, because the type holds
-// an `Rc`, and `threads = true` on the function, because it spawns. The lie is
-// told in `unsafe` Rust and the line it would have to change is in a committed
-// `.contracts` file.
+// The first build fetches `hyper` and `tokio` from crates.io.
 //
-// That is not soundness and the record says so (ADR-193 D3). What moved is who
-// has to be honest. `docs/foreign-runtime.md` §8 is the measurement.
+// It checks that the false claim in Rust does not get the value through. The
+// refusal rests on the crate's description in `contracts/`, which a person
+// wrote and reviews. That is not a proof of safety: a wrong description would
+// let it through.
+
 fn main() {
     let handle = hyper_shim::local_handle("not Send")
     let crossed = hyper_shim::across_a_thread_unchecked(handle)

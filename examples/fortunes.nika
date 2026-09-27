@@ -1,26 +1,10 @@
-// examples/fortunes.nika
+// The TechEmpower "fortunes" benchmark: read rows from a database, add one,
+// sort them and render them as an HTML table.
 //
-// The TechEmpower "fortunes" benchmark, in Nikaia 0.0.7.
+// This does not compile yet: it needs database access, which is not built yet,
+// and the `http` package has no `Server` with routes.
 //
-// Per request: read every row from a `fortune` table, add one row in memory,
-// sort by message, render an HTML table. It is the most interesting of the
-// TechEmpower tests because it touches a database, does server-side templating,
-// and requires correct HTML escaping - all on the hot path.
-//
-// For Nikaia it is the end-to-end test of the 0.0.7 DSL protocol: one handler
-// using *both* binding modes from ADR-007 D4 - deferred parameters for SQL,
-// immediate capture for the template.
-//
-// Build:  nikaia build --user-parallelism=0 --release
-//
-// NOTE: this does not compile yet - see examples/README.md. [G7], the template
-// and its escaping, is done: `render` below lowers and runs. What is left is
-// [G6] alone, the request the handler cannot see - the chain in `main` reads
-// as it should since ADR-022 removed the `fn:` form that could not be chained.
-//
-// `http` is a package and not a module of `std` (ADR-069 D1), so when this file
-// compiles it will be a directory with a manifest naming it by path rather than
-// a single file. The spelling below is the one the first chapter teaches.
+// Shows: an SQL query and an HTML template embedded in the same handler.
 
 use http
 use std::db::postgres
@@ -39,25 +23,13 @@ pub struct Fortune {
 // 2. The template, as a DSL
 // ---------------------------------------------------------------------------
 
-// The `html` grammar uses *immediate capture* (`meta::capture`): `:rows` is
-// resolved from the enclosing scope at compile time, like an assembly operand
-// and unlike a SQL placeholder. The template is fixed at the call site; there
-// is nothing to reuse it over, so baking the binding in is correct here.
+// The template binds immediately: `:rows` is taken from this function's scope
+// where the template is written, unlike a SQL placeholder.
 //
-// Escaping is part of this grammar's contract rather than the caller's
-// discipline, and it is **built**
-// ([ADR-017](../docs/specification/adr/adr-017.md)): every hole is escaped,
-// every time, with no flag at the hole that turns it off; the one way to say
-// "this is already markup" is the type `html::Raw`; and a hole in a position
-// the grammar cannot escape for - inside `<script>`, in a URL - is a compile
-// error naming the position rather than a promise that quietly does not hold.
-// The `render` function below lowers and runs today; what this file still
-// waits on is [G6] alone.
-// `Vec` and not `List`: Part I 2.2's prose calls the concept *List (Vector)*
-// and every program writes `Vec`, which is what `std`'s `ListExt` is implemented
-// for. This line said `List` until `NK1135` asked what declares it
-// ([ADR-096](../docs/specification/adr/adr-096.md)) - a name the language does
-// not have, in a file that never built for another reason and so never said so.
+// Every `{…}` hole is escaped, and nothing at the hole turns that off. The only
+// way to insert markup as it is is a value of type `html::Raw`. A hole where
+// the template cannot escape, such as inside `<script>` or in a URL, is a
+// compile error.
 fn render(rows: Vec[Fortune]) -> String {
     return dsl html {
         <!DOCTYPE html>
@@ -81,50 +53,38 @@ fn render(rows: Vec[Fortune]) -> String {
 
 fn fortunes(db: Shared[postgres::Connection]) -> String throws {
 
-    // A *deferred* parameter DSL, even though this query takes none today.
-    // The statement is parsed once at compile time; the compiler checks the
-    // column names against the schema and hands back a typed result. Writing it
-    // as a string would move both checks to the first production request.
+    // The query binds late: its parameters are filled when it runs, although
+    // this one has none. It is parsed at compile time, and its columns are
+    // checked against the schema. As a plain string, both checks would wait
+    // for the first request in production.
     let all = dsl postgres {
         SELECT id, message FROM fortune
     } eod
 
-    // Implicit async (Part II, 11.1): this is a network round-trip, written in
-    // direct style. No `async` on the signature, no `await` at the call. In the
-    // At 0 the event loop picks up another connection while this one
-    // waits - which is the entire point of the benchmark.
+    // A network round-trip, written as a plain call: no `async` on the
+    // signature and no `await` here. While this request waits, the event loop
+    // serves other connections, which is what the benchmark measures.
     //
-    // And nothing marks the failure either. `fetch` can fail, this function is
-    // `throws`, and that is the whole propagation (ADR-023 D8). A sigil here
-    // would mark one of four invisible things - a pause, a failure, a cleanup
-    // at the closing brace, a loop step that fails (ADR-025 D2) - and imply the
-    // other three were absent.
+    // Nothing marks the failure either. `fetch` can fail, and because this
+    // function is `throws`, the error goes to the caller.
     let mut rows = all.fetch(db)
 
     // The benchmark requires one extra row added in memory, not in the query.
     rows.push(Fortune { id: 0, message: "Additional fortune added at request time." })
 
-    // `sort_by` is @immediate (Part I, 5.4), so the comparison borrows `rows`
-    // rather than moving it - no clone needed.
+    // `sort_by` runs the comparison right away, so it can borrow `rows`
+    // instead of taking it. No copy is needed.
     rows.sort_by fn(left, right) { left.message.cmp(right.message) }
 
     return render(rows)
 }
 
 fn main() throws {
-    // One connection per worker. At `user_parallelism = no` this is a single-threaded
-    // event loop, so `Shared` costs a non-atomic refcount; the same source
-    // compiled with --user-parallelism=auto gets the atomic one, and nothing above
-    // this line changes (Part II, 12.2).
+    // One database connection, shared by every request.
     let db = postgres::connect(env::var("DATABASE_URL") ?? "postgres://localhost/hello_world")
 
-    // A handler sees the request as its first implicit argument, under the
-    // rule the language already has for lambdas
-    // ([ADR-018](../docs/specification/adr/adr-018.md)): one that mentions `a`
-    // receives it, one that does not takes nothing. `fortunes` is the second
-    // kind, which is exactly why this gap went unnoticed here - the other six
-    // TechEmpower tests need a query parameter or a status code. What is left
-    // for [G6] is the runtime binding this cannot run without.
+    // A handler that does not mention the request takes no argument. This one
+    // does not need it.
     http::Server::new()
         .route("/fortunes") fn { fortunes(db) }
         .listen(":8080")

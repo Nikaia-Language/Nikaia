@@ -1,11 +1,11 @@
-// The third question of the ADR-038 D7 experiment, as a single file, so that
-// `nikaia --input examples/foreign-runtime/overlaps.nika --overlaps
-// --user-parallelism yes` answers it with no network and no Cargo.
+// A compiler experiment for the ordering analysis: pairs of statements, some
+// with a call into a Rust crate.
 //
-// A foreign crate has no ledger entry, so `touches` is absent, so ADR-033 D4
-// makes it reach everything and order against everything. The first pair is the
-// control - two reads of two files, which do overlap - and every pair after it
-// has a foreign call in it.
+// It has no `main` and is not run. A test reads it and checks that no pair with
+// a foreign call may run at the same time as its neighbour. The compiler knows
+// nothing about what a foreign call touches, so it must assume everything. The
+// first function is the control: two file reads, which may overlap.
+
 use std::fs
 
 fn control() throws {

@@ -1,43 +1,42 @@
-// **A server**, and the program on the other end of
-// [ADR-069](../../../docs/specification/adr/adr-069.md) D1's path arm.
+// A small web server that answers a greeting, a header and a POST.
 //
-// What it exercises is the pair: `http/` is a package reached **by a path**, and
-// this is a program that reaches it. Until this directory existed nothing in the
-// corpus wrote that arm with a Nikaia package on the end of it (the `type =
-// "rust"` arm has `examples/foreign-runtime/`).
+//     cd examples/hello-http
+//     nikaia run
+//     http: listening on 127.0.0.1:8080
 //
-// It used to render a response and print it, because there was no server to hand
-// one to. There is now
-// ([ADR-194](../../../docs/specification/adr/adr-194.md) D5), so this asks for
-// one — which is the whole of what a program has to write: an address, and one
-// function that decides.
+// Then, from another terminal:
+//
+//     curl 'localhost:8080/?name=Ada'    Hello, Ada
+//     curl localhost:8080/who             you asked localhost:8080
+//     curl -d hello localhost:8080/       you sent 5 bytes
+//     curl localhost:8080/elsewhere       not found
+//
+// Shows: a package reached by a path (`../http`, named in `nikaia.toml`), a
+// function passed as the last argument after the call, and `??` for a value
+// that may be missing.
+
 use http
 use std::cli
 
 fn main() throws {
-    // Port `0` is *any free one*, which is what a test wants; `listen` prints
-    // the address it got, which is how the test finds out which.
+    // An address may be given as an argument. Port `0` picks any free port,
+    // and `listen` prints the one it got.
     let at = cli::args().nth(1) ?? "127.0.0.1:8080"
 
-    // **One function and not a route table**, which is the package's own note:
-    // `NK1142` refuses a function type in a field, so nothing can keep a
-    // handler per path. What a program writes instead is the decision itself,
-    // which is also ADR-194 D4's rule — the program says what is exposed.
+    // One function answers every request and decides by method and path.
+    // Nothing is served that this function does not name.
     http::listen(at) fn(request) {
         if request.method() == http::Method::Post {
             let size = request.body().len()
             return http::Response::text(f"you sent {size} bytes")
         }
-        // **The query string is its own question**
-        // ([ADR-018](../../../docs/specification/adr/adr-018.md) D4), and
-        // **nothing** is not an empty string: `?name=` and no `name` at all are
-        // two different facts, and `??` is where a program says what it does
-        // about the second.
+        // A missing value is not an empty string: `?name=` gives "" and no
+        // `name` at all gives nothing. `??` supplies a value for the second
+        // case only.
         if request.path() == "/" {
             let who = request.query("name") ?? "world"
             return http::Response::text(f"Hello, {who}")
         }
-        // And a header, case-insensitive as the protocol is.
         if request.path() == "/who" {
             let host = request.header("host") ?? "nobody"
             return http::Response::text(f"you asked {host}")
