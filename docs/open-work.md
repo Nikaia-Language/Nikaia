@@ -67,6 +67,75 @@ the scrutinee lent where no arm keeps what it binds — which arms keep is the
 `keeps` question [ADR-094](specification/adr/adr-094.md) already answers for
 calls.
 
+### 1.17. A pausing step in a `par_fold` compiles and folds nothing
+
+A fold step that calls a function which may pause is neither refused nor
+awaited. `examples/1brc.nika` with `sync` taken off `Summary::record` and one
+pausing call put in it:
+
+```nika
+fn record(ref mut self, m: Reading) {
+    let note = fs::read_to_string("m.txt", fs::Root::Anywhere) catch { "" }
+    …
+}
+```
+
+builds at both settings of `user_parallelism`, and on a one-row input prints
+`{}` instead of the station. The only sign is `rustc`'s warning at the
+`par_fold` line, *unused implementer of `Future` that must be used*: the step
+became a future and the fold drops it. `record` is called from the step lambda,
+which `par_fold` requires to be `sync`; the check that refuses a pausing call in
+a `sync` body (`NK2202`) does not reach through the lambda to the method it
+calls. Evidence: the program above, built with `nikaia run` at 0.0.228.
+
+### 1.18. A field read on a map lookup without `??` reaches `rustc` in `examples/access-log.nika`
+
+Taking the `?? panic(…)` off `examples/access-log.nika:137`, so the line reads
+`let counts = report.paths[path]`, is refused by `rustc`, not by `NK1125`:
+
+```text
+error: src/main.nika:138:9: no field `hits` on type `Option<&Counts>`
+```
+
+Four smaller programs that each take one ingredient of that line — the lookup
+inside a `map` lambda, the map in a struct field, the field read inside a tuple
+literal, a lambda over `keys().collect()` — are all refused with `NK1125`, so the
+trigger is the combination and is not isolated yet. Two of those four also show
+a second fault: where the map's value type is inferred from a later
+assignment, the message names `??` instead of the type
+(*`??` may be absent, so it has no field to reach*). Evidence: the edit above at
+0.0.228.
+
+### 1.19. `examples/foreign-runtime/serve` does not build, and its test is ignored
+
+`cargo test -p nikaia --test foreign_runtime -- --ignored` fails
+`a_nikaia_program_serves_one_request_through_hyper`:
+
+```text
+error: examples/foreign-runtime/serve/src/main.nika:24:5: the trait bound `&str: Describe` is not satisfied
+     = the trait `Describe` is implemented for `String`
+```
+
+A text literal passed to the shim now lowers to `&str`, and the shim's
+`Describe` is implemented for `String` only. The test is `#[ignore]` because it
+fetches crates from crates.io, so no CI run sees it. Evidence: that command at
+0.0.228.
+
+### 1.20. Every program with a `grammar` prints a `rustc` warning about `cfg` `trace`
+
+Building any program that declares a `grammar` (`examples/calc.nika` is the
+smallest) prints, at the `grammar` line:
+
+```text
+warning: src/main.nika:19:1: unexpected `cfg` condition value: `trace`
+```
+
+followed by `rustc`'s advice about `check-cfg` and `winnow_grammar_macros`. The
+`grammar!` macro expands a `cfg(feature = "trace")` into the program's own
+crate, which declares no such feature (`crates/nikaia-std/Cargo.toml` has it, and
+forwards it to `winnow-grammar`). The program is correct; the warning is the
+backend's words on every build. Evidence: `nikaia run` on `calc.nika` at 0.0.228.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
