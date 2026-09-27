@@ -34,7 +34,32 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-**This section is empty.**
+### 1.15. `count()` hands back the backend's `usize`, not an `i64`
+
+Part I 2.2 says a length is an `i64` and that `u64`/`usize` are not types a
+program writes. `len()` keeps that promise; `count()` on a sequence does not:
+the emitted Rust keeps `Iterator::count`'s `usize`, and the program meets it
+in `rustc`'s words the moment the count stands where an `i64` is wanted.
+
+```nika
+fn count_words(text: ref String) -> i64 {
+    return text.split_whitespace().count()
+}
+```
+
+```text
+error: src/main.nika:2:5: mismatched types
+   2 |     return text.split_whitespace().count()
+     = you can convert a `usize` to an `i64` and panic if the converted value doesn't fit
+```
+
+The same with `let n: i64 = ….count()`, and with a sum,
+`"abc".chars().count() + "abc".len()` (*the trait `Add<i64>` is not
+implemented for `usize`*). A count that is only printed compiles, which is why
+no example has met it. Evidence: the three programs above, built with
+`nikaia run` at 0.0.225. The fix is the one `len()` already has: the
+compiler writes the checked conversion where the count is produced (2.2,
+*a count is as wide as the machine is; the conversion is checked*).
 
 ## 2. Decided and unbuilt
 
