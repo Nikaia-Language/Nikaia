@@ -6,12 +6,22 @@ fenced literal braces off from Liquid and before Jekyll builds. Nothing here cha
 the repository, and nothing here restates documentation: every page it writes
 either quotes a program that exists or is a list of links to pages that exist.
 
-Five things:
+Six things:
 
 1. **A page per example program.** `examples/*.nika` are published as files, and
    a browser asking for one gets a download rather than a page — no layout, no
    menu, no highlighting. Each now has a page beside it that shows the program,
-   with the file itself still one link away.
+   with the file itself still one link away, as `tally.nika.txt`: a browser
+   shows plain text rather than downloading it, and the link's `download`
+   attribute names the saved file `tally.nika` again.
+
+6. **`_redirects`, which sends `/examples/tally.nika` to that page.** The
+   address a reader has — from the README, from a search result, from a link
+   written before the pages existed — is the program's own, and it should
+   open the page, not a download. Cloudflare follows a redirect before it
+   looks for an asset, so the rule wins over the file of that name; the file
+   is still served, at `tally.nika.txt`. `site-build.sh` lays this file into
+   `_site`, since Jekyll publishes nothing whose name starts with `_`.
 
 2. **A directory index where a directory of programs has no README.**
    `examples/inventory/` is linked as a directory from the examples index and
@@ -103,8 +113,10 @@ def example_pages(root):
             f"{program.read_text(encoding='utf-8').rstrip()}\n"
             "```\n"
             f"{RAW_CLOSE}\n\n"
-            f"[The file itself]({name}) · [all the examples]({up})\n",
+            f"[The file itself]({name}.txt){{: download=\"{name}\"}}"
+            f" · [all the examples]({up})\n",
         )
+        write(program.with_name(name + ".txt"), program.read_text(encoding="utf-8"))
         written.append(page)
 
     directories = {p.parent for p in examples.rglob("*.nika")}
@@ -138,6 +150,15 @@ def relink_examples_index(root, written):
         return match.group(0)
 
     index.write_text(re.sub(r"\]\(([^)/]+\.nika)\)", swap, text), encoding="utf-8")
+
+
+def redirects(root, written):
+    """`/examples/tally.nika` → `/examples/tally`, one line per program."""
+    lines = []
+    for page in written:
+        url = "/" + page.relative_to(root).with_suffix("").as_posix()
+        lines.append(f"{url}.nika {url} 301")
+    return "\n".join(lines) + "\n"
 
 
 def docs_index_permalink(root):
@@ -256,6 +277,7 @@ def main():
     sections = menu(root)
     write(root / "_data" / "nav.json", json.dumps(sections, indent=2) + "\n")
     write(root / "llms.txt", llms_txt(root, sections))
+    write(root / "_redirects", redirects(root, written))
 
     print(f"{len(written)} example pages")
     for section in sections:

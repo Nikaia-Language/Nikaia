@@ -2,10 +2,10 @@
 <!--
   The site's one layout.
 
-  It is `jekyll-theme-primer`'s own `_layouts/default.html` with three things
+  It is `jekyll-theme-primer`'s own `_layouts/default.html` with four things
   added and nothing taken away: the theme attribute the reader's choice is
   written to, the stylesheet and script that make that choice mean something,
-  and the control that offers it. Overriding the layout is what puts the
+  the control that offers it, and the favicon. Overriding the layout is what puts the
   picker in the page rather than injecting it from script, so a reader who
   has JavaScript switched off still gets the theme their system asks for.
 -->
@@ -21,6 +21,10 @@
     <meta name="color-scheme" content="light dark">
 
 {% seo %}
+    <!-- The wing of the logo (`1768075880760.jpg`), cut square. The `.ico`
+         sits at the root too, where a browser looks for one unasked. -->
+    <link rel="icon" href="{{ "/favicon.ico" | relative_url }}" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="{{ "/assets/apple-touch-icon.png" | relative_url }}">
     <link rel="stylesheet" href="{{ "/assets/css/style.css?v=" | append: site.github.build_revision | relative_url }}">
     <link rel="stylesheet" href="{{ "/assets/css/nikaia.css?v=" | append: site.github.build_revision | relative_url }}">
 
