@@ -23,6 +23,12 @@ open. The version is the specification's; the compiler's crates carry their own.
   or hands back something the checker cannot name (Part I 7.1 says so in a
   sentence). Where a lookup's value type is unknown, the message says *this
   value may be absent* instead of naming the operator `??`.
+  - Typing the `catch` surfaced a false `NK2105` in `examples/http`: two loops
+    that each bind `more` and hand it to `take` were one name to the check for
+    a read after a hand-over. A `let` now gives a name a value again, as an
+    assignment does.
+  - `lent_arguments.rs` used a bare `catch` as its value of unknown type; it
+    uses an `if` whose branches the checker does not unify instead.
 - **§1.19: `examples/foreign-runtime/serve` builds and runs.** A text literal
   handed to a Rust crate's generic parameter (`across_a_thread<T: Describe>`,
   `Describe` for `String` only) lowered as `&str`. A kept, by-value `$T` that

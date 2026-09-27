@@ -6709,6 +6709,19 @@ impl<'a> Checker<'a> {
                     let to = format!("bound to `{}` by a `let`", bound.join("`, `"));
                     self.hands_over(value, &found, &to, span);
                 }
+                // **And a `let` gives the name a value again**, as an
+                // assignment does: a name handed over and then bound anew is a
+                // new binding, so a read after it is not a read of what was
+                // taken. Two loops that each bind `more` and hand it to
+                // `take` - `examples/http` - were one name to the path walk.
+                let rebound: Vec<String> = bound
+                    .iter()
+                    .filter(|n| **n != "_")
+                    .map(|n| n.to_string())
+                    .collect();
+                for name in rebound {
+                    self.written_at.push((name, span.start));
+                }
                 // **A `let` over a place is a view of it** (ADR-094 D4), and
                 // the emitter needs to know before it writes the line. A bare
                 // name is deliberately not a place here: `let y = x` is a

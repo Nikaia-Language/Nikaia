@@ -346,12 +346,14 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
                   \n\
                   fn main() {\n\
                   \x20   let data = \"abcd\"\n\
-                  \x20   let entries = read(data) catch { return }\n\
+                  \x20   let entries = if data.len() > 0 { read(data) catch { return } } else { Vec() }\n\
                   \x20   println(f\"{total(entries)}\")\n\
                   }\n";
 
-    // A `catch` hands back a value this compiler does not name, and the
-    // declaration lends all the same - so the call must too.
+    // An `if` whose branches this compiler does not bring to one type hands
+    // back a value it does not name, and the declaration lends all the same -
+    // so the call must too. (It was a bare `catch` until 0.0.230, when a
+    // `catch` took the type of what it guards.)
     let rust = lowered(source);
     assert!(rust.contains("fn total(entries: &Vec<Entry>)"), "{rust}");
     assert!(rust.contains("total(&entries)"), "{rust}");

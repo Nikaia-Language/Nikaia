@@ -717,3 +717,49 @@ fn a_bare_literal_is_text_of_its_own_where_it_is_kept() {
         "1 one B\nnone\nda",
     );
 }
+
+/// **A name bound again is a new binding** (0.0.230). Two loops that each bind
+/// `more` and hand it to something that keeps it are two names to the reader,
+/// and were one to the walk that finds a read after a hand-over: the second
+/// loop's `more.len()` was taken for a read of the first loop's `more`. It was
+/// found when a `catch` began to have a type, so `examples/http`'s
+/// `connection.read() catch { return }` was data at last. A `let` gives the
+/// name a value again, as an assignment does; a real read after a hand-over is
+/// still refused.
+#[test]
+fn a_name_bound_again_is_not_the_one_handed_over() {
+    let source = |tail: &str| {
+        format!(
+            "fn next() -> Vec[i64] throws {{ return [1, 2] }}\n\
+             fn main() {{\n\
+             \x20   let mut all = Vec()\n\
+             \x20   while all.len() < 4 {{\n\
+             \x20       let more = next() catch {{ return }}\n\
+             \x20       all.push(more)\n\
+             \x20   }}\n\
+             \x20   while all.len() < 8 {{\n\
+             \x20       let more = next() catch {{ return }}\n\
+             \x20       if more.len() == 0 {{ return }}\n\
+             \x20       all.push(more)\n\
+             \x20   }}\n\
+             {tail}\
+             \x20   println(f\"{{all.len()}}\")\n\
+             }}\n"
+        )
+    };
+    let refused = |source: String| -> Vec<String> {
+        findings(&source)
+            .into_iter()
+            .filter(|f| f.code == "NK2105")
+            .map(|f| f.message)
+            .collect()
+    };
+    assert!(refused(source("")).is_empty(), "{:?}", refused(source("")));
+    runs("rebound-in-two-loops", &source(""), "8");
+
+    let reused = refused(source(
+        "    let kept = next() catch { return }\n    all.push(kept)\n    println(f\"{kept.len()}\")\n",
+    ));
+    assert_eq!(reused.len(), 1, "{reused:?}");
+    assert!(reused[0].contains("`kept`"), "{reused:?}");
+}
