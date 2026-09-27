@@ -123,11 +123,15 @@ for readers who come from Python, JavaScript, Go, Java or similar.
 
 **Look elsewhere if you need:**
 
+* **An interactive REPL.** This is a design choice, not a gap: Nikaia works out its guarantees
+  by looking at the whole program at once, and a line typed into a prompt has no whole program
+  around it.
+
+For now, also look elsewhere if you need the things only time brings:
+
 * **Something to ship next quarter.** Nikaia is pre-alpha (see below).
-* **A large ecosystem**, an interactive REPL, or years of answered questions online.
-* **To embed a big runtime** like PyTorch, Spark or a JVM library. Calling a C library works;
-  hosting another language's runtime inside your program brings back exactly the costs Nikaia
-  is built to avoid.
+* **A large ecosystem** of libraries.
+* **Years of answered questions online.**
 
 ---
 
