@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.235] — 2026-09-27
+
+**A map keyed by numbers can be read** — closing `open-work.md` §1.21.
+
+- **A lookup method's key is lent.** `m.get(k)`, `m.contains_key(k)` and a
+  set's `contains(k)` and `remove(k)` passed a number key by value where the
+  language below takes a reference, and `rustc` said *mismatched types*. A
+  method's arguments are not lent by the ledger's column (the declaration would
+  be written off it), so the checker lends a `std` lookup's key itself, for
+  exactly those entries: `&k` where the key's type is known, and
+  `index::AsKey::as_key(&k)` where it is not (`let k = 1` has no type until
+  something pins it) - which lends a number and passes a view through. A
+  `String` key looked up is no longer handed over, so it is still there after
+  (`NK2105` said *`get` keeps it* before).
+- **On a map whose key type nothing pinned, a key is not a list position.**
+  `collections::HashMap()` with no annotation, then `m[1] = 2` and `m[k]`,
+  went through `index::at`, which made the map keyed by `usize` and the read a
+  mismatch. A write now hands the key over as it is and a read goes through
+  `index::key`, the same number-or-view answer; a map of views reads as before.
+- Tests: `tests/map_reads.rs`.
+
 ## [0.0.234] — 2026-09-27
 
 **Two more shapes refused here rather than by `rustc`, and the question each

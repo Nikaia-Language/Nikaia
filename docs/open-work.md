@@ -34,33 +34,6 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.21. A map keyed by numbers cannot always be read
-
-Found at 0.0.232, while making `collections::HashSet()` build. Two cases,
-measured, and in both `rustc` refuses a file nobody wrote
-([Part III C.1](specification/30-nikaia-tooling.md)):
-
-* **A method's key is passed by value.** On
-  `let mut m: collections::HashMap[i64, i64] = collections::HashMap()`,
-  `m.get(k)` lowers as `m.get(k)` and `rustc` says *mismatched types*
-  (`&i64` wanted). The same holds for `contains_key`, and for
-  `HashSet::contains`, `BTreeSet::contains` and `BTreeMap::get`. Text keys work
-  only because a text literal is already a view. The ledger cannot fix it: the
-  key is `?` (`HashMap::get`'s comment says why), and writing `ref $K` changes
-  nothing, because `contracts::keeps::lends` says *a method's arguments are not
-  lent yet* — the checker resolves which entry a method call goes to and the
-  emitter does not.
-* **`m[k]` is right where the map's type is declared, and not where it was
-  inferred.** On the map above, `m[k]` and `m[1]` lower to
-  `index::get(&m, &k)` and `index::get(&m, &1)` and run. On
-  `let mut m = collections::HashMap()` followed by `m[1] = 2`, the key type is
-  never pinned, `m[k]` lowers as a list position (`index::at(k)`), and `rustc`
-  says *type mismatch resolving `<i32 as At>::Out == &usize`*.
-
-`m[k]` is the language's own read ([ADR-215](specification/adr/adr-215.md) D1)
-and goes through `check::KeyForm`, which is the mechanism a method's key needs
-too.
-
 ### 1.24. A `Shared` field of a type and the value put in it disagree on the count
 
 Found at 0.0.234, measuring how a type can hold itself. In

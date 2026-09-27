@@ -319,6 +319,83 @@ where
     }
 }
 
+/// **A key read out of a map whose key type the checker could not pin**
+/// (0.0.235): what `index::key(k)` wraps.
+///
+/// A map's read wants `&Q` where the map's key borrows as `Q`, and the key in
+/// the brackets may be a number (lent here) or already a view (passed
+/// through) - which one, the emitter cannot say, because nothing in the source
+/// pinned the map's key type. [`AsKey`] answers it by the key's own type.
+pub struct Key<T>(T);
+
+/// Wrap a key for [`Key`]'s read.
+pub fn key<T: AsKey>(key: T) -> Key<T> {
+    Key(key)
+}
+
+/// What a key is looked up as.
+pub trait AsKey {
+    type Q: ?Sized;
+    fn as_key(&self) -> &Self::Q;
+}
+
+macro_rules! keyed_by_value {
+    ($($t:ty),*) => {
+        $(
+            impl AsKey for $t {
+                type Q = $t;
+                fn as_key(&self) -> &$t {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+keyed_by_value!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char, bool, String
+);
+
+impl<T: ?Sized> AsKey for &T {
+    type Q = T;
+    fn as_key(&self) -> &T {
+        self
+    }
+}
+
+impl<K, T, V, S> Get<Key<T>> for std::collections::HashMap<K, V, S>
+where
+    T: AsKey,
+    K: std::cmp::Eq + std::hash::Hash + std::borrow::Borrow<T::Q>,
+    T::Q: std::cmp::Eq + std::hash::Hash,
+    S: std::hash::BuildHasher,
+{
+    type Out<'a>
+        = Found<'a, V>
+    where
+        Self: 'a;
+
+    fn get(&self, key: Key<T>) -> Found<'_, V> {
+        Found(std::collections::HashMap::get(self, key.0.as_key()))
+    }
+}
+
+impl<K, T, V> Get<Key<T>> for std::collections::BTreeMap<K, V>
+where
+    T: AsKey,
+    K: Ord + std::borrow::Borrow<T::Q>,
+    T::Q: Ord,
+{
+    type Out<'a>
+        = Found<'a, V>
+    where
+        Self: 'a;
+
+    fn get(&self, key: Key<T>) -> Found<'_, V> {
+        Found(std::collections::BTreeMap::get(self, key.0.as_key()))
+    }
+}
+
 /// The emitted spelling: `nikaia_std::index::get(&m, nikaia_std::index::at(k))`.
 #[track_caller]
 pub fn get<T, K>(target: &T, key: K) -> T::Out<'_>

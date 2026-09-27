@@ -1422,6 +1422,8 @@ struct Emitter<'p> {
     /// this argument is already a view.
     lent_args:
         std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    /// `check::Checked::lookup_keys` (0.0.235).
+    lookup_keys: std::collections::BTreeSet<(usize, String, String)>,
     /// **The arguments the compiler writes a `&mut` for**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// `lent_args` is. The third state, and the one that is a declaration
@@ -2358,6 +2360,7 @@ impl<'p> Emitter<'p> {
             held: std::cell::RefCell::new(HashMap::new()),
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
+            lookup_keys: propagation.lookup_keys,
             mut_args: propagation.mut_args,
             copied_args: propagation.copied_args,
             nullable_args: propagation.nullable_in_args,
@@ -6518,6 +6521,12 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        if form == crate::check::KeyForm::Either {
+            out.push("nikaia_std::index::key(");
+            self.expr(out, index, depth, flow)?;
+            out.push(")");
+            return Ok(());
+        }
         if form != crate::check::KeyForm::Lent {
             return self.expr(out, index, depth, flow);
         }
@@ -10440,6 +10449,21 @@ impl<'p> Emitter<'p> {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 out.push(", ");
+            }
+            // **A lookup's key of no known type** (0.0.235): the reference the
+            // map wants, whichever of a number or a view the key turns out to
+            // be (`check::Checked::lookup_keys`).
+            if i == 0
+                && self.lookup_keys.contains(&(
+                    flow.statement,
+                    callee.to_string(),
+                    crate::check::argument_shape(arg),
+                ))
+            {
+                out.push("nikaia_std::index::AsKey::as_key(&");
+                self.expr(out, arg, depth, flow)?;
+                out.push(")");
+                continue;
             }
             // ADR-040 D1: a handle on a shared value is **duplicated, never
             // moved**, where it is handed on by value. There is no method for a

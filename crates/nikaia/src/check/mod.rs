@@ -701,6 +701,12 @@ pub struct Checked {
     /// went down the same path.
     pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// **A lookup's key whose type this checker could not work out**
+    /// (0.0.235), by statement, method as written and the argument's shape:
+    /// the emitter writes `index::AsKey::as_key(&k)`, which is the reference
+    /// the language below wants whether `k` turns out a number, owned text or
+    /// a view ([`Checker::a_lookup_key_lent`]).
+    pub lookup_keys: BTreeSet<(usize, String, String)>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1622,6 +1628,8 @@ pub struct Propagation {
     pub view_fallbacks: BTreeSet<usize>,
     /// [`Checked::lent_args`].
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// [`Checked::lookup_keys`].
+    pub lookup_keys: BTreeSet<(usize, String, String)>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -1811,6 +1819,7 @@ pub fn propagation_against(
         owned_texts: checked.owned_texts,
         view_fallbacks: checked.view_fallbacks,
         lent_args: checked.lent_args,
+        lookup_keys: checked.lookup_keys,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -2940,6 +2949,10 @@ pub enum KeyForm {
     Lent,
     /// Read, and already a view: it goes in as it is.
     AsIs,
+    /// Read, from a map whose key type nothing pinned, with a key that may
+    /// be a number or a view: `index::key` lends the one and passes the other
+    /// through (0.0.235).
+    Either,
 }
 
 /// A path through the choices of a body: which arm of which `if` or `match`
@@ -4296,6 +4309,53 @@ impl<'a> Checker<'a> {
                 ),
             }),
         });
+    }
+
+    /// **A lookup's key is lent** (0.0.235, `open-work.md` §1.21).
+    ///
+    /// `m.get(k)`, `m.contains_key(k)` and a set's `contains(k)` and
+    /// `remove(k)` take the key by reference in the language below, and a
+    /// method's arguments are not lent by the ledger's column
+    /// (`contracts::keeps::lends` says why: the declaration would be written
+    /// off it, and a call the checker does not walk would miss). These
+    /// declarations are Rust's and are never written off anything, so the
+    /// reason does not reach them: the `&` is recorded here, for exactly these
+    /// entries, where the key is a known value that is not already a view.
+    /// `m.get(k)` over a map keyed by numbers was `rustc`'s *mismatched types*.
+    fn a_lookup_key_lent(
+        &mut self,
+        key: &str,
+        written: &str,
+        args: &[Expr],
+        found: &[Ty],
+        span: &Span,
+    ) {
+        if !is_a_lookup(key) || !self.library.functions.contains_key(key) {
+            return;
+        }
+        let ([given], [ty]) = (args, found) else {
+            return;
+        };
+        if ty.is_a_view() || matches!(given, Expr::LitStr { .. }) {
+            return;
+        }
+        // **A key of no known type** - `let k = 1` has none until something
+        // pins it - is written through `AsKey`, which lends a number and
+        // passes a view through, since the `&` alone would be wrong for the
+        // second.
+        if ty.is_unknown() {
+            self.checked.lookup_keys.insert((
+                span.start,
+                written.to_string(),
+                argument_shape(given),
+            ));
+            return;
+        }
+        self.checked
+            .lent_args
+            .entry((span.start, written.to_string(), 0))
+            .or_default()
+            .insert(argument_shape(given));
     }
 
     /// **`NK1190`: a `std` type called as its constructor, where nothing
@@ -6179,6 +6239,7 @@ impl<'a> Checker<'a> {
         // `set`, which is the word on the page.
         let written = self.parsed.text(method).to_string();
         let result = self.arguments(&key, &written, contract, args, &found, &[], span);
+        self.a_lookup_key_lent(&key, &written, args, &found, span);
         self.a_view_kept_where_the_receiver_says_text(
             &key, contract, args, &found, &expected, span,
         );
@@ -10532,10 +10593,11 @@ impl<'a> Checker<'a> {
             // own where the callee keeps it, and the literal as it is where the
             // callee only reads it, because that parameter is a `&str` below
             // (D3) and a constant needs no copy to be read.
-            let kept = !crate::contracts::keeps::lends(
+            let lent = crate::contracts::keeps::lends(
                 contract,
                 at + usize::from(signature.takes_a_receiver()),
-            );
+            ) || (at == 0 && is_a_lookup(key));
+            let kept = !lent;
             // **What the callee keeps, it is given** (ADR-213 D3): no `&` is
             // written for this position, so a name here moves.
             // **Not across the C boundary**: what a C declaration takes it
@@ -10859,10 +10921,11 @@ impl<'a> Checker<'a> {
         let arguments = signature.arguments();
         for (at, ((name, declared), want)) in arguments.iter().zip(expected).enumerate() {
             let generic = matches!(declared, Ty::Var { .. });
-            let kept = !crate::contracts::keeps::lends(
+            let lent = crate::contracts::keeps::lends(
                 contract,
                 at + usize::from(signature.takes_a_receiver()),
-            );
+            ) || (at == 0 && is_a_lookup(key));
+            let kept = !lent;
             let Some(found) = found.get(at) else { continue };
             if !generic || !kept || !views_into_text(found, want) {
                 continue;
@@ -11804,7 +11867,35 @@ impl<'a> Checker<'a> {
     /// A map keyed by **views** is left exactly as it was: every example keys
     /// its maps that way, and a view goes through `at` untouched.
     fn a_map_key(&mut self, keys: &Ty, found: &Ty, index: &Expr, writing: bool, span: &Span) {
-        if keys.is_unknown() || keys.is_a_view() {
+        // **A map whose key type nothing pinned is keyed by what goes in the
+        // brackets** (0.0.235, `open-work.md` §1.21). `collections::HashMap()`
+        // with no annotation has `?` keys, and the brackets went through `at`,
+        // which made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the
+        // language below refused. Where the key is a known value that is not
+        // a view, it is the map's key; a view or a key of no known type goes
+        // through `at` as before, which is the path every map of views takes.
+        // **A map whose key type nothing pinned** (0.0.235, `open-work.md`
+        // §1.21). `collections::HashMap()` with no annotation has `?` keys,
+        // and the brackets went through `at`, which is for a **position**: it
+        // made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the
+        // language below refused. A key is not a position, and the receiver is
+        // known to be a map, so neither side goes through `at` any more: a
+        // write hands the key over as it is, and a read of a key that is not
+        // already a view goes through `index::key`, which lends a number and
+        // passes a view through - the one spelling that is right whatever the
+        // map turns out to be keyed by, since this checker cannot say.
+        if keys.is_unknown() {
+            let form = match (writing, found.is_a_view()) {
+                (true, _) => KeyForm::Handed,
+                (false, true) => KeyForm::AsIs,
+                (false, false) => KeyForm::Either,
+            };
+            self.checked
+                .map_keys
+                .insert((span.start, argument_shape(index)), form);
+            return;
+        }
+        if keys.is_a_view() {
             return;
         }
         let form = match writing {
@@ -19419,6 +19510,22 @@ fn reaches_itself(start: &str, holds: &BTreeMap<String, BTreeSet<String>>) -> Op
     }
     let mut path = Vec::new();
     walk(start, start, holds, &mut BTreeSet::new(), &mut path).then_some(path)
+}
+
+/// **A `std` lookup whose key the language below takes by reference**
+/// (0.0.235): the map or set is asked about the key and keeps nothing, so the
+/// key is lent ([`Checker::a_lookup_key_lent`]) and not handed over.
+fn is_a_lookup(key: &str) -> bool {
+    const LOOKUPS: &[&str] = &[
+        "HashMap::get",
+        "HashMap::contains_key",
+        "HashSet::contains",
+        "HashSet::remove",
+        "BTreeMap::get",
+        "BTreeMap::contains_key",
+        "BTreeSet::contains",
+    ];
+    LOOKUPS.contains(&key.strip_prefix("collections::").unwrap_or(key))
 }
 
 /// A list: what `[…]` makes, and what `Vec()` builds.

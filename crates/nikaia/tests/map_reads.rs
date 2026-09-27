@@ -323,3 +323,48 @@ fn a_read_of_a_map_whose_values_are_unknown_names_no_operator() {
     assert!(!found[0].message.contains("`??`"), "{found:#?}");
     assert!(found[0].message.contains("may be absent"), "{found:#?}");
 }
+
+/// **A map keyed by numbers can be read** (0.0.235, `open-work.md` §1.21).
+///
+/// Two ways it was not, both `rustc` about a file nobody wrote. A lookup
+/// method's key went below by value, where Rust's `get`, `contains_key`,
+/// `contains` and `remove` take it by reference - the checker now records the
+/// `&` for exactly those `std` entries, and a key of no known type goes
+/// through `index::AsKey`, which lends a number and passes a view through.
+/// And on a map whose key type nothing pinned, `m[1] = 2` and `m[k]` went
+/// through `index::at`, which is for a list position: the key is now handed
+/// over as it is on a write and read through `index::key` - neither side is a
+/// position on a map. A `String` key looked up is lent and not handed over,
+/// so it is still there to use after.
+#[test]
+fn a_map_keyed_by_numbers_is_read() {
+    let source = "use std::collections\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut m = collections::HashMap()\n\
+                  \x20   m[1] = 2\n\
+                  \x20   m.insert(5, 6)\n\
+                  \x20   let k = 1\n\
+                  \x20   println(f\"{m[k] ?? 0} {m[5] ?? 0} {m[9] ?? -1} {m.get(k) ?? 0} {m.contains_key(k)} {m.len()}\")\n\
+                  \x20   let mut t = collections::HashMap()\n\
+                  \x20   t[\"a\"] = 10\n\
+                  \x20   let name = \"a\"\n\
+                  \x20   println(f\"{t[name] ?? 0} {t.get(name) ?? 0} {t.contains_key(name)}\")\n\
+                  \x20   let mut owned: collections::HashMap[String, i64] = collections::HashMap()\n\
+                  \x20   let who: String = \"b\"\n\
+                  \x20   owned[who.clone()] = 3\n\
+                  \x20   println(f\"{owned[who] ?? 0} {owned.get(who) ?? 0} {owned.contains_key(who)}\")\n\
+                  \x20   let mut typed: collections::HashMap[i64, i64] = collections::HashMap()\n\
+                  \x20   typed[4] = 40\n\
+                  \x20   let four: i64 = 4\n\
+                  \x20   println(f\"{typed[four] ?? 0} {typed.get(four) ?? 0} {typed.contains_key(four)}\")\n\
+                  \x20   let mut seen = collections::HashSet()\n\
+                  \x20   seen.insert(7)\n\
+                  \x20   let seven = 7\n\
+                  \x20   println(f\"{seen.contains(seven)} {seen.remove(seven)} {seen.len()}\")\n\
+                  }\n";
+    assert_eq!(
+        output("number-keys", source),
+        "2 6 -1 2 true 2\n10 10 true\n3 3 true\n40 40 true\ntrue true 0"
+    );
+}

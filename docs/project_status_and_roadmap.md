@@ -34,7 +34,7 @@ is correct, because the big one is what is actually in the way.
 
 *In plain words: what works today, what does not, and where a bug report helps most.*
 
-**Pre-alpha, as of 0.0.234.** The table above shows 74.4 % —
+**Pre-alpha, as of 0.0.235.** The table above shows 74.4 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in

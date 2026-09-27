@@ -745,10 +745,11 @@ doc = "Whether the map holds this key."
 # `HashSet` in a trusted program is `TrustedSet::default()`, as `HashMap` is
 # `TrustedMap` (ADR-010 D5) - the emitter's `path` answers that off the name.
 #
-# **A lookup's key is `?`**, as `HashMap::get`'s is and for its reason. And a
-# method's arguments are not lent yet (`contracts::keeps::lends`), so a key
-# that is not already a view - a number - reaches the language below by value:
-# `open-work.md` §1.21, *a map keyed by numbers cannot always be read*.
+# **A lookup's key is `?`**, as `HashMap::get`'s is and for its reason. A
+# method's arguments are not lent by this file's column
+# (`contracts::keeps::lends`), so the checker lends a lookup's key itself, for
+# exactly these entries (`check::is_a_lookup`, 0.0.235): the `&` where the key's
+# type is known, and `index::AsKey` where it is not.
 [fn."collections::HashSet::new"]
 pub = true
 sync = true
