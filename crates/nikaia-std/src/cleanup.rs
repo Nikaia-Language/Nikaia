@@ -31,6 +31,8 @@
 //! setting has ([`Kind`]).
 
 use std::cell::RefCell;
+
+use crate::error::{Origin, Thrown};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -343,13 +345,13 @@ pub async fn settle_quietly<K: Kind>() {
 /// and not the function - and then what died in it is settled. A failure while
 /// the body already failed is the body's failure's **secondary** (D3); one
 /// where the body succeeded is the function's failure.
-pub async fn settle_after<K: Kind, T, E, F>(body: F) -> Result<T, E>
+pub async fn settle_after<K: Kind, T, E, F>(body: F, origin: Origin) -> Result<T, E>
 where
     F: Future<Output = Result<T, E>>,
-    E: From<Failure> + crate::error::Joined,
+    E: From<Thrown<Failure>> + crate::error::Joined,
 {
     let result = body.await;
-    joined(result, settle::<K>().await)
+    joined(result, settle::<K>().await, origin)
 }
 
 /// The same around a function that cannot fail. A cleanup that failed there has
@@ -478,10 +480,10 @@ pub async fn branch<K: Kind, T, F: Future<Output = T>>(body: F) -> T {
 /// take the failure: a cleanup that fails while the branch is already failing
 /// joins **that branch's** error (ADR-115 D3), one that fails where it
 /// succeeded is its error.
-pub async fn branch_after<K: Kind, T, E, F>(body: F) -> Result<T, E>
+pub async fn branch_after<K: Kind, T, E, F>(body: F, origin: Origin) -> Result<T, E>
 where
     F: Future<Output = Result<T, E>>,
-    E: From<Failure> + crate::error::Joined,
+    E: From<Thrown<Failure>> + crate::error::Joined,
 {
     let mut queues = Own(K::Queues::default());
     let result = Within {
@@ -494,22 +496,34 @@ where
         queues: &mut queues,
     }
     .await;
-    joined(result, settled)
+    joined(result, settled, origin)
 }
 
-/// A body's result and its settle point's, as one (D3).
-fn joined<T, E: From<Failure> + crate::error::Joined>(
+/// A body's result and its settle point's, as one (D3). The failure goes in
+/// an envelope with the settle point's site, so `error.full()` says where the
+/// cleanup ran ([ADR-240](../../../docs/specification/adr/adr-240.md) D2).
+fn joined<T, E: From<Thrown<Failure>> + crate::error::Joined>(
     result: Result<T, E>,
     settled: Result<(), Failure>,
+    origin: Origin,
 ) -> Result<T, E> {
+    let raised = |failure| E::from(crate::error::throwing(failure, origin));
     match (result, settled) {
         (result, Ok(())) => result,
-        (Ok(_), Err(failure)) => Err(E::from(failure)),
+        (Ok(_), Err(failure)) => Err(raised(failure)),
         (Err(mut error), Err(failure)) => {
-            error.joined_by(E::from(failure));
+            error.joined_by(raised(failure));
             Err(error)
         }
     }
+}
+
+/// **A settle point that fails with its site**: what a block's settle point
+/// hands to its `?` (ADR-240 D2).
+pub async fn settle_at<K: Kind>(origin: Origin) -> Result<(), Thrown<Failure>> {
+    settle::<K>()
+        .await
+        .map_err(|failure| crate::error::throwing(failure, origin))
 }
 
 /// **Every cleanup nobody will settle**, taken: a cancelled task's, a finished
@@ -683,11 +697,13 @@ mod tests {
         assert_eq!(failed.failed()[0].0, "a `Noted`");
         assert!(failed.to_string().contains("a would not flush"), "{failed}");
 
-        let result: Result<(), Box<dyn std::error::Error>> =
-            run(settle_after::<Local, _, _, _>(async {
+        let result: Result<(), Box<dyn std::error::Error>> = run(settle_after::<Local, _, _, _>(
+            async {
                 drop(noted("b", &log, true));
                 Ok(())
-            }));
+            },
+            &"test",
+        ));
         assert!(result.is_err());
     }
 

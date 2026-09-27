@@ -397,14 +397,6 @@ envelope — was answered **A**: a body that joins puts one on.
   transitive version — a derived column like `locks`, and worth its own
   measurement rather than a guess.
 
-*And what the box still costs, named rather than discovered:* an error a
-callee raised in a **typed** channel, put in the box by a `?`, loses its site
-there — `error.full()` says *no site recorded* although the callee's `throw`
-had one. What joins it is kept since 0.0.225
-([ADR-239](specification/adr/adr-239.md) D3); the site is the envelope's
-`Thrown<E>`, which the box cannot reach without knowing `E`. The fix is the
-conversion at that `?`, which the emitter would write.
-
 ### 2.28. A target without an operating system
 
 [ADR-119](specification/adr/adr-119.md). A bare-metal target with

@@ -4201,7 +4201,15 @@ impl<'p> Emitter<'p> {
                 };
                 out.push(&format!("{{ {settle}::<{kind}, {rest}>(async "));
                 out.append(body);
-                out.push(").await }");
+                // A cleanup's failure is raised where the settle point is
+                // ([ADR-240](../../docs/specification/adr/adr-240.md) D2).
+                match failing {
+                    true => {
+                        let origin = key.rsplit("::").next().unwrap_or(&key);
+                        out.push(&format!(", &{origin:?}).await }}"));
+                    }
+                    false => out.push(").await }"),
+                }
             }
             None => self.function_body(out, body, depth, declared)?,
         }
@@ -5441,7 +5449,10 @@ impl<'p> Emitter<'p> {
                 Out::scratch(|inner| self.block_plain(inner, block, depth, flow, tail, opening))?;
             let kind = self.settle_kind();
             let settle = match fails {
-                true => format!("nikaia_std::cleanup::settle::<{kind}>().await?"),
+                true => format!(
+                    "nikaia_std::cleanup::settle_at::<{kind}>(&{:?}).await?",
+                    flow.origin
+                ),
                 false => format!("nikaia_std::cleanup::settle_quietly::<{kind}>().await"),
             };
             out.push("{ let __nikaia_block = ");
@@ -8585,8 +8596,12 @@ impl<'p> Emitter<'p> {
                     if fallible {
                         out.push(")");
                     }
-                    if own_queue.is_some() {
-                        out.push(" }).await");
+                    match &own_queue {
+                        Some(wrapper) if wrapper.contains("branch_after") => {
+                            out.push(&format!(" }}, &{:?}).await", flow.origin));
+                        }
+                        Some(_) => out.push(" }).await"),
+                        None => {}
                     }
                 }
                 _ => {

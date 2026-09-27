@@ -138,6 +138,22 @@ impl<S> Tail<S> {
         self.as_cold().map_or(&[], |cold| &cold.secondary)
     }
 
+    /// The same site, trace and list, each joined failure converted: what a
+    /// hop from one channel to another keeps (ADR-240 D1). Always the cold
+    /// form, which is one allocation on a path that allocates a box anyway.
+    fn map_into<T>(mut self, convert: impl FnMut(S) -> T) -> Tail<T> {
+        let origin = self.origin();
+        let (trace, secondary) = match self.word.boxed_mut() {
+            Some(cold) => (cold.trace.take(), std::mem::take(&mut cold.secondary)),
+            None => (None, Vec::new()),
+        };
+        Tail::cold(Cold {
+            origin,
+            trace,
+            secondary: secondary.into_iter().map(convert).collect(),
+        })
+    }
+
     /// The cold part, made on the spot if this is the first thing to need it
     /// - which is what joining does.
     fn cold_mut(&mut self) -> &mut Cold<S> {
@@ -178,6 +194,12 @@ impl Raised {
     /// `{error}` prints - the short form is the one you get without thinking,
     /// and it is the one that is safe in front of a stranger.
     pub fn full(&self) -> String {
+        self.long(true)
+    }
+
+    /// The long form, with the note about a missing trace said once - at the
+    /// top, as [`Thrown`] says it - and not under every failure that joined.
+    fn long(&self, note_trace: bool) -> String {
         // An envelope put on in the box to hold a list has no site of its own,
         // and says so as a library's error does (ADR-159 D3).
         let mut out = match self.tail.origin() == BELOW_SITE {
@@ -193,10 +215,15 @@ impl Raised {
             Some(t) if t.status() == BacktraceStatus::Captured => {
                 out.push_str(&format!("\n{t}"));
             }
-            _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+            _ if note_trace => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
+            _ => {}
         }
         for later in self.tail.secondary() {
-            out.push_str(&indented(&later.full()));
+            let long = match later.downcast_ref::<Raised>() {
+                Some(raised) => raised.long(false),
+                None => later.full(),
+            };
+            out.push_str(&indented(&long));
         }
         out
     }
@@ -441,9 +468,23 @@ impl<E: fmt::Display> fmt::Debug for Thrown<E> {
     }
 }
 
-impl<E: Error> Error for Thrown<E> {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.inner.source()
+/// **Into the box, the envelope goes with it**
+/// ([ADR-240](../../../docs/specification/adr/adr-240.md) D1): a `?` from a
+/// typed channel into the boxed one converts the `Thrown` into a [`Raised`]
+/// with the same site, trace and list, so `error.full()` names the `throw` the
+/// callee wrote and what joins it later is kept.
+///
+/// This is why `Thrown` is not an `Error` itself: were it one, the language
+/// below's own `From<E: Error> for Box<dyn Error>` would take this `?` and put
+/// the envelope in the box as an opaque value, where nothing can reach its
+/// site without knowing `E`. A typed channel is never a `dyn Error` anywhere
+/// else, so nothing is lost by the missing impl.
+impl<E: Error + 'static> From<Thrown<E>> for Box<dyn Error> {
+    fn from(thrown: Thrown<E>) -> Box<dyn Error> {
+        Box::new(Raised {
+            inner: Box::new(thrown.inner),
+            tail: thrown.tail.map_into(Box::<dyn Error>::from),
+        })
     }
 }
 
@@ -586,6 +627,39 @@ mod tests {
         }
     }
     impl Error for Boom {}
+
+    /// **ADR-240 D1: a typed envelope keeps its site in the box**, and the
+    /// failures that joined it, each with its own; and what joins it there is
+    /// kept too.
+    #[test]
+    fn a_thrown_error_keeps_its_site_and_list_in_the_box() {
+        let mut thrown = throwing(Boom, &"load");
+        thrown.joined_by(throwing(Boom, &"later"));
+        let mut boxed: Box<dyn Error> = thrown.into();
+        boxed.joined_by(raise(Boom, &"cleanup"));
+        let full = boxed.full();
+        assert!(full.starts_with("boom\n  raised at load\n"), "{full}");
+        assert!(
+            full.contains("  and then:\n  boom\n    raised at later"),
+            "{full}"
+        );
+        assert!(
+            full.contains("  and then:\n  boom\n    raised at cleanup"),
+            "{full}"
+        );
+        assert_eq!(full.matches("(no trace;").count(), 1, "{full}");
+    }
+
+    /// **And a bare error that reaches the box keeps what joins it**, in an
+    /// envelope with no site.
+    #[test]
+    fn a_bare_error_in_the_box_keeps_what_joins_it() {
+        let mut boxed: Box<dyn Error> = Box::new(Boom);
+        boxed.joined_by(raise(Boom, &"cleanup"));
+        let full = boxed.full();
+        assert!(full.starts_with(&format!("boom\n{BELOW}")), "{full}");
+        assert!(full.contains("raised at cleanup"), "{full}");
+    }
 
     #[test]
     fn the_short_form_is_the_message_and_nothing_else() {
