@@ -630,6 +630,20 @@ fn an_overlap_branch_settles_its_own_and_joins_its_own_error() {
             .find("cleaning up a `Flaky` failed: second would not flush")
             .expect(&out);
         assert!(first < own && own < later, "at {how:?}: {out}");
+        // **Each with its site** (ADR-240): the first error was raised in
+        // `refuse`'s typed channel and keeps the site across the `?` into the
+        // box; the cleanups say where they ran, and the note about a trace is
+        // said once, at the top.
+        assert!(
+            out.contains("the first branch would not flush\n  raised at refuse\n"),
+            "at {how:?}: {out}"
+        );
+        assert_eq!(
+            out.matches("    raised at both\n").count(),
+            2,
+            "at {how:?}: {out}"
+        );
+        assert_eq!(out.matches("(no trace;").count(), 1, "at {how:?}: {out}");
         assert!(out.ends_with("both 0\n"), "at {how:?}: {out}");
     }
 }

@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.226] — 2026-09-27
+
+**An error keeps its site when it hops into the box** —
+[ADR-240](docs/specification/adr/adr-240.md), closing what `open-work.md`
+§2.25 named as the box's remaining cost.
+
+- `Thrown<E>` is no longer an `Error`; `std` writes
+  `From<Thrown<E>> for Box<dyn Error>`, which makes a `Raised` with the same
+  site, trace and list. A `?` from a typed channel into the box now keeps
+  them: `error.full()` names the callee's `throw` instead of *no site
+  recorded*, and what joins the error later is kept.
+- A cleanup's failure is raised at its settle point (`raised at both`), from
+  `settle_after`, `branch_after` and the new `settle_at`.
+- The long form of a boxed error says the missing-trace note once, at the top,
+  as the typed envelope does.
+
 ## [0.0.225] — 2026-09-27
 
 **An `overlap` branch settles its own cleanups and joins its own error** —
