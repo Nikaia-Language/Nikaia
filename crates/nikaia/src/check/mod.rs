@@ -243,6 +243,22 @@ pub enum Viewed {
     Plain,
 }
 
+/// **What a `std` entry handed a lambda that pauses is lowered to**
+/// ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2): its counterpart
+/// in `nikaia_std::seq`, which takes the language below's `async` closure where
+/// the entry takes a synchronous one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PausingEntry {
+    /// `nikaia_std::seq::name(receiver, lambda)`.
+    Function(&'static str),
+    /// `nikaia_std::seq::name(&mut receiver, lambda)`: the entry changes its
+    /// receiver in place.
+    Lent(&'static str),
+    /// `receiver.name(lambda)`: the receiver is already a sequence whose step
+    /// pauses, and has the adapter as a method.
+    Method(&'static str),
+}
+
 /// What one pass of the checker learned.
 #[derive(Debug, Clone, Default)]
 pub struct Checked {
@@ -459,6 +475,12 @@ pub struct Checked {
     /// *the same analysis that decides whether a value is a view or kept, asked
     /// of a parameter that is code*. Nothing new is derived for it.
     pub run_lambdas: BTreeSet<(usize, usize)>,
+    /// **The lambdas that pause, handed to a `std` entry**, by the byte the
+    /// statement starts at and the lambda's shape, with what the call is
+    /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
+    /// The lambda is written as an `async` closure and the call as the
+    /// entry's counterpart; the emitter has no types to tell which one.
+    pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
     pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
@@ -684,6 +706,11 @@ pub struct Checked {
     /// sentence — a language that hides mutation through a receiver and shows
     /// it through an argument has two rules for one thing.
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// **The arguments that are a view of a value that copies, handed where
+    /// the value is wanted**, keyed as [`Checked::mut_args`] is
+    /// ([ADR-233](../../docs/specification/adr/adr-233.md) D4). The emitter
+    /// writes the `*` that copies it out.
+    pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// What each `spawn` body **binds and then holds across a pause**, by the
     /// byte the `spawn` starts at and the name
     /// ([ADR-055](../../docs/specification/adr/adr-055.md) §2 D6).
@@ -1019,6 +1046,7 @@ fn walked<'a>(
         pausing_methods: BTreeSet::new(),
         settled_methods: BTreeSet::new(),
         handed_over: None,
+        paused_args: Vec::new(),
         opaque_handles: parsed
             .program
             .items
@@ -1465,6 +1493,8 @@ pub struct Propagation {
     pub future_lambdas: BTreeSet<(usize, usize)>,
     /// [`Checked::run_lambdas`].
     pub run_lambdas: BTreeSet<(usize, usize)>,
+    /// [`Checked::pausing_lambdas`].
+    pub pausing_lambdas: BTreeMap<(usize, String), PausingEntry>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -1529,6 +1559,8 @@ pub struct Propagation {
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
+    /// [`Checked::copied_args`].
+    pub copied_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::method_options`].
     pub method_options: BTreeMap<(usize, String), Vec<(String, String)>>,
 }
@@ -1664,6 +1696,7 @@ pub fn propagation_against(
         witnessed_sets: checked.witnessed_sets,
         future_lambdas: checked.future_lambdas,
         run_lambdas: checked.run_lambdas,
+        pausing_lambdas: checked.pausing_lambdas,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -1690,6 +1723,7 @@ pub fn propagation_against(
         view_fallbacks: checked.view_fallbacks,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
+        copied_args: checked.copied_args,
         method_options: checked.method_options,
     }
 }
@@ -2382,6 +2416,11 @@ struct Checker<'a> {
     /// `None` where nothing is being asked — outside a lambda, and inside one
     /// whose parameter's type nothing describes.
     handed_over: Option<Handed>,
+    /// The lambdas of the call being walked that paused and were handed to a
+    /// `std` entry, by their shape
+    /// ([ADR-233](../../docs/specification/adr/adr-233.md) D1). Filled by
+    /// [`Self::arguments_given`] and emptied by the call that asked.
+    paused_args: Vec<String>,
     /// **The names an `extern "C"` block declares**
     /// ([ADR-124](../../docs/specification/adr/adr-124.md) D3).
     ///
@@ -5133,6 +5172,12 @@ impl<'a> Checker<'a> {
             Ty::Named { name, args, .. } if name == "String" && args.is_empty() => {
                 self.method(&format!("str::{entry}"))
             }
+            // **A list's own `map` is `std`'s `ListExt`** (ADR-233 D2): the
+            // trait is what the language below calls on a `Vec`, and the entry
+            // is written under its name.
+            Ty::Named { name, .. } if ty::base(name) == "Vec" => {
+                self.method(&format!("list::ListExt::{entry}"))
+            }
             _ => None,
         });
         let Some((key, contract)) = found else {
@@ -5172,6 +5217,14 @@ impl<'a> Checker<'a> {
             let taken = self.taken(name, on.clone(), self.read_seq, "", span);
             self.walked.push(taken);
         }
+        // **And a list's own `map` takes the list** (ADR-233 D2): the mapped
+        // list replaces it, so a read of it afterwards is one of a list that
+        // is gone - `NK2105`, where it was `rustc`'s *borrow of moved value*.
+        if key == "list::ListExt::map"
+            && let Some(name) = self.receiver_name.clone()
+        {
+            self.hands_over_name(&name, "taken by `map`", span);
+        }
         // ADR-023 D8: the failure leaves at the call, and the emitter
         // is what writes that. Recorded whether or not the function
         // around it declares `throws` - where it does not, `NK2605`
@@ -5192,8 +5245,13 @@ impl<'a> Checker<'a> {
         // nothing else — and what suspends is the **step** it asks for. So the
         // receiver's word decides it at the site, which is the same word the
         // `for` one construct over reads.
+        //
+        // **Except a `map` or a `filter` of a sequence this compiler made
+        // pause** ([ADR-233](../../docs/specification/adr/adr-233.md) D1): that
+        // one has both, as adapters of its own, and hands back another like it.
+        let chained = a_paused_chain(&key, &on);
         let walks_a_pausing_step =
-            matches!(&on, Ty::Seq { pauses: true, .. }) && walks_by_value(contract);
+            matches!(&on, Ty::Seq { pauses: true, .. }) && walks_by_value(contract) && !chained;
         self.method_pauses(
             method,
             !contract.sync.is_sync() || walks_a_pausing_step,
@@ -5233,7 +5291,11 @@ impl<'a> Checker<'a> {
             self.a_walk_of_a_failing_sequence(method, span);
         }
         self.a_pausing_method_in_a_sync_body(&key, contract, span);
-        self.a_call_that_may_pause(contract);
+        self.a_call_that_may_pause(
+            self.parsed.text(method),
+            !contract.sync.is_sync() || walks_a_pausing_step,
+            span,
+        );
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
         // A method call is a written call, so the rule reaches it too
         // (`NK2605`) - and here the receiver's type was known and a
@@ -5256,6 +5318,7 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
+        let outer_paused = std::mem::take(&mut self.paused_args);
         let found = self.arguments_given(
             args,
             &expected,
@@ -5263,6 +5326,10 @@ impl<'a> Checker<'a> {
             Some(contract),
             span,
         );
+        let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
+        let pausing_lambda = args.iter().find(|arg| {
+            matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
+        });
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
         // **A literal where the receiver says text is wanted** (ADR-215 D1):
         // `m.insert("a", 1)` on a map of `String` keys wants `$K`, which the
@@ -5296,7 +5363,87 @@ impl<'a> Checker<'a> {
         self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = ty::substitute(&result, &bound);
         let result = shape_through(contract, &on, &found, result);
+        let result =
+            self.a_lambda_that_pauses_at_an_entry(&key, method, &on, pausing_lambda, result, span);
         self.stamped_through(contract, &found, result)
+    }
+
+    /// **A lambda that pauses, handed to a `std` entry**
+    /// ([ADR-233](../../docs/specification/adr/adr-233.md)).
+    ///
+    /// Every `std` entry that takes a lambda describes a **Rust** signature
+    /// whose closure is synchronous, so the call is lowered to the entry's
+    /// counterpart in `nikaia_std::seq`, which takes the language below's own
+    /// `async` closure (D1, D2). Which counterpart is a question about the
+    /// receiver's type, which the emitter has none of, so it is answered here.
+    ///
+    /// * `map` and `filter` of a sequence hand back **a sequence whose step
+    ///   pauses** (D1): nothing is walked here, and whatever walks the result
+    ///   pauses - a `for` gives its thread up at each step, and `collect`,
+    ///   `count`, `nth` and `join` are awaited, exactly as for `io::lines()`.
+    /// * A list's `map`, `sort_by_key`, `or_insert_with` and `and_modify` are
+    ///   **eager** (D2): the call itself runs the lambda, so the call pauses.
+    ///
+    /// The four doors take their lambda **while a lock is held**, where a
+    /// pause is `NK2202` by Part II 12.2's own rule - asked of every call
+    /// inside a door, not here (D3).
+    #[allow(clippy::too_many_arguments)]
+    fn a_lambda_that_pauses_at_an_entry(
+        &mut self,
+        key: &str,
+        method: Ident,
+        on: &Ty,
+        lambda: Option<&Expr>,
+        result: Ty,
+        span: &Span,
+    ) -> Ty {
+        let chained = a_paused_chain(key, on);
+        let Some(lambda) = lambda else {
+            // A plain lambda over a sequence that already pauses: the step
+            // still does, so the result is one too.
+            return match chained {
+                true => a_pausing_sequence(result),
+                false => result,
+            };
+        };
+        let entry = match (key, chained) {
+            ("Seq::map", true) => PausingEntry::Method("then"),
+            ("Seq::filter", true) => PausingEntry::Method("then_filter"),
+            ("Seq::map", false) => PausingEntry::Function("then"),
+            ("Seq::filter", false) => PausingEntry::Function("then_filter"),
+            ("list::ListExt::map", _) => PausingEntry::Function("map_list"),
+            // A `mut` parameter is a `&mut Vec` already, and handed on as it
+            // is: a second `&mut` may not be taken of it (ADR-094 D3).
+            ("Vec::sort_by_key", _) => match self
+                .receiver_name
+                .as_deref()
+                .and_then(|name| self.binding(name))
+                .is_some_and(|local| local.changing)
+            {
+                true => PausingEntry::Function("sort_by_key"),
+                false => PausingEntry::Lent("sort_by_key"),
+            },
+            ("Entry::or_insert_with", _) => PausingEntry::Function("or_insert_with"),
+            ("Entry::and_modify", _) => PausingEntry::Function("and_modify"),
+            // An entry with no counterpart keeps the lowering's refusal, which
+            // names the call and the way out.
+            _ => return result,
+        };
+        self.checked
+            .pausing_lambdas
+            .insert((span.start, argument_shape(lambda)), entry);
+        if matches!(key, "Seq::map" | "Seq::filter") {
+            return a_pausing_sequence(result);
+        }
+        // The eager ones pause where they are called, and the call is one that
+        // may pause for every rule that asks: the function around it, the
+        // lambda around it, the door around it.
+        let written = (span.start, self.parsed.text(method).to_string());
+        self.settled_methods.remove(&written);
+        self.pausing_methods.insert(written);
+        let callee = key.to_string();
+        self.a_call_that_may_pause(&callee, true, span);
+        result
     }
 
     /// **`NK2703`: a sequence asked for something it is not**
@@ -7916,10 +8063,20 @@ impl<'a> Checker<'a> {
                     // a bare number is neither - so one known side decides. Two
                     // known sides that disagree still decide nothing, now that
                     // the one case anybody met is taken above.
-                    _ => match (left.is_unknown(), right.is_unknown()) {
-                        (true, _) => right,
-                        (_, true) => left,
-                        _ if left == right => left,
+                    //
+                    // **And a view of a number is the number here**
+                    // ([ADR-233](../../docs/specification/adr/adr-233.md) D4):
+                    // `0 - y` over a `ref i64` makes an `i64`, which is what
+                    // the language below's operators make of a `&i64` too.
+                    _ => match (
+                        left.is_unknown(),
+                        right.is_unknown(),
+                        value_of_a_copy(left),
+                        value_of_a_copy(right),
+                    ) {
+                        (true, _, _, right) => right,
+                        (_, true, left, _) => left,
+                        (_, _, left, right) if left == right => left,
                         _ => Ty::Unknown,
                     },
                 };
@@ -9253,7 +9410,7 @@ impl<'a> Checker<'a> {
             );
         }
         self.may_fail_here(&key, contract, span);
-        self.a_call_that_may_pause(contract);
+        self.a_call_that_may_pause(&name, !contract.sync.is_sync(), span);
         self.a_pausing_call_in_an_action(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
@@ -9375,7 +9532,16 @@ impl<'a> Checker<'a> {
             }
         }
 
+        let text_view = Ty::view(ty::TEXT_VIEW);
         for (at, ((name, want), found)) in wanted.iter().zip(found).enumerate() {
+            // **A view of a `String` is a view of text here**
+            // ([ADR-233](../../docs/specification/adr/adr-233.md) D4): an
+            // element of `words.iter()` is one, and the language below lends it
+            // as the `&str` a parameter takes at the call, by itself.
+            let found = match is_a_view_of_a_string(found) {
+                true => &text_view,
+                false => found,
+            };
             // A literal that cannot fit the parameter it is given, asked here
             // rather than where the argument was walked: a free call walks its
             // arguments before it resolves the callee, so the type to measure
@@ -9503,6 +9669,23 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if self.fits_through_deref(found, want) {
+                continue;
+            }
+            // **A view of a value that copies, where the value is wanted**
+            // ([ADR-233](../../docs/specification/adr/adr-233.md) D4): the copy
+            // out of it is a machine word, and the compiler's to write. It is
+            // what a lambda `sort_by_key` hands a `ref i64` meets first.
+            // A **name**: what an operator makes of a view is a value below
+            // whatever this checker calls it, and a `*` on it is not Rust.
+            if copies_as_a_view(found)
+                && unviewed(found) == *want
+                && matches!(given.get(at), Some(Expr::Variable(_)))
+            {
+                self.checked
+                    .copied_args
+                    .entry((span.start, written.to_string(), at))
+                    .or_default()
+                    .insert(given.get(at).map(argument_shape).unwrap_or_default());
                 continue;
             }
             // A plain value where a hull is wanted. It is refused by a code of
@@ -10159,13 +10342,37 @@ impl<'a> Checker<'a> {
     /// pausing half, and it needs its own line because only the *method* path
     /// records pausing for the emitter — a free call's `.await` is written from
     /// the name, which the emitter can resolve itself (ADR-028).
-    fn a_call_that_may_pause(&mut self, contract: &FnContract) {
-        if contract.sync.is_sync() {
+    ///
+    /// **And `NK2202` inside a door** (Part II 12.2,
+    /// [ADR-233](../../docs/specification/adr/adr-233.md) D3): a door's block
+    /// runs with the lock open, and a pause there holds the lock for as long
+    /// as the wait takes. `callee` is the call's name as the message says it.
+    fn a_call_that_may_pause(&mut self, callee: &str, pauses: bool, span: &Span) {
+        if !pauses {
             return;
         }
         if let Some(handed) = &mut self.handed_over {
             handed.pauses = true;
         }
+        if !self.inside_a_door {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2202",
+            message: format!("`{callee}` can pause, and this runs with a lock held"),
+            notes: vec![
+                "a door's block runs with the lock open, and a pause there keeps it \
+                 open for as long as the wait takes - every task that wants the \
+                 value waits with it (Part II, 12.2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "call `{callee}` before the door and hand its value in, or after it \
+                 with what the block handed out"
+            )),
+        });
     }
 
     /// **`NK2209`: a call that can pause, inside a grammar's action**
@@ -11167,6 +11374,9 @@ impl<'a> Checker<'a> {
     fn pausing_step(&mut self, over: &Ty, span: &Span) {
         if matches!(over, Ty::Seq { pauses: true, .. }) {
             self.checked.pausing_loops.insert(span.start);
+            // A lambda around the loop pauses with it, and a door around it
+            // is held across the wait (ADR-233 D1, D3).
+            self.a_call_that_may_pause("a step of this `for`", true, span);
         }
     }
 
@@ -15274,7 +15484,7 @@ impl<'a> Checker<'a> {
                     if let Some(want) = expected.get(at) {
                         self.a_lambdas_text_is_its_own(want, arg);
                     }
-                    let came_to = self.lambda(
+                    let (came_to, paused) = self.lambda(
                         params,
                         mutable,
                         body,
@@ -15285,6 +15495,13 @@ impl<'a> Checker<'a> {
                         },
                         span,
                     );
+                    // **A lambda that paused, handed to a `std` entry**
+                    // ([ADR-233](../../docs/specification/adr/adr-233.md) D1):
+                    // kept for the call to lower to the entry's pausing
+                    // counterpart, which only the call knows.
+                    if paused && !declared_here {
+                        self.paused_args.push(argument_shape(arg));
+                    }
                     // **The lambda as the type it was handed to, with what its
                     // body comes to where that type does not say** (ADR-212
                     // D5): `fn($T) -> $U` binds `$U` from it, which is how a
@@ -15365,7 +15582,7 @@ impl<'a> Checker<'a> {
         given: &[Ty],
         promised: Promises,
         span: &Span,
-    ) -> Ty {
+    ) -> (Ty, bool) {
         let frame = params
             .iter()
             .enumerate()
@@ -15396,6 +15613,7 @@ impl<'a> Checker<'a> {
         });
         self.scope.pop();
         self.repeats.pop();
+        let paused = seen.as_ref().is_some_and(|seen| seen.pauses);
         if let Some(seen) = seen {
             self.a_handler_that_does_more_than_the_type_allows(promised, seen, span);
         }
@@ -15404,7 +15622,11 @@ impl<'a> Checker<'a> {
         // block this checker has just walked - the same one `spawn` reads for
         // a task. ADR-029 D1 was about *writing* a lambda's result down, which
         // nothing does; a `map` still has to know what its elements are.
-        tail
+        //
+        // **And whether it paused** ([ADR-233](../../docs/specification/adr/adr-233.md)
+        // D1): a `std` entry that takes the lambda is lowered to its pausing
+        // counterpart where it did.
+        (tail, paused)
     }
 
     /// Walk something the language below makes **a function of its own**.
@@ -16719,6 +16941,52 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
     }
 }
 
+/// **A lazy walk of a sequence whose step pauses and cannot fail**
+/// ([ADR-233](../../docs/specification/adr/adr-233.md) D1): one this compiler
+/// made pause, by handing a pausing lambda to a `map` or a `filter`. It has
+/// every lazy walk `Seq` has but `rev`, as adapters of its own. `io::lines()`,
+/// whose step fails as well, does not (`open-work.md` §2.2).
+fn a_paused_chain(key: &str, on: &Ty) -> bool {
+    matches!(
+        key,
+        "Seq::map" | "Seq::filter" | "Seq::take" | "Seq::skip" | "Seq::step_by" | "Seq::zip"
+    ) && matches!(
+        on,
+        Ty::Seq {
+            pauses: true,
+            throws: false,
+            ..
+        }
+    )
+}
+
+/// What a `map` or a `filter` hands back where its step pauses
+/// ([ADR-233](../../docs/specification/adr/adr-233.md) D1): a sequence whose
+/// step pauses, walked from the front only and with no length until the end.
+fn a_pausing_sequence(result: Ty) -> Ty {
+    match result {
+        Ty::Seq {
+            item,
+            throws,
+            parallel,
+            shape,
+            ..
+        } => Ty::Seq {
+            item,
+            is_sync: false,
+            pauses: true,
+            throws,
+            parallel,
+            shape: ty::Shape {
+                ends: false,
+                sized: false,
+                ..shape
+            },
+        },
+        other => other,
+    }
+}
+
 fn walks_by_value(contract: &FnContract) -> bool {
     let Some(signature) = &contract.signature else {
         return false;
@@ -17236,6 +17504,21 @@ fn is_one_of_part_one_2_2(name: &str) -> bool {
 fn copies_as_a_view(ty: &Ty) -> bool {
     matches!(ty, Ty::Named { name, args, view: true }
         if args.is_empty() && (is_number(name) || name == "bool" || name == "char"))
+}
+
+/// `ref String` as the language below has it, a `&String`: what a `$T` bound
+/// to `String` becomes under `ref $T`, which is an element of `words.iter()`.
+fn is_a_view_of_a_string(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, view: true } if args.is_empty() && ty::base(name) == "String")
+}
+
+/// A view of a value that copies read as the value, and anything else as it is
+/// ([ADR-233](../../docs/specification/adr/adr-233.md) D4).
+fn value_of_a_copy(ty: Ty) -> Ty {
+    match copies_as_a_view(&ty) {
+        true => unviewed(&ty),
+        false => ty,
+    }
 }
 
 /// The value a view is of.

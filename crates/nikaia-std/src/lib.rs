@@ -47,6 +47,7 @@ pub mod net;
 pub mod num;
 pub mod range;
 pub mod rt;
+pub mod seq;
 pub mod task;
 pub mod tether;
 pub mod time;

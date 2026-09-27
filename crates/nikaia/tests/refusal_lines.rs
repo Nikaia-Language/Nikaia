@@ -35,9 +35,9 @@ fn a_file(name: &str) -> PathBuf {
     PathBuf::from(format!("{name}.nika"))
 }
 
-/// **A lambda that pauses**, which is the refusal
-/// [`docs/open-work.md`](../../../docs/open-work.md) §2.1 is about — and the
-/// one that sent this looking, because it named a callee and no place.
+/// **A lambda that pauses, handed to what nothing describes** — the refusal
+/// [ADR-233](../../../docs/specification/adr/adr-233.md) §3 leaves, and the one
+/// that sent this looking, because it named a callee and no place.
 #[test]
 fn a_pausing_lambda_is_refused_on_its_line() {
     let said = nikaia(
@@ -45,7 +45,7 @@ fn a_pausing_lambda_is_refused_on_its_line() {
          \n\
          fn main() throws {\n\
          \x20   let names = Vec()\n\
-         \x20   let sizes = names.map fn(n) { fs::read_to_string(n, fs::Root::Anywhere) catch { \"\" } }\n\
+         \x20   let sizes = names.par_iter().map fn(n) { fs::read_to_string(n, fs::Root::Anywhere) catch { \"\" } }\n\
          \x20   println(f\"{sizes.len()}\")\n\
          }\n",
         "pausing",

@@ -48,9 +48,8 @@ Two rules for ordering this section:
 The order:
 
 1. **A server to bind to, and the `postgres` block.** Several entries wait on
-   it: a `std` entry whose lambda may genuinely pause is a route handler (§2.1);
-   a `par_iter` with an entry to demand `sync` of is a program that calls one;
-   a pausing sequence's lazy walk is the same shape (§2.2).
+   it: a `par_iter` with an entry to demand `sync` of is a program that calls
+   one; a lazy walk of `io::lines()` is the same shape (§2.2).
 2. **The rules around the lock.** The type, its constructor, its spelling, all
    four doors and the transfer are built
    ([ADR-065](specification/adr/adr-065.md)); what is left is **D7's stored
@@ -58,88 +57,30 @@ The order:
    programs until the functions they call have entries.
 3. **Supervision.** Nothing else waits on it.
 
-### 2.1. A lambda that pauses is refused where `std` takes it
-
-[ADR-055](specification/adr/adr-055.md) §6's remainder, and a limit of this
-compiler rather than of the language — so it is here and not in §1, where a
-defect is the compiler being *wrong*.
-
-**A lambda whose body calls something that can pause is refused at the build —
-where the parameter it is handed to is `std`'s.** Those entries describe
-**Rust** signatures that take a **synchronous** closure, so the lowering has
-nothing to write for one. The refusal is by the lowering and not by the checker
-on purpose: refusing it in the type checker would refuse a correct program
-(Part III, C.4).
-
-**This entry used to give a different reason**, and it was false: *Rust has no
-stable `async` closure*. It has one — `async |x| { … }`, `AsyncFn`, `AsyncFnMut`
-and `AsyncFnOnce`, measured on this tree's toolchain
-([ADR-187](specification/adr/adr-187.md) D1). What is true is narrower and is
-about those `std` entries: `Iterator::map` takes `FnMut`, and an `async` closure
-handed to it yields an iterator **of futures**, which is a different program.
-
-**Where the parameter is declared in *this* language it is not refused any
-more** ([ADR-122](specification/adr/adr-122.md) D1, D2): the type says the code
-may pause, the declaration is a closure returning a boxed future, and the lambda
-is `|a| Box::pin(async move { … })` — a body that pauses is an ordinary body
-inside it. So what keeps the refusal alive is `std` alone: its lambda-taking
-entries describe **Rust** signatures that take a plain closure, so a pausing
-lambda handed to `map` still has no shape. That is D3's own exemption read from
-the other side.
-
-*Evidence:* `examples/fortunes.nika:120` — `.route("/fortunes") fn { fortunes(db) }`,
-a route handler that queries a database. It type-checks clean and no build
-reaches it, because the server it binds to does not exist yet — the
-`fortunes.nika` entry below. So nothing in the repository meets the refusal
-today, and the first program that does will be the one that binds a handler.
-
-*And no `std` entry it could meet is one where a pausing lambda would be a
-**correct** program*, counted at 0.0.107 — which is what says the refusal is
-narrow rather than merely unmet. `std` takes a lambda in ten places.
-`list::ListExt::map`, `Seq::map`, `Seq::filter`, `Vec::sort_by_key`,
-`Entry::and_modify` and `Entry::or_insert_with` lower to Rust's own
-synchronous closures, where a suspension point is not a shape that exists. The
-other four — `Locked::access`, `Locked::update`, `SharedMut::access`,
-`SharedMut::update` — run their lambda **while a lock is held**, where pausing
-is refused on its own merits (Part II 12.3). So what is left here is an entry
-that does not exist, and the lowering that would serve it is built and waiting:
-[ADR-122](specification/adr/adr-122.md) D1's `|p| Box::pin(async move { … })`,
-measured on a parameter declared `fn(ref String) -> String throws` in this language.
-
-*What it needs:* a `std` entry whose lambda may genuinely pause, written in
-Nikaia or described as taking one — either a future, `|| async move { … }`, or
-an `impl AsyncFn(…) -> …`, which is how a handler is taken in practice and costs
-about a ninth of the boxed form ([ADR-187](specification/adr/adr-187.md) D1).
-Which of the two a *declared* parameter lowers to was the question that record
-left, and it is **answered**: [ADR-192](specification/adr/adr-192.md) D1 — a
-**run** parameter is `impl AsyncFn(A) -> R` and only a **kept** one keeps the
-box. Which one a **described** entry says is the describer's, because the
-signature is hand-written. Not a new
-mechanism: a claim to record.
-
-### 2.2. A lazy walk of a pausing sequence has no shape
+### 2.2. A lazy walk of `io::lines()` has no shape
 
 **[ADR-172](specification/adr/adr-172.md) closed all but one corner of this
-entry.** A `for` over `io::lines()` gives its thread up (D1), and the **eager**
-walks of the same sequence — `collect`, `count`, `nth`, `join` — pause and
-propagate with it (D5): each is a loop around the step, and both of the
-receiver's words reach them.
+entry, and [ADR-233](specification/adr/adr-233.md) D1 most of that.** A `for`
+over `io::lines()` gives its thread up (D1), and the **eager** walks of the
+same sequence — `collect`, `count`, `nth`, `join` — pause and propagate with it
+(D5). And a sequence whose step pauses now has its lazy walks too — `map`,
+`filter`, `take`, `skip`, `step_by`, `zip` — on `nikaia_std::seq::Step`, the
+trait D3 deferred until a second producer needed one: a `map` whose lambda
+pauses is that producer.
 
-**What is left is the two lazy ones.** `map` and `filter` hand back another
-*sequence*, whose steps would pause, and a sequence like that is the trait D3
-defers until a second producer needs one. They are refused from the lowering
-meanwhile, with the loop as the way out and the line under it.
+**What is left is `io::lines()`'s own lazy walks.** Its step can **fail** as
+well as pause, so below each item is a `Result`, and an adapter over it has to
+carry the failure to whatever walks it — the `?` ADR-025 D1 puts on the eager
+walk, one level further out. They are refused from the lowering meanwhile, with
+the loop as the way out and the line under it.
 
 *Evidence: a refusal, which is the good kind.* `io::lines().map fn { … }` says
 what is missing and what to write instead, in this compiler's words and on the
 `.nika` line.
 
-*What it needs:* the trait, and a type to put behind `map` that holds a lambda
-and a pausing source. [ADR-172](specification/adr/adr-172.md) D3 says whose it
-will be and why it is not `futures_core::Stream`; what it does not say is what
-it looks like, and that is written the day a program asks for it — D4's *it
-waits for a program*, which is [ADR-105](specification/adr/adr-105.md)'s rule
-for the same file.
+*What it needs:* `Step` over `io::Lines`, whose item is the `Result`, and
+adapters that hand the lambda the line and keep the failure for the walk.
+[ADR-105](specification/adr/adr-105.md)'s rule holds — it waits for a program.
 
 ### 2.4. Part II 12.8's supervision syntax
 

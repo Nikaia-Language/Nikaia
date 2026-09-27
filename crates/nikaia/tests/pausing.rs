@@ -39,22 +39,6 @@ fn lower(dir: &Path, source: &str) -> String {
     std::fs::read_to_string(&output).expect("the emitted Rust")
 }
 
-/// Lower and hand back what the compiler said, for the sources it refuses.
-fn refusal(dir: &Path, source: &str) -> String {
-    let input = dir.join("main.nika");
-    std::fs::write(&input, source).expect("the source");
-    let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
-        .args(["--output", dir.join("main.rs").to_str().unwrap()])
-        .args(["--no-cache"])
-        .env("NIKAIA_CACHE_DIR", dir.join("cache"))
-        .output()
-        .expect("the nikaia binary runs");
-    assert!(!run.status.success(), "this source should not have lowered");
-    String::from_utf8_lossy(&run.stderr).to_string()
-}
-
 /// One function that can pause and one that cannot, and nothing saying so.
 const BOTH_KINDS: &str = "use std::io\n\
      \n\
@@ -228,29 +212,20 @@ fn a_program_with_both_kinds_runs() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **A lambda that pauses is refused in Nikaia's words, at the build.**
+/// **A lambda that pauses is handed to `std`'s pausing counterpart**
+/// ([ADR-233](../../../docs/specification/adr/adr-233.md) D2).
 ///
-/// **The `std` entry it is handed to takes a synchronous closure**, so there is
-/// nothing for this lowering to write - and a plain closure holding an `.await`
-/// is a `rustc` error about a file nobody wrote (Part III, C.1). The refusal
-/// names the callee and says what to do instead.
-///
-/// **It is those entries and not the language below**, which this doc comment
-/// used to have backwards: Rust's `async` closure is stable
-/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1), and
-/// `Iterator::map` takes `FnMut` whatever the closure spelling is.
-///
-/// **It is a refusal by the lowering and not by the checker**, which is the
-/// decision this test records. `examples/fortunes.nika`'s route handler is a
-/// lambda that queries a database, and it is a correct program: refusing it in
-/// the type checker would refuse a correct program, which is the one thing the
-/// compiler may never do (Part III, C.4). So it still checks clean -
-/// `typecheck.rs`'s `no_program_in_the_repository_has_a_type_error` covers that
-/// - and only a build meets the limit.
+/// This test used to record a refusal: the `std` entry takes a synchronous
+/// closure, so the lowering had nothing to write. `nikaia_std::seq` now has a
+/// counterpart for each entry that takes the language below's `async` closure,
+/// and the program the refusal was about - a correct one, which the checker
+/// never refused (Part III, C.4) - is built. Where the lambda is handed to
+/// something nothing describes, the refusal is still in Nikaia's words
+/// (`refusal_lines.rs`).
 #[test]
-fn a_lambda_that_pauses_is_refused_with_a_sentence() {
+fn a_lambda_that_pauses_is_handed_to_the_pausing_counterpart() {
     let dir = common::scratch_dir("pausing-lambda");
-    let said = refusal(
+    let rust = lower(
         &dir,
         "use std::io\n\
          \n\
@@ -266,12 +241,11 @@ fn a_lambda_that_pauses_is_refused_with_a_sentence() {
          }",
     );
 
-    assert!(said.contains("this lambda calls `size`"), "{said}");
-    assert!(said.contains("can pause"), "{said}");
-    // Nikaia's words and not the backend's: no `rustc` vocabulary in it.
-    for backend in ["async", "closure", "Future", "E07"] {
-        assert!(!said.contains(backend), "`{backend}` in: {said}");
-    }
+    assert!(
+        rust.contains("nikaia_std::seq::sort_by_key(&mut ys, async |n|"),
+        "{rust}"
+    );
+    assert!(rust.contains("size().await"), "{rust}");
 
     std::fs::remove_dir_all(&dir).ok();
 }

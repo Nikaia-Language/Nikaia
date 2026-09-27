@@ -1204,6 +1204,20 @@ pub fn check(
     // tally that has to say what it counted must not call one of them *a place
     // that can fail without saying so*.
     let pausing = count("NK2202");
+    // **A pause inside a door is the same code and another sentence**
+    // ([ADR-233](../../docs/specification/adr/adr-233.md) D3): it is no `sync`
+    // function's, and the way out is moving the call out of the block.
+    let paused_in_a_door = findings
+        .iter()
+        .filter(|f| f.code == "NK2202" && f.message.ends_with("with a lock held"))
+        .count();
+    if paused_in_a_door > 0 {
+        refused.push(format!(
+            "{paused_in_a_door} pause{} with a lock held",
+            plural(paused_in_a_door)
+        ));
+    }
+    let pausing = pausing - paused_in_a_door;
     // **A file read with a lock held is not a place that can fail either**
     // ([ADR-169](../../docs/specification/adr/adr-169.md) D2), and lands on the
     // same reasoning as the two above: the tally has to say what it counted,
@@ -1227,6 +1241,7 @@ pub fn check(
         - tasks
         - walked
         - pausing
+        - paused_in_a_door
         - under_a_lock;
     if rules > 0 {
         refused.push(format!(

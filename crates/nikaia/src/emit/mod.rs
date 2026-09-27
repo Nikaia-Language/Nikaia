@@ -33,6 +33,7 @@ use crate::ast::{
     BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
+use crate::check::PausingEntry;
 use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
 
@@ -1208,6 +1209,9 @@ struct Emitter<'p> {
     /// `async` closure rather than a boxed future
     /// (`check::Checked::run_lambdas`).
     run_lambdas: std::collections::BTreeSet<(usize, usize)>,
+    /// The lambdas that pause, handed to a `std` entry, and what the call is
+    /// lowered to ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2).
+    pausing_lambdas: std::collections::BTreeMap<(usize, String), PausingEntry>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -1344,6 +1348,9 @@ struct Emitter<'p> {
     /// `lent_args` is. The third state, and the one that is a declaration
     /// rather than an inference.
     mut_args:
+        std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
+    /// [`crate::check::Checked::copied_args`] (ADR-233 D4).
+    copied_args:
         std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
     /// Part I 2.3: the call arguments where a plain value stands in a nullable
     /// parameter, by statement, callee as written, and position
@@ -2219,6 +2226,7 @@ impl<'p> Emitter<'p> {
             witnessed_sets: propagation.witnessed_sets,
             future_lambdas: propagation.future_lambdas,
             run_lambdas: propagation.run_lambdas,
+            pausing_lambdas: propagation.pausing_lambdas,
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
@@ -2258,6 +2266,7 @@ impl<'p> Emitter<'p> {
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
             mut_args: propagation.mut_args,
+            copied_args: propagation.copied_args,
             nullable_args: propagation.nullable_in_args,
             task_handles: propagation.task_handles,
             method_options: propagation.method_options,
@@ -7139,6 +7148,16 @@ impl<'p> Emitter<'p> {
                     }
                     return Ok(());
                 }
+                // **A lambda that pauses, where a `std` entry takes it**
+                // ([ADR-233](../../docs/specification/adr/adr-233.md) D1): the
+                // language below's own `async` closure, handed to the entry's
+                // counterpart. Its body is an ordinary body that pauses.
+                let pauses = self
+                    .pausing_lambdas
+                    .contains_key(&(flow.statement, crate::check::argument_shape(expr)));
+                if pauses {
+                    out.push("async ");
+                }
                 // **`filter` is handed a reference to its item** (ADR-231 D2):
                 // where the item copies, the pattern takes it out.
                 let pattern = self
@@ -7164,7 +7183,7 @@ impl<'p> Emitter<'p> {
                 // calls in here are keyed by it, and `in_lambda` is what makes
                 // a pausing one refusable (ADR-055 §6).
                 let inside = Flow {
-                    in_lambda: true,
+                    in_lambda: !pauses,
                     statement: flow.statement,
                     // **And the `mut` parameters with it**: the body starts
                     // from `PLAIN` because a lambda's `return` leaves the
@@ -9706,8 +9725,39 @@ impl<'p> Emitter<'p> {
         if boxed {
             out.push("Box::pin(");
         }
-        self.receiver(out, receiver, depth, flow, false)?;
-        out.push(&format!(".{written}"));
+        // **A lambda that pauses, handed to a `std` entry**
+        // ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2): the
+        // entry's counterpart in `nikaia_std::seq`, which takes the `async`
+        // closure the lambda is written as. The checker says which, because it
+        // is the receiver's type that decides.
+        let pausing = args
+            .last()
+            .filter(|arg| matches!(arg, Expr::Closure { .. }))
+            .and_then(|arg| {
+                self.pausing_lambdas
+                    .get(&(flow.statement, crate::check::argument_shape(arg)))
+            })
+            .copied();
+        match pausing {
+            Some(PausingEntry::Function(name)) => {
+                out.push(&format!("nikaia_std::seq::{name}("));
+                self.receiver(out, receiver, depth, flow, false)?;
+                out.push(", ");
+            }
+            Some(PausingEntry::Lent(name)) => {
+                out.push(&format!("nikaia_std::seq::{name}(&mut "));
+                self.receiver(out, receiver, depth, flow, false)?;
+                out.push(", ");
+            }
+            Some(PausingEntry::Method(name)) => {
+                self.receiver(out, receiver, depth, flow, false)?;
+                out.push(&format!(".{name}("));
+            }
+            None => {
+                self.receiver(out, receiver, depth, flow, false)?;
+                out.push(&format!(".{written}"));
+            }
+        }
         // Nikaia's `collect` builds a List; Rust's needs to be told
         // what to build, and with no types here that is `Vec<_>`.
         //
@@ -9733,7 +9783,9 @@ impl<'p> Emitter<'p> {
         {
             out.push("::<Vec<_>>");
         }
-        out.push("(");
+        if pausing.is_none() {
+            out.push("(");
+        }
         let takes = self.takes_a_handle(self.text(method));
         // **Views put into a keeper that drops entries are held** (ADR-209 D4),
         // each value with a handle on every buffer it points into - as many as
@@ -9842,8 +9894,8 @@ impl<'p> Emitter<'p> {
             let name = self.text(method);
             return Err(refused_at!(
                 flow.statement,
-                "`{name}` walks a sequence whose step pauses, and a `for` is the only walk of \
-                 one this compiler can write yet (ADR-172 D5). Write the loop - \
+                "`{name}` walks a sequence whose step can fail as well as pause, and this \
+                 compiler cannot write a lazy walk of one yet (ADR-233 §3). Write the loop - \
                  `for line in io::lines() {{ … }}` - and do inside it what this was going to \
                  do afterwards"
             ));
@@ -10248,7 +10300,18 @@ impl<'p> Emitter<'p> {
                             {
                                 out.push("&*");
                             }
-                            self.expr(out, arg, depth, inside)?
+                            // **A view of a value that copies, where the value
+                            // is wanted** (ADR-233 D4): copied out of it.
+                            if self
+                                .copied_args
+                                .get(&key)
+                                .is_some_and(|shapes| shapes.contains(&shape))
+                            {
+                                out.push("*");
+                                self.postfix_base(out, arg, depth, inside)?
+                            } else {
+                                self.expr(out, arg, depth, inside)?
+                            }
                         }
                     }
                 }
@@ -10706,31 +10769,24 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 
 /// **A lambda whose body pauses, which this lowering cannot write.**
 ///
-/// **The `std` entry it is handed to takes a synchronous closure**, so there is
-/// no shape for a lambda that gives the thread up - and a plain closure holding
-/// an `.await` is a `rustc` error about a file nobody wrote (Part III, C.1).
-/// This is that error in Nikaia's words, at the one place that has the fact:
-/// the emitter.
-///
-/// **It is those entries and not the language below.** `Iterator::map` takes
-/// `FnMut`, and an `async` closure handed to it yields an iterator **of
-/// futures**, which is a different program. Rust's `async` closure is stable
-/// and this comment used to say it was not
-/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D2).
-///
-/// **A limit of this compiler and not of the language.** Nikaia is implicitly
-/// async ([ADR-055](../../../docs/specification/adr/adr-055.md) D1), so
-/// `examples/fortunes.nika`'s route handler - a lambda that queries a database -
-/// is a correct program. It still type-checks, and it is only a *build* that
-/// meets this. What closes it is §6 step 3 and step 4, where `std`'s own
-/// signatures say which parameters take something that may pause, and a lambda
-/// handed to one of those can be written as a closure that returns a future.
+/// **What is left of it is a callee nothing describes.** A lambda that pauses
+/// is written as an `async` closure where the parameter is declared in this
+/// language ([ADR-192](../../../docs/specification/adr/adr-192.md) D1), and
+/// handed to the counterpart in `nikaia_std::seq` where it is one of `std`'s
+/// entries ([ADR-233](../../../docs/specification/adr/adr-233.md)) - every one
+/// of them: `map`, `filter`, a list's `map`, `sort_by_key`, `or_insert_with`,
+/// `and_modify`, and the four doors, where a pause is `NK2202` by the
+/// language's own rule. What reaches this is a lambda handed to a method whose
+/// receiver the checker could not resolve - `par_iter()`'s, until
+/// `open-work.md` §2.17 gives it an entry - so there is no signature to say
+/// what shape the lambda takes, and a plain closure holding an `.await` is a
+/// `rustc` error about a file nobody wrote (Part III, C.1).
 fn pausing_in_a_lambda(at: usize, callee: &str) -> anyhow::Error {
     refused_at!(
         at,
-        "this lambda calls `{callee}`, which can pause - and a lambda that pauses is \
-         not something this compiler can build yet (ADR-055 §6). Call `{callee}` \
-         outside the lambda and hand it the value, or give it a `sync` body"
+        "this lambda calls `{callee}`, which can pause - and nothing describes what the \
+         lambda is handed to, so there is no pausing form of it to write (ADR-233). \
+         Call `{callee}` outside the lambda and hand it the value, or give it a `sync` body"
     )
 }
 

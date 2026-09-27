@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.217] — 2026-09-27
+
+**A lambda that pauses is handed to `std`'s pausing counterpart** —
+[ADR-233](docs/specification/adr/adr-233.md), closing `open-work.md` §2.1.
+
+- `xs.iter().map(fn(x) { fetch(x) })` was refused by the lowering, *not
+  something this compiler can build yet*. `map` and `filter` with a lambda that
+  pauses now hand back a sequence whose step pauses, walked as `io::lines()`
+  is: a `for` gives its thread up at each step, `collect`, `count`, `nth` and
+  `join` pause with it, and `map`, `filter`, `take`, `skip`, `step_by` and `zip`
+  chain onto it. Below, `nikaia_std::seq::Paused` over a `Step` trait — the
+  trait ADR-172 D3 deferred until a second producer needed one.
+- A list's `map`, `sort_by_key`, `or_insert_with` and `and_modify` await the
+  lambda where they would have called it (`sort_by_key` works each key out
+  once). A lambda that does not pause is lowered exactly as before.
+- **A pause inside a door is `NK2202`**, which Part II 12.2 said and nothing
+  asked: `access`, `update` and `access_all` bodies reached the lowering's
+  refusal with the wrong reason. Its own tally line, *a pause with a lock held*.
+- A list's `map` resolves to its ledger entry in the checker, so its lambda is
+  typed, and a read of the list after it is `NK2105` rather than `rustc`'s
+  *borrow of moved value*.
+- A `ref i64` goes where an `i64` is wanted (the `*` is written), arithmetic
+  over one is a number, and an element of `words.iter()` goes to a `ref String`
+  parameter or to a `String` one the callee only reads — each was `NK1102`.
+- `open-work.md` §2.2 narrows to `io::lines()`'s lazy walks, whose step can also
+  fail.
+
 ## [0.0.216] — 2026-09-26
 
 **A published parameter takes either kind of text from its own package** —

@@ -278,7 +278,9 @@ doc = "The whole of standard input, as text.\n\nIt pauses rather than holding th
 [fn."list::ListExt::map"]
 pub = true
 sync = "from(f)"
-signature = "(?, f: fn(?)) -> ?"
+# The list goes in by value and a new one comes out, which is what the language
+# below's trait does; `$U` is what the lambda comes to (ADR-212 D5).
+signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
 doc = "Each element through a function, as a new list.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # --- Written by hand: the collections and text the language below provides ---

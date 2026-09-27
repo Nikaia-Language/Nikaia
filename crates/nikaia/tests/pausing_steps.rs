@@ -304,7 +304,8 @@ fn a_lazy_walk_of_a_pausing_sequence_is_refused_too() {
     let refused = emit::emit_program(&parsed, emit::Build::default())
         .expect_err("a walk with no form is refused");
     assert!(
-        format!("{refused:#}").contains("`map` walks a sequence whose step pauses"),
+        format!("{refused:#}")
+            .contains("`map` walks a sequence whose step can fail as well as pause"),
         "{refused:#}"
     );
 }
