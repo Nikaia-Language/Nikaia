@@ -197,6 +197,8 @@ def menu(root):
                 # The README opens with a banner rather than a heading, so this
                 # is the one label that is not a page's own first line.
                 entry(root, root / "README.md", "Overview"),
+                entry(root, root / "guide" / "getting-started.md"),
+                entry(root, root / "guide" / "syntax.md"),
                 entry(root, root / "manifesto.md"),
                 entry(root, root / "CHANGELOG.md", "Changelog"),
             ],
