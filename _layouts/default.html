@@ -1,66 +1,22 @@
 <!DOCTYPE html>
 <!--
-  The site's one layout.
+  The layout of every page but the home page.
 
-  It is `jekyll-theme-primer`'s own `_layouts/default.html` with four things
-  added and nothing taken away: the theme attribute the reader's choice is
-  written to, the stylesheet and script that make that choice mean something,
-  the control that offers it, and the favicon. Overriding the layout is what puts the
-  picker in the page rather than injecting it from script, so a reader who
-  has JavaScript switched off still gets the theme their system asks for.
+  It began as `jekyll-theme-primer`'s own `_layouts/default.html`. What it
+  adds: the bar across the top (`_includes/site-header.html`, which holds the
+  theme picker), the sidebar menu, and the footer. The `<head>` is shared with
+  the home page (`_layouts/home.html`) through `_includes/site-head.html`.
+  Overriding the layout is what puts the picker in the page rather than
+  injecting it from script, so a reader who has JavaScript switched off still
+  gets the theme their system asks for.
 -->
 <html lang="{{ site.lang | default: "en-US" }}">
   <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <!-- Both, so the browser paints its own furniture — scrollbars, form
-         controls, the canvas behind the page — to match whichever the reader
-         ends up with. `assets/css/nikaia.css` narrows it per theme. -->
-    <meta name="color-scheme" content="light dark">
-
-{% seo %}
-    <!-- The wing of the logo (`1768075880760.jpg`), cut square. The `.ico`
-         sits at the root too, where a browser looks for one unasked. -->
-    <link rel="icon" href="{{ "/favicon.ico" | relative_url }}" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="{{ "/assets/apple-touch-icon.png" | relative_url }}">
-    <link rel="stylesheet" href="{{ "/assets/css/style.css?v=" | append: site.github.build_revision | relative_url }}">
-    <link rel="stylesheet" href="{{ "/assets/css/nikaia.css?v=" | append: site.github.build_revision | relative_url }}">
-
-    <!--
-      Inline and before the stylesheets are applied, because this is the one
-      thing that cannot wait for a file to load: a reader who chose dark and
-      whose system says light would otherwise see a white page flash first.
-      Everything else the picker does is in `assets/js/theme.js`.
-    -->
-    <script>
-      (function () {
-        try {
-          var choice = window.localStorage.getItem("nikaia-theme");
-          if (choice === "light" || choice === "dark" || choice === "sepia") {
-            document.documentElement.setAttribute("data-theme", choice);
-          }
-        } catch (e) {
-          /* Storage can be denied outright. The system theme still applies. */
-        }
-      })();
-    </script>
-
+{% include site-head.html %}
     {% include head-custom.html %}
   </head>
   <body>
-    <!--
-      `hidden` until `theme.js` takes it over: without script the buttons
-      could not do anything, and a control that does nothing is worse than no
-      control. The theme itself still follows `prefers-color-scheme`.
-    -->
-    <div class="theme-picker" role="group" aria-label="Colour theme" hidden>
-      <button type="button" data-theme-choice="system">System</button>
-      <button type="button" data-theme-choice="light">Light</button>
-      <button type="button" data-theme-choice="dark">Dark</button>
-      <button type="button" data-theme-choice="sepia">Sepia</button>
-    </div>
+    {% include site-header.html %}
 
     <div class="page">
       <!--
@@ -85,7 +41,7 @@
           widths where it is a control. The sections are nested inside it for
           that reason and no other.
         -->
-        <summary>Menu</summary>
+        <summary>All pages</summary>
         <div class="site-nav-body">
         {% for section in site.data.nav %}
           {% assign here = false %}
@@ -108,17 +64,14 @@
       </nav>
 
       <div class="container-lg px-3 my-5 markdown-body">
-      {% if site.title and site.title != page.title %}
-      <h1><a href="{{ "/" | absolute_url }}">{{ site.title }}</a></h1>
-      {% endif %}
-
       {{ content }}
 
-      <div class="footer border-top border-gray-light mt-5 pt-3 text-right text-gray">
-        {% if site.github.private != true and site.github.license %}This site is open source. {% github_edit_link "Improve this page" %}. · {% endif %}<a href="{{ "/impressum.html" | relative_url }}">Impressum</a> · <a href="{{ "/datenschutz.html" | relative_url }}">Datenschutz</a>
-      </div>
+      {% if site.github.private != true and site.github.license %}
+      <div class="page-edit">This site is open source. {% github_edit_link "Improve this page" %}.</div>
+      {% endif %}
       </div>
     </div>
+    {% include site-footer.html %}
     <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
     <script src="{{ "/assets/js/nav.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
     <!-- AnchorJS 4.1.0 (MIT), served from this site rather than a CDN: the page

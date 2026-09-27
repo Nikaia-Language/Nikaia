@@ -1,0 +1,56 @@
+<!--
+  The bar across the top of every page: the way home, the six places a reader
+  goes, and what the README's badges used to say — the version (to the
+  changelog), the status (to the roadmap) and the repository. The badges are
+  GitHub's furniture and stay in the README; their destinations are here.
+
+  The links are one `<details>`, as the sidebar is: open as shipped, so a
+  reader without script gets every link, and closed by `nav.js` on the widths
+  where it is a menu button rather than a row.
+-->
+{% assign here = page.url %}
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="site-brand" href="{{ "/" | relative_url }}">
+      <img src="{{ "/assets/apple-touch-icon.png" | relative_url }}" alt="" width="28" height="28">
+      <span>Nikaia</span>
+    </a>
+
+    <details class="site-header-menu" open>
+      <summary aria-label="Site menu"><span class="site-header-burger" aria-hidden="true"></span>Menu</summary>
+      <div class="site-header-body">
+        <nav class="site-header-links" aria-label="Site">
+          <a href="{{ "/guide/getting-started.html" | relative_url }}"{% if here == "/guide/getting-started.html" %} aria-current="page"{% endif %}>Get started</a>
+          <a href="{{ "/guide/syntax.html" | relative_url }}"{% if here == "/guide/syntax.html" %} aria-current="page"{% endif %}>Syntax</a>
+          <a href="{{ "/docs/specification/" | relative_url }}"{% if here contains "/docs/specification/" %}{% unless here contains "/adr/" %} aria-current="page"{% endunless %}{% endif %}>Specification</a>
+          <a href="{{ "/docs/specification/adr/" | relative_url }}"{% if here contains "/docs/specification/adr/" %} aria-current="page"{% endif %}>Decisions</a>
+          <a href="{{ "/docs/project_status_and_roadmap.html" | relative_url }}"{% if here == "/docs/project_status_and_roadmap.html" %} aria-current="page"{% endif %}>Roadmap</a>
+          <a href="{{ "/examples/" | relative_url }}"{% if here contains "/examples/" %} aria-current="page"{% endif %}>Examples</a>
+        </nav>
+
+        <div class="site-header-tools">
+          <span class="site-version">
+            <a href="{{ "/CHANGELOG.html" | relative_url }}" title="Changelog">v{{ site.data.project.version }}</a><a href="{{ "/docs/project_status_and_roadmap.html#where-the-project-actually-stands" | relative_url }}" title="Where the project stands">pre-alpha</a>
+          </span>
+
+          <!--
+            `hidden` until `theme.js` takes it over: without script the buttons
+            could not do anything, and a control that does nothing is worse than no
+            control. The theme itself still follows `prefers-color-scheme`.
+          -->
+          <div class="theme-picker" role="group" aria-label="Colour theme" hidden>
+            <button type="button" data-theme-choice="system">System</button>
+            <button type="button" data-theme-choice="light">Light</button>
+            <button type="button" data-theme-choice="dark">Dark</button>
+            <button type="button" data-theme-choice="sepia">Sepia</button>
+          </div>
+
+          <a class="site-github" href="https://github.com/Nikaia-Language/Nikaia">
+            <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+    </details>
+  </div>
+</header>

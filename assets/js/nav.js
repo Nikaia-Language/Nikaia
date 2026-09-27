@@ -8,6 +8,30 @@
 // This moves the menu's own scroll and nothing else. `scrollIntoView` would
 // also move the window, which would start every page part-way down.
 
+// The header's links follow the same rule as the sidebar: shipped open, and
+// closed where they are a menu button rather than a row (the width the
+// stylesheet's header query names). A link followed inside the panel closes
+// it, so an anchor on the same page is not hidden behind it.
+(function () {
+  "use strict";
+
+  var menu = document.querySelector(".site-header-menu");
+  if (!menu) return;
+
+  var narrow = window.matchMedia("(max-width: 1099px)");
+
+  function fit(query) {
+    menu.open = !query.matches;
+  }
+
+  fit(narrow);
+  if (narrow.addEventListener) narrow.addEventListener("change", fit);
+
+  menu.addEventListener("click", function (event) {
+    if (narrow.matches && event.target.closest("a")) menu.open = false;
+  });
+})();
+
 (function () {
   "use strict";
 
