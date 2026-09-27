@@ -1,22 +1,28 @@
-// **`sqlite3` from end to end**
-// ([ADR-147](../../docs/specification/adr/adr-147.md) §5 step 5), which is that
-// record's own check that its four decisions are enough for a real library
-// rather than for four libc calls.
+// Opens an in-memory SQLite database through its C API and reads one row back.
 //
-// Everything the C boundary offers is here and nothing else is: a **buffer**
-// lent for the call (`ref Array[u8]`), an **opaque handle** with its `cleanup`
-// (`sqlite3`, `sqlite3_stmt`), a handle that **may be absent** filled through an
-// out-parameter ([ADR-155](../../docs/specification/adr/adr-155.md) D1), and
-// **text the library owns** copied once by `std` (`foreign::CStr`).
+//     RUSTFLAGS="-l sqlite3" nikaia run
+//     opened 0
+//     prepared 0
+//     stepped 100
+//     hello, C
 //
-// What closes the database and the statement is written **nowhere**: each
-// handle's release runs at the end of its scope, which is Part I 6.4's
-// `cleanup` read at this boundary.
+// It needs libsqlite3 on the machine. `nikaia` has no option for linking a C
+// library, so `-l sqlite3` goes to `rustc` through `RUSTFLAGS`.
 //
-// Build it with `-l sqlite3`.
+// Shows: an `extern "C"` block, opaque handles that clean up after themselves,
+// out-parameters, text owned by C, and `unsafe`.
+//
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::foreign
 
+// Declared here and linked from libsqlite3. A handle `released by` a function
+// has that function called when the handle goes out of scope, so nothing below
+// closes the database or finalizes the statement.
+//
+// `ref Array[u8]` lends a buffer for the call. `ref mut sqlite3?` is an
+// out-parameter: a slot that C fills with a handle, or leaves empty.
+// `foreign::CStr` is text that SQLite owns; `to_string()` copies it.
 extern "C" {
     opaque type sqlite3 released by sqlite3_close
     opaque type sqlite3_stmt released by sqlite3_finalize
@@ -44,6 +50,8 @@ impl Error for Refused {
 }
 
 fn main() throws {
+    // Every call into C must be inside `unsafe`. C strings end in a zero
+    // byte, hence the `\0`.
     let mut slot: sqlite3? = null
     let opened = unsafe { sqlite3_open(":memory:\0", slot) }
     println(f"opened {opened}")
@@ -55,6 +63,7 @@ fn main() throws {
     println(f"prepared {prepared}")
     let stmt = ready ?? throw Refused::NoStatement
 
+    // 0 is SQLITE_OK, 100 is SQLITE_ROW: a row is ready to read.
     let stepped = unsafe { sqlite3_step(stmt) }
     println(f"stepped {stepped}")
     let text = unsafe { sqlite3_column_text(stmt, 0) }
