@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.234] — 2026-09-27
+
+**Two more shapes refused here rather than by `rustc`, and the question each
+leaves on `open-decisions.md`.** Both found on the way to writing a compiler in
+Nikaia.
+
+- **`NK1191`: arithmetic on a list, a map or a set.** `[1] + [2]` lowered as
+  written and `rustc` said *cannot add `Vec<i64>` to `Vec<i64>`*. Part I 4.5
+  gives a collection no operator; for two lists the help names `a.extend(b)`,
+  which the ledger now describes (`Vec::extend`, the list keeps what it is
+  given). Whether `+` should join two lists is on `open-decisions.md`.
+- **Text read out of a list joins without being taken out of it.** `w[0] +
+  w[1]` over a `Vec[String]` moved the element out and `rustc` said *cannot
+  move out of a shared reference*; each side of a text `+` that is an index
+  read is now lent as a view.
+- **`NK1192`: a type that holds itself inline.** `enum Expr { Add(Expr, Expr)
+  }`, `struct Node { next: Node? }` and a ring through other types or tuples
+  reached `rustc`'s *recursive type has infinite size*. The help names a list;
+  a view, a function, a list or anything the checker cannot see through is
+  taken to be an indirection, so no correct program is refused on a guess.
+  **How a type should hold itself is the owner's question** — it is what
+  stands between Nikaia and a parser written in Nikaia — and it is on
+  `open-decisions.md` with a recommendation: the compiler puts the box in.
+- Recorded: a `Shared` field and the value put in it disagree on the count
+  (`open-work.md` §1.23). `open-work.md` §1.22 is closed.
+- Tests: `tests/list_operators.rs`, `tests/recursive_types.rs`.
+
 ## [0.0.233] — 2026-09-27
 
 **`std::process`: another program, started and waited for** — ADR-243, the

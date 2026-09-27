@@ -4878,6 +4878,26 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// **One side of a text `+`**, where a side read out of a list is handed
+    /// over as a view (0.0.234).
+    ///
+    /// A read at a number is `*index::get(&w, 0)`, a place, which is right
+    /// wherever the value is only looked at; handed to `concat::plus` by value
+    /// it is a **move** out of the list, and `w[0] + w[1]` over a
+    /// `Vec[String]` was `rustc`'s *cannot move out of a shared reference*
+    /// about a file nobody wrote. A concatenation makes new text and needs
+    /// only to read its sides, so the side is lent as `&str` - which is
+    /// `AsRef` whether the list holds owned text or views of it.
+    fn concatenated(&self, out: &mut Out, side: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
+        if matches!(side, Expr::Index { .. }) {
+            out.push("::core::convert::AsRef::<str>::as_ref(&");
+            self.expr(out, side, depth, flow)?;
+            out.push(")");
+            return Ok(());
+        }
+        self.expr(out, side, depth, flow)
+    }
+
     /// The same, for a name that may carry its module
     /// ([ADR-154](../../docs/specification/adr/adr-154.md) D3).
     ///
@@ -7510,9 +7530,9 @@ impl<'p> Emitter<'p> {
                 // abort across (ADR-043 D1).
                 if self.concatenations.contains(&at.start) {
                     out.push("nikaia_std::concat::plus(");
-                    self.expr(out, lhs, depth, flow)?;
+                    self.concatenated(out, lhs, depth, flow)?;
                     out.push(", ");
-                    self.expr(out, rhs, depth, flow)?;
+                    self.concatenated(out, rhs, depth, flow)?;
                     out.push(")");
                     return Ok(());
                 }

@@ -3412,6 +3412,7 @@ impl<'a> Checker<'a> {
         // function declared *above* the constant as much as below it. That is
         // the whole of why this is a pass and not an arm.
         self.item_constants();
+        self.types_that_contain_themselves();
         for item in &self.parsed.program.items {
             match &item.node {
                 // Walked by `item_constants` above, in a frame that stays.
@@ -4376,6 +4377,133 @@ impl<'a> Checker<'a> {
             )),
         });
         true
+    }
+
+    /// **`NK1191`: an arithmetic operator on a collection** (0.0.234).
+    ///
+    /// Only where a side is **known** to be a list, a map or a set: a value
+    /// whose type this checker could not work out is not refused on a guess
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    fn arithmetic_on_a_collection(&mut self, op: BinaryOp, left: &Ty, right: &Ty, span: &Span) {
+        let symbol = match op {
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
+            BinaryOp::Mul => "*",
+            BinaryOp::Div => "/",
+            _ => "%",
+        };
+        let (side, other) = match is_a_collection(left) {
+            true => (left, right),
+            false => (right, left),
+        };
+        let joining = matches!(op, BinaryOp::Add) && is_a_list(left) && is_a_list(right);
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1191",
+            message: match is_a_list(side) {
+                true => format!("`{symbol}` is not defined on a list"),
+                false => format!("`{symbol}` is not defined on `{side}`"),
+            },
+            notes: vec![match joining {
+                true => "a list has no operators (Part I, 4.5): whether `+` should join two \
+                         lists is not decided, and it is on `open-decisions.md`"
+                    .to_string(),
+                false => format!(
+                    "a list, a map or a set has no arithmetic (Part I, 4.5), and the other \
+                     side is `{other}`"
+                ),
+            }],
+            help: joining.then(|| {
+                "to add one list's elements to the end of another: `a.extend(b)`".to_string()
+            }),
+        });
+    }
+
+    /// **`NK1192`: a type that holds itself** (0.0.234).
+    ///
+    /// `enum Expr { Add(Expr, Expr) }` and `struct Node { next: Node? }` passed
+    /// the check and lowered as written, and the language below said
+    /// *recursive type has infinite size* about a file nobody wrote: a value
+    /// that holds a whole value of its own type inline has no size. How the
+    /// language should let a type hold itself is the owner's question
+    /// (`open-decisions.md`); until it is answered this says so, and names the
+    /// way that works today - a list between them.
+    ///
+    /// **Only an edge that is certainly inline**: the type itself, nullable or
+    /// not, a tuple's parts and an array's element. A view, a function, a list,
+    /// a map or anything this compiler cannot see through is taken to be an
+    /// indirection, so a correct program is never refused on a guess
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    fn types_that_contain_themselves(&mut self) {
+        let parsed = self.parsed;
+        let files: Vec<&Parsed> = std::iter::once(parsed)
+            .chain(self.beside.iter().copied())
+            .collect();
+        // Every declared type, with the types it holds inline.
+        let mut holds: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for file in &files {
+            for item in &file.program.items {
+                let (name, types): (String, Vec<&ast::Type>) = match &item.node {
+                    Item::Struct { name, fields, .. } => (
+                        file.text(*name).to_string(),
+                        fields.iter().map(|f| &f.ty).collect(),
+                    ),
+                    Item::Enum { name, variants, .. } => (
+                        file.text(*name).to_string(),
+                        variants
+                            .iter()
+                            .flat_map(|v| match &v.fields {
+                                ast::VariantFields::Unit => Vec::new(),
+                                ast::VariantFields::Tuple(types) => types.iter().collect(),
+                                ast::VariantFields::Named(fields) => {
+                                    fields.iter().map(|f| &f.ty).collect()
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => continue,
+                };
+                let mut inline = BTreeSet::new();
+                for ty in types {
+                    held_inline(file, ty, &mut inline);
+                }
+                holds.entry(name).or_default().extend(inline);
+            }
+        }
+        // Each type this file declares, asked whether it reaches itself.
+        for item in &parsed.program.items {
+            let name = match &item.node {
+                Item::Struct { name, .. } | Item::Enum { name, .. } => parsed.text(*name),
+                _ => continue,
+            };
+            let Some(path) = reaches_itself(name, &holds) else {
+                continue;
+            };
+            let through = match path.len() {
+                1 => format!("`{name}` holds another `{name}`"),
+                _ => format!("`{name}` holds `{}`", path.join("`, which holds `")),
+            };
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: item.span.clone(),
+                code: "NK1192",
+                message: format!("`{name}` holds itself, so it has no size"),
+                notes: vec![
+                    format!(
+                        "{through}, inline: a value that holds a whole value of its own type \
+                         would be larger than itself"
+                    ),
+                    "how a type holds itself is not decided yet, and it is on \
+                     `open-decisions.md`"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "hold it through a list, which keeps its elements elsewhere: \
+                     `Vec[{name}]` in place of the `{name}` it holds"
+                )),
+            });
+        }
     }
 
     /// **An `impl` of a trait nothing declares** (0.0.231).
@@ -8873,6 +9001,21 @@ impl<'a> Checker<'a> {
                     BinaryOp::Add if is_text(&left) || is_text(&right) => {
                         self.checked.concatenations.insert(at.start);
                         Ty::named("String")
+                    }
+                    // **`NK1191`: arithmetic on a collection** (0.0.234).
+                    // `[1] + [2]` lowered as it was written and the language
+                    // below said *cannot add `Vec<i64>` to `Vec<i64>`* about a
+                    // file nobody wrote. Part I gives a list no operator, and
+                    // whether `+` should join two is the owner's question.
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Rem
+                        if is_a_collection(&left) || is_a_collection(&right) =>
+                    {
+                        self.arithmetic_on_a_collection(*op, &left, &right, span);
+                        Ty::Unknown
                     }
                     // Arithmetic on two of the same thing is that thing, and
                     // a bare number is neither - so one known side decides. Two
@@ -19227,6 +19370,72 @@ fn copies(ty: &Ty) -> bool {
 /// `String` and `&str`, and nothing else. A `T?` is deliberately **not** text:
 /// `maybe + "x"` is a member reached off a nullable, which Part I 2.3 answers
 /// and this must not quietly paper over.
+/// The declared types `ty` holds **inline** - itself, nullable or not, a
+/// tuple's parts and an array's element - and nothing it holds through a view,
+/// a function, a list or anything else ([`Checker::types_that_contain_themselves`]).
+fn held_inline(parsed: &Parsed, ty: &ast::Type, out: &mut BTreeSet<String>) {
+    if ty.is_view || ty.code.is_some() {
+        return;
+    }
+    if ty.is_tuple {
+        for part in &ty.generics {
+            held_inline(parsed, part, out);
+        }
+        return;
+    }
+    let name = parsed.text(ty.name);
+    if name == "Array" {
+        if let Some(element) = ty.generics.first() {
+            held_inline(parsed, element, out);
+        }
+        return;
+    }
+    if ty.generics.is_empty() {
+        out.insert(name.to_string());
+    }
+}
+
+/// The path by which `start` holds itself inline, or `None`: a depth-first
+/// walk over what each type holds, stopping at the first way back.
+fn reaches_itself(start: &str, holds: &BTreeMap<String, BTreeSet<String>>) -> Option<Vec<String>> {
+    fn walk(
+        at: &str,
+        start: &str,
+        holds: &BTreeMap<String, BTreeSet<String>>,
+        seen: &mut BTreeSet<String>,
+        path: &mut Vec<String>,
+    ) -> bool {
+        for next in holds.get(at).into_iter().flatten() {
+            path.push(next.clone());
+            if next == start {
+                return true;
+            }
+            if seen.insert(next.clone()) && walk(next, start, holds, seen, path) {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+    let mut path = Vec::new();
+    walk(start, start, holds, &mut BTreeSet::new(), &mut path).then_some(path)
+}
+
+/// A list: what `[…]` makes, and what `Vec()` builds.
+fn is_a_list(ty: &Ty) -> bool {
+    matches!(ty.unseen(), Ty::Named { name, .. } if matches!(name.as_str(), "Vec" | "List" | "Array"))
+}
+
+/// A list, a map or a set - the types Part I gives no operator.
+fn is_a_collection(ty: &Ty) -> bool {
+    is_a_list(ty)
+        || matches!(ty.unseen(), Ty::Named { name, .. }
+        if matches!(
+            name.rsplit("::").next().unwrap_or(name.as_str()),
+            "HashMap" | "HashSet" | "BTreeMap" | "BTreeSet" | "TrustedMap" | "TrustedSet"
+        ))
+}
+
 fn is_text(ty: &Ty) -> bool {
     matches!(ty, Ty::Named { name, args, .. } if args.is_empty() && (name == "String" || name == "str"))
 }

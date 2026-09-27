@@ -19,6 +19,71 @@ blocked by a question, the question comes here in that shape.
 
 ## Open
 
+### How a type holds itself
+
+**What is blocked.** Every recursive data structure, and with it **writing
+Nikaia's own parser in Nikaia** — the compiler's parser is already written in
+the grammar language Nikaia's `grammar` blocks lower to (275 rules in
+`crates/nikaia/src/parser/mod.rs`), but its actions build a syntax tree, and
+`Expr` holds `Expr`. `enum Expr { Add(Expr, Expr) }` and
+`struct Node { next: Node? }` have no size, and nothing in the language says
+how a type holds another of itself. Measured at 0.0.234: `Vec[Expr]` in place
+of `Expr` works and is what `NK1192` now names; `Shared[Expr]` does not (the
+field and the value disagree on the count, `open-work.md` §1.23); a written
+`Box[T]` does not exist — Part I 4.6's `Box[T]` is an example struct, not an
+indirection.
+
+**Why it is the owner's.** It decides whether a program ever sees the heap
+indirection a tree needs, and what it is called if it does.
+
+**The options.**
+
+1. **The compiler puts the indirection in.** A field whose type holds itself
+   inline — directly, nullable, through a tuple or another type — lowers to a
+   `Box` below, and a construction and a `match` over it are written as if it
+   were not there. `enum Expr { Add(Expr, Expr) }` is a program as written.
+   `NK1192` is the analysis that finds those fields, already built.
+2. **A written indirection type in `std`**, as Rust has: `Add(Heap[Expr],
+   Heap[Expr])`, built with `Heap(e)` and read through. Explicit, and it needs
+   a name (`Box` is Part I 4.6's example's).
+3. **No new form**: a type holds itself through a list or a `Shared`, and
+   `NK1192` stays a refusal with that help.
+
+**What this file recommends: option 1.** It is the rule the language already
+follows for references — *the `&` is the compiler's to write*
+([ADR-094](specification/adr/adr-094.md) D4) — applied to the one other thing
+Rust makes a program spell for the machine's sake. A tree reads as the tree,
+which is what a parser's actions are made of.
+
+**What each costs if it is wrong.**
+
+* **Option 1**: an allocation per recursive field that the source does not
+  show. Part II's cost rule wants what runs to be visible; the answer is that
+  the allocation is where the recursion is, which the declaration shows. If it
+  proves wrong, option 2 can be added beside it without breaking a program.
+* **Option 2**: every recursive type, and every construction and pattern over
+  one, carries a word that says nothing about the program's meaning.
+* **Option 3**: a syntax tree whose children are `xs[0]` and `xs[1]`, checked
+  by nobody — the self-hosted compiler would be written in a workaround.
+
+### Whether `+` joins two lists
+
+**What is blocked.** Nothing hard: `a + b` on two lists is refused
+(`NK1191`, 0.0.234) and `a.extend(b)` is the way that works. Before that it
+reached `rustc`.
+
+**Why it is the owner's.** It is an operator on a type Part I 4.5 gives none.
+
+**The options.** (1) `+` on two lists of one element type makes a new list,
+as `+` on text makes new text (ADR-081); (2) no operator on a list, and the
+refusal stays.
+
+**What this file recommends: (2) for now.** `+` on text is there because text
+is built up by hand constantly; a list is built with `push` and `extend`, and
+`+` would allocate a third list where a program usually wants to grow one.
+**Costs:** (1) wrong is a quietly quadratic loop `xs = xs + [x]`; (2) wrong is
+a refusal lifted later, which breaks nothing.
+
 ### Where the connection goes when a checked statement runs
 
 **What is blocked.** [ADR-143](specification/adr/adr-143.md), all of it

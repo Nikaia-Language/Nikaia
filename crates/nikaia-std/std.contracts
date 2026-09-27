@@ -1255,6 +1255,18 @@ keeps = ["value"]
 signature = "(ref Vec[$T], value: $T)"
 doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
+# **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
+# program wrote `a + b`. It was reached before only because a method nothing
+# describes fails open.
+[fn."Vec::extend"]
+pub = true
+sync = true
+mutates = true
+touches = []
+keeps = ["items"]
+signature = "(ref Vec[$T], items: Vec[$T])"
+doc = "Add every element of another list to the end of this one, in order.\n\nThe list **keeps** them, so the other list is given away rather than lent."
+
 [fn."Vec::sort"]
 pub = true
 sync = true

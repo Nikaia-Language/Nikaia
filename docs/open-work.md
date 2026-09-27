@@ -61,22 +61,20 @@ measured, and in both `rustc` refuses a file nobody wrote
 and goes through `check::KeyForm`, which is the mechanism a method's key needs
 too.
 
-### 1.22. Two lists added together reach `rustc`
+### 1.23. A `Shared` field of a type and the value put in it disagree on the count
 
-Found at 0.0.233, writing `std::process`'s tests. Measured:
+Found at 0.0.234, measuring how a type can hold itself. In
 
 ```nika
-let a = [1, 2]
-let b = [3]
-let c = a + b
+enum E { Leaf(i64), Add(Shared[E], Shared[E]) }
+fn main() { let e = E::Add(Shared(E::Leaf(2)), Shared(E::Leaf(3))) }
 ```
 
-passes the check and lowers as `let c = a + b;`, and `rustc` says *cannot add
-`Vec<i64>` to `Vec<i64>`* about a file nobody wrote
-([Part III C.1](specification/30-nikaia-tooling.md)). Part I says nothing about
-`+` on a list, so the answer is one of two: `NK1105`-style refusal of an
-operator the type does not have, or a decision that `+` joins two lists (the
-text form already does, through `concat::plus`). The second is the owner's.
+the variant lowers as `Add(std::sync::Arc<E>, std::sync::Arc<E>)` and the
+construction as `E::Add(std::rc::Rc::new(…), std::rc::Rc::new(…))`, and
+`rustc` says *expected `Shared[E]`, found `Shared[E]`*. Which count a `Shared`
+gets is decided per value ([ADR-037](specification/adr/adr-037.md) D7); a value
+written straight into a field has to take the field's.
 
 ## 2. Decided and unbuilt
 
