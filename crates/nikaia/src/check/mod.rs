@@ -1048,6 +1048,7 @@ fn walked<'a>(
         settled_methods: BTreeSet::new(),
         handed_over: None,
         paused_args: Vec::new(),
+        in_parallel: None,
         opaque_handles: parsed
             .program
             .items
@@ -2422,6 +2423,11 @@ struct Checker<'a> {
     /// ([ADR-233](../../docs/specification/adr/adr-233.md) D1). Filled by
     /// [`Self::arguments_given`] and emptied by the call that asked.
     paused_args: Vec<String>,
+    /// **Inside a lambda handed to a walk of a `Par[T]`**, the length of the
+    /// scope where it began: a name bound below it is one every core shares
+    /// ([ADR-235](../../docs/specification/adr/adr-235.md) D2). `None`
+    /// elsewhere.
+    in_parallel: Option<usize>,
     /// **The names an `extern "C"` block declares**
     /// ([ADR-124](../../docs/specification/adr/adr-124.md) D3).
     ///
@@ -4888,6 +4894,50 @@ impl<'a> Checker<'a> {
     /// has, or whose candidates do not agree, is not one to refuse on;
     /// answering *it might change* would refuse a correct program, which is C.4
     /// and the worse of the two mistakes.
+    /// **`NK2107`: a lambda that runs on several cores at once changes a name
+    /// they all share** (Part II 12.6,
+    /// [ADR-235](../../docs/specification/adr/adr-235.md) D2).
+    ///
+    /// Every core runs the lambda on its own share of the elements, so a name
+    /// bound outside it is one they would all write at once - a data race,
+    /// which the language below refuses in its own words about a file nobody
+    /// wrote (Part III, C.1). Asked at **both** settings of
+    /// `user_parallelism`: at `no` the walk is one loop and the write would
+    /// work, and a program that means something different at the two settings
+    /// is what the setting promises never to make.
+    fn a_shared_name_changed_in_parallel(&mut self, name: &str, span: &Span) {
+        let Some(depth) = self.in_parallel else {
+            return;
+        };
+        let declared = self
+            .scope
+            .iter()
+            .rposition(|frame| frame.iter().any(|local| local.name == name));
+        if declared.is_none_or(|at| at >= depth) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2107",
+            message: format!(
+                "this lambda runs on several cores at once, and it changes `{name}`, which \
+                 all of them share"
+            ),
+            notes: vec![
+                "a `par_iter()` walk splits the elements across every core and runs the \
+                 lambda on each share at the same time, so every core would write `{name}` \
+                 together (Part II, 12.6)"
+                    .replace("{name}", name),
+            ],
+            help: Some(format!(
+                "hand each element's value out of the lambda and combine them after the \
+                 walk - `map` and then `collect` or `count` - or keep `{name}` in a \
+                 `SharedMut` and change it through `update`"
+            )),
+        });
+    }
+
     fn a_changed_binding_says_mut(&mut self, name: &str, how: &str) {
         let Some(at) = self
             .binding(name)
@@ -5321,6 +5371,13 @@ impl<'a> Checker<'a> {
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
         let outer_paused = std::mem::take(&mut self.paused_args);
+        // **A lambda handed to a walk of a `Par[T]` runs on several cores at
+        // once** (Part II 12.6, ADR-235 D2): what it may do is asked while it
+        // is walked, and a lambda inside it is inside it too.
+        let outer_parallel = self.in_parallel;
+        if matches!(&on, Ty::Seq { parallel: true, .. }) {
+            self.in_parallel = outer_parallel.or(Some(self.scope.len()));
+        }
         let found = self.arguments_given(
             args,
             &expected,
@@ -5328,6 +5385,7 @@ impl<'a> Checker<'a> {
             Some(contract),
             span,
         );
+        self.in_parallel = outer_parallel;
         let paused_here = std::mem::replace(&mut self.paused_args, outer_paused);
         let pausing_lambda = args.iter().find(|arg| {
             matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
@@ -5399,6 +5457,10 @@ impl<'a> Checker<'a> {
         result: Ty,
         span: &Span,
     ) -> Ty {
+        // A `Par[T]`'s lambda may not pause at all: `NK2209` has said so.
+        if matches!(on, Ty::Seq { parallel: true, .. }) {
+            return result;
+        }
         let chained = a_paused_chain(key, on);
         let Some(lambda) = lambda else {
             // A plain lambda over a sequence that already pauses: the step
@@ -6375,6 +6437,7 @@ impl<'a> Checker<'a> {
                         _ => "this assigns into it",
                     };
                     self.a_changed_binding_says_mut(&root, how);
+                    self.a_shared_name_changed_in_parallel(&root, span);
                 }
                 // **A write through the brackets is unchanged**
                 // ([ADR-114](../../docs/specification/adr/adr-114.md) D2):
@@ -7177,6 +7240,7 @@ impl<'a> Checker<'a> {
                             &root,
                             &format!("`{name}` changes what it is called on"),
                         );
+                        self.a_shared_name_changed_in_parallel(&root, span);
                     }
                 }
                 self.a_copy_under_another_name(receiver, *method, args, span);
@@ -10355,6 +10419,27 @@ impl<'a> Checker<'a> {
         }
         if let Some(handed) = &mut self.handed_over {
             handed.pauses = true;
+        }
+        // **`NK2209` in a lambda that runs on several cores at once**
+        // (Part II 12.6, ADR-235 D2): a core is not given up, so a pause there
+        // holds one for as long as the wait takes.
+        if self.in_parallel.is_some() {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK2209",
+                message: format!("`{callee}` can pause, and this runs on several cores at once"),
+                notes: vec![
+                    "a lambda handed to a `par_iter()` walk is split across every core, \
+                     and a core that waits holds its share of the work with it - so the \
+                     lambda may not pause (Part II, 12.6)"
+                        .to_string(),
+                ],
+                help: Some(format!(
+                    "call `{callee}` before the walk and hand the values in, or walk with \
+                     `iter()`, whose lambda may pause"
+                )),
+            });
         }
         if !self.inside_a_door {
             return;

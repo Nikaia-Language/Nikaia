@@ -35,9 +35,10 @@ fn a_file(name: &str) -> PathBuf {
     PathBuf::from(format!("{name}.nika"))
 }
 
-/// **A lambda that pauses, handed to what nothing describes** — the refusal
-/// [ADR-233](../../../docs/specification/adr/adr-233.md) §3 leaves, and the one
-/// that sent this looking, because it named a callee and no place.
+/// **A lambda that pauses where it runs on several cores** — `NK2209`
+/// ([ADR-235](../../../docs/specification/adr/adr-235.md) D2), and the case
+/// that sent this looking, because the refusal it replaced named a callee and
+/// no place.
 #[test]
 fn a_pausing_lambda_is_refused_on_its_line() {
     let said = nikaia(
@@ -50,7 +51,8 @@ fn a_pausing_lambda_is_refused_on_its_line() {
          }\n",
         "pausing",
     );
-    assert!(said.contains("which can pause"), "{said}");
+    assert!(said.contains("NK2209"), "{said}");
+    assert!(said.contains("can pause"), "{said}");
     // The line, and the caret under the call inside the lambda.
     assert!(said.contains(":5:"), "the line it is about:\n{said}");
     assert!(said.contains("-->"), "{said}");
