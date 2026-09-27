@@ -1,6 +1,9 @@
 /target
 # Each crate under crates/unsafe/ is its own workspace with its own build.
 crates/unsafe/*/target
+# A cargo run from inside a crate's directory builds there; 0.0.200 committed
+# one such tree by accident (crates/nikaia/target/floor), removed in 0.0.227.
+crates/*/target
 /vendor
 
 # Dependencies of the TextMate grammar's scope test (editors/test). The lockfile

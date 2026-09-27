@@ -14,6 +14,9 @@ open. The version is the specification's; the compiler's crates carry their own.
   sequence (`Seq::count`, `Par::count`), and the emitter writes the conversion
   a length gets, parenthesised where an operator or a method stands on it. A
   program's own `count` is left as it is.
+- Removed `crates/nikaia/target/floor/`, 2,114 build files committed by
+  accident with 0.0.200, and ignored `crates/*/target` so a build run from
+  inside a crate's directory cannot be committed again.
 
 ## [0.0.226] — 2026-09-27
 
