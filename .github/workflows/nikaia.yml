@@ -28,6 +28,7 @@ jobs:
     outputs:
       unsafe: ${{ steps.decide.outputs.unsafe }}
       floor: ${{ steps.decide.outputs.floor }}
+      arm64: ${{ steps.decide.outputs.arm64 }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -69,6 +70,51 @@ jobs:
 
       - name: Run the suite on the floor
         run: sh scripts/check-floor.sh
+
+  # The compiler, `std` and every program the tests emit, on 64-bit ARM
+  # (aarch64 Linux: Graviton, Ampere, a Raspberry Pi 4/5, Apple silicon under
+  # Linux). Nothing in the tree names the architecture - no `asm!`, no
+  # `target_arch`, and the triple the `target` switch names is never handed to
+  # `rustc` - so a build here is a native build, and this job is what says it
+  # stays one. The `unsafe` crates run too: atomics and memory ordering are
+  # where a weaker memory model than x86's would show.
+  #
+  # On every push to main and weekly; on a pull request only where the runtime,
+  # an `unsafe` crate or a dependency changed (`scripts/ci-changes.sh`).
+  arm64:
+    needs: changes
+    if: needs.changes.outputs.arm64 == 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install the toolchain the repository names
+        run: rustup show
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-stable-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-stable-
+
+      - name: Build the workspace
+        run: cargo build --workspace --release
+
+      - name: Test
+        run: cargo test --workspace --release --no-fail-fast
+
+      - name: Test the unsafe crates
+        run: |
+          for dir in crates/unsafe/*/; do
+            echo "::group::$dir"
+            (cd "$dir" && cargo test --quiet --all-features)
+            echo "::endgroup::"
+          done
 
   # The crates that hold `unsafe`, one topic each (ADR-218). Each is its own
   # workspace and is checked on its own: tests and lints on stable, and Miri on

@@ -66,11 +66,23 @@ const MOST_BRANCHES: usize = 8;
 /// It decides what `std` can offer and what a panic does. It decides nothing
 /// about what a program means: the same source compiles for every target and
 /// prints the same bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// **The default is the machine the compiler runs on** ([`Target::host`]), and
+/// the triple is handed to Cargo as `--target` whichever one is named. Until
+/// 0.0.218 it was only ever printed: every build was for the host, so on an ARM
+/// machine `x86_64-linux` - the default - produced ARM code under an x86 name,
+/// which is the one thing D1 says a target never does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    #[default]
     X86_64Linux,
+    Aarch64Linux,
     Wasm32Unknown,
+}
+
+impl Default for Target {
+    fn default() -> Target {
+        Target::host().unwrap_or(Target::X86_64Linux)
+    }
 }
 
 /// Whether the **user's** code may run concurrently at all (ADR-037 D2).
@@ -213,28 +225,62 @@ impl Build {
 }
 
 impl Target {
+    /// Every target, in the order a refusal lists them.
+    pub const ALL: [Target; 3] = [
+        Target::X86_64Linux,
+        Target::Aarch64Linux,
+        Target::Wasm32Unknown,
+    ];
+
     pub fn parse(name: &str) -> Result<Target> {
-        match name {
-            "x86_64-linux" => Ok(Target::X86_64Linux),
-            "wasm32-unknown" => Ok(Target::Wasm32Unknown),
-            other => Err(refused!(
-                "unknown target `{other}` (expected x86_64-linux or wasm32-unknown)"
+        match Target::ALL.into_iter().find(|target| target.name() == name) {
+            Some(target) => Ok(target),
+            None => Err(refused!(
+                "unknown target `{name}` (expected x86_64-linux, aarch64-linux or \
+                 wasm32-unknown)"
             )),
         }
     }
 
-    /// The triple handed to the backend.
+    /// The word a manifest and `--target` use for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Target::X86_64Linux => "x86_64-linux",
+            Target::Aarch64Linux => "aarch64-linux",
+            Target::Wasm32Unknown => "wasm32-unknown",
+        }
+    }
+
+    /// The triple handed to the backend: Cargo's `--target`.
     pub fn triple(self) -> &'static str {
         match self {
             Target::X86_64Linux => "x86_64-unknown-linux-gnu",
+            Target::Aarch64Linux => "aarch64-unknown-linux-gnu",
             Target::Wasm32Unknown => "wasm32-unknown-unknown",
+        }
+    }
+
+    /// The machine this compiler is running on, where it is one of the
+    /// targets. The compiler is a native program, so the machine it was built
+    /// for is the machine it runs on.
+    ///
+    /// `None` on any other (macOS, a 32-bit ARM board, RISC-V): there is no
+    /// name for it, and a build there has to name one of the targets and have
+    /// the toolchain for it.
+    pub fn host() -> Option<Target> {
+        if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+            Some(Target::X86_64Linux)
+        } else if cfg!(all(target_arch = "aarch64", target_os = "linux")) {
+            Some(Target::Aarch64Linux)
+        } else {
+            None
         }
     }
 
     /// Whether this machine has threads at all. A target without them bounds
     /// `user_parallelism` to `0` however it is set.
     pub fn has_threads(self) -> bool {
-        matches!(self, Target::X86_64Linux)
+        matches!(self, Target::X86_64Linux | Target::Aarch64Linux)
     }
 
     /// Whether `std`'s own runtime exists for this machine (ADR-038 D4): the
@@ -247,7 +293,7 @@ impl Target {
     /// back to; a machine with threads but no completion queue has the runtime,
     /// and `std` is what decides there what a pair costs.
     pub fn has_runtime(self) -> bool {
-        matches!(self, Target::X86_64Linux)
+        matches!(self, Target::X86_64Linux | Target::Aarch64Linux)
     }
 
     /// What a target still needs before a program can be built for it.
@@ -261,7 +307,7 @@ impl Target {
                  exists on wasm32-unknown-unknown; what `std::fs` offers there is \
                  undecided",
             ),
-            Target::X86_64Linux => None,
+            Target::X86_64Linux | Target::Aarch64Linux => None,
         }
     }
 }
@@ -688,7 +734,12 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
-    let build = Build::default();
+    // Named rather than defaulted: the default is the machine this runs on,
+    // and the committed text must not depend on where it was lowered.
+    let build = Build {
+        target: Target::X86_64Linux,
+        ..Build::default()
+    };
     let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
     Emitter::new(parsed, build, trust.provenance)
         .for_std()
