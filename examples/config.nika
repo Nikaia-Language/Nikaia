@@ -1,56 +1,36 @@
-// examples/config.nika
+// Parses an INI-style configuration file and prints it back, section by
+// section, in the order it was written.
 //
-// An INI-style configuration file, parsed and printed back.
+//     nikaia run -- app.conf
+//     2 sections
+//     [server]
+//       host = 0.0.0.0
+//       port = 8080
+//     …
 //
-// Input:  sections and settings, with `#` comments anywhere
-// Output: the sections and what is in each, in the order they were written
+// The input is `[section]` headers, `key = value` lines under them, and `#`
+// comments anywhere, such as `[server]` then `port = 8080  # the usual one`.
 //
-// Run:
+// Shows: a `grammar` that defines its own whitespace, a repetition that
+// collects into a `Vec`, and a result tree whose strings are all slices of
+// the input.
 //
-//     nikaia --input examples/config.nika --backend rust
-//     ./config app.conf
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
-//
-// Why it is here beside the others. 1BRC and `access-log.nika` are both one
-// record repeated to the end of the file; `calc.nika` is one expression. A
-// configuration file is neither: it has *structure*, sections holding
-// settings, and the shape of the result is a tree rather than a number or a
-// tally. Three things follow that none of the others shows.
-//
-//   * **A grammar that defines its own whitespace.** `WS` below is the rule
-//     the backend inserts between the elements of every syntactic rule, and
-//     redefining it to include `COMMENT` is what makes `#` legal everywhere a
-//     blank is - without one other rule in this file mentioning comments.
-//   * **A repetition that keeps what it matched.** `setting*` collects, which
-//     is right here and wrong at a billion rows; that is the same choice
-//     `1brc.nika` makes in the other direction with `par_fold`, and seeing
-//     both is the point.
-//   * **Nesting.** `Section` holds a `Vec[Setting]` whose `ref String`s are slices
-//     of the input, so the whole tree is views into one buffer and the
-//     compiler ties `Section` to it through the `Vec` (Part II, 10.6).
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::fs
 use std::cli
 
 grammar Config {
 
-    // Defining `WS` replaces the implicit skip. A rule that is *not* here
-    // would have to say where a comment may appear, once per position; this
-    // says it once, and every syntactic rule below inherits it.
-    //
-    // It is also the exact shape that used to make every error message in a
-    // grammar useless: two alternatives at the same position, so the real
-    // expectation lost the comparison and was discarded. Fixed upstream, and
-    // this file is where a Nikaia program would have met it.
+    // `WS` is what a syntactic (lowercase) rule skips between its parts.
+    // Defining it here to include `COMMENT` makes a comment legal wherever a
+    // blank is, and no other rule has to mention comments.
     rule WSE = multispace1 { }
     rule WS = (WSE | COMMENT)* { }
     rule COMMENT = "#" until(line_ending) { }
 
-    // A header and everything under it. The repetition stops on its own at
-    // the next `[`, because a setting has to start with a name and `[` is not
-    // one - no lookahead, no terminator, nothing to state.
+    // A header and the settings under it. `setting*` stops by itself at the
+    // next `[`, because a setting starts with a name and `[` is not one.
     rule section -> Section =
         "[" name:NAME "]" settings:setting* { Section { name, settings } }
 
@@ -59,14 +39,9 @@ grammar Config {
 
     rule NAME -> ref String = s:raw_ident { s }
 
-    // Lexical: a value may contain blanks, dots and colons, so the only things
-    // that end it are the end of the line and a comment. Naming both in the
-    // terminator is what makes `port = 8080  # the usual one` a port rather
-    // than a port and an opinion - and the trailing blanks it leaves are the
-    // action's business, which is what an action is for.
-    //
-    // The price, stated rather than hidden: a `#` inside a value is a comment
-    // here. A format that needs one needs quoting, and quoting is a rule.
+    // Lexical (uppercase), so blanks inside a value are kept. The value ends at
+    // the end of the line or at a `#`, and the action trims the blanks left
+    // before a comment. A `#` can therefore not appear inside a value.
     rule VALUE -> ref String = s:until("#" | line_ending) { s.trim() }
 
     pub rule file -> Vec[Section] =
@@ -78,9 +53,9 @@ pub struct Setting {
     value: ref String,
 }
 
-// `Section` never writes a view type, and is tied to the input all the same: it
-// holds a `Vec[Setting]`, and a `Setting` holds views. That is the transitive
-// half of Part II, 10.6, and it is inferred rather than declared.
+// `Section` holds `Setting`s, which hold slices of the input, so a `Section`
+// may not outlive the input either. The compiler infers that; nothing here
+// declares it.
 pub struct Section {
     name: ref String,
     settings: Vec[Setting],
@@ -89,9 +64,7 @@ pub struct Section {
 fn main() throws {
     let path = cli::args().nth(1) ?? "app.conf"
 
-    // `read_to_string` rather than `map`: a configuration file is small, and
-    // the text has to outlive nothing here. `fs::map` is the other half of the
-    // same module and what 1BRC needs (Part III, 17.1).
+    // A configuration file is small, so it is read into a string.
     let text = fs::read_to_string(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot read {path}: {error}")
         return

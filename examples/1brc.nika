@@ -1,38 +1,19 @@
-// examples/1brc.nika
+// The One Billion Row Challenge: the lowest, mean and highest temperature
+// of each weather station, from one reading per line.
 //
-// The One Billion Row Challenge, in Nikaia 0.0.7.
+//     printf 'Hamburg;12.0\nBulawayo;8.9\nHamburg;-3.4\n' > measurements.txt
+//     nikaia run -- measurements.txt
+//     {Bulawayo=8.9/8.9/8.9, Hamburg=-3.4/4.3/12.0}
 //
-// Input:  ~13 GB of lines, "<station name>;<temperature>\n", e.g. "Hamburg;12.0"
-// Output: one line, "{Abha=-23.0/18.0/59.2, Abidjan=-16.2/26.0/67.3, ...}"
-//         sorted by station name, min/mean/max to one decimal.
+// To parse on every core, add `user-parallelism = "yes"` under `[build]` in
+// nikaia.toml; for timing, also `opt-level = 3` under `[build.x86_64-linux]`.
+// Name the project `brc`, not `1brc`: a package name cannot start with a digit.
 //
-// This is a benchmark, not a demo: it stresses the three things the 0.0.7
-// grammar protocol claims (scannerless parsing, zero-copy slices, `sync`
-// parallelism). If it is slow, the argument in ADR-007 is wrong.
+// Shows: a `grammar` that describes the whole file, a parallel `par_fold`,
+// names that are slices of a memory-mapped file rather than copies, `sync`
+// functions, and a format spec inside an f-string.
 //
-// Build:  nikaia build --user-parallelism=auto --release
-// Run:    ./1brc measurements.txt
-//
-// This runs:
-//
-//     nikaia --input examples/1brc.nika --backend rust
-//
-// and `crates/nikaia/tests/one_brc.rs` compiles the result and checks what it
-// prints, on this file rather than a copy of it.
-//
-// It does what it says: `fs::map` maps the file (ADR-014 D2), and under the
-// `--user-parallelism=auto` the pieces are parsed on every core (D3) - 8 million lines
-// on 4 cores took 0.14 s against 0.52 s sequentially, with identical output.
-// Sequentially it is 659 instructions per row, against 840 for the same
-// aggregation written naively in Rust and 688 for it hand-tuned (ADR-015 D3).
-// `digit_value`, called for every digit below, is itself written in Nikaia and
-// compiled into `std` by this compiler (D1).
-//
-// Where this file says something explicitly that a later Nikaia will infer -
-// `as i64`, `ref path`, `fn { … }` instead of `fn:` - the reason is in ADR-013 D7,
-// and that last rewrite is why the `fn:` form is gone entirely (ADR-022).
-// The compiler checks types (ADR-024) but converts nothing on its own: a
-// printer that guessed would be worse than a source that says what it means.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::fs
 use std::cli
@@ -43,40 +24,25 @@ use std::collections
 // 1. A grammar for the file
 // ---------------------------------------------------------------------------
 
-// This is a grammar for the *input*, not for a line. You do not run it once per
-// row - you write down what the file looks like and get a parser for it, which
-// then drives itself over the bytes. Per-row invocation would pay the whole DSL
-// protocol a billion times over; the parser pays it once.
-//
-// It is scannerless (Part II, 10.1): the rules consume the byte stream
-// directly. There is no tokenizer to ask what a "token" is in `Hamburg;12.0`,
-// and station names legitimately contain blanks, dots and non-ASCII text.
+// A grammar for the whole file, not for one line: it is called once and walks
+// the bytes itself. There is no tokenizer, so station names may contain blanks,
+// dots and non-ASCII text.
 grammar Measurements {
 
-    // Lexical rule (uppercase name): no implicit whitespace between parts.
-    // That matters here - " Hamburg" and "Hamburg" are different stations, so
-    // the parser must not helpfully skip the leading blank.
+    // An uppercase rule is *lexical*: nothing is skipped between its parts, so
+    // "Hamburg " with a trailing blank is a station of its own.
     //
-    // The name is a slice into the input buffer, never a copy (Part II, 10.6).
-    // At a billion rows, copying each name into a String is the difference
-    // between seconds and minutes.
+    // `ref String` is a slice of the input, never a copy.
     //
-    // Up to the semicolon - or to the end of the frame, whichever comes first.
-    // `frame_end` is the boundary of the frame this rule is reached from
-    // (MEASUREMENT below), written once there and referenced here. It has to
-    // be said: a plain `until(";")` would run through a newline, and the
-    // compiler rejects that under a frame rather than quietly fixing it
-    // (ADR-009 D1). Either way it is one machine-word-at-a-time scan.
+    // The scan stops at the `;` or at `frame_end`, the line end that
+    // MEASUREMENT below declares. A plain `until(";")` could run into the next
+    // line, and the compiler rejects it here.
     rule NAME -> ref String = s:until(";" | frame_end) { s }
 
     // Temperatures always carry exactly one decimal, so they are parsed as
-    // tenths and the whole aggregation stays in integer arithmetic. Floating
-    // point comes back only when printing.
-    //
-    // `digit{1,2}` states the width the format fixes (-99.9 ..= 99.9). That
-    // is what lets the parser treat this as a fixed-width field rather than
-    // scan for where the digits stop - and a three-digit temperature is a
-    // parse error, as it should be (ADR-009 D5).
+    // tenths and all the arithmetic stays in integers until printing.
+    // `digit{1,2}` is the width the format allows (-99.9 to 99.9), so
+    // "123.0" is a parse error.
     rule TENTHS -> i32 =
         neg:"-"? whole:digit{1,2} "." frac:digit
         {
@@ -86,53 +52,28 @@ grammar Measurements {
             if neg != null { -value } else { value }
         }
 
-    // The commit point (`=>`) says: once the separator is there, this line *is*
-    // a measurement. A malformed temperature after it is an error to report,
-    // not a reason to backtrack and reinterpret the line. Without it a corrupt
-    // row is silently skipped - the worst possible outcome for an aggregation.
-    // `@frame` (Part II, 10.7) is what makes the parse parallel: it says a
-    // measurement can be found from any offset by scanning to the next "\n",
-    // so the file can be cut blindly and each piece repairs its own start. The
-    // compiler does not take that on trust - it checks that no rule reachable
-    // from here can consume a "\n" in the middle, which is exactly what would
-    // make this wrong for, say, CSV with quoted fields. Uppercase, because a
-    // frame is lexical: the implicit whitespace of a syntactic rule would eat
-    // the very newline the file is cut at - and `Hamburg ; 12.0` is not a
-    // measurement anyway.
+    // `=>` is a commit point: once the `;` is there, the line is a measurement,
+    // and a bad temperature after it is reported, not retried as something else.
+    //
+    // `@frame` says a measurement can be found from any offset by scanning to
+    // the next "\n", so the file can be cut into pieces and parsed in parallel.
+    // The compiler checks that no scan inside the frame can run past it (see NAME).
     @frame(boundary: "\n")
     rule MEASUREMENT -> Reading =
         name:NAME ";" => temp:TENTHS frame_end
         { Reading { name, temp } }
 
-    // The entry rule *is* the file.
-    //
-    // Writing `MEASUREMENT*` here would be wrong at this size: it collects, and
-    // a billion Readings do not fit in memory. A fold threads an accumulator
-    // through instead, so the parser consumes one measurement at a time and
-    // nothing is ever collected - the parse runs in constant space.
-    //
-    // `par_fold` adds the second half of what parallel parsing needs: how two
-    // partial results combine. With a frame boundary and a merge, the compiler
-    // generates the split, the seam repair, one accumulator per core and the
-    // final reduce - none of which appears in main() below.
-    //
-    // It has to be asked for. The compiler will not parallelise a plain `fold`
-    // on its own, because a merge over floats is not associative and the core
-    // count would silently change the answer. This one is associative: the
-    // aggregation runs entirely in i64 tenths and only becomes f64 at print
-    // time. Under --user-parallelism=0 the same grammar runs as a sequential fold.
+    // `MEASUREMENT*` would collect a billion readings into memory. A fold
+    // instead passes each one to an accumulator, so the parse runs in
+    // constant space. `par_fold` also says how two partial results merge;
+    // with that and the frame, the compiler writes the splitting, one
+    // accumulator per core and the final merge. The merge is exact because
+    // everything is summed in integer tenths.
     pub rule file -> Summary =
         par_fold(MEASUREMENT, Summary, fn(acc, m) { acc.record(m) },
                  Summary::merge)
 }
 
-// Nothing is written above this struct, and that is the promise: a `Reading` is
-// built and consumed inside the fold, so its name stays a plain reference into
-// the input buffer and costs nothing (Part I, 6.6). A later edit that let one
-// escape the buffer's scope would be refused here - keeping a buffer alive is
-// what `@tethers` allows, and nothing that does not say it may quietly grow a
-// shared handle on a struct built a billion times
-// ([ADR-201](../docs/specification/adr/adr-201.md) D2).
 pub struct Reading {
     name: ref String,
     temp: i32,
@@ -154,9 +95,8 @@ impl Stats {
         return Stats { min: first, max: first, sum: first as i64, count: 1 }
     }
 
-    // `sync` (Part II, 12.1): pure computation, cannot pause, cannot do I/O.
-    // This is what lets the parser run inside `par_iter` below - the compiler
-    // checks it, rather than us remembering it.
+    // `sync`: this function cannot pause. The compiler checks it, and refuses
+    // a call like `fs::read_to_string` in here.
     fn add(ref mut self, temp: i32) sync {
         if temp < self.min { self.min = temp }
         if temp > self.max { self.max = temp }
@@ -176,11 +116,8 @@ impl Stats {
     }
 }
 
-// What one parser run produces: the stations it saw, and their statistics.
-// The keys are slices into the input buffer too. `totals` dies before `data`
-// does, so they are plain references here as well; were this summary returned
-// past the mapping, the *map* would take one handle on the buffer and the keys
-// would stay offsets - never one handle per key (ADR-008, D4).
+// The stations seen so far and their statistics. The keys are slices of the
+// input too.
 pub struct Summary {
     stations: collections::HashMap[ref String, Stats],
 }
@@ -214,35 +151,19 @@ impl Summary {
 fn main() throws {
     let path = cli::args().nth(1) ?? "measurements.txt"
 
-    // I/O in direct style: no `async` on the signature, no `await` here.
-    // `fs::map` is compiled into a non-blocking state machine like every other
-    // `std::fs` call (Part III, 17.1). A memory map is what makes 13 GB
-    // practical - the pages *are* the buffer, so nothing is copied and every
-    // station name below points straight into the mapped file.
-    //
-    // `fs::map` needs a target with memory mapping, not a particular setting:
-    // this would map the file just the same under `--user-parallelism=0` on Linux.
-    // Only a `wasm32-*` target rules it out, where `fs::lines` is the
-    // constant-memory alternative. Parallelism is asked for here so the
-    // grammar's `par_fold` uses every core, not for the mapping - and at
-    // `user_parallelism = no` the same program still runs, on one core.
+    // `fs::map` maps the file into memory instead of reading it, so a file of
+    // many gigabytes is never copied, and every station name points into it.
+    // No `async` or `await` is written: I/O does not block, and the code reads
+    // straight through. `catch` runs its block when the call fails, with the
+    // failure named `error`.
     let data = fs::map(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }
 
-    // The whole parse, on every core. There is no chunking code here because
-    // the grammar already carries what chunking needs: `@frame` says where the
-    // file may be cut, `par_fold` says how the pieces combine. One parser per
-    // core, one accumulator each, nothing shared and nothing locked until the
-    // merge - and a billion rows collapse to a few thousand stations, so that
-    // merge costs nothing. A bad row in piece seven is reported at its line in
-    // the file, not in piece seven (ADR-009 D3).
-    //
-    // Parsing is pure computation, so this satisfies the `sync` rule (12.1) the
-    // parallel form requires. Had a `println` found its way into an action
-    // block, the compiler would have said so here rather than quietly
-    // serialising the workers.
+    // The whole parse. With no `catch`, a bad line leaves `main` through
+    // `throws` and ends the program with an error that gives its line number
+    // in the whole file, even when the file was parsed in pieces.
     let totals = Measurements::file(data)
 
     let mut names = totals.stations.keys().collect()
@@ -250,19 +171,14 @@ fn main() throws {
 
     let body = names
         .map fn(name) {
-            // `names` came out of this very map, so the key is there - and
-            // since ADR-114 D1 the brackets say a `T?` whether or not this
-            // line knows better, so the line says what it knows. The abort it
-            // used to get for free is the one it now writes.
+            // A map lookup gives a `Stats?` that may be absent. `??` supplies
+            // the other case; the key came from this map, so it cannot happen.
             let s = totals.stations[name] ?? panic(f"{name} was a key a moment ago")
-            // 1BRC prints one decimal; a hole may say how it is written, after
-            // the colon, as a format string does anywhere else.
+            // `:.1` after a value prints it with one decimal.
             f"{name}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"
         }
         .join(", ")
 
-    // `{{` and `}}` are literal braces: this one *is* an `f"…"`, so the escape
-    // is the one a format string has always had. Only a string that
-    // interpolates pays for it now (ADR-035 D1).
+    // In an f-string, `{{` and `}}` are literal braces.
     println(f"{{{body}}}")
 }
