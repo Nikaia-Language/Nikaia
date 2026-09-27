@@ -639,40 +639,6 @@ work waiting on one answer. It is on
 [`open-decisions.md`](open-decisions.md), *where the connection goes when a
 checked statement runs*, with the options and a recommendation.
 
-### 2.41. One name the prelude promises and `std` does not have
-
-[ADR-154](specification/adr/adr-154.md). The rule is built for a function and
-for a type; what is left is D1's own list naming **one** thing that does not
-exist.
-
-**`assert`** is on the list on Part I 1.3 and is not in `std`. It is not a piece
-of work on its own: it belongs with the **testing chapter** (Part III 14), which
-is not built either — there is no `nikaia test`, `assert c` parses as two
-statements and is refused with `NK1117`, and `assert(c)` is a call to a function
-of that name. Whatever `assert` is, it is decided there rather than here.
-
-*The other three are answered.* **`Bytes`** is the language's and it exists
-([ADR-156](specification/adr/adr-156.md) D1). **`panic`** exists
-([ADR-161](specification/adr/adr-161.md) D3), ends the program with the
-program's own words at the Nikaia line, and was built because
-[ADR-114](specification/adr/adr-114.md) D1 writes it as the way a program says
-it knows a key is present. And **`eprint`** is on the list
-([ADR-162](specification/adr/adr-162.md) D1) rather than being a question:
-diagnosis is the language's, and what it *does* is a thing only the compiler
-knows, because only the compiler knows the target.
-
-*A name on the list that does not exist* is the one direction a prelude can be
-wrong in without anybody noticing — nothing refuses it, because nothing reaches
-it. **The other direction is now watched too**
-([ADR-162](specification/adr/adr-162.md) D3): a test reads the list off the page
-and holds it against what `std` keys bare, which is what found `access_all` and
-`update_all` sitting there unlisted.
-
-*What stays bare on purpose:* `Shared`, `SharedMut` and `Locked` are the
-language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and
-a `TaskHandle` is what a `spawn` hands back — a program has no reason to write
-the name, so moving it would cost a migration and buy nothing.
-
 ### 2.44. The describer's remaining half: `cargo metadata`, a directory walk and a subprocess
 
 [ADR-195](specification/adr/adr-195.md) D4 and
@@ -822,6 +788,26 @@ consumer) take the rules when they are built. §1.23 is in the way of the
 stricter form D4 mentions (`f: fn(…) sync` under a plain `sync`), not of
 `sync(f)`.
 
+### 2.48. `nikaia test`, and `assert` as a claim
+
+[ADR-245](specification/adr/adr-245.md), accepted; nothing of it is built. It
+answers what §2.41 left open — `assert` was the one name on the prelude's list
+([ADR-154](specification/adr/adr-154.md) D1) that `std` did not have, and
+[ADR-162](specification/adr/adr-162.md) D3's test sees it once it does. In the
+order the pieces depend on each other:
+
+1. **D2 and D3:** `assert(cond; message: …)` in the prelude, recognised by the
+   checker, its condition refused unless it is `sync`, does not throw and
+   touches nothing; the failure message with the operands' values.
+2. **D1 and D7:** `test "name" { … }` (and `test` in the reserved list), left out
+   of `build` and `run`; `nikaia test`, one process per test, at the project's
+   setting and, with `--both-settings`, at both.
+3. **D8:** `tests/NAME.stdout` with optional `.stdin` and `.args`. The programs in
+   `examples/` are its first users: their expected outputs are in their
+   comments.
+4. **D6:** `nikaia --asserts`, every row *run time* until there is a prover.
+   D4 and D5 need no work before a prover exists; D3 is what keeps them open.
+
 ## 3. Upkeep
 
 A page that says something a later decision made false.
@@ -850,6 +836,16 @@ database driver above and is itself blocked. Its `render` lowers and runs today.
 
 *So the corpus check to trust is the test suite*, which builds each project the
 way a project is built, and not a loop over every file.
+
+### 3.8. Part III 14.1 and 14.2 describe the `assert` ADR-245 displaced
+
+Part III 14.1 writes `assert 1 + 1 == 2` as a statement, and 14.2 says an
+assertion is removed from a release build unless `--with-asserts` asks for it.
+[ADR-245](specification/adr/adr-245.md) D2 makes `assert` a function,
+`assert(cond; message: …)`, and D4 makes it a claim no build option turns off.
+Both sections, their examples included, are rewritten with the build of §2.48;
+until then `tests/specification.rs` walks the old blocks, which parse as the
+two statements Part I 2.2 already says `assert c` is.
 
 ## 4. Where the other lists are
 
