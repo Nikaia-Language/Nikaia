@@ -1,8 +1,0 @@
-/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/app-d8a8b9497ce21098.d: /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/app/app.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/maths/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/switches
-
-/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/app-d8a8b9497ce21098: /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/app/app.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/maths/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/switches
-
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/app/app.rs:
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/src/main.nika:
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/maths/src/main.nika:
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-overflow-30/app/target/nikaia/gen/switches:

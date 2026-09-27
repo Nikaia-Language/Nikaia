@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.227] — 2026-09-27
+
+**A sequence's `count()` is an `i64`** — closing `open-work.md` §1.15.
+
+- `count()` kept the language below's `usize`, so a count returned as an
+  `i64`, bound to one or added to a length was `rustc`'s *mismatched types*.
+  The checker now records each `count()` that resolved to `std`'s count of a
+  sequence (`Seq::count`, `Par::count`), and the emitter writes the conversion
+  a length gets, parenthesised where an operator or a method stands on it. A
+  program's own `count` is left as it is.
+- Removed `crates/nikaia/target/floor/`, 2,114 build files committed by
+  accident with 0.0.200, and ignored `crates/*/target` so a build run from
+  inside a crate's directory cannot be committed again.
+
 ## [0.0.226] — 2026-09-27
 
 **An error keeps its site when it hops into the box** —
