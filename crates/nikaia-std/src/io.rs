@@ -239,8 +239,9 @@ pub async fn lines() -> Lines {
 /// **Not an `Iterator`**, and that is the decision rather than an omission.
 /// `Iterator::next` has no `await` in it, which is the whole reason D1 exists;
 /// the inherent `async fn next` below is the shape a `for` over a pausing
-/// sequence lowers to, and the trait a second such producer would want is D3's
-/// and is not written until there is a second.
+/// sequence lowers to. The trait a second such producer wanted is
+/// `nikaia_std::seq::Step` ([ADR-233](../../../docs/specification/adr/adr-233.md)
+/// D1), and this is one: its item is the line or the failure.
 pub struct Lines {
     /// What the last chunks brought and what has not been handed out yet.
     held: Vec<u8>,
@@ -310,12 +311,11 @@ impl Lines {
     /// sequence whose step pauses
     /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D5).
     ///
-    /// **The eager walks and not the lazy ones.** What `collect`, `count`,
-    /// `nth` and `join` hand back is a value, so each is a loop around
-    /// [`Lines::next`] and nothing more. `map` and `filter` hand back another
-    /// sequence, whose steps would pause — that is the trait D3 defers, and the
-    /// compiler refuses those by name and line rather than letting `rustc`
-    /// speak about this file.
+    /// **The eager walks**: what `collect`, `count`, `nth` and `join` hand back
+    /// is a value, so each is a loop around [`Lines::next`] and nothing more.
+    /// The lazy ones hand back another sequence whose step pauses and can
+    /// fail, `nikaia_std::seq::Failing`
+    /// ([ADR-234](../../../docs/specification/adr/adr-234.md)).
     ///
     /// **The first failure ends the walk.** A `collect` that swallowed one
     /// would turn a truncated stream into a shorter list, which is the bug
@@ -373,6 +373,65 @@ impl Lines {
             first = false;
         }
         Ok(out)
+    }
+
+    /// Each line through a lambda — `Seq::map`, lazy: nothing is read until
+    /// something walks the result
+    /// ([ADR-234](../../../docs/specification/adr/adr-234.md) D1). A failure
+    /// passes through to that walk, which is where the program's `?` is.
+    pub fn map<U, F: FnMut(String) -> U>(
+        self,
+        f: F,
+    ) -> crate::seq::Failing<crate::seq::OkMap<Self, F>> {
+        crate::seq::Failing(self).map(f)
+    }
+
+    /// Only the lines a lambda says yes to — `Seq::filter`, lazy.
+    pub fn filter<F: FnMut(&String) -> bool>(
+        self,
+        f: F,
+    ) -> crate::seq::Failing<crate::seq::OkFilter<Self, F>> {
+        crate::seq::Failing(self).filter(f)
+    }
+
+    /// Each line through a lambda that pauses
+    /// ([ADR-233](../../../docs/specification/adr/adr-233.md) D1).
+    pub fn then<U, F: AsyncFnMut(String) -> U>(
+        self,
+        f: F,
+    ) -> crate::seq::Failing<crate::seq::OkThen<Self, F>> {
+        crate::seq::Failing(self).then(f)
+    }
+
+    /// Only the lines a lambda that pauses says yes to.
+    pub fn then_filter<F: AsyncFnMut(&String) -> bool>(
+        self,
+        f: F,
+    ) -> crate::seq::Failing<crate::seq::OkThenFilter<Self, F>> {
+        crate::seq::Failing(self).then_filter(f)
+    }
+
+    /// The first `n` lines — `Seq::take`, lazy.
+    pub fn take(self, n: usize) -> crate::seq::Failing<crate::seq::Take<Self>> {
+        crate::seq::Failing(self).take(n)
+    }
+
+    /// Everything after the first `n` lines — `Seq::skip`, lazy.
+    pub fn skip(self, n: usize) -> crate::seq::Failing<crate::seq::Skip<Self>> {
+        crate::seq::Failing(self).skip(n)
+    }
+
+    /// The first line, and then every `step`-th after it — `Seq::step_by`.
+    pub fn step_by(self, step: usize) -> crate::seq::Failing<crate::seq::StepBy<Self>> {
+        crate::seq::Failing(self).step_by(step)
+    }
+
+    /// Pairs, one line and one item of `other` — `Seq::zip`, lazy.
+    pub fn zip<J: IntoIterator>(
+        self,
+        other: J,
+    ) -> crate::seq::Failing<crate::seq::OkZip<Self, J::IntoIter>> {
+        crate::seq::Failing(self).zip(other)
     }
 
     /// One line out of what is already held, where there is one.
@@ -592,5 +651,12 @@ mod tests {
             steps[1].is_err(),
             "a failed read must not be indistinguishable from the end of the stream"
         );
+    }
+}
+
+impl crate::seq::Step for Lines {
+    type Item = Result<String, IoError>;
+    async fn step(&mut self) -> Option<Result<String, IoError>> {
+        self.next().await
     }
 }

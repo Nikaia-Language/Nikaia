@@ -293,20 +293,76 @@ fn the_eager_walks_compile() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn a_lazy_walk_of_a_pausing_sequence_is_refused_too() {
-    let parsed = parse_to_ast(
-        "use std::io\n\nfn main() {\n\
-         \x20   let ls = io::lines().map fn { a }\n\
-         }",
-    )
-    .expect("the source parses");
-    let refused = emit::emit_program(&parsed, emit::Build::default())
-        .expect_err("a walk with no form is refused");
+/// Compile `rust` and run it with `input` on standard input: what it printed,
+/// and whether it ended well.
+fn ran_with(purpose: &str, rust: &str, input: &[u8]) -> (String, bool) {
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
     assert!(
-        format!("{refused:#}")
-            .contains("`map` walks a sequence whose step can fail as well as pause"),
-        "{refused:#}"
+        out.status.success(),
+        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut child = std::process::Command::new(&binary)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the program runs");
+    {
+        use std::io::Write;
+        let stdin = child.stdin.as_mut().expect("a pipe");
+        stdin.write_all(input).expect("written");
+    }
+    let done = child.wait_with_output().expect("the program ends");
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        String::from_utf8_lossy(&done.stdout).trim().to_string(),
+        done.status.success(),
+    )
+}
+
+/// **A lazy walk of `io::lines()` is another sequence whose step pauses and can
+/// fail** ([ADR-234](../../../docs/specification/adr/adr-234.md) D1). The
+/// lambda sees the line; a failure passes through the walks to whatever walks
+/// the result, where the `?` is - an eager walk or a `for`. Refused by the
+/// lowering until 0.0.220.
+#[test]
+fn a_lazy_walk_of_the_lines_hands_the_failure_to_the_walk() {
+    let walked = rust(
+        "use std::io\n\n\
+         fn main() throws {\n\
+         \x20   let long = io::lines().map(fn(l) { l.len() }).filter(fn(n) { n > 1 }).skip(1).take(5).collect()\n\
+         \x20   println(f\"{long.len()}\")\n\
+         }",
+    );
+    assert!(walked.contains("io::lines().await.map("), "{walked}");
+    assert_eq!(
+        ran_with("lazy-lines", &walked, b"a\nbb\nccc\ndddd\n"),
+        ("2".to_string(), true)
+    );
+    // A line that is not text is a failing step: the walk ends there, and the
+    // failure leaves `main` rather than shortening the list.
+    assert_eq!(
+        ran_with("lazy-lines-broken", &walked, b"a\nbb\n\xFF\nccc\n"),
+        (String::new(), false)
+    );
+
+    // …and a `for` over one, with the failure after the lines before it.
+    let looped = rust(
+        "use std::io\n\n\
+         fn main() throws {\n\
+         \x20   for n in io::lines().map(fn(l) { l.len() }).filter(fn(n) { n > 1 }) {\n\
+         \x20       println(f\"{n}\")\n\
+         \x20   }\n\
+         }",
+    );
+    assert_eq!(
+        ran_with("lazy-lines-for", &looped, b"a\nbb\n\xFF\nccc\n"),
+        ("2".to_string(), false)
     );
 }
 

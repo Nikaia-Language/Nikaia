@@ -395,7 +395,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.219.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
+**Pre-alpha, as of 0.0.220.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -423,11 +423,10 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 | write tests | nothing to run them with | no `nikaia test` and no `assert` — Part III 14 is not built. Compare output instead |
 | format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](editors/) has syntax highlighting only |
 | put a **view** of text into a **published** (`pub`) field or result that also gets text of its own | refused, and the message says why and what copies nothing | every user of a published field or result reads and builds its representation, which is fixed before they exist. A published *parameter* takes either kind from its own package and text of its own from others ([ADR-232](docs/specification/adr/adr-232.md)). Everywhere else a declared `String` or `String?` — field, result, parameter, `let`, the elements of a `Vec` or a map, from inside an `f"…"` hole too — becomes a view, or either per value, by what flows into it ([ADR-222](docs/specification/adr/adr-222.md), [223](docs/specification/adr/adr-223.md), [224](docs/specification/adr/adr-224.md)) |
-| do I/O inside a lambda handed to `std` (`map`, `filter`, …) | refused — write a `for` loop | `std`'s entries take synchronous Rust closures; a lazy walk of a pausing sequence has no shape yet |
 | put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |
 | talk to a database | not possible | `std::db` and the SQL DSL are specified, not built — which is why `fortunes` doesn't run |
 | serve HTTPS or HTTP/2, or many connections at once | not possible | the server handles one connection at a time, HTTP/1.1, no TLS |
-| build for anything but `x86_64-linux` | refused | wasm, C library, Python binding and bare metal are all specified and unbuilt |
+| build for anything but `x86_64-linux` or `aarch64-linux` | refused | wasm, C library, Python binding and bare metal are all specified and unbuilt |
 | supervise tasks | not possible | no supervisor |
 | find a function you'd expect in `std` | often missing | `std` holds what the examples needed; the *surface* is the open part |
 
@@ -448,7 +447,7 @@ finished or not.
 | :--- | :--- | :--- | :--- |
 | **The tether** ([ADR-209](docs/specification/adr/adr-209.md)) | a view may outlive its buffer, with no annotation and no copy | ✅ all of it: the buffer lives in the caller's frame, in a handle a task carries, or one handle per buffer where a cache drops entries — for text and for a list of structs of views alike; `nikaia --tethers` shows which | a buffer handed both to a task *and* out of the function; a *map* of structs holding views that drops entries — both refused with an explanation |
 | **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing; every declared `String` or `String?` a view flows into — field, result, parameter, `let`, a list's element, a map's key — becomes a view, or either per value, and only that position pays ([ADR-222](docs/specification/adr/adr-222.md), [223](docs/specification/adr/adr-223.md), [224](docs/specification/adr/adr-224.md)) | a view for a *published* `String` field or result that also gets text of its own needs `.clone()` |
-| **Functions have no colour** ([ADR-055](docs/specification/adr/adr-055.md)) | no `async`/`await`; any function may pause | ✅ inferred everywhere, including tasks, `overlap`, and a lambda handed to `std` — `map` and `filter` then make a sequence that pauses at each step, `sort_by_key` and the map entries await it ([ADR-233](docs/specification/adr/adr-233.md)) | a lazy walk (`map`, `filter`, …) of `io::lines()`, whose step can also fail — refused, write a loop |
+| **Functions have no colour** ([ADR-055](docs/specification/adr/adr-055.md)) | no `async`/`await`; any function may pause | ✅ inferred everywhere, including tasks, `overlap`, and a lambda handed to `std` — `map` and `filter` then make a sequence that pauses at each step, `sort_by_key` and the map entries await it ([ADR-233](docs/specification/adr/adr-233.md)) — and every lazy walk of `io::lines()` ([ADR-234](docs/specification/adr/adr-234.md)) | a lambda handed to `par_iter()`, which has no entry yet |
 | **Locks without deadlocks** ([ADR-057](docs/specification/adr/adr-057.md)) | `access_all` takes locks in one order; a lock is never held across a pause | ✅ the lock, all its doors, and `access_all`; a call that may pause inside a door is refused (`NK2202`) | the analysis that would refuse misuse answers *undecided* for 24 of 59 functions in the examples, so those refusals are not switched on |
 | **SQL checked at build time** ([ADR-143](docs/specification/adr/adr-143.md)) | a misspelled column is refused while the program is built | — | not started: `std::db`, the driver, and the query DSL |
 

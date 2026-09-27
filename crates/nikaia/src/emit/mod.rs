@@ -9932,11 +9932,11 @@ impl<'p> Emitter<'p> {
             out.push(")");
         }
 
-        // **A walk of a pausing sequence other than a `for`**
-        // ([ADR-172](../../docs/specification/adr/adr-172.md) D5). The `for` is
-        // the one walk that gives its thread up; every other is `Iterator`'s
-        // below, which has no suspension point in it. Refused here with a line,
-        // rather than left to `rustc` about a method the generated file's
+        // **A walk of a pausing sequence that has no pausing form**
+        // ([ADR-172](../../docs/specification/adr/adr-172.md) D5,
+        // [ADR-234](../../docs/specification/adr/adr-234.md)). Every walk `Seq`
+        // has today has one; an entry added without one is refused here with a
+        // line, rather than left to `rustc` about a method the generated file's
         // receiver does not have (Part III, C.1).
         if self
             .pausing_walks
@@ -9945,10 +9945,9 @@ impl<'p> Emitter<'p> {
             let name = self.text(method);
             return Err(refused_at!(
                 flow.statement,
-                "`{name}` walks a sequence whose step can fail as well as pause, and this \
-                 compiler cannot write a lazy walk of one yet (ADR-233 §3). Write the loop - \
-                 `for line in io::lines() {{ … }}` - and do inside it what this was going to \
-                 do afterwards"
+                "`{name}` walks a sequence whose step pauses, and there is no pausing form \
+                 of `{name}` to write (ADR-234). Write the loop - `for x in … {{ … }}` - and do \
+                 inside it what this was going to do afterwards"
             ));
         }
         if self.method_pauses(flow, method) {

@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.220] — 2026-09-27
+
+**A lazy walk of `io::lines()` carries its failure to the walk** —
+[ADR-234](docs/specification/adr/adr-234.md), closing `open-work.md` §2.2.
+
+- `io::lines().map fn(l) { … }` was refused by the lowering, *write the loop*.
+  `io::Lines` is now a `Step` whose item is the line or the failure, and
+  `map`, `filter`, `take`, `skip`, `step_by` and `zip` on it — with a plain
+  lambda or one that pauses — hand back another such sequence
+  (`nikaia_std::seq::Failing`).
+- The lambda sees the line; a failure passes through to whatever walks the
+  result: `collect`, `count`, `nth` and `join` hand back the first one, and a
+  `for` handles the lines before it and then leaves with it. A failure is never
+  a shorter list.
+- The result of a lazy walk of a failing sequence keeps `throws`, so the
+  function walking it says so, as for the lines themselves.
+- The open-work ordering no longer lists the lock rules, which 0.0.213 built.
+- The README's *build for anything but `x86_64-linux`* wall names
+  `aarch64-linux` too, which 0.0.218 made a target.
+
 ## [0.0.219] — 2026-09-27
 
 **A lambda that pauses is handed to `std`'s pausing counterpart** —

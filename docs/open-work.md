@@ -47,40 +47,9 @@ Two rules for ordering this section:
 
 The order:
 
-1. **A server to bind to, and the `postgres` block.** Several entries wait on
-   it: a `par_iter` with an entry to demand `sync` of is a program that calls
-   one; a lazy walk of `io::lines()` is the same shape (§2.2).
-2. **The rules around the lock.** The type, its constructor, its spelling, all
-   four doors and the transfer are built
-   ([ADR-065](specification/adr/adr-065.md)); what is left is **D7's stored
-   lambda**, and a refusal reading the `locks` column would refuse correct
-   programs until the functions they call have entries.
-3. **Supervision.** Nothing else waits on it.
-
-### 2.2. A lazy walk of `io::lines()` has no shape
-
-**[ADR-172](specification/adr/adr-172.md) closed all but one corner of this
-entry, and [ADR-233](specification/adr/adr-233.md) D1 most of that.** A `for`
-over `io::lines()` gives its thread up (D1), and the **eager** walks of the
-same sequence — `collect`, `count`, `nth`, `join` — pause and propagate with it
-(D5). And a sequence whose step pauses now has its lazy walks too — `map`,
-`filter`, `take`, `skip`, `step_by`, `zip` — on `nikaia_std::seq::Step`, the
-trait D3 deferred until a second producer needed one: a `map` whose lambda
-pauses is that producer.
-
-**What is left is `io::lines()`'s own lazy walks.** Its step can **fail** as
-well as pause, so below each item is a `Result`, and an adapter over it has to
-carry the failure to whatever walks it — the `?` ADR-025 D1 puts on the eager
-walk, one level further out. They are refused from the lowering meanwhile, with
-the loop as the way out and the line under it.
-
-*Evidence: a refusal, which is the good kind.* `io::lines().map fn { … }` says
-what is missing and what to write instead, in this compiler's words and on the
-`.nika` line.
-
-*What it needs:* `Step` over `io::Lines`, whose item is the `Result`, and
-adapters that hand the lambda the line and keep the failure for the walk.
-[ADR-105](specification/adr/adr-105.md)'s rule holds — it waits for a program.
+1. **A server to bind to, and the `postgres` block.** A `par_iter` with an
+   entry to demand `sync` of is a program that calls one (§2.17).
+2. **Supervision.** Nothing else waits on it.
 
 ### 2.4. Part II 12.8's supervision syntax
 

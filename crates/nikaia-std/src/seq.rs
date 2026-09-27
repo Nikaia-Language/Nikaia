@@ -287,6 +287,215 @@ impl<S: Step> Paused<S> {
     }
 }
 
+/// Each item that is there through a plain lambda; a failure passes through.
+pub struct OkMap<S, F> {
+    inner: S,
+    f: F,
+}
+
+impl<S: Step<Item = Result<T, E>>, T, E, U, F: FnMut(T) -> U> Step for OkMap<S, F> {
+    type Item = Result<U, E>;
+    async fn step(&mut self) -> Option<Result<U, E>> {
+        Some(self.inner.step().await?.map(&mut self.f))
+    }
+}
+
+/// Only the items a plain lambda says yes to; a failure passes through.
+pub struct OkFilter<S, F> {
+    inner: S,
+    f: F,
+}
+
+impl<S: Step<Item = Result<T, E>>, T, E, F: FnMut(&T) -> bool> Step for OkFilter<S, F> {
+    type Item = Result<T, E>;
+    async fn step(&mut self) -> Option<Result<T, E>> {
+        loop {
+            match self.inner.step().await? {
+                Ok(item) if !(self.f)(&item) => continue,
+                other => return Some(other),
+            }
+        }
+    }
+}
+
+/// Each item that is there through a lambda that pauses; a failure passes
+/// through.
+pub struct OkThen<S, F> {
+    inner: S,
+    f: F,
+}
+
+impl<S: Step<Item = Result<T, E>>, T, E, U, F: AsyncFnMut(T) -> U> Step for OkThen<S, F> {
+    type Item = Result<U, E>;
+    async fn step(&mut self) -> Option<Result<U, E>> {
+        match self.inner.step().await? {
+            Ok(item) => Some(Ok((self.f)(item).await)),
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// Only the items a lambda that pauses says yes to; a failure passes through.
+pub struct OkThenFilter<S, F> {
+    inner: S,
+    f: F,
+}
+
+impl<S: Step<Item = Result<T, E>>, T, E, F: AsyncFnMut(&T) -> bool> Step for OkThenFilter<S, F> {
+    type Item = Result<T, E>;
+    async fn step(&mut self) -> Option<Result<T, E>> {
+        loop {
+            match self.inner.step().await? {
+                Ok(item) if !(self.f)(&item).await => continue,
+                other => return Some(other),
+            }
+        }
+    }
+}
+
+/// Pairs, one item of each, until the shorter ends; a failure passes through
+/// and takes nothing from `other`.
+pub struct OkZip<S, J> {
+    inner: S,
+    other: J,
+}
+
+impl<S: Step<Item = Result<T, E>>, T, E, J: Iterator> Step for OkZip<S, J> {
+    type Item = Result<(T, J::Item), E>;
+    async fn step(&mut self) -> Option<Self::Item> {
+        match self.inner.step().await? {
+            Ok(item) => Some(Ok((item, self.other.next()?))),
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+/// **A sequence whose step pauses and can fail**
+/// ([ADR-234](../../../docs/specification/adr/adr-234.md) D1): what
+/// `io::lines()` is, and what a lazy walk of it makes. Each step hands back the
+/// item or the failure; a lambda handed to a walk sees the item, and the
+/// failure goes on to whatever walks the result - the eager walks here end at
+/// the first one and hand it back, which is where the program's `?` is.
+pub struct Failing<S>(pub(crate) S);
+
+impl<S: Step<Item = Result<T, E>>, T, E> Failing<S> {
+    /// The next item or failure, pausing while the step does - the shape a
+    /// `for` over the sequence lowers to, with the `?` after it.
+    pub async fn next(&mut self) -> Option<Result<T, E>> {
+        self.0.step().await
+    }
+
+    /// Everything the sequence produces, as a list, or the first failure.
+    pub async fn collect(mut self) -> Result<Vec<T>, E> {
+        let mut out = Vec::new();
+        while let Some(item) = self.next().await {
+            out.push(item?);
+        }
+        Ok(out)
+    }
+
+    /// How many items the sequence produces, or the first failure.
+    pub async fn count(mut self) -> Result<i64, E> {
+        let mut n = 0_i64;
+        while let Some(item) = self.next().await {
+            item?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// The item at a position, nothing where the sequence is shorter, or the
+    /// first failure before it.
+    pub async fn nth(mut self, at: i64) -> Result<Option<T>, E> {
+        if at < 0 {
+            return Ok(None);
+        }
+        let mut seen = 0_i64;
+        while let Some(item) = self.next().await {
+            let item = item?;
+            if seen == at {
+                return Ok(Some(item));
+            }
+            seen += 1;
+        }
+        Ok(None)
+    }
+
+    /// Every item written one after another with this text between them, or
+    /// the first failure.
+    pub async fn join(mut self, separator: &str) -> Result<String, E>
+    where
+        T: std::fmt::Display,
+    {
+        let mut out = String::new();
+        let mut first = true;
+        while let Some(item) = self.next().await {
+            let item = item?;
+            if !first {
+                out.push_str(separator);
+            }
+            out.push_str(&item.to_string());
+            first = false;
+        }
+        Ok(out)
+    }
+
+    /// Each item through a plain lambda.
+    pub fn map<U, F: FnMut(T) -> U>(self, f: F) -> Failing<OkMap<S, F>> {
+        Failing(OkMap { inner: self.0, f })
+    }
+
+    /// Only the items a plain lambda says yes to.
+    pub fn filter<F: FnMut(&T) -> bool>(self, f: F) -> Failing<OkFilter<S, F>> {
+        Failing(OkFilter { inner: self.0, f })
+    }
+
+    /// Each item through a lambda that pauses.
+    pub fn then<U, F: AsyncFnMut(T) -> U>(self, f: F) -> Failing<OkThen<S, F>> {
+        Failing(OkThen { inner: self.0, f })
+    }
+
+    /// Only the items a lambda that pauses says yes to.
+    pub fn then_filter<F: AsyncFnMut(&T) -> bool>(self, f: F) -> Failing<OkThenFilter<S, F>> {
+        Failing(OkThenFilter { inner: self.0, f })
+    }
+
+    /// The first `n` steps. A failure is a step, and the walk ends at it.
+    pub fn take(self, n: usize) -> Failing<Take<S>> {
+        Failing(Take {
+            inner: self.0,
+            left: n,
+        })
+    }
+
+    /// Everything after the first `n` steps.
+    pub fn skip(self, n: usize) -> Failing<Skip<S>> {
+        Failing(Skip {
+            inner: self.0,
+            skip: n,
+        })
+    }
+
+    /// The first step, and then every `step`-th after it. A step of `0`
+    /// aborts, as the language below's does.
+    pub fn step_by(self, step: usize) -> Failing<StepBy<S>> {
+        assert!(step != 0, "step_by: a step of 0 would never move");
+        Failing(StepBy {
+            inner: self.0,
+            step,
+            first: true,
+        })
+    }
+
+    /// Pairs, one item of this and one of `other`, until the shorter ends.
+    pub fn zip<J: IntoIterator>(self, other: J) -> Failing<OkZip<S, J::IntoIter>> {
+        Failing(OkZip {
+            inner: self.0,
+            other: other.into_iter(),
+        })
+    }
+}
+
 /// **`map` with a lambda that pauses** (ADR-233 D1): a sequence whose step
 /// pauses, one item at a time.
 pub fn then<I: IntoIterator, U, F: AsyncFnMut(I::Item) -> U>(
@@ -436,6 +645,39 @@ mod tests {
             .zip(["a", "b", "c"])
             .collect());
         assert_eq!(cut, vec![(2, "a"), (5, "b")]);
+    }
+
+    /// A step that fails at `3`, as a stream that breaks would.
+    struct Breaks(i32);
+
+    impl Step for Breaks {
+        type Item = Result<i32, String>;
+        async fn step(&mut self) -> Option<Result<i32, String>> {
+            self.0 += 1;
+            match self.0 {
+                3 => Some(Err("broke".to_string())),
+                n if n > 5 => None,
+                n => Some(Ok(n)),
+            }
+        }
+    }
+
+    #[test]
+    fn a_failing_sequence_hands_the_item_to_the_lambda_and_the_failure_on() {
+        let first_two = run(Failing(Breaks(0)).map(|x| x * 10).take(2).collect());
+        assert_eq!(first_two, Ok(vec![10, 20]));
+        let broken = run(Failing(Breaks(0)).then(async |x| x + 1).collect());
+        assert_eq!(broken, Err("broke".to_string()));
+        let past = run(Failing(Breaks(0))
+            .skip(3)
+            .then_filter(async |x: &i32| *x > 4)
+            .zip(["a"])
+            .collect());
+        assert_eq!(past, Ok(vec![(5, "a")]));
+        let counted = run(Failing(Breaks(0)).filter(|x| *x > 1).count());
+        assert_eq!(counted, Err("broke".to_string()));
+        let after = run(Failing(Breaks(3)).step_by(2).nth(0));
+        assert_eq!(after, Ok(Some(4)));
     }
 
     #[test]

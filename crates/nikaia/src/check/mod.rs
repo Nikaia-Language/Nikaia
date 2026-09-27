@@ -332,11 +332,12 @@ pub struct Checked {
     /// no form to be written as ([ADR-172](../../docs/specification/adr/adr-172.md)
     /// D5), by the byte the statement starts at and the method's name.
     ///
-    /// `io::lines().count()`, `.collect()`, `.map fn …`: the `for` is the one
-    /// walk that gives its thread up, and every other is `Iterator`'s below,
-    /// which has no suspension point in it. The emitter refuses them by name
-    /// and line rather than letting `rustc` speak about a method the generated
-    /// file's receiver does not have
+    /// The eager walks pause with the step (ADR-172 D5) and the lazy ones are
+    /// adapters of their own ([ADR-233](../../docs/specification/adr/adr-233.md),
+    /// [ADR-234](../../docs/specification/adr/adr-234.md)), so nothing lands
+    /// here today: it is the net for an entry added without a pausing form,
+    /// which the emitter refuses by name and line rather than letting `rustc`
+    /// speak about a method the generated file's receiver does not have
     /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
     ///
     /// **And what it replaces was worse than a refusal.** `io::lines().count()`
@@ -5257,11 +5258,12 @@ impl<'a> Checker<'a> {
             !contract.sync.is_sync() || walks_a_pausing_step,
             span,
         );
-        // …and a **lazy** walk of one has no form. What `map` and `filter` hand
-        // back is another sequence, whose steps would pause, and a sequence
-        // like that is the trait D3 defers until a second producer needs one.
-        // The eager walks — `collect`, `count`, `nth`, `join` — are a loop
-        // around the step and `std` writes them.
+        // …and a **lazy** walk of one is another such sequence, as an adapter
+        // of its own ([ADR-233](../../docs/specification/adr/adr-233.md) D1,
+        // [ADR-234](../../docs/specification/adr/adr-234.md) D1) - every one
+        // `Seq` has, which is what `chained` says. What is left here is an entry
+        // that hands back a sequence and has no pausing form: none today, since
+        // `rev` is `NK2703` first. The net stays for the next one.
         //
         // Recorded rather than refused here, because *this compiler cannot
         // build that yet* is a refusal from the lowering and not a rule of the
@@ -5402,7 +5404,7 @@ impl<'a> Checker<'a> {
             // A plain lambda over a sequence that already pauses: the step
             // still does, so the result is one too.
             return match chained {
-                true => a_pausing_sequence(result),
+                true => a_pausing_sequence(result, on),
                 false => result,
             };
         };
@@ -5433,7 +5435,7 @@ impl<'a> Checker<'a> {
             .pausing_lambdas
             .insert((span.start, argument_shape(lambda)), entry);
         if matches!(key, "Seq::map" | "Seq::filter") {
-            return a_pausing_sequence(result);
+            return a_pausing_sequence(result, on);
         }
         // The eager ones pause where they are called, and the call is one that
         // may pause for every rule that asks: the function around it, the
@@ -16941,29 +16943,29 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
     }
 }
 
-/// **A lazy walk of a sequence whose step pauses and cannot fail**
-/// ([ADR-233](../../docs/specification/adr/adr-233.md) D1): one this compiler
-/// made pause, by handing a pausing lambda to a `map` or a `filter`. It has
-/// every lazy walk `Seq` has but `rev`, as adapters of its own. `io::lines()`,
-/// whose step fails as well, does not (`open-work.md` §2.2).
+/// **A lazy walk of a sequence whose step pauses**
+/// ([ADR-233](../../docs/specification/adr/adr-233.md) D1,
+/// [ADR-234](../../docs/specification/adr/adr-234.md) D1): one this compiler
+/// made pause, by handing a pausing lambda to a `map` or a `filter`, or
+/// `io::lines()`, whose step can fail as well. Both have every lazy walk `Seq`
+/// has but `rev`, as adapters of their own.
 fn a_paused_chain(key: &str, on: &Ty) -> bool {
     matches!(
         key,
         "Seq::map" | "Seq::filter" | "Seq::take" | "Seq::skip" | "Seq::step_by" | "Seq::zip"
-    ) && matches!(
-        on,
-        Ty::Seq {
-            pauses: true,
-            throws: false,
-            ..
-        }
-    )
+    ) && matches!(on, Ty::Seq { pauses: true, .. })
 }
 
 /// What a `map` or a `filter` hands back where its step pauses
 /// ([ADR-233](../../docs/specification/adr/adr-233.md) D1): a sequence whose
 /// step pauses, walked from the front only and with no length until the end.
-fn a_pausing_sequence(result: Ty) -> Ty {
+///
+/// **And one whose step can fail where what it walks can**
+/// ([ADR-234](../../docs/specification/adr/adr-234.md) D1): a `map` of
+/// `io::lines()` has produced nothing yet, so its failures are still ahead of
+/// whatever walks it, and the `?` goes there.
+fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
+    let fails = matches!(on, Ty::Seq { throws: true, .. });
     match result {
         Ty::Seq {
             item,
@@ -16975,7 +16977,7 @@ fn a_pausing_sequence(result: Ty) -> Ty {
             item,
             is_sync: false,
             pauses: true,
-            throws,
+            throws: throws || fails,
             parallel,
             shape: ty::Shape {
                 ends: false,
