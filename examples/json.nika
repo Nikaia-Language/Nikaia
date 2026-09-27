@@ -1,46 +1,30 @@
-// examples/json.nika
+// Parses a JSON file into a tree and prints it back, two spaces per level.
 //
-// A JSON document, parsed into a tree and printed back.
+//     nikaia run -- data.json
+//     {
+//       "name": "a\nb",
+//       …
+//     }
+//     longest string: 3 characters
 //
-// Run:
+// Any JSON file will do; a one-line one is enough:
+// `{"name": "a\nb", "tags": [1, 2.5, true, null], "empty": {}}`.
 //
-//     nikaia --input examples/json.nika --backend rust
-//     ./json data.json
+// Shows: an `enum` as a recursive tree, a recursive `grammar`, strings kept as
+// views of the input and decoded only when asked, and a `match` the compiler
+// checks for missing cases.
 //
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
-//
-// Why it is here beside the others. `calc.nika` is one expression, `1brc.nika`
-// and `access-log.nika` are one record repeated to the end of the file, and
-// `config.nika` is a tree exactly two levels deep. JSON is the first input
-// whose shape is *not* fixed by the grammar: a value contains values, to
-// whatever depth the document happens to go. Three things follow from that,
-// and none of the others shows them.
-//
-//   * **An enum is the tree.** A JSON value is one of six things, which is
-//     what a sum type says (Part I, 4.4). Every walk over the document below
-//     is a `match` with six arms, and the compiler is the one that checks none
-//     is missing - the check a `kind: ref String` field cannot have.
-//   * **Mutual recursion between a rule and a type.** `value` reaches `value`
-//     again through `[` and `{`, and `Json` holds a `Vec[Json]` and a
-//     `Vec[Member]` that holds a `Json`. Both cycles are fine and neither is
-//     declared: the rule recurses because a PEG may, and the view analysis of
-//     Part II 10.6 walks the type cycle to a fixed point rather than into it.
-//   * **Where zero-copy stops, and what to do about it.** A JSON string is not
-//     a slice of the input: `"a\nb"` is five characters in the file and three
-//     in the value. `Text` therefore holds the **raw** body - still a view -
-//     and `unescape` is called on the strings a program actually asks about.
-//     That is deferred decoding, the same argument `dec[T]` makes for numbers,
-//     and it pays twice here: printing the document back needs the raw text,
-//     so the common case never decodes at all.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::fs
 use std::cli
 
-// Six variants, and `Text` carries a view - so `Json` is tied to the input it
-// was parsed from, and so is `Member`, through the `Json` it holds. Neither says
-// anything about it: the analysis reaches both through the cycle, which is what
-// makes *being* a view a thing a declaration never has to state.
+// A JSON value is one of six things, which is what an enum says. `Array` and
+// `Object` hold more `Json`, so the type is a tree of any depth.
+//
+// `Text` holds a view into the input, so `Json` and `Member` are tied to the
+// text they were parsed from. Neither declaration has to say so: the compiler
+// works it out, through the cycle.
 enum Json {
     Null,
     Bool(bool),
@@ -50,8 +34,6 @@ enum Json {
     Object(Vec[Member]),
 }
 
-// A member is a pair with names, which is what a struct is for. The key is a
-// raw body like any other string.
 pub struct Member {
     key: ref String,
     value: Json,
@@ -59,13 +41,9 @@ pub struct Member {
 
 grammar Json_ {
 
-    // Lowercase, so the whitespace between the elements is the backend's
-    // business - which is the whole of why nothing below mentions blanks, and
-    // why `[1, 2]` and a document spread over forty lines parse the same.
-    //
-    // The order of the alternatives is the order they are tried: `[` `]` has
-    // to come before `[` value-list `]`, or the empty array reaches a rule
-    // that requires a value and fails on the `]`.
+    // A lowercase rule skips whitespace between its parts, so nothing below
+    // mentions blanks, and `[1, 2]` and a document spread over forty lines
+    // parse the same. `value` reaches `value` again through `[` and `{`.
     pub rule value -> Json =
           "null" { Json::Null }
         | "true" { Json::Bool(true) }
@@ -77,10 +55,8 @@ grammar Json_ {
         | "{" "}" { Json::Object(Vec()) }
         | "{" members:members "}" { Json::Object(members) }
 
-    // A comma-separated list, written the way `calc.nika` writes its operand
-    // tails: a head and a repetition, collected in the action. A PEG cannot
-    // say `values = values "," value` - that does not terminate - and this is
-    // the standard repair.
+    // A comma-separated list: a head and a repetition, collected in the
+    // action. `values = values "," value` would never terminate.
     rule values -> Vec[Json] =
         head:value tail:value_tail* {
             let mut all = Vec()
@@ -103,20 +79,19 @@ grammar Json_ {
 
     rule member -> Member = k:TEXT ":" v:value { Member { key: k, value: v } }
 
-    // Uppercase, so this is lexical and the sign, the digits and the fraction
-    // are one run with nothing allowed between them. `dec[f64](…)` reads the
-    // text the pattern matched, so the number is parsed once, by the same code
-    // that would have to check it anyway.
+    // An uppercase rule skips nothing, so the sign, the digits and the fraction
+    // are one run with nothing between them. `dec[f64](…)` converts the text
+    // the pattern matched.
     rule NUMBER -> f64 =
         n:dec[f64](text("-"? digit+ ("." digit+)? )) { n }
 
-    // The body between the quotes, raw. Two things can appear in it and both
-    // consume at least one character, which is what keeps the repetition from
-    // standing still: an escape is a backslash and whatever follows it, and
-    // anything else is a character that is neither a quote nor a backslash.
+    // The body between the quotes, raw: escapes are kept as written. The body
+    // `a\nb` is four characters in the file and three once decoded, so a JSON
+    // string cannot simply be a slice of the input; the raw body can.
     //
-    // `text(…)` hands back the input the repetition covered instead of a list
-    // of what it matched - a view, one slice, no allocation.
+    // An escape is a backslash and whatever follows it; anything else is a
+    // character that is neither a quote nor a backslash. `text(…)` hands back
+    // the input the repetition covered, as a view: one slice, no copy.
     rule TEXT -> ref String = "\"" s:text((ESC | PLAIN)*) "\"" { s }
 
     rule ESC = "\\" any { }
@@ -125,13 +100,11 @@ grammar Json_ {
 
 // The document, printed back with two spaces per level.
 //
-// Six arms, no default: a variant added to `Json` above makes this a compile
-// error rather than a document that silently prints nothing. That is the check
-// a `kind: ref String` field cannot have, and the reason the tree is an enum.
+// Six arms and no `else`: a variant added to `Json` makes this `match` a
+// compile error until it is handled.
 //
-// The two string cases print the **raw** body back, unchanged. That is the
-// second half of holding it raw: re-escaping a decoded string would be a
-// second copy of the same table, and one of the two would be wrong.
+// Strings are printed back raw, as they were in the file, so printing never
+// decodes and never has to re-escape.
 fn show(value: Json, indent: i64) {
     let pad = "  ".repeat(indent)
     let inner = "  ".repeat(indent + 1)
@@ -158,10 +131,8 @@ fn show(value: Json, indent: i64) {
             }
         }
 
-        // **A brace is a brace** (ADR-035). Until every string stopped being a
-        // template, a program that writes JSON had to double every one of
-        // these - `print("{{}}")` to print `{}` - and the most ordinary thing a
-        // JSON writer does was the thing the syntax made hardest to read.
+        // A brace in a plain string is just a brace: `print("{}")` prints `{}`.
+        // Only an f-string reads `{…}`, and there `}}` stands for one `}`.
         Json::Object(fields) => {
             if fields.len() == 0 {
                 print("{}")
@@ -180,13 +151,9 @@ fn show(value: Json, indent: i64) {
     }
 }
 
-// What a JSON escape means. This is the *only* place a string is decoded, and
-// printing a document back never reaches it - which is what keeping the body
-// raw is for.
+// What a JSON escape means. This is the only place a string is decoded.
 //
-// `\u` is not here, and this says so rather than pretending: four hex digits,
-// a surrogate pair rule, and a decision about what a lone surrogate is worth
-// are a specification of their own.
+// `\u` is not handled: `\u0041` comes out as `u0041`, not `A`.
 fn unescape(raw: ref String) -> String {
     let mut out = String()
     let mut escaped = false
@@ -211,10 +178,9 @@ fn unescape(raw: ref String) -> String {
     return out
 }
 
-// The longest decoded string in the document, in characters - the one thing
-// here that has to decode. It takes the tree by reference because `main` still
-// wants to print it afterwards; `show` takes it by value, being the last to
-// look.
+// The longest decoded string in the document, in characters. It takes the
+// tree by `ref` because `main` still prints it afterwards; `show` takes it by
+// value, being the last to look.
 fn longest(value: ref Json) -> i64 {
     match value {
         Json::Text(raw) => return unescape(raw).chars().count() as i64
@@ -249,9 +215,6 @@ fn main() throws {
         return
     }
 
-    // One entry rule over the whole document. There is no `par_fold` here and
-    // there could not be: a JSON document has no boundary a cutter could find
-    // without parsing it, which is the shape ADR-009's frames are *not* for.
     let document = Json_::value(text) catch {
         eprintln(f"{path}: {error}")
         return
