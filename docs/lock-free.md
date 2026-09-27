@@ -138,6 +138,11 @@ choice is already made per value.
 
 ## 6. What this is, and what it is not
 
+**Built since:** [ADR-238](specification/adr/adr-238.md) is the third
+representation §4 asks for: a word-sized `SharedMut` whose crossing is proven
+and which no door over several locks holds is `nikaia_std::lock::Word`, and
+everything else keeps the row it had.
+
 **Decided since:** [ADR-110](specification/adr/adr-110.md) D3 permits the
 retry — an `update` block may run more than once — and D2 says where: on a
 copy, for a value that fits a machine word. The block's form is `fn(mut v)`

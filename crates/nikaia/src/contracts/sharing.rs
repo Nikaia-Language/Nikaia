@@ -137,6 +137,13 @@ pub enum Count {
     /// A count only the thread that built it ever touches. What this analysis
     /// may lower a value to, where it proves nothing crosses.
     Plain,
+    /// **A `SharedMut` of a value that fits a machine word, which crosses**
+    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md)): the atomic
+    /// count, and the lock inside it the word itself - `update` is a
+    /// compare-and-swap (ADR-110 D2). Only for a crossing this analysis
+    /// **proved** and a value no door over several locks takes: a class the
+    /// floor answered for, or one an `update_all` holds, keeps the lock.
+    Word,
     /// A count any thread may touch. The floor, and the answer wherever this
     /// analysis cannot prove the other one.
     #[default]
@@ -152,6 +159,7 @@ impl Count {
     pub fn as_str(self) -> &'static str {
         match self {
             Count::Plain => "plain",
+            Count::Word => "word",
             Count::Atomic => "atomic",
         }
     }
@@ -160,6 +168,7 @@ impl Count {
     pub fn parse(text: &str) -> Option<Self> {
         match text.trim() {
             "plain" => Some(Count::Plain),
+            "word" => Some(Count::Word),
             "atomic" => Some(Count::Atomic),
             _ => None,
         }
@@ -300,6 +309,14 @@ pub struct Decision {
     /// inner value out hands no handle on, so there is nothing to duplicate and no
     /// instruction to pay.
     pub duplications: Vec<String>,
+    /// **Where a `get` copies the whole value out of the lock**
+    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md) D3): the
+    /// value is one that does not copy cheaply, a text or a list, and `access`
+    /// would have read it in place.
+    pub copied_out: Vec<String>,
+    /// Why a word-sized value that crosses kept its lock, where it did
+    /// (ADR-238 D2).
+    pub kept_its_lock: Option<&'static str>,
 }
 
 impl Decision {
@@ -551,10 +568,25 @@ pub fn report(
             (Some(why), Some(_)) => {
                 out.push_str(&format!("             could not decide: {why}\n"))
             }
+            (Some(why), None) if decision.count == Count::Word => {
+                out.push_str(&format!("             crosses: {why}\n"));
+                out.push_str(
+                    "             a word, and no door over several locks takes it, so its \
+                     `update` is a compare-and-swap and there is no lock (ADR-110 D2)\n",
+                );
+            }
             (Some(why), None) => out.push_str(&format!("             crosses: {why}\n")),
             (None, _) => out.push_str(
                 "             nothing crosses a thread with it, so the count is lowered\n",
             ),
+        }
+        if let Some(kept) = decision.kept_its_lock {
+            out.push_str(&format!("             {kept}\n"));
+        }
+        for site in &decision.copied_out {
+            out.push_str(&format!(
+                "             copied out: {site} each time - `access` reads it in place\n"
+            ));
         }
         // ADR-040 D5: a handle is duplicated where it is handed on by value, and
         // the source does not say so - one step of the count is paid there. So the
@@ -573,7 +605,7 @@ pub fn report(
     let atomic = sharing
         .decisions
         .iter()
-        .filter(|d| d.count == Count::Atomic)
+        .filter(|d| d.count != Count::Plain)
         .count();
     let undecided: BTreeSet<Fallback> = sharing
         .decisions
@@ -682,6 +714,14 @@ struct Analysis<'a> {
     /// chained onto the name is one too. Over-approximate - a name is never
     /// taken out - which is this file's safe direction.
     parallel_names: BTreeSet<String>,
+    /// The slots a door over several locks names
+    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md) D2): an
+    /// `access_all` or an `update_all` holds each lock across the block, and a
+    /// compare-and-swap cannot be held, so their classes keep the lock.
+    held_together: Vec<String>,
+    /// Where a `get` copies a value that does not copy cheaply out of its
+    /// lock, by slot (ADR-238 D3).
+    copies: Vec<(String, String)>,
 }
 
 struct Handle {
@@ -710,6 +750,8 @@ impl<'a> Analysis<'a> {
             forced: Vec::new(),
             duplicated: Vec::new(),
             parallel_names: BTreeSet::new(),
+            held_together: Vec::new(),
+            copies: Vec::new(),
         }
     }
 
@@ -992,10 +1034,25 @@ impl<'a> Analysis<'a> {
                         // watched takes the floor - so the *constructor* would
                         // come out atomic while the parameter it is handed to came
                         // out plain, and the two ends of one value would disagree.
-                        Expr::Call { func, .. } => match func.as_ref() {
+                        Expr::Call { func, args, .. } => match func.as_ref() {
                             Expr::Variable(name) => {
                                 let text = self.parsed.text(*name);
-                                is_hull(text).then(|| Ty::named(text))
+                                // **And what it holds, where a literal says**
+                                // (ADR-238 D1): `SharedMut(0)` holds an `i64`,
+                                // which is what decides whether its lock is a
+                                // word. Anything else is left unsaid, and an
+                                // unsaid type is never a word.
+                                is_hull(text).then(|| match args.as_slice() {
+                                    [held] => match literal_type(held) {
+                                        Some(held) => Ty::Named {
+                                            name: text.to_string(),
+                                            args: vec![Ty::named(held)],
+                                            view: false,
+                                        },
+                                        None => Ty::named(text),
+                                    },
+                                    _ => Ty::named(text),
+                                })
                             }
                             _ => None,
                         },
@@ -1307,6 +1364,13 @@ impl<'a> Analysis<'a> {
             }
             Expr::Call { func, args, config } => {
                 let callee = self.path_of(func);
+                if matches!(callee.as_deref(), Some("access_all" | "update_all")) {
+                    for arg in args {
+                        if let Some((handle, _)) = self.names_a_handle(arg, scope) {
+                            self.held_together.push(slot(function, &handle));
+                        }
+                    }
+                }
                 self.arguments(function, callee.as_deref(), false, args, config, scope);
                 self.expr(function, func, scope);
             }
@@ -1326,6 +1390,20 @@ impl<'a> Analysis<'a> {
                 config,
             } => {
                 let method = self.parsed.text(*method).to_string();
+                // **A `get` of a value that does not copy cheaply** (ADR-238
+                // D3): it copies the whole of it out each time, where `access`
+                // would read it in place. Named where the type says so, and
+                // silent where it does not.
+                if method == "get"
+                    && args.is_empty()
+                    && let Some((handle, ty)) = self.names_a_handle(receiver, scope)
+                    && let Some(held) = held_that_does_not_copy(&ty)
+                {
+                    self.copies.push((
+                        slot(function, &handle),
+                        format!("`{handle}.get()` copies the whole `{held}` out of the lock"),
+                    ));
+                }
                 // **And every walk chained onto one**
                 // ([ADR-235](../../../../docs/specification/adr/adr-235.md) D1):
                 // `xs.par_iter().map fn …` hands its lambda to `map`, and the
@@ -1590,6 +1668,7 @@ impl<'a> Analysis<'a> {
     fn decide(mut self) -> Sharing {
         self.foreign_slots_hold_the_floor();
         let mut atomic: BTreeMap<usize, (String, Option<Fallback>)> = BTreeMap::new();
+        let forced_seen = self.forced.clone();
         for (key, why, fallback) in std::mem::take(&mut self.forced) {
             let id = self.id(&key);
             let root = self.root(id);
@@ -1614,6 +1693,38 @@ impl<'a> Analysis<'a> {
             }
         }
 
+        // **Which crossing classes are a word** (ADR-238 D2): every handle a
+        // `SharedMut` of a word-sized value, the crossing a proven one and not
+        // the floor's, and no door over several locks among them.
+        let mut floor: BTreeSet<usize> = BTreeSet::new();
+        for (key, _, fallback) in &forced_seen {
+            if fallback.is_some() {
+                let id = self.id(key);
+                floor.insert(self.root(id));
+            }
+        }
+        let mut held: BTreeSet<usize> = BTreeSet::new();
+        for key in std::mem::take(&mut self.held_together) {
+            let id = self.id(&key);
+            held.insert(self.root(id));
+        }
+        let mut words: BTreeMap<usize, bool> = BTreeMap::new();
+        for key in self.handles.keys().cloned().collect::<Vec<_>>() {
+            let id = self.id(&key);
+            let root = self.root(id);
+            let word = holds_a_word(&self.handles[&key].ty);
+            let entry = words.entry(root).or_insert(true);
+            *entry = *entry && word;
+        }
+
+        let mut copied_out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (key, site) in std::mem::take(&mut self.copies) {
+            let sites = copied_out.entry(key).or_default();
+            if !sites.contains(&site) {
+                sites.push(site);
+            }
+        }
+
         let keys: Vec<String> = self.handles.keys().cloned().collect();
         let mut decisions = Vec::new();
         let mut counts: BTreeMap<String, Count> = BTreeMap::new();
@@ -1623,7 +1734,11 @@ impl<'a> Analysis<'a> {
             let root = self.root(id);
             let answer = atomic.get(&root).cloned();
             let handle = &self.handles[&key];
+            let a_word = words.get(&root) == Some(&true);
             let (count, why, fallback) = match answer {
+                Some((why, None)) if a_word && !floor.contains(&root) && !held.contains(&root) => {
+                    (Count::Word, Some(why), None)
+                }
                 Some((why, fallback)) => (Count::Atomic, Some(why), fallback),
                 None => (Count::Plain, None, None),
             };
@@ -1649,6 +1764,18 @@ impl<'a> Analysis<'a> {
                     why,
                     fallback,
                     duplications: duplicated.get(&key).cloned().unwrap_or_default(),
+                    copied_out: copied_out.get(&key).cloned().unwrap_or_default(),
+                    kept_its_lock: match (count, a_word) {
+                        (Count::Atomic, true) if held.contains(&root) => Some(
+                            "a word, but a door over several locks takes it, and a \
+                             compare-and-swap cannot be held, so it keeps its lock",
+                        ),
+                        (Count::Atomic, true) => Some(
+                            "a word, but the floor answered for it rather than a crossing, \
+                             so it keeps its lock",
+                        ),
+                        _ => None,
+                    },
                 });
             }
         }
@@ -1704,6 +1831,43 @@ impl Analysis<'_> {
             _ => None,
         }
     }
+}
+
+/// What a `SharedMut` holds, where it is a value that does not copy cheaply:
+/// anything that is not a word (ADR-238 D3). A hull whose content nobody named
+/// says nothing.
+fn held_that_does_not_copy(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Named { name, args, .. } if name == SHARED_MUT => match args.as_slice() {
+            [held] if !holds_a_word(ty) && !held.is_unknown() => Some(held.text()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The type a literal is: a word-sized one, or text.
+fn literal_type(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::LitStr { .. } | Expr::LitInterpolated(_) => Some("String"),
+        Expr::LitInt(_) => Some("i64"),
+        Expr::LitFloat(_) => Some("f64"),
+        Expr::LitBool(_) => Some("bool"),
+        Expr::LitChar(_) => Some("char"),
+        Expr::Unary { expr, .. } => literal_type(expr),
+        _ => None,
+    }
+}
+
+/// **A `SharedMut` of a value that fits a machine word** (ADR-238 D1): a
+/// number, a truth value or a character.
+fn holds_a_word(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, view: false }
+        if name == SHARED_MUT
+            && matches!(args.as_slice(), [Ty::Named { name: held, args: none, view: false }]
+                if none.is_empty()
+                    && matches!(held.as_str(), "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
+                        | "u32" | "u64" | "f32" | "f64" | "bool" | "char")))
 }
 
 /// The sentence a published position gets.
@@ -1833,7 +1997,7 @@ fn field_type(ty: &str, field: &str, own: &Ledger, library: &Ledger) -> Option<T
 pub fn rust_name(count: Count) -> &'static str {
     match count {
         Count::Plain => "std::rc::Rc",
-        Count::Atomic => "std::sync::Arc",
+        Count::Word | Count::Atomic => "std::sync::Arc",
     }
 }
 
@@ -1853,6 +2017,7 @@ pub fn rust_name(count: Count) -> &'static str {
 pub fn lock_name(count: Count) -> &'static str {
     match count {
         Count::Plain => "nikaia_std::lock::Local",
+        Count::Word => "nikaia_std::lock::Word",
         Count::Atomic => "nikaia_std::lock::Crossing",
     }
 }

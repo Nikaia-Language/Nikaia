@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.222 (Draft)
+**Version:** 0.0.223 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -629,7 +629,7 @@ A change to locked data has four shapes, and each has its own door. Only two of 
 | `kasse.access fn(state) { … }` | reading in place, large values | no |
 
 * **`set` needs no block.** Arguments are evaluated before the call, so producing the new value, including waiting for I/O, happens outside, and the lock is open for one store. `get` is the same in the other direction: one load.
-* **`update` is handed the value as `mut v`, changes it, and returns nothing.** It is **where locked data changes**, small or large. What `v` is, is the compiler's decision by type. It is a **copy** where the value fits a machine word: the block runs on the copy, the result is swapped in, and the block runs again if another task got there first. It is the **address** in the lock otherwise, and the block runs once. Nothing is moved out of the lock in either case. A block that hands a value back is refused with `NK1141`.
+* **`update` is handed the value as `mut v`, changes it, and returns nothing.** It is **where locked data changes**, small or large. What `v` is, is the compiler's decision, by the value's type and by what it meets. It may be a **copy** where the value fits a machine word: the block runs on the copy, the result is swapped in, and the block runs again if another task got there first — which is what a value that crosses a thread gets, unless an `access_all` or `update_all` holds it, since a retry cannot be held. It is the **address** in the lock otherwise, and the block runs once. A program cannot tell the two apart, and `--sharing` says which a value got. Nothing is moved out of the lock in either case. A block that hands a value back is refused with `NK1141`.
 * **`set` takes a witness where the new value came out of the lock.** `after:` makes the store compare, and store only if the lock still holds what was seen. `kasse.set(neu; after: stand)` **is** `kasse.update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`, and like every `update` it takes the lock once. The comparison is of the whole value.
 * **`access` is for reading in place.** It hands the block the value where it lies, and the block **may not change it**.
 

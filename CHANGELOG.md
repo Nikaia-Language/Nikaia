@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.223] — 2026-09-27
+
+**A word-sized value that crosses is the word, and `update` is a
+compare-and-swap** — [ADR-238](docs/specification/adr/adr-238.md), closing
+`open-work.md` §2.21 (ADR-110's speed half).
+
+- `nikaia_std::lock::Word`: an `AtomicU64` whose `update` runs the block on a
+  copy and compare-and-swaps it in, again on a collision; `set_after` is one
+  compare-and-swap; a panic in the block leaves the word as it was.
+- The sharing analysis has a third answer, `word`: a `SharedMut` of a number,
+  `bool` or `char` whose crossing it proved (a `spawn`, a parallel walk), that
+  no `access_all`/`update_all` holds and that the floor did not answer for.
+  It reaches every position of the value, so one value is one Rust type. The
+  cheap single-thread shape is never replaced, and `no` never gets it.
+- `--sharing` prints `word` with the reason, says why a word-sized crossing
+  value kept its lock, and names a `get` that copies a text or a list out of
+  its lock (`access` reads it in place).
+
 ## [0.0.222] — 2026-09-27
 
 **A cleanup point that moves is narrated, and a described call that fails

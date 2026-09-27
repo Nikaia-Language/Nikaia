@@ -378,40 +378,6 @@ itself had to be one **nothing** describes — which is
 and built through 0.0.163: a described call is asked now, and what is left of
 that record is the I/O half, §2.44 below.
 
-### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
-
-[ADR-110](specification/adr/adr-110.md). `update fn(mut v) { … }` is the one
-form; `v` is a copy where the value fits a machine word — run the block on the
-copy, compare-and-swap, retry on a collision — and the address in the lock
-otherwise, where the block runs once; nothing is moved out of the lock and no
-slot is ever empty. `update_all` takes one `mut` per lock. `access` reads.
-**D1, D4 and D6 are built, and D2's address row with them**: `fn(mut v)`
-parses, both doors are handed a view they may write through, the `Option` is gone and with it the
-empty slot — and the `emptied()` panic that named that state, because it cannot
-occur. **What is left is speed**: a copy and a compare-and-swap where the value
-fits a machine word. The block runs exactly once today, which D3 licenses
-outright (*may* run more than once is a permission, not a requirement).
-
-*And Part II 12.2's counter runs again.* `counter.update fn(mut n) { n += 1 }`
-had stopped lowering the day the page was rewritten to this form;
-`tests/specification/COMPILES.txt` carries it as a program rather than a
-fragment now.
-
-*One thing the record had not said, and the corpus settled it.* `NK1138` at a
-door is D1's, and the first build asked it of **every** lambda parameter, on the
-reasoning that one changed without `mut` is already broken Rust. It is not:
-`par_fold(…, fn(acc, m) { acc.record(m) })` in `examples/1brc.nika` changes
-`acc`, has no `mut`, and compiles — the **emitter** writes the word itself where
-it recognises a fold's accumulator, and `and_modify fn(tally) { tally.bump() }`
-in `k-nucleotide.nika` is the same shape one library over. So the question is
-asked at a door and nowhere else. **Widening it is work of its own**: it means
-taking that `mut` out of the emitter and making every such lambda say the word,
-which is a corpus migration rather than a rule change.
-
-*What it needs, in the record's order (§5):* the compare-and-swap loop for
-word-sized values and the second lowering, with `explain` naming which row a
-value fell in; `--sharing` on a large `get`.
-
 ### 2.22. A cleanup the deadline cut off names the resource
 
 [ADR-112](specification/adr/adr-112.md). **Steps 2 and 3 are built**: an

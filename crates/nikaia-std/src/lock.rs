@@ -509,6 +509,172 @@ mod tests {
     }
 }
 
+/// **A value that fits a machine word, as the word itself**
+/// ([ADR-110](../../../docs/specification/adr/adr-110.md) D2, D3;
+/// [ADR-238](../../../docs/specification/adr/adr-238.md)).
+///
+/// The third shape, and the one [`Crossing`] gives way to where the value is a
+/// number, a truth value or a character and nothing takes it in a door over
+/// several locks. There is no lock: `update` runs the block on a **copy**,
+/// compare-and-swaps the result in, and on a collision runs it again on a
+/// fresh copy — which ADR-110 D3 permits, because a block is `sync`, touches
+/// no lock and changes nothing outside `v`, so the run that lost leaves no
+/// trace. A panic in the block leaves the word as it was (D4).
+///
+/// Measured against the crossing shape at ×0.63–×0.67 uncontended and several
+/// times less under contention (`docs/lock-free.md` §2). It never replaces
+/// [`Local`], which a compare-and-swap loses to by ×6.5.
+///
+/// **Not a [`Door`]**, deliberately: a door over two locks holds both at once,
+/// and a retry cannot be held. The compiler gives such a value the crossing
+/// shape; were it to get this one, the program would not compile rather than
+/// race.
+pub struct Word<T> {
+    bits: AtomicU64,
+    of: std::marker::PhantomData<T>,
+}
+
+/// **What fits a word**: a value that is its own bits, and back.
+pub trait Bits: Copy {
+    /// The value as 64 bits.
+    fn to_bits(self) -> u64;
+    /// The value those bits are.
+    fn from_bits(bits: u64) -> Self;
+}
+
+macro_rules! bits_by_cast {
+    ($($t:ty),*) => {$(
+        impl Bits for $t {
+            fn to_bits(self) -> u64 {
+                self as u64
+            }
+            fn from_bits(bits: u64) -> Self {
+                bits as $t
+            }
+        }
+    )*};
+}
+bits_by_cast!(i8, i16, i32, i64, u8, u16, u32, u64, isize, usize);
+
+impl Bits for f64 {
+    fn to_bits(self) -> u64 {
+        f64::to_bits(self)
+    }
+    fn from_bits(bits: u64) -> Self {
+        f64::from_bits(bits)
+    }
+}
+
+impl Bits for f32 {
+    fn to_bits(self) -> u64 {
+        u64::from(f32::to_bits(self))
+    }
+    fn from_bits(bits: u64) -> Self {
+        f32::from_bits(bits as u32)
+    }
+}
+
+impl Bits for bool {
+    fn to_bits(self) -> u64 {
+        u64::from(self)
+    }
+    fn from_bits(bits: u64) -> Self {
+        bits != 0
+    }
+}
+
+impl Bits for char {
+    fn to_bits(self) -> u64 {
+        u64::from(u32::from(self))
+    }
+    fn from_bits(bits: u64) -> Self {
+        // Only a `char` is ever stored, so the bits are always one.
+        char::from_u32(bits as u32).unwrap_or('\0')
+    }
+}
+
+impl<T: Bits> Word<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            bits: AtomicU64::new(value.to_bits()),
+            of: std::marker::PhantomData,
+        }
+    }
+
+    /// The value, read.
+    pub fn get(&self) -> T {
+        T::from_bits(self.bits.load(Ordering::Acquire))
+    }
+
+    /// The value, written.
+    pub fn set(&self, value: T) {
+        self.bits.store(value.to_bits(), Ordering::Release);
+    }
+
+    /// **Reading in place**, which for a word is reading a copy: nothing can
+    /// change what the block was handed.
+    pub fn access<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        f(&self.get())
+    }
+
+    /// **The block on a copy, swapped in; again on a collision**
+    /// (ADR-110 D2, D3).
+    pub fn update(&self, mut f: impl FnMut(&mut T)) {
+        let mut seen = self.bits.load(Ordering::Acquire);
+        loop {
+            let mut value = T::from_bits(seen);
+            f(&mut value);
+            match self.bits.compare_exchange_weak(
+                seen,
+                value.to_bits(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(now) => seen = now,
+            }
+        }
+    }
+
+    /// **The one door for a stamped value**
+    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), as one
+    /// compare-and-swap: the value goes in where the word still holds what
+    /// was seen. Compared as values, so a number equal to the one seen is the
+    /// one seen, as the other shapes compare it.
+    pub fn set_after(&self, value: T, seen: &T) -> Result<(), Overtaken>
+    where
+        T: PartialEq,
+    {
+        let mut now = self.bits.load(Ordering::Acquire);
+        loop {
+            if T::from_bits(now) != *seen {
+                return Err(Overtaken);
+            }
+            match self.bits.compare_exchange_weak(
+                now,
+                value.to_bits(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(moved) => now = moved,
+            }
+        }
+    }
+}
+
+impl<T: Bits + std::fmt::Debug> std::fmt::Debug for Word<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Word").field(&self.get()).finish()
+    }
+}
+
+impl<T: Bits + Default> Default for Word<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 /// One lock, whichever shape it got — what a door over **several** of them needs
 /// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
 ///
@@ -794,5 +960,73 @@ mod doors {
         let count = Local::new(3i64);
         let said = access_all(&name, &count, |n, c| format!("{n} {c}"));
         assert_eq!(said, "kasse 3");
+    }
+}
+
+#[cfg(test)]
+mod word {
+    use super::*;
+
+    #[test]
+    fn a_word_is_changed_by_its_block_and_read_as_a_copy() {
+        let n = Word::new(40_i64);
+        n.update(|v| *v += 2);
+        assert_eq!(n.get(), 42);
+        assert_eq!(n.access(|v| *v * 2), 84);
+        n.set(-1);
+        assert_eq!(n.get(), -1);
+        let flag = Word::new(false);
+        flag.update(|v| *v = !*v);
+        assert!(flag.get());
+        let x = Word::new(1.5_f64);
+        x.update(|v| *v *= 2.0);
+        assert_eq!(x.get(), 3.0);
+        let c = Word::new('a');
+        c.update(|v| *v = 'z');
+        assert_eq!(c.get(), 'z');
+    }
+
+    /// **A collision runs the block again, and nothing is lost** (ADR-110 D3):
+    /// four threads adding to one word end at the sum.
+    #[test]
+    fn no_update_is_lost_under_contention() {
+        let n = std::sync::Arc::new(Word::new(0_i64));
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let n = std::sync::Arc::clone(&n);
+                std::thread::spawn(move || {
+                    for _ in 0..10_000 {
+                        n.update(|v| *v += 1);
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("the thread ends");
+        }
+        assert_eq!(n.get(), 40_000);
+    }
+
+    #[test]
+    fn set_after_is_one_compare_and_swap() {
+        let n = Word::new(5_i64);
+        assert_eq!(n.set_after(6, &4), Err(Overtaken));
+        assert_eq!(n.get(), 5);
+        assert_eq!(n.set_after(6, &5), Ok(()));
+        assert_eq!(n.get(), 6);
+    }
+
+    /// **A panic in the block leaves the word as it was** (ADR-110 D4).
+    #[test]
+    fn a_panic_in_the_block_leaves_the_word_untouched() {
+        let n = Word::new(7_i64);
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            n.update(|v| {
+                *v = 100;
+                panic!("in the block");
+            })
+        }));
+        assert!(caught.is_err());
+        assert_eq!(n.get(), 7);
     }
 }

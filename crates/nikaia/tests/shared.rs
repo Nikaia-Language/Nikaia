@@ -599,15 +599,17 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
     }
 
     // A value a task takes may reach another thread, so both hulls are the
-    // robust shape - and only where it does (ADR-037 D7, ADR-057 D3).
+    // robust shape - and only where it does (ADR-037 D7, ADR-057 D3). For a
+    // counter the robust lock is the word itself, a compare-and-swap
+    // (ADR-238 D1): the count is atomic either way.
     let (_, crossing) = run(
         "task-handle-pair",
         SHARED_WITH_A_TASK,
         &["--user-parallelism", "yes"],
     );
     assert!(
-        crossing.contains("std::sync::Arc::new(nikaia_std::lock::Crossing::new("),
-        "a value a task takes is atomic in both hulls:\n{crossing}"
+        crossing.contains("std::sync::Arc::new(nikaia_std::lock::Word::new("),
+        "a counter a task takes is atomic, and its lock a word:\n{crossing}"
     );
 }
 
