@@ -382,6 +382,10 @@ pub struct Checked {
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// **`count()` calls that are `std`'s count of a sequence**, by statement
+    /// and receiver shape: the language below counts in `usize`, and a count
+    /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
+    pub counted: BTreeSet<(usize, String)>,
     /// `collect()` calls whose target declares what they build - a map, a
     /// set, text - by statement and receiver shape
     /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
@@ -1512,6 +1516,8 @@ pub struct Propagation {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// [`Checked::counted`].
+    pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::collected_into`].
     pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::copied_walks`].
@@ -1734,6 +1740,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
+        counted: checked.counted,
         collected_into: checked.collected_into,
         copied_walks: checked.copied_walks,
         filter_patterns: checked.filter_patterns,
@@ -7696,6 +7703,16 @@ impl<'a> Checker<'a> {
                     if library && args.is_empty() {
                         self.checked
                             .owned_copies
+                            .insert((span.start, argument_shape(receiver)));
+                    }
+                    // **A sequence's count is an `i64`** (Part I 2.2): the
+                    // emitter writes the conversion a length has.
+                    let counts = [ty::SEQ, ty::PAR]
+                        .iter()
+                        .any(|of| key == format!("{of}::count"));
+                    if counts && !self.own.functions.contains_key(&key) {
+                        self.checked
+                            .counted
                             .insert((span.start, argument_shape(receiver)));
                     }
                 }

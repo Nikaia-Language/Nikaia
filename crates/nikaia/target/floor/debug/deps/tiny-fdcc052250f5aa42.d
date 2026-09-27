@@ -1,9 +1,0 @@
-/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/tiny-fdcc052250f5aa42.d: /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/tiny/tiny.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/tiny/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/switches
-
-/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/libtiny-fdcc052250f5aa42.rlib: /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/tiny/tiny.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/tiny/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/switches
-
-/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/libtiny-fdcc052250f5aa42.rmeta: /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/tiny/tiny.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/tiny/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/switches
-
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/tiny/tiny.rs:
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/tiny/src/main.nika:
-/home/user/Nikaia/target/floor/release/nikaia-scratch/30490-18d8d10d32c7c0c5/package-constructor-19/app/target/nikaia/gen/switches:

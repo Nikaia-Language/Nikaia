@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.226 (Draft)
+**Version:** 0.0.227 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -332,7 +332,8 @@ Three conversions are checked or unchecked in a way the code does not show:
 
 * **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
   `-1e20 as i32`, and a value that is not a number all abort.
-* **A count**, what `len` hands back, is as wide as the machine is. The
+* **A count**, what `len` and a sequence's `count` hand back, is as wide as the
+  machine is. The
   conversion is checked, so the program's behaviour does not depend on where it
   was built.
 * **An integer to an `f64`** is **not** checked. Digits are lost at large values

@@ -1135,6 +1135,9 @@ struct Emitter<'p> {
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
+    /// **`std`'s count of a sequence**, by statement and receiver shape, which
+    /// gets the conversion a length gets (Part I 2.2).
+    counted: std::collections::BTreeSet<(usize, String)>,
     /// `collect()` into a declared map, set or text (ADR-227 D1).
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
@@ -2281,6 +2284,7 @@ impl<'p> Emitter<'p> {
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
+            counted: propagation.counted,
             collected_into: propagation.collected_into,
             copied_walks: propagation.copied_walks,
             filter_patterns: propagation.filter_patterns,
@@ -9991,7 +9995,8 @@ impl<'p> Emitter<'p> {
             "set" if witness.is_some() => "set_after",
             other => other,
         };
-        let length = is_length(self.text(method), args);
+        let length = is_length(self.text(method), args)
+            || receiver.is_some_and(|receiver| self.is_counted(receiver, method, args, flow));
         // **ADR-055 D6, the method half.** A recursive `async fn` is an
         // infinitely sized future, and a call that closes a cycle of pausing
         // functions puts it behind a pointer. `call` has asked this since D6's
@@ -10261,7 +10266,7 @@ impl<'p> Emitter<'p> {
         let a_read = !flow.in_a_place
             && matches!(expr, Expr::Index { index, .. } if !self.slices(flow.statement, index));
         let parenthesise = a_read
-            || self.emits_as_cast(expr)
+            || self.emits_as_cast(expr, flow)
             || matches!(
                 expr,
                 Expr::Binary { .. }
@@ -10303,15 +10308,39 @@ impl<'p> Emitter<'p> {
     /// Asked in one place because the alternative is parenthesising always, and a
     /// parenthesis nobody needs is a Rust warning about a file nobody wrote
     /// (Part III, C.1).
-    fn emits_as_cast(&self, expr: &Expr) -> bool {
+    fn emits_as_cast(&self, expr: &Expr, flow: Flow<'_>) -> bool {
         match expr {
             Expr::Cast { .. } => true,
-            Expr::MethodCall { method, args, .. } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
                 let name = self.text(*method);
-                truncating(name).is_some() || is_length(name, args)
+                truncating(name).is_some()
+                    || is_length(name, args)
+                    || self.is_counted(receiver, *method, args, flow)
             }
             _ => false,
         }
+    }
+
+    /// **`std`'s count of a sequence**, which counts in `usize` below and is
+    /// an `i64` here, as a length is (Part I 2.2): the checker says which
+    /// `count()` resolved to it, so a program's own `count` is left alone.
+    fn is_counted(
+        &self,
+        receiver: &Expr,
+        method: winnow_grammar::Symbol,
+        args: &[Expr],
+        flow: Flow<'_>,
+    ) -> bool {
+        self.text(method) == "count"
+            && args.is_empty()
+            && self
+                .counted
+                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
     }
 
     /// An operand of an operator, parenthesised only where it binds looser
@@ -10340,7 +10369,8 @@ impl<'p> Emitter<'p> {
             // parentheses and a parenthesis nobody needs is the other half of
             // C.1 - `unused_parens` is a warning about the generated file.
             _ => {
-                self.emits_as_cast(expr) && (needs == u8::MAX || needs == precedence(BinaryOp::Lt))
+                self.emits_as_cast(expr, flow)
+                    && (needs == u8::MAX || needs == precedence(BinaryOp::Lt))
             }
         };
 
