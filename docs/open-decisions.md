@@ -21,7 +21,7 @@ blocked by a question, the question comes here in that shape.
 
 ### How a `pub` function writes that it pauses only when its lambda does
 
-**What is blocked.** [ADR-244](specification/adr/adr-244.md) D4, and with it the
+**What is blocked.** [ADR-244](specification/adr/adr-244.md) §3, and with it the
 rest of that record: under its D1, a consumer reads a `pub` function as *may
 pause* unless the source writes `sync`. A higher-order function that only calls
 the lambda it is handed is `sync = "from(f)"` in `std`'s hand-written ledger
