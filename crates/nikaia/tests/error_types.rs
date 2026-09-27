@@ -366,15 +366,20 @@ fn a_librarys_error_type_is_a_channel() {
          }\n\
          fn main() { }\n",
     );
-    assert!(rust.contains("-> Result<String, io::IoError>"), "{rust}");
+    assert!(
+        rust.contains("-> Result<String, nikaia_std::error::Thrown<io::IoError>>"),
+        "{rust}"
+    );
     assert!(!rust.contains("Box<dyn std::error::Error>"), "{rust}");
 }
 
-/// **And it travels bare** (D2): there is no envelope, because there is no
-/// `throw` in this program to record the site of — so propagating it is the
-/// plain `?` the language below already writes.
+/// **It travels in an envelope with no site**
+/// ([ADR-241](../../../docs/specification/adr/adr-241.md) D1, which replaced
+/// ADR-159 D2's *bare*): the envelope is what carries the list a caller hands
+/// on, and a `?` from `std`'s bare error puts it on - so the call is still the
+/// plain `?` the language below writes.
 #[test]
-fn a_librarys_error_needs_no_envelope() {
+fn a_librarys_error_travels_in_an_envelope() {
     let rust = lowered(
         "use std::fs\n\
          fn load(path: ref String) -> String throws {\n\
@@ -382,7 +387,7 @@ fn a_librarys_error_needs_no_envelope() {
          }\n\
          fn main() { }\n",
     );
-    assert!(!rust.contains("Thrown<"), "{rust}");
+    assert!(rust.contains("Thrown<io::IoError>"), "{rust}");
     // **The root gets its own `&` from the compiler** (ADR-094 D1): the entry only
     // reads it, so the declaration is `&Root` and the call writes no reference.
     assert!(
@@ -471,4 +476,52 @@ fn a_variant_of_a_librarys_type_names_the_type() {
     let parsed = parse_to_ast(source).expect("the source parses");
     let throws = Ledger::infer(&parsed).functions["boom"].throws.clone();
     assert_eq!(throws, vec!["io::IoError".to_string()], "{throws:#?}");
+}
+
+/// **The list survives a hop to a caller that only propagates**
+/// ([ADR-241](../../../docs/specification/adr/adr-241.md), `open-work.md`
+/// §2.25): `pair` joins two failing reads, and `relay` hands its failure on.
+/// `relay`'s channel was a bare `io::IoError`, which nothing converts an
+/// envelope into, and `rustc` refused the file; now it is the envelope, and
+/// the handler reads both failures, in each of the two places.
+#[test]
+fn a_joined_failure_survives_a_caller_that_propagates_it() {
+    let printed = output(
+        "library-error-hop",
+        "use std::fs\n\
+         \n\
+         fn pair() -> String throws {\n\
+         \x20   let both = overlap {\n\
+         \x20       fs::read_to_string(\"missing-one.txt\", fs::Root::Anywhere)\n\
+         \x20       fs::read_to_string(\"missing-two.txt\", fs::Root::Anywhere)\n\
+         \x20   }\n\
+         \x20   return f\"{both.0}{both.1}\"\n\
+         }\n\
+         \n\
+         fn relay() -> String throws {\n\
+         \x20   return pair()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let a = pair() catch {\n\
+         \x20       println(f\"pair: {error.full()}\")\n\
+         \x20       f\"\"\n\
+         \x20   }\n\
+         \x20   let b = relay() catch {\n\
+         \x20       println(f\"{error.full()}\")\n\
+         \x20       match error {\n\
+         \x20           io::IoError::NotFound(what) => println(f\"relay: not found {what}\")\n\
+         \x20           else => println(\"relay: other\")\n\
+         \x20       }\n\
+         \x20       f\"\"\n\
+         \x20   }\n\
+         \x20   println(f\"{a}{b}\")\n\
+         }\n",
+    );
+    assert!(
+        printed.contains("relay: not found missing-one.txt"),
+        "{printed}"
+    );
+    assert_eq!(printed.matches("and then:").count(), 2, "{printed}");
+    assert_eq!(printed.matches("missing-two.txt").count(), 2, "{printed}");
 }

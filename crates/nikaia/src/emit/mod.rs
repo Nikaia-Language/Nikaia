@@ -1472,19 +1472,6 @@ struct Emitter<'p> {
     /// a name here resolves in the generated file, and one another package
     /// declares does not.
     declared_errors: std::collections::BTreeSet<String>,
-    /// The functions whose body holds a block that **joins**, and can therefore
-    /// carry a `secondary` list ([ADR-115](../../docs/specification/adr/adr-115.md)
-    /// D1, D2).
-    ///
-    /// **This is what puts an envelope on a bare channel.**
-    /// [ADR-159](../../docs/specification/adr/adr-159.md) D2 sends a library's
-    /// error bare because there is no `throw` in this program to have a site —
-    /// which holds for the *site* and not for the *list*: an `overlap` that
-    /// combines failures is the language doing something, so there is something
-    /// to attach even where nothing was raised here. So a function that joins
-    /// gets `Thrown<E>` where it would otherwise have had `E`, and a `?` from a
-    /// callee with a bare one converts through `From<E> for Thrown<E>`.
-    joining: std::collections::BTreeSet<String>,
     /// Every distinct error set of two or more named members in this unit, and
     /// the type that stands for it
     /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
@@ -2266,7 +2253,6 @@ impl<'p> Emitter<'p> {
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
-            joining: joining_bodies(parsed),
             carries_input: crate::views::carried(parsed, &own_contracts, &library),
             grammars,
             structs,
@@ -7760,7 +7746,7 @@ impl<'p> Emitter<'p> {
                     let own = thrown
                         .as_deref()
                         .and_then(|t| self.name_of_error(t))
-                        .is_some_and(|named| matches!(named, Named::Own(_)));
+                        .is_some();
                     match own {
                         true => {
                             out.push("return Err(nikaia_std::error::throwing(");
@@ -7775,14 +7761,13 @@ impl<'p> Emitter<'p> {
                     }
                     return Ok(());
                 }
+                // **A `throw` has a site whoever declared the error**
+                // ([ADR-241](../../docs/specification/adr/adr-241.md) D2): a
+                // library's error thrown by this program was raised here.
                 match self.named_error(flow.function) {
-                    Some(Named::Library(_)) => {
-                        out.push("return Err(");
-                        self.expr(out, inner, depth, flow)?;
-                        out.push(")");
-                        return Ok(());
+                    Some(Named::Own(_) | Named::Library(_)) => {
+                        out.push("return Err(nikaia_std::error::throwing(")
                     }
-                    Some(Named::Own(_)) => out.push("return Err(nikaia_std::error::throwing("),
                     None => out.push("return Err(nikaia_std::error::raise("),
                 }
                 self.expr(out, inner, depth, flow)?;
@@ -8934,15 +8919,7 @@ impl<'p> Emitter<'p> {
     /// only write `'static` for it.
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
         match self.own_contracts.functions.get(key) {
-            // **A body that joins puts an envelope on a bare channel**
-            // ([ADR-115](../../docs/specification/adr/adr-115.md) D1): there is
-            // something to attach now, even where nothing was raised here.
-            Some(contract) => self.channel_of_joining(
-                &contract.throws,
-                lifetimes,
-                borrows,
-                self.joining.contains(key),
-            ),
+            Some(contract) => self.channel_of(&contract.throws, lifetimes, borrows),
             None => "Box<dyn std::error::Error>".to_string(),
         }
     }
@@ -8950,18 +8927,6 @@ impl<'p> Emitter<'p> {
     /// [`Emitter::error_channel`] asked of the **set** rather than of a
     /// function ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
     fn channel_of(&self, throws: &[String], lifetimes: Lifetimes, borrows: bool) -> String {
-        self.channel_of_joining(throws, lifetimes, borrows, false)
-    }
-
-    /// The same, told whether the body it belongs to **joins**
-    /// ([ADR-115](../../docs/specification/adr/adr-115.md) D1).
-    fn channel_of_joining(
-        &self,
-        throws: &[String],
-        lifetimes: Lifetimes,
-        borrows: bool,
-        joins: bool,
-    ) -> String {
         // **A set of two or more is the generated sum**
         // ([ADR-160](../../docs/specification/adr/adr-160.md) D1), where every
         // member of it is a name.
@@ -8977,23 +8942,16 @@ impl<'p> Emitter<'p> {
         }
         match self.named_error_of(throws) {
             None => "Box<dyn std::error::Error>".to_string(),
-            // **A library's error travels bare**
-            // ([ADR-159](../../docs/specification/adr/adr-159.md) D2): there is
-            // no envelope because there is no `throw` in this program to record
-            // the site of. `std` hands the value back as it is, so propagating
-            // it is a plain `?` and a `catch` binds what the source names.
-            //
-            // **Unless the body joins**
-            // ([ADR-115](../../docs/specification/adr/adr-115.md) D1). D2's
-            // reason is about the **site**, and it still holds — the envelope
-            // this puts on says *no site recorded*. What it carries is the
-            // **list**, and an `overlap` that combines failures is the language
-            // doing something, so there is something to attach even where
-            // nothing was raised here.
-            Some(Named::Library(name)) if joins => {
-                format!("nikaia_std::error::Thrown<{name}>")
-            }
-            Some(Named::Library(name)) => name.to_string(),
+            // **A library's error travels in an envelope too**
+            // ([ADR-241](../../docs/specification/adr/adr-241.md) D1). It was
+            // bare ([ADR-159](../../docs/specification/adr/adr-159.md) D2)
+            // because no `throw` of this program raised it, and the envelope
+            // says *no site recorded* for exactly that. What it carries is the
+            // **list**: a caller that propagates a failure that joined others
+            // has to be able to hand it on, and a bare channel could not take
+            // one — `rustc` refused the file. Measured before it was decided
+            // (`benches/envelope`): one word on the `Result`, and no time.
+            Some(Named::Library(name)) => format!("nikaia_std::error::Thrown<{name}>"),
             Some(Named::Own(name)) => {
                 let params = match self.borrows_named(name) {
                     false => String::new(),
@@ -9122,6 +9080,18 @@ impl<'p> Emitter<'p> {
                     self.sum_member_type(member, &of(member)),
                     Self::sum_variant(member)
                 ));
+                // **A `?` straight from `std` hands a library's error bare**,
+                // and the member is its envelope (ADR-241 D1): put on here,
+                // with no site, as `From<E> for Thrown<E>` puts it on.
+                if matches!(self.name_of_error(member), Some(Named::Library(_))) {
+                    out.push(&format!(
+                        "impl{decl} From<{member}> for {name}{params} {{\n\
+                         \x20   fn from(error: {member}) -> {name}{params} {{ \
+                         {name}::{}(nikaia_std::error::Thrown::from(error)) }}\n\
+                         }}\n",
+                        Self::sum_variant(member)
+                    ));
+                }
             }
 
             out.push(&format!(
@@ -9151,8 +9121,8 @@ impl<'p> Emitter<'p> {
             ));
             for member in members {
                 let held = match self.name_of_error(member) {
-                    Some(Named::Own(_)) => "e.full()",
-                    _ => "nikaia_std::error::Full::full(e)",
+                    Some(_) => "e.full()",
+                    None => "nikaia_std::error::Full::full(e)",
                 };
                 out.push(&format!(
                     "            {name}::{}(e) => {held},\n",
@@ -9249,7 +9219,7 @@ impl<'p> Emitter<'p> {
             // site is kept in a local beside it, for the arm that passes the
             // error on. The split is the same one a single-typed handler makes;
             // what is new is that it happens per member.
-            let own = matches!(self.name_of_error(member), Some(Named::Own(_)));
+            let own = self.name_of_error(member).is_some();
             let flow = flow.inside(member, own);
             if own {
                 out.push(&format!(
@@ -9349,8 +9319,8 @@ impl<'p> Emitter<'p> {
     /// neither — it only says which of them this failure was.
     fn sum_member_type(&self, name: &str, params: &str) -> String {
         match self.name_of_error(name) {
-            Some(Named::Own(_)) => format!("nikaia_std::error::Thrown<{name}{params}>"),
-            _ => name.to_string(),
+            Some(_) => format!("nikaia_std::error::Thrown<{name}{params}>"),
+            None => name.to_string(),
         }
     }
 
@@ -9470,12 +9440,21 @@ impl<'p> Emitter<'p> {
             _ => None,
         };
         if let Some(set) = joined {
-            return matches!(self.named_error_of(&set), Some(Named::Own(_)));
+            return self.named_error_of(&set).is_some();
         }
         let Some(name) = self.callee_name(expr) else {
             return false;
         };
-        matches!(self.named_error(&name), Some(Named::Own(_)))
+        // A call of this program's hands its failure in an envelope whoever
+        // declared the error (ADR-241 D1); a call of `std`'s hands it bare,
+        // which `named_error` says by knowing no contract for it - and so does
+        // a grammar's entry rule, whose contract is in the ledger (ADR-082 D1)
+        // and whose body is the grammar's, which returns the parse's error.
+        let a_grammar = name
+            .split("::")
+            .next()
+            .is_some_and(|head| self.grammars.keys().any(|g| self.text(*g) == head));
+        !a_grammar && self.named_error(&name).is_some()
     }
 
     /// Whether a function of **this program** can pause, and is therefore an
@@ -11168,78 +11147,6 @@ fn declared_errors(parsed: &Parsed) -> std::collections::BTreeSet<String> {
         }
     }
     out
-}
-
-/// The ledger keys of the functions whose body holds a joining block
-/// ([ADR-115](../../docs/specification/adr/adr-115.md) D2).
-///
-/// **The body it is written in and no further.** A caller that propagates such
-/// a failure has a channel of its own, and whether the list survives that hop
-/// is the transitive question this does not answer — `docs/open-work.md` §2.25
-/// carries it. What this covers is the block, its `catch`, and the function
-/// around them, which is where a handler for it is written.
-fn joining_bodies(parsed: &Parsed) -> std::collections::BTreeSet<String> {
-    let mut out = std::collections::BTreeSet::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { name, body, .. } => {
-                if body_joins(parsed, body) {
-                    let key = match name {
-                        Some(name) => parsed.text(*name).to_string(),
-                        None => "new".to_string(),
-                    };
-                    out.insert(key);
-                }
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    if let Item::Fn { name, body, .. } = &method.node
-                        && body_joins(parsed, body)
-                    {
-                        let own = match name {
-                            Some(name) => parsed.text(*name).to_string(),
-                            None => "new".to_string(),
-                        };
-                        out.insert(format!("{target}::{own}"));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// Whether a block holds a joining construct, at any depth inside it.
-///
-/// The same two walks `contracts::sync` uses over a body — the expressions of a
-/// statement, and the blocks nested in it — so a block written inside an `if`
-/// or a loop counts, which is the answer a reader expects.
-fn body_joins(parsed: &Parsed, block: &Block) -> bool {
-    for stmt in &block.stmts {
-        let mut found = false;
-        crate::contracts::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if matches!(expr, Expr::Overlap(_) | Expr::Select(_)) {
-                found = true;
-            }
-        });
-        if found {
-            return true;
-        }
-        let mut inside = false;
-        crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |block| {
-            if body_joins(parsed, block) {
-                inside = true;
-            }
-        });
-        if inside {
-            return true;
-        }
-    }
-    false
 }
 
 fn tethered_types(contracts: &crate::contracts::Ledger) -> std::collections::BTreeSet<String> {

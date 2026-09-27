@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.227 (Draft)
+**Version:** 0.0.228 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -2095,8 +2095,9 @@ let config = load() catch {
 
 A `match` over `error` needs `else`, because the set of error **types** is open
 (`NK1151`). A library's error type arrives as that type: a function that reads
-a file hands its failure on as an `io::IoError`, with no envelope, because no
-`throw` in the program raised it; `error.full()` says so.
+a file hands its failure on as an `io::IoError`. No `throw` in the program
+raised it, so it has no site, and `error.full()` says so; the failures that
+joined it travel with it through every caller that hands it on.
 
 **Two sets differ.** The **variants of an error type** are closed: a `match`
 over them is exhaustive, and adding one is a breaking change. The **set of

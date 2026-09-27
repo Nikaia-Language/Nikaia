@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.228] — 2026-09-27
+
+**A library's error travels in an envelope too** —
+[ADR-241](docs/specification/adr/adr-241.md), closing `open-work.md` §2.25.
+
+- Measured first: `benches/envelope` puts one word on the `Result` and no time
+  on either path (success ×0.95–×0.98, failure ×0.98–×1.03 of the bare
+  channel, inside the control's spread).
+- A channel that is one library error is `Thrown<E>` everywhere, not only where
+  a body joins, and a sum's member for one is `Thrown<E>` with a `From<E>` for
+  a `?` straight from `std`. A caller that only propagates a joined failure was
+  refused by `rustc` (no `From<Thrown<IoError>>` for `IoError`); it now has its
+  callee's channel and the list goes with it. A grammar's entry rule still
+  hands its parse error bare.
+- A `throw` of a library error has a site; a `catch` opens the envelope, so
+  `match error` names the library's variants.
+- `error.full()` in a handler now includes the failures that joined the error,
+  for a program's own types too.
+- Recorded `open-work.md` §1.16, found while writing the test: a `match` that
+  binds a field of a name moves the name.
+
 ## [0.0.227] — 2026-09-27
 
 **A sequence's `count()` is an `i64`** — closing `open-work.md` §1.15.

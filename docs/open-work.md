@@ -34,7 +34,38 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-**This section is empty.**
+### 1.16. A `match` that binds a field of a name moves the name
+
+A `match` over a local whose type does not copy, with an arm that binds a part
+of it, takes the part by value; the name is gone afterwards, and a second read
+of it is `rustc`'s *use of moved value* about a file nobody wrote.
+
+```nika
+enum Shape {
+    Named(String),
+    Empty,
+}
+
+fn main() {
+    let s = Shape::Named(f"box")
+    match s {
+        Shape::Named(n) => println(f"named {n}")
+        Shape::Empty => println("empty")
+    }
+    match s {
+        Shape::Named(n) => println(f"again {n}")
+        Shape::Empty => println("empty")
+    }
+}
+```
+
+The same in a `catch` handler: `match error { ConfigError::NotFound(p) => … }`
+followed by `{error}` is *borrow of partially moved value: `error`*. Evidence:
+both programs, lowered at 0.0.228 and handed to `rustc`. Part I 6.5 says a
+reader takes a view; an arm that only reads its binding is one, and the fix is
+the scrutinee lent where no arm keeps what it binds — which arms keep is the
+`keeps` question [ADR-094](specification/adr/adr-094.md) already answers for
+calls.
 
 ## 2. Decided and unbuilt
 
@@ -377,25 +408,6 @@ itself had to be one **nothing** describes — which is
 [ADR-193](specification/adr/adr-193.md)'s `threads` column, decided at 0.0.149
 and built through 0.0.163: a described call is asked now, and what is left of
 that record is the I/O half, §2.44 below.
-
-### 2.25. An `overlap` keeps every failure — the hop half
-
-[ADR-115](specification/adr/adr-115.md) D1 and D2 are **built**
-([ADR-170](specification/adr/adr-170.md)): every error carries the failures
-that joined it, an `overlap`'s later failing branches join the winner's list in
-written order, and an uncaught failure prints them indented under it. The
-question that blocked it — where the list lives when the channel has no
-envelope — was answered **A**: a body that joins puts one on.
-
-*What is left, in the record's order:*
-
-* **Whether the list survives a hop to a caller with a bare channel of its
-  own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
-  is written in and says so: the block, its `catch` and the function around
-  them, which is where a handler is written. A caller that propagates such a
-  failure has a channel of its own, and making the envelope travel is the
-  transitive version — a derived column like `locks`, and worth its own
-  measurement rather than a guess.
 
 ### 2.28. A target without an operating system
 

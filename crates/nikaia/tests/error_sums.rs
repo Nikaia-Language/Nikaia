@@ -101,10 +101,11 @@ fn two_error_types_are_a_sum() {
     assert!(!rust.contains("Box<dyn std::error::Error>"), "{rust}");
 }
 
-/// **Each member keeps the channel it would have had alone** (D2): the
-/// program's own type its envelope, because the program `throw`s it and the
-/// site is worth carrying; a library's bare, because no `throw` here raised it
-/// ([ADR-159](../../../docs/specification/adr/adr-159.md) D2).
+/// **Each member keeps the channel it would have had alone** (D2): an
+/// envelope, the program's own type and a library's alike
+/// ([ADR-241](../../../docs/specification/adr/adr-241.md) D1) - and a `?`
+/// straight from `std` hands the library's error bare, so the sum puts the
+/// envelope on for it.
 #[test]
 fn a_member_keeps_its_own_channel() {
     let rust = lowered(&format!("{TWO_WAYS}fn main() {{ }}\n"));
@@ -112,7 +113,11 @@ fn a_member_keeps_its_own_channel() {
         rust.contains("ConfigError(nikaia_std::error::Thrown<ConfigError"),
         "{rust}"
     );
-    assert!(rust.contains("io_IoError(io::IoError)"), "{rust}");
+    assert!(
+        rust.contains("io_IoError(nikaia_std::error::Thrown<io::IoError>)"),
+        "{rust}"
+    );
+    assert!(rust.contains("From<io::IoError> for "), "{rust}");
 }
 
 /// **One type per distinct set and not per function**, which is what makes

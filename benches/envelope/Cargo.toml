@@ -1,0 +1,12 @@
+# What an envelope costs a library's error
+# (open-work.md §2.25, ADR-241). It depends on `nikaia-std` because the two
+# channels measured are the two a generated program gets: `io::IoError` bare,
+# and `nikaia_std::error::Thrown<io::IoError>`.
+[package]
+name = "envelope-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+nikaia-std = { path = "../../crates/nikaia-std" }

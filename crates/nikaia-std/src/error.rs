@@ -380,12 +380,18 @@ impl<E> Site<E> {
     /// site, and the trace if there is one.
     ///
     /// The same string [`Thrown::full`] builds, from the two halves the handler
-    /// holds rather than from one value.
+    /// holds rather than from one value - **the failures that joined it
+    /// included** ([ADR-241](../../../docs/specification/adr/adr-241.md) D3),
+    /// which the handler's half used to leave out.
     pub fn full_of(&self, error: &E) -> String
     where
         E: fmt::Display,
     {
-        full_form(error, self.tail.origin(), self.tail.trace())
+        let mut out = full_form(error, self.tail.origin(), self.tail.trace());
+        for later in self.tail.secondary() {
+            out.push_str(&indented(&later.long(false)));
+        }
+        out
     }
 
     /// `throw error`: put the error back in the channel, in the envelope it
@@ -508,8 +514,9 @@ pub fn throwing<E>(error: E, origin: Origin) -> Thrown<E> {
 /// `throw` in this program to have a site. That holds for the site and not for
 /// the list: an `overlap` that combines failures is the language doing
 /// something, so there is something to attach even where nothing was raised
-/// here. Where a function's body joins, its channel is the envelope and this is
-/// what a `?` from a callee with a bare one converts through.
+/// here. Since [ADR-241](../../../docs/specification/adr/adr-241.md) D1 every
+/// channel that is one library error is the envelope, and this is what a `?`
+/// from a `std` call, which hands the error bare, converts through.
 ///
 /// The site stays absent, which [`Full`] already has words for.
 impl<E> From<E> for Thrown<E> {
