@@ -1,36 +1,16 @@
-// examples/report.nika
+// Reads a stock list and writes it as an HTML page, largest count first.
 //
-// A stock file in, an HTML page out - the first example here whose result is a
-// **file** rather than something printed.
+//     printf 'tools;Bolts & Nuts;12\npaper;<plain> A4;40\n' > stock.csv
+//     nikaia run -- stock.csv report.html
+//     2 items, 52 in total
 //
-// Input:  `category;item;count` per line, item names as people actually type
-//         them: `Bolts & Nuts`, `3" Clamp`, `<plain> A4`.
-// Output: an HTML page written to the path given as the second argument, and
-//         a one-line summary on standard output.
+// The input has one `category;item;count` per line, as above. The page lands
+// in report.html.
 //
-// Run:
+// Shows: a `grammar` with `@frame`, sorting by a key, and a `dsl html` page
+// written to a file with `fs::write`.
 //
-//     nikaia --input examples/report.nika --backend rust
-//     ./report stock.csv report.html
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, and checks
-// **the page it wrote** rather than only what it printed.
-//
-// Why it is here beside the others. Every other example ends at `println`, and
-// a program that cannot produce a file is not a tool. Three things follow that
-// nothing else here shows.
-//
-//   * **`fs::write`** (Part III, 17.1). The other half of `read_to_string`, and
-//     the reason a Nikaia program can now be the thing that builds a page, a
-//     report, a generated source file.
-//   * **Escaping that has something to escape.** `escaping.nika` demonstrates
-//     the contract on data written for the purpose; this one gets its `&` and
-//     its `"` and its `<` from a *file*, which is where they come from in
-//     every program that has ever had an escaping bug. The template refuses to
-//     let one through - not by remembering to call something, but because
-//     there is no way to write the hole that does not (ADR-017 D1).
-//   * **A grammar whose result is collected, then ordered, then rendered.** The
-//     whole path from bytes to page, in one file.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::fs
 use std::cli
@@ -38,44 +18,32 @@ use std::html
 
 grammar Stock {
 
-    // Up to the next `;`, or to the end of the line - whichever comes first.
-    // The second alternative is what makes this safe inside a frame: a line
-    // missing its last field stops at the newline instead of eating the line
-    // after it.
+    // Up to the next `;` or the end of the line. A line missing its last field
+    // then stops at the newline instead of eating the line after it.
     rule FIELD -> ref String = s:until(";" | frame_end) { s }
 
     rule COUNT -> i64 = n:dec[i64](digit+) { n }
 
-    // An entry can be found from any offset by scanning to the next newline,
-    // which is what `@frame` says. Lexical (uppercase), because the implicit
-    // whitespace of a syntactic rule would eat the newline the frame is drawn
-    // at - and ` Bolts` and `Bolts` are different items.
+    // `@frame` says an entry ends at a newline. The rule is uppercase, so it is
+    // lexical: no whitespace is skipped, and ` Bolts` stays different from `Bolts`.
     @frame(boundary: "\n")
     rule ENTRY -> Entry =
         category:FIELD ";" => item:FIELD ";" count:COUNT frame_end
         { Entry { category, item, count } }
 
-    // Collected rather than folded: a stock file is a page's worth of rows and
-    // the page needs all of them. `1brc.nika` makes the other choice with
-    // `par_fold`, for input that does not fit in memory - the two are worth
-    // seeing side by side.
     pub rule file -> Vec[Entry] = entries:ENTRY* { entries }
 }
 
-// The name and the category are slices of the file, never copies. No `Entry`
-// outlives the buffer, which is true here - the page is built while the file is
-// still mapped - and a struct that says nothing may not outlive one.
+// `ref String`: the category and the item are slices of the input file, not
+// copies.
 pub struct Entry {
     category: ref String,
     item: ref String,
     count: i64,
 }
 
-// The page, in one template.
-//
-// Four holes and every one of them escaped, because that is the only thing a
-// hole can be (ADR-017 D1). `{e.item}` is where the input's `&` and `<` and `"`
-// arrive, and the reason this file has a test that reads the output back.
+// Every hole in the template is escaped, so the `&`, `<` and `"` in item names
+// from the file arrive on the page as `&amp;`, `&lt;` and `&quot;`.
 fn page(entries: Vec[Entry], total: i64) -> String {
     return dsl html {
         <html>
@@ -106,8 +74,8 @@ fn main() throws {
         return
     }
 
-    // Largest first, and stable underneath - the file's own order decides
-    // between two items with the same count (Part I, 4.5).
+    // Largest first. The sort is stable: items with the same count keep their
+    // order from the file.
     entries.sort_by_key fn(entry) { -entry.count }
 
     let mut total = 0
@@ -116,18 +84,11 @@ fn main() throws {
     let count = entries.len()
     let markup = page(entries, total)
 
-    // The one line that did not exist before this example. A failure to write
-    // is an ordinary failure: the page is worth nothing if it did not land, so
-    // the program says so and stops rather than reporting success.
+    // If the page cannot be written, say so and stop, rather than report success.
     fs::write(ref out, fs::Root::Anywhere, ref markup) catch {
         eprintln(f"cannot write {out}: {error}")
         return
     }
 
-    // Path-free, and not because a tool should be quiet about where it wrote:
-    // the two settings are compiled and run separately by
-    // `crates/nikaia/tests/examples.rs`, in scratch directories of their own,
-    // and what a program prints has to be the same under both. The page is the
-    // deliverable, and the test reads it back.
     println(f"{count} items, {total} in total")
 }

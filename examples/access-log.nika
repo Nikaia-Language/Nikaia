@@ -1,39 +1,19 @@
-// examples/access-log.nika
+// Summarises a web server's access log: how many requests, how many failed,
+// and the hits and bytes sent per path, busiest first.
 //
-// A web server's access log, summarised.
+//     nikaia run -- access.log
+//     5 requests, 1 failed
+//     /index.html 2 10240
+//     /api/order 1 512
+//     …
 //
-// Input:  one request per line, "<ip> <method> <path> <status> <bytes>", e.g.
-//         "203.0.113.7 GET /index.html 200 5120"
-// Output: the request count, how many of them failed, and one line per path
-//         with its hits and the bytes it sent, sorted by path.
+// Each line of the log is `<ip> <method> <path> <status> <bytes>`, such as
+// `203.0.113.7 GET /index.html 200 5120`.
 //
-// Run:
+// Shows: a `grammar` for lines of several fields, a parallel `par_fold`, a
+// parse error caught and printed, and a two-key sort done as two stable sorts.
 //
-//     nikaia --input examples/access-log.nika --backend rust
-//     ./access-log access.log
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
-//
-// Why it is here beside 1brc and calc. 1brc is one field and a number, at a
-// size where only throughput matters; calc is a grammar with no I/O at all.
-// This is the shape most real work has: a line with *several* fields of
-// different kinds, a record built from them, and a report at the end. Three
-// things it shows that neither of the others does.
-//
-//   * **A frame with more than one scan in it.** `until(" " | frame_end)`
-//     appears four times, and each one has to name the frame's boundary as an
-//     alternative or the compiler rejects it (ADR-009 D1). That is not
-//     ceremony: a scan that does not stop at the newline would run a truncated
-//     line into the next one and silently invent a request that was never
-//     made.
-//   * **A field the format fixes the width of.** A status is `digit{3}`, so
-//     "20" is a parse error at the third character rather than the number 20
-//     followed by whatever the parser makes of the rest.
-//   * **What a rejected line looks like.** The parse is one expression, so the
-//     failure is one value: `catch` below prints where in the file the line is
-//     and what was expected there, and the program exits without a summary
-//     rather than with a wrong one.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::fs
 use std::cli
@@ -41,41 +21,34 @@ use std::collections
 
 grammar Log {
 
-    // Up to the next blank, or to the end of the line - whichever comes first.
-    // The second alternative is what makes this safe inside a frame: a line
-    // missing its last field stops at the newline instead of eating the line
-    // after it.
+    // Up to the next blank or the end of the line. Without `frame_end`, a line
+    // missing a field would run on into the next line; the compiler rejects
+    // a scan like that inside a frame.
     rule FIELD -> ref String = s:until(" " | frame_end) { s }
 
-    // Three digits, exactly. The format says a status is three digits, so the
-    // grammar says it too - and a line carrying "20" fails here, where the
-    // reader can see why, instead of somewhere downstream.
+    // Exactly three digits: a status of "20" is a parse error here.
     rule STATUS -> i32 = n:dec[i32](digit{3}) { n }
 
     rule SIZE -> i64 = n:dec[i64](digit+) { n }
 
-    // A request can be found from any offset by scanning to the next newline,
-    // which is what `@frame` says and what makes the parse parallel. Lexical
-    // (uppercase), because the implicit whitespace of a syntactic rule would
-    // eat the newline the file is cut at - and here the blanks between fields
-    // are part of the format, not decoration.
+    // `@frame` says a request can be found from any offset by scanning to the
+    // next newline, so the file can be cut into pieces and parsed in parallel.
+    // The rule is uppercase, so *lexical*: no blanks are skipped for it, and
+    // each `" "` between fields is written out. `=>` is a commit point: once the
+    // first field and its blank are read, the line must be a request.
     @frame(boundary: "\n")
     rule ENTRY -> Hit =
         _ip:FIELD " " => method:FIELD " " path:FIELD " " status:STATUS " " bytes:SIZE frame_end
         { Hit { path, status, bytes } }
 
-    // The entry rule is the file. A fold rather than `ENTRY*`: a log is
-    // append-only and unbounded, and a report is small, so nothing is
-    // collected. `par_fold` adds how two partial reports combine, which is all
-    // the compiler needs to cut the file and parse the pieces on every core.
+    // A fold hands each entry to an accumulator instead of collecting them
+    // all, as `ENTRY*` would. `par_fold` also says how two partial reports
+    // merge, so each core can fold its own piece of the file.
     pub rule file -> Report =
         par_fold(ENTRY, Report, fn(acc, e) { acc.record(e) }, Report::merge)
 }
 
-// The `_ip` is parsed and dropped: the grammar has to consume it, the report
-// does not need it. `path` is a slice of the mapped file and never a copy - at a
-// million lines that is the difference between a report and a second copy of the
-// log - and nothing above the struct says otherwise, which is what keeps it one.
+// `path` is a slice of the mapped file, not a copy.
 pub struct Hit {
     path: ref String,
     status: i32,
@@ -114,9 +87,7 @@ impl Report {
         return Report { paths: collections::HashMap(), requests: 0, failures: 0 }
     }
 
-    // `sync`: pure computation, no I/O, cannot pause - which is what lets the
-    // fold run on every core. The compiler checks it here rather than trusting
-    // the author to remember it at the call site.
+    // `sync`: this function cannot pause, and the compiler checks it.
     fn record(ref mut self, e: Hit) sync {
         self.requests += 1
         if e.status >= 400 { self.failures += 1 }
@@ -146,9 +117,8 @@ fn main() throws {
         return
     }
 
-    // The whole parse. A malformed line is a value, not a panic: the parser
-    // reports the offset it failed at in the *file*, not in whichever piece a
-    // core happened to be holding (ADR-009 D3).
+    // A malformed line is an error that `catch` prints: its line and column
+    // in the whole file, and what was expected there. No summary is printed.
     let report = Log::file(data) catch {
         eprintln(f"{path}: {error}")
         return
@@ -156,25 +126,20 @@ fn main() throws {
 
     println(f"{report.requests} requests, {report.failures} failed")
 
-    // A map has no order to borrow - ADR-010 seeds an untrusted one randomly,
-    // so its iteration order differs between runs - and a report has to say
-    // which order it wants.
+    // A map keeps no order, so the report chooses one.
     let mut names = report.paths.keys().collect()
     names.sort()
 
-    // One row per path, as a tuple: the name and the two numbers. Sorting the
-    // rows rather than the names is what lets the key be a number without
-    // looking anything up.
+    // One row per path, as a tuple: the name and the two numbers.
     let mut rows = names.map fn(path) {
-        // `names` are this map's own keys, so the read cannot fail - and the
-        // brackets answer a `T?` all the same (ADR-114 D1), so this says so.
+        // A lookup gives a `Counts?` that may be absent; `??` handles that
+        // case, which cannot happen for the map's own keys.
         let counts = report.paths[path] ?? panic(f"{path} was a key a moment ago")
         (path, counts.hits, counts.bytes)
     }
 
-    // Two passes, because `sort` is stable (Part I, 4.5): the names are in
-    // order already, so sorting by hits leaves paths with the same count in
-    // name order underneath. That is a compound order without a comparator.
+    // `sort_by_key` is stable: rows with the same number of hits keep the name
+    // order from the first sort.
     rows.sort_by_key fn(row) { -row.1 }
 
     let body = rows

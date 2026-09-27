@@ -12,7 +12,7 @@ toolchain = "nikaia 0.1.0"
 inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 [sources]
-"stock.nika" = "70f7d602532ffc9962e02ddbe12bf0e133d079832ec6fadacd60c06d5f85eb47"
+"stock.nika" = "98c628ac548e223cd1e429f2e28bf21828c5968f6ab8afff21e097ec6f6b6c4e"
 
 [fn."Stock::file"]
 pub = true

@@ -1,12 +1,9 @@
-// examples/inventory/page.nika
-//
-// The rendering, and nothing about parsing. It names `Entry`, which
-// `stock.nika` declares - and writes it plainly, because the files of a package
-// share one namespace (Part I, 9.1) and there is nothing to import.
+// Part of the inventory program (see main.nika): the HTML page.
 
 use std::html
 
-// The title is a Kap 5.1 option: after the `;`, named at the call, defaulted.
+// `title` is an option: it stands after the `;`, has a default, and a call
+// that wants another one names it: `render(entries, total; title: "Tools")`.
 pub fn render(entries: Vec[Entry], total: i64; title: ref String = "Stock") -> String {
     return dsl html {
         <html>

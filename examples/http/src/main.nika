@@ -1,76 +1,45 @@
-// The `http` package — **the MVP's protocol, and it says where it stops**.
+// The `http` package: a small HTTP/1.1 server, and the types a handler sees.
 //
-// [ADR-069](../../../docs/specification/adr/adr-069.md) made `http` a package
-// and did not build one; this is the thing on the other end of the path. What
-// it holds is [ADR-018](../../../docs/specification/adr/adr-018.md)'s data —
-// what a handler is given and what it gives back — and
-// [ADR-194](../../../docs/specification/adr/adr-194.md) D5's server over it:
-// `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no chunked
-// transfer and no TLS.
+// It is a library with no `main`. The program that uses it is
+// `examples/hello-http`:
 //
-// **The socket is `std`'s and the protocol is this package's** (D1). The text
-// half of HTTP/1.1 is `std::http1`, which is D5's staging — the parser is Rust
-// until it is written in a grammar — and everything that decides what a request
-// *means* is here.
+//     cd examples/hello-http
+//     nikaia run
+//     http: listening on 127.0.0.1:8080
 //
-// **One handler and not a route table**, which is a language limit named rather
-// than a design: `NK1142` refuses a function type in a field, so a `.route(…)`
-// chain cannot keep what it was handed
-// ([ADR-102](../../../docs/specification/adr/adr-102.md) D5's kept lowering).
-// What a program writes instead is one function that decides, which is
-// [ADR-194](../../../docs/specification/adr/adr-194.md) D4's rule kept — the
-// program says what is exposed, and nothing is derived from `pub`.
+// Shows: a package written in Nikaia and reached by a path, a function passed
+// as a value, options with defaults after the `;`, and `catch`.
+//
+// It speaks `GET` and `POST`, reads a body by `Content-Length`, and closes each
+// connection after one answer. There is no chunked transfer and no TLS. The
+// socket is `std::net` and the request parsing is `std::http1`; this package
+// decides what a request means. A program hands it one handler function, not
+// a route table: the handler looks at the path and decides.
 
 use std::net
 use std::http1
 use std::io
 
-// What a request asks for ([ADR-018](../../../docs/specification/adr/adr-018.md)
-// D4).
-//
-// **Two variants and no third**, and that is `std`'s refusal rather than an
-// omission here: `http1` answers `400` to any method but these two, before a
-// handler runs. So a `match` over this covers everything a handler can be given
-// — which is what Part I 3.4 asks of one.
+// Only two methods. `std::http1` answers `400` to any other method before a
+// handler runs, so a `match` over this covers every request a handler can get.
 pub enum Method {
     Get,
     Post,
 }
 
-// What a handler is given ([ADR-018](../../../docs/specification/adr/adr-018.md)
-// D1), with D4's surface over it.
-//
-// **The head is `std`'s and the reading is this package's**
-// ([ADR-194](../../../docs/specification/adr/adr-194.md) D1): `http1::Head` is
-// where a request's text was parsed, and a handler asks *this* type its
-// questions. The accessors hand back **views** into the bytes the connection
-// read (Part I 6.6), so one used inside the handler's scope costs nothing and
-// one kept past it has to be owned. Nothing here allocates.
+// What a handler is given. The accessors return views into the bytes read from
+// the connection, so nothing here allocates. A handler that wants to keep a
+// value after it returns has to copy it.
 pub struct Request {
-    // The head as `std` parsed it. **`pub`**, because a handler that wants
-    // something D4 does not name — the header count, the declared length — asks
-    // it directly, and hiding it would buy nothing.
+    // The head as `std::http1` parsed it. It is `pub` so a handler can ask it
+    // for things the accessors below do not cover, such as the header count.
     pub head: http1::Head,
-    // What the client sent after the head, empty where it sent nothing.
-    //
-    // **Untrusted**, and the language knows it: it came off a socket
-    // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
-    // provenance travels with the bytes.
-    //
-    // **`pub`, and `body()` beside it.** The accessor is the one a handler
-    // reads (D4); the field is what `listen` fills and what a program that
-    // wants the bytes owned may take.
+    // Filled by `listen`. A handler reads it through `body()`; the field is
+    // `pub` for a program that wants to take the bytes and own them.
     pub body: String,
 }
 
 impl Request {
-    // `GET` or `POST` ([ADR-018](../../../docs/specification/adr/adr-018.md)
-    // D4's **enum**).
-    //
-    // **Total by what `std` refuses**, which is what makes two variants the
-    // whole type rather than two of several: `http1` answers a request whose
-    // method is neither with a `400` before a handler is ever called, so there
-    // is no third case for this to have.
     pub fn method(ref self) -> Method {
         if self.head.method() == "POST" {
             return Method::Post
@@ -78,53 +47,42 @@ impl Request {
         return Method::Get
     }
 
-    // The same word, as the client wrote it — for a log, and for a program that
-    // wants the text rather than the decision.
+    // The method as the client wrote it, for a log.
     pub fn method_text(ref self) -> ref String {
         return self.head.method()
     }
 
-    // The path, **without** the query string (D4, which writes `path()` and
-    // `query()` as two things) and **not decoded**: what a `%20` means is this
-    // program's question.
+    // The path without the query string. It is not decoded: a `%20` stays
+    // `%20`.
     pub fn path(ref self) -> ref String {
         return self.head.path()
     }
 
-    // The whole request target as the client wrote it, which is what a log
-    // wants.
+    // The whole request target as the client wrote it, for a log.
     pub fn target(ref self) -> ref String {
         return self.head.target()
     }
 
-    // What the client sent after the head, empty where it sent nothing
-    // ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
-    //
-    // **Untrusted**, and the language knows it: it came off a socket
-    // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
-    // provenance travels with the bytes.
+    // What the client sent after the head, empty if it sent nothing. Treat it
+    // as untrusted: it came off a socket.
     pub fn body(ref self) -> ref String {
         return self.body
     }
 
-    // What the query string says under this name, or nothing where it says
-    // nothing. **Nothing is decoded** — see `std::http1`, which says why.
+    // One query parameter, or nothing if the query does not have it. The `?`
+    // in the return type is what allows "nothing". Not decoded either.
     pub fn query(ref self, name: ref String) -> ref String? {
         return self.head.query(name)
     }
 
-    // What the client sent under this header, or nothing where it sent none.
-    // **Case-insensitive, as the protocol is** (D4).
+    // One header, or nothing if the client did not send it. The name is
+    // matched case-insensitively, as HTTP requires.
     pub fn header(ref self, name: ref String) -> ref String? {
         return self.head.header(name)
     }
 }
 
-// What a handler gives back (ADR-018 D3).
-//
-// A status, a content type and a body.  ADR-018 D2's other two rows - a bare
-// `String` and an `html::Raw` - are conveniences over this one, and they need
-// the conversion this package cannot express yet.
+// What a handler gives back: a status, a content type and a body.
 pub struct Response {
     pub status: i32,
     pub content_type: String,
@@ -132,33 +90,25 @@ pub struct Response {
 }
 
 impl Response {
-    // 200, text, the body given.  The shape every other constructor is a
-    // variation of.
+    // A `200` with a plain-text body.
     pub fn text(body: String) -> Response {
         return Response { status: 200, content_type: "text/plain", body: body }
     }
 
-    // The one a router writes when nothing matched.
+    // A `404`, for a path the handler does not answer.
     pub fn not_found() -> Response {
         return Response { status: 404, content_type: "text/plain", body: "not found" }
     }
 }
 
-// The status line and headers, as bytes a socket would take.
-//
-// Written here rather than left to the server, because it is the half of
-// HTTP/1.1 that is pure text handling and needs nothing from the runtime - so
-// it is the half that can be built, tested and read today.
+// The status line, the headers and the body, as the text that goes on the
+// wire.
 pub fn render(response: ref Response) -> String {
     let status = status_line(response.status)
     return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {response.body.len()}\r\n\r\n{response.body}"
 }
 
-// One decision, written as one decision
-// ([ADR-132](../../../docs/specification/adr/adr-132.md)). This was four
-// statements - three `if`s in a row and a `return` - which read as three
-// decisions where there is one, and was the workaround the record was written
-// about: `else if` did not parse.
+// The reason phrase for each status this package sends.
 pub fn status_line(status: i32) -> String {
     if status == 200 {
         return "200 OK"
@@ -177,17 +127,13 @@ pub fn status_line(status: i32) -> String {
     }
 }
 
-// **The server** ([ADR-194](../../../docs/specification/adr/adr-194.md) D5).
+// The server. It takes one connection at a time: read the request, run the
+// handler, send the answer, close. A slow client holds up everyone else, and
+// `head_wait` limits how long. The limits are options after the `;`, so a
+// program names only the ones it changes.
 //
-// One connection at a time, answered and closed. That is `Connection: close`
-// read as an implementation and not only as a header: a request is read, a
-// handler runs, an answer goes out, the connection ends. What it costs is that
-// a slow client holds the server, which is what `head_wait` bounds.
-//
-// **The caps are the program's** (D5's second half), with defaults that are a
-// server rather than a denial of service. Written as options after the `;`, so
-// a program that wants the defaults says nothing and one that does not names
-// only what it changes.
+// Nothing here waits in a special way. `accept` and `read` are plain calls
+// with no `async` or `await`.
 pub fn listen(
     at: ref String,
     handler: fn(Request) -> Response;
@@ -201,9 +147,8 @@ pub fn listen(
     println(f"http: listening on {bound}")
 
     let mut served = 0
-    // `connections: 0` is *keep going*, which is what a server does; a count is
-    // what a test wants, and a test is the only reader that can say when to
-    // stop.
+    // `connections: 0` means serve forever. Any other number stops after that
+    // many connections.
     while connections == 0 || served < connections {
         let mut connection = listener.accept()
         answer(connection, handler; body_cap: body_cap, head_cap: head_cap, head_wait: head_wait)
@@ -213,14 +158,12 @@ pub fn listen(
 
 // One connection, from its first byte to its close.
 //
-// Every failure here is **answered** rather than thrown at the caller: a
-// malformed request is one client's problem, and a server that stopped for it
-// would be answering the next client's question with silence. The one thing not
-// answered is a client that went away, because there is nobody left to answer.
+// A bad request is answered with a status instead of thrown, because it is
+// one client's problem and must not stop the server. `catch` is
+// where that happens; inside it, `error` is what was thrown.
 //
-// `mut connection` and not `ref mut` at the call: the declaration writes the
-// `&` and the call shows nothing (Part I 6.5,
-// [ADR-094](../../../docs/specification/adr/adr-094.md) D1).
+// `mut connection` in the signature lends the connection for changing. The
+// call site writes nothing extra.
 fn answer(
     mut connection: net::Connection,
     handler: fn(Request) -> Response;
@@ -230,17 +173,15 @@ fn answer(
 ) {
     let mut buffer = http1::Buffer()
 
-    // **Read until the head ends**, and no longer than the cap, which
-    // `head_end` is the one to say. `0` is *not yet*; `head_wait` is how many
-    // reads a client gets to finish asking in, which is what bounds a client
-    // that dribbles a head one byte at a time.
+    // Read until the head ends. `head_end` returns `0` for "not yet" and throws
+    // once the head is over `head_cap`. `head_wait` is how many reads a client
+    // gets, so one that sends a byte at a time cannot hold the server forever.
     let mut ended = 0
     let mut reads = 0
     while ended == 0 && reads < head_wait {
         let more = connection.read() catch { return }
         if more.len() == 0 {
-            // The client went away before it finished asking. Nothing to
-            // answer and nobody to answer it to.
+            // The client went away. There is nobody to answer.
             return
         }
         buffer.take(more)
@@ -260,17 +201,15 @@ fn answer(
         return
     }
 
-    // **The cap is checked against what the head promised**, before a byte of
-    // body is read: a client that says it will send a gigabyte is refused for
-    // saying so, which is the only point at which refusing is cheap.
+    // The body limit is checked against the length the head announced, before
+    // any of the body is read. Refusing is cheap only at this point.
     if asked.length() > body_cap {
         refuse(connection, 413, "413 a body over the cap")
         return
     }
 
-    // The body, as much of it as the head promised. What the head's own reads
-    // already carried is not read again, which is why this counts from the
-    // head's end rather than from zero.
+    // Read the rest of the body. Some of it may have arrived with the head,
+    // so this counts from where the head ends.
     while buffer.len() - asked.size() < asked.length() {
         let more = connection.read() catch { return }
         if more.len() == 0 { return }
@@ -285,10 +224,8 @@ fn answer(
     connection.write(render(answered)) catch { return }
 }
 
-// A status and a sentence, for a client this will not answer properly.
-//
-// The sentence is the one `http1` threw, which already begins with its status:
-// the parser knows what it refused and this only has to pass it on.
+// Answers a request the server refuses. The text `http1` throws already starts
+// with the status code, so it is passed on as the body.
 fn refuse(mut connection: net::Connection, status: i32, why: ref String) {
     let answered = Response { status: status, content_type: "text/plain", body: why.clone() }
     connection.write(render(answered)) catch { return }

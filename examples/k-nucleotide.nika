@@ -1,37 +1,23 @@
-// examples/k-nucleotide.nika
+// The Benchmarks Game's `k-nucleotide`: reads DNA in FASTA form from standard
+// input and reports how often each short fragment occurs in one section.
 //
-// The Computer Language Benchmarks Game's `k-nucleotide`: read a DNA sequence
-// in FASTA form from **standard input**, and report how often each short
-// fragment occurs in it.
+//     cat dna.fasta | nikaia run
+//     A 33.333
+//     T 30.000
+//     …
+//     3	GGT
+//     3	GGTA
+//     0	GGTATT
+//     …
 //
-// Run:
+// The input is FASTA text: a header line starting with `>`, then lines of DNA.
+// The section read is the one whose header starts with `THREE` (the
+// benchmark's choice); `cat dna.fasta | nikaia run -- ONE` picks another.
 //
-//     nikaia --input examples/k-nucleotide.nika --backend rust
-//     ./k-nucleotide < dna.fasta
+// Shows: reading standard input, a `grammar` for a line-based format, map
+// keys that are views into a string rather than copies, and `?.` with `??`.
 //
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it, with the input arriving on a **pipe**.
-//
-// Why it is here beside the others. It is the first program that reads standard
-// input ([ADR-019](../docs/specification/adr/adr-019.md)), and the difference
-// that makes is worth seeing rather than being told:
-//
-//   * **A stream is not a file.** `1brc.nika` maps its input and every station
-//     name is a view into the pages - nothing is copied at all. Here there are
-//     no pages: the bytes do not exist until they are read, so the program owns
-//     its buffer. Everything *after* that first copy is the same, and this file
-//     is where that shows - the fragments counted below are views into the
-//     sequence, thousands of them, and none of them is a string.
-//   * **Looks blocking, is not.** There is no `async` on `main` and no `await`
-//     on the read. On one thread the event loop runs another task while the pipe
-//     is empty; with threads the read may resume on a different onead. The
-//     source says neither, and both settings must print the same thing -
-//     which the test checks.
-//   * **A grammar for a format that is nearly not one.** FASTA is a header line
-//     beginning with `>` and the lines under it. That is small enough that the
-//     usual answer is a pair of loops with an index; it is written as a grammar
-//     here because the result is a *tree* of sections, and because `until` and
-//     `not(">")` say what a hand-rolled scan would have to be read to discover.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::io
 use std::cli
@@ -43,26 +29,24 @@ use std::collections
 
 grammar Fasta {
 
-    // A file where every character counts: a blank is not a separator, and a
-    // newline is the structure. Defining `WS` as empty is what says so - the
-    // skip the backend puts between the elements of a syntactic rule would
-    // otherwise eat the very line endings this grammar is made of.
+    // In FASTA a newline is the structure, not a blank to skip. Defining `WS`
+    // as empty turns off the whitespace skipping of lowercase rules, which
+    // would otherwise eat the line endings this grammar is made of.
     rule WS = "" { }
 
     pub rule file -> Vec[Section] =
         sections:section* { sections }
 
     // A header, then every line that does not start a new one. `not(">")`
-    // consumes nothing: it is the test that ends the body, and writing it here
-    // means the repetition needs no terminator of its own.
+    // consumes nothing: it only tests, and it is what ends the body.
     rule section -> Section =
         ">" header:LINE body:body_line* { Section { header, lines: body } }
 
     rule body_line -> ref String = not(">") l:LINE { l }
 
     // `until` stops before the terminator, so the line ending is consumed
-    // explicitly. A file that does not end in one is not FASTA, and saying so
-    // here is better than accepting it and losing the last line silently.
+    // explicitly. Input whose last line has no line ending is refused as not
+    // FASTA rather than losing that line.
     rule LINE -> ref String = s:until(line_ending) line_ending { s }
 }
 
@@ -75,9 +59,10 @@ pub struct Section {
 // 2. Counting
 // ---------------------------------------------------------------------------
 
-// A count is a struct with a method rather than a number, for the reason
-// `access-log.nika`'s `Counts` is: `entry(..).and_modify` hands the lambda the
-// value that is already there, and what to do to it is a method on it.
+// A count is a struct with a method rather than a bare number:
+// `entry(..).and_modify` hands the lambda the value already there, and the
+// lambda calls a method on it. `sync` says a function cannot pause, and the
+// compiler checks it.
 pub struct Tally {
     n: i64,
 }
@@ -94,11 +79,9 @@ impl Tally {
 
 // Every fragment of length `k`, and how often each occurs.
 //
-// The keys are **views into `dna`** - `dna[i..i + k]` is a slice, not a copy -
-// so a sequence of a million characters counted at k = 12 builds a table of
-// pointers and lengths rather than a million small strings. That is the same
-// claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
-// program owns rather than one it mapped.
+// The keys are views into `dna`: `ref dna[i..<i + k]` is a slice, not a copy,
+// so a sequence of a million characters builds a table of positions and
+// lengths rather than a million small strings.
 fn count(dna: ref String, k: i64) -> collections::HashMap[ref String, Tally] {
     let mut counts: collections::HashMap[ref String, Tally] = collections::HashMap()
 
@@ -119,9 +102,9 @@ fn count(dna: ref String, k: i64) -> collections::HashMap[ref String, Tally] {
 
 // The fragments of one length, as percentages, most frequent first.
 //
-// Two stable sorts state the compound order the benchmark asks for, which is
-// what Part I 4.5 says they are for: by fragment ascending, then by count
-// descending, and the second keeps the order of the first among equals.
+// Two stable sorts give the order the benchmark asks for: by fragment, then by
+// count descending. The second sort keeps the first's order among equal counts,
+// so ties come out alphabetically.
 fn report_frequencies(dna: ref String, k: i64) {
     let counts = count(dna, k)
 
@@ -146,11 +129,8 @@ fn report_frequencies(dna: ref String, k: i64) {
 // length, so the table is built for exactly the width being asked about.
 fn report_fragment(dna: ref String, fragment: ref String) {
     let counts = count(dna, fragment.len())
-    // `get` hands back a `Tally?`, because a key may not be there - so the
-    // reach is `?.` and the fallback is `??`, which is Part I 3.5's own pair.
-    // It used to be `.map_or(0, fn(t) { t.n })`: the ledger claimed `get`
-    // hands back the value itself, and this line was reaching for Rust's
-    // `Option` surface through that hole.
+    // `get` hands back a `Tally?`, because the key may not be there: `?.`
+    // reaches into it if it is, and `??` gives the value to use if it is not.
     let n = counts.get(fragment)?.n ?? 0
     println(f"{n}\t{fragment}")
 }
@@ -160,8 +140,10 @@ fn report_fragment(dna: ref String, fragment: ref String) {
 // ---------------------------------------------------------------------------
 
 fn main() throws {
-    // The whole of standard input, owned. There is no `map` for a pipe and no
-    // `await` on the read: ADR-019 D1 and D2, in one line.
+    // The whole of standard input, read into a string the program owns: a pipe
+    // cannot be mapped like a file. There is no `await`, yet while the pipe is
+    // empty other tasks run. With `user-parallelism = "yes"` in nikaia.toml
+    // `[build]` the read may resume on another thread; the output is the same.
     let text = io::read_to_string() catch {
         eprintln(f"cannot read standard input: {error}")
         return
@@ -172,9 +154,8 @@ fn main() throws {
         return
     }
 
-    // The benchmark reports on the third section. Which one that is by name is
-    // the caller's business, so it is an argument with the benchmark's own
-    // answer as the default.
+    // The section to count, by the start of its header. Lines are uppercased,
+    // since FASTA may write DNA in either case.
     let wanted = cli::args().nth(1) ?? "THREE"
 
     let mut dna = String()

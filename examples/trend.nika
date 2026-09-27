@@ -1,42 +1,18 @@
-// examples/trend.nika
+// Ten days of readings, and three questions answered from the latest day
+// backwards: recent moving averages, recent day-over-day changes, and every
+// third day counted back from today.
 //
-// Ten days of readings, and three questions about them that all look at the
-// data from its **end**: the latest moving averages, the latest day-over-day
-// changes, and every third day counted back from today.
+//     nikaia run
+//     moving average over 3 days, latest first:
+//       25
+//       …
+//     peak: day 9, 28
+//     every third day, from today back: 28 22 17 12
 //
-// Run:
+// Shows: sequence pipelines (`windows`, `map`, `zip`, `skip`, `step_by`) walked
+// from the back with `rev`, and a range used as a value.
 //
-//     nikaia --input examples/trend.nika --backend rust
-//     ./trend
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
-//
-// Why it is here beside the others. It is the program [ADR-212] was checked
-// against: a pipeline that is turned round **after** it has been built. Each
-// answer is one loop over the list, and nothing on the way is collected into a
-// second one - `windows` hands out views of the list, `map` computes one
-// average at a time, and `rev` walks the result from its back end rather than
-// reversing a copy. That is only possible because the compiler knows which
-// sequences *have* a back end: a list's `iter()`, its `windows`, a range and
-// `chars()` do; a map's `keys()` and `io::lines()` do not, and asking one of
-// those for `rev()` is `NK2703`, in these words, rather than a trait bound in
-// the generated Rust.
-//
-// What it shows:
-//
-//   * **A pipeline walked from the back.** `averages.rev().take(3)` - the
-//     `map` in the middle does not stop it, because a `map` walked from the
-//     back is its input walked from the back.
-//   * **Where the length matters.** `zip` and `skip` can only be walked from
-//     the back where the length of what went in is known; a list's is, so
-//     `changes.rev()` is allowed. A `filter` in front of them would not be.
-//   * **A range is a value.** `days` is walked twice - once to find the peak,
-//     once counted back in steps of three - because walking a range walks a
-//     copy of two numbers. A sequence that is produced is walked once, and a
-//     second walk of one is `NK2702`.
-//
-// [ADR-212]: ../docs/specification/adr/adr-212.md
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 fn main() {
     let readings = [12, 14, 13, 17, 19, 18, 22, 25, 24, 28]
@@ -50,16 +26,24 @@ fn main() {
         }
         total / n
     })
+    // `rev` walks the pipeline from its back end; nothing is collected or
+    // copied on the way. `windows` hands out views of the list, and a `map`
+    // walked from the back is its input walked from the back. Not every
+    // sequence has a back end: `io::lines().rev()` is a compile error.
     for average in averages.rev().take(3) {
         println(f"  {average}")
     }
 
     println("day over day, latest first:")
     let changes = readings.iter().zip(readings.iter().skip(1))
+    // `zip` and `skip` can be walked from the back only when the length of
+    // what goes in is known. A list's is; after a `filter` it would not be.
     for (before, after) in changes.rev().take(3) {
         println(f"  {before} -> {after}: {after - before}")
     }
 
+    // A range is a value: `days` is walked twice, here and below. A produced
+    // sequence such as `averages` can be walked only once.
     let days = 0..<readings.len()
     let mut peak = 0
     for day in days {

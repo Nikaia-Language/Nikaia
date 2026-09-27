@@ -1,47 +1,22 @@
-// examples/n-body.nika
+// The Benchmarks Game's `n-body`: the sun and four planets, moved forward in
+// small time steps, with the system's total energy printed before and after.
 //
-// The Computer Language Benchmarks Game's `n-body`: five bodies of the solar
-// system, integrated forward by a symplectic step, with the total energy
-// printed before and after.
-//
-// Run:
-//
-//     nikaia --input examples/n-body.nika --backend rust
-//     ./n-body 1000
+//     nikaia run -- 1000
 //     -0.169075164
 //     -0.169087605
 //
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
+// The argument is the number of steps (1000 if left out). These two numbers
+// are the benchmark's published output for 1000 steps.
 //
-// Why it is here beside the others. Every other example in this directory
-// parses something: the `grammar` construct is what 0.0.7 is about, and four
-// programs in a row that all start with a DSL would say that Nikaia is a
-// parser generator. This one has no grammar, no input format and no I/O. It is
-// arithmetic in a loop, which is the other half of what a systems language is
-// judged on - and the one benchmark here whose numbers are directly comparable
-// against Rust, C and Go, because the CLBG publishes the same program in some
-// thirty languages with an exact expected output.
+// Shows: structs with methods, `ref mut self` for methods that change their
+// value, `sync` functions, and floating-point arithmetic in a loop.
 //
-// What it shows:
-//
-//   * **`sync` as a property the compiler checks** (Part II, 12.1). Every
-//     method here is pure computation that cannot pause and cannot do I/O.
-//     Saying so is what would let the whole integration run inside a
-//     `par_iter` without anyone having to remember that it is safe.
-//   * **Data and behaviour, kept apart** (Part I, 4.3). `Body` is six numbers
-//     and a mass; `System` is the list and what may be done to it. There is no
-//     class, and `ref mut self` is where a mutation is written down.
-//   * **Arithmetic that reads like arithmetic.** `0..n`, `1e-3`, and
-//     `(dx * dx + dy * dy + dz * dz).sqrt()` - three things the language could
-//     not say before this file was written, listed under G14 in the README.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::cli
 
-// One body: a position, a velocity, and a mass. All `f64`, and all of it
-// mutated in place - the benchmark's whole point is that the loop below runs
-// millions of times, so a step that rebuilt the list would be measuring the
-// allocator.
+// One body: a position, a velocity, and a mass. All of it is changed in place,
+// since the step below runs millions of times.
 pub struct Body {
     x: f64,
     y: f64,
@@ -52,10 +27,8 @@ pub struct Body {
     mass: f64,
 }
 
-// The list, and what may be done to it. `System` rather than a bare
-// `Vec[Body]` because the interesting operations are about the *set* of bodies
-// - the pairwise force, the total energy - and a method on the set is where
-// those belong (Part I, 4.3).
+// The bodies as a set, because the interesting operations - the pairwise
+// force, the total energy - are about all of them at once.
 pub struct System {
     bodies: Vec[Body],
 }
@@ -63,9 +36,10 @@ pub struct System {
 impl System {
 
     // The sun's velocity is not given: it is whatever makes the total momentum
-    // of the system zero, which is what keeps the centre of mass still and the
-    // energy comparable between runs. The benchmark specifies this, and it is
-    // the one place where a body is defined by all the others.
+    // of the system zero, which keeps the centre of mass still.
+    //
+    // `sync` says the method cannot pause (no file or network I/O, for
+    // example); the compiler refuses the program if it could.
     fn offset_momentum(ref mut self) sync {
         let mut px = 0.0
         let mut py = 0.0
@@ -83,15 +57,13 @@ impl System {
         self.bodies[0].vz = -pz / solar_mass
     }
 
-    // One symplectic step: every pair pulls on both of its bodies, then every
-    // body moves. Splitting it that way is what makes the integrator
-    // *symplectic* - the energy stays bounded over millions of steps instead of
-    // drifting - and it is why the two loops cannot be merged into one.
+    // One step: first every pair pulls on both of its bodies, then every body
+    // moves. Updating all velocities before any position is what keeps the
+    // energy from drifting over millions of steps, so the two loops cannot be
+    // merged into one.
     //
-    // The inner loop starts at `i + 1`: a pair is counted once and its two
-    // halves differ only in sign, which halves the work and is the reason the
-    // benchmark is written with indices rather than with a pair of `for`s over
-    // the list.
+    // The inner loop starts at `i + 1`: each pair is visited once, and the pull
+    // on its two bodies differs only in sign.
     fn advance(ref mut self, dt: f64) sync {
         let n = self.bodies.len()
 
@@ -124,10 +96,9 @@ impl System {
         }
     }
 
-    // Kinetic energy of each body, less the potential energy of each pair.
-    // This is the number the benchmark checks: it is conserved by an exact
-    // integrator, so printing it before and after says whether the arithmetic
-    // held up.
+    // Kinetic energy of each body, less the potential energy of each pair. An
+    // exact integrator would keep it constant, so printing it before and after
+    // shows how well the arithmetic held up.
     fn energy(ref self) -> f64 sync {
         let n = self.bodies.len()
         let mut e = 0.0
@@ -148,13 +119,9 @@ impl System {
     }
 }
 
-// The five bodies, in the units the benchmark fixes: astronomical units, days,
-// and a solar mass of 4 pi squared. The velocities are per day and are scaled
-// by the days in a year, which is why every one of them carries the factor.
-//
-// The exponents are what makes this readable: `9.54791938424326609e-04` is
-// Jupiter's mass beside the sun's `1.0`, and the same number written out as
-// zeroes is how a digit gets lost in a diff.
+// The sun, Jupiter, Saturn, Uranus and Neptune, in the benchmark's units:
+// astronomical units, years, and a solar mass of 4 pi squared. The velocities
+// are given per day, so each is multiplied by the days in a year.
 fn solar_system() -> System {
     let days_per_year = 365.24
     let solar_mass = 4.0 * 3.141592653589793 * 3.141592653589793
@@ -207,12 +174,9 @@ fn solar_system() -> System {
 }
 
 fn main() {
-    // The number of steps, as the benchmark takes it. The default is what the
-    // test in `crates/nikaia/tests/examples.rs` runs, so the two numbers below
-    // are checked rather than described.
-    // `??` is for a value that may be absent (Part I, 3.5) - `nth` returns
-    // one. Parsing it is a different thing: it *fails*, so its answer is a
-    // `catch` (7.1) and the fallback is the handler's value.
+    // `??` is for a value that may be absent: `nth` returns one. Parsing is
+    // different, it can fail, so its fallback is a `catch` whose block gives
+    // the value to use instead.
     let steps = cli::args().nth(1) ?? "1000"
     let n: i32 = steps.parse() catch { 1000 }
 

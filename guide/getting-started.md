@@ -137,7 +137,8 @@ decide, because the right answer depends on the machine and not on the source fi
 Because the difference lives in the compiler rather than in your source, a library built
 at `no` is still checked against the rules parallel code needs. You cannot accidentally
 ship something that only works single-threaded.
-→ [ADR-037](../docs/specification/adr/adr-037.md)
+
+📐 **Design decision:** [ADR-037, the build switches](../docs/specification/adr/adr-037.md)
 
 ---
 

@@ -1,10 +1,22 @@
-// ADR-038 D7, question 1: a Nikaia program that starts a Rust HTTP server and
-// serves one request, and question 2's *legal* half - a value that may cross
-// any thread crossing into one the foreign runtime owns.
+// A compiler experiment: a Nikaia program calls a Rust crate that starts its
+// own threads and event loop, serves one HTTP request, and hands a `String` to
+// one of those threads.
 //
-// Both lines are ordinary calls. Nothing in this file says that `hyper_shim`
-// starts three threads and an event loop, and nothing in the language lets it
-// say so.
+//     cd examples/foreign-runtime/serve
+//     nikaia run
+//
+// It is meant to print:
+//
+//     served: GET /hello on tokio-rt-worker
+//     crossed: a String is Send on tokio-rt-worker, called from main
+//
+// At present the build fails instead: the text literal reaches Rust as a
+// `&str`, and the Rust function accepts only a `String`. The first build
+// fetches `hyper` and `tokio` from crates.io.
+//
+// It checks that this works at all. Nothing in the source shows that the calls
+// start threads, and nothing in the language lets it say so.
+
 fn main() {
     let served = hyper_shim::serve_once(18080)
     println(f"served: {served}")

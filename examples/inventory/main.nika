@@ -1,36 +1,18 @@
-// examples/inventory/main.nika
+// Reads a stock list and writes it as an HTML page, largest count first,
+// from three files: this one, `stock.nika` (the parse) and `page.nika` (the page).
 //
-// The same program `examples/report.nika` is, in **three files** - and the
-// first thing in this repository that is more than one (Part I, 9.1).
+//     printf 'tools;Bolts & Nuts;12\npaper;<plain> A4;40\n' > stock.csv
+//     nikaia run -- stock.csv report.html
+//     2 items, 52 in total
 //
-// Input:  `category;item;count` per line
-// Output: an HTML page written to the path given as the second argument
+// Shows: one package in several files, and `pub`.
 //
-// Run:
+// To run it, copy the three `.nika` files into `src/` of a project
+// (guide/getting-started.md).
 //
-//     nikaia build && ./main stock.csv report.html
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs it, and checks the page.
-//
-// Why it is here beside `report.nika` rather than instead of it. `report.nika`
-// is the same program in one file, and having both is the point: a reader can
-// see what splitting a program buys and what it costs, on something small
-// enough to hold in the head. What it buys here is that a reader of this file
-// never has to open the parser, and that `weight` stays where it is used.
-//
-// **A package is a directory** (Part I, 9.1; ADR-047 D1), so there is no `use`
-// between these three files and no prefix on the names they share: they are one
-// namespace. Three things follow, and all three are the same answer - the
-// lowering stays name for name (ADR-011 D2) because there is nothing to resolve.
-//
-//   * `total(…)` is written the way it is *because* that is what it lowers to.
-//     One namespace here is one crate root there.
-//   * **One ledger for the package** (Part III, 13.5), and one namespace in it -
-//     so the type checker, the `sync` check and the provenance analysis work
-//     across the files without learning a new trick.
-//   * **`pub` says what leaves the package**, not what leaves the file. `weight`
-//     is not public and this file may still call it; a *consumer* of this
-//     package could not.
+// A package is a directory, and its files share one namespace. So there is no
+// `use` between them: `read`, `total` and `render` are simply called here.
+// `pub` means visible outside the package, not outside the file.
 
 use std::fs
 use std::cli

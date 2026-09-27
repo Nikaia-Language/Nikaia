@@ -1,9 +1,4 @@
-// examples/inventory/stock.nika
-//
-// The parse: a grammar, the record it yields, and nothing about reports or
-// pages. The files of a package share one namespace (Part I, 9.1), so this is
-// not a unit of naming - it is the file about *reading* a stock list, which is
-// a unit of attention.
+// Part of the inventory program (see main.nika): reading the stock list.
 
 grammar Stock {
 
@@ -19,33 +14,23 @@ grammar Stock {
     pub rule file -> Vec[Entry] = entries:ENTRY* { entries }
 }
 
-// `pub`, because this is part of what the package offers: a consumer that reads
-// a stock list gets `Entry` back. Inside the package `main.nika` could see it
-// either way.
 pub struct Entry {
     pub category: ref String,
     pub item: ref String,
     pub count: i64,
 }
 
-// The parse itself, behind a function.
-//
-// A **grammar is not visible from another file** (ADR-030 §7): `Stock::file(…)`
-// in `main.nika` finds no `Stock`, because the emitter reads grammars out of the
-// file it is emitting - one namespace or not. That is a limit of this compiler
-// and not of the language, and it points the right way here: the file about
-// reading a stock list is where reading a stock list belongs.
+// A grammar is only visible in the file that declares it, so `main.nika`
+// cannot call `Stock::file` and calls this instead.
 pub fn read(data: ref String) -> Vec[Entry] throws {
     return Stock::file(data)
 }
 
-// Not public: nothing outside this package needs it, and Part I 9.3's point is
-// that privacy is what forces an interface rather than a pile of exposed parts.
+// Not `pub`: the other files of this package can call it, but nothing outside.
 fn weight(entry: ref Entry) -> i64 {
     return entry.count
 }
 
-// The total, in one place. `pub` because the page prints it.
 pub fn total(entries: ref Vec[Entry]) -> i64 {
     let mut sum = 0
     for e in entries { sum += weight(e) }

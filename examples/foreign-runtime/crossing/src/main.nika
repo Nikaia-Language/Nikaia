@@ -1,31 +1,19 @@
-// ADR-038 D7, question 2, first rule: a value that may *not* cross a thread,
-// handed to a thread the foreign runtime owns.
+// A compiler experiment, expected to be refused: a value that must stay on one
+// thread is handed to a Rust library that runs it on a thread of its own.
 //
-// `local_handle` returns a value holding an `Rc`, and it is **the foreign
-// crate's** `Rc` rather than anything this language writes. That sentence used
-// to read *"which is what `Shared` lowers to at `user_parallelism = no`
-// (ADR-037 D3), and which `Shared` being unbuilt is the reason this experiment
-// has to borrow from the foreign crate"*, and both halves are gone:
-// ADR-037 D6 narrowed D3 so `Shared` is an atomic count at **both** settings,
-// and `Shared` is built.
+//     cd examples/foreign-runtime/crossing
+//     nikaia build
+//     error[NK2502]: `handle` may not cross a thread, and
+//     `hyper_shim::across_a_thread` may put it on one
 //
-// **The experiment still has to borrow, and now for a sharper reason.** A
-// Nikaia `Shared` cannot be written into this shape at all: ADR-061 D1 refuses
-// one handed to code nothing describes, because D7's per-value inference makes
-// a `Shared[Conn]` an `Rc` for one value and an `Arc` for another in the same
-// program, and no foreign signature can name both. So the only way to build a
-// value that may not cross and hand it to a foreign thread is to get it from
-// the foreign side, which is what this does.
+// The first build fetches `hyper` and `tokio` from crates.io.
 //
-// **This program must not build.** It is kept because what it says when it
-// fails is the finding: who refuses it, in whose vocabulary, and pointing at
-// which file.
-//
-// All three answers changed at 0.0.161. It used to be `rustc`'s `Send` bound,
-// translated onto the line below by ADR-005 D7 - the place right and the words
-// Rust's. It is `NK2502` now, in this compiler's vocabulary, because the
-// description says two things no signature could: `crosses = false` on
-// `LocalHandle` and `threads = true` on the function (ADR-193 D1, D2).
+// It checks that the refusal comes from this compiler, in its own words, at
+// this file's line, and not from `rustc` in generated code. The value comes
+// from the Rust side because a Nikaia value cannot be built into this shape.
+// What decides it is the crate's description in `contracts/`: `LocalHandle`
+// may not cross a thread, and `across_a_thread` starts one.
+
 fn main() {
     let handle = hyper_shim::local_handle("not Send")
     let crossed = hyper_shim::across_a_thread(handle)
