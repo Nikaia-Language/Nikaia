@@ -262,8 +262,7 @@ fn a_cleanup_that_cannot_fail_leaves_a_typed_channel_as_it_is() {
         let (out, err, ok) = ran("typed", source, how);
         assert!(ok, "{err}");
         assert_eq!(
-            out,
-            "cleanup guard\ncleanup guard\nrefused: 2\n6 0\n",
+            out, "cleanup guard\ncleanup guard\nrefused: 2\n6 0\n",
             "at {how:?}"
         );
     }

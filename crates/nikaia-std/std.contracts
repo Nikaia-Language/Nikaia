@@ -219,23 +219,25 @@ doc = "What being done with a writer does: it is flushed."
 # **Where a value with a cleanup dies** ([ADR-239](../../docs/specification/adr/adr-239.md)
 # D2). The compiler records one of these as a call wherever such a value may
 # die, and the analyses read it as they read any call: it pauses, and - where
-# the value's cleanup can fail - it fails with something handed on without its
-# type. No program writes either.
+# the value's cleanup can fail - it fails with a `cleanup::Failure`, which names
+# each value and its message. It travels in the box and has no `type` entry of
+# its own: the settle point is where it joins a failure already on its way, and
+# only the box takes one of each. No program writes either.
 [fn."cleanup::settle"]
 touches = []
 signature = "()"
 
 [fn."cleanup::settle_failing"]
 touches = []
-throws = ["?"]
+throws = ["cleanup::Failure"]
 signature = "()"
 
-# **`close()`**, on any value with a cleanup (ADR-006 D4): the cleanup now, its
+# **`close()`**, on any value with a cleanup (ADR-239 D3): the cleanup now, its
 # failure this call's, and nothing owed afterwards.
 [fn."cleanup::close"]
 pub = true
 touches = []
-throws = ["?"]
+throws = ["cleanup::Failure"]
 signature = "(?)"
 doc = "Run the value's cleanup now, and hand back its failure as this call's.\n\nNothing is owed afterwards: the value is gone."
 

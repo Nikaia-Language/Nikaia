@@ -225,7 +225,10 @@ macro_rules! cleaned {
                     drop(value);
                     outcome
                 });
-                $queue.with(|queue| queue.borrow_mut().push(Parked { what, work }));
+                // A thread whose queues are already gone - its own teardown -
+                // parks nothing: the work, and the value with it, is dropped
+                // here, which runs its `impl Drop`.
+                let _ = $queue.try_with(|queue| queue.borrow_mut().push(Parked { what, work }));
             }
         }
     };
@@ -287,8 +290,12 @@ impl Kind for Local {
     type Work = Work;
 
     fn taken() -> Vec<Parked<Work>> {
-        let mut local = LOCAL.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
-        let sent = SENT.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
+        let mut local = LOCAL
+            .try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+            .unwrap_or_default();
+        let sent = SENT
+            .try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+            .unwrap_or_default();
         local.extend(sent.into_iter().map(|parked| Parked {
             what: parked.what,
             work: parked.work as Work,
@@ -301,7 +308,8 @@ impl Kind for Sent {
     type Work = SendWork;
 
     fn taken() -> Vec<Parked<SendWork>> {
-        SENT.with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+        SENT.try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+            .unwrap_or_default()
     }
 }
 
@@ -368,13 +376,13 @@ pub struct Queues {
 impl Queues {
     /// Swap these in, and what was in back here.
     pub fn swap(&mut self) {
-        LOCAL.with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.local));
-        SENT.with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
+        let _ = LOCAL.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.local));
+        let _ = SENT.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
     }
 
     /// **What nobody will settle**, handed to the runtime: the task is over.
     pub fn orphan(&mut self) {
-        LOCAL_ORPHANS.with(|orphans| orphans.borrow_mut().append(&mut self.local));
+        let _ = LOCAL_ORPHANS.try_with(|orphans| orphans.borrow_mut().append(&mut self.local));
         SENT_ORPHANS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -392,7 +400,7 @@ pub struct SendQueues {
 impl SendQueues {
     /// See [`Queues::swap`].
     pub fn swap(&mut self) {
-        SENT.with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
+        let _ = SENT.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
     }
 
     /// See [`Queues::orphan`].
@@ -408,10 +416,19 @@ impl SendQueues {
 /// task's that died after its last settle point, and what the thread itself
 /// still holds. What the runtime finishes before the program ends.
 pub fn orphans() -> (Vec<Parked<Work>>, Vec<Parked<SendWork>>) {
-    let mut local = LOCAL_ORPHANS.with(|orphans| std::mem::take(&mut *orphans.borrow_mut()));
-    local.extend(LOCAL.with(|queue| std::mem::take(&mut *queue.borrow_mut())));
+    let mut local = LOCAL_ORPHANS
+        .try_with(|orphans| std::mem::take(&mut *orphans.borrow_mut()))
+        .unwrap_or_default();
+    local.extend(
+        LOCAL
+            .try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+            .unwrap_or_default(),
+    );
     let mut sent = std::mem::take(&mut *SENT_ORPHANS.lock().unwrap_or_else(|e| e.into_inner()));
-    sent.extend(SENT.with(|queue| std::mem::take(&mut *queue.borrow_mut())));
+    sent.extend(
+        SENT.try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
+            .unwrap_or_default(),
+    );
     (local, sent)
 }
 
