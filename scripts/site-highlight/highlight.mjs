@@ -131,6 +131,16 @@ async function render(fence, body) {
     // outrank every selector in `nikaia.css`, so the alternative is a file of
     // `!important`.
     defaultColor: false,
+    // The GitHub themes' comment grey, and two of the light theme's reds,
+    // fall under WCAG AA's 4.5:1 on this site's code backgrounds — the light
+    // colours are read on Sepia's too — and the examples are mostly comment.
+    // Each replacement is the same hue, moved only as far as 4.5:1 against
+    // every background it is shown on (light: #f5f7fa, #ece1c6; dark:
+    // #131a26, #0c1119). Comments get a little more than the minimum.
+    colorReplacements: {
+      [LIGHT]: { "#6a737d": "#57606a", "#d73a49": "#bd2635", "#e36209": "#a34606" },
+      [DARK]: { "#6a737d": "#8b949e" },
+    },
     transformers: [
       {
         pre(node) {
