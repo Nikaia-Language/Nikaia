@@ -1284,6 +1284,10 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 /// a socket cannot be written without the question. `http1::Buffer::len` is the
 /// same rule on a type that grows: a server reads until the body is as long as
 /// the head promised.
+///
+/// **And the ninth to eleventh** (0.0.232): the other three collections got
+/// their constructors and first methods when `collections::HashSet()` was
+/// found reaching `rustc`, and a set's size is a length like any other.
 #[test]
 fn the_lengths_are_i64_and_are_all_called_len() {
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
@@ -1302,7 +1306,10 @@ fn the_lengths_are_i64_and_are_all_called_len() {
             "Fixed::len",
             "String::len",
             "Vec::len",
+            "collections::BTreeMap::len",
+            "collections::BTreeSet::len",
             "collections::HashMap::len",
+            "collections::HashSet::len",
             "http1::Buffer::len",
             "str::len",
         ],

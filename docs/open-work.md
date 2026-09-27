@@ -61,6 +61,23 @@ measured, and in both `rustc` refuses a file nobody wrote
 and goes through `check::KeyForm`, which is the mechanism a method's key needs
 too.
 
+### 1.22. Two lists added together reach `rustc`
+
+Found at 0.0.233, writing `std::process`'s tests. Measured:
+
+```nika
+let a = [1, 2]
+let b = [3]
+let c = a + b
+```
+
+passes the check and lowers as `let c = a + b;`, and `rustc` says *cannot add
+`Vec<i64>` to `Vec<i64>`* about a file nobody wrote
+([Part III C.1](specification/30-nikaia-tooling.md)). Part I says nothing about
+`+` on a list, so the answer is one of two: `NK1105`-style refusal of an
+operator the type does not have, or a decision that `+` joins two lists (the
+text form already does, through `concat::plus`). The second is the owner's.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
@@ -706,6 +723,10 @@ it refuses no re-export, which the scanner refused every one of.
    socket in `std` for, and the subprocess is what `cargo metadata` is run
    through — which is the one thing `nikaia describe` still cannot do for a
    crate declared by **version**, whose sources are in Cargo's registry cache.
+   **The subprocess is built** at 0.0.233
+   ([ADR-243](specification/adr/adr-243.md)): `process::run` runs a program to
+   the end and hands back its code and both streams. The directory walk is what
+   is left of this step.
 3. **the command rewritten in `.nika`**, in the sysroot, pre-lowered at release
    by `nikaia lower-std`'s own step — which is the route the grammar already
    took.

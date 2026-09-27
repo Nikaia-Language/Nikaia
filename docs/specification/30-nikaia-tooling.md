@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.232 (Draft)
+**Version:** 0.0.233 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -1089,7 +1089,13 @@ Some modules are available, or behave restrictively, depending on the target and
 
 **A target without an operating system** is one more column of this section. `user_parallelism` is `no` on it. `fs`, `net`, `process`, threads, memory mapping and `http` do not exist on it. Everything the language itself is carries over: `overlap`, `spawn` as a coroutine, the four doors, `Cleanup`, `Seen`, grammars, `comptime` and Chapter 16's assembly. The emitted Rust is `no_std`, the executor is the target's with interrupts as wakers, an interrupt handler is a `fn() sync` that touches no lock, a lock is a critical section the length of its block, and a build may forbid allocation after start.
 
-* **`std::process`**: spawning child processes.
+* **`std::process`**: starting another program and waiting for it
+  ([ADR-243](adr/adr-243.md)). `process::run(program, args; dir: …)` runs it to
+  the end and hands back its exit `code`, whether it was `ok`, and its
+  `stdout` and `stderr` as text. A non-zero exit is an answer and not a
+  failure; what throws `io::IoError` is a program that cannot be started, or
+  output that is not UTF-8. The wait gives the thread up, so other tasks run
+  while the program does.
 * **`std::thread` / `spawn`**:
     * **At `user_parallelism = yes`:** full concurrency. The primary mechanism is `spawn`.
         * **Strict implicit move:** ownership of the ordinary data used inside a `spawn` block is transferred to the new task. A handle on a shared value is the one exception and is duplicated instead, so the name outside keeps working (Part I 6.2).

@@ -1966,6 +1966,37 @@ doc = "A table from keys to values, kept in the keys' order.\n\nIt is reached th
 pub = true
 doc = "A set of values, kept in their order.\n\nIt is reached through its module, as every name outside the prelude is."
 
+# --- `process`: another program, started and waited for (ADR-243) ----------
+#
+# [ADR-195](../../docs/specification/adr/adr-195.md) D4 put a subprocess in
+# `std` on the socket's own argument: an operating-system resource, not a
+# protocol. **No `touches`**, which is the claim that it touches everything: a
+# child may write any file this program reads, so it keeps its place against
+# every other effect (ADR-033 D4's reading of an absent column).
+#
+# **What it hands back is `untrusted`**: the program that ran may have printed
+# what somebody else sent it, and a map keyed on its output is hashed with the
+# keyed function (ADR-010 D2).
+
+[type."process::Output"]
+pub = true
+crosses = true
+fields = ["pub code: i64", "pub ok: bool", "pub stdout: String", "pub stderr: String"]
+doc = "What a program that ran to its end left behind.\n\n`code` is its exit code, or `-1` where it was ended by a signal and has none;\n`ok` is whether that code is `0`; `stdout` and `stderr` are everything it wrote\nto each, as text."
+
+# **`args: Vec[String]`, handed over**, and not `?`: an empty list has no
+# element type of its own, and a parameter that names none left `run("pwd", [])`
+# for `rustc` to guess at (ADR-135 D2 - the use answers it). A list of literals
+# is built into text of its own where it is kept (ADR-207 D2), so the ordinary
+# call is written as it reads.
+[fn."process::run"]
+pub = true
+throws = ["io::IoError"]
+provenance = "untrusted"
+keeps = ["args"]
+signature = "(program: ref String, args: Vec[String]; dir: ref String = \".\") -> process::Output"
+doc = "Start a program, wait for it to finish, and hand back what it said.\n\n`program` is looked for on `PATH` where it has no `/` in it; `dir` is the\ndirectory it starts in. A non-zero exit is not a failure - it is `code` and\n`ok`, and the caller decides what it means. It fails where the program cannot\nbe started, and where what it wrote is not UTF-8.\n\nThe wait gives the thread up, so other tasks run while the program does."
+
 # --- `net`: the socket `std` lends (ADR-194 D1) ------------------------------
 #
 # [ADR-069](../../docs/specification/adr/adr-069.md) D2's subtraction carried one

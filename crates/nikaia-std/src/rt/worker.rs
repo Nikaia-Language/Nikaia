@@ -150,6 +150,41 @@ impl Workers {
         true
     }
 
+    /// **Work that waits on something outside this process, on a thread of
+    /// its own** ([ADR-243](../../../../docs/specification/adr/adr-243.md) D3).
+    ///
+    /// A child process runs for as long as it runs, and an I/O worker that
+    /// waited on one would hold up every read queued behind it - `io-workers`
+    /// is `1` by default, which is the ceiling
+    /// [ADR-199](../../../../docs/specification/adr/adr-199.md) took away from
+    /// readiness waits. So the wait gets a thread, and everything a worker's
+    /// reply does after the operation this does too: the reply goes in its
+    /// channel, **both bells** ring, and the operation counts in `pending` from
+    /// before the thread starts until after the bell, so a caller never sees an
+    /// answered operation as one nobody is working on.
+    pub(super) fn beside<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<Receiver<T>> {
+        let (reply, answer) = channel();
+        self.pending.fetch_add(1, Ordering::SeqCst);
+        let pending = Arc::clone(&self.pending);
+        let started = std::thread::Builder::new()
+            .name("nikaia-child".to_string())
+            .spawn(move || {
+                let _ = reply.send(work());
+                super::ring_the_bell();
+                pending.fetch_sub(1, Ordering::SeqCst);
+            });
+        match started {
+            Ok(_) => Some(answer),
+            Err(_) => {
+                self.pending.fetch_sub(1, Ordering::SeqCst);
+                None
+            }
+        }
+    }
+
     pub(super) fn pending(&self) -> usize {
         self.pending.load(Ordering::SeqCst)
     }

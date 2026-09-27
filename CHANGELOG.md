@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.233] — 2026-09-27
+
+**`std::process`: another program, started and waited for** — ADR-243, the
+subprocess [ADR-195](docs/specification/adr/adr-195.md) D4 decided and nothing
+built, and the thing a compiler written in Nikaia needs to run `rustc`.
+
+- `process::run(program, args; dir: …)` runs a program to the end and hands
+  back a `process::Output`: `code`, `ok`, `stdout`, `stderr`. A non-zero exit
+  is an answer, not a failure; `io::IoError` is a program that cannot be
+  started (`NotFound(program)`, `PermissionDenied`) or output that is not
+  UTF-8. `args` is `Vec[String]`, so `[]` has a type and a list of literals is
+  built into owned text. No `touches` (a child may touch anything), and the
+  output is `untrusted`.
+- **The wait gives the thread up**, on a thread of its own
+  (`rt::io::beside`), with a worker's bells and pending count - so it holds up
+  neither the program's other tasks nor an I/O worker. Proven by a program:
+  two children in an `overlap` at `user_parallelism = no`, one waiting for a
+  file the other makes.
+- Found writing its tests and recorded, not fixed: two lists added together
+  reach `rustc` (`open-work.md` §1.22).
+- 0.0.232's three new collection lengths are added to the test that lists
+  every `len` in `std`.
+- Tests: `tests/process.rs`, at both settings of `user_parallelism`.
+
 ## [0.0.232] — 2026-09-27
 
 **Two defects found writing a miniature compiler in Nikaia**, to measure how

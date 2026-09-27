@@ -1004,6 +1004,24 @@ pub mod io {
         }
     }
 
+    /// **Blocking work on a thread of its own, as a future**
+    /// ([ADR-243](../../../docs/specification/adr/adr-243.md) D3): what
+    /// `process::run` waits on. The park is [`stdin_whole`]'s, and the thread
+    /// is not an I/O worker's, so a child that runs for a minute holds up no
+    /// read.
+    pub fn beside<T: Send + 'static>(
+        work: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Replied<T> {
+        off_the_io_thread();
+        let runtime = handle();
+        Replied {
+            answer: runtime
+                .workers
+                .beside(work)
+                .ok_or_else(|| Error::other("no thread could be started for the wait")),
+        }
+    }
+
     /// **The next chunk of standard input, as something that can be awaited**
     /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D4).
     ///

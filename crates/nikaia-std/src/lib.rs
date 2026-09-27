@@ -47,6 +47,7 @@ pub mod lock;
 pub mod net;
 pub mod num;
 pub mod par;
+pub mod process;
 pub mod range;
 pub mod rt;
 pub mod seq;
@@ -155,6 +156,10 @@ pub mod prelude {
     // a program reaches through its prefix has to be in scope in the generated
     // file, and nothing a program writes says where it comes from.
     pub use crate::net;
+    // **Another program, started and waited for** (ADR-243). Here for `net`'s
+    // reason: a module reached through its prefix has to be in scope in the
+    // generated file.
+    pub use crate::process;
     // **What a parse fails with**
     // ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): written bare,
     // like `Overtaken`, because a program never writes a path to it — it
