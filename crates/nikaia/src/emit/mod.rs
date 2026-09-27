@@ -9776,6 +9776,31 @@ impl<'p> Emitter<'p> {
         if boxed {
             out.push("Box::pin(");
         }
+        // **`par_iter()` walks the list on every core at `yes`, and is the
+        // list's `iter()` at `no`**
+        // ([ADR-235](../../docs/specification/adr/adr-235.md) D1). What the
+        // lambdas handed to it may do is the checker's, at both settings, so
+        // the program means the same at each.
+        if self.text(method) == "par_iter"
+            && args.is_empty()
+            && self.own_contracts.candidates("par_iter").is_empty()
+        {
+            match self.build.user_parallelism {
+                UserParallelism::Yes => {
+                    out.push("nikaia_std::par::iter(&");
+                    self.receiver(out, receiver, depth, flow, false)?;
+                    out.push(")");
+                }
+                UserParallelism::No => {
+                    self.receiver(out, receiver, depth, flow, false)?;
+                    out.push(".iter()");
+                }
+            }
+            if boxed {
+                out.push(")");
+            }
+            return Ok(());
+        }
         // **A lambda that pauses, handed to a `std` entry**
         // ([ADR-233](../../docs/specification/adr/adr-233.md) D1, D2): the
         // entry's counterpart in `nikaia_std::seq`, which takes the `async`
@@ -10826,11 +10851,12 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 /// entries ([ADR-233](../../../docs/specification/adr/adr-233.md)) - every one
 /// of them: `map`, `filter`, a list's `map`, `sort_by_key`, `or_insert_with`,
 /// `and_modify`, and the four doors, where a pause is `NK2202` by the
-/// language's own rule. What reaches this is a lambda handed to a method whose
-/// receiver the checker could not resolve - `par_iter()`'s, until
-/// `open-work.md` §2.17 gives it an entry - so there is no signature to say
-/// what shape the lambda takes, and a plain closure holding an `.await` is a
-/// `rustc` error about a file nobody wrote (Part III, C.1).
+/// language's own rule, and `par_iter()`'s walks, where it is `NK2209`
+/// ([ADR-235](../../../docs/specification/adr/adr-235.md)). What reaches this
+/// is a lambda handed to a method whose receiver the checker could not
+/// resolve, so there is no signature to say what shape the lambda takes, and a
+/// plain closure holding an `.await` is a `rustc` error about a file nobody
+/// wrote (Part III, C.1).
 fn pausing_in_a_lambda(at: usize, callee: &str) -> anyhow::Error {
     refused_at!(
         at,

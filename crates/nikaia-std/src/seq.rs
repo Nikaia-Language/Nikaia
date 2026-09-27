@@ -21,6 +21,34 @@
 //! [`sort_by_key`], which works each key out once rather than on every
 //! comparison - a pausing key could not be asked for again and again.
 
+/// **`Seq::join` over a sequence that does not pause**: every item written one
+/// after another with this text between them.
+///
+/// The language below's own `join` is a slice's, so a `map` or a `chars()`
+/// had none and the call was `rustc`'s error about a file nobody wrote
+/// ([ADR-235](../../../docs/specification/adr/adr-235.md) §3). In the prelude
+/// under no name, so it is in scope and names nothing.
+pub trait Join {
+    /// The items, written with `separator` between them.
+    fn join(self, separator: &str) -> String;
+}
+
+impl<I: Iterator> Join for I
+where
+    I::Item: std::fmt::Display,
+{
+    fn join(self, separator: &str) -> String {
+        let mut out = String::new();
+        for (at, item) in self.enumerate() {
+            if at > 0 {
+                out.push_str(separator);
+            }
+            out.push_str(&item.to_string());
+        }
+        out
+    }
+}
+
 /// One step of a sequence that may pause.
 pub trait Step {
     /// What each step produces.
@@ -625,6 +653,12 @@ mod tests {
 
     fn run<T>(future: impl Future<Output = T>) -> T {
         crate::rt::exec::block_on(future)
+    }
+
+    #[test]
+    fn a_plain_sequence_joins_what_it_produces() {
+        assert_eq!(Join::join([1, 2, 3].iter().map(|x| x * 2), "-"), "2-4-6");
+        assert_eq!(Join::join(std::iter::empty::<i32>(), ","), "");
     }
 
     #[test]

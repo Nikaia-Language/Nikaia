@@ -47,8 +47,7 @@ Two rules for ordering this section:
 
 The order:
 
-1. **A server to bind to, and the `postgres` block.** A `par_iter` with an
-   entry to demand `sync` of is a program that calls one (§2.17).
+1. **A server to bind to, and the `postgres` block.**
 2. **Supervision.** Nothing else waits on it.
 
 ### 2.4. Part II 12.8's supervision syntax
@@ -450,53 +449,6 @@ itself had to be one **nothing** describes — which is
 [ADR-193](specification/adr/adr-193.md)'s `threads` column, decided at 0.0.149
 and built through 0.0.163: a described call is asked now, and what is left of
 that record is the I/O half, §2.44 below.
-
-### 2.17. `par_iter` has no entry to demand `sync` of
-
-[ADR-105](specification/adr/adr-105.md). **Steps 1 and 2 are built.** `Seq[T]` and
-`Par[T]` are words of the ledger's type language: they parse with the two
-trailing words, write themselves back, bind through their item, answer as a
-**receiver** — `Seq::collect` is found exactly as `Vec::push` is, and a `Par`
-falls back to `Seq`'s entries for D3's *otherwise `Par[T]` has `Seq[T]`'s
-surface* — and a `for` over one binds its item. A program cannot write either
-(D4), and `NK1135` says so by the rule that refuses `Widgit`.
-
-The entries: `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`,
-`HashMap::drain`, `io::lines`, and six consumers under the receiver's own word.
-[ADR-212](specification/adr/adr-212.md) added three words about the sequence as
-a whole (`ends`, `sized`, `replays`), a range as a sequence that replays, the
-rest of a pipeline (`rev`, `zip`, `take`, `skip`, `step_by`, a list's `iter`,
-`windows`, `chunks`) and `NK2702` at every place a sequence is taken; its §5
-lists what it found and left.
-
-*`io::lines` was the one that mattered.* It said `-> Lines`, a named type whose
-`iterates = "throws"` carried the failing step — which worked for the `for` and
-for nothing else: the binding had no type, so `line.len()` was a method on `?`.
-`Seq[String] throws` says both things in one place, and the fallible-step rule
-reads either.
-
-*And §1's own attribution did not survive the measurement.* *Every one of the 35
-downstream of a `?` that is a sequence* is not what the corpus shows: the harness
-in `crates/nikaia/tests/sequences.rs` reads **38** before these entries and **33**
-after, and the rest are downstream of a receiver with no type for other reasons —
-`tail.drain()` in `json.nika` where `tail` is a field nothing types, `map` on the
-result of a `catch` in `access-log.nika`. **Those are a separate entry**, and the
-number is kept rather than remembered (`MethodCalls::unanswered`).
-
-*Step 3 is built too.* D2's once-only rule is `NK2702`: a name whose sequence a
-walk consumed is refused where it is read again, and what counts as a walk is read
-**off the signature** — every `Seq` entry writes its receiver `(Seq[$T], …)` and a
-container's writes `(&Vec[$T], …)`. It is `NK2101`'s analysis with one word
-changed, so an assignment revives the name and a temporary is not asked about. The
-fit gained its arm with it, which the first build had missed: a
-`Seq[String] throws` did not fit a `Seq[String] throws`.
-
-*What is left is step 4 alone,* and it waits on a program rather than on work:
-D3's `sync` demand on a `Par[T]`'s lambda needs `par_iter` to have an entry to
-demand it of, and nothing in `examples/`, in `tests/` or in `std` calls it —
-`par_fold` is a grammar driver and not this. D4's *it waits for a program* applies:
-the **word** is in the type language and binds, so the entry is one line the day
-something asks for it, and the demand is the line after.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 

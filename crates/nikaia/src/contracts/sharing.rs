@@ -677,6 +677,11 @@ struct Analysis<'a> {
     /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D5): the slot
     /// key, and what a reader is told about the place.
     duplicated: Vec<(String, String)>,
+    /// The names bound to a walk that runs in parallel
+    /// ([ADR-235](../../../../docs/specification/adr/adr-235.md) D1), so a walk
+    /// chained onto the name is one too. Over-approximate - a name is never
+    /// taken out - which is this file's safe direction.
+    parallel_names: BTreeSet<String>,
 }
 
 struct Handle {
@@ -704,6 +709,7 @@ impl<'a> Analysis<'a> {
             parent: Vec::new(),
             forced: Vec::new(),
             duplicated: Vec::new(),
+            parallel_names: BTreeSet::new(),
         }
     }
 
@@ -963,6 +969,9 @@ impl<'a> Analysis<'a> {
                     return;
                 };
                 let name = self.parsed.text(*name).to_string();
+                if self.walks_in_parallel(value) {
+                    self.parallel_names.insert(name.clone());
+                }
                 let declared = ty.as_ref().map(|t| Ty::from_ast(self.parsed, t));
                 // An untyped `let` that names a `Shared` is a second handle on
                 // the same allocation, and takes its type from the first.
@@ -1317,7 +1326,11 @@ impl<'a> Analysis<'a> {
                 config,
             } => {
                 let method = self.parsed.text(*method).to_string();
-                if PARALLEL.contains(&method.as_str()) {
+                // **And every walk chained onto one**
+                // ([ADR-235](../../../../docs/specification/adr/adr-235.md) D1):
+                // `xs.par_iter().map fn …` hands its lambda to `map`, and the
+                // lambda is what runs on every core.
+                if PARALLEL.contains(&method.as_str()) || self.walks_in_parallel(receiver) {
                     let why = format!(
                         "a lambda handed to `{method}` uses it, and that lambda runs on a \
                          thread the program asked for"
@@ -1666,6 +1679,18 @@ impl<'a> Analysis<'a> {
 
 impl Analysis<'_> {
     /// The qualified name a call names, where it names one.
+    /// Whether a receiver is a walk that runs in parallel: a `par_iter()`, a
+    /// name bound to one, or a walk chained onto either.
+    fn walks_in_parallel(&self, receiver: &Expr) -> bool {
+        match receiver {
+            Expr::Variable(name) => self.parallel_names.contains(self.parsed.text(*name)),
+            Expr::MethodCall {
+                receiver, method, ..
+            } => PARALLEL.contains(&self.parsed.text(*method)) || self.walks_in_parallel(receiver),
+            _ => false,
+        }
+    }
+
     fn path_of(&self, func: &Expr) -> Option<String> {
         match func {
             Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),

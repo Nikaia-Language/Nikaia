@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.221] — 2026-09-27
+
+**`par_iter()` walks a list on every core** —
+[ADR-235](docs/specification/adr/adr-235.md), closing `open-work.md` §2.17
+(ADR-105 step 4).
+
+- `Vec::par_iter` is a `Par[ref T]` with `Seq`'s whole surface, and
+  `Seq::for_each` is new. At `user_parallelism = yes` it is
+  `nikaia_std::par`, a wrapper over rayon that keeps the list's order; at `no`
+  it is the list's `iter()`. The same program prints the same at both.
+- A parallel lambda that pauses is `NK2209`; one that changes a name bound
+  outside it — `sum += x`, `seen.push(x)` — is `NK2107`, with `map` and
+  `collect` or a `SharedMut` as the way out. Both asked at both settings, each
+  with a tally line of its own.
+- A `SharedMut` a parallel lambda changes through `update` keeps its atomic
+  count: the sharing analysis reads a walk chained onto `par_iter()`, or onto a
+  name bound to one, as a crossing.
+- **`join` over a plain walk** — `xs.iter().map fn …` then `.join(",")` — was
+  `rustc`'s error; `nikaia_std::seq::Join` is its counterpart.
+
 ## [0.0.220] — 2026-09-27
 
 **A lazy walk of `io::lines()` carries its failure to the walk** —

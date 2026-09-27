@@ -964,6 +964,16 @@ doc = "Only the elements the function says yes to.\n\nThe element type survives,
 # and `nth` take a count, which is an `i64` here and a `usize` below; the
 # checker names those arguments by entry and the emitter converts them.
 
+# **Each element handed to a lambda, and nothing handed back**
+# ([ADR-235](../../docs/specification/adr/adr-235.md) D1): the walk that exists
+# for what the lambda does. `from(f)` for `map`'s reason.
+[fn."Seq::for_each"]
+pub = true
+sync = "from(f)"
+touches = []
+signature = "(Seq[$T], f: fn($T))"
+doc = "Each element through a function, for what the function does.\n\nIt walks the whole sequence, one element at a time."
+
 [fn."Seq::rev"]
 pub = true
 sync = true
@@ -1003,6 +1013,18 @@ touches = []
 ends_by_length = true
 signature = "(Seq[$T], step: i64) -> Seq[$T] ends sized"
 doc = "The first element, and then every `step`-th after it.\n\nA step of `0` aborts, since it would never move."
+
+# **The list's elements on every core at once** (Part II 12.6,
+# [ADR-235](../../docs/specification/adr/adr-235.md) D1). A `Par` has `Seq`'s
+# surface; a lambda handed to it may not pause (`NK2209`) and may not change a
+# name outside it (`NK2107`). At `user_parallelism = no` it is the list's `iter`.
+[fn."Vec::par_iter"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Vec[$T]) -> Par[ref $T] sync ends sized"
+doc = "The list's elements, walked on every core at once.\n\nWhat `map`, `filter` and `for_each` are handed runs in parallel, so it may not\npause and may not change a name outside it. The order of a `collect` is the\nlist's."
 
 [fn."Vec::iter"]
 pub = true

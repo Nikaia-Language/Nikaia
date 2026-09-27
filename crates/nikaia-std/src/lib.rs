@@ -45,6 +45,7 @@ pub mod list;
 pub mod lock;
 pub mod net;
 pub mod num;
+pub mod par;
 pub mod range;
 pub mod rt;
 pub mod seq;
@@ -141,6 +142,7 @@ pub mod prelude {
     // `either_items`) into the program, and a method needs its trait in scope.
     pub use crate::either_text::{EitherItems, EitherPairs, IntoEither, IntoEitherMaybe};
     pub use crate::error::Full;
+    pub use crate::seq::Join as _;
     // **The C boundary's one `std` type**
     // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
     // that declares `fn getenv(name: &[u8]) -> CStr` has to be able to name

@@ -1185,6 +1185,15 @@ pub fn check(
             if together == 1 { "" } else { "es" }
         ));
     }
+    // **A name a parallel lambda changes** (ADR-235 D2): the way out is a
+    // `map` and a `collect`, or a lock, which is neither line above.
+    let raced = count("NK2107");
+    if raced > 0 {
+        refused.push(format!(
+            "{raced} name{} changed from a lambda that runs on several cores",
+            plural(raced)
+        ));
+    }
     let tasks = count("NK21");
     // **A sequence walked twice is not a place that can fail**
     // ([ADR-105](../../docs/specification/adr/adr-105.md) D2), so it does not
@@ -1219,6 +1228,15 @@ pub fn check(
         ));
     }
     let pausing = pausing - paused_in_a_door;
+    // **A pause where nothing may pause** - a grammar's action, a fold, a
+    // parallel lambda (ADR-142 D1, ADR-235 D2) - is not a place that can fail.
+    let pauses_forbidden = count("NK2209");
+    if pauses_forbidden > 0 {
+        refused.push(format!(
+            "{pauses_forbidden} call{} that can pause where nothing may",
+            plural(pauses_forbidden)
+        ));
+    }
     // **A file read with a lock held is not a place that can fail either**
     // ([ADR-169](../../docs/specification/adr/adr-169.md) D2), and lands on the
     // same reasoning as the two above: the tally has to say what it counted,
@@ -1243,6 +1261,7 @@ pub fn check(
         - walked
         - pausing
         - paused_in_a_door
+        - pauses_forbidden
         - under_a_lock;
     if rules > 0 {
         refused.push(format!(
