@@ -7361,7 +7361,14 @@ impl<'p> Emitter<'p> {
                         // (Part I 4.1), and a wrapper has to be written around
                         // the name - which means writing the pair out.
                         let name = self.name(field.name);
-                        out.push(&format!(": {before}{name}{after}"));
+                        let wrapped = match how.is_some() {
+                            true => format!("Some({name})"),
+                            false => name.to_string(),
+                        };
+                        match boxed {
+                            true => out.push(&format!(": Box::new({wrapped})")),
+                            false => out.push(&format!(": {wrapped}")),
+                        }
                     }
                 }
                 out.push(" }");
