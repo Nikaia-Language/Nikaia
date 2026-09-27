@@ -707,6 +707,20 @@ pub struct Checked {
     /// the language below wants whether `k` turns out a number, owned text or
     /// a view ([`Checker::a_lookup_key_lent`]).
     pub lookup_keys: BTreeSet<(usize, String, String)>,
+    /// **The members that go behind a `Box` below**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D1), by type and
+    /// member ([`boxed_member`]): the fields on a ring of types that hold each
+    /// other inline.
+    pub boxed_members: BTreeMap<String, BTreeSet<String>>,
+    /// **The reads of a boxed field**, by statement and the read's shape: the
+    /// emitter writes `(*base.field)`, the place that behaves as the unboxed
+    /// field would ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
+    pub boxed_reads: BTreeSet<(usize, String)>,
+    /// **A number an arm binds out of a value it was lent** (0.0.236), by the
+    /// pattern's address and the name: the language below binds a `&i64`
+    /// there, and the emitter copies the number out at the head of the arm, so
+    /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
+    pub copied_bindings: BTreeSet<(usize, String)>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1630,6 +1644,12 @@ pub struct Propagation {
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::lookup_keys`].
     pub lookup_keys: BTreeSet<(usize, String, String)>,
+    /// [`Checked::boxed_members`].
+    pub boxed_members: BTreeMap<String, BTreeSet<String>>,
+    /// [`Checked::boxed_reads`].
+    pub boxed_reads: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_bindings`].
+    pub copied_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -1820,6 +1840,9 @@ pub fn propagation_against(
         view_fallbacks: checked.view_fallbacks,
         lent_args: checked.lent_args,
         lookup_keys: checked.lookup_keys,
+        boxed_members: checked.boxed_members,
+        boxed_reads: checked.boxed_reads,
+        copied_bindings: checked.copied_bindings,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -4480,89 +4503,159 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// **`NK1192`: a type that holds itself** (0.0.234).
+    /// **A type that holds itself holds itself through a box the compiler
+    /// writes** ([ADR-246](../../docs/specification/adr/adr-246.md) D1).
     ///
-    /// `enum Expr { Add(Expr, Expr) }` and `struct Node { next: Node? }` passed
-    /// the check and lowered as written, and the language below said
-    /// *recursive type has infinite size* about a file nobody wrote: a value
-    /// that holds a whole value of its own type inline has no size. How the
-    /// language should let a type hold itself is the owner's question
-    /// (`open-decisions.md`); until it is answered this says so, and names the
-    /// way that works today - a list between them.
+    /// `enum Expr { Add(Expr, Expr) }` is a program as written: a value that
+    /// holds a whole value of its own type inline has no size, so the fields on
+    /// such a ring are the ones that go behind a `Box` below, and this is the
+    /// walk that finds them. It was `NK1192`'s refusal at 0.0.234, until the
+    /// owner decided the question it named.
     ///
-    /// **Only an edge that is certainly inline**: the type itself, nullable or
-    /// not, a tuple's parts and an array's element. A view, a function, a list,
-    /// a map or anything this compiler cannot see through is taken to be an
-    /// indirection, so a correct program is never refused on a guess
-    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    /// **A field is boxed where what it holds inline reaches back to the type
+    /// that declares it** - the type itself, or one on the same ring. Only an
+    /// edge that is certainly inline counts: the type, nullable or not, a
+    /// tuple's parts and an array's element. A view, a function, a list or
+    /// anything this compiler cannot see through is an indirection already.
+    ///
+    /// Recorded for **every** type of the program, not only this file's: a
+    /// literal in this file may build a type declared beside it.
     fn types_that_contain_themselves(&mut self) {
         let parsed = self.parsed;
         let files: Vec<&Parsed> = std::iter::once(parsed)
             .chain(self.beside.iter().copied())
             .collect();
-        // Every declared type, with the types it holds inline.
-        let mut holds: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        // Every declared type's members, with the types each holds inline.
+        let mut members: BTreeMap<String, Vec<(String, BTreeSet<String>)>> = BTreeMap::new();
         for file in &files {
             for item in &file.program.items {
-                let (name, types): (String, Vec<&ast::Type>) = match &item.node {
+                let (name, held): (String, Vec<(String, &ast::Type)>) = match &item.node {
                     Item::Struct { name, fields, .. } => (
                         file.text(*name).to_string(),
-                        fields.iter().map(|f| &f.ty).collect(),
+                        fields
+                            .iter()
+                            .map(|f| (file.text(f.name).to_string(), &f.ty))
+                            .collect(),
                     ),
                     Item::Enum { name, variants, .. } => (
                         file.text(*name).to_string(),
                         variants
                             .iter()
-                            .flat_map(|v| match &v.fields {
-                                ast::VariantFields::Unit => Vec::new(),
-                                ast::VariantFields::Tuple(types) => types.iter().collect(),
-                                ast::VariantFields::Named(fields) => {
-                                    fields.iter().map(|f| &f.ty).collect()
+                            .flat_map(|v| {
+                                let variant = file.text(v.name).to_string();
+                                match &v.fields {
+                                    ast::VariantFields::Unit => Vec::new(),
+                                    ast::VariantFields::Tuple(types) => types
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(at, ty)| {
+                                            (boxed_member(&variant, Some(at), None), ty)
+                                        })
+                                        .collect(),
+                                    ast::VariantFields::Named(fields) => fields
+                                        .iter()
+                                        .map(|f| {
+                                            let field = file.text(f.name);
+                                            (boxed_member(&variant, None, Some(field)), &f.ty)
+                                        })
+                                        .collect(),
                                 }
                             })
                             .collect(),
                     ),
                     _ => continue,
                 };
-                let mut inline = BTreeSet::new();
-                for ty in types {
+                let entry = members.entry(name).or_default();
+                for (member, ty) in held {
+                    let mut inline = BTreeSet::new();
                     held_inline(file, ty, &mut inline);
+                    entry.push((member, inline));
                 }
-                holds.entry(name).or_default().extend(inline);
             }
         }
-        // Each type this file declares, asked whether it reaches itself.
-        for item in &parsed.program.items {
-            let name = match &item.node {
-                Item::Struct { name, .. } | Item::Enum { name, .. } => parsed.text(*name),
-                _ => continue,
-            };
-            let Some(path) = reaches_itself(name, &holds) else {
-                continue;
-            };
-            let through = match path.len() {
-                1 => format!("`{name}` holds another `{name}`"),
-                _ => format!("`{name}` holds `{}`", path.join("`, which holds `")),
-            };
-            self.checked.findings.push(Finding {
-                severity: Severity::Error,
-                span: item.span.clone(),
-                code: "NK1192",
-                message: format!("`{name}` holds itself, so it has no size"),
-                notes: vec![
-                    format!(
-                        "{through}, inline: a value that holds a whole value of its own type \
-                         would be larger than itself"
-                    ),
-                    "how a type holds itself is not decided yet, and it is on \
-                     `open-decisions.md`"
-                        .to_string(),
-                ],
-                help: Some(format!(
-                    "hold it through a list, which keeps its elements elsewhere: \
-                     `Vec[{name}]` in place of the `{name}` it holds"
-                )),
-            });
+        let holds: BTreeMap<String, BTreeSet<String>> = members
+            .iter()
+            .map(|(name, fields)| {
+                let all = fields.iter().flat_map(|(_, inline)| inline.iter().cloned());
+                (name.clone(), all.collect())
+            })
+            .collect();
+        for (name, fields) in &members {
+            for (member, inline) in fields {
+                let back = inline
+                    .iter()
+                    .any(|held| held == name || reaches(held, name, &holds));
+                if back {
+                    self.checked
+                        .boxed_members
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(member.clone());
+                }
+            }
+        }
+    }
+
+    /// **`NK1193`: a pattern that looks inside a part the compiler boxed**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D4).
+    ///
+    /// `Expr::Add(Expr::Num(n), b)` asks the part inside a box a question, and
+    /// the language below matches no pattern through one: a name binds the
+    /// part and the arm reads it, but a pattern there has nothing to stand
+    /// on. Refused by name until the lowering rewrites it into a second
+    /// `match` in the arm; a nested `match` says the same today.
+    fn a_pattern_inside_a_box(&mut self, pattern: &MatchPattern, span: &Span) {
+        match pattern {
+            MatchPattern::Tuple { path, parts } => {
+                let written: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+                let boxed: Vec<bool> = (0..parts.len())
+                    .map(|at| {
+                        let [.., owner, variant] = written.as_slice() else {
+                            return false;
+                        };
+                        self.checked
+                            .boxed_members
+                            .get(*owner)
+                            .is_some_and(|members| {
+                                members.contains(&boxed_member(variant, Some(at), None))
+                            })
+                    })
+                    .collect();
+                for (at, part) in parts.iter().enumerate() {
+                    let binds = matches!(part, MatchPattern::Path(one) if one.len() == 1)
+                        || matches!(part, MatchPattern::Otherwise);
+                    if boxed[at] && !binds {
+                        let owner = written.join("::");
+                        self.checked.findings.push(Finding {
+                            severity: Severity::Error,
+                            span: span.clone(),
+                            code: "NK1193",
+                            message: format!(
+                                "the part of `{owner}` at position {at} holds its own type, and \
+                                 a pattern cannot look inside it yet"
+                            ),
+                            notes: vec![
+                                "a part that holds its own type is kept in a box the compiler \
+                                 writes (ADR-246 D1), and a pattern cannot be matched through \
+                                 one below: a name binds the part, and the arm reads it"
+                                    .to_string(),
+                            ],
+                            help: Some(
+                                "bind the part to a name here and `match` on the name in the arm"
+                                    .to_string(),
+                            ),
+                        });
+                        continue;
+                    }
+                    self.a_pattern_inside_a_box(part, span);
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.a_pattern_inside_a_box(alternative, span);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -7800,6 +7893,7 @@ impl<'a> Checker<'a> {
                     // missing rather than the name that is wrong — and with an
                     // `else` arm beside it, nothing at all.
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
+                    self.a_pattern_inside_a_box(&arm.pattern, span);
                     // **Over a place this function owns, a part is lent**
                     // (ADR-242): the bindings are typed from the
                     // variant, so that what the arm keeps is seen as kept.
@@ -7807,6 +7901,20 @@ impl<'a> Checker<'a> {
                         true => self.pattern_parts(&arm.pattern, &typed),
                         false => BTreeMap::new(),
                     };
+                    // **A number bound out of a value the `match` was lent**
+                    // is copied out at the head of the arm (0.0.236): the
+                    // language below binds a `&i64` there, and
+                    // `Expr::Num(n) => n` handed back a reference where the
+                    // function says `i64` - `rustc`'s *mismatched types*
+                    // about a file nobody wrote.
+                    if typed.is_a_view() {
+                        let at = &arm.pattern as *const MatchPattern as usize;
+                        for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
+                            if copies(&ty) && !ty.is_a_view() {
+                                self.checked.copied_bindings.insert((at, name));
+                            }
+                        }
+                    }
                     let frame = self
                         .pattern_bindings(&arm.pattern)
                         .into_iter()
@@ -8482,6 +8590,18 @@ impl<'a> Checker<'a> {
                 let Ty::Named { name: ty, .. } = &on else {
                     return Ty::Unknown;
                 };
+                // **A boxed field is read through its box**
+                // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
+                if self
+                    .checked
+                    .boxed_members
+                    .get(ty)
+                    .is_some_and(|members| members.contains(&field))
+                {
+                    self.checked
+                        .boxed_reads
+                        .insert((span.start, argument_shape(expr)));
+                }
                 // **A handle has no fields** (ADR-147 D3): it is an address
                 // this language never dereferences, so there is nothing inside
                 // it to name. Before `fields_of`, which would answer `None` and
@@ -8554,6 +8674,18 @@ impl<'a> Checker<'a> {
                 let Ty::Named { name: ty, .. } = inner.as_ref() else {
                     return Ty::Unknown;
                 };
+                // **A boxed field is read through its box here too**
+                // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
+                if self
+                    .checked
+                    .boxed_members
+                    .get(ty)
+                    .is_some_and(|members| members.contains(&field))
+                {
+                    self.checked
+                        .boxed_reads
+                        .insert((span.start, argument_shape(expr)));
+                }
                 let Some(fields) = self.fields_of(ty) else {
                     return Ty::Unknown;
                 };
@@ -10263,6 +10395,26 @@ impl<'a> Checker<'a> {
                 entry.code_fails |= throws;
             }
             return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
+        }
+
+        // **A variant is built by its constructor, and its parts are what it
+        // keeps** (0.0.236). `Stmt::Say("a")` resolved to nothing, so its
+        // argument was walked with no type to meet: the literal went below as
+        // a `&str` where the variant holds a `String`, and `rustc` said
+        // *mismatched types* about a file nobody wrote. The parts are the
+        // variant's declared types, a literal handed to text is built into
+        // text of its own there (ADR-207 D2), and a name handed in is given.
+        if let Some(parts) = self.variant_parts.get(&name).cloned() {
+            let found = self.arguments_given(args, &parts, false, None, span);
+            for ((arg, want), ty) in args.iter().zip(&parts).zip(&found) {
+                if self.text_literal(want, arg, true).is_none() {
+                    self.hands_over(arg, ty, "put into a variant, which keeps it", span);
+                }
+            }
+            let owner = name
+                .rsplit_once("::")
+                .map_or(name.as_str(), |(owner, _)| owner);
+            return Ty::named(owner);
         }
 
         // **A call to an `extern` name is written inside `unsafe { … }`**
@@ -19456,11 +19608,6 @@ fn copies(ty: &Ty) -> bool {
     }
 }
 
-/// Whether a type is one this language calls text.
-///
-/// `String` and `&str`, and nothing else. A `T?` is deliberately **not** text:
-/// `maybe + "x"` is a member reached off a nullable, which Part I 2.3 answers
-/// and this must not quietly paper over.
 /// The declared types `ty` holds **inline** - itself, nullable or not, a
 /// tuple's parts and an array's element - and nothing it holds through a view,
 /// a function, a list or anything else ([`Checker::types_that_contain_themselves`]).
@@ -19486,30 +19633,34 @@ fn held_inline(parsed: &Parsed, ty: &ast::Type, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The path by which `start` holds itself inline, or `None`: a depth-first
-/// walk over what each type holds, stopping at the first way back.
-fn reaches_itself(start: &str, holds: &BTreeMap<String, BTreeSet<String>>) -> Option<Vec<String>> {
-    fn walk(
-        at: &str,
-        start: &str,
-        holds: &BTreeMap<String, BTreeSet<String>>,
-        seen: &mut BTreeSet<String>,
-        path: &mut Vec<String>,
-    ) -> bool {
-        for next in holds.get(at).into_iter().flatten() {
-            path.push(next.clone());
-            if next == start {
+/// Whether `from` holds `to` inline, through any number of types between: a
+/// depth-first walk over what each type holds ([`Checker::types_that_contain_themselves`]).
+fn reaches(from: &str, to: &str, holds: &BTreeMap<String, BTreeSet<String>>) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![from.to_string()];
+    while let Some(at) = stack.pop() {
+        for next in holds.get(&at).into_iter().flatten() {
+            if next == to {
                 return true;
             }
-            if seen.insert(next.clone()) && walk(next, start, holds, seen, path) {
-                return true;
+            if seen.insert(next.clone()) {
+                stack.push(next.clone());
             }
-            path.pop();
         }
-        false
     }
-    let mut path = Vec::new();
-    walk(start, start, holds, &mut BTreeSet::new(), &mut path).then_some(path)
+    false
+}
+
+/// How a member that may be boxed is named, the same in the checker and the
+/// emitter ([ADR-246](../../docs/specification/adr/adr-246.md)): a struct's
+/// field by its name, a variant's part as `Variant#0`, and a variant's named
+/// field as `Variant.name`.
+pub fn boxed_member(owner: &str, at: Option<usize>, field: Option<&str>) -> String {
+    match (at, field) {
+        (Some(at), _) => format!("{owner}#{at}"),
+        (None, Some(field)) => format!("{owner}.{field}"),
+        (None, None) => owner.to_string(),
+    }
 }
 
 /// **A `std` lookup whose key the language below takes by reference**
@@ -19543,6 +19694,11 @@ fn is_a_collection(ty: &Ty) -> bool {
         ))
 }
 
+/// Whether a type is one this language calls text.
+///
+/// `String` and `&str`, and nothing else. A `T?` is deliberately **not** text:
+/// `maybe + "x"` is a member reached off a nullable, which Part I 2.3 answers
+/// and this must not quietly paper over.
 fn is_text(ty: &Ty) -> bool {
     matches!(ty, Ty::Named { name, args, .. } if args.is_empty() && (name == "String" || name == "str"))
 }

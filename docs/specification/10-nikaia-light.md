@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.235 (Draft)
+**Version:** 0.0.236 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -994,6 +994,29 @@ An enum is the type for a value that is **one of a fixed set of things**: two
 operators, four directions, the three states a connection can be in. An enum is
 read back with `match` (3.4): an arm per variant, and no arm for a case that
 cannot happen.
+
+**A type may hold itself.** A syntax tree is an enum whose variants hold more of
+it, and a list is a node whose `next` is another node or nothing:
+
+```nika
+enum Expr {
+    Num(i64),
+    Add(Expr, Expr),
+}
+
+struct Node {
+    value: i64,
+    next: Node?,
+}
+```
+
+The program writes the tree as the tree. A value that held a whole value of its
+own type inline would be larger than itself, so the compiler keeps such a field
+somewhere else and the program never names where: it is built, read, matched
+and assigned as the type it declares (ADR-246). What that costs is one
+allocation per such field built. A pattern cannot yet look *inside* such a part
+(`Expr::Add(Expr::Num(n), b)`); a name binds it, and a `match` in the arm asks
+the question.
 
 ### 4.5. Collections
 The standard library provides types for groups of values.

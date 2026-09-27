@@ -66,6 +66,28 @@ parameter *without* `sync` gets, and correctly so there. The check of the body
 does not read the `sync` on the parameter's type. Evidence:
 the line above with a `main` that calls it, built with `nikaia run` at 0.0.233.
 
+### 1.25. A `?.` chain through two nullable fields of a lent value takes the first one out
+
+Found at 0.0.236, writing a linked list. Measured, with no recursion in it:
+
+```nika
+struct C { v: i64 }
+struct B { c: C? }
+struct A { b: B? }
+
+fn f(a: ref A) -> i64 {
+    return a.b?.c?.v ?? -1
+}
+```
+
+lowers `a.b?.c` to `a.b.and_then(|it| it.c.as_ref())`, and `rustc` says
+*cannot move out of `a.b` which is behind a shared reference* about a file
+nobody wrote ([Part III C.1](specification/30-nikaia-tooling.md)). The
+receiver is lent only where the member copies
+([ADR-189](specification/adr/adr-189.md) D1), and a member that is itself a
+`T?` is not one; where the chain reaches on, the first step has to be lent and
+the second an option of a view.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
@@ -807,6 +829,15 @@ order the pieces depend on each other:
    comments.
 4. **D6:** `nikaia --asserts`, every row *run time* until there is a prover.
    D4 and D5 need no work before a prover exists; D3 is what keeps them open.
+
+### 2.49. What is left of a type that holds itself
+
+[ADR-246](specification/adr/adr-246.md) D5, in its order: a pattern that
+looks inside a boxed part (`Expr::Add(Expr::Num(n), b)`, `NK1193` today)
+rewritten into a `match` in the arm; a guard that reads a boxed binding
+before the arm opens it; and a nullable field boxed inside its option, so a
+`null` costs no allocation. D1-D4 are built and `tests/recursive_types.rs`
+runs them.
 
 ## 3. Upkeep
 

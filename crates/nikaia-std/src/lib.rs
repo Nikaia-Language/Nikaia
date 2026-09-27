@@ -24,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 pub mod abort;
+pub mod boxed;
 pub mod bytes;
 pub mod channel;
 pub mod cleanup;

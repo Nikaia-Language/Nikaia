@@ -1424,6 +1424,17 @@ struct Emitter<'p> {
         std::collections::BTreeMap<(usize, String, usize), std::collections::BTreeSet<String>>,
     /// `check::Checked::lookup_keys` (0.0.235).
     lookup_keys: std::collections::BTreeSet<(usize, String, String)>,
+    /// `check::Checked::boxed_members`
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md)).
+    boxed_members: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// `check::Checked::boxed_reads`.
+    boxed_reads: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::copied_bindings` (0.0.236).
+    copied_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// Which of the arguments `args` is writing go into a boxed part of a
+    /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
+    /// around one call by `call` and read by `args`, as `hold_args` is.
+    boxed_args: std::cell::RefCell<Option<Vec<bool>>>,
     /// **The arguments the compiler writes a `&mut` for**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// `lent_args` is. The third state, and the one that is a declaration
@@ -2361,6 +2372,10 @@ impl<'p> Emitter<'p> {
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
             lookup_keys: propagation.lookup_keys,
+            boxed_members: propagation.boxed_members,
+            boxed_reads: propagation.boxed_reads,
+            copied_bindings: propagation.copied_bindings,
+            boxed_args: std::cell::RefCell::new(None),
             mut_args: propagation.mut_args,
             copied_args: propagation.copied_args,
             nullable_args: propagation.nullable_in_args,
@@ -2887,23 +2902,41 @@ impl<'p> Emitter<'p> {
                     String::new()
                 };
                 out.push(&format!("{vis}enum {}{params} {{\n", self.name(*name)));
+                let enum_name = self.text(*name);
                 for variant in variants {
                     let name = self.name(variant.name);
                     match &variant.fields {
                         VariantFields::Unit => out.push(&format!("    {name},\n")),
                         VariantFields::Tuple(types) => {
-                            let parts: Vec<String> =
-                                types.iter().map(|t| self.ty(t, Lifetimes::NAMED)).collect();
+                            let owner = self.text(variant.name);
+                            let parts: Vec<String> = types
+                                .iter()
+                                .enumerate()
+                                .map(|(at, t)| {
+                                    let member = crate::check::boxed_member(owner, Some(at), None);
+                                    self.boxed_ty(enum_name, &member, self.ty(t, Lifetimes::NAMED))
+                                })
+                                .collect();
                             out.push(&format!("    {name}({}),\n", parts.join(", ")));
                         }
                         VariantFields::Named(fields) => {
+                            let owner = self.text(variant.name);
                             let parts: Vec<String> = fields
                                 .iter()
                                 .map(|f| {
+                                    let member = crate::check::boxed_member(
+                                        owner,
+                                        None,
+                                        Some(self.text(f.name)),
+                                    );
                                     format!(
                                         "{}: {}",
                                         self.name(f.name),
-                                        self.ty(&f.ty, Lifetimes::NAMED)
+                                        self.boxed_ty(
+                                            enum_name,
+                                            &member,
+                                            self.ty(&f.ty, Lifetimes::NAMED)
+                                        )
                                     )
                                 })
                                 .collect();
@@ -2936,15 +2969,16 @@ impl<'p> Emitter<'p> {
                     // Public, because the actions that build this struct are
                     // generated into the grammar's own module.
                     let slot = format!("{}.{}", self.text(*name), self.text(field.name));
+                    let lowered = self.ty_counted(
+                        &field.ty,
+                        Lifetimes::NAMED,
+                        self.count_at(SHARED_FIELDS, &slot),
+                    );
                     out.push(&format!(
                         "    {}{}: {},\n",
                         if field.is_public { "pub " } else { "" },
                         self.name(field.name),
-                        self.ty_counted(
-                            &field.ty,
-                            Lifetimes::NAMED,
-                            self.count_at(SHARED_FIELDS, &slot)
-                        )
+                        self.boxed_ty(self.text(*name), self.text(field.name), lowered)
                     ));
                 }
                 out.push("}\n");
@@ -6929,7 +6963,7 @@ impl<'p> Emitter<'p> {
                         self.expr(out, guard, depth + 1, flow)?;
                     }
                     out.push(" => ");
-                    self.expr(out, &arm.body, depth + 1, flow)?;
+                    self.arm_body(out, &arm.pattern, &arm.body, depth + 1, flow)?;
                     out.push(",\n");
                 }
                 out.push(&format!("{close}}}"));
@@ -6977,8 +7011,21 @@ impl<'p> Emitter<'p> {
                     out.push(&format!("\"{}\"", field));
                     return Ok(());
                 }
+                // **A boxed field is read through its box**
+                // ([ADR-246](../../docs/specification/adr/adr-246.md) D2):
+                // `(*base.field)` is a place that behaves as the unboxed field
+                // would - read, lent, moved out of an owned value, assigned.
+                let boxed = self
+                    .boxed_reads
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                if boxed {
+                    out.push("(*");
+                }
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.name(*name)));
+                if boxed {
+                    out.push(")");
+                }
             }
             // Part I 3.5: `x?.name` reaches the field only where there is
             // something to reach it on.
@@ -7023,23 +7070,24 @@ impl<'p> Emitter<'p> {
                 // ([ADR-184](../../docs/specification/adr/adr-184.md) D2) and a
                 // view of anything else is `&T`. The checker says which,
                 // because this emitter has no types (ADR-011 D2).
+                // **A boxed field is reached through its box**
+                // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
+                let place = match self
+                    .boxed_reads
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    true => format!("(*__nikaia_it.{field})"),
+                    false => format!("__nikaia_it.{field}"),
+                };
                 let reach = match (
                     self.viewed_reaches.get(&(flow.statement, field.clone())),
                     flattens,
                 ) {
-                    (None, _) => format!("__nikaia_it.{field}"),
-                    (Some(crate::check::Viewed::Text), false) => {
-                        format!("__nikaia_it.{field}.as_str()")
-                    }
-                    (Some(crate::check::Viewed::Text), true) => {
-                        format!("__nikaia_it.{field}.as_deref()")
-                    }
-                    (Some(crate::check::Viewed::Plain), false) => {
-                        format!("&__nikaia_it.{field}")
-                    }
-                    (Some(crate::check::Viewed::Plain), true) => {
-                        format!("__nikaia_it.{field}.as_ref()")
-                    }
+                    (None, _) => place,
+                    (Some(crate::check::Viewed::Text), false) => format!("{place}.as_str()"),
+                    (Some(crate::check::Viewed::Text), true) => format!("{place}.as_deref()"),
+                    (Some(crate::check::Viewed::Plain), false) => format!("&{place}"),
+                    (Some(crate::check::Viewed::Plain), true) => format!("{place}.as_ref()"),
                 };
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!("{lent}.{how}(|__nikaia_it| {reach})"));
@@ -7277,6 +7325,15 @@ impl<'p> Emitter<'p> {
                         })
                         .copied();
                     let (before, after) = Self::around(how);
+                    // **A boxed field is built in its box**
+                    // ([ADR-246](../../docs/specification/adr/adr-246.md) D3),
+                    // around whatever else the value is wrapped in.
+                    let boxed = self.is_boxed_field(&owner, self.text(field.name));
+                    let (before, after) = match boxed {
+                        true => (format!("Box::new({before}"), format!("{after})")),
+                        false => (before.to_string(), after.to_string()),
+                    };
+                    let (before, after) = (before.as_str(), after.as_str());
                     // **Into a field both kinds of text flow into, each value
                     // goes as it is** (ADR-222 D3): a view borrowed, text of its
                     // own moved in.
@@ -7299,12 +7356,12 @@ impl<'p> Emitter<'p> {
                         out.push(before);
                         self.expr(out, value, depth, flow)?;
                         out.push(after);
-                    } else if how.is_some() {
+                    } else if how.is_some() || boxed {
                         // `Counter { db }` is the shorthand for `db: db`
                         // (Part I 4.1), and a wrapper has to be written around
                         // the name - which means writing the pair out.
                         let name = self.name(field.name);
-                        out.push(&format!(": Some({name})"));
+                        out.push(&format!(": {before}{name}{after}"));
                     }
                 }
                 out.push(" }");
@@ -7333,6 +7390,16 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{owner} {{ "));
                 for field in fields {
                     out.push(&self.name(field.name));
+                    // **A boxed field is built in its box** (ADR-246 D3).
+                    if self.is_boxed_field(&owner, self.text(field.name)) {
+                        out.push(": Box::new(");
+                        match &field.value {
+                            Some(value) => self.expr(out, value, depth, flow)?,
+                            None => out.push(&self.name(field.name)),
+                        }
+                        out.push("), ");
+                        continue;
+                    }
                     let either = self.either_field(&owner, field.name)
                         && !matches!(field.value, Some(Expr::LitNull));
                     match (&field.value, either) {
@@ -7970,6 +8037,30 @@ impl<'p> Emitter<'p> {
             && args.len() == 1
         {
             return self.grammar_entry(out, *grammar, *rule, &args[0], depth, flow);
+        }
+        // **A variant with a boxed part is built with the part in its box**
+        // ([ADR-246](../../docs/specification/adr/adr-246.md) D3). The mask
+        // is `args`' to read, so every other thing an argument is written
+        // with still happens inside the box.
+        if let Expr::Path(segments) = func
+            && let [.., owner, variant] = segments.as_slice()
+        {
+            let (owner, variant) = (self.text(*owner), self.text(*variant));
+            let mask: Vec<bool> = (0..args.len())
+                .map(|at| {
+                    self.is_boxed(owner, &crate::check::boxed_member(variant, Some(at), None))
+                })
+                .collect();
+            if mask.iter().any(|b| *b) {
+                *self.boxed_args.borrow_mut() = Some(mask);
+                out.push(&self.path(&segments.iter().map(|s| self.text(*s)).collect::<Vec<_>>()));
+                out.push("(");
+                let written = self.args(out, variant, args, &[], depth, flow);
+                *self.boxed_args.borrow_mut() = None;
+                written?;
+                out.push(")");
+                return Ok(());
+            }
         }
         let pausing = self.pausing_key(func);
         if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
@@ -9289,7 +9380,7 @@ impl<'p> Emitter<'p> {
                     self.expr(out, guard, depth + 2, flow)?;
                 }
                 out.push(" => ");
-                self.expr(out, &arm.body, depth + 2, flow)?;
+                self.arm_body(out, &arm.pattern, &arm.body, depth + 2, flow)?;
                 out.push(",\n");
             }
             match own {
@@ -9811,6 +9902,137 @@ impl<'p> Emitter<'p> {
     /// One arm's pattern. Every shape is one the language below spells the
     /// same way, so this is a transcription rather than a translation - a bare
     /// name binds here because it binds there, and the rule is drawn once.
+    /// **Whether a member is boxed below**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D1), by the
+    /// owner's last segment: a qualified name reaches the same type.
+    fn is_boxed(&self, owner: &str, member: &str) -> bool {
+        let owner = owner.rsplit("::").next().unwrap_or(owner);
+        self.boxed_members
+            .get(owner)
+            .is_some_and(|members| members.contains(member))
+    }
+
+    /// **A field of a struct literal**, which may be a variant's written as a
+    /// struct: `Expr::Neg { inner: … }` is the variant `Neg` of `Expr`, and its
+    /// member is `Neg.inner`.
+    fn is_boxed_field(&self, owner: &str, field: &str) -> bool {
+        if let Some((ty, variant)) = owner.rsplit_once("::") {
+            let ty = ty.rsplit("::").next().unwrap_or(ty);
+            if self.boxed_members.contains_key(ty) {
+                return self.is_boxed(ty, &crate::check::boxed_member(variant, None, Some(field)));
+            }
+        }
+        self.is_boxed(owner, field)
+    }
+
+    /// A member's lowered type, in its box where it has one.
+    fn boxed_ty(&self, owner: &str, member: &str, lowered: String) -> String {
+        match self.is_boxed(owner, member) {
+            true => format!("Box<{lowered}>"),
+            false => lowered,
+        }
+    }
+
+    /// **An arm, with each name bound out of a box taken out of it first**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D2):
+    /// `boxed::open` makes a `T` of a `Box<T>` and a `&T` of a `&Box<T>`, so
+    /// the arm reads the name as the pattern's type says, whether the `match`
+    /// took the value or lent it.
+    fn arm_body(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        body: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let mut opened = Vec::new();
+        self.boxed_bindings(pattern, &mut opened);
+        // **And a number bound out of a lent value is copied out** (0.0.236,
+        // `check::Checked::copied_bindings`).
+        let at = pattern as *const MatchPattern as usize;
+        let copied: Vec<&String> = self
+            .copied_bindings
+            .range((at, String::new())..)
+            .take_while(|(pattern, _)| *pattern == at)
+            .map(|(_, name)| name)
+            .collect();
+        if opened.is_empty() && copied.is_empty() {
+            return self.expr(out, body, depth, flow);
+        }
+        out.push("{ ");
+        for name in &opened {
+            out.push(&format!("let {name} = nikaia_std::boxed::open({name}); "));
+        }
+        for name in copied {
+            out.push(&format!("let {name} = *{name}; "));
+        }
+        self.expr(out, body, depth, flow)?;
+        out.push(" }");
+        Ok(())
+    }
+
+    /// The names a pattern binds out of a boxed part.
+    fn boxed_bindings(&self, pattern: &MatchPattern, out: &mut Vec<String>) {
+        let owner_of = |path: &[Symbol]| -> Option<(String, Option<String>)> {
+            match path {
+                [.., owner, variant] if self.boxed_members.contains_key(self.text(*owner)) => {
+                    Some((
+                        self.text(*owner).to_string(),
+                        Some(self.text(*variant).to_string()),
+                    ))
+                }
+                [.., owner] => Some((self.text(*owner).to_string(), None)),
+                [] => None,
+            }
+        };
+        match pattern {
+            MatchPattern::Tuple { path, parts } => {
+                let owner = owner_of(path);
+                for (at, part) in parts.iter().enumerate() {
+                    let boxed = owner.as_ref().is_some_and(|(owner, variant)| {
+                        variant.as_deref().is_some_and(|variant| {
+                            self.is_boxed(
+                                owner,
+                                &crate::check::boxed_member(variant, Some(at), None),
+                            )
+                        })
+                    });
+                    match (boxed, part) {
+                        (true, MatchPattern::Path(one)) if one.len() == 1 => {
+                            let name = self.text(one[0]);
+                            if name != "_" {
+                                out.push(self.name(one[0]).to_string());
+                            }
+                        }
+                        _ => self.boxed_bindings(part, out),
+                    }
+                }
+            }
+            MatchPattern::Named { path, bindings, .. } => {
+                let Some((owner, variant)) = owner_of(path) else {
+                    return;
+                };
+                for binding in bindings {
+                    let field = self.text(*binding);
+                    let member = match &variant {
+                        Some(variant) => crate::check::boxed_member(variant, None, Some(field)),
+                        None => field.to_string(),
+                    };
+                    if self.is_boxed(&owner, &member) {
+                        out.push(self.name(*binding).to_string());
+                    }
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                if let Some(first) = alternatives.first() {
+                    self.boxed_bindings(first, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn match_pattern(
         &self,
         out: &mut Out,
@@ -10446,9 +10668,21 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **This call's mask and no other's**: taken here, so a call written
+        // inside one of these arguments does not see it.
+        let boxed_mask = self.boxed_args.borrow_mut().take();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 out.push(", ");
+            }
+            // **A part of a variant that is boxed is built in its box**
+            // ([ADR-246](../../docs/specification/adr/adr-246.md) D3), around
+            // everything else this argument is written with.
+            let boxed_here = boxed_mask
+                .as_ref()
+                .is_some_and(|parts| parts.get(i).copied().unwrap_or(false));
+            if boxed_here {
+                out.push("Box::new(");
             }
             // **A lookup's key of no known type** (0.0.235): the reference the
             // map wants, whichever of a number or a view the key turns out to
@@ -10744,6 +10978,9 @@ impl<'p> Emitter<'p> {
                 // lowered to. `Rc<T>` and `Arc<T>` implement `Clone` themselves,
                 // so this steps the count and never copies `T`.
                 out.push(".clone()");
+            }
+            if boxed_here {
+                out.push(")");
             }
         }
         Ok(())

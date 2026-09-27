@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.236] — 2026-09-27
+
+**A type may hold itself** — ADR-246, the owner's answer to *how a type holds
+itself*: the compiler puts the box in.
+
+- `enum Expr { Add(Expr, Expr) }`, `struct Node { next: Node? }` and a ring
+  through two types are programs as written. A field whose inline type reaches
+  back to the type that declares it is `Box<T>` below; it is built in its box
+  (a literal, a `with`, a variant's constructor), read as `(*base.field)` - a
+  place of its declared type, through `?.` too - and a name a `match` binds out
+  of it is opened at the head of the arm by `std`'s new `boxed::open`, which
+  makes a `T` of a box taken and a `&T` of a box lent. `NK1192`'s refusal is
+  withdrawn; the walk that found such types finds the fields to box.
+- **`NK1193`**: a pattern that looks inside a boxed part
+  (`Expr::Add(Expr::Num(n), b)`) is refused by name with the way that works -
+  bind it and `match` in the arm - until the lowering rewrites it
+  (`open-work.md` §2.49).
+- Two defects a syntax tree meets first, closed beside it: a literal handed to
+  a variant's text part (`Stmt::Say("a")`) is built into text of its own, and
+  a variant's constructor now types and hands over its arguments; and a number
+  bound out of a `match` over a lent value is copied out, so
+  `Expr::Num(n) => n` over a `ref Expr` is the `i64` it says.
+- The miniature compiler written to measure self-hosting now builds its `Expr`
+  directly, where it needed a list of two children.
+- Recorded: a `?.` chain through two nullable fields of a lent value takes the
+  first one out (`open-work.md` §1.25).
+- Tests: `tests/recursive_types.rs`, at both settings of `user_parallelism`.
+
 ## [0.0.235] — 2026-09-27
 
 **A map keyed by numbers can be read** — closing `open-work.md` §1.21.
