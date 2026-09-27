@@ -979,6 +979,8 @@ fn an_impl_of_a_trait_nothing_declares_is_refused() {
     // A shape bound is answered by the declaration, so no `impl` says it.
     let shape = findings(&program("Struct"));
     assert_eq!(shape.len(), 1, "{shape:#?}");
+    assert_eq!(shape[0].code, "NK1117", "{shape:#?}");
+    assert_eq!(shape[0].message, "nothing declares a trait called `Struct`");
     assert!(shape[0].notes[0].contains("ADR-088"), "{shape:#?}");
 }
 
@@ -1002,9 +1004,5 @@ fn an_impl_of_a_declared_trait_is_silent() {
                    \x20   fn drop(ref mut self) { println(f\"closing {self.name}\") }\n\
                    }\n\
                    fn main() { let h = Handle { name: \"a\" } }\n";
-    assert!(
-        !findings(dropped).iter().any(|f| f.code == "NK1117"),
-        "{:#?}",
-        findings(dropped)
-    );
+    assert!(findings(dropped).is_empty(), "{:#?}", findings(dropped));
 }

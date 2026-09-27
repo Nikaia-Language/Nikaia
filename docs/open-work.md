@@ -601,6 +601,14 @@ build-time value, and the shape this record needs — a flat list of declared
 columns and parameters — is one of the five that cross. So what is left here is
 the driver's own work rather than the machinery under it.
 
+**And it is blocked on a question the record does not answer**: where the
+connection goes when a statement runs. D3's example writes
+`by_age.execute(min_age: 18)` with no connection anywhere, and the row type of
+step 1 cannot be run without an `execute`, so steps 1 and 3 are one piece of
+work waiting on one answer. It is on
+[`open-decisions.md`](open-decisions.md), *where the connection goes when a
+checked statement runs*, with the options and a recommendation.
+
 ### 2.41. One name the prelude promises and `std` does not have
 
 [ADR-154](specification/adr/adr-154.md). The rule is built for a function and
