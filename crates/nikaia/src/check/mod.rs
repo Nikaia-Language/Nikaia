@@ -1152,6 +1152,7 @@ fn walked<'a>(
         reading_only: false,
         read_seq: 0,
         empty_lists: BTreeMap::new(),
+        grown_text: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
         checked: Checked::default(),
@@ -2652,6 +2653,10 @@ struct Checker<'a> {
     /// an empty list its element type; what is left when the body ends is a
     /// list nothing will ever constrain, and that is `NK1153`.
     empty_lists: BTreeMap<usize, (String, Span)>,
+    /// The names this function's body gives text of its own later on, with
+    /// `+` or an f-string ([`grown_text`]): a `let mut` of a literal under one
+    /// of them holds owned text (0.0.232).
+    grown_text: BTreeSet<String>,
     /// The conversions that do **not** narrow, so a statement holding one of
     /// those beside a narrowing one to the same type is left alone entirely.
     widening_casts: BTreeSet<(usize, String)>,
@@ -4078,7 +4083,9 @@ impl<'a> Checker<'a> {
         self.scope.push(frame);
         let tail_span = body.stmts.last().map(|s| s.span.clone());
         let outer_lists = std::mem::take(&mut self.empty_lists);
+        let outer_grown = std::mem::replace(&mut self.grown_text, grown_text(self.parsed, body));
         let tail = self.block(body);
+        self.grown_text = outer_grown;
         self.scope.pop();
 
         // **`NK1153`, once the whole body has been seen**
@@ -4288,6 +4295,87 @@ impl<'a> Checker<'a> {
                 ),
             }),
         });
+    }
+
+    /// **`NK1190`: a `std` type called as its constructor, where nothing
+    /// describes one** (0.0.232).
+    ///
+    /// `collections::HashSet()` passed the check and lowered as it was written,
+    /// and the language below said *expected function, found type alias* about
+    /// a file nobody wrote ([Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)). The constructor is
+    /// the ledger entry `Name::new` ([ADR-140](../../docs/specification/adr/adr-140.md)
+    /// D2), the emitter writes one only where that entry exists, and the ledger
+    /// described `HashSet`, `BTreeMap` and `BTreeSet` as types without one.
+    ///
+    /// **Only a type the library names exactly, and only with nothing in the
+    /// parentheses.** A type this compiler cannot see is not asked about, and a
+    /// call with arguments may be a foreign tuple struct's own constructor.
+    fn a_constructor_nothing_describes(&mut self, name: &str, args: &[Expr], span: &Span) {
+        if !args.is_empty()
+            || !self.library.types.contains_key(name)
+            || self.resolve(name).is_some()
+        {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1190",
+            message: format!("`{name}` is a type, and nothing describes a constructor for it"),
+            notes: vec![format!(
+                "a type is built by its anonymous constructor, `{name}()`, and what that \
+                 does is the entry `{name}::new` in the ledger that describes the type \
+                 (ADR-140 D2) - `{name}` has no such entry, so there is nothing this call \
+                 could be lowered to"
+            )],
+            help: None,
+        });
+    }
+
+    /// **Owned text assigned to a `let mut` that began as a literal**
+    /// (0.0.232): `NK1105` with the way out that exists.
+    ///
+    /// The binding is a view because a literal is one, and `s + "…"` or an
+    /// f-string assigned to it later makes it text of its own without a word
+    /// ([`grown_text`]). A bare name assigned is not read that way, since it may
+    /// be a view, so here the program has to say it - and the generic help,
+    /// *write `ref` in front of it*, sent the reader to take a view of a value
+    /// that is about to be dropped.
+    fn owned_text_into_a_literal_binding(
+        &mut self,
+        target: &Expr,
+        found: &Ty,
+        into: &Ty,
+        span: &Span,
+    ) -> bool {
+        let Expr::Variable(name) = target else {
+            return false;
+        };
+        let name = self.parsed.text(*name).to_string();
+        let Some(literal) = self.binding(&name).and_then(|l| l.literal.clone()) else {
+            return false;
+        };
+        if *found != Ty::named("String") || !into.is_a_view() {
+            return false;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1105",
+            message: format!(
+                "this is `String`, and `{name}` is a `ref String`, because it began as a literal"
+            ),
+            notes: vec![
+                "a literal is a view of text built into the program, and a name bound to one \
+                 is a view too - so what it is given later has to be one as well (ADR-216 D4)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "say that `{name}` holds text of its own: `let mut {name}: String = \"{literal}\"`"
+            )),
+        });
+        true
     }
 
     /// **An `impl` of a trait nothing declares** (0.0.231).
@@ -6875,6 +6963,30 @@ impl<'a> Checker<'a> {
                         self.a_number_read_through_a_lent_binding(&want, value, span);
                         want
                     }
+                    // **A `let mut` of a literal that the body later grows
+                    // holds text of its own** (0.0.232). `let mut s = "a"`
+                    // then `s = s + "b"` was `NK1105` - *this is `String`, and
+                    // what it is assigned to is `ref String`* - with a help to
+                    // take a view of the sum, which is no way out at all. A
+                    // literal is built into text of its own wherever it is kept
+                    // ([ADR-207](../../docs/specification/adr/adr-207.md) D2),
+                    // and a binding the program appends to keeps it: the `let`
+                    // reads as `let mut s: String = "a"` would.
+                    //
+                    // **Only where the growing is written as `+` or an
+                    // f-string**, which can only be text of its own. A bare
+                    // name assigned later may be a view - `best = w` over a
+                    // list of views is the ordinary shape - and one read that
+                    // way would refuse it.
+                    None if *mutable
+                        && self.grown_text.contains(&name)
+                        && found.is_a_view()
+                        && self
+                            .text_literal(&Ty::named("String"), value, true)
+                            .is_some() =>
+                    {
+                        Ty::named("String")
+                    }
                     None => {
                         // **No annotation, and a type all the same** where an
                         // operand's declaration pinned one: `let a: i32 = …`
@@ -7069,6 +7181,9 @@ impl<'a> Checker<'a> {
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
                     self.wraps_into_nullable(&found, &into, value, span);
+                    if self.owned_text_into_a_literal_binding(target, &found, &into, span) {
+                        return Ty::Tuple(Vec::new());
+                    }
                     self.expect(&found, &into, span.clone(), "assign", |found, want| {
                         format!("this is `{found}`, and what it is assigned to is `{want}`")
                     });
@@ -9965,6 +10080,7 @@ impl<'a> Checker<'a> {
         self.a_std_name_without_its_module(&name, span);
         self.a_module_used_before_it_is_introduced(&name, span);
         self.a_prelude_name_with_a_module_in_front(&name, span);
+        self.a_constructor_nothing_describes(&name, args, span);
 
         // **A grammar is entered by an ordinary call**
         // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
@@ -18051,6 +18167,43 @@ fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
 /// records what a type **promises**, and what is asked here is only that the
 /// word was written down: a private `enum` a neighbouring file declares is a
 /// head, whatever its contract says.
+/// **The names a body gives text of its own by growing them**: `s = s + "…"`,
+/// `s += "…"` or `s = f"…"`, anywhere in it (0.0.232). Syntactic, because it is
+/// asked at the `let`, before the assignment has been walked; and narrow for
+/// the same reason - `+` and an f-string can only hand back owned text, where a
+/// name or a call may hand back a view.
+fn grown_text(parsed: &Parsed, body: &Block) -> BTreeSet<String> {
+    fn walk(parsed: &Parsed, block: &Block, out: &mut BTreeSet<String>) {
+        for stmt in &block.stmts {
+            if let Stmt::Assign {
+                target: Expr::Variable(name),
+                op,
+                value,
+            } = &stmt.node
+            {
+                let grows = matches!(op, Some(BinaryOp::Add))
+                    || (op.is_none()
+                        && matches!(
+                            value,
+                            Expr::Binary {
+                                op: BinaryOp::Add,
+                                ..
+                            } | Expr::LitInterpolated(_)
+                        ));
+                if grows {
+                    out.insert(parsed.text(*name).to_string());
+                }
+            }
+            crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
+                walk(parsed, inner, out)
+            });
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(parsed, body, &mut out);
+    out
+}
+
 fn declares_a_type(parsed: &Parsed, name: &str) -> bool {
     parsed.program.items.iter().any(|item| {
         let written = match &item.node {

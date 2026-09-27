@@ -12,6 +12,8 @@
 //! that the resolution reaching for it now reaches into the library too, where
 //! it used to stop at this unit.
 
+mod common;
+
 use nikaia::contracts::{Ledger, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -125,4 +127,91 @@ fn new_is_refused_as_a_value_and_the_bare_name_lowers() {
 fn a_package_that_nothing_describes_is_not_refused() {
     let found = refusals("fn main() { let s = http::Server::new() }");
     assert!(found.is_empty(), "{found:#?}");
+}
+
+fn every_finding(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    nikaia::check::check(&parsed, &own, &library).findings
+}
+
+fn ran(purpose: &str, source: &str) -> String {
+    let rust = lowered(source);
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let out = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+/// **The other three collections are built** (0.0.232), and a `std` type with
+/// no constructor described is refused here rather than by `rustc`.
+///
+/// `collections::HashSet()` passed the check and lowered as it was written,
+/// and the language below said *expected function, found type alias* about a
+/// file nobody wrote. The ledger described `HashSet`, `BTreeMap` and
+/// `BTreeSet` as types and none of them as constructed, so each now has its
+/// `::new` entry, and `NK1190` stands where the next such gap would land.
+#[test]
+fn the_other_three_collections_are_built() {
+    // Text for the lookups: a key that is not already a view is passed by
+    // value, which is `open-work.md` §1's *a method's key of a number type*.
+    let source = "use std::collections\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut seen = collections::HashSet()\n\
+                  \x20   seen.insert(\"a\")\n\
+                  \x20   seen.insert(\"a\")\n\
+                  \x20   let mut order = collections::BTreeMap()\n\
+                  \x20   order.insert(\"two\", 2)\n\
+                  \x20   order.insert(\"one\", 1)\n\
+                  \x20   let mut kept = collections::BTreeSet()\n\
+                  \x20   kept.insert(\"x\")\n\
+                  \x20   let known = order.contains_key(\"one\") && seen.contains(\"a\") && kept.contains(\"x\")\n\
+                  \x20   println(f\"{seen.len()} {order.len()} {kept.len()} {known}\")\n\
+                  }\n";
+    assert!(
+        every_finding(source).is_empty(),
+        "{:#?}",
+        every_finding(source)
+    );
+    assert!(lowered(source).contains("collections::BTreeMap::new()"));
+    assert_eq!(ran("three-collections", source), "1 2 1 true\n");
+}
+
+/// **What `NK1190` refuses**: a type the library names, called as its
+/// constructor, with no `::new` entry beside it. `io::IoError` is a `std` type
+/// nothing constructs this way.
+#[test]
+fn a_std_type_with_no_constructor_is_refused_here() {
+    let source = "use std::io\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let e = io::IoError()\n\
+                  }\n";
+    let found: Vec<_> = every_finding(source)
+        .into_iter()
+        .filter(|f| f.code == "NK1190")
+        .collect();
+    assert_eq!(found.len(), 1, "{:#?}", every_finding(source));
+    assert_eq!(
+        found[0].message,
+        "`io::IoError` is a type, and nothing describes a constructor for it"
+    );
 }

@@ -763,3 +763,61 @@ fn a_name_bound_again_is_not_the_one_handed_over() {
     assert_eq!(reused.len(), 1, "{reused:?}");
     assert!(reused[0].contains("`kept`"), "{reused:?}");
 }
+
+/// **A `let mut` of a literal that the body grows holds text of its own**
+/// (0.0.232). `let mut s = "a"` then `s = s + "b"` was `NK1105` with a help to
+/// take a view of the sum; found writing a miniature compiler in Nikaia, where
+/// emitted code is built up this way. A literal is built into text of its own
+/// wherever it is kept (ADR-207 D2), and a binding the program appends to
+/// keeps it. The growing is read off `+`, `+=` and an f-string, which can only
+/// be owned text.
+#[test]
+fn a_literal_binding_the_body_grows_is_text_of_its_own() {
+    let source = "fn width(s: ref String) -> i64 { return s.len() as i64 }\n\
+                  fn main() {\n\
+                  \x20   let mut out = \"fn main() {\\n\"\n\
+                  \x20   let before = width(out)\n\
+                  \x20   out = out + \"    let a = 1;\\n\"\n\
+                  \x20   out += \"    let b = 2;\\n\"\n\
+                  \x20   out = f\"{out}}}\"\n\
+                  \x20   println(f\"{before} {width(out)}\")\n\
+                  \x20   println(out)\n\
+                  }\n";
+    runs(
+        "literal-grown",
+        source,
+        "12 43\nfn main() {\n    let a = 1;\n    let b = 2;\n}",
+    );
+
+    // **A literal assigned is still a view**, and so is a name that may be
+    // one: the best of a list of views is the ordinary shape, and reading it
+    // as owned text would refuse it.
+    let views = "fn main() {\n\
+                 \x20   let words = [\"a\", \"bbb\", \"cc\"]\n\
+                 \x20   let mut best = \"\"\n\
+                 \x20   for w in words { if w.len() > best.len() { best = w } }\n\
+                 \x20   best = \"-\"\n\
+                 \x20   println(best)\n\
+                 }\n";
+    runs("literal-views", views, "-");
+}
+
+/// **A bare name of owned text assigned to a literal's binding** is still
+/// refused, because a name may be a view, and the help says the one thing that
+/// works rather than *write `ref` in front of it*.
+#[test]
+fn owned_text_into_a_literal_binding_names_the_annotation() {
+    let source = "fn main() {\n\
+                  \x20   let mut s = \"a\"\n\
+                  \x20   let t: String = \"q\"\n\
+                  \x20   s = t\n\
+                  \x20   println(s)\n\
+                  }\n";
+    let found = findings(source);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1105");
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("say that `s` holds text of its own: `let mut s: String = \"a\"`")
+    );
+}

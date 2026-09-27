@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.232] — 2026-09-27
+
+**Two defects found writing a miniature compiler in Nikaia**, to measure how
+far self-hosting is.
+
+- **`collections::HashSet()` reached `rustc`.** The ledger described `HashSet`,
+  `BTreeMap` and `BTreeSet` as types with no constructor, so the call lowered
+  as written and the language below said *expected function, found type
+  alias*. Each now has its `::new` entry and the methods a program first asks
+  for (`insert`, `contains`, `len`, `get`, `contains_key`, `remove`), and
+  `HashMap` gains `contains_key`. **`NK1190`** refuses a `std` type called as
+  its constructor where the ledger describes none, so the next such gap is
+  refused here.
+- **`let mut s = "a"` then `s = s + "b"` was refused**, `NK1105` with a help to
+  take a view of the sum. A `let mut` of a literal that the body grows with
+  `+`, `+=` or an f-string now holds text of its own, as
+  `let mut s: String = "a"` does (ADR-207 D2). A literal assigned, or a bare
+  name, keeps the binding a view — `best = w` over a list of views is the
+  ordinary shape — and a bare name of owned text assigned to it gets a help
+  naming the annotation.
+- **Found and recorded, not fixed**: a map keyed by numbers cannot always be
+  read. A method's key is passed by value (`m.get(k)`), and `m[k]` on a map
+  whose type was inferred lowers as a list position. `open-work.md` §1.21.
+- Tests: `tests/anonymous_constructors.rs`, `tests/handed_over.rs`.
+
 ## [0.0.231] — 2026-09-27
 
 **An `impl` of a trait nothing declares is refused here**, not by `rustc`.

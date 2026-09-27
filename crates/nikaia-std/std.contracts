@@ -725,6 +725,135 @@ touches = []
 signature = "() -> collections::HashMap[?, ?]"
 doc = "A map with nothing in it. It is written `HashMap()`."
 
+# **Whether a key is there**, without the value. Observed being asked for: a
+# checker's scope is a map of names, and *is this name declared* is the question
+# it asks most (0.0.232, the miniature compiler written to measure how far
+# self-hosting is).
+[fn."collections::HashMap::contains_key"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::HashMap[$K, $V], key: ?) -> bool"
+doc = "Whether the map holds this key."
+
+# --- The other three collections, constructed (0.0.232) ----------------------
+#
+# The types were described below and their constructors were not, so
+# `collections::HashSet()` passed the check and reached `rustc` as a call on a
+# type alias. A constructor is the `::new` entry (ADR-140 D2) and `NK1190` now
+# refuses one that has none; these are the entries that build the three.
+# `HashSet` in a trusted program is `TrustedSet::default()`, as `HashMap` is
+# `TrustedMap` (ADR-010 D5) - the emitter's `path` answers that off the name.
+#
+# **A lookup's key is `?`**, as `HashMap::get`'s is and for its reason. And a
+# method's arguments are not lent yet (`contracts::keeps::lends`), so a key
+# that is not already a view - a number - reaches the language below by value:
+# `open-work.md` §1.21, *a map keyed by numbers cannot always be read*.
+[fn."collections::HashSet::new"]
+pub = true
+sync = true
+touches = []
+signature = "() -> collections::HashSet[?]"
+doc = "A set with nothing in it. It is written `collections::HashSet()`."
+
+[fn."collections::HashSet::insert"]
+pub = true
+sync = true
+mutates = true
+touches = []
+keeps = ["value"]
+signature = "(ref collections::HashSet[$T], value: $T) -> bool"
+doc = "Put a value in the set, and say whether it was new.\n\nThe set keeps the value."
+
+[fn."collections::HashSet::contains"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::HashSet[$T], value: ?) -> bool"
+doc = "Whether the set holds this value."
+
+[fn."collections::HashSet::remove"]
+pub = true
+sync = true
+mutates = true
+touches = []
+signature = "(ref collections::HashSet[$T], value: ?) -> bool"
+doc = "Take a value out of the set, and say whether it was there."
+
+[fn."collections::HashSet::len"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::HashSet[?]) -> i64"
+doc = "How many values the set holds."
+
+[fn."collections::BTreeSet::new"]
+pub = true
+sync = true
+touches = []
+signature = "() -> collections::BTreeSet[?]"
+doc = "A set with nothing in it, kept in order. It is written `collections::BTreeSet()`."
+
+[fn."collections::BTreeSet::insert"]
+pub = true
+sync = true
+mutates = true
+touches = []
+keeps = ["value"]
+signature = "(ref collections::BTreeSet[$T], value: $T) -> bool"
+doc = "Put a value in the set, and say whether it was new.\n\nThe set keeps the value."
+
+[fn."collections::BTreeSet::contains"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::BTreeSet[$T], value: ?) -> bool"
+doc = "Whether the set holds this value."
+
+[fn."collections::BTreeSet::len"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::BTreeSet[?]) -> i64"
+doc = "How many values the set holds."
+
+[fn."collections::BTreeMap::new"]
+pub = true
+sync = true
+touches = []
+signature = "() -> collections::BTreeMap[?, ?]"
+doc = "A map with nothing in it, kept in the keys' order. It is written\n`collections::BTreeMap()`."
+
+[fn."collections::BTreeMap::insert"]
+pub = true
+sync = true
+mutates = true
+touches = []
+keeps = ["key", "value"]
+signature = "(ref collections::BTreeMap[$K, $V], key: $K, value: $V) -> $V?"
+doc = "Put a value in the map under this key, and hand back the one it replaced, or\nnothing where the key was not there.\n\nThe map keeps both the key and the value."
+
+[fn."collections::BTreeMap::get"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> $V?"
+doc = "What this key names, or nothing where the key is not there."
+
+[fn."collections::BTreeMap::contains_key"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> bool"
+doc = "Whether the map holds this key."
+
+[fn."collections::BTreeMap::len"]
+pub = true
+sync = true
+touches = []
+signature = "(ref collections::BTreeMap[?, ?]) -> i64"
+doc = "How many pairs the map holds."
+
 [fn."collections::HashMap::values"]
 pub = true
 sync = true
