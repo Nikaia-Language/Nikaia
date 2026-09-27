@@ -76,6 +76,23 @@ construction as `E::Add(std::rc::Rc::new(…), std::rc::Rc::new(…))`, and
 gets is decided per value ([ADR-037](specification/adr/adr-037.md) D7); a value
 written straight into a field has to take the field's.
 
+### 1.23. A `sync` function cannot call a parameter whose type says `sync`
+
+Found at 0.0.233, working out [ADR-244](specification/adr/adr-244.md). Part I
+5.4 C says a function type written with `sync` cannot pause, and a call site
+holds a lambda to it (`NK2206` refuses a pausing lambda passed to such a
+parameter, measured). The body of the function that takes it does not read the
+same word:
+
+```nika
+pub fn apply(f: fn(i64) -> i64 sync, x: i64) -> i64 sync { return f(x) }
+```
+
+is refused with `NK2202: apply is sync, and f can pause` - the message a
+parameter *without* `sync` gets, and correctly so there. The check of the body
+does not read the `sync` on the parameter's type. Evidence:
+the line above with a `main` that calls it, built with `nikaia run` at 0.0.233.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
@@ -805,6 +822,32 @@ handle is `Held::new` since [ADR-221](specification/adr/adr-221.md) D1, which
 finds the view in the keep by address instead of trusting the caller. The
 task's packed values move onto the same shape — `Holding` over the task's
 keep. Evidence: `grep -n 'unsafe {{' crates/nikaia/src/emit/mod.rs`.
+
+### 2.47. What a `pub` function promises about pausing
+
+[ADR-244](specification/adr/adr-244.md), accepted in full; nothing of it is
+built. In the order the pieces depend on each other:
+
+1. **D4, `sync(f)`.** The parser takes `sync(f, …)` after a result; the checker
+   allows a call to a named parameter and refuses every other pausing call in
+   the body, refuses a named parameter that is kept rather than called, and
+   reads a call's `sync` from the lambda given for it; the ledger writer emits
+   the `sync = "from(f)"` the reader already understands.
+2. **D1 and D3 together.** A consumer's checker reads a dependency's
+   `"inferred"` as *may pause*, and the lowering keeps reading it as the fact it
+   is. Neither is useful alone: D1 without D3 emits `.await` on a plain
+   function. Path dependencies in this tree that rely on an inferred `sync` are
+   refused until they write it — D2's note says where.
+3. **D2, the note** after the ledger is written: every `pub` entry that says
+   `"inferred"`, and every one whose only pausing is its lambda's, with the word
+   to write.
+4. **D5, the warning**, against the committed ledger: a `pub` entry that was
+   `"inferred"` and can now pause, with the line and the call chain to it.
+
+Part I (the signature's `sync`) and Part III 13.5 (what `"inferred"` means to a
+consumer) take the rules when they are built. §1.23 is in the way of the
+stricter form D4 mentions (`f: fn(…) sync` under a plain `sync`), not of
+`sync(f)`.
 
 ## 3. Upkeep
 
