@@ -2066,6 +2066,14 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
         "the parse happened while the program was built: {}",
         said(&ran)
     );
+    // **And the backend has nothing to say about it** (0.0.230, `open-work.md` §1.20 before it):
+    // the expansion tests `feature = "trace"` in this crate, and the generated
+    // manifest declares it, so `rustc` has no unexpected `cfg` to warn about.
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        !stderr.contains("unexpected `cfg`") && !stderr.contains("warning"),
+        "a correct program builds without the backend's words: {stderr}"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -2777,6 +2785,65 @@ fn a_boundary_mismatch_names_the_description_to_redo() {
     assert!(
         complaint.contains("the language below said:"),
         "{complaint}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A text literal handed to a Rust crate's generic parameter is a `String`**
+/// (0.0.230, `open-work.md` §1.19 before it).
+///
+/// `examples/foreign-runtime/serve` stopped building when a literal began
+/// lowering as `&str`: `across_a_thread<T: Describe>(value: T)` has `Describe`
+/// for `String` only, and a `$T` that only this argument decides takes the
+/// argument's own type. The checker said so; the emitter's own walk read `std`'s
+/// ledger alone, never resolved the callee, and wrote the literal as a view.
+///
+/// **Here, and not only in `foreign_runtime.rs`**, because that test fetches
+/// `hyper` from crates.io and is ignored, so no CI run saw the break. This crate
+/// has no dependencies at all.
+#[test]
+fn a_literal_handed_to_a_foreign_generic_is_text_of_its_own() {
+    let dir = a_project(
+        "project-foreign-generic",
+        "[package]\nname = \"described\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nlabels = { type = \"rust\", path = \"labels\" }\n",
+        "fn main() {\n\
+         \x20   let said = labels::describe(\"a literal\")\n\
+         \x20   println(f\"said: {said}\")\n\
+         }\n",
+    );
+    std::fs::create_dir_all(dir.join("labels/src")).expect("the crate's src");
+    std::fs::write(
+        dir.join("labels/Cargo.toml"),
+        "[package]\nname = \"labels\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("the crate's manifest");
+    std::fs::write(
+        dir.join("labels/src/lib.rs"),
+        "pub trait Describe { fn describe(&self) -> String; }\n\
+         impl Describe for String { fn describe(&self) -> String { format!(\"owned {self}\") } }\n\
+         pub fn describe<T: Describe + Send + 'static>(value: T) -> String { value.describe() }\n",
+    )
+    .expect("the crate's source");
+    std::fs::create_dir_all(dir.join("contracts")).expect("contracts");
+    std::fs::write(
+        dir.join("contracts/labels.contracts"),
+        "version = 2\n\
+         inference = \"described-from-signatures\"\n\n\
+         [fn.\"labels::describe\"]\n\
+         pub = true\n\
+         sync = true\n\
+         keeps = [\"value\"]\n\
+         signature = \"(value: $T) -> String\"\n",
+    )
+    .expect("the description");
+
+    let ran = nikaia(&["run"], &dir);
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert!(
+        String::from_utf8_lossy(&ran.stdout).contains("said: owned a literal"),
+        "{}",
+        said(&ran)
     );
     std::fs::remove_dir_all(&dir).ok();
 }

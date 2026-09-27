@@ -869,6 +869,8 @@ fn the_checker_says_which_method_calls_can_fail() {
         &parsed,
         &[],
         &Ledger::infer(&parsed),
+        // No described crates.
+        &Ledger::empty(),
         // No allowlist: a build given none reads nothing (ADR-072 D1).
         &nikaia::assets::Reads::none(),
     )

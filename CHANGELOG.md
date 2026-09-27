@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.230] — 2026-09-27
+
+**Four defects found while checking the examples** — closing `open-work.md`
+§1.17–1.20.
+
+- **§1.17: a pausing step in a `par_fold` is refused.** A fold's step lambda
+  had untyped parameters, so `acc.record(m)` resolved to nothing and a pausing
+  `record` compiled into a future the fold dropped: the parse printed `{}`. The
+  accumulator is now typed from `init` (a type's name is its constructor) and
+  the item from the folded rule, so the call meets `NK2209` like any action's.
+  A `merge` or `init` written as a function's name is asked the same question.
+- **§1.18: a field read on a map lookup without `??` is `NK1125`.** A `catch`
+  expression typed as nothing, so everything bound from one did too:
+  `let report = Log::file(data) catch { … return }` left `report.paths[path]`
+  a lookup on an unknown map, and `counts.hits` reached `rustc`. The `catch` is
+  now the guarded value's type where its handler leaves, hands back that type,
+  or hands back something the checker cannot name (Part I 7.1 says so in a
+  sentence). Where a lookup's value type is unknown, the message says *this
+  value may be absent* instead of naming the operator `??`.
+- **§1.19: `examples/foreign-runtime/serve` builds and runs.** A text literal
+  handed to a Rust crate's generic parameter (`across_a_thread<T: Describe>`,
+  `Describe` for `String` only) lowered as `&str`. A kept, by-value `$T` that
+  only this argument decides now takes the literal's own type, `String`. The
+  checker already said so; the emitter's own walk read `std`'s ledger alone and
+  never resolved the callee, so it now reads the described crates' ledger too.
+  A test with a dependency-free crate covers it on every run, since the hyper
+  test fetches from crates.io and is ignored.
+- **§1.20: no `cfg` `trace` warning on a program with a `grammar`.** The
+  `grammar!` expansion tests `feature = "trace"` in the crate that invokes it,
+  so the generated manifest now declares `trace = ["winnow-grammar/trace"]`
+  wherever it depends on `winnow-grammar`, as `nikaia` and `nikaia-std` do.
+
 ## [0.0.229] — 2026-09-27
 
 **A `match` over a place lends what an arm only reads** —

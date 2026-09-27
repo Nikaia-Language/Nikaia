@@ -10,8 +10,8 @@
 //     served: GET /hello on tokio-rt-worker
 //     crossed: a String is Send on tokio-rt-worker, called from main
 //
-// At present the build fails instead: the text literal reaches Rust as a
-// `&str`, and the Rust function accepts only a `String`. The first build
+// The literal reaches Rust as a `String`: `across_a_thread`'s `T` is decided
+// by this argument alone, and a text literal is `String`. The first build
 // fetches `hyper` and `tokio` from crates.io.
 //
 // It checks that this works at all. Nothing in the source shows that the calls

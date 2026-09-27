@@ -93,6 +93,11 @@ pub struct CargoProject {
     /// Rendered verbatim. A native Rust dependency passes through unchanged
     /// (D1), which means this map holds exactly what the author wrote.
     pub dependencies: BTreeMap<String, toml::Value>,
+    /// `[features]`, each feature and what it turns on. Empty unless the
+    /// generated code tests a feature of its own crate - a `grammar!` expansion
+    /// does, for `trace` - because `rustc` warns about a `cfg` value the crate
+    /// never declared.
+    pub features: BTreeMap<String, Vec<String>>,
 }
 
 impl CargoProject {
@@ -127,6 +132,14 @@ impl CargoProject {
         out.push_str("\n[dependencies]\n");
         for (name, value) in &self.dependencies {
             out.push_str(&format!("{} = {value}\n", key(name)));
+        }
+
+        if !self.features.is_empty() {
+            out.push_str("\n[features]\n");
+            for (name, enables) in &self.features {
+                let enables: Vec<String> = enables.iter().map(|e| string(e)).collect();
+                out.push_str(&format!("{} = [{}]\n", key(name), enables.join(", ")));
+            }
         }
 
         out
@@ -818,6 +831,7 @@ mod tests {
             bin_name: "hyper-core".into(),
             bin_path: PathBuf::from("/p/src/main.nika"),
             dependencies,
+            features: BTreeMap::new(),
         }
     }
 
@@ -833,6 +847,7 @@ mod tests {
             bin_name: name.replace('-', "_"),
             bin_path: PathBuf::from(format!("/p/{name}/src/main.nika")),
             dependencies: BTreeMap::new(),
+            features: BTreeMap::new(),
         }
     }
 

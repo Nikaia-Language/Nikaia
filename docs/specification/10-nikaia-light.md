@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.229 (Draft)
+**Version:** 0.0.230 (Draft)
 **Date:** 2026-09-27
 
 ---
@@ -2082,6 +2082,9 @@ let port = read_port() catch { 8080 }     // replacement value
 
 Inside the block the error is named **`error`**. A handler that passes the
 error on writes `throw error`.
+
+The `catch` has the type of the value it guards: `config` above is what
+`load()` hands back, and a member of it is reached as on that value.
 
 **Telling failures apart.** `error` is the sum of the errors that can arrive at
 this point, as the compiler inferred them. A handler tells them apart with the

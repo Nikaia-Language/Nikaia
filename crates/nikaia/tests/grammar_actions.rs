@@ -71,6 +71,59 @@ fn a_pausing_call_in_a_folds_step_is_refused() {
     assert!(found[0].message.contains("`file`'s action"), "{found:#?}");
 }
 
+/// **A pause reached through a method on the accumulator** (0.0.230, `open-work.md`
+/// §1.17). The step's parameters had no type, so `acc.record(m)` resolved to
+/// nothing and a pausing `record` compiled into a future the fold dropped: the
+/// parse counted nothing. The accumulator is typed from `init` - here a type's
+/// name, which is its constructor - and the item from the rule it folds.
+#[test]
+fn a_pause_through_the_accumulators_method_is_refused() {
+    let source = |merge: &str, record: &str| {
+        format!(
+            "use std::fs
+
+             grammar G {{
+                 rule N -> i64 = d:dec[i64](digit+) {{ d }}
+                 pub rule file -> Tally = par_fold(N, Tally, fn(acc, m) {{ acc.record(m) }}, {merge})
+             }}
+             pub struct Tally {{ sum: i64 }}
+             impl Tally {{
+                 pub fn() -> Tally sync {{ return Tally {{ sum: 0 }} }}
+                 fn record(ref mut self, m: i64) {{ {record} self.sum += m }}
+                 fn merge(ref mut self, other: Tally) {{ self.sum += other.sum }}
+                 fn wait(ref mut self, other: Tally) {{ let t = fs::read_to_string(\"t\", fs::Root::Anywhere) catch {{ \"\" }} self.sum += other.sum }}
+             }}
+"
+        )
+    };
+    let refusals = |source: String| -> Vec<nikaia::check::Finding> {
+        findings(&source)
+            .into_iter()
+            .filter(|f| f.code == "NK2209" || f.code == "NK2206")
+            .collect()
+    };
+
+    let paused = refusals(source(
+        "Tally::merge",
+        "let t = fs::read_to_string(\"t\", fs::Root::Anywhere) catch { \"\" }",
+    ));
+    assert_eq!(
+        paused.len(),
+        1,
+        "one refusal, and it is the action's: {paused:#?}"
+    );
+    assert_eq!(paused[0].code, "NK2209", "{paused:#?}");
+    assert!(paused[0].message.contains("`record`"), "{paused:#?}");
+
+    // **A named `merge` is a call the fold makes**, asked the same question.
+    let merged = refusals(source("Tally::wait", ""));
+    assert_eq!(merged.len(), 1, "{merged:#?}");
+    assert!(merged[0].message.contains("Tally::wait"), "{merged:#?}");
+
+    // And the same fold with nothing that pauses is left alone.
+    assert!(refusals(source("Tally::merge", "")).is_empty());
+}
+
 /// **An action that does not pause is untouched**, and so is a body *around* a
 /// parse that does: what is refused is pausing inside the parse, not near it
 /// (D3).

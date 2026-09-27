@@ -1795,6 +1795,7 @@ impl Project {
                 CrateKind::Lib => member.name.replace('-', "_"),
             },
             bin_path: member.entry.clone(),
+            features: runtime_features(&dependencies),
             dependencies,
         })
     }
@@ -2294,6 +2295,24 @@ pub fn runtime_dependencies_for(rust: &str) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// **The features the generated code tests in its own crate.** A `grammar!`
+/// expansion writes `#[cfg(feature = "trace")]` into the crate that invokes it,
+/// so that crate is the one that has to declare `trace`, or every build of a
+/// program with a `grammar` carries `rustc`'s *unexpected `cfg` condition
+/// value* (0.0.230, `open-work.md` §1.20 before it). It forwards to `winnow-grammar`'s
+/// own `trace`, as `nikaia` and `nikaia-std` do, so turning it on traces the
+/// parser end to end.
+fn runtime_features(dependencies: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    if dependencies.contains_key("winnow-grammar") {
+        out.insert(
+            "trace".to_string(),
+            vec!["winnow-grammar/trace".to_string()],
+        );
+    }
+    out
+}
+
 fn runtime_dependencies(
     rust: &str,
     reentrancy_check: crate::emit::ReentrancyCheck,
@@ -2544,6 +2563,28 @@ mod tests {
             runtime.contains_key("winnow"),
             "a grammar expansion writes `winnow::Parser` too"
         );
+    }
+
+    /// A `grammar!` expansion tests `feature = "trace"` in the crate that
+    /// invokes it, so that crate declares it (0.0.230, `open-work.md` §1.20 before it), forwarding
+    /// to `winnow-grammar`'s. A program without a grammar declares no feature.
+    #[test]
+    fn a_program_with_a_grammar_declares_trace() {
+        let with = runtime_dependencies(
+            "use winnow_grammar::grammar;",
+            crate::emit::ReentrancyCheck::Yes,
+        )
+        .expect("resolves");
+        assert_eq!(
+            runtime_features(&with)["trace"],
+            ["winnow-grammar/trace".to_string()]
+        );
+        let without = runtime_dependencies(
+            "use nikaia_std::prelude;",
+            crate::emit::ReentrancyCheck::Yes,
+        )
+        .expect("resolves");
+        assert!(runtime_features(&without).is_empty());
     }
 
     /// A program that names none of them declares none of them, and fetches

@@ -275,3 +275,51 @@ fn panic_ends_the_program_at_the_nikaia_line() {
     assert!(said.contains("was a key a moment ago"), "{said}");
     assert!(said.contains("main.rs") || said.contains(".nika"), "{said}");
 }
+
+/// **A map read off a value that came out of a `catch`** (0.0.230, `open-work.md`
+/// §1.18). `examples/access-log.nika` without its `??` reached `rustc`: the
+/// `catch` around the parse typed as nothing, so `report.paths[path]` was a
+/// lookup on a map nobody knew, and the field read after it was not refused.
+/// The `catch` is the guarded value's type where its handler leaves.
+#[test]
+fn a_map_read_off_a_caught_value_is_refused() {
+    let found: Vec<_> = findings(
+        "use std::collections\n\n\
+         pub struct Counts { hits: i64 }\n\
+         pub struct Report { paths: collections::HashMap[ref String, Counts] }\n\
+         fn load() -> Report throws { return Report { paths: collections::HashMap() } }\n\
+         fn main() {\n\
+         \x20   let report = load() catch { return }\n\
+         \x20   let counts = report.paths[\"a\"]\n\
+         \x20   println(f\"{counts.hits}\")\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK1125")
+    .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(found[0].message.contains("`Counts?`"), "{found:#?}");
+}
+
+/// **A `?` whose inside has no type is not written `??`** (§1.18's second
+/// fault): that is the operator, and the message said the operator may be
+/// absent. It says the value may be.
+#[test]
+fn a_read_of_a_map_whose_values_are_unknown_names_no_operator() {
+    let found: Vec<_> = findings(
+        "use std::collections\n\n\
+         pub struct Counts { hits: i64 }\n\
+         fn main() {\n\
+         \x20   let mut m = collections::HashMap()\n\
+         \x20   m.insert(\"a\", Counts { hits: 1 })\n\
+         \x20   let c = m[\"a\"]\n\
+         \x20   println(f\"{c.hits}\")\n\
+         }\n",
+    )
+    .into_iter()
+    .filter(|f| f.code == "NK1125")
+    .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(!found[0].message.contains("`??`"), "{found:#?}");
+    assert!(found[0].message.contains("may be absent"), "{found:#?}");
+}

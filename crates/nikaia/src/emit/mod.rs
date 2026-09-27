@@ -797,10 +797,17 @@ pub fn emit_module_body_at(
     // disagree about one program ([ADR-072](../../docs/specification/adr/adr-072.md)).
     reads: &Reads,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, beside, build, provenance, contracts.clone(), reads)
-        .for_entry(entry)
-        .with_described(described)
-        .items_only()
+    Emitter::with_contracts(
+        parsed,
+        beside,
+        build,
+        provenance,
+        contracts.clone(),
+        described,
+        reads,
+    )
+    .for_entry(entry)
+    .items_only()
 }
 
 /// What a program's preamble has to say, over all of its files.
@@ -2154,7 +2161,15 @@ impl<'p> Emitter<'p> {
         reads: &Reads,
     ) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
-        Self::with_contracts(parsed, &[], build, provenance, own, reads)
+        Self::with_contracts(
+            parsed,
+            &[],
+            build,
+            provenance,
+            own,
+            &crate::contracts::Ledger::default(),
+            reads,
+        )
     }
 
     /// The same, against contracts that already exist - a program's rather than
@@ -2165,6 +2180,9 @@ impl<'p> Emitter<'p> {
         build: Build,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
+        // **The described crates' boundary** (ADR-237 D1): whether a call into
+        // one can fail, and what it keeps, which the propagation below asks.
+        described: &crate::contracts::Ledger,
         reads: &Reads,
     ) -> Self {
         let mut grammars = HashMap::new();
@@ -2232,7 +2250,8 @@ impl<'p> Emitter<'p> {
         // `let s = io::lines()` followed by `for line in s`. ADR-028 for the
         // method calls: a receiver's type is the type checker's to know, and
         // there is one type checker (ADR-028).
-        let propagation = crate::check::propagation_against(parsed, beside, &own_contracts, reads);
+        let propagation =
+            crate::check::propagation_against(parsed, beside, &own_contracts, described, reads);
 
         // ADR-037 D7: which count each `Shared` value gets. Computed over the
         // whole unit, because a count belongs to an allocation and a handle's
@@ -2252,7 +2271,7 @@ impl<'p> Emitter<'p> {
         let mut made = Self {
             parsed,
             build,
-            described: crate::contracts::Ledger::default(),
+            described: described.clone(),
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
@@ -2362,12 +2381,6 @@ impl<'p> Emitter<'p> {
     /// The same, said of a module rather than of the crate root.
     fn for_entry(mut self, entry: bool) -> Self {
         self.entry = entry;
-        self
-    }
-
-    /// What the described crates say about their boundary (ADR-237 D1).
-    fn with_described(mut self, described: &crate::contracts::Ledger) -> Self {
-        self.described = described.clone();
         self
     }
 
@@ -11434,6 +11447,7 @@ pub fn branch_starts_first<'p>(
         build,
         crate::contracts::Provenance::Trusted,
         contracts.clone(),
+        &crate::contracts::Ledger::default(),
         // This asks whether a branch pauses, which no file a build read can
         // change — so D1's default is the honest answer here.
         &Reads::none(),

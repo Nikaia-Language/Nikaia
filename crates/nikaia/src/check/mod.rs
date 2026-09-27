@@ -1644,7 +1644,7 @@ pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
 /// The same, against contracts the caller already has - which for a program of
 /// several files is the **program's** ledger and not this file's (Part I, 9.1).
 pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
-    propagation_against(parsed, &[], own, &Reads::none()).loops
+    propagation_against(parsed, &[], own, &Ledger::empty(), &Reads::none()).loops
 }
 
 /// **What a `T::fields` loop was unrolled to, for the types actually used**
@@ -1674,7 +1674,7 @@ pub fn unrolling_report(beside: &[&Parsed], own: &Ledger, reads: &Reads) -> Stri
     let mut walks_fields: BTreeMap<String, String> = BTreeMap::new();
     let mut unrolled: BTreeMap<(String, String), Vec<FieldContract>> = BTreeMap::new();
     for parsed in beside {
-        let found = propagation_against(parsed, beside, own, reads);
+        let found = propagation_against(parsed, beside, own, &Ledger::empty(), reads);
         walks_fields.extend(found.walks_fields);
         unrolled.extend(found.unrolled);
     }
@@ -1717,11 +1717,29 @@ pub fn propagation_against(
     parsed: &Parsed,
     beside: &[&Parsed],
     own: &Ledger,
+    described: &Ledger,
     reads: &Reads,
 ) -> Propagation {
-    let Ok(library) = Ledger::parse(crate::contracts::STD) else {
+    let Ok(mut library) = Ledger::parse(crate::contracts::STD) else {
         return Propagation::default();
     };
+    // **And the described crates' boundary**, as the check that refused had it
+    // (`project::Foreign::library`, `std` winning a collision): what a call
+    // into `hyper_shim` keeps decides how its argument is written, and a walk
+    // that could not resolve the callee lowered a literal it had been told to
+    // build as text of its own (0.0.230, `open-work.md` §1.19 before it).
+    for (name, contract) in &described.functions {
+        library
+            .functions
+            .entry(name.clone())
+            .or_insert_with(|| contract.clone());
+    }
+    for (name, contract) in &described.types {
+        library
+            .types
+            .entry(name.clone())
+            .or_insert_with(|| contract.clone());
+    }
     // **The same walk the refusal ran**, `beside` included: a `comptime` that
     // calls across a file boundary is answered by the checker, and what the
     // emitter writes is that answer. Handing it fewer files than the check had
@@ -3718,7 +3736,7 @@ impl<'a> Checker<'a> {
                 let named = self.parsed.text(rule.name).to_string();
                 let outer_action = self.inside_an_action.replace(named);
                 self.scope.push(frame.iter().map(Local::again).collect());
-                self.folds_in(&alt.pattern.node, &alt.pattern.span);
+                self.folds_in(grammar, &alt.pattern.node, &alt.pattern.span);
                 self.scope.pop();
                 let Some(action) = &alt.action else {
                     self.inside_an_action = outer_action;
@@ -3756,31 +3774,110 @@ impl<'a> Checker<'a> {
     /// loops from zero, so a jump here meets `NK1132` through the path every
     /// other lambda's does - and gets the better of the two messages, naming
     /// the lambda instead of saying there is no loop.
-    fn folds_in(&mut self, pattern: &ast::Pattern, span: &Span) {
+    fn folds_in(&mut self, grammar: &ast::GrammarDef, pattern: &ast::Pattern, span: &Span) {
         match pattern {
-            ast::Pattern::Fold(spec) => {
-                for part in [Some(&spec.init), Some(&spec.step), spec.merge.as_ref()]
-                    .into_iter()
-                    .flatten()
-                {
-                    self.expr(part, span);
-                }
-            }
+            ast::Pattern::Fold(spec) => self.fold(grammar, spec, span),
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
                 for part in parts {
-                    self.folds_in(&part.node, &part.span);
+                    self.folds_in(grammar, &part.node, &part.span);
                 }
             }
             ast::Pattern::Bind { pat, .. }
             | ast::Pattern::Repeat { pat, .. }
-            | ast::Pattern::Group(pat) => self.folds_in(&pat.node, &pat.span),
+            | ast::Pattern::Group(pat) => self.folds_in(grammar, &pat.node, &pat.span),
             ast::Pattern::Ref { args, .. } => {
                 for arg in args {
-                    self.folds_in(&arg.node, &arg.span);
+                    self.folds_in(grammar, &arg.node, &arg.span);
                 }
             }
             ast::Pattern::Literal(_) | ast::Pattern::Cut => {}
         }
+    }
+
+    /// **A fold's `init`, `step` and `merge`, typed** (0.0.230, `open-work.md` §1.17
+    /// before it).
+    ///
+    /// The step is handed the accumulator `init` builds and one item of the
+    /// rule it folds, so its parameters are typed from those two: without that,
+    /// `fn(acc, m) { acc.record(m) }` resolved `record` to nothing and a
+    /// pausing one compiled - into a future the fold dropped, so the parse
+    /// counted nothing. Typed, the call meets `NK2209` like any action's.
+    ///
+    /// A `merge` is handed two accumulators. An `init` or a `merge` written as
+    /// a function's name is a call the fold makes, so it is asked the same
+    /// question of the function it names.
+    fn fold(&mut self, grammar: &ast::GrammarDef, spec: &ast::FoldSpec, span: &Span) {
+        let item = grammar
+            .rules
+            .iter()
+            .find(|rule| rule.name == spec.rule)
+            .and_then(|rule| rule.ret_type.as_ref())
+            .map(|t| Ty::from_ast(self.parsed, t))
+            .unwrap_or(Ty::Unknown);
+        let named = self.a_named_fold_part_that_may_pause(&spec.init, span);
+        let built = self.expr(&spec.init, span);
+        // A function's name - `Summary` is its constructor, `Summary::new` -
+        // builds what its signature hands back; anything else is the value.
+        let acc = match (named, built) {
+            (Some(result), _) => result,
+            (
+                None,
+                Ty::Fn {
+                    result: Some(result),
+                    ..
+                },
+            ) => *result,
+            (None, Ty::Fn { result: None, .. }) => Ty::Unknown,
+            (None, other) => other,
+        };
+        // **`NK2209` is the rule here and not `NK2206`**: no parameter type
+        // says `sync` about this lambda, the language does, and the action
+        // rule inside it names the call that breaks it.
+        let promised = Promises {
+            may_pause: true,
+            may_fail: true,
+        };
+        for (part, given) in [
+            (Some(&spec.step), vec![acc.clone(), item]),
+            (spec.merge.as_ref(), vec![acc.clone(), acc.clone()]),
+        ] {
+            let Some(part) = part else { continue };
+            match part {
+                Expr::Closure {
+                    params,
+                    mutable,
+                    body,
+                } => {
+                    self.lambda(params, mutable, body, &given, promised, span);
+                }
+                _ => {
+                    let _ = self.a_named_fold_part_that_may_pause(part, span);
+                    self.expr(part, span);
+                }
+            }
+        }
+    }
+
+    /// `Summary::merge` or `Summary` in a fold: a function the fold calls, so
+    /// a pausing one is refused as a call in an action is. What the function
+    /// hands back, where its signature says.
+    fn a_named_fold_part_that_may_pause(&mut self, part: &Expr, span: &Span) -> Option<Ty> {
+        let name = match part {
+            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            Expr::Path(parts) => parts
+                .iter()
+                .map(|p| self.parsed.text(*p))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return None,
+        };
+        let (key, contract) = self.resolve(&name)?;
+        self.a_pausing_call_in_an_action(&key, contract, span);
+        contract
+            .signature
+            .as_ref()
+            .map(|signature| signature.result_or_unit())
+            .filter(|result| !result.is_unknown())
     }
 
     /// Every `name:pattern` in a pattern, all of them `?`.
@@ -4335,7 +4432,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1125",
-            message: format!("`{on}` may be absent, so it has no {what} to reach"),
+            // **A `?` whose inside has no type is not written `??`**
+            // (0.0.230, `open-work.md` §1.18 before it): that is the operator, and a reader told
+            // "`??` may be absent" is told about the wrong thing. What is known
+            // is that the value may be absent, so that is what is said.
+            message: match on {
+                Ty::Nullable(inner) if inner.is_unknown() => {
+                    format!("this value may be absent, so it has no {what} to reach")
+                }
+                _ => format!("`{on}` may be absent, so it has no {what} to reach"),
+            },
             notes: vec![
                 "a `T?` is a type of its own and not a `T` that might be missing \
                  (Part I, 2.3), so a member of `T` is not a member of it - which is \
@@ -8824,19 +8930,30 @@ impl<'a> Checker<'a> {
                 let several = std::mem::replace(&mut self.caught_several, arriving);
                 let single = std::mem::replace(&mut self.caught_one, one);
                 let from = self.taken_so_far();
-                self.block(handler);
+                let handled = self.block(handler);
                 // **A handler's value stands where the guarded one would**, so
                 // a text literal it ends in is built into text of its own where
                 // the guarded value is (ADR-216 D4, one more of ADR-207 D1's
                 // positions): `read() catch { "" }`.
-                if let Some(tail) = tail_of(handler) {
-                    self.text_literal(&answers, tail, true);
-                }
+                let literal =
+                    tail_of(handler).and_then(|tail| self.text_literal(&answers, tail, true));
                 self.a_branch_that_leaves(from, block_exits(handler), span);
                 self.caught_several = several;
                 self.caught_one = single;
                 self.scope.pop();
-                Ty::Unknown
+                // **And so the `catch` is the guarded value's type**
+                // (0.0.230, `open-work.md` §1.18 before it): where the handler leaves,
+                // or hands back that type, or something this checker cannot
+                // name. It used to be `?` always, so `let report = Log::file(d)
+                // catch { return }` typed nothing that followed - a field read
+                // on a lookup in `report.paths` reached `rustc` instead of
+                // `NK1125`. A handler whose value is known to be something
+                // else keeps the old answer, which claims nothing.
+                let handled = literal.unwrap_or(handled);
+                match block_leaves(handler) || handled.is_unknown() || handled.fits(&answers) {
+                    true => answers,
+                    false => Ty::Unknown,
+                }
             }
 
             Expr::Spawn { body, .. } => {
@@ -10078,9 +10195,23 @@ impl<'a> Checker<'a> {
                     span,
                 );
             }
+            // **A type variable only this argument decides takes the
+            // argument's own type** (0.0.230, `open-work.md` §1.19 before it): a text
+            // literal is a `String`, so where a kept, by-value `$T` is bound by
+            // nothing else - no receiver, no other parameter - it is constructed
+            // as one. `hyper_shim::across_a_thread(value: $T)` with
+            // `T: Describe` implemented for `String` is the case: the literal's
+            // `&str` was a type the program never wrote. A `$T` a receiver
+            // binds (`Vec[$T]::push`) is the receiver's to answer and is left.
+            let text = Ty::named("String");
+            let literal_wants = match kept && self.decided_by_this_argument(&signature, wanted, at)
+            {
+                true => &text,
+                false => want,
+            };
             let array = given.get(at).and_then(|given| {
                 self.array_literal(found, want, given, span)
-                    .or_else(|| self.text_literal(want, given, kept))
+                    .or_else(|| self.text_literal(literal_wants, given, kept))
             });
             let found = array.as_ref().unwrap_or(found);
             // **A view handed to a `String` the callee only reads is lent as it
@@ -16209,6 +16340,24 @@ impl<'a> Checker<'a> {
                 }
             })
             .collect()
+    }
+
+    /// Whether parameter `at` is a by-value type variable that nothing else in
+    /// the signature binds: no receiver, and no other parameter names it.
+    fn decided_by_this_argument(
+        &self,
+        signature: &crate::contracts::Signature,
+        wanted: &[(String, Ty)],
+        at: usize,
+    ) -> bool {
+        let Some((_, Ty::Var { name, view: false })) = wanted.get(at) else {
+            return false;
+        };
+        !signature.takes_a_receiver()
+            && wanted
+                .iter()
+                .enumerate()
+                .all(|(other, (_, ty))| other == at || !ty.text().contains(&format!("${name}")))
     }
 
     /// **A kept function takes its arguments by value**, so a text literal

@@ -222,8 +222,16 @@ fn manifest(key: &str, program: &str) -> String {
     out.push_str("version = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\n");
     out.push_str(&format!("name = \"p{key}\"\npath = \"src/main.rs\"\n\n"));
     out.push_str("[dependencies]\n");
-    for (name, value) in crate::project::runtime_dependencies_for(program) {
+    let dependencies = crate::project::runtime_dependencies_for(program);
+    let traced = dependencies
+        .iter()
+        .any(|(name, _)| name == "\"winnow-grammar\"");
+    for (name, value) in dependencies {
         out.push_str(&format!("{name} = {value}\n"));
+    }
+    // The same `trace` a program declares (`project::runtime_features`).
+    if traced {
+        out.push_str("\n[features]\ntrace = [\"winnow-grammar/trace\"]\n");
     }
     out
 }

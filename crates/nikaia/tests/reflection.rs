@@ -313,7 +313,7 @@ fn a_shape_walk_is_unrolled_across_the_files_of_a_package() {
 
     // **The unit that writes the copies** knows both, although neither call
     // stands in it.
-    let there = check::propagation_against(&declares, &beside, &own, &reads);
+    let there = check::propagation_against(&declares, &beside, &own, &Ledger::empty(), &reads);
     assert!(
         there
             .unrolled
@@ -328,7 +328,7 @@ fn a_shape_walk_is_unrolled_across_the_files_of_a_package() {
     // **The unit that holds the calls** knows the name is a shape walk, so each
     // call is rewritten to the copy rather than left pointing at an original
     // nobody emits.
-    let here = check::propagation_against(&calls, &beside, &own, &reads);
+    let here = check::propagation_against(&calls, &beside, &own, &Ledger::empty(), &reads);
     assert_eq!(here.unrolled_calls.len(), 2, "{:#?}", here.unrolled_calls);
     assert!(here.walks_fields.contains_key("describe"));
 
