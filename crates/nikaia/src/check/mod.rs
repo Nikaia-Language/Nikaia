@@ -3420,6 +3420,10 @@ impl<'a> Checker<'a> {
                     if trait_name.is_some_and(|t| self.parsed.text(t) == "Cleanup") {
                         self.a_cleanup_shaped(self.parsed.text(target.name), methods, &item.span);
                     }
+                    if let Some(trait_name) = trait_name {
+                        let written = self.parsed.text(*trait_name).to_string();
+                        self.a_trait_nothing_declares(&written, &item.span);
+                    }
                     // `impl Stack[T]` puts `T` in scope for every method in it,
                     // exactly as the ledger reads it (`Ledger::of`), so a method
                     // body sees the same names its signature was recorded with -
@@ -4281,6 +4285,89 @@ impl<'a> Checker<'a> {
                 None => format!(
                     "if `{name}` is meant to be a value, declare it with `let`; if it is \
                      meant to be a keyword, this language has no such keyword"
+                ),
+            }),
+        });
+    }
+
+    /// **An `impl` of a trait nothing declares** (0.0.231).
+    ///
+    /// `impl db::Connection for Fake` lowered as it was written, and the
+    /// language below answered *unresolved import `db`* about a file nobody
+    /// wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md));
+    /// a bare `impl Connection for Fake` was *cannot find trait* the same way.
+    /// Nothing looked at the trait an `impl` names: a **bound** fails open on a
+    /// trait it does not know ([`Checker::answers_for`]), and that is right for
+    /// a bound, which only asks. An `impl` *writes* the name into the program.
+    ///
+    /// **A path is [`Checker::a_head_nothing_declares`]'s question**, asked of
+    /// its head: a package, a module, a described crate or a `std` module may
+    /// hold the trait, and past a head this compiler knows it does not claim
+    /// to know the rest. **A bare name is `NK1117`'s**, and it is declared by
+    /// the three traits the language itself names (`Error`, Part I 7.1; `Drop`
+    /// and `Cleanup`, Part I 6), a `trait` in any ledger this program reads, a
+    /// `use` that brings it in, or a foreign name. Everything this cannot see
+    /// is a name it must not refuse ([Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)).
+    fn a_trait_nothing_declares(&mut self, written: &str, span: &Span) {
+        if let Some((head, _)) = written.split_once("::") {
+            return self.a_head_nothing_declares(head, written, span);
+        }
+        let suffix = format!("::{written}");
+        let in_a_ledger = |traits: &BTreeMap<String, BTreeSet<String>>| {
+            traits
+                .keys()
+                .any(|key| key == written || key.ends_with(&suffix))
+        };
+        let imported = |parsed: &Parsed| {
+            parsed.program.items.iter().any(|item| {
+                matches!(&item.node, Item::Import { path, alias }
+                if alias.map_or_else(
+                    || path.last().is_some_and(|last| parsed.text(*last) == written),
+                    |alias| parsed.text(alias) == written,
+                ))
+            })
+        };
+        let shape = SHAPE_BOUNDS.contains(&written);
+        let declared = (!shape && ["Error", "Drop", "Cleanup"].contains(&written))
+            || in_a_ledger(&self.own.traits)
+            || in_a_ledger(&self.library.traits)
+            || declares_a_type(self.parsed, written)
+            || self
+                .beside
+                .iter()
+                .any(|other| declares_a_type(other, written))
+            || imported(self.parsed)
+            || self.foreign_names.contains(written);
+        if declared {
+            return;
+        }
+        let because = match shape {
+            // **A shape bound is answered by the declaration**
+            // ([ADR-088](../../docs/specification/adr/adr-088.md) D2): a
+            // `struct` is a `Struct` by being one, so there is no trait to
+            // implement and no `impl` that could say it.
+            true => format!(
+                "`{written}` is answered by what a type is declared as, not by an `impl`: a \
+                 `struct` is a `Struct` and an `enum` is an `Enum` already (ADR-088 D2)"
+            ),
+            false => format!(
+                "an `impl` names a trait the program declares with `trait {written} {{ … }}`, \
+                 one a package it depends on declares, or `Error`, `Drop` or `Cleanup`, \
+                 which the language names itself (Part I, 4.7)"
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("nothing declares a trait called `{written}`"),
+            notes: vec![because],
+            help: Some(match shape {
+                true => "leave the `impl` out: the bound is already answered".to_string(),
+                false => format!(
+                    "declare `trait {written}`, or write the path of the package that does: \
+                     `package::{written}`"
                 ),
             }),
         });

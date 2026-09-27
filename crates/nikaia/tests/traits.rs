@@ -941,3 +941,70 @@ fn main() {
         "nothing here can answer about `Error`: {found:#?}"
     );
 }
+
+/// **An `impl` of a trait nothing declares is refused here** (0.0.231), and
+/// not by `rustc` about a file nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// `impl db::Connection for Fake` lowered as written and the language below
+/// said *unresolved import `db`*; `impl Connection for Fake` said *cannot find
+/// trait*. A bound may fail open on a trait it does not know, because it only
+/// asks; an `impl` writes the name into the program.
+#[test]
+fn an_impl_of_a_trait_nothing_declares_is_refused() {
+    let program = |trait_name: &str| {
+        format!(
+            "struct Fake {{ n: i64 }}\n\
+             impl {trait_name} for Fake {{\n\
+             \x20   fn run(ref self) -> i64 {{ return self.n }}\n\
+             }}\n\
+             fn main() {{ println(\"x\") }}\n"
+        )
+    };
+
+    let bare = findings(&program("Connection"));
+    assert_eq!(bare.len(), 1, "{bare:#?}");
+    assert_eq!(bare[0].code, "NK1117", "{bare:#?}");
+    assert_eq!(
+        bare[0].message,
+        "nothing declares a trait called `Connection`"
+    );
+
+    // A path is asked about its head, which is `NK1181`'s question.
+    let path = findings(&program("db::Connection"));
+    assert_eq!(path.len(), 1, "{path:#?}");
+    assert_eq!(path[0].code, "NK1181", "{path:#?}");
+    assert!(path[0].message.contains("`db`"), "{path:#?}");
+
+    // A shape bound is answered by the declaration, so no `impl` says it.
+    let shape = findings(&program("Struct"));
+    assert_eq!(shape.len(), 1, "{shape:#?}");
+    assert!(shape[0].notes[0].contains("ADR-088"), "{shape:#?}");
+}
+
+/// **What declares a trait an `impl` may name**: the program's own `trait`,
+/// and the three the language names itself. Each of these is a correct
+/// program and the check must say nothing about it.
+#[test]
+fn an_impl_of_a_declared_trait_is_silent() {
+    let own = "trait Speaks {\n\
+               \x20   fn speak(ref self) -> String\n\
+               }\n\
+               struct Dog { name: String }\n\
+               impl Speaks for Dog {\n\
+               \x20   fn speak(ref self) -> String { return \"woof\" }\n\
+               }\n\
+               fn main() { println(Dog { name: \"rex\" }.speak()) }\n";
+    assert!(findings(own).is_empty(), "{:#?}", findings(own));
+
+    let dropped = "struct Handle { name: String }\n\
+                   impl Drop for Handle {\n\
+                   \x20   fn drop(ref mut self) { println(f\"closing {self.name}\") }\n\
+                   }\n\
+                   fn main() { let h = Handle { name: \"a\" } }\n";
+    assert!(
+        !findings(dropped).iter().any(|f| f.code == "NK1117"),
+        "{:#?}",
+        findings(dropped)
+    );
+}

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.231] — 2026-09-27
+
+**An `impl` of a trait nothing declares is refused here**, not by `rustc`.
+
+- `impl db::Connection for Fake` lowered as written and the language below said
+  *unresolved import `db`* about a file nobody wrote; `impl Connection for
+  Fake` said *cannot find trait*. Nothing looked at the trait an `impl` names:
+  a bound fails open on a trait it does not know, which is right for a bound,
+  but an `impl` writes the name into the program. Found while designing
+  ADR-143's database protocol.
+- A path is asked about its head, which is `NK1181`. A bare name is `NK1117`,
+  *nothing declares a trait called `Connection`*, and it is declared by
+  `Error`, `Drop` and `Cleanup`, a `trait` in any ledger the program reads, a
+  `use` that brings it in, or a foreign name. `impl Struct for X` is refused
+  with a note that a shape bound is answered by the declaration (ADR-088 D2).
+- Tests: `tests/traits.rs`, both refusals and the correct programs beside them.
+
 ## [0.0.230] — 2026-09-27
 
 **Four defects found while checking the examples** — closing `open-work.md`
