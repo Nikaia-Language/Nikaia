@@ -114,15 +114,21 @@ fn main() {
 }
 "#,
     );
+    // **And the key is not a position** (0.0.235): the map's key type is
+    // pinned by nothing here, and `index::at` - which turns a number into a
+    // `usize` - made `m[1] = 2` a map keyed by `usize`. It was the identity on
+    // this text key, so what changed is the spelling and not the program.
     assert!(
-        rust.contains(
-            "nikaia_std::index::set(&mut scores, nikaia_std::index::at(\"Player1\"), __nikaia_stored)"
-        ),
+        rust.contains("nikaia_std::index::set(&mut scores, \"Player1\", __nikaia_stored)"),
         "the write goes through `set`:\n{rust}"
     );
     assert!(
-        rust.contains("*nikaia_std::index::get(&scores, nikaia_std::index::at(\"Player1\"))"),
+        rust.contains("*nikaia_std::index::get(&scores, \"Player1\")"),
         "the read goes through `get`:\n{rust}"
+    );
+    assert!(
+        !rust.contains("index::at("),
+        "a key is not a position:\n{rust}"
     );
     // **And it is no longer an index.** Rust's `Index` for a map panics on an
     // absent key, which is the abort
