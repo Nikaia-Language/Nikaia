@@ -1,54 +1,24 @@
-// examples/tally.nika
+// Counts the lines piped into it, in constant memory.
 //
-// A line-oriented filter over **standard input, in constant memory**.
+//     cat something.txt | nikaia run
+//     120 lines, 14 blank
+//     longest: 87 characters
+//     …the longest line itself…
 //
-// Input:  any text on a pipe, however long
-// Output: how many lines, how many of them are blank, and the longest one's
-//         length - and the longest line itself, which is the only thing the
-//         program keeps
+// With a file name, it also appends one summary row to that file as a log:
+// `cat something.txt | nikaia run -- runs.log`.
 //
-// Run:
+// Shows: reading standard input line by line, a loop that can fail, and
+// named options after the `;` in a signature and at a call.
 //
-//     nikaia --input examples/tally.nika --backend rust
-//     cat something.txt | ./tally
-//
-// `crates/nikaia/tests/examples.rs` compiles and runs this file.
-//
-// Why it is here beside the others. `k-nucleotide.nika` also reads standard
-// input, and it reads **all** of it: `io::read_to_string` hands back a buffer
-// the size of the input, and everything after that points into it. That is
-// right for FASTA, where the analysis needs the whole sequence. It is wrong for
-// a log that never ends. This is the other half - and it is the first program
-// here whose memory does not grow with its input.
-//
-// One thing about it is invisible and is the point (ADR-025).
-//
-//     for line in io::lines() { … }
-//
-// Each turn of that loop **reads**, and a read can fail. Nothing marks it, for
-// the same reason nothing marks a call that can fail (ADR-023 D8): three of the
-// language's four invisible control-flow events were already unmarked, and
-// marking the fourth would imply the other three were absent. What happens
-// instead is what happens everywhere else - the failure leaves the function,
-// and the compiler is the reason `throws` is on the signature. Take it off and
-// the program does not compile:
-//
-//     error[NK2701]: this function can fail because a turn of this loop can fail
-//       help: declare the error: add `throws` to this function
-//
-// The one thing that must **not** happen is the one every language with a
-// scanner has shipped: a failed read that looks like the end of the input, so a
-// truncated stream becomes a shorter stream and the tally is quietly wrong.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::io
 use std::fs
 use std::cli
 
-// One line of summary, and where it goes.
-//
-// `separator` is a Kap 5.1 **option**: it stands after the `;`, it is named at
-// the call, and it has a default - which is what makes it an option rather than
-// an argument. Nothing that calls this has to know it exists.
+// `separator` is an option: it stands after the `;`, has a default, and is
+// named where a call sets it. A caller that does not need it never sees it.
 fn summary(lines: i64, blank: i64; separator: ref String = " ") -> String {
     return f"{lines}{separator}{blank}"
 }
@@ -58,9 +28,18 @@ fn main() throws {
     let mut blank = 0
     let mut longest = String()
 
-    // Constant memory: one line is alive at a time, and the only thing that
-    // outlives a turn is the longest line seen so far - which the program
-    // takes ownership of, because everything else is gone by the next read.
+    // Each turn of this loop reads one line, so only one line is in memory at a
+    // time, plus the longest seen so far.
+    //
+    // A read can fail. Nothing marks that here, just as nothing marks a call
+    // that can fail: the failure leaves `main`, which is why `main` says
+    // `throws`. Without it the program does not compile:
+    //
+    //     error[NK2701]: this function can fail because a turn of this loop can fail
+    //       help: declare the error: add `throws` to this function
+    //
+    // So a read that fails is reported as an error, never mistaken for the end
+    // of the input.
     for line in io::lines() {
         lines += 1
         if line.len() == 0 {
@@ -75,13 +54,8 @@ fn main() throws {
     println(f"longest: {longest.len()} characters")
     println(f"{longest}")
 
-    // A run log, if the caller named one. `append: true` is the other half of
-    // Kap 5.1 - an option at a *call*, and the reason `fs::write` has one:
-    // truncating here would make a log of one line.
-    //
-    // The default is `append: false`, so a call that says nothing overwrites -
-    // which is what `write` means everywhere, and why the option exists rather
-    // than a second function.
+    // A run log, if a file was named. `append: true` is an option set at the
+    // call; without it `fs::write` replaces the file.
     let log = cli::args().nth(1) ?? ""
     if log.len() > 0 {
         let row = summary(lines, blank; separator: "\t")

@@ -1,44 +1,16 @@
-// examples/calc.nika
+// A four-function calculator, written as a grammar.
 //
-// A four-function calculator: the grammar protocol at its smallest.
-//
-// Run:
-//
-//     nikaia --input examples/calc.nika --backend rust
-//     ./calc "2 + 3 * (10 - 4) / 2"
+//     nikaia run -- "2 + 3 * (10 - 4) / 2"
 //     2 + 3 * (10 - 4) / 2 = 11
 //
-// `crates/nikaia/tests/examples.rs` compiles and runs this file, on the file
-// itself rather than a copy of it.
+// Shows: a `grammar` block, precedence and recursion as rules, an `enum` and a
+// tuple pattern in `match`, and `catch` on a parse that fails.
 //
-// Why it is here beside 1brc: that example is the grammar protocol at scale -
-// a frame, a parallel fold, a billion rows. This one is the same protocol with
-// none of that. No `@frame`, no `par_fold`, no `sync`, no I/O: one `pub rule`
-// that returns a number, entered once over one string. If the protocol only
-// paid off at 13 GB it would be a benchmark trick rather than a way to write
-// programs, so the small case is worth showing too.
-//
-// What it does show:
-//
-//   * **Recursion.** `factor` reaches `expr` again through `( … )`, which is
-//     what a grammar can say and a chain of iterator combinators cannot.
-//   * **Precedence as structure.** `*` binds tighter than `+` because `term`
-//     sits between `expr` and `factor` - three rules, no precedence table.
-//   * **Left association without left recursion.** `a - b - c` is `(a - b) - c`
-//     because the tails are collected and folded in the action, left to right.
-//     Writing `expr = expr "-" term` would be the natural way to say it and
-//     does not terminate; this is the standard repair and the reason the rules
-//     below read as they do.
-//   * **A tuple where a pair belongs, and an enum where a choice does.**
-//     `mul_tail` yields `(Op, i64)` - the operator and its operand. Naming the
-//     pair would have been a struct pretending to be a type; spelling the
-//     operator as text would have been a comparison the compiler cannot check.
+// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
 use std::cli
 
-// Two operators, and the type says two. A `match` over it has no arm for a
-// third and needs none - which is the difference between a sum type and a
-// string that happens to hold "*".
+// Two operators, and the type says two: a `match` over it needs no third arm.
 enum Op {
     Times,
     Divide,
@@ -46,9 +18,11 @@ enum Op {
 
 grammar Calc {
 
-    // Lowercase, so this is a *syntactic* rule: the backend skips whitespace
-    // between the elements of the sequence. That is the whole of why
-    // "2+3", "2 + 3" and "2  +  3" all parse and nothing here mentions blanks.
+    // A lowercase rule is *syntactic*: whitespace between its parts is skipped,
+    // so "2+3" and "2 + 3" both parse and no rule mentions blanks.
+    //
+    // `a - b - c` means `(a - b) - c`: the tails are collected and folded left to
+    // right in the action. (`expr = expr "-" term` would never terminate.)
     pub rule expr -> i64 =
         head:term tail:add_tail* {
             let mut value = head
@@ -56,21 +30,15 @@ grammar Calc {
             value
         }
 
-    // Subtraction is addition of a negation, so both alternatives can yield a
-    // number and the fold above needs no operator at all.
+    // Subtraction is addition of a negation, so the fold above needs no operator.
     rule add_tail -> i64 =
           "+" t:term { t }
         | "-" t:term { -t }
 
-    // Division cannot be folded that way - it is neither commutative nor
-    // recoverable from a sign - so the operator has to travel with the operand.
-    // A tuple carries the pair, and the operator itself is an `enum`: there are
-    // exactly two, which is what a sum type says. Written as a `ref String` it would
-    // be one comparison away from a typo the compiler cannot see.
-    //
-    // The `match` reads the **pair**, which is ADR-137 D1's tuple pattern: this
-    // said `match step.0` and then `step.1` in each arm until the shape existed,
-    // and naming the parts twice is how a reader loses which is which.
+    // Division cannot be folded that way, so each operand travels with its
+    // operator as a pair `(Op, i64)`, and `match` takes the pair apart.
+    // `term` sits between `expr` and `factor`, which is why `*` binds tighter
+    // than `+`: precedence is the order of the rules, not a table.
     rule term -> i64 =
         head:factor tail:mul_tail* {
             let mut value = head
@@ -90,40 +58,29 @@ grammar Calc {
           "*" { Op::Times }
         | "/" { Op::Divide }
 
-    // The recursion. `expr` is reached again inside the parentheses, and the
-    // whole precedence climb starts over there - which is why `(10 - 4)` is a
-    // factor and multiplies like one.
+    // The recursion: `expr` is reached again inside the parentheses, so
+    // `(10 - 4)` is a factor and multiplies like one.
     //
-    // `# "expression"` is what this rule is called when it fails where it
-    // began. Every operand in the language bottoms out here, so `2 +` reports
-    // `expected expression` rather than the three ways an operand can start.
-    // It applies only at the rule's own starting position: `(1` got past the
-    // `(`, and the message naming the missing `)` says more (Part II, 10.6).
+    // `# "expression"` names the rule in error messages: `2 +` reports
+    // `expected expression` rather than listing every way an operand can start.
     rule factor -> i64 # "expression" =
           "(" e:expr ")" { e }
         | "-" f:factor { -f }
         | n:NUMBER { n }
 
-    // Uppercase, so this is *lexical*: no whitespace between the digits.
-    // Without that, "1 2" would be one number - the implicit skip of a
-    // syntactic rule sits between every pair of elements, digits included.
-    //
-    // `dec[i64](…)` reads the digits the pattern matched as a number, and a
-    // value `i64` cannot hold is a parse error rather than a silent wrap.
+    // An uppercase rule is *lexical*: nothing is skipped between the digits, so
+    // "1 2" is not one number. `dec[i64](…)` turns the digits into an `i64`; a
+    // number too large for one is a parse error, not a silent wrap.
     rule NUMBER -> i64 =
         n:dec[i64](digit+) { n }
 }
 
 fn main() throws {
-    // The expression to evaluate, or one that shows what this is.
+    // The expression from the command line, or an example.
     let source = cli::args().nth(1) ?? "2 + 3 * (10 - 4) / 2"
 
-    // One line: the grammar is the parser, and `dsl … from …` is how a program
-    // runs it. There is no `par_fold` here, so the compiler drives the entry
-    // rule over the whole string once instead of cutting it into pieces.
-    //
-    // `catch` turns a rejected input into a message rather than a stack trace:
-    // the parse is an expression, so its failure is a value like any other.
+    // The grammar is the parser: `Calc::expr` parses the whole string. Input it
+    // rejects is handled by `catch` like any other failure.
     let value = Calc::expr(source) catch {
         eprintln(f"{source}: {error}")
         return
