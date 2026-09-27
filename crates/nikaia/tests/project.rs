@@ -232,6 +232,68 @@ fn a_machine_the_toolchain_cannot_build_for_is_refused() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **The machine named is the machine built for** (ADR-037 D1): the triple
+/// reaches Cargo as `--target`, which is what puts Cargo's output under a
+/// directory named for it. Until 0.0.218 it was printed and never passed, so a
+/// build was for whatever machine it ran on - ARM code under the name
+/// `x86_64-linux` on an ARM machine - and this directory never appeared.
+///
+/// `CARGO_TARGET_DIR` is set here, where the other builds leave it alone,
+/// because it is the one way to know where Cargo wrote without asking it.
+#[test]
+fn the_triple_of_the_target_is_handed_to_cargo() {
+    use nikaia::emit::Target;
+
+    let host = Target::host().expect("the suite runs on a machine that is a target");
+    let dir = a_project(
+        "project-triple",
+        "[package]\nname = \"triple\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    let out = dir.join("cargo-target");
+
+    let built = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["build", "--target", host.name(), "--project"])
+        .arg(&dir)
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+        .env("CARGO_TARGET_DIR", &out)
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(built.status.success(), "{}", said(&built));
+    assert!(
+        out.join(host.triple()).is_dir(),
+        "Cargo built for `{}`, so its output is under that name in {}",
+        host.triple(),
+        out.display()
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Every target a manifest can name, and the default: the machine the compiler
+/// runs on, so that a build that names nothing needs no toolchain but its own.
+#[test]
+fn aarch64_linux_is_a_target_and_the_default_is_the_host() {
+    use nikaia::emit::Target;
+
+    let arm = Target::parse("aarch64-linux").expect("a target that exists");
+    assert_eq!(arm.triple(), "aarch64-unknown-linux-gnu");
+    assert!(arm.has_threads() && arm.has_runtime() && arm.unbuildable().is_none());
+
+    let error = Target::parse("riscv64-linux").expect_err("not a target");
+    assert!(format!("{error:#}").contains("aarch64-linux"), "{error:#}");
+
+    let dir = a_project(
+        "project-default-target",
+        "[package]\nname = \"host\"\nversion = \"0.1.0\"\n",
+        HELLO,
+    );
+    let project = Project::open(&dir, None, None).expect("the project opens");
+    assert_eq!(Some(project.settings.build.target), Target::host());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `RUSTC_WORKSPACE_WRAPPER` is applied to workspace members only, and that is
 /// the reason it was chosen over `RUSTC_WRAPPER`: a crate from crates.io is
 /// compiled by the real `rustc` with nothing in between.
@@ -391,7 +453,9 @@ fn the_manifest_becomes_a_cargo_manifest() {
         HELLO,
     );
 
-    let project = Project::open(&dir, None, None).expect("the project opens");
+    // Named, because the default is the machine this runs on and the table
+    // asserted below is `x86_64-linux`'s.
+    let project = Project::open(&dir, Some("x86_64-linux"), None).expect("the project opens");
     let members = project.members().expect("the packages resolve");
     let workspace = project
         .cargo_workspace(&members, &["fn main() {}".to_string()])

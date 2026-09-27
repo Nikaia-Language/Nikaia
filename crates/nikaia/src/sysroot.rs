@@ -208,9 +208,10 @@ impl Codegen {
 /// Lower one of `std`'s Nikaia modules to the Rust that is committed beside it.
 ///
 /// **One setting, and that is now a promise rather than an accident.** The
-/// build switches reach this as `Build::default()` - `target = x86_64-linux`,
-/// `user_parallelism = no` - whatever the consuming program is built at, because
-/// there is one compiled `std` per machine and the Nikaia half of it is lowered
+/// build switches reach this as `target = x86_64-linux` (named, not defaulted,
+/// since the default is the host) and `user_parallelism = no`, whatever the
+/// consuming program is built at, because there is one compiled `std` per
+/// machine and the Nikaia half of it is lowered
 /// once, at release time. Nobody decided that while it was a build script; it is
 /// decided now (ADR-002 D4), and it is sound for exactly as long as **nothing
 /// switch-sensitive appears in `std`'s `.nika` files**.

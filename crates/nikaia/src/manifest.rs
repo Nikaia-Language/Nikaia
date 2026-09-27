@@ -135,7 +135,7 @@ const KNOWN_CODEGEN: &[&str] = &["opt-level", "lto"];
 
 /// The machines `[build.<target>]` may name (ADR-037 D1). A table for a target
 /// that does not exist is codegen nothing will ever apply.
-const TARGETS: &[&str] = &["x86_64-linux", "wasm32-unknown"];
+const TARGETS: &[&str] = &["x86_64-linux", "aarch64-linux", "wasm32-unknown"];
 
 impl Manifest {
     /// Read the manifest governing `input`, if there is one.

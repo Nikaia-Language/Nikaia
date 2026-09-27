@@ -305,7 +305,8 @@ that only works single-threaded.
 
 ## 🚀 Getting started
 
-Linux on x86_64 is the one machine this works on today. macOS and Windows are untested.
+Linux on x86_64 and on 64-bit ARM (aarch64) are the machines this works on today; CI runs
+the whole suite on both. macOS and Windows are untested.
 
 **1. A Rust toolchain.** Stable, nothing else — `rustup` reads the channel from
 `rust-toolchain.toml` and installs it on first use. **Rust 1.88 or newer** is required:
@@ -394,7 +395,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.216.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
+**Pre-alpha, as of 0.0.218.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
