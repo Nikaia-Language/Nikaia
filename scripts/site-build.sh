@@ -120,6 +120,10 @@ bundle exec jekyll build \
   --source "$WORK" --destination "$ROOT/_site" \
   --config "$WORK/_config.yml,$WORK/_config.build.yml"
 
+# The redirects `site-prepare.py` wrote, which Cloudflare reads from the assets
+# directory. Jekyll skips every file whose name starts with `_`.
+cp "$WORK/_redirects" "$ROOT/_site/_redirects"
+
 # Nikaia code blocks, highlighted from the editor grammar.
 npm ci --prefix "$ROOT/scripts/site-highlight" --no-audit --no-fund
 node "$ROOT/scripts/site-highlight/highlight.mjs" "$ROOT/_site"
