@@ -34,8 +34,6 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-**This section is empty.**
-
 ### 1.17. A pausing step in a `par_fold` compiles and folds nothing
 
 A fold step that calls a function which may pause is neither refused nor
