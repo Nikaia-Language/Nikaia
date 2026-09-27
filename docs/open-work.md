@@ -78,6 +78,23 @@ passes the check and lowers as `let c = a + b;`, and `rustc` says *cannot add
 operator the type does not have, or a decision that `+` joins two lists (the
 text form already does, through `concat::plus`). The second is the owner's.
 
+### 1.23. A `sync` function cannot call a parameter whose type says `sync`
+
+Found at 0.0.233, working out [ADR-244](specification/adr/adr-244.md). Part I
+5.4 C says a function type written with `sync` cannot pause, and a call site
+holds a lambda to it (`NK2206` refuses a pausing lambda passed to such a
+parameter, measured). The body of the function that takes it does not read the
+same word:
+
+```nika
+pub fn apply(f: fn(i64) -> i64 sync, x: i64) -> i64 sync { return f(x) }
+```
+
+is refused with `NK2202: apply is sync, and f can pause` - the message a
+parameter *without* `sync` gets, and correctly so there. The check of the body
+does not read the `sync` on the parameter's type. Evidence:
+the line above with a `main` that calls it, built with `nikaia run` at 0.0.233.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
@@ -807,6 +824,19 @@ handle is `Held::new` since [ADR-221](specification/adr/adr-221.md) D1, which
 finds the view in the keep by address instead of trusting the caller. The
 task's packed values move onto the same shape — `Holding` over the task's
 keep. Evidence: `grep -n 'unsafe {{' crates/nikaia/src/emit/mod.rs`.
+
+### 2.47. `sync(f)` and the note that names an unpromised `sync`
+
+[ADR-244](specification/adr/adr-244.md) D2 and D4, accepted; nothing of either is
+built. D4 is the larger half: the parser takes `sync(f, …)` after a result, the
+checker allows a call to a named parameter and refuses every other pausing call
+in the body, refuses a named parameter that is kept rather than called, and
+reads a call's `sync` from the lambda given for it; the ledger writer emits the
+`sync = "from(f)"` the reader already understands. D2 is a note after the
+ledger is written: every `pub` entry that says `"inferred"`, and every one whose
+only pausing is its lambda's, named with the word to write. §1.23 is in D4's
+way for the stricter form (`f: fn(…) sync` under a plain `sync`) and not for
+`sync(f)` itself.
 
 ## 3. Upkeep
 

@@ -19,35 +19,34 @@ blocked by a question, the question comes here in that shape.
 
 ## Open
 
-### How a `pub` function writes that it pauses only when its lambda does
+### Does a consumer rely on an inferred `sync`?
 
-**What is blocked.** [ADR-244](specification/adr/adr-244.md) §3, and with it the
-rest of that record: under its D1, a consumer reads a `pub` function as *may
-pause* unless the source writes `sync`. A higher-order function that only calls
-the lambda it is handed is `sync = "from(f)"` in `std`'s hand-written ledger
-([ADR-029](specification/adr/adr-029.md) D3), but a `.nika` source has no way to
-say it, so every such `pub` function in a package would read as pausing.
+**What is blocked.** [ADR-244](specification/adr/adr-244.md) D1 and D3; D2 and
+D4 of the same record are accepted and do not wait on it.
 
-**Why it is the owner's.** It is syntax on a signature, and the language has
-been sparing with words there ([ADR-084](specification/adr/adr-084.md)).
+**The question.** A `pub` function whose body never pauses is `sync =
+"inferred"` in its ledger. A consumer in another package reads that as a
+promise today, and a later line in the body can withdraw it; the consumer finds
+out at upgrade, refused at its own line (ADR-244 §1 measures where).
 
 **Options.**
 
-1. **`sync(f)` where `sync` stands today**: `pub fn apply(f: fn(i64) -> i64, x:
-   i64) -> i64 sync(f)`. Reads as "sync, given `f` is"; it is the ledger's
-   `"from(f)"` in the source's own place for the word. Several lambdas:
-   `sync(f, g)`.
-2. **No syntax; publish `"from(f)"` when inferred.** A body whose only pausing
-   calls are to its lambda parameter is `"from(f)"`, and that crosses the
-   boundary. Cheapest, but it is exactly what ADR-244 D1 says not to do: an
-   inference published as a promise, withdrawn by the next pausing line.
-3. **Leave it unwritable.** Such functions read as pausing across the boundary,
-   which is safe; a caller in a `par_iter` or a lock cannot use them.
+1. **D1 as proposed:** across a package boundary `"inferred"` reads as *may
+   pause*; only `sync` and `sync(f)` are promises. Safe and simple to explain;
+   costs a caller in another package the use of every function its author has
+   not marked, until the author follows D2's note.
+2. **Keep reading `"inferred"` as a promise**, and rely on D2's note to get
+   authors to write the word. Nothing changes for consumers; the withdrawn
+   promise stays possible for every function whose author ignored the note.
+3. **Keep reading it as a promise, and tell the author when a `pub` entry loses
+   it** — at the change, in the author's build, naming the line that made it
+   pause. Moves *who learns it* to the author without narrowing what consumers
+   may use; the withdrawal is still published if the author commits it.
 
-**Recommendation: 1.** It is the only option that keeps D1's rule — a promise is
-what the source wrote — and it costs no new word, only a parameter list on one
-that exists. **If it is wrong,** the cost is one form to accept and ignore;
-option 3 is what happens until it is decided.
+**Recommendation: 1**, for the reason ADR-244 D1 gives: a promise is what the
+source wrote. **If it is wrong,** the cost is some `sync` words written in
+libraries that would have been inferred anyway; option 3 can be added on top of
+either answer.
 
 ### Where the connection goes when a checked statement runs
 
