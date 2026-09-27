@@ -178,7 +178,12 @@ impl Raised {
     /// `{error}` prints - the short form is the one you get without thinking,
     /// and it is the one that is safe in front of a stranger.
     pub fn full(&self) -> String {
-        let mut out = format!("{}\n  raised at {}", self.inner, self.tail.origin());
+        // An envelope put on in the box to hold a list has no site of its own,
+        // and says so as a library's error does (ADR-159 D3).
+        let mut out = match self.tail.origin() == BELOW_SITE {
+            true => format!("{}\n{BELOW}", self.inner),
+            false => format!("{}\n  raised at {}", self.inner, self.tail.origin()),
+        };
         let mut source = self.inner.source();
         while let Some(cause) = source {
             out.push_str(&format!("\n  caused by {cause}"));
@@ -497,13 +502,21 @@ impl<E> Joined for Thrown<E> {
     }
 }
 
-/// **The boxed channel joins through a downcast**, which is the price of the
-/// box rather than a shortcut: what is inside it is a [`Raised`] wherever this
-/// program raised it, and an error from below Nikaia has no envelope to hold a
-/// list. A failure that joins one of those is dropped, and that is the one case
-/// the list cannot cover — named here rather than discovered.
+/// **The boxed channel joins through a downcast**: what is inside it is a
+/// [`Raised`] wherever this program raised it into the box. An error that
+/// arrived without one - from below Nikaia, or in a callee's typed channel that
+/// a `?` put in the box - is put in one here, with no site, so what joins it is
+/// kept ([ADR-239](../../../docs/specification/adr/adr-239.md) D3: a cleanup
+/// that fails while such an error is leaving joins it rather than vanishing).
 impl Joined for Box<dyn Error> {
     fn joined_by(&mut self, later: Box<dyn Error>) {
+        if !self.is::<Raised>() {
+            let bare = std::mem::replace(self, Box::from(""));
+            *self = Box::new(Raised {
+                inner: bare,
+                tail: Tail::site(&BELOW_SITE),
+            });
+        }
         if let Some(raised) = self.downcast_mut::<Raised>() {
             raised.tail.cold_mut().secondary.push(later);
         }

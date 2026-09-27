@@ -5428,13 +5428,19 @@ impl<'p> Emitter<'p> {
             .iter()
             .filter_map(|stmt| self.settle_lets.get(&stmt.span.start).copied())
             .reduce(|a, b| a || b);
+        // **A failure is never settled away**: where a cleanup that can fail
+        // has no channel to fail into here - a lambda's body, a branch that is
+        // not wrapped, a guarded half - the value stays parked for the next
+        // settle point out, which has one (ADR-239 D3).
+        let propagates = flow.throws && !flow.caught;
         if let Some(fails) = settles
             && !flow.in_lambda
+            && (!fails || propagates)
         {
             let inner =
                 Out::scratch(|inner| self.block_plain(inner, block, depth, flow, tail, opening))?;
             let kind = self.settle_kind();
-            let settle = match fails && flow.throws && !flow.caught {
+            let settle = match fails {
                 true => format!("nikaia_std::cleanup::settle::<{kind}>().await?"),
                 false => format!("nikaia_std::cleanup::settle_quietly::<{kind}>().await"),
             };
@@ -8384,6 +8390,19 @@ impl<'p> Emitter<'p> {
                 |stmt| matches!(&stmt.node, Stmt::Expr(value) if self.branch_can_fail(value, flow)),
             ),
             Expr::Throw(_) => true,
+            // **A branch written as a block** fails where a statement in it
+            // can, and where a value it binds has a cleanup that can
+            // ([ADR-239](../../docs/specification/adr/adr-239.md) D3): the
+            // branch is where that failure belongs.
+            Expr::Block(block) => block.stmts.iter().any(|stmt| {
+                self.settle_lets.get(&stmt.span.start) == Some(&true)
+                    || match &stmt.node {
+                        Stmt::Expr(value) | Stmt::Let { value, .. } => {
+                            self.branch_can_fail(value, flow)
+                        }
+                        _ => false,
+                    }
+            }),
             Expr::Try(inner) | Expr::Unary { expr: inner, .. } => self.branch_can_fail(inner, flow),
             Expr::Binary { lhs, rhs, .. } => {
                 self.branch_can_fail(lhs, flow) || self.branch_can_fail(rhs, flow)
@@ -8492,6 +8511,21 @@ impl<'p> Emitter<'p> {
             Some(set) => self.channel_of(set, Lifetimes::ELIDED, false),
         };
 
+        // **Each branch settles what it parks, where a value with a cleanup
+        // may die in this function** ([ADR-239](../../docs/specification/adr/adr-239.md)
+        // D3, [ADR-115](../../docs/specification/adr/adr-115.md) D3): the
+        // branches run at once in one task, so each gets a queue of its own. A
+        // cleanup that fails joins **its branch's** error where the branch's
+        // channel is the box, which is where such a failure travels; elsewhere
+        // what the branch parked goes to the function's settle point.
+        let own_queue = self.settle_fns.get(flow.function).map(|&failing| {
+            let kind = self.settle_kind();
+            match failing && fallible && channel == "Box<dyn std::error::Error>" {
+                true => format!("nikaia_std::cleanup::branch_after::<{kind}, _, _, _>"),
+                false => format!("nikaia_std::cleanup::branch::<{kind}, _, _>"),
+            }
+        });
+
         let pad = "    ".repeat(depth);
         let inner = "    ".repeat(depth + 1);
         let reordered = order.iter().enumerate().any(|(at, &from)| at != from);
@@ -8538,6 +8572,9 @@ impl<'p> Emitter<'p> {
             };
             match &stmt.node {
                 Stmt::Expr(value) => {
+                    if let Some(wrapper) = &own_queue {
+                        out.push(&format!("{wrapper}(async {{ "));
+                    }
                     if fallible {
                         // **The enclosing function's channel**
                         // ([ADR-163](../../docs/specification/adr/adr-163.md)
@@ -8547,6 +8584,9 @@ impl<'p> Emitter<'p> {
                     out.from(&stmt.span, |out| self.expr(out, value, depth + 1, inside))?;
                     if fallible {
                         out.push(")");
+                    }
+                    if own_queue.is_some() {
+                        out.push(" }).await");
                     }
                 }
                 _ => {

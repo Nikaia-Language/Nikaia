@@ -378,7 +378,7 @@ itself had to be one **nothing** describes — which is
 and built through 0.0.163: a described call is asked now, and what is left of
 that record is the I/O half, §2.44 below.
 
-### 2.25. An `overlap` keeps every failure — the cleanup half
+### 2.25. An `overlap` keeps every failure — the hop half
 
 [ADR-115](specification/adr/adr-115.md) D1 and D2 are **built**
 ([ADR-170](specification/adr/adr-170.md)): every error carries the failures
@@ -389,14 +389,6 @@ envelope — was answered **A**: a body that joins puts one on.
 
 *What is left, in the record's order:*
 
-* **D3's cleanup attachment, for a branch written inline.** A branch that is
-  a call joins its cleanup's failure to its own error at the function's settle
-  point ([ADR-239](specification/adr/adr-239.md) D3), which is D3 as the
-  record wants it. A branch written as a block in place settles at the end of
-  that block only when it succeeds; when it fails, what died in it is settled
-  at the function's settle point and joins the **function's** error rather
-  than that branch's. The error it joins is readable; which branch it came
-  from is not.
 * **Whether the list survives a hop to a caller with a bare channel of its
   own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
   is written in and says so: the block, its `catch` and the function around
@@ -405,10 +397,13 @@ envelope — was answered **A**: a body that joins puts one on.
   transitive version — a derived column like `locks`, and worth its own
   measurement rather than a guess.
 
-*And one case the list cannot cover, named rather than discovered:* a failure
-that joins an error from **below** Nikaia, which has no envelope at all, is
-dropped. That is the boxed channel's downcast finding nothing, and it is the
-price of the box.
+*And what the box still costs, named rather than discovered:* an error a
+callee raised in a **typed** channel, put in the box by a `?`, loses its site
+there — `error.full()` says *no site recorded* although the callee's `throw`
+had one. What joins it is kept since 0.0.225
+([ADR-239](specification/adr/adr-239.md) D3); the site is the envelope's
+`Thrown<E>`, which the box cannot reach without knowing `E`. The fix is the
+conversion at that `?`, which the emitter would write.
 
 ### 2.28. A target without an operating system
 

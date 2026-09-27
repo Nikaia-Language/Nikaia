@@ -527,3 +527,168 @@ fn a_cleanup_the_deadline_cut_off_is_named_with_exit_70() {
         );
     }
 }
+
+const BRANCHES: &str = "use std::time\n\
+    \n\
+    enum FlushError {\n\
+    \x20   Refused(String),\n\
+    }\n\
+    \n\
+    impl Error for FlushError {\n\
+    \x20   fn message(ref self) -> String {\n\
+    \x20       match self {\n\
+    \x20           FlushError::Refused(name) => f\"{name} would not flush\"\n\
+    \x20       }\n\
+    \x20   }\n\
+    }\n\
+    \n\
+    struct Flaky {\n\
+    \x20   name: String,\n\
+    }\n\
+    \n\
+    impl Cleanup for Flaky {\n\
+    \x20   fn cleanup(ref mut self) throws {\n\
+    \x20       throw FlushError::Refused(f\"{self.name}\")\n\
+    \x20   }\n\
+    }\n\
+    \n\
+    struct Noted {\n\
+    \x20   name: String,\n\
+    }\n\
+    \n\
+    impl Cleanup for Noted {\n\
+    \x20   fn cleanup(ref mut self) {\n\
+    \x20       println(f\"cleanup {self.name}\")\n\
+    \x20   }\n\
+    }\n\
+    \n\
+    fn refuse(what: String) -> i64 throws {\n\
+    \x20   throw FlushError::Refused(what)\n\
+    }\n\
+    \n\
+    fn both() -> i64 throws {\n\
+    \x20   let pair = overlap {\n\
+    \x20       {\n\
+    \x20           let f = Flaky { name: f\"first\" }\n\
+    \x20           refuse(f\"the first branch\")\n\
+    \x20       }\n\
+    \x20       {\n\
+    \x20           let g = Flaky { name: f\"second\" }\n\
+    \x20           2\n\
+    \x20       }\n\
+    \x20   }\n\
+    \x20   return pair.0 + pair.1\n\
+    }\n\
+    \n\
+    fn quiet() -> i64 {\n\
+    \x20   let pair = overlap {\n\
+    \x20       {\n\
+    \x20           let a = Noted { name: f\"a\" }\n\
+    \x20           time::sleep(20.millis())\n\
+    \x20           println(\"a done\")\n\
+    \x20           1\n\
+    \x20       }\n\
+    \x20       {\n\
+    \x20           let b = Noted { name: f\"b\" }\n\
+    \x20           println(\"b done\")\n\
+    \x20           2\n\
+    \x20       }\n\
+    \x20   }\n\
+    \x20   return pair.0 + pair.1\n\
+    }\n\
+    \n\
+    fn main() {\n\
+    \x20   println(f\"quiet {quiet()}\")\n\
+    \x20   let n = both() catch {\n\
+    \x20       println(f\"{error.full()}\")\n\
+    \x20       0\n\
+    \x20   }\n\
+    \x20   println(f\"both {n}\")\n\
+    }\n";
+
+/// **Each `overlap` branch settles what it parks** (D3, ADR-115 D3): the
+/// branches run at once in one task, and each has a queue of its own, so a
+/// branch's values are cleaned up at its own end. A cleanup that fails while
+/// its branch is failing joins **that branch's** error, and a later branch's
+/// failure joins the winner's list after it - also where the first error
+/// arrived in the box from a callee's typed channel, which has no envelope of
+/// its own to hold a list.
+#[test]
+fn an_overlap_branch_settles_its_own_and_joins_its_own_error() {
+    for how in [Build::default(), Build::parallel()] {
+        let (out, err, ok) = ran("branches", BRANCHES, how);
+        assert!(ok, "{err}");
+        assert!(
+            out.starts_with("b done\ncleanup b\na done\ncleanup a\nquiet 3\n"),
+            "at {how:?}: {out}"
+        );
+        let first = out.find("the first branch would not flush").expect(&out);
+        let own = out
+            .find("cleaning up a `Flaky` failed: first would not flush")
+            .expect(&out);
+        let later = out
+            .find("cleaning up a `Flaky` failed: second would not flush")
+            .expect(&out);
+        assert!(first < own && own < later, "at {how:?}: {out}");
+        assert!(out.ends_with("both 0\n"), "at {how:?}: {out}");
+    }
+}
+
+const LAMBDA_FAILS: &str = "enum FlushError {\n\
+    \x20   Refused(String),\n\
+    }\n\
+    \n\
+    impl Error for FlushError {\n\
+    \x20   fn message(ref self) -> String {\n\
+    \x20       match self {\n\
+    \x20           FlushError::Refused(name) => f\"{name} would not flush\"\n\
+    \x20       }\n\
+    \x20   }\n\
+    }\n\
+    \n\
+    struct Flaky {\n\
+    \x20   name: String,\n\
+    }\n\
+    \n\
+    impl Cleanup for Flaky {\n\
+    \x20   fn cleanup(ref mut self) throws {\n\
+    \x20       throw FlushError::Refused(f\"{self.name}\")\n\
+    \x20   }\n\
+    }\n\
+    \n\
+    fn walk(xs: Vec[i64]) -> i64 throws {\n\
+    \x20   let ys: Vec[i64] = xs.iter().map(fn(x) {\n\
+    \x20       let f = Flaky { name: f\"lambda {x}\" }\n\
+    \x20       return x\n\
+    \x20   }).collect()\n\
+    \x20   return ys.len()\n\
+    }\n\
+    \n\
+    fn main() {\n\
+    \x20   let n = walk([1, 2]) catch {\n\
+    \x20       println(f\"{error.full()}\")\n\
+    \x20       0\n\
+    \x20   }\n\
+    \x20   println(f\"walked {n}\")\n\
+    }\n";
+
+/// **A failure is never settled away** (D3): a value that dies in a lambda's
+/// body has no channel to fail into there, so it stays parked, and the settle
+/// point of the function around the lambda - which has one - runs its cleanup
+/// and fails with it.
+#[test]
+fn a_cleanup_that_fails_in_a_lambda_fails_the_function_around_it() {
+    for how in [Build::default(), Build::parallel()] {
+        let (out, err, ok) = ran("lambda-fails", LAMBDA_FAILS, how);
+        assert!(ok, "{err}");
+        assert!(
+            out.contains("lambda 1 would not flush"),
+            "at {how:?}: {out}"
+        );
+        assert!(
+            out.contains("lambda 2 would not flush"),
+            "at {how:?}: {out}"
+        );
+        assert!(out.ends_with("walked 0\n"), "at {how:?}: {out}");
+    }
+}

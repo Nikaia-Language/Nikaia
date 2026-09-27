@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.225] — 2026-09-27
+
+**An `overlap` branch settles its own cleanups and joins its own error** —
+[ADR-239](docs/specification/adr/adr-239.md) D3, closing the cleanup half of
+`open-work.md` §2.25 ([ADR-115](docs/specification/adr/adr-115.md) D3).
+
+- `nikaia_std::cleanup::branch` and `branch_after`: an `overlap` branch is
+  polled with a queue of its own, so what one branch parks is not another's
+  to settle. Where the branch's channel is the box it is settled at the
+  branch's end, and a cleanup that fails while the branch is failing joins
+  that branch's error; otherwise what it parked goes to the settle point
+  around the `overlap`. A block branch counts as fallible where a value it
+  binds has a cleanup that can fail.
+- A failure is never settled away: a block whose cleanup can fail and that has
+  no channel to fail into (a lambda's body, a branch that is not wrapped)
+  writes no settle point of its own, and the next one out settles it. Such a
+  failure used to be lost.
+- `Joined for Box<dyn Error>` puts an envelope on an error that reached the box
+  without one — a library's, or a typed channel's after a `?` — so what joins
+  it is kept rather than dropped; `full()` says *no site recorded* for it, as
+  for a library's error.
+
 ## [0.0.224] — 2026-09-27
 
 **Ownership says when a value dies, and the compiler settles its cleanup

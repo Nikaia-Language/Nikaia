@@ -79,7 +79,7 @@ impl Cancelled {
 /// bounded by the `cleanup-deadline`
 /// ([ADR-006](../../../docs/specification/adr/adr-006.md) D3), and nobody waits
 /// for any of it.
-struct Cancellable<F, T, Q: TaskQueues> {
+struct Cancellable<F, T, Q: crate::cleanup::Queue> {
     body: Option<std::pin::Pin<Box<F>>>,
     slot: std::sync::Arc<crate::rt::exec::Slot<T>>,
     asked: std::sync::Arc<Cancelled>,
@@ -90,31 +90,7 @@ struct Cancellable<F, T, Q: TaskQueues> {
     queues: Q,
 }
 
-/// A task's cleanup queues, of whichever kind its setting needs.
-trait TaskQueues {
-    fn swap(&mut self);
-    fn orphan(&mut self);
-}
-
-impl TaskQueues for crate::cleanup::Queues {
-    fn swap(&mut self) {
-        crate::cleanup::Queues::swap(self)
-    }
-    fn orphan(&mut self) {
-        crate::cleanup::Queues::orphan(self)
-    }
-}
-
-impl TaskQueues for crate::cleanup::SendQueues {
-    fn swap(&mut self) {
-        crate::cleanup::SendQueues::swap(self)
-    }
-    fn orphan(&mut self) {
-        crate::cleanup::SendQueues::orphan(self)
-    }
-}
-
-impl<F: std::future::Future<Output = T>, T, Q: TaskQueues + Unpin> std::future::Future
+impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue + Unpin> std::future::Future
     for Cancellable<F, T, Q>
 {
     type Output = ();
@@ -142,7 +118,7 @@ impl<F: std::future::Future<Output = T>, T, Q: TaskQueues + Unpin> std::future::
 /// deadline, or a queue that goes with its thread - tears its values down in
 /// its own queues too, so what they park is an orphan like a cancelled task's
 /// and not a stranger's to settle (ADR-239 D5).
-impl<F, T, Q: TaskQueues> Drop for Cancellable<F, T, Q> {
+impl<F, T, Q: crate::cleanup::Queue> Drop for Cancellable<F, T, Q> {
     fn drop(&mut self) {
         if self.body.is_some() {
             self.queues.swap();
@@ -153,7 +129,7 @@ impl<F, T, Q: TaskQueues> Drop for Cancellable<F, T, Q> {
     }
 }
 
-impl<F: std::future::Future<Output = T>, T, Q: TaskQueues> Cancellable<F, T, Q> {
+impl<F: std::future::Future<Output = T>, T, Q: crate::cleanup::Queue> Cancellable<F, T, Q> {
     /// One poll of the body, with the task's own queues in place.
     fn step(&mut self, context: &mut std::task::Context<'_>) -> std::task::Poll<()> {
         if self.asked.asked.load(std::sync::atomic::Ordering::Acquire) {

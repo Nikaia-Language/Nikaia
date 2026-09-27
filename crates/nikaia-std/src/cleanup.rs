@@ -275,6 +275,8 @@ impl std::error::Error for Failure {}
 pub trait Kind {
     /// The work this kind runs.
     type Work: Future<Output = Result<(), String>> + Unpin;
+    /// The queues a task or a branch of this kind keeps of its own.
+    type Queues: Queue + Default;
     /// Everything parked in this task that this kind runs, in the order it
     /// died.
     fn taken() -> Vec<Parked<Self::Work>>;
@@ -288,6 +290,7 @@ pub struct Sent;
 
 impl Kind for Local {
     type Work = Work;
+    type Queues = Queues;
 
     fn taken() -> Vec<Parked<Work>> {
         let mut local = LOCAL
@@ -306,6 +309,7 @@ impl Kind for Local {
 
 impl Kind for Sent {
     type Work = SendWork;
+    type Queues = SendQueues;
 
     fn taken() -> Vec<Parked<SendWork>> {
         SENT.try_with(|queue| std::mem::take(&mut *queue.borrow_mut()))
@@ -345,14 +349,7 @@ where
     E: From<Failure> + crate::error::Joined,
 {
     let result = body.await;
-    match (result, settle::<K>().await) {
-        (result, Ok(())) => result,
-        (Ok(_), Err(failure)) => Err(E::from(failure)),
-        (Err(mut error), Err(failure)) => {
-            error.joined_by(E::from(failure));
-            Err(error)
-        }
-    }
+    joined(result, settle::<K>().await)
 }
 
 /// The same around a function that cannot fail. A cleanup that failed there has
@@ -367,26 +364,42 @@ pub async fn settle_with<K: Kind, T, F: Future<Output = T>>(body: F) -> T {
 
 /// **A task's own queues**, swapped in while it is polled so that what it
 /// parks is its own and what it settles is its own.
+/// **Queues of one's own** - a task's, or an `overlap` branch's - swapped in
+/// while it is polled, so that what it parks and what it settles are its own.
+pub trait Queue {
+    /// Swap these in, and what was in back here.
+    fn swap(&mut self);
+    /// **What nobody will settle**, handed to the runtime: the task is over.
+    fn orphan(&mut self);
+    /// **What the enclosing task will settle**, handed to it: the branch is
+    /// over, and what it could not settle itself goes to the settle point
+    /// around it.
+    fn hand_over(&mut self);
+}
+
 #[derive(Default)]
 pub struct Queues {
     local: Vec<Parked<Work>>,
     sent: Vec<Parked<SendWork>>,
 }
 
-impl Queues {
-    /// Swap these in, and what was in back here.
-    pub fn swap(&mut self) {
+impl Queue for Queues {
+    fn swap(&mut self) {
         let _ = LOCAL.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.local));
         let _ = SENT.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
     }
 
-    /// **What nobody will settle**, handed to the runtime: the task is over.
-    pub fn orphan(&mut self) {
+    fn orphan(&mut self) {
         let _ = LOCAL_ORPHANS.try_with(|orphans| orphans.borrow_mut().append(&mut self.local));
         SENT_ORPHANS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .append(&mut self.sent);
+    }
+
+    fn hand_over(&mut self) {
+        let _ = LOCAL.try_with(|queue| queue.borrow_mut().append(&mut self.local));
+        let _ = SENT.try_with(|queue| queue.borrow_mut().append(&mut self.sent));
     }
 }
 
@@ -397,18 +410,105 @@ pub struct SendQueues {
     sent: Vec<Parked<SendWork>>,
 }
 
-impl SendQueues {
-    /// See [`Queues::swap`].
-    pub fn swap(&mut self) {
+impl Queue for SendQueues {
+    fn swap(&mut self) {
         let _ = SENT.try_with(|queue| std::mem::swap(&mut *queue.borrow_mut(), &mut self.sent));
     }
 
-    /// See [`Queues::orphan`].
-    pub fn orphan(&mut self) {
+    fn orphan(&mut self) {
         SENT_ORPHANS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .append(&mut self.sent);
+    }
+
+    fn hand_over(&mut self) {
+        let _ = SENT.try_with(|queue| queue.borrow_mut().append(&mut self.sent));
+    }
+}
+
+/// **A branch's own queues**, handed to the enclosing task when the branch is
+/// dropped - at its end, or with the `overlap` around it - so nothing it parked
+/// is lost.
+struct Own<Q: Queue>(Q);
+
+impl<Q: Queue> Drop for Own<Q> {
+    fn drop(&mut self) {
+        self.0.hand_over();
+    }
+}
+
+/// A future polled with a branch's own queues in place.
+struct Within<'a, F, Q: Queue> {
+    body: Pin<&'a mut F>,
+    queues: &'a mut Own<Q>,
+}
+
+impl<F: Future, Q: Queue> Future for Within<'_, F, Q> {
+    type Output = F::Output;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<F::Output> {
+        let me = self.get_mut();
+        me.queues.0.swap();
+        let polled = me.body.as_mut().poll(context);
+        me.queues.0.swap();
+        polled
+    }
+}
+
+/// **An `overlap` branch with a queue of its own**
+/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D3): the branches
+/// run at once in one task, and what one of them parks is not another's to
+/// settle. What is still parked at its end goes to the settle point around the
+/// `overlap`.
+pub async fn branch<K: Kind, T, F: Future<Output = T>>(body: F) -> T {
+    let mut queues = Own(K::Queues::default());
+    let body = std::pin::pin!(body);
+    Within {
+        body,
+        queues: &mut queues,
+    }
+    .await
+}
+
+/// **The same, settled at the branch's end**, where the branch's channel can
+/// take the failure: a cleanup that fails while the branch is already failing
+/// joins **that branch's** error (ADR-115 D3), one that fails where it
+/// succeeded is its error.
+pub async fn branch_after<K: Kind, T, E, F>(body: F) -> Result<T, E>
+where
+    F: Future<Output = Result<T, E>>,
+    E: From<Failure> + crate::error::Joined,
+{
+    let mut queues = Own(K::Queues::default());
+    let result = Within {
+        body: std::pin::pin!(body),
+        queues: &mut queues,
+    }
+    .await;
+    let settled = Within {
+        body: std::pin::pin!(settle::<K>()),
+        queues: &mut queues,
+    }
+    .await;
+    joined(result, settled)
+}
+
+/// A body's result and its settle point's, as one (D3).
+fn joined<T, E: From<Failure> + crate::error::Joined>(
+    result: Result<T, E>,
+    settled: Result<(), Failure>,
+) -> Result<T, E> {
+    match (result, settled) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(failure)) => Err(E::from(failure)),
+        (Err(mut error), Err(failure)) => {
+            error.joined_by(E::from(failure));
+            Err(error)
+        }
     }
 }
 
