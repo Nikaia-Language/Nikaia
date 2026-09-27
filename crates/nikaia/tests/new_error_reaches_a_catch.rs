@@ -23,7 +23,7 @@
 use std::collections::BTreeSet;
 
 use nikaia::assets::Reads;
-use nikaia::check::{self, Finding, NewlyThrowing};
+use nikaia::check::{self, Finding, Newly};
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
 
@@ -31,7 +31,7 @@ fn findings(source: &str, newly: &[(&str, &[&str])]) -> Vec<Finding> {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's shipped ledger parses");
-    let newly: NewlyThrowing = newly
+    let newly: Newly = newly
         .iter()
         .map(|(name, errors)| {
             (
@@ -196,7 +196,7 @@ fn no_handler_in_the_repository_is_noted_without_a_change() {
             &own,
             &library,
             &BTreeSet::new(),
-            &NewlyThrowing::new(),
+            &Newly::new(),
             &Reads::none(),
         )
         .findings;

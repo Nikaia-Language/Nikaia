@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.222] — 2026-09-27
+
+**A cleanup point that moves is narrated, and a described call that fails
+compiles** — [ADR-236](docs/specification/adr/adr-236.md) and
+[ADR-237](docs/specification/adr/adr-237.md), closing `open-work.md` §2.10
+and §2.11.
+
+- `NK2403` (warning): a parameter whose `keeps` changed since the committed
+  ledger, on a type with `impl Drop` or `impl Cleanup` (directly or through a
+  field), is named at each call that hands it a name — where that name's
+  cleanup runs now. Once; committing the ledger acknowledges it.
+- A parameter put into a list or tuple literal is kept. It was lent, and
+  `rustc` met a `&Handle` where the list wanted a `Handle`.
+- **Every described fallible call failed to compile**: the checker read the
+  description's `throws` and the emitter, which read `std`'s ledger alone, did
+  not write the `?`. It reads the descriptions now, for that question only.
+- A backend error that is a boundary's shape — *is not a future*, a `?` on a
+  non-`Result`, a `Result` where none was expected — is reported as *the
+  description of `X` does not match the crate* or *the ledger of `X` does not
+  match its sources*, with the backend's words kept as a note (ADR-100 D6).
+- `check::NewlyThrowing` is `check::Newly`, carrying `throws` and `keeps`.
+
 ## [0.0.221] — 2026-09-27
 
 **`par_iter()` walks a list on every core** —

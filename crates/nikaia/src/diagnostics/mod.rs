@@ -211,6 +211,10 @@ pub struct Diagnostic {
     /// shown to the reader and written to a log, because whoever fixes the
     /// compiler needs the words the compiler below actually said.
     pub internal: Option<String>,
+    /// What the backend wrote under the caret, where it wrote anything: the
+    /// half of *mismatched types* that says which types
+    /// ([ADR-237](../../../../docs/specification/adr/adr-237.md) D2 reads it).
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +311,9 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
         let generated_line = primary
             .and_then(|s| s["line_start"].as_u64())
             .map(|l| l as usize);
+        let label = primary
+            .and_then(|s| s["label"].as_str())
+            .map(in_this_language);
         let location = primary
             .and_then(|s| s["byte_start"].as_u64())
             .and_then(|offset| map.locate(offset as usize))
@@ -332,10 +339,116 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
             generated_line,
             notes,
             internal,
+            label,
         });
     }
 
     out
+}
+
+/// **A boundary whose ledger may be stale**
+/// ([ADR-237](../../../../docs/specification/adr/adr-237.md) D2): a package
+/// this program depends on, or a Rust crate it describes, by the word a call
+/// writes in front of `::`.
+#[derive(Debug, Clone)]
+pub struct Boundary {
+    pub word: String,
+    /// A described crate, rather than a package with a ledger of its own.
+    pub described: bool,
+    /// The crate's files that changed since it was described.
+    pub moved: Vec<String>,
+}
+
+/// **A boundary mismatch the backend reports is said as a stale ledger**
+/// ([ADR-100](../../../../docs/specification/adr/adr-100.md) D6,
+/// [ADR-237](../../../../docs/specification/adr/adr-237.md) D2).
+///
+/// A program never meets a `Result` or a future: both are this compiler's
+/// lowering of `throws` and of a pause, written off what a ledger says. So
+/// where the backend says *is not a future*, *the `?` operator can only be
+/// applied to values that implement `Try`*, or names a `Result`, the lowering
+/// believed a ledger the code below does not match - and where the program
+/// calls across a boundary, that boundary's ledger is the one to name.
+///
+/// Which one: the boundary the line itself calls, else one whose sources moved
+/// since it was described, else the only one the file calls at all. Where none
+/// of the three answers, the message is left as it is - it is then this
+/// compiler's defect and is reported as the backend said it (Part III C.1).
+///
+/// The backend's own words are kept, as a note: this is a translation, and a
+/// reader who has to check it needs what it was translated from.
+pub fn a_stale_boundary(
+    diagnostic: &mut Diagnostic,
+    source: &str,
+    boundaries: &[Boundary],
+) -> bool {
+    if diagnostic.level != "error" {
+        return false;
+    }
+    let said = format!(
+        "{} {} {}",
+        diagnostic.message,
+        diagnostic.label.as_deref().unwrap_or_default(),
+        diagnostic.notes.join(" ")
+    );
+    let the_shape = said.contains("is not a future")
+        || said.contains("can only be applied to values that implement `Try`")
+        || said.contains("`Result<")
+        || said.contains("enum `Result`");
+    if !the_shape {
+        return false;
+    }
+    let called = |word: &str| format!("{word}::");
+    let on_the_line = diagnostic
+        .location
+        .as_ref()
+        .and_then(|at| source.get(at.span.clone()))
+        .and_then(|text| boundaries.iter().find(|b| text.contains(&called(&b.word))));
+    let in_the_file: Vec<&Boundary> = boundaries
+        .iter()
+        .filter(|b| source.contains(&called(&b.word)))
+        .collect();
+    let boundary = on_the_line
+        .or_else(|| in_the_file.iter().copied().find(|b| !b.moved.is_empty()))
+        .or(match in_the_file.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        });
+    let Some(boundary) = boundary else {
+        return false;
+    };
+    let word = &boundary.word;
+    let below = match &diagnostic.label {
+        Some(label) if !label.is_empty() => format!("{} - {label}", diagnostic.message),
+        _ => diagnostic.message.clone(),
+    };
+    let mut notes = vec![format!("the language below said: {below}")];
+    if !boundary.moved.is_empty() {
+        notes.push(format!(
+            "`{word}`'s {} changed since it was described",
+            boundary.moved.join(", ")
+        ));
+    }
+    match boundary.described {
+        true => {
+            diagnostic.message = format!("the description of `{word}` does not match the crate");
+            notes.push(format!(
+                "help: run `nikaia describe {word}` again, and review what changed in \
+                 `contracts/{word}.contracts` - a description is read, never checked \
+                 against the crate (ADR-104 D5)"
+            ));
+        }
+        false => {
+            diagnostic.message = format!("the ledger of `{word}` does not match its sources");
+            notes.push(format!(
+                "help: build `{word}` again - `nikaia build` without `--locked` derives its \
+                 ledger from its sources (ADR-100 D6)"
+            ));
+        }
+    }
+    notes.append(&mut diagnostic.notes);
+    diagnostic.notes = notes;
+    true
 }
 
 /// Whether a note from the backend tells the reader about **Rust** rather than
@@ -820,5 +933,74 @@ impl LineIndex {
             span,
             unit,
         }
+    }
+}
+
+#[cfg(test)]
+mod stale_boundaries {
+    use super::*;
+
+    fn an_error(message: &str, span: Span) -> Diagnostic {
+        Diagnostic {
+            level: "error".to_string(),
+            message: message.to_string(),
+            location: Some(Location {
+                line: 1,
+                column: 1,
+                span,
+                unit: 0,
+            }),
+            generated_line: None,
+            notes: Vec::new(),
+            internal: None,
+            label: None,
+        }
+    }
+
+    fn boundary(word: &str, described: bool) -> Boundary {
+        Boundary {
+            word: word.to_string(),
+            described,
+            moved: Vec::new(),
+        }
+    }
+
+    /// **The boundary the line calls is the one named**, as a package's ledger
+    /// or a crate's description, and the backend's words are kept.
+    #[test]
+    fn the_line_names_its_boundary() {
+        let source = "let n = util::count()\nlet m = fremd::drei()\n";
+        let boundaries = [boundary("util", false), boundary("fremd", true)];
+
+        let mut on_util = an_error("`i64` is not a future", 8..21);
+        assert!(a_stale_boundary(&mut on_util, source, &boundaries));
+        assert_eq!(
+            on_util.message,
+            "the ledger of `util` does not match its sources"
+        );
+        assert!(on_util.notes[0].contains("is not a future"), "{on_util:#?}");
+
+        let mut on_fremd = an_error(
+            "the `?` operator can only be applied to values that implement `Try`",
+            30..43,
+        );
+        assert!(a_stale_boundary(&mut on_fremd, source, &boundaries));
+        assert_eq!(
+            on_fremd.message,
+            "the description of `fremd` does not match the crate"
+        );
+    }
+
+    /// **Silence where the shape is not a boundary's, or no boundary is
+    /// called**: that is this compiler's own defect, said as the backend said
+    /// it.
+    #[test]
+    fn nothing_else_is_renamed() {
+        let boundaries = [boundary("fremd", true)];
+        let mut other = an_error("mismatched types", 0..5);
+        assert!(!a_stale_boundary(&mut other, "fremd::x()", &boundaries));
+        let mut unnamed = an_error("`i64` is not a future", 0..5);
+        assert!(!a_stale_boundary(&mut unnamed, "let n = 1", &boundaries));
+        assert_eq!(unnamed.message, "`i64` is not a future");
     }
 }

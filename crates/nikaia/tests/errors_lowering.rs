@@ -628,7 +628,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         // ledger, which is every build but the one after a change (ADR-101 D1).
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
-            newly: &nikaia::check::NewlyThrowing::new(),
+            newly: &nikaia::check::Newly::new(),
             // One file is the whole program here, so a `comptime` has
             // nowhere else to call into.
             beside: &[],

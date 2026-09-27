@@ -668,6 +668,18 @@ fn classify(
                 }
             }
         }
+        // **So does a list or a tuple literal every element it is given**
+        // ([ADR-236](../../../docs/specification/adr/adr-236.md) D2), for the
+        // same reason: `[h]` builds a list that holds `h`. Missing it lent the
+        // parameter, and `rustc` met a `&Handle` where the list wanted a
+        // `Handle` - about a file nobody wrote.
+        Expr::ListLit { items, .. } | Expr::Tuple(items) => {
+            for item in items {
+                if let Some(name) = part_of_a_parameter(parsed, parameters, fields, item) {
+                    uses.kept.insert(name);
+                }
+            }
+        }
         // **And three more shapes the *lowering* consumes**, which is the same
         // clause one position over: `a ?? b` is `unwrap_or_else`, `x?.f` takes
         // the value it reaches through (Part I 3.5's own Status note), and `x?`

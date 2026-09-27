@@ -857,15 +857,52 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
     check_program(parsed, own, library, &BTreeSet::new())
 }
 
-/// The errors a callee has **newly** gained since the committed ledger
-/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1), keyed by the
-/// callee's name.
+/// **What moved in a contract since the committed ledger**, keyed by the
+/// callee's name: the errors it newly throws
+/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1), and the parameters
+/// whose `keeps` changed on a type whose teardown does something
+/// ([ADR-236](../../docs/specification/adr/adr-236.md) D1).
 ///
 /// Empty for every build that has nothing to compare — a first build, a loose
 /// file, a package whose ledger is not committed yet — which is the honest
-/// answer: nothing was written against the old set, so nothing has changed for
-/// anybody.
-pub type NewlyThrowing = BTreeMap<String, Vec<String>>;
+/// answer: nothing was written against the old contract, so nothing has
+/// changed for anybody.
+#[derive(Debug, Clone, Default)]
+pub struct Newly {
+    /// The errors each callee throws now and did not.
+    pub throws: BTreeMap<String, Vec<String>>,
+    /// The parameters each callee keeps now and did not, or keeps no longer.
+    pub keeps: BTreeMap<String, Vec<Kept>>,
+}
+
+/// **A parameter whose `keeps` moved** (ADR-236 D1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// The parameter, as the callee's signature names it.
+    pub param: String,
+    /// `true` where the callee keeps it now and did not; `false` where it kept
+    /// it and only reads it now.
+    pub now: bool,
+    /// The parameter's type, whose teardown does something.
+    pub ty: String,
+}
+
+impl Newly {
+    /// Nothing moved.
+    pub fn new() -> Newly {
+        Newly::default()
+    }
+}
+
+/// A map of newly thrown errors is a `Newly` about errors alone.
+impl FromIterator<(String, Vec<String>)> for Newly {
+    fn from_iter<I: IntoIterator<Item = (String, Vec<String>)>>(items: I) -> Newly {
+        Newly {
+            throws: items.into_iter().collect(),
+            keeps: BTreeMap::new(),
+        }
+    }
+}
 
 /// The same, for one file of a program made of several.
 ///
@@ -886,7 +923,7 @@ pub fn check_program(
         own,
         library,
         modules,
-        &NewlyThrowing::new(),
+        &Newly::new(),
         &Reads::none(),
     )
 }
@@ -909,7 +946,7 @@ pub fn check_against<'a>(
     own: &'a Ledger,
     library: &'a Ledger,
     modules: &BTreeSet<String>,
-    newly: &'a NewlyThrowing,
+    newly: &'a Newly,
     // **What this build may read while it builds**
     // ([ADR-072](../../docs/specification/adr/adr-072.md)). The same shape as
     // `beside`, and for the same reason: it is a fact about the *build* that no
@@ -945,7 +982,7 @@ fn instantiations_in<'a>(
         own,
         library,
         modules,
-        &NewlyThrowing::new(),
+        &Newly::new(),
         reads,
         true,
     )
@@ -960,7 +997,7 @@ fn walked<'a>(
     own: &'a Ledger,
     library: &'a Ledger,
     modules: &BTreeSet<String>,
-    newly: &'a NewlyThrowing,
+    newly: &'a Newly,
     reads: &'a Reads,
     harvesting: bool,
 ) -> Checked {
@@ -1671,7 +1708,7 @@ pub fn propagation_against(
         own,
         &library,
         &BTreeSet::new(),
-        &NewlyThrowing::new(),
+        &Newly::new(),
         reads,
     );
     Propagation {
@@ -2165,7 +2202,7 @@ struct Checker<'a> {
     /// What each callee has **newly** gained since the committed ledger
     /// ([ADR-101](../../docs/specification/adr/adr-101.md) D1). Empty where
     /// there is nothing to compare, which says nothing.
-    newly: &'a NewlyThrowing,
+    newly: &'a Newly,
     parsed: &'a Parsed,
     /// **The program's other files**, for the one question that needs a body
     /// rather than a contract — a `comptime` calling across a file boundary.
@@ -9616,6 +9653,7 @@ impl<'a> Checker<'a> {
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
             }
+            self.a_cleanup_that_moved(key, name, want, given.get(at), span);
             // **A parameter is a use** (ADR-152 D4), and a literal handed to one
             // that takes an `Array[T, N]` **is** that array. What it changes is
             // the type the rest of this loop reads, rather than ending it: the
@@ -10296,7 +10334,7 @@ impl<'a> Checker<'a> {
         if self.guarded.is_none() {
             return;
         }
-        let Some(gained) = self.newly.get(key) else {
+        let Some(gained) = self.newly.throws.get(key) else {
             return;
         };
         let named = list(&gained.iter().map(String::as_str).collect::<Vec<_>>());
@@ -10322,6 +10360,124 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ),
         });
+    }
+
+    /// **`NK2403`: a value's cleanup moved with a contract**
+    /// ([ADR-236](../../docs/specification/adr/adr-236.md), ADR-094 D5).
+    ///
+    /// A callee that keeps what it is given runs its cleanup when it is done
+    /// with it; one that only reads it lends it, and the cleanup runs at the end
+    /// of the caller's block. The call site shows neither, which ADR-094 D5
+    /// accepts - and what it owes for that is this: when a change to the callee
+    /// moves the point, on a type whose teardown does something, every call
+    /// that hands it a name is told once.
+    ///
+    /// A **warning**, as `NK2402` is, and for its reason: the program is
+    /// correct either way, and committing the ledger diff is the
+    /// acknowledgement. Only a **name**: a temporary's cleanup was at the end of
+    /// its statement, and where inside a call that is, nobody can observe.
+    fn a_cleanup_that_moved(
+        &mut self,
+        key: &str,
+        param: &str,
+        want: &Ty,
+        given: Option<&Expr>,
+        span: &Span,
+    ) {
+        let Some(moved) = self
+            .newly
+            .keeps
+            .get(key)
+            .and_then(|all| all.iter().find(|kept| kept.param == param))
+        else {
+            return;
+        };
+        let Some(Expr::Variable(value)) = given else {
+            return;
+        };
+        let Some(how) = self.tears_down(want, &mut BTreeSet::new()) else {
+            return;
+        };
+        let value = self.parsed.text(*value).to_string();
+        let ty = &moved.ty;
+        let (message, before, help) = match moved.now {
+            true => (
+                format!(
+                    "`{key}` keeps `{param}` now, so `{value}`'s cleanup runs when `{key}` is \
+                     done with it rather than at the end of this block"
+                ),
+                format!("`{key}` only read its `{param}` when this call was written"),
+                format!(
+                    "if the cleanup belongs here, hand `{key}` a copy - `{value}.clone()` - or \
+                     have `{key}` read what it is given again"
+                ),
+            ),
+            false => (
+                format!(
+                    "`{key}` only reads `{param}` now, so `{value}`'s cleanup runs at the end \
+                     of this block rather than when `{key}` is done with it"
+                ),
+                format!("`{key}` kept its `{param}` when this call was written"),
+                format!(
+                    "if the cleanup belongs inside `{key}`, have it keep what it is given \
+                     again; otherwise nothing is to be done here"
+                ),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Warning,
+            span: span.clone(),
+            code: "NK2403",
+            message,
+            notes: vec![
+                format!("{before}, and a `{ty}` does something when it is torn down ({how})"),
+                "nothing is wrong and nothing is refused: this is the narration ADR-094 D5 \
+                 owes for a cleanup point the call does not show, and committing the ledger \
+                 diff acknowledges it - after that the note is not given again"
+                    .to_string(),
+            ],
+            help: Some(help),
+        });
+    }
+
+    /// **Whether a type's teardown does something**, and what says so
+    /// (ADR-236 D1): an `impl Drop` or an `impl Cleanup` in any ledger this
+    /// build reads, on the type or on the type of one of its fields.
+    fn tears_down(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> Option<String> {
+        let Ty::Named {
+            name, view: false, ..
+        } = ty
+        else {
+            return None;
+        };
+        let base = crate::contracts::ty::base(name).to_string();
+        if !seen.insert(base.clone()) {
+            return None;
+        }
+        for teardown in ["Drop", "Cleanup"] {
+            let written = [self.own, self.library].into_iter().any(|ledger| {
+                ledger.implementations.get(teardown).is_some_and(|types| {
+                    types.iter().any(|t| crate::contracts::ty::base(t) == base)
+                })
+            });
+            if written {
+                return Some(format!("`impl {teardown} for {base}`"));
+            }
+        }
+        let fields: Vec<Ty> = [self.own, self.library]
+            .into_iter()
+            .flat_map(|ledger| {
+                ledger
+                    .types
+                    .iter()
+                    .filter(|(key, _)| crate::contracts::ty::base(key) == base)
+                    .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
+            })
+            .collect();
+        fields.iter().find_map(|field| {
+            self.tears_down(field, seen)
+                .map(|how| format!("through its field of type `{}`, {how}", field.text()))
+        })
     }
 
     /// **`NK2206` and `NK2606`: a handler that does more than its type allows**

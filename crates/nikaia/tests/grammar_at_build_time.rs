@@ -46,7 +46,7 @@ fn findings_in(source: &str, reads: &Reads) -> Vec<Finding> {
         &own,
         &library,
         &BTreeSet::new(),
-        &check::NewlyThrowing::new(),
+        &check::Newly::new(),
         reads,
     )
     .findings

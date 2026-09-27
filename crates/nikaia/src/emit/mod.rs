@@ -767,6 +767,7 @@ pub fn emit_module_body(
         build,
         provenance,
         contracts,
+        &crate::contracts::Ledger::default(),
         false,
         &Reads::none(),
     )
@@ -787,6 +788,9 @@ pub fn emit_module_body_at(
     build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
+    // **The described crates' boundary** (ADR-237 D1), for whether a call into
+    // one can fail. Empty where the program declares none.
+    described: &crate::contracts::Ledger,
     entry: bool,
     // **And what it may read**, for the same reason one line up: the check the
     // emitter runs has to be the check that refused, or the two halves
@@ -795,6 +799,7 @@ pub fn emit_module_body_at(
 ) -> Result<Lowered> {
     Emitter::with_contracts(parsed, beside, build, provenance, contracts.clone(), reads)
         .for_entry(entry)
+        .with_described(described)
         .items_only()
 }
 
@@ -1440,6 +1445,12 @@ struct Emitter<'p> {
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
     library: crate::contracts::Ledger,
+    /// **The described crates' boundary**
+    /// ([ADR-237](../../docs/specification/adr/adr-237.md) D1). Asked one
+    /// question, whether a call into one can fail - and deliberately not
+    /// merged into `library`, whose `sync = false` means *await it*: a
+    /// described function that may block is an ordinary Rust call.
+    described: crate::contracts::Ledger,
     /// The types **this unit declares and gives an `impl Error`**
     /// ([ADR-157](../../docs/specification/adr/adr-157.md) D1).
     ///
@@ -2238,6 +2249,7 @@ impl<'p> Emitter<'p> {
         let mut made = Self {
             parsed,
             build,
+            described: crate::contracts::Ledger::default(),
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
@@ -2339,6 +2351,12 @@ impl<'p> Emitter<'p> {
     /// The same, said of a module rather than of the crate root.
     fn for_entry(mut self, entry: bool) -> Self {
         self.entry = entry;
+        self
+    }
+
+    /// What the described crates say about their boundary (ADR-237 D1).
+    fn with_described(mut self, described: &crate::contracts::Ledger) -> Self {
+        self.described = described.clone();
         self
     }
 
@@ -9395,6 +9413,11 @@ impl<'p> Emitter<'p> {
             .get(&name)
             .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
             .or_else(|| self.library.lookup(&name).map(|(_, c)| c))
+            // **And a described crate's** (ADR-237 D1): the checker made the
+            // call a place that can fail off the same entry, so the `?` is
+            // owed here - without it the crate's `Result` reached the rest of
+            // the line, and `rustc` said so about a file nobody wrote.
+            .or_else(|| self.described.functions.get(&name))
             .is_some_and(|contract| !contract.throws.is_empty())
     }
 

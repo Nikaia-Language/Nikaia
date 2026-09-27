@@ -704,7 +704,7 @@ pub fn lower_reading(
             // once for the package rather than once per unit: the question is
             // whether a *contract* moved, and a contract belongs to the
             // package.
-            let newly = newly_throwing(&layout.root, &program.contracts);
+            let newly = newly(&layout.root, &program.contracts);
             // Collected once for the whole package, because every unit is
             // checked against the same program (`ADR-030`) and a `comptime` in
             // any of them may call into any other.
@@ -742,7 +742,15 @@ pub fn lower_reading(
                 )?;
             }
 
-            let lowered = program.emit_reading(settings.build, &reads)?;
+            let lowered = {
+                // **The described crates' boundary reaches the emitter**
+                // (ADR-237 D1), which the checker above already read it for.
+                let mut program = program;
+                program.described = foreign.descriptions.clone();
+                let lowered = program.emit_reading(settings.build, &reads)?;
+                (lowered, program)
+            };
+            let (lowered, program) = lowered;
             let ledger = program.contracts.render();
 
             // **An entry nothing read** ([ADR-072](../../docs/specification/adr/adr-072.md)
@@ -992,7 +1000,7 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 #[derive(Debug, Clone, Copy)]
 pub struct Around<'a> {
     pub foreign: &'a Foreign,
-    pub newly: &'a check::NewlyThrowing,
+    pub newly: &'a check::Newly,
     /// **What this build may read while it builds**
     /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
     ///
@@ -1335,14 +1343,14 @@ fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism:
 /// answer (`ADR-100` D3's rule one file over). And a function the committed
 /// ledger does not name is **new**, so nothing was ever written against its
 /// set — a new function's whole set is not a set that grew.
-fn newly_throwing(root: &Path, inferred: &Ledger) -> check::NewlyThrowing {
+fn newly(root: &Path, inferred: &Ledger) -> check::Newly {
     let Some(committed) = std::fs::read_to_string(root.join("nikaia.contracts"))
         .ok()
         .and_then(|text| Ledger::parse(&text).ok())
     else {
-        return check::NewlyThrowing::new();
+        return check::Newly::new();
     };
-    inferred
+    let mut newly: check::Newly = inferred
         .functions
         .iter()
         .filter_map(|(name, contract)| {
@@ -1354,6 +1362,39 @@ fn newly_throwing(root: &Path, inferred: &Ledger) -> check::NewlyThrowing {
                 .cloned()
                 .collect();
             (!gained.is_empty()).then(|| (name.clone(), gained))
+        })
+        .collect();
+    newly.keeps = keeps_that_moved(&committed, inferred);
+    newly
+}
+
+/// **The parameters whose `keeps` changed**
+/// ([ADR-236](../../docs/specification/adr/adr-236.md) D1): kept now and not
+/// before, or kept before and only read now. A parameter the old signature
+/// does not have is **new** rather than moved, as a new function's set is not
+/// a set that grew. Whether the type's teardown does anything is the checker's
+/// question, which has both ledgers.
+fn keeps_that_moved(committed: &Ledger, inferred: &Ledger) -> BTreeMap<String, Vec<check::Kept>> {
+    inferred
+        .functions
+        .iter()
+        .filter_map(|(name, contract)| {
+            let before = committed.functions.get(name)?;
+            let (now, then) = (contract.signature.as_ref()?, before.signature.as_ref()?);
+            let moved: Vec<check::Kept> = now
+                .arguments()
+                .iter()
+                .filter(|(param, _)| then.arguments().iter().any(|(p, _)| p == param))
+                .filter_map(|(param, ty)| {
+                    let kept = contract.keeps.contains(param);
+                    (kept != before.keeps.contains(param)).then(|| check::Kept {
+                        param: param.clone(),
+                        now: kept,
+                        ty: ty.text(),
+                    })
+                })
+                .collect();
+            (!moved.is_empty()).then(|| (name.clone(), moved))
         })
         .collect()
 }
@@ -2065,11 +2106,18 @@ impl Project {
         // **With the packages**, or a `use` line would be read against an empty
         // set and the translation of somebody else's error would be a refusal of
         // a program that is fine.
-        let program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
+        let mut program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
         // **The same reads the build lowered under** (ADR-072, ADR-177). This
         // lowering has to be the lowering, or an item the build wrote a `const`
         // for is refused here and the backend's message never arrives.
-        let reads = reads_for(&Layout::resolve(&self.entry()), allowlist)?;
+        let layout = Layout::resolve(&self.entry());
+        let reads = reads_for(&layout, allowlist)?;
+        // …and the same descriptions (ADR-237 D1), for the same reason.
+        let foreign = match layout.in_project {
+            true => Foreign::of(&layout.root),
+            false => Foreign::default(),
+        };
+        program.described = foreign.descriptions.clone();
         let lowered = program.emit_reading(self.settings.build, &reads)?;
         let sources: Vec<&str> = program.sources();
         let paths: Vec<String> = program
@@ -2079,10 +2127,32 @@ impl Project {
             .collect();
         let generated = self.gen_dir().display().to_string();
 
-        let translated: Vec<_> = diagnostics::translate_units(messages, &lowered.map, &sources)
+        let mut translated: Vec<_> = diagnostics::translate_units(messages, &lowered.map, &sources)
             .into_iter()
             .filter(diagnostics::is_about_the_program)
             .collect();
+        // **A boundary mismatch is said as a stale ledger** (ADR-100 D6,
+        // ADR-237 D2): the packages this program depends on and the crates it
+        // describes are where a ledger the lowering believed can disagree with
+        // the code below it.
+        let boundaries: Vec<diagnostics::Boundary> = self
+            .packages()?
+            .into_iter()
+            .map(|package| diagnostics::Boundary {
+                word: package.name,
+                described: false,
+                moved: Vec::new(),
+            })
+            .chain(foreign.described.iter().map(|word| diagnostics::Boundary {
+                word: word.clone(),
+                described: true,
+                moved: foreign.moved.get(word).cloned().unwrap_or_default(),
+            }))
+            .collect();
+        for diagnostic in &mut translated {
+            let at = diagnostic.location.as_ref().map_or(0, |l| l.unit);
+            diagnostics::a_stale_boundary(diagnostic, sources[at], &boundaries);
+        }
 
         for diagnostic in &translated {
             let at = diagnostic.location.as_ref().map_or(0, |l| l.unit);

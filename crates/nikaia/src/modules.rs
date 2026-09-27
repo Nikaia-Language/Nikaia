@@ -482,6 +482,12 @@ fn shipped_ledger(root: &Path) -> Option<crate::contracts::Ledger> {
 /// A whole program: one ledger, one Rust file, one source map.
 pub struct Program {
     pub units: Vec<Unit>,
+    /// **What the manifest's described crates say about their boundary**
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1,
+    /// [ADR-237](../../../docs/specification/adr/adr-237.md) D1): read by the
+    /// emitter for one question, whether a call into one can fail. Empty
+    /// outside a project and for a project that declares no crate.
+    pub described: crate::contracts::Ledger,
     /// One ledger for the project (Part III, 13.5), with every module's entries
     /// under the name a caller writes.
     pub contracts: crate::contracts::Ledger,
@@ -595,6 +601,7 @@ impl Program {
 
         Ok(Program {
             units,
+            described: crate::contracts::Ledger::default(),
             contracts,
             as_its_own,
         })
@@ -700,6 +707,7 @@ impl Program {
                 build,
                 trust.provenance,
                 &self.contracts,
+                &self.described,
                 // The entry is the only file ADR-038 D4's generated `fn main`
                 // may be written from.
                 at == 0,

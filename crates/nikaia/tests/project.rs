@@ -2657,3 +2657,126 @@ fn a_published_parameter_takes_either_kind_from_its_package_and_its_own_from_oth
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A cleanup point the ledger moved is narrated at the call, once**
+/// ([ADR-236](../../../docs/specification/adr/adr-236.md), ADR-094 D5): the
+/// committed ledger says `look` only read its `Handle`, the edited body keeps
+/// it, and the build that records the change says where the cleanup went. The
+/// build after it says nothing: the committed ledger is the acknowledgement.
+#[test]
+fn a_moved_cleanup_point_is_narrated_once() {
+    const BEFORE: &str = "struct Handle {\n    name: String,\n}\n\n\
+        impl Drop for Handle {\n    fn drop(ref mut self) {\n        println(f\"closing {self.name}\")\n    }\n}\n\n\
+        fn look(h: Handle) -> i64 {\n    return h.name.len()\n}\n\n\
+        fn main() {\n    let h = Handle { name: f\"a\" }\n    let n = look(h)\n    println(f\"end of main {n}\")\n}\n";
+    let dir = a_project(
+        "project-cleanup-moved",
+        "[package]\nname = \"keeper\"\nversion = \"0.1.0\"\n",
+        BEFORE,
+    );
+    let first = nikaia(&["run"], &dir);
+    assert!(first.status.success(), "{}", said(&first));
+    assert!(!said(&first).contains("NK2403"), "{}", said(&first));
+    assert!(
+        String::from_utf8_lossy(&first.stdout).contains("end of main 1\nclosing a"),
+        "{}",
+        said(&first)
+    );
+
+    let after = BEFORE.replace(
+        "fn look(h: Handle) -> i64 {\n    return h.name.len()\n}",
+        "fn look(h: Handle) -> i64 {\n    let n = h.name.len()\n    let held: Vec[Handle] = [h]\n    return n + held.len() - 1\n}",
+    );
+    std::fs::write(dir.join("src/main.nika"), after).expect("edit");
+    let second = nikaia(&["run"], &dir);
+    assert!(second.status.success(), "{}", said(&second));
+    assert!(
+        said(&second).contains("warning[NK2403]: `look` keeps `h` now"),
+        "{}",
+        said(&second)
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stdout).contains("closing a\nend of main 1"),
+        "{}",
+        said(&second)
+    );
+
+    let third = nikaia(&["run"], &dir);
+    assert!(third.status.success(), "{}", said(&third));
+    assert!(!said(&third).contains("NK2403"), "{}", said(&third));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A project calling one function of a path Rust crate, `fremd::drei`, which
+/// hands back a `Result` - described by `nikaia describe` as it would be.
+fn a_project_with_a_failing_crate(purpose: &str) -> PathBuf {
+    let dir = a_project(
+        purpose,
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\nfremd = { type = \"rust\", path = \"fremd\" }\n",
+        "fn main() throws {\n    let n = fremd::drei()\n    println(f\"{n + 1}\")\n}\n",
+    );
+    std::fs::create_dir_all(dir.join("fremd/src")).expect("the crate");
+    std::fs::write(
+        dir.join("fremd/Cargo.toml"),
+        "[package]\nname = \"fremd\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("the crate's manifest");
+    std::fs::write(
+        dir.join("fremd/src/lib.rs"),
+        "pub fn drei() -> Result<i64, String> { Ok(3) }\n",
+    )
+    .expect("the crate's source");
+    let described = nikaia(&["describe", "fremd"], &dir);
+    assert!(described.status.success(), "{}", said(&described));
+    dir
+}
+
+/// **A described call that can fail is a place that can fail, in the Rust
+/// too** ([ADR-237](../../../docs/specification/adr/adr-237.md) D1). The
+/// checker read the description's `throws` and the emitter did not, so the
+/// crate's `Result` reached `n + 1` and `rustc` said so about a file nobody
+/// wrote.
+#[test]
+fn a_described_call_that_can_fail_is_propagated() {
+    let dir = a_project_with_a_failing_crate("project-described-throws");
+    let description =
+        std::fs::read_to_string(dir.join("contracts/fremd.contracts")).expect("described");
+    assert!(description.contains("throws = [\"?\"]"), "{description}");
+    let run = nikaia(&["run"], &dir);
+    assert!(run.status.success(), "{}", said(&run));
+    assert!(
+        String::from_utf8_lossy(&run.stdout).contains('4'),
+        "{}",
+        said(&run)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A boundary the backend disagrees with is said as a stale description**
+/// (ADR-100 D6, ADR-237 D2). The description is edited by hand, as D5 expects
+/// a person to, and loses `throws`: the crate's sources have not moved, so
+/// nothing refuses the build, and the lowering believes the description. What
+/// `rustc` says about the `Result` is reported as the description of `fremd`
+/// not matching the crate, with the backend's words kept beside it.
+#[test]
+fn a_boundary_mismatch_names_the_description_to_redo() {
+    let dir = a_project_with_a_failing_crate("project-stale-description");
+    let path = dir.join("contracts/fremd.contracts");
+    let description = std::fs::read_to_string(&path).expect("described");
+    std::fs::write(&path, description.replace("throws = [\"?\"]\n", "")).expect("edit");
+    let built = nikaia(&["build"], &dir);
+    assert!(!built.status.success(), "{}", said(&built));
+    let complaint = said(&built);
+    assert!(
+        complaint.contains("the description of `fremd` does not match the crate"),
+        "{complaint}"
+    );
+    assert!(complaint.contains("nikaia describe fremd"), "{complaint}");
+    assert!(
+        complaint.contains("the language below said:"),
+        "{complaint}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
