@@ -326,6 +326,13 @@ returns = "borrows(text)"
 signature = "(text: ref String) -> ?"
 doc = "The same text, with the five characters HTML reads as markup written as\nentities.\n\nWhat comes back **borrows** its argument where nothing had to change, so text\nwith no markup in it costs no allocation."
 
+[fn."html::Raw::new"]
+pub = true
+sync = true
+touches = []
+signature = "(markup: ?) -> ?"
+doc = "Promise that `markup` is already HTML: the one constructor of `html::Raw`,\nand the one line to review, because everything downstream of it trusts this\ncall."
+
 [fn."io::read"]
 pub = true
 throws = ["io::IoError"]
