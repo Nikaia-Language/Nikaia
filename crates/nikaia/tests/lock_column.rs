@@ -19,6 +19,8 @@
 //! [`contracts::send`](../../src/contracts/send.rs): not permission, and not a
 //! refusal either.
 
+mod common;
+
 use nikaia::contracts::{Ledger, Lock};
 use nikaia::parser::parse_to_ast;
 
@@ -203,8 +205,7 @@ fn the_column_renders_and_parses_back() {
 #[test]
 fn what_the_corpus_holds_is_the_prints() {
     let mut held = Vec::new();
-    for entry in std::fs::read_dir("../../examples").expect("the examples are there") {
-        let path = entry.expect("an entry").path();
+    for path in common::standalone_programs(std::path::Path::new("../../examples")) {
         if path.extension().is_none_or(|e| e != "nika") {
             continue;
         }
@@ -226,8 +227,7 @@ fn what_the_corpus_holds_is_the_prints() {
     );
     // And none of them is a lock the program itself opened: nothing in
     // `examples/` writes `SharedMut` or `Locked`.
-    for path in std::fs::read_dir("../../examples").expect("the examples are there") {
-        let path = path.expect("an entry").path();
+    for path in common::standalone_programs(std::path::Path::new("../../examples")) {
         if path.extension().is_none_or(|e| e != "nika") {
             continue;
         }

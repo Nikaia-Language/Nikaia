@@ -70,12 +70,8 @@ fn no_program_in_the_repository_keeps_a_naked_view() {
 
     for dir in ["examples", "crates/nikaia-std/src", "benches"] {
         let dir = repo_root().join(dir);
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-            .map(|entry| entry.expect("dir entry").path())
-            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("nika"))
-            .collect();
-        paths.sort();
+        let paths = common::standalone_programs(&dir);
+        assert!(!paths.is_empty(), "nothing to check in {}", dir.display());
 
         for path in paths {
             let source = std::fs::read_to_string(&path).expect("read the program");

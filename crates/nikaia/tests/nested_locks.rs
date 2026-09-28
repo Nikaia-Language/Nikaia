@@ -16,6 +16,8 @@
 //! it never pauses, so `sync` says nothing about it, and it takes standard
 //! output's own lock while yours is open. Two conditions and not one.
 
+mod common;
+
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
 
@@ -161,8 +163,7 @@ fn a_task_started_inside_a_door_is_not_the_doors_reach() {
 /// the first program that does will be the one that writes `SharedMut`.
 #[test]
 fn no_example_meets_the_rule() {
-    for entry in std::fs::read_dir("../../examples").expect("the examples are there") {
-        let path = entry.expect("an entry").path();
+    for path in common::standalone_programs(std::path::Path::new("../../examples")) {
         if path.extension().is_none_or(|e| e != "nika") {
             continue;
         }

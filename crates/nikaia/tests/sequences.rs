@@ -10,6 +10,8 @@
 //! **A container is not this.** A `Vec[T]` has its elements already, a length
 //! and an index; it is walked *as* a `Seq` by a `for` and is not one.
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -363,15 +365,7 @@ fn no_loose_program_in_the_repository_is_refused() {
 fn every_program(root: &Path) -> Vec<PathBuf> {
     let mut out = BTreeSet::new();
     for dir in [root.join("examples"), root.join("crates/nikaia-std/src")] {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|e| e == "nika") {
-                out.insert(path);
-            }
-        }
+        out.extend(common::standalone_programs(&dir));
     }
     out.into_iter().collect()
 }
