@@ -1439,6 +1439,13 @@ struct Emitter<'p> {
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
     /// around one call by `call` and read by `args`, as `hold_args` is.
     boxed_args: std::cell::RefCell<Option<Vec<bool>>>,
+    /// **The count each part of a variant was given**, set around one call by
+    /// `call` and read by `args` as `boxed_args` is (0.0.244, `open-work.md`
+    /// §1.24): a `Shared(…)` written straight into a part takes the part's
+    /// count, or the two would be an `Rc` and an `Arc` of one value.
+    variant_counts: std::cell::RefCell<Option<Vec<crate::contracts::sharing::Count>>>,
+    /// The count the next hull written takes, where its position decided it.
+    hull_count: std::cell::Cell<Option<crate::contracts::sharing::Count>>,
     /// **The arguments the compiler writes a `&mut` for**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// `lent_args` is. The third state, and the one that is a declaration
@@ -1695,6 +1702,12 @@ const SHARED_RESULT: &str = "<result>";
 
 /// The pseudo-function a `<struct>.<field>` slot is filed under, the same.
 const SHARED_FIELDS: &str = "<field>";
+
+/// The slot a part of a variant is filed under, beside a struct's
+/// `<struct>.<field>`: `E.Add#0` (0.0.244).
+fn variant_slot(owner: &str, variant: &str, at: usize) -> String {
+    format!("{owner}.{variant}#{at}")
+}
 
 /// What the program's own `main` is called in the emitted Rust.
 ///
@@ -2382,6 +2395,8 @@ impl<'p> Emitter<'p> {
             compared_views: propagation.compared_views,
             claims: propagation.claims,
             boxed_args: std::cell::RefCell::new(None),
+            variant_counts: std::cell::RefCell::new(None),
+            hull_count: std::cell::Cell::new(None),
             mut_args: propagation.mut_args,
             copied_args: propagation.copied_args,
             nullable_args: propagation.nullable_in_args,
@@ -2920,7 +2935,15 @@ impl<'p> Emitter<'p> {
                                 .enumerate()
                                 .map(|(at, t)| {
                                     let member = crate::check::boxed_member(owner, Some(at), None);
-                                    self.boxed_ty(enum_name, &member, self.ty(t, Lifetimes::NAMED))
+                                    let count = self.count_at(
+                                        SHARED_FIELDS,
+                                        &variant_slot(enum_name, owner, at),
+                                    );
+                                    self.boxed_ty(
+                                        enum_name,
+                                        &member,
+                                        self.ty_counted(t, Lifetimes::NAMED, count),
+                                    )
                                 })
                                 .collect();
                             out.push(&format!("    {name}({}),\n", parts.join(", ")));
@@ -5004,6 +5027,15 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// Whether `owner::variant` is a variant of an enum this file declares.
+    fn is_variant(&self, owner: &str, variant: &str) -> bool {
+        self.parsed.program.items.iter().any(|item| {
+            matches!(&item.node, Item::Enum { name, variants, .. }
+                if self.text(*name) == owner
+                    && variants.iter().any(|v| self.text(v.name) == variant))
+        })
+    }
+
     /// What `Shared(x)`, `SharedMut(x)` and `Locked(x)` allocate, outermost first
     /// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
     ///
@@ -7079,7 +7111,15 @@ impl<'p> Emitter<'p> {
                 let copies = self
                     .copied_reaches
                     .contains(&(flow.statement, field.clone()));
-                let lent = match copies {
+                // **And where it comes out as a view** (0.0.244, `open-work.md`
+                // §1.25): a view of the member is a view *into* the receiver,
+                // so the receiver has to be lent for it as well. `a.b?.c?.v`
+                // took `a.b` out of a lent `a` - *cannot move out of `a.b`* -
+                // and handed back a view of the value it had just moved.
+                let viewed = self
+                    .viewed_reaches
+                    .contains_key(&(flow.statement, field.clone()));
+                let lent = match copies || viewed {
                     true => ".as_ref()",
                     false => "",
                 };
@@ -8063,12 +8103,24 @@ impl<'p> Emitter<'p> {
                     self.is_boxed(owner, &crate::check::boxed_member(variant, Some(at), None))
                 })
                 .collect();
-            if mask.iter().any(|b| *b) {
+            let holds_a_hull = self.is_variant(owner, variant)
+                && args.iter().any(|arg| {
+                    matches!(arg, Expr::Call { func, .. }
+                        if matches!(func.as_ref(), Expr::Variable(name)
+                            if matches!(self.text(*name), SHARED | SHARED_MUT | LOCKED)))
+                });
+            if mask.iter().any(|b| *b) || holds_a_hull {
                 *self.boxed_args.borrow_mut() = Some(mask);
+                *self.variant_counts.borrow_mut() = Some(
+                    (0..args.len())
+                        .map(|at| self.count_at(SHARED_FIELDS, &variant_slot(owner, variant, at)))
+                        .collect(),
+                );
                 out.push(&self.path(&segments.iter().map(|s| self.text(*s)).collect::<Vec<_>>()));
                 out.push("(");
                 let written = self.args(out, variant, args, &[], depth, flow);
                 *self.boxed_args.borrow_mut() = None;
+                *self.variant_counts.borrow_mut() = None;
                 written?;
                 out.push(")");
                 return Ok(());
@@ -8206,7 +8258,12 @@ impl<'p> Emitter<'p> {
             // expands to the shape `written_name` would give the *type* - so the
             // constructor and the annotation cannot disagree about a value.
             if let [held] = args
-                && let Some(hulls) = self.hull_new(text, self.count_at(flow.function, flow.bound))
+                && let Some(hulls) = self.hull_new(
+                    text,
+                    self.hull_count
+                        .take()
+                        .unwrap_or_else(|| self.count_at(flow.function, flow.bound)),
+                )
             {
                 for path in &hulls {
                     out.push(&format!("{path}::new("));
@@ -10786,10 +10843,13 @@ impl<'p> Emitter<'p> {
         // **This call's mask and no other's**: taken here, so a call written
         // inside one of these arguments does not see it.
         let boxed_mask = self.boxed_args.borrow_mut().take();
+        let part_counts = self.variant_counts.borrow_mut().take();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 out.push(", ");
             }
+            self.hull_count
+                .set(part_counts.as_ref().and_then(|counts| counts.get(i).copied()));
             // **A part of a variant that is boxed is built in its box**
             // ([ADR-246](../../docs/specification/adr/adr-246.md) D3), around
             // everything else this argument is written with.

@@ -4364,6 +4364,58 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1117` for a function nothing declares** (0.0.244).
+    ///
+    /// `frobnicate(1)` lowered as written and `rustc` said *cannot find
+    /// function* about a file nobody wrote (Part III C.1). A call nothing
+    /// describes is left alone where it is written through a path - a package
+    /// or a crate may have it - but a **bare** name has nowhere else to come
+    /// from: a `use` brings no name in (ADR-140 D5), so it is this program's,
+    /// a value in scope, the prelude's or nothing. Everything this checker
+    /// knows declares one is asked first, so what is left is certain (C.4).
+    fn a_function_nothing_declares(&mut self, name: &str, span: &Span) {
+        let declared = self.lookup(name).is_some()
+            || self.structs.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.own.types.contains_key(name)
+            || self.modules.contains(name)
+            || self.grammars.contains_key(name)
+            || self.foreign_names.contains(name)
+            || self.variant_parts.contains_key(name)
+            || is_hull(name)
+            || MultiLock::named(name).is_some()
+            || matches!(name, "panic" | ASSET | ASSERT);
+        if declared {
+            return;
+        }
+        let mut known: Vec<&str> = self
+            .own
+            .functions
+            .keys()
+            .chain(self.library.functions.keys())
+            .filter(|key| !key.contains("::"))
+            .map(String::as_str)
+            .collect();
+        known.push("panic");
+        let help = match nearest(name, &known) {
+            Some(near) => format!("did you mean `{near}`?"),
+            None => format!("declare it with `fn {name}(…)`, or call it through the package that has it"),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1117",
+            message: format!("nothing declares a function `{name}`"),
+            notes: vec![
+                "a function called by its bare name is this program's, a value in scope or \
+                 one the prelude offers; a `use` brings no name in, so one from a package \
+                 is written with the package's name in front (Part I, 9.1)"
+                    .to_string(),
+            ],
+            help: Some(help),
+        });
+    }
+
     /// **A lookup's key is lent** (0.0.235, `open-work.md` §1.21).
     ///
     /// `m.get(k)`, `m.contains_key(k)` and a set's `contains(k)` and
@@ -10912,6 +10964,9 @@ impl<'a> Checker<'a> {
         }
 
         let Some((key, contract)) = resolved else {
+            if matches!(func, Expr::Variable(_)) {
+                self.a_function_nothing_declares(&name, span);
+            }
             // A call nothing describes is a call this compiler cannot see the
             // end of, and a thread of its own is among the things it may do
             // (ADR-038 D7). What it is handed is therefore handed across.

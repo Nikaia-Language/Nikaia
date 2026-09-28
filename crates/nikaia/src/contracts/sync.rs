@@ -487,6 +487,7 @@ fn walk_fn(
 ) {
     let Item::Fn {
         name,
+        args,
         body,
         is_sync,
         ..
@@ -497,6 +498,16 @@ fn walk_fn(
     if !*is_sync {
         return;
     }
+    // **A parameter whose type says `sync` cannot pause** (Part I 5.4 C,
+    // 0.0.244): the caller is held to it - `NK2206` refuses a pausing lambda
+    // handed to one - so a call of it here keeps the promise. Read as a call
+    // to something no ledger knows, `apply(f: fn(i64) -> i64 sync, …) sync`
+    // was refused for calling `f`.
+    let sync_code: BTreeSet<String> = args
+        .iter()
+        .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| code.is_sync))
+        .map(|arg| parsed.text(arg.name).to_string())
+        .collect();
 
     let own_name = match name {
         Some(name) => parsed.text(*name).to_string(),
@@ -507,13 +518,14 @@ fn walk_fn(
         None => own_name,
     };
 
-    walk_block(parsed, body, &caller, own, library, found);
+    walk_block(parsed, body, &caller, &sync_code, own, library, found);
 }
 
 fn walk_block(
     parsed: &Parsed,
     block: &Block,
     caller: &str,
+    sync_code: &BTreeSet<String>,
     own: &Ledger,
     library: &Ledger,
     found: &mut Vec<Violation>,
@@ -537,6 +549,12 @@ fn walk_block(
                 });
                 return;
             }
+            if let Expr::Call { func, .. } = expr
+                && let Expr::Variable(name) = func.as_ref()
+                && sync_code.contains(parsed.text(*name))
+            {
+                return;
+            }
             if let Some((callee, from_library)) = called(parsed, expr, own, library) {
                 found.push(Violation {
                     span: span.clone(),
@@ -551,7 +569,7 @@ fn walk_block(
         // A nested block is part of the same function, so its calls are the
         // same promise.
         visit_stmt_blocks(&stmt.node, &mut |inner| {
-            walk_block(parsed, inner, caller, own, library, found)
+            walk_block(parsed, inner, caller, sync_code, own, library, found)
         });
     }
 }
