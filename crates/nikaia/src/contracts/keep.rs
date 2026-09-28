@@ -600,6 +600,17 @@ impl Walk<'_> {
                 .is_some_and(|ty| {
                     matches!(self.parsed.text(ty.name), "String" | "str") && ty.generics.is_empty()
                 }),
+            // **A trimmed text is text** (0.0.252): `expr.trim().clone()` is a
+            // copy of a piece of `expr`, and holds nothing of it.
+            Expr::MethodCall {
+                receiver, method, ..
+            } if matches!(
+                self.parsed.text(*method),
+                "trim" | "trim_start" | "trim_end"
+            ) =>
+            {
+                self.copies_text(receiver)
+            }
             _ => false,
         }
     }
@@ -859,6 +870,25 @@ impl Walk<'_> {
         self.borrowing.contains(&name).then_some(name)
     }
 
+    /// Whether `Type::Variant` names a variant of an `enum` this file
+    /// declares: a value built, not a function called.
+    fn a_variant(&self, callee: &str) -> bool {
+        let Some((owner, variant)) = callee.rsplit_once("::") else {
+            return false;
+        };
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match &item.node {
+                Item::Enum { name, variants, .. } => {
+                    self.parsed.text(*name) == owner
+                        && variants.iter().any(|v| self.parsed.text(v.name) == variant)
+                }
+                _ => false,
+            })
+    }
+
     /// Whether an expression **is** a buffer rather than a view of one: a
     /// name bound to one, or its copy.
     fn is_the_buffer(&self, expr: &Expr) -> bool {
@@ -1004,8 +1034,14 @@ impl Walk<'_> {
                 let callee = callee_name(self.parsed, func);
                 let mut out = BTreeSet::new();
                 let mut arg_origins = Vec::new();
+                // **And to a variant whole**, for the same reason:
+                // `Seg::Text(text)` is the text moved into the value.
+                let variant = callee.as_deref().is_some_and(|c| self.a_variant(c));
                 for arg in args {
-                    arg_origins.push(self.origins(arg));
+                    let origins = self.origins(arg);
+                    if !(variant && self.is_the_buffer(arg)) {
+                        arg_origins.push(origins);
+                    }
                 }
                 let contract = callee
                     .as_deref()
@@ -1061,13 +1097,23 @@ impl Walk<'_> {
                 let _ = self.origins(index);
                 self.origins(base)
             }
+            // **A buffer handed to a field whole is moved there** (0.0.252),
+            // and takes nothing of this frame's along: `Seg { text }` holds
+            // the text, not a view of it. Counted as one, the `let` went into a
+            // keep and became a reference the field's `String` refused - found
+            // moving the template splitter into Nikaia.
             Expr::StructLit { fields, .. } => {
                 let mut out = BTreeSet::new();
                 for field in fields {
                     match &field.value {
+                        Some(value) if self.is_the_buffer(value) => {
+                            let _ = self.origins(value);
+                        }
                         Some(value) => out.extend(self.origins(value)),
                         None => {
-                            if let Some(l) = self.local(self.parsed.text(field.name)) {
+                            if let Some(l) = self.local(self.parsed.text(field.name))
+                                && !l.buffer
+                            {
                                 out.extend(l.origins.iter().cloned());
                             }
                         }

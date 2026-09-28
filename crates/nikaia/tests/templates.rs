@@ -100,7 +100,7 @@ fn the_scan_tracks_where_it_is() {
     let positions: Vec<Position> = with_holes
         .iter()
         .filter_map(|s| match s {
-            Segment::Hole { at, .. } => Some(*at),
+            Segment::Hole { at, .. } => Some(at.clone()),
             _ => None,
         })
         .collect();
@@ -125,7 +125,7 @@ fn a_url_attribute_is_not_a_quoted_attribute() {
         let found = segments
             .iter()
             .find_map(|s| match s {
-                Segment::Hole { at, .. } => Some(*at),
+                Segment::Hole { at, .. } => Some(at.clone()),
                 _ => None,
             })
             .expect("a hole");
@@ -249,4 +249,28 @@ fn only_the_keyword_and_a_blank_make_a_directive() {
     let segments = template::split("<form action=\"/x\">y</form>").expect("splits");
     assert_eq!(segments.len(), 1, "{segments:?}");
     assert!(matches!(segments[0], Segment::Text(_)));
+}
+
+/// **Characters, not bytes** (0.0.252): the scan keeps the last nine
+/// characters to recognise `<!--` and `</script`, and the Rust it replaced kept
+/// nine *bytes* - which cut a character outside ASCII in two and aborted on
+/// `byte index is not a char boundary`. The splitter is Nikaia now
+/// (`nikaia-std/src/tools/template.nika`), and walks characters.
+#[test]
+fn text_outside_ascii_is_scanned_by_character() {
+    let segments =
+        template::split("<p title=\"été\">ééééééééé {name}</p><!-- ü --><a href=\"{link}\">")
+            .expect("it splits");
+    let positions: Vec<Position> = segments
+        .iter()
+        .filter_map(|segment| match segment {
+            Segment::Hole { at, .. } => Some(at.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(positions, vec![Position::Text, Position::Url]);
+    assert_eq!(
+        template::literal_length(&segments),
+        "<p title=\"été\">ééééééééé </p><!-- ü --><a href=\"\">".len()
+    );
 }

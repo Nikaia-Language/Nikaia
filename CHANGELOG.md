@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.252] — 2026-09-28
+
+**The road to Stage 1, and the fifth module on it**
+([ADR-250](docs/specification/adr/adr-250.md)). ADR-001 D4 named Stage 1 -
+Nikaia compiling Nikaia - and this says how it is walked: a module at a time,
+leaves of the module graph first, the Rust module left as the adapter and the
+whole suite as the proof. **The compiler is 2.0 % Nikaia** (876 of 44,718 lines
+that say something), measured by `scripts/self_hosting.py` and drawn into a
+README badge.
+
+- **`emit::template` is Nikaia**: `nikaia-std/src/tools/template.nika`, the
+  HTML scan that decides where a template's hole sits and whether escaping can
+  make it safe (ADR-017). `Position` and `Segment` are Nikaia enums the emitter
+  matches on; the Rust module is an eighteen-line adapter. The scan walks
+  characters - the Rust it replaced kept its last nine *bytes* and aborted on a
+  character outside ASCII.
+- **Found by the move, fixed in the compiler** (ADR-250 D3):
+  - `f(self.field)` into a parameter that only borrows was `NK1131`;
+  - a name a `match` binds over a lent value had no type, so `why.clone()` in
+    an `Error`'s `message` made it a future the generated `Display` could not
+    print;
+  - a `String` moved whole into a struct literal or an enum variant was taken
+    for a view of itself and put in a keep (ADR-209), where it became a
+    reference;
+  - `.clone()` of a trimmed text was not seen as text of its own.
+- `std.contracts`: `char::is_whitespace` and `char::to_ascii_lowercase`.
+
 ## [0.0.251] — 2026-09-28
 
 **A number without an annotation is typed by its uses, and this compiler decides

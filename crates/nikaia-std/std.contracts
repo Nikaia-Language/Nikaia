@@ -1712,6 +1712,23 @@ touches = []
 signature = "(ref String, n: i64) -> String"
 doc = "The text written `n` times, one after another.\n\n`n` is an ordinary `i64`, and a negative one aborts with *a count cannot be\nnegative* rather than with anything about the language below."
 
+# **Asked for by `tools/template.nika`** (0.0.252), the HTML scan the
+# compiler's template DSL runs: a blank ends an unquoted attribute, and an
+# attribute's name is compared without its case.
+[fn."char::is_whitespace"]
+pub = true
+sync = true
+touches = []
+signature = "(char) -> bool"
+doc = "Whether the character is a blank: a space, a tab, a line end, or any other\ncharacter Unicode counts as white space."
+
+[fn."char::to_ascii_lowercase"]
+pub = true
+sync = true
+touches = []
+signature = "(char) -> char"
+doc = "The character in lower case where it is an ASCII letter, and itself\notherwise."
+
 [fn."str::starts_with"]
 pub = true
 sync = true

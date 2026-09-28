@@ -34,6 +34,7 @@ WIDTHS = {
     **dict.fromkeys("cksvxyz", 6.0),
     "e": 6.6, "f": 3.9, "i": 3.0, "j": 3.8, "l": 3.0, "m": 10.7, "r": 4.7,
     "t": 4.3, "w": 9.0, " ": 3.9, ".": 3.9, "-": 4.9, "/": 4.9, "+": 9.0,
+    "%": 12.0,
 }
 
 
@@ -80,9 +81,18 @@ def version():
     return found.group(1)
 
 
+def self_hosted():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.dont_write_bytecode = True
+    import self_hosting
+
+    return self_hosting.share_text()
+
+
 def badges():
     return {
         "version.svg": badge("version", version(), BLUE),
+        "self-hosted.svg": badge("self-hosted", self_hosted(), ORANGE),
         "status.svg": badge("status", "specification + bootstrap", ORANGE),
         "license.svg": badge("license", "Apache 2.0", BLUE),
         "docs.svg": badge("docs", "nikaia-lang.org", BLUE),

@@ -12,50 +12,161 @@ toolchain = "nikaia 0.1.0"
 inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 [sources]
-"rust.nika" = "3a98629ba29f7a4782db753c79fff7e77381c754837b03aec1da023056bf2f19"
+"template.nika" = "ac8a01f6695414deedf8846f33bfe19d55d6baa46d7410b993c75432b29c2a4b"
 
-[fn."Rust::file"]
+[fn."Position::escapable"]
 pub = true
 sync = true
-throws = ["ParseError"]
-keeps = ["input"]
-locks = "?"
+keeps = ["self"]
 touches = []
-views = ["input: borrowed", "<result>: borrowed"]
-signature = "(input: ?) -> Vec[Item]"
+signature = "(ref Position) -> bool"
+doc = "Whether escaping for this position is something `html::escape` can do."
 
-[fn."joined"]
+[fn."Position::name"]
+pub = true
+sync = true
+returns = "borrows(self)"
+keeps = ["self"]
+touches = []
+views = ["<result>: borrowed"]
+signature = "(ref Position) -> ref String"
+doc = "The position, as a sentence says it."
+
+[fn."Position::why"]
+pub = true
+sync = true
+returns = "borrows(self)"
+keeps = ["self"]
+touches = []
+views = ["<result>: borrowed"]
+signature = "(ref Position) -> ref String"
+doc = "What the error says, and what it suggests instead."
+
+[fn."Refused::message"]
+keeps = ["self"]
+locks = "?"
+signature = "(ref Refused) -> String"
+
+[fn."Scan::ended_with"]
+sync = true
+touches = []
+views = ["word: borrowed"]
+signature = "(ref Scan, word: ref String) -> bool"
+
+[fn."Scan::feed"]
+sync = true
+keeps = ["c"]
+mutates = true
+touches = []
+signature = "(ref Scan, c: char)"
+
+[fn."Scan::in_a_tag"]
+sync = true
+keeps = ["c"]
+mutates = true
+touches = []
+signature = "(ref Scan, c: char)"
+
+[fn."Scan::position"]
+sync = true
+touches = []
+signature = "(ref Scan) -> Position"
+
+[fn."Scan::saw"]
+sync = true
+touches = []
+views = ["word: borrowed"]
+signature = "(ref Scan, word: ref String) -> bool"
+
+[fn."Splitter::here"]
+sync = true
+touches = []
+views = ["word: borrowed"]
+signature = "(ref Splitter, word: ref String) -> bool"
+
+[fn."Splitter::loop_header"]
 sync = "inferred"
-keeps = ["pieces"]
-locks = "?"
+throws = ["Refused"]
+mutates = true
 touches = []
-views = ["pieces: borrowed", "<result>: borrowed"]
-signature = "(pieces: Vec[Called]) -> Vec[ref String]"
+signature = "(ref Splitter) -> (String, String)"
 
-[fn."kept"]
+[fn."Splitter::until"]
 sync = "inferred"
-keeps = ["found"]
-locks = "?"
+throws = ["Refused"]
+keeps = ["self"]
+mutates = true
 touches = []
-views = ["found: borrowed", "<result>: borrowed"]
-signature = "(found: Vec[Found]) -> Vec[Item]"
+signature = "(ref Splitter, inside: bool) -> Vec[Segment]"
 
-[type."Fun"]
-pub = true
-fields = ["pub name: ref String", "pub generics: ref String", "pub calls: Vec[ref String]", "pub wheres: ref String", "pub pauses: bool", "pub parts: Vec[Part]", "pub result: ref String"]
-tethered = ["name", "generics", "calls", "wheres", "parts", "result"]
+[fn."blank"]
+sync = true
+keeps = ["c"]
+touches = []
+signature = "(c: char) -> bool"
 
-[type."Group"]
+[fn."illegal"]
 pub = true
-fields = ["pub what: ref String", "pub name: ref String", "pub via: ref String", "pub visible: bool", "pub items: Vec[Item]"]
-tethered = ["what", "name", "via", "items"]
+sync = true
+locks = "?"
+views = ["segments: borrowed"]
+signature = "(segments: ref Vec[Segment]) -> Vec[(String, Position)]"
+doc = "Every hole that is somewhere escaping cannot make safe, with what to say.\n\nThrough a loop's body as well: what is legal inside one is what is legal\noutside, and a hole in a `<script>` does not become safe by being repeated."
 
-[type."Part"]
+[fn."illegal_message"]
 pub = true
-fields = ["pub name: ref String", "pub ty: ref String"]
-tethered = ["name", "ty"]
+sync = true
+touches = []
+views = ["expr: borrowed", "at: borrowed"]
+signature = "(expr: ref String, at: ref Position) -> String"
+doc = "The message for one of them."
 
-[type."Rec"]
+[fn."literal_length"]
 pub = true
-fields = ["pub what: ref String", "pub name: ref String", "pub parts: Vec[Part]"]
-tethered = ["what", "name", "parts"]
+sync = true
+locks = "?"
+views = ["segments: borrowed"]
+signature = "(segments: ref Vec[Segment]) -> i64"
+doc = "The literal bytes a template writes, whatever its holes turn out to be.\n\nA **floor** on the result's length: every hole and every turn of a `<for>`\nadds to it and none of them subtracts, so a `String` that starts this size\nnever reserves more than it uses (ADR-178 §1). A `<for>` body counts\n**once**: the compiler knows what the body is and not how many elements the\ncollection has."
+
+[fn."quoted"]
+sync = true
+keeps = ["attribute"]
+touches = []
+views = ["attribute: borrowed"]
+signature = "(attribute: ref String) -> Position"
+
+[fn."split"]
+pub = true
+sync = "inferred"
+throws = ["Refused"]
+touches = []
+views = ["body: borrowed"]
+signature = "(body: ref String) -> Vec[Segment]"
+doc = "Split a template body into text and holes, deciding each hole's position.\n\nThe scan is a small HTML state machine over the *literal* text only: a hole\ncontributes nothing to it, because what a hole expands to is escaped and\ntherefore cannot open a tag, close a string, or start a comment."
+
+[impl."Error for Refused"]
+
+[type."Position"]
+pub = true
+variants = ["Text", "QuotedAttribute", "Url", "UnquotedAttribute", "Script", "Style", "Comment"]
+doc = "Where in the markup a hole sits, which decides whether it may be there."
+
+[type."Refused"]
+pub = true
+variants = ["Because(String)"]
+doc = "Why a template is refused, in the words the compiler reports."
+
+[type."Scan"]
+fields = ["state: State", "tail: Vec[char]", "attribute: String"]
+
+[type."Segment"]
+pub = true
+variants = ["Text(String)", "Hole { expr: String, at: Position }", "For { binding: String, collection: String, body: Vec[Segment] }"]
+doc = "One piece of a compiled template."
+
+[type."Splitter"]
+fields = ["c: Vec[char]", "at: i64", "scan: Scan"]
+
+[type."State"]
+variants = ["Text", "Tag", "Equals", "Quoted(char)", "Unquoted", "Script", "Style", "Comment"]

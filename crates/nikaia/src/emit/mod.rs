@@ -4939,7 +4939,7 @@ impl<'p> Emitter<'p> {
         if !illegal.is_empty() {
             let mut message = String::from("the template has holes escaping cannot make safe\n");
             for (expr, at) in &illegal {
-                message.push_str(&format!("  {}\n", template::illegal_message(expr, *at)));
+                message.push_str(&format!("  {}\n", template::illegal_message(expr, at)));
             }
             return Err(crate::diagnostics::refuse(message));
         }

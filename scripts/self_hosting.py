@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""How much of the compiler is written in Nikaia (ADR-250 D4).
+
+Stage 1 of ADR-001 D4 is Nikaia compiling Nikaia, and ADR-250 reaches it a
+module at a time. This counts where the road stands: the lines of the
+toolchain that are Rust (`crates/nikaia/src`), the lines that are Nikaia (the
+`.nika` files under `crates/nikaia-std/src/tools/` the toolchain calls), and the
+share of the second in both.
+
+A line is one that says something: blank lines and lines that are only a
+comment are not counted in either language, so a well-commented module does
+not move the number and a moved one is measured by its code.
+
+Usage:
+    scripts/self_hosting.py           print the table and the share
+    scripts/self_hosting.py --share   print the share alone, as `N.N %`
+"""
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+RUST = ROOT / "crates" / "nikaia" / "src"
+TOOLS = ROOT / "crates" / "nikaia-std" / "src" / "tools"
+
+# The toolchain's Nikaia, and the Rust module each one took the place of or
+# serves. `http1.nika` is in the same directory and is not here: it is `std`'s
+# HTTP server, which a program runs, and not a piece of the compiler.
+COMPILER_NIKA = {
+    "spelling.nika": "check: *did you mean* (0.0.238)",
+    "dsl.nika": "dsl: a body's parameters (0.0.248)",
+    "rust.nika": "describe: reading a crate's Rust (ADR-195)",
+    "fixed.nika": "fixed: FNV-1a and CHD (0.0.250)",
+    "template.nika": "emit::template: the HTML scan (0.0.252)",
+}
+
+
+def code_lines(path):
+    count = 0
+    block = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if block:
+            if "*/" in stripped:
+                block = False
+            continue
+        if not stripped or stripped.startswith("//"):
+            continue
+        if stripped.startswith("/*"):
+            block = "*/" not in stripped
+            continue
+        count += 1
+    return count
+
+
+def measure():
+    rust = sum(code_lines(p) for p in sorted(RUST.rglob("*.rs")))
+    nika = {name: code_lines(TOOLS / name) for name in COMPILER_NIKA}
+    total = rust + sum(nika.values())
+    share = 100.0 * sum(nika.values()) / total if total else 0.0
+    return rust, nika, share
+
+
+def share_text():
+    return f"{measure()[2]:.1f} %"
+
+
+def main():
+    rust, nika, share = measure()
+    if "--share" in sys.argv[1:]:
+        print(f"{share:.1f} %")
+        return
+    print(f"{'Rust, crates/nikaia/src':<44} {rust:>7}")
+    for name, what in COMPILER_NIKA.items():
+        print(f"{'Nikaia, ' + name:<44} {nika[name]:>7}   {what}")
+    print(f"{'Nikaia in all':<44} {sum(nika.values()):>7}   {share:.1f} % of the toolchain")
+
+
+if __name__ == "__main__":
+    main()

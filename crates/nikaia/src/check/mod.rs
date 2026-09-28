@@ -8912,9 +8912,24 @@ impl<'a> Checker<'a> {
                     // **Over a place this function owns, a part is lent**
                     // (ADR-242): the bindings are typed from the
                     // variant, so that what the arm keeps is seen as kept.
-                    let parts = match lendable {
-                        true => self.pattern_parts(&arm.pattern, &typed),
-                        false => BTreeMap::new(),
+                    // **Over a value the `match` was lent, a part is a view
+                    // of it** (0.0.252), and a number is its copy: `why` in
+                    // `Refused::Because(why)` over a `ref self` is a view of
+                    // text. Untyped, `why.clone()` was a method on nothing
+                    // known, and a function that called one could not be
+                    // `sync` - found moving the template splitter into Nikaia,
+                    // where it made an `Error`'s `message` a future.
+                    let parts = match (lendable, typed.is_a_view()) {
+                        (true, _) => self.pattern_parts(&arm.pattern, &typed),
+                        (false, true) => self
+                            .pattern_parts(&arm.pattern, &typed)
+                            .into_iter()
+                            .map(|(name, ty)| match copies(&ty) {
+                                true => (name, ty),
+                                false => (name, view_of(&ty)),
+                            })
+                            .collect(),
+                        (false, false) => BTreeMap::new(),
                     };
                     // **A number bound out of a value the `match` was lent**
                     // is copied out at the head of the arm (0.0.236): the
@@ -18309,7 +18324,14 @@ impl<'a> Checker<'a> {
                     }
                 }
                 _ => {
-                    self.a_field_of_a_borrowed_subject(arg, span, "passed");
+                    // **A parameter that only borrows takes nothing out of
+                    // `self`** (0.0.252): `quoted(self.attribute)` into
+                    // `attribute: ref String` is lent, which is what the
+                    // subject's own loan allows. Found moving the template
+                    // splitter into Nikaia.
+                    if !expected.get(at).is_some_and(Ty::is_a_view) {
+                        self.a_field_of_a_borrowed_subject(arg, span, "passed");
+                    }
                     let found = self.expr(arg, span);
                     // **A kept value handed to a parameter that only runs
                     // it** is lent as the closure it holds.

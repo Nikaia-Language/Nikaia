@@ -17,6 +17,7 @@
 
   <img src="assets/badges/version.svg" alt="Version" />
   <img src="assets/badges/status.svg" alt="Status" />
+  <img src="assets/badges/self-hosted.svg" alt="Self-hosted share of the compiler" />
   <img src="assets/badges/license.svg" alt="License" />
   <a href="https://nikaia-lang.org/"><img src="assets/badges/docs.svg" alt="Documentation site" /></a>
   <a href="https://github.com/Nikaia-Language/Nikaia"><img src="assets/badges/github.svg" alt="GitHub repository" /></a>

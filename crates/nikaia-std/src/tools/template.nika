@@ -1,0 +1,481 @@
+// crates/nikaia-std/src/tools/template.nika
+//
+// **The `html` template DSL (ADR-017), split where the template is written.**
+//
+// The fifth piece of the compiler moved from Rust to Nikaia (0.0.252), by
+// ADR-196's route and on ADR-250's road: lowered ahead of time by
+// `nikaia lower-std` to `template.rs` beside it, `include!`d as
+// `nikaia_std::tools::template`, and called from the compiler's
+// `emit::template`, which is left holding the conversion to its own error type.
+//
+// A template is not parsed at run time: the body is known when the program is
+// compiled, so it is split into literal text and holes here, and what comes out
+// is the string building a hand-written renderer would do. That is what makes
+// the escaping contract a *compile-time* property rather than a call somebody
+// has to remember.
+//
+// * **D1, every hole escaped, unconditionally.** There is no flag at a hole and
+//   no way to ask for the other behaviour - the emitted code always goes
+//   through `html::Render`.
+// * **D3, a hole is only legal in a position the grammar can escape *for*.**
+//   "Escaped" is not one operation: a `<script>` body, a URL, an unquoted
+//   attribute and a CSS block each need something else. A hole in one of those
+//   is an error naming the position, which is what lets D1 be unconditional.
+// * **D2, the one way to say "already markup" is a type**, and `rustc` acts on
+//   it through `html::Render`; nothing here needs to know which it is.
+//
+// **Characters, not bytes.** The Rust this replaces walked the body by byte and
+// kept the last nine *bytes* of it to recognise `<!--` and `</script`, which
+// cut a character outside ASCII in two. This keeps nine characters.
+
+/// Where in the markup a hole sits, which decides whether it may be there.
+pub enum Position {
+    /// Between tags. Escaping the five characters is the whole answer.
+    Text,
+    /// Inside `"…"` or `'…'` in a tag, on an attribute that is not a URL.
+    QuotedAttribute,
+    /// Inside a quoted attribute whose name takes a URL.
+    Url,
+    /// In a tag but not inside quotes.
+    UnquotedAttribute,
+    /// Inside `<script>…</script>`.
+    Script,
+    /// Inside `<style>…</style>`.
+    Style,
+    /// Inside `<!-- … -->`.
+    Comment,
+}
+
+impl Position {
+    /// Whether escaping for this position is something `html::escape` can do.
+    pub fn escapable(ref self) -> bool sync {
+        return match self {
+            Position::Text => true
+            Position::QuotedAttribute => true
+            else => false
+        }
+    }
+
+    /// What the error says, and what it suggests instead.
+    pub fn why(ref self) -> ref String sync {
+        return match self {
+            Position::Url => "a URL needs percent-encoding and a scheme check, not HTML escaping: `javascript:` survives every one of the five characters"
+            Position::UnquotedAttribute => "an unquoted attribute value ends at the first blank, so a space in the value starts a new attribute - quote it and the hole is legal"
+            Position::Script => "a `<script>` body is JavaScript, where `&lt;` is not `<` and `</script>` inside a string still ends the element"
+            Position::Style => "a CSS block needs CSS escaping, which is a different table"
+            Position::Comment => "a comment ends at the first `-->`, and escaping does not produce or remove one"
+            else => ""
+        }
+    }
+
+    /// The position, as a sentence says it.
+    pub fn name(ref self) -> ref String sync {
+        return match self {
+            Position::Text => "a text node"
+            Position::QuotedAttribute => "a quoted attribute value"
+            Position::Url => "a URL attribute"
+            Position::UnquotedAttribute => "an unquoted attribute value"
+            Position::Script => "a `<script>` body"
+            Position::Style => "a `<style>` block"
+            Position::Comment => "an HTML comment"
+        }
+    }
+}
+
+/// One piece of a compiled template.
+pub enum Segment {
+    /// Markup the template wrote itself, which is markup by definition.
+    Text(String),
+    /// `{ … }`: a Nikaia expression, and where it sits.
+    Hole { expr: String, at: Position },
+    /// `<for row in :rows> … </for>`: the body, once per element.
+    ///
+    /// Written as an *element* because the file is markup and an editor that
+    /// highlights it keeps working. The collection carries `:` because it is
+    /// captured from the enclosing scope (ADR-007 D4) - the colon is where the
+    /// template's names end and the program's begin.
+    For { binding: String, collection: String, body: Vec[Segment] },
+}
+
+/// Why a template is refused, in the words the compiler reports.
+pub enum Refused {
+    Because(String),
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return match self {
+            Refused::Because(why) => why.clone()
+        }
+    }
+}
+
+/// The literal bytes a template writes, whatever its holes turn out to be.
+///
+/// A **floor** on the result's length: every hole and every turn of a `<for>`
+/// adds to it and none of them subtracts, so a `String` that starts this size
+/// never reserves more than it uses (ADR-178 §1). A `<for>` body counts
+/// **once**: the compiler knows what the body is and not how many elements the
+/// collection has.
+pub fn literal_length(segments: ref Array[Segment]) -> i64 sync {
+    let mut total = 0
+    for segment in segments {
+        match segment {
+            Segment::Text(text) => {
+                total += text.len()
+            }
+            Segment::For { body, .. } => {
+                total += literal_length(body)
+            }
+            // What a hole expands to is a value at run time, and escaping can
+            // only make it longer. Zero is the floor.
+            else => {}
+        }
+    }
+    return total
+}
+
+/// Split a template body into text and holes, deciding each hole's position.
+///
+/// The scan is a small HTML state machine over the *literal* text only: a hole
+/// contributes nothing to it, because what a hole expands to is escaped and
+/// therefore cannot open a tag, close a string, or start a comment.
+pub fn split(body: ref String) -> Vec[Segment] throws {
+    let mut splitter = Splitter {
+        c: body.chars().collect(),
+        at: 0,
+        scan: Scan { state: State::Text, tail: [], attribute: "" },
+    }
+    let segments = splitter.until(false)
+    if splitter.at < splitter.c.len() {
+        throw Refused::Because("`</for>` without a `<for …>` before it")
+    }
+    return segments
+}
+
+/// Every hole that is somewhere escaping cannot make safe, with what to say.
+///
+/// Through a loop's body as well: what is legal inside one is what is legal
+/// outside, and a hole in a `<script>` does not become safe by being repeated.
+pub fn illegal(segments: ref Array[Segment]) -> Vec[(String, Position)] sync {
+    let mut found: Vec[(String, Position)] = []
+    for segment in segments {
+        match segment {
+            Segment::Hole { expr, at } => {
+                if !at.escapable() {
+                    found.push((expr.clone(), at.clone()))
+                }
+            }
+            Segment::For { body, .. } => {
+                for inner in illegal(body) {
+                    found.push(inner)
+                }
+            }
+            else => {}
+        }
+    }
+    return found
+}
+
+/// The message for one of them.
+pub fn illegal_message(expr: ref String, at: ref Position) -> String sync {
+    let name = at.name()
+    let why = at.why()
+    return f"`{{{expr}}}` is in {name}, which this template cannot escape for\n     = {why}\n     = every hole is escaped, every time, and a position where that is not enough is an error rather than a promise that quietly does not hold (ADR-017 D1, D3)"
+}
+
+// The body as characters, how far it has been read, and the markup around the
+// place it has got to.
+struct Splitter {
+    c: Vec[char],
+    at: i64,
+    scan: Scan,
+}
+
+impl Splitter {
+    // The segments from here up to `</for>` inside a loop, or the end at the
+    // top, leaving `at` past the terminator it stopped on.
+    //
+    // The HTML scan is threaded through rather than restarted per level: a
+    // `<for>` is not markup, so a loop written inside a `<table>` is still
+    // inside it, and a hole in the loop's body is in the position the
+    // surrounding markup put it.
+    fn until(ref mut self, inside: bool) -> Vec[Segment] throws {
+        let mut segments: Vec[Segment] = []
+        let mut text: String = ""
+        while self.at < self.c.len() {
+            if self.here("</for>") {
+                if inside {
+                    self.at += 6
+                    if text.len() > 0 {
+                        segments.push(Segment::Text(text))
+                    }
+                    return segments
+                }
+                return segments
+            }
+            if self.here("<for") && self.at + 4 < self.c.len() && blank(self.c[self.at + 4]) {
+                let (binding, collection) = self.loop_header()
+                if text.len() > 0 {
+                    segments.push(Segment::Text(text))
+                    text = ""
+                }
+                let body = self.until(true)
+                segments.push(Segment::For { binding, collection, body })
+                continue
+            }
+            let c = self.c[self.at]
+            let next = self.at + 1 < self.c.len()
+            if c == '{' && next && self.c[self.at + 1] == '{' {
+                text.push('{')
+                self.at += 2
+            } else if c == '}' && next && self.c[self.at + 1] == '}' {
+                text.push('}')
+                self.at += 2
+            } else if c == '{' {
+                let position = self.scan.position()
+                let mut close = self.at + 1
+                while close < self.c.len() && self.c[close] != '}' {
+                    close += 1
+                }
+                if close == self.c.len() {
+                    let at = self.at
+                    throw Refused::Because(f"unclosed `{{` in the template, at character {at}")
+                }
+                let mut expr: String = ""
+                for k in self.at + 1..<close {
+                    expr.push(self.c[k])
+                }
+                if text.len() > 0 {
+                    segments.push(Segment::Text(text))
+                    text = ""
+                }
+                segments.push(Segment::Hole { expr: expr.trim().clone(), at: position })
+                self.at = close + 1
+            } else {
+                self.scan.feed(c)
+                text.push(c)
+                self.at += 1
+            }
+        }
+        if inside {
+            throw Refused::Because("a `<for …>` in the template is never closed")
+        }
+        if text.len() > 0 {
+            segments.push(Segment::Text(text))
+        }
+        return segments
+    }
+
+    // Whether the body goes on with these characters from here.
+    fn here(ref self, word: ref String) -> bool sync {
+        let mut k = self.at
+        for w in word.chars() {
+            if k >= self.c.len() || self.c[k] != w {
+                return false
+            }
+            k += 1
+        }
+        return true
+    }
+
+    // `<for name in :collection>` from here, which the caller has seen begin:
+    // the two names, with `at` moved past the `>`.
+    fn loop_header(ref mut self) -> (String, String) throws {
+        let mut close = self.at
+        while close < self.c.len() && self.c[close] != '>' {
+            close += 1
+        }
+        if close == self.c.len() {
+            throw Refused::Because("`<for` in the template is never closed with `>`")
+        }
+        let mut header: String = ""
+        for k in self.at + 4..<close {
+            header.push(self.c[k])
+        }
+        self.at = close + 1
+        let mut words: Vec[String] = []
+        for word in header.split_whitespace() {
+            words.push(word.clone())
+        }
+        if words.len() != 3 || words[1] != "in" {
+            throw Refused::Because(f"a template loop is written `<for name in :collection>`, not `<for{header}>`")
+        }
+        let binding = words[0].clone()
+        let written = words[2].clone()
+        if !written.starts_with(":") {
+            throw Refused::Because(f"`{written}` is captured from the enclosing scope, so it is written `:{written}` - the colon is where the template's names end and the program's begin (ADR-007 D4)")
+        }
+        let mut collection: String = ""
+        let mut first = true
+        for ch in written.chars() {
+            if !first {
+                collection.push(ch)
+            }
+            first = false
+        }
+        return (binding, collection)
+    }
+}
+
+// The HTML state machine, over literal text.
+struct Scan {
+    state: State,
+    // The last nine characters, lower-cased, for the markers that are longer
+    // than one.
+    tail: Vec[char],
+    // The attribute name currently being given a value, lower-cased.
+    attribute: String,
+}
+
+enum State {
+    Text,
+    Tag,
+    // After `=` in a tag, before the value starts.
+    Equals,
+    Quoted(char),
+    Unquoted,
+    Script,
+    Style,
+    Comment,
+}
+
+impl Scan {
+    fn position(ref self) -> Position sync {
+        return match self.state {
+            State::Text => Position::Text
+            State::Script => Position::Script
+            State::Style => Position::Style
+            State::Comment => Position::Comment
+            State::Quoted(_) => quoted(self.attribute)
+            else => Position::UnquotedAttribute
+        }
+    }
+
+    // Whether the last characters read are these.
+    fn ended_with(ref self, word: ref String) -> bool sync {
+        let tail: String = self.tail.iter().collect()
+        return tail.ends_with(word)
+    }
+
+    // Whether these characters are among the last ones read.
+    fn saw(ref self, word: ref String) -> bool sync {
+        let tail: String = self.tail.iter().collect()
+        return tail.contains(word)
+    }
+
+    fn feed(ref mut self, c: char) sync {
+        self.tail.push(c.to_ascii_lowercase())
+        if self.tail.len() > 9 {
+            let mut kept: Vec[char] = []
+            for k in self.tail.len() - 9..<self.tail.len() {
+                kept.push(self.tail[k])
+            }
+            self.tail = kept
+        }
+        match self.state {
+            State::Text => {
+                if self.ended_with("<!--") {
+                    self.state = State::Comment
+                } else if c == '<' {
+                    self.state = State::Tag
+                    self.attribute = ""
+                }
+            }
+            State::Comment => {
+                if self.ended_with("-->") {
+                    self.state = State::Text
+                }
+            }
+            State::Quoted(quote) => {
+                if c == quote {
+                    self.state = State::Tag
+                    self.attribute = ""
+                }
+            }
+            State::Script => {
+                if self.ended_with("</script") {
+                    self.state = State::Tag
+                }
+            }
+            State::Style => {
+                if self.ended_with("</style") {
+                    self.state = State::Tag
+                }
+            }
+            else => self.in_a_tag(c)
+        }
+    }
+
+    // `Tag`, `Equals` and `Unquoted`: inside a tag, outside quotes.
+    fn in_a_tag(ref mut self, c: char) sync {
+        let tag = match self.state {
+            State::Tag => true
+            else => false
+        }
+        let equals = match self.state {
+            State::Equals => true
+            else => false
+        }
+        let unquoted = match self.state {
+            State::Unquoted => true
+            else => false
+        }
+        // `<!--` looks like the start of a tag until its fourth character, so
+        // the comment is recognised from in here rather than by looking ahead
+        // from the `<`.
+        if self.ended_with("<!--") {
+            self.state = State::Comment
+            self.attribute = ""
+        } else if c == '>' {
+            // Which element was opened decides whether what follows is markup
+            // or a foreign language.
+            if self.saw("<script") {
+                self.state = State::Script
+            } else if self.saw("<style") {
+                self.state = State::Style
+            } else {
+                self.state = State::Text
+            }
+            self.attribute = ""
+        } else if c == '=' && tag {
+            self.state = State::Equals
+        } else if equals {
+            if c == '"' || c == '\'' {
+                self.state = State::Quoted(c)
+            } else if !blank(c) {
+                self.state = State::Unquoted
+            }
+        } else if unquoted && blank(c) {
+            self.state = State::Tag
+            self.attribute = ""
+        } else if tag {
+            // An attribute name is what runs up to the `=`.
+            if blank(c) || c == '<' {
+                self.attribute = ""
+            } else {
+                self.attribute.push(c.to_ascii_lowercase())
+            }
+        }
+    }
+}
+
+// A hole inside quotes: a URL where the attribute takes one, and otherwise an
+// attribute value, which escaping makes safe.
+fn quoted(attribute: ref String) -> Position sync {
+    return match attribute {
+        "href" => Position::Url
+        "src" => Position::Url
+        "action" => Position::Url
+        "formaction" => Position::Url
+        "data" => Position::Url
+        "poster" => Position::Url
+        "xlink:href" => Position::Url
+        else => Position::QuotedAttribute
+    }
+}
+
+// A blank, as `split_whitespace` reads one.
+fn blank(c: char) -> bool sync {
+    return c.is_whitespace()
+}

@@ -122,6 +122,15 @@ pub mod tools {
         include!("tools/fixed.rs");
     }
 
+    /// **The `html` template DSL split where it is written**:
+    /// `src/tools/template.nika`, the HTML scan that decides where a hole sits
+    /// and whether escaping can make it safe (ADR-017), lowered to
+    /// `src/tools/template.rs` and committed beside it (ADR-250, 0.0.252). The
+    /// compiler's `emit::template` calls it.
+    pub mod template {
+        include!("tools/template.rs");
+    }
+
     /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
     /// grammar and the rules a server answers by, lowered to
     /// `src/tools/http1.rs` and committed beside it
