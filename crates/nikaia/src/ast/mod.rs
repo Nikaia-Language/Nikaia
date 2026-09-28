@@ -838,6 +838,10 @@ pub enum MatchPattern {
     /// `_`: [ADR-126](../../../docs/specification/adr/adr-126.md) argues
     /// against that word for `_` itself, and it is wrong here twice over —
     /// nothing is being matched loosely, and nothing arrived to be ignored.
+    ///
+    /// **And `_` as a part of a pattern** (ADR-145 D2), `(0, _)`: a value
+    /// that arrived and is ignored matches as `else` does and binds nothing,
+    /// so the two are one node and lower to the same `_`.
     Otherwise,
     /// `1`, `"text"`, `true`
     Literal(Expr),

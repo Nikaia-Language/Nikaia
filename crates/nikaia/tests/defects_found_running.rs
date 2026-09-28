@@ -358,3 +358,117 @@ fn a_list_of_functions_is_run() {
         "12\n",
     );
 }
+
+/// **`_` is the ignore pattern inside a pattern** (ADR-145 D2, 0.0.246): a
+/// part is a value that arrived, and `(0, _)` and `Shape::Circle(_)` were
+/// refused with the catch-all arm's message - which itself says `_` stands in
+/// a tuple position.
+#[test]
+fn an_ignored_part_of_a_pattern() {
+    runs(
+        "ignored-part",
+        "enum Shape {\n\
+         \x20   Circle(f64),\n\
+         \x20   Square(f64),\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let shapes = [Shape::Circle(1.0), Shape::Square(2.0), Shape::Square(3.0)]\n\
+         \x20   let mut squares = 0\n\
+         \x20   for s in shapes {\n\
+         \x20       match s {\n\
+         \x20           Shape::Square(_) => { squares += 1 }\n\
+         \x20           Shape::Circle(_) => {}\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   let where_ = match (0, 5) {\n\
+         \x20       (0, _) => \"on the y axis\",\n\
+         \x20       else => \"elsewhere\",\n\
+         \x20   }\n\
+         \x20   println(f\"{squares} {where_}\")\n\
+         }\n",
+        "2 on the y axis\n",
+    );
+}
+
+/// **A graph over a map of lists** (0.0.246), which found four at once: a set
+/// asked about an untyped number took the language below's default integer
+/// (`i32`); a list had no `contains`; `m[k]?.clone()` lent the map's view a
+/// second time and copied the reference rather than the list; and `m[k] ?? []`
+/// reached `rustc`, where it is `NK1185` with the copy to write.
+#[test]
+fn a_graph_over_a_map_of_lists() {
+    runs(
+        "graph",
+        "use std::collections\n\
+         \n\
+         struct Graph { edges: collections::HashMap[i64, Vec[i64]] }\n\
+         \n\
+         impl Graph {\n\
+         \x20   fn add(ref mut self, a: i64, b: i64) {\n\
+         \x20       let mut list = self.edges[a]?.clone() ?? []\n\
+         \x20       list.push(b)\n\
+         \x20       self.edges[a] = list\n\
+         \x20   }\n\
+         \n\
+         \x20   fn reachable(ref self, start: i64) -> Vec[i64] {\n\
+         \x20       let mut seen: Vec[i64] = []\n\
+         \x20       let mut todo: Vec[i64] = [start]\n\
+         \x20       while todo.len() > 0 {\n\
+         \x20           let n = todo.pop() ?? 0\n\
+         \x20           if seen.contains(n) {\n\
+         \x20               continue\n\
+         \x20           }\n\
+         \x20           seen.push(n)\n\
+         \x20           for m in self.edges[n]?.clone() ?? [] {\n\
+         \x20               todo.push(m)\n\
+         \x20           }\n\
+         \x20       }\n\
+         \x20       seen.sort()\n\
+         \x20       return seen\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut g = Graph { edges: collections::HashMap() }\n\
+         \x20   g.add(1, 2)\n\
+         \x20   g.add(2, 3)\n\
+         \x20   g.add(3, 1)\n\
+         \x20   g.add(4, 5)\n\
+         \x20   let mut small: collections::HashSet[i64] = collections::HashSet()\n\
+         \x20   small.insert(3)\n\
+         \x20   let three = 3\n\
+         \x20   let r = g.reachable(1)\n\
+         \x20   println(f\"{r.len()} {small.contains(three)} {small.contains(4)}\")\n\
+         }\n",
+        "3 true false\n",
+    );
+    let found = findings(
+        "use std::collections\n\
+         \n\
+         fn main() {\n\
+         \x20   let edges: collections::HashMap[i64, Vec[i64]] = collections::HashMap()\n\
+         \x20   for m in edges[1] ?? [] {\n\
+         \x20       println(f\"{m}\")\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1185"
+            && f.help
+                .as_deref()
+                .is_some_and(|h| h.contains("`edges[1]?.clone() ?? …`"))),
+        "{found:#?}"
+    );
+    // A fallback that leaves is not one of its own: nothing to refuse.
+    let leaves = findings(
+        "use std::collections\n\
+         \n\
+         fn main() {\n\
+         \x20   let edges: collections::HashMap[i64, Vec[i64]] = collections::HashMap()\n\
+         \x20   let first = edges[1] ?? panic(\"no edges from 1\")\n\
+         \x20   println(f\"{first.len()}\")\n\
+         }\n",
+    );
+    assert!(leaves.iter().all(|f| f.code != "NK1185"), "{leaves:#?}");
+}

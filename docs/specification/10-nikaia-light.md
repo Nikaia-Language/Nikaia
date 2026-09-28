@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.245 (Draft)
+**Version:** 0.0.246 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -161,8 +161,9 @@ body (Part II, 10.2). It promises a time of evaluation, not constancy.
 **`_` is not a name; it is the ignore pattern.** It stands where a name would be
 bound and says that the value is ignored on purpose: a position of a
 destructured tuple (`let (name, _) = pair()`), a parameter a shape dictates
-(`fn handle(event: Event, _: Context)`, `fn(_, value) { … }`), and a `match`
-arm. `let _ = expr` is refused: a call made for its effect is written as the
+(`fn handle(event: Event, _: Context)`, `fn(_, value) { … }`), and a part of a
+`match` pattern (`(0, _)`, `Shape::Circle(_)`). The arm taken when nothing else
+matched is `else`, not `_` (3.4). `let _ = expr` is refused: a call made for its effect is written as the
 call, and a resource is closed by name. `_` is never a value. What `_` ignores
 is not moved, so a `let` over a place stays a view of it (6.5).
 
@@ -768,7 +769,7 @@ A pattern is one of six things, and each is read the way it is written:
 
 | pattern | matches |
 | :--- | :--- |
-| `else` | anything, and binds nothing: the arm taken when none above it matched. `_` in this position is refused: it is the **ignore pattern**, which stands in a tuple position and as a parameter |
+| `else` | anything, and binds nothing: the arm taken when none above it matched. `_` in this position is refused: it is the **ignore pattern**, which stands in a tuple position, as a parameter and as a part of a pattern, `(0, _)` |
 | `1`, `"text"`, `true`, `'n'` | that value |
 | `Op::Times` | that variant |
 | `Message::Write(text)` | that variant, binding what it carries |

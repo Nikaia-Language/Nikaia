@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.246] — 2026-09-28
+
+**Patterns, lookups and a map's lists**: found by writing a graph and a few
+shapes and running them, and kept in
+`crates/nikaia/tests/defects_found_running.rs`.
+
+- **`_` is the ignore pattern inside a pattern** (ADR-145 D2): `(0, _)` and
+  `Shape::Circle(_)` were refused with the catch-all arm's message, which
+  itself says `_` stands in a tuple position. A part of a pattern is now its
+  own rule; the arm is still `else`. Part I 2.1 and 3.4 say where `_` stands,
+  and 2.1 no longer lists the arm, which ADR-145 D1 moved to `else`.
+- **A number asked about in a set or a map is lent as it is.** Through
+  `AsKey` an untyped `4` got the language below's default integer, and
+  `s.contains(4)` on a `HashSet[i64]` asked for an `i32`. A plain `&` lets the
+  collection's key type say what the number is; a key of no known type that
+  may be a view still goes through `AsKey`.
+- **`Vec::contains` is in `std`'s ledger**, lent as a set's lookup is.
+- **`m[k]?.clone()` copies the value**, not the reference: a map's read is a
+  view already, and lending it again made each element a view of a view.
+- **`m[k] ?? []` is `NK1185`**, for a map's value that is not text: the read
+  is a view of what the map holds and the fallback is one of its own, and the
+  help names `m[k]?.clone() ?? …`. `rustc` said *the trait bound `&Vec<i64>:
+  From<Vec<_>>` is not satisfied*.
+
 ## [0.0.245] — 2026-09-28
 
 **Loops, keys and lists of functions**: six programs found by writing small

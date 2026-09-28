@@ -4493,11 +4493,19 @@ impl<'a> Checker<'a> {
         if ty.is_a_view() || matches!(given, Expr::LitStr { .. }) {
             return;
         }
+        // **A number is lent as it is**, typed or not (0.0.246): a literal, or
+        // a name a literal folded into, can never be a view, and through
+        // `AsKey` the language below had no type to give it but its default -
+        // `s.contains(4)` on a `HashSet[i64]` asked for an `i32`'s key. A plain
+        // `&` lets the collection's own key type say what the number is.
+        let a_number = matches!(given, Expr::LitInt(_) | Expr::LitFloat(_))
+            || matches!(given, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|l| l.constant.is_some()));
         // **A key of no known type** - `let k = 1` has none until something
         // pins it - is written through `AsKey`, which lends a number and
         // passes a view through, since the `&` alone would be wrong for the
         // second.
-        if ty.is_unknown() {
+        if ty.is_unknown() && !a_number {
             self.checked.lookup_keys.insert((
                 span.start,
                 written.to_string(),
@@ -9028,7 +9036,15 @@ impl<'a> Checker<'a> {
                     .into_iter()
                     .chain(self.library.candidates(&name))
                     .collect();
-                let lent = !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates);
+                // **A map's read is lent already** (0.0.246): it answers a
+                // view of the value the map holds, and lending that again made
+                // each element a view of a view - `m[k]?.clone()` copied the
+                // reference and not the list, and `rustc` refused the `??`
+                // after it. The receiver of a `?.` that is an index can only be
+                // a map's, since a list's element is not a `T?` (`NK1121`).
+                let lent = !candidates.is_empty()
+                    && candidates.iter().all(|(_, c)| !c.mutates)
+                    && !matches!(receiver.as_ref(), Expr::Index { .. });
                 if lent {
                     self.checked.lent_reaches.insert((span.start, name.clone()));
                 }
@@ -9804,6 +9820,9 @@ impl<'a> Checker<'a> {
                     self.a_fallback_that_owns_what_the_left_side_views(
                         inner, &other, fallback, span,
                     );
+                    if from_a_map {
+                        self.a_fallback_beside_what_a_map_holds(value, inner, &other, span);
+                    }
                 }
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
                 // ending the chain means, and claiming nothing about it cost
@@ -10338,6 +10357,54 @@ impl<'a> Checker<'a> {
                 "give the fallback as a view too - a text literal already is one, so \
                  `?? \"…\"` reads the same and costs nothing - or take the receiver's member \
                  by a name of its own first, where a `{fallback}` is what is wanted"
+            )),
+        });
+    }
+
+    /// **`NK1185` for a map's value that is not text** (0.0.246): `m[k] ?? []`
+    /// reads the list the map holds - a view of it, since the map keeps it -
+    /// and the fallback builds a list of its own, and `??` hands back one of
+    /// the two. `rustc` said *the trait bound `&Vec<i64>: From<Vec<_>>` is not
+    /// satisfied* about a file nobody wrote. Text has its own answer above (a
+    /// literal is a view already); a list, a map or a struct has none, so the
+    /// way out is the copy, written where it is wanted.
+    fn a_fallback_beside_what_a_map_holds(
+        &mut self,
+        read: &Expr,
+        held: &Ty,
+        fallback: &Ty,
+        span: &Span,
+    ) {
+        // A fallback of no known type claims nothing (Part III C.4), and that
+        // is also every one that leaves: `m[k] ?? panic(…)`, `?? return`.
+        if held.is_a_view()
+            || fallback.is_a_view()
+            || fallback.is_unknown()
+            || *held == Ty::named(crate::contracts::ty::TEXT)
+            || !matches!(held, Ty::Named { .. })
+            || !crate::contracts::keeps::moves(held)
+        {
+            return;
+        }
+        let written = written(self.parsed, read);
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1185",
+            message: format!(
+                "this reads the `{held}` the map holds, and the fallback beside it is one of its own"
+            ),
+            notes: vec![
+                "the map keeps its values, so a read is a view of one, and `??` hands back \
+                 either the view or the fallback - which are two types"
+                    .to_string(),
+                "a copy is written by the program and never inserted by the compiler \
+                 ([ADR-008](docs/specification/adr/adr-008.md) D5)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "copy what the map holds where a `{held}` of your own is wanted: \
+                 `{written}?.clone() ?? …`"
             )),
         });
     }
@@ -20429,6 +20496,7 @@ fn is_a_lookup(key: &str) -> bool {
         "BTreeMap::get",
         "BTreeMap::contains_key",
         "BTreeSet::contains",
+        "Vec::contains",
     ];
     LOOKUPS.contains(&key.strip_prefix("collections::").unwrap_or(key))
 }

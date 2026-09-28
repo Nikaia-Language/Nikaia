@@ -3308,13 +3308,22 @@ grammar! {
         // `Event::Click(Point { x, .. })` is a tuple whose one part is a named
         // pattern ([ADR-137](../../../../docs/specification/adr/adr-137.md) D1).
         rule match_part_list -> Vec<MatchPattern> =
-            head:match_pattern tail:match_part_tail* ","? -> {
+            head:match_part tail:match_part_tail* ","? -> {
                 let mut parts = vec![head];
                 parts.extend(tail);
                 parts
             }
 
-        rule match_part_tail -> MatchPattern = "," p:match_pattern -> { p }
+        rule match_part_tail -> MatchPattern = "," p:match_part -> { p }
+
+        // **`_` is the ignore pattern inside a pattern**
+        // ([ADR-145](../../../../docs/specification/adr/adr-145.md) D2): a
+        // part is a value that arrived, which is what `_` ignores - `(0, _)`,
+        // `Shape::Circle(_)`. It was refused with the catch-all arm's message,
+        // which itself says `_` is for a tuple position.
+        rule match_part -> MatchPattern =
+            UNDERSCORE -> { MatchPattern::Otherwise }
+          | p:match_pattern -> { p }
 
         // --- Keywords ---
         //
