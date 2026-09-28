@@ -4,7 +4,7 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.247] — 2026-09-28
+## [0.0.248] — 2026-09-28
 
 **Two more pieces of Rust are Nikaia**, by ADR-196's route: written as `.nika`
 under `nikaia-std/src/tools/`, lowered ahead of time by `nikaia lower-std`,
@@ -26,6 +26,42 @@ committed beside it and `include!`d.
 - **Found and recorded, not fixed**: `list(item, sep)` (Part II 10.8) reaches a
   backend that has no such element (`open-work.md` §1.26); `http1.nika` writes
   the repetition out.
+
+## [0.0.247] — 2026-09-28
+
+**The lock column resolves a call the way `sync` does, and 11 of its 12
+doubts in `examples/` were only that.** The analysis `NK2201` and `NK2203`
+are to read ([ADR-039](docs/specification/adr/adr-039.md) D3) answered
+*undecided* for 12 of 61 functions in `examples/`, and the roadmap still said
+24 of 59. Traced call by call, the doubts were:
+
+- **A constructor read by the name as written.** `Stats(n)` is the anonymous
+  constructor, recorded as `Stats::new`; `HashMap()` is
+  `collections::HashMap::new`, `String()` is `String::new`. The lock column
+  looked the name up as written, found nothing and answered *undecided*.
+  `sync::reached` already tried the constructor's key "by the same rule for
+  both analyses"; the lock column did not use it. It does now.
+- **A variant read as a callee.** `Json::Array(items)` builds a value and runs
+  no body. It is *no* now, as it is for `sync` — except a last segment `new`,
+  which is a constructor nothing describes and stays the doubt it is.
+- **A constructor `std` has and its ledger did not write.** `html::Raw::new`
+  exists in `crates/nikaia-std/src/html.rs` and had no entry; it has one
+  (`sync`, touches nothing).
+
+What is left is one function, `http::answer`, which calls its `handler`
+parameter: whether that takes a lock is the caller's lambda's answer, which is
+a real doubt and not a lookup.
+
+**The ledger entry found a program that broke a rule unseen.**
+`examples/escaping` wrote `html::Raw::new(built)`; with `std` describing the
+constructor, [ADR-140](docs/specification/adr/adr-140.md) D2's `NK1149` applies
+and the example writes `html::Raw(built)`, which lowers to the same call.
+
+- `crates/nikaia/tests/lock_column.rs`: an own type's constructor, `std`'s
+  constructor and a variant are each *no*; the test fails on 0.0.246.
+- The roadmap's row for *Locks without deadlocks* says what is in the way now:
+  the refusals are not written, and the noise that kept them from being written
+  is gone.
 
 ## [0.0.246] — 2026-09-28
 

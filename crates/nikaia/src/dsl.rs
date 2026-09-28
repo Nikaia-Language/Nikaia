@@ -39,7 +39,7 @@ const TEMPLATE: &str = "html";
 /// The deferred parameters of one `dsl … { … } eod` body, in the order the body
 /// first names them, and empty where it names none.
 ///
-/// **Written in Nikaia** (0.0.247): `nikaia-std/src/tools/dsl.nika`, whose
+/// **Written in Nikaia** (0.0.248): `nikaia-std/src/tools/dsl.nika`, whose
 /// comment says what the scan reads and what it cannot tell apart. This is the
 /// call, kept so that the compiler's callers name a `dsl` question in `dsl`.
 pub fn parameters(body: &str) -> Vec<String> {

@@ -42,7 +42,7 @@ fn emphasised(name: ref String) -> String {
     built.push_str("<em>")
     built.push_str(ref html::escape(name))
     built.push_str("</em>")
-    let markup = html::Raw::new(built)
+    let markup = html::Raw(built)
     return dsl html {
         <tr class="odd"><td>{name}</td><td>{markup}</td></tr>
     } eod

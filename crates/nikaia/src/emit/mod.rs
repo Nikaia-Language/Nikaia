@@ -3192,7 +3192,7 @@ impl<'p> Emitter<'p> {
                     .collect::<Vec<_>>()
                     .join("::");
                 // **Inside `std` there is no prelude to bring it in**
-                // (0.0.247): a module of `std`'s Nikaia half is lowered without
+                // (0.0.248): a module of `std`'s Nikaia half is lowered without
                 // one (`emit_std`), so `use std::text` has to be the import
                 // itself, or `text::parse_i64` below it names nothing and
                 // `rustc` says so about the generated file.

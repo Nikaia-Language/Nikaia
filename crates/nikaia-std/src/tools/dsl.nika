@@ -3,7 +3,7 @@
 // **The holes of a `dsl` block's body**, for the compiler's deferred
 // parameters (ADR-007 D4).
 //
-// The second piece of the compiler moved from Rust to Nikaia (0.0.247), by
+// The second piece of the compiler moved from Rust to Nikaia (0.0.248), by
 // ADR-196's route, the one `spelling.nika` took: written here, lowered ahead
 // of time by `nikaia lower-std` to `dsl.rs` beside it, `include!`d as
 // `nikaia_std::tools::dsl`, and called from the compiler's `dsl` module as an

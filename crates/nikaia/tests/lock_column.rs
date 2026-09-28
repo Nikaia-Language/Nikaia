@@ -190,6 +190,40 @@ fn the_column_renders_and_parses_back() {
     assert!(!Ledger::infer(&plain).render().contains("locks"));
 }
 
+/// **A constructor and a variant are values being built, not doubts.**
+///
+/// `Stats(n)` is the anonymous constructor (Part I 4.2), recorded as
+/// `Stats::new`; `String()` is `std`'s, recorded as `String::new`; and
+/// `Shape::Circle(n)` runs no body at all. Read by the name as written, each was
+/// *a callee nothing describes* and made its caller undecided - 11 of the 12
+/// undecided functions in `examples/` at 0.0.244 were only that. The lock
+/// column now resolves a call by the rule `sync` already used.
+#[test]
+fn a_constructor_or_a_variant_is_not_a_doubt() {
+    let source = "enum Shape {\n\
+                  \x20   Circle(i64),\n\
+                  \x20   Square,\n\
+                  }\n\
+                  struct Stats { count: i64 }\n\
+                  impl Stats {\n\
+                  \x20   pub fn(first: i64) -> Stats { return Stats { count: first } }\n\
+                  }\n\
+                  fn stats(n: i64) -> Stats { return Stats(n) }\n\
+                  fn shape(n: i64) -> Shape { return Shape::Circle(n) }\n\
+                  fn text() -> String { return String() }\n";
+    assert_eq!(
+        locks(source, "stats"),
+        Lock::No,
+        "an own type's constructor"
+    );
+    assert_eq!(locks(source, "shape"), Lock::No, "a variant builds a value");
+    assert_eq!(
+        locks(source, "text"),
+        Lock::No,
+        "std's constructor, by its `::new` key"
+    );
+}
+
 /// **What the corpus holds, and the number a refusal is read against.**
 ///
 /// **18 hold, 7 are undecided, 34 are clear**, of 59 — and every one of the 18

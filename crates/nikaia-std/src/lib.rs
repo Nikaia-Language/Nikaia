@@ -107,7 +107,7 @@ pub mod tools {
 
     /// **The holes of a `dsl` block's body**: `src/tools/dsl.nika`, lowered
     /// to `src/tools/dsl.rs` and committed beside it. The second piece of the
-    /// compiler moved from Rust to Nikaia (0.0.247); the compiler's `dsl`
+    /// compiler moved from Rust to Nikaia (0.0.248); the compiler's `dsl`
     /// module calls it.
     pub mod dsl {
         include!("tools/dsl.rs");
@@ -116,7 +116,7 @@ pub mod tools {
     /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
     /// grammar and the rules a server answers by, lowered to
     /// `src/tools/http1.rs` and committed beside it
-    /// ([ADR-038](../../../docs/specification/adr/adr-038.md) D6, 0.0.247).
+    /// ([ADR-038](../../../docs/specification/adr/adr-038.md) D6, 0.0.248).
     /// `crate::http1` keeps the bytes and calls this for the text.
     pub mod http1 {
         include!("tools/http1.rs");

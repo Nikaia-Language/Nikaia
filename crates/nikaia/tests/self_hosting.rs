@@ -193,7 +193,7 @@ fn the_compilers_spelling_is_nikaia() {
     assert!(!one("abc", "xbz"));
 }
 
-/// **The second piece, a `dsl` body's holes** (0.0.247), held to what the Rust
+/// **The second piece, a `dsl` body's holes** (0.0.248), held to what the Rust
 /// it replaced answered: a path and a time are not holes, a name is taken once
 /// and in the order the body names it, and a body without one has none.
 #[test]

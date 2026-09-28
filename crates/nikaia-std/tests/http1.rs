@@ -263,7 +263,7 @@ fn a_target_with_no_query_answers_nothing() {
     assert_eq!(head.query("q"), None);
 }
 
-/// **The head is read in Nikaia now** (0.0.247, `src/tools/http1.nika`), and
+/// **The head is read in Nikaia now** (0.0.248, `src/tools/http1.nika`), and
 /// two readings of the Rust it replaced are held here, because they are the
 /// ones a grammar written from scratch gets differently: a line without a
 /// colon says nothing and is skipped, and two spaces in a row are an empty

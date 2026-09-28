@@ -216,6 +216,37 @@ pub fn infer(
         .map(|(name, reaches)| (name.clone(), reaches.itself))
         .collect();
 
+    // **A variant is a value, not a callee** - the rule `sync::reached` states
+    // for both analyses. `Json::Array(items)` builds a value and runs no body,
+    // so it opens no door; read as a callee nothing describes it made every
+    // grammar that builds a tree undecided. The type is everything but the
+    // last segment, and a type is one this package or a library declares.
+    let declared: BTreeSet<String> = units
+        .iter()
+        .flat_map(|parsed| {
+            parsed
+                .program
+                .items
+                .iter()
+                .filter_map(|item| match &item.node {
+                    Item::Enum { name, .. } | Item::Struct { name, .. } => {
+                        Some(parsed.text(*name).to_string())
+                    }
+                    _ => None,
+                })
+        })
+        .chain(ledger.types.keys().cloned())
+        .chain(library.types.keys().cloned())
+        .collect();
+    // `Type::new` is the constructor, never a variant: a constructor no ledger
+    // describes stays the doubt it is, which is the safe direction here - a
+    // lock this walk does not see is a deadlock nothing refuses.
+    let is_a_variant = |callee: &str| {
+        callee
+            .rsplit_once("::")
+            .is_some_and(|(owner, last)| last != "new" && declared.contains(owner))
+    };
+
     // The least fixpoint: give the property to whoever reaches a holder, until
     // nothing changes. `BTreeMap`s throughout, so the answer does not depend on
     // the order the source declared things in - Part III 13.5 makes this file a
@@ -228,15 +259,28 @@ pub fn infer(
                 continue;
             }
             let reached = reaches.callees.iter().fold(Lock::No, |so_far, callee| {
-                let theirs = touches.get(callee).copied().unwrap_or_else(|| {
-                    library
-                        .functions
-                        .get(callee)
-                        .map(|contract| contract.touches_a_lock)
+                // **By the rule `sync::reached` resolves a call with**, so the
+                // two analyses agree on what a call is: the name as written,
+                // then the anonymous constructor's key (`Stats(t)` is
+                // `Stats::new`, `HashMap()` is `collections::HashMap::new`,
+                // Part I 4.2, ADR-140 D2), in this package before the library.
+                let constructed = format!("{callee}::new");
+                let theirs = [callee.as_str(), constructed.as_str()]
+                    .iter()
+                    .find_map(|key| {
+                        touches.get(*key).copied().or_else(|| {
+                            library
+                                .functions
+                                .get(*key)
+                                .map(|contract| contract.touches_a_lock)
+                        })
+                    })
+                    .unwrap_or_else(|| match is_a_variant(callee) {
+                        true => Lock::No,
                         // A callee no ledger describes is the same doubt an
                         // unresolvable method is, reached from the other side.
-                        .unwrap_or(Lock::Undecided)
-                });
+                        false => Lock::Undecided,
+                    });
                 so_far.or(theirs)
             });
             let grown = touches[name].or(reached);

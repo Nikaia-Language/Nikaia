@@ -3,7 +3,7 @@
 //!
 //! `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no
 //! chunked transfer and no TLS. That record's own scope, and its own staging:
-//! **the parser was Rust here and is a Nikaia grammar now** (0.0.247,
+//! **the parser was Rust here and is a Nikaia grammar now** (0.0.248,
 //! [ADR-038](../../../docs/specification/adr/adr-038.md) D6), by
 //! [ADR-196](../../../docs/specification/adr/adr-196.md)'s route:
 //! `src/tools/http1.nika`. What stays here is the bytes - the buffer a socket
@@ -280,7 +280,7 @@ impl Head {
 /// The request line and the headers, where the head is already known to be text
 /// and `size` bytes long.
 ///
-/// **Read in Nikaia** (0.0.247): `src/tools/http1.nika` is the grammar and the
+/// **Read in Nikaia** (0.0.248): `src/tools/http1.nika` is the grammar and the
 /// rules - which methods, which version, what a `Content-Length` has to be -
 /// and this is the handover. The grammar reads every head that ended, so a
 /// failure of it is a head this module has no words for, and it is refused as

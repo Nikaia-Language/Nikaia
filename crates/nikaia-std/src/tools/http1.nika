@@ -5,7 +5,7 @@
 // [ADR-194](../../../../docs/specification/adr/adr-194.md) D5: *the parser is
 // Rust until it is not*).
 //
-// This is the text half of `std::http1` (0.0.247). It reaches `std` the way
+// This is the text half of `std::http1` (0.0.248). It reaches `std` the way
 // ADR-196 D1 says Nikaia reaches Rust: lowered ahead of time by
 // `nikaia lower-std` to the `http1.rs` beside this file, `include!`d as
 // `nikaia_std::tools::http1`, and called from `src/http1.rs`. What stayed Rust
