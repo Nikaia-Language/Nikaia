@@ -17,7 +17,7 @@ grammar! {
         rule TENTHS -> i32 =
             neg:"-"? whole:digit{1,2} "." frac:digit
             -> {
-                let mut value = 0;
+                let mut value: i32 = 0;
                 for d in whole.chars() { value = value * 10 + text::digit_value(d); }
                 value = value * 10 + text::digit_value(frac);
                 if neg.is_some() { -value } else { value }

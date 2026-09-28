@@ -34,26 +34,6 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.27. An `i32` sum that overflows inside an `f"…"` hole is `rustc`'s error
-
-Found at 0.0.250, answering what `a + b` does with two `i32`s. A constant sum
-too large for its type is `NK1116` where it is bound (`let c = a + b`), but
-written straight into a hole - `println(f"{a + b}")` with `let a: i32 =
-2000000000` and `let b: i32 = 2000000000` - the checker does not fold it, and
-`rustc` says *this arithmetic operation will overflow* about the generated
-file. The hole's expression is folded as a `let`'s is, or the abort at run
-time is what the program gets, as for a sum the checker cannot see.
-
-### 1.28. An untyped index into an element a call changes is `rustc`'s E0282
-
-Found at 0.0.250, writing `fixed.nika`. `let i = 0` then `v[i].push(x)` lowers
-to `v[nikaia_std::index::at(i)].push(x)` - the element as a place, which is
-what a mutating call needs (0.0.250) - and `rustc` cannot tell which integer
-`i` is: `index::at` takes any of them, and nothing else pins the literal.
-`let i: i64 = 0`, or a loop variable, lowers and runs; a read, `v[i].len()`,
-does too. The name is written with the type its literal took (ADR-063 D1),
-which is the one fact `rustc` is missing.
-
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

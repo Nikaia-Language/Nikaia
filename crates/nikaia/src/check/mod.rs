@@ -397,6 +397,11 @@ pub struct Checked {
     /// writes the suffix: a number above an `i32` is otherwise given `i64`'s,
     /// which is right for a bare `let` and wrong beside a `u64`.
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
+    /// **A `let` without an annotation whose number its uses typed**, by the
+    /// byte the statement starts at, and the type
+    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D4). The emitter
+    /// writes it, so the language below infers nothing this compiler decided.
+    pub number_lets: BTreeMap<usize, String>,
     /// **A list element a method call changes**, by statement and the
     /// receiver's shape: the emitter writes it as the place it is,
     /// `xs[at(i)].push(…)`, and not as a read.
@@ -1226,6 +1231,8 @@ fn walked<'a>(
         reading_only: false,
         read_seq: 0,
         empty_lists: BTreeMap::new(),
+        open_numbers: BTreeMap::new(),
+        overflowed: BTreeSet::new(),
         grown_text: BTreeSet::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
@@ -1288,6 +1295,8 @@ fn walked<'a>(
         .checked
         .findings
         .extend(crate::types::check(parsed, own, library));
+    // **What no function body held**, typed the same way (ADR-249).
+    checker.numbers_typed_by_their_uses();
     checker.checked.findings.sort_by_key(|f| f.span.start);
     // Only the calls that provably fail, and only where the name is not also a
     // call that does not: the emitter writes a `?` for each of these, and a `?`
@@ -1592,6 +1601,8 @@ pub struct Propagation {
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::unsigned_literals`].
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
+    /// [`Checked::number_lets`].
+    pub number_lets: BTreeMap<usize, String>,
     /// [`Checked::changed_elements`].
     pub changed_elements: BTreeSet<(usize, String)>,
     /// [`Checked::count_args`].
@@ -1857,6 +1868,7 @@ pub fn propagation_against(
         owned_loops: checked.owned_loops,
         copied_loop_bindings: checked.copied_loop_bindings,
         unsigned_literals: checked.unsigned_literals,
+        number_lets: checked.number_lets,
         changed_elements: checked.changed_elements,
         count_args: checked.count_args,
         map_keys: checked.map_keys,
@@ -2206,6 +2218,44 @@ enum Copyable {
     Unnamed,
 }
 
+/// **A number no annotation typed**
+/// ([ADR-249](../../docs/specification/adr/adr-249.md)): one `let`, or several
+/// its uses joined, and what those uses asked of it.
+///
+/// Part I 2.4 says *a number takes the type its use asks for*, and that half was
+/// the language below's inference, inherited rather than built (ADR-060 D1): the
+/// `let` was written bare and `rustc` looked at the uses. Two things broke it.
+/// A use `rustc` cannot see through - `v[i].push(x)`, where `index::at` takes
+/// any integer - left it without an answer; and ADR-248's `u64` and `u32` gave
+/// a number above an `i32` a second type to be, which ADR-060 D3's *"there is
+/// no second answer"* had ruled out.
+struct OpenNumber {
+    /// The name, for the message.
+    name: String,
+    /// The `let`, where the type is written and where a refusal points.
+    at: Span,
+    /// The entry this one was joined into, by the `let` it names; itself where
+    /// none. `let c = a + b` joins all three: one operation, one type.
+    joined: usize,
+    /// What the uses asked: the type, the statement, and whether the use is a
+    /// **type standing beside it** (`true`) or an index, which takes any
+    /// integer and prefers an `i64` (D2).
+    asks: Vec<(String, Span, bool)>,
+    /// The numbers it is given as written - its own value and every one
+    /// assigned to it - with the statement and whether it is a bare literal.
+    /// These decide the type where no use does (D3), and every one of them has
+    /// to fit the type that is decided.
+    given: Vec<(i128, Span, bool)>,
+    /// What an operation over it comes to, where that folds: held to the type
+    /// and never deciding it, because a name is where the widening stops
+    /// (ADR-063 D2).
+    derived: Vec<(i128, Span)>,
+    /// The statements that give it a number, by the byte they start at, and
+    /// every literal in them: the emitter writes each with the type's suffix
+    /// where it would otherwise write another.
+    written: Vec<(usize, Vec<i128>, bool)>,
+}
+
 /// A name in scope: what it is called, the type it holds, and - where this
 /// checker could work it out - the constant integer it stands for.
 ///
@@ -2290,6 +2340,10 @@ struct Local {
     /// the scope is the one `scope` already keeps, so an inner `let xs = []`
     /// and an outer `xs` are two questions and not one.
     empty_list: Option<usize>,
+    /// **A number no annotation typed, whose uses will**
+    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D1): the `let` it
+    /// was bound at, which names its entry in `Checker::open_numbers`.
+    open_number: Option<usize>,
     /// **Which binding this is**, of all the ones a name has had: a number no
     /// other binding gets. A `for (k, v) in seen` inside the life of an outer
     /// `k` binds another `k`, and a read of it is not a read of the one that
@@ -2344,6 +2398,7 @@ impl Local {
             immutable: local.immutable.clone(),
             changing: local.changing,
             empty_list: local.empty_list,
+            open_number: local.open_number,
             id: local.id,
         }
     }
@@ -2359,6 +2414,7 @@ impl Local {
             built: None,
             immutable: None,
             empty_list: None,
+            open_number: None,
             id: a_new_binding(),
         }
     }
@@ -2767,6 +2823,14 @@ struct Checker<'a> {
     /// an empty list its element type; what is left when the body ends is a
     /// list nothing will ever constrain, and that is `NK1153`.
     empty_lists: BTreeMap<usize, (String, Span)>,
+    /// **The numbers whose uses decide their type**, by the `let` each was
+    /// bound at ([ADR-249](../../docs/specification/adr/adr-249.md)). Asked
+    /// once the body has been walked, as `empty_lists` is: the use that
+    /// answers stands after the `let`.
+    open_numbers: BTreeMap<usize, OpenNumber>,
+    /// **The statements an operation in has already overflowed**, by the byte
+    /// they start at: one refusal for one cause (`an_operation_that_overflows`).
+    overflowed: BTreeSet<usize>,
     /// The names this function's body gives text of its own later on, with
     /// `+` or an f-string ([`grown_text`]): a `let mut` of a literal under one
     /// of them holds owned text (0.0.232).
@@ -4144,6 +4208,7 @@ impl<'a> Checker<'a> {
                 // **D3**: without the word, a body that changes this parameter
                 // is `NK1138`.
                 empty_list: None,
+                open_number: None,
                 immutable: (!arg.mutable).then(|| Immutable {
                     at: arg.span.clone(),
                     kind: Kind::Parameter,
@@ -4208,9 +4273,25 @@ impl<'a> Checker<'a> {
         self.scope.push(frame);
         let tail_span = body.stmts.last().map(|s| s.span.clone());
         let outer_lists = std::mem::take(&mut self.empty_lists);
+        let outer_numbers = std::mem::take(&mut self.open_numbers);
         let outer_grown = std::mem::replace(&mut self.grown_text, grown_text(self.parsed, body));
         let tail = self.block(body);
         self.grown_text = outer_grown;
+        // **A body's numbers, typed by their uses** once all of them have been
+        // seen ([ADR-249](../../docs/specification/adr/adr-249.md) D2) - the
+        // tail's included, which is read against the scope still standing.
+        if let (Some(expected), Some(Stmt::Expr(value))) =
+            (&expected, body.stmts.last().map(|s| &s.node))
+        {
+            let at = body
+                .stmts
+                .last()
+                .map(|s| s.span.clone())
+                .unwrap_or_default();
+            self.number_asked(value, expected, &at, true);
+        }
+        self.numbers_typed_by_their_uses();
+        self.open_numbers = outer_numbers;
         self.scope.pop();
 
         // **`NK1153`, once the whole body has been seen**
@@ -6016,6 +6097,7 @@ impl<'a> Checker<'a> {
             changing: false,
             built: None,
             empty_list: None,
+            open_number: None,
             immutable: asked.then(|| Immutable {
                 at: span.clone(),
                 kind: Kind::Parameter,
@@ -7320,13 +7402,29 @@ impl<'a> Checker<'a> {
     /// asked too. That is the one case `rustc` refused about the generated file
     /// with *"attempt to compute `i32::MAX + 1_i32`"*.
     ///
-    /// **Only the integer types Part I 2.2 offers** — `i64`, `i32` and `u8`.
-    /// `u32` and the rest are accepted by the compiler below and not offered
-    /// here, so a range for them would be a claim about a surface that is not
-    /// promised. The byte joined the list the day it gained a `const` form: a
-    /// range that is not checked is `rustc` about the generated file the first
-    /// time somebody writes one.
+    /// **Only the integer types Part I 2.2 offers** — `i64`, `i32`, `u8`, and
+    /// since [ADR-248](../../docs/specification/adr/adr-248.md) `u64` and
+    /// `u32`. A range that is not checked is `rustc` about the generated file
+    /// the first time somebody writes one.
     fn constant_fits(&mut self, value: &Expr, want: Option<&Ty>, span: &Span) {
+        // **A type beside a value is a use of the numbers in it**
+        // ([ADR-249](../../docs/specification/adr/adr-249.md) D2), whether or
+        // not the value folds.
+        if let Some(want) = want {
+            self.number_asked(value, want, span, true);
+        }
+        // **Nothing beside it and an open number in it**: what it comes to is
+        // measured once that number's uses have decided its type, where the
+        // refusal names the one cause rather than each sum it reaches.
+        let mut open = Vec::new();
+        self.open_numbers_in(value, &mut open);
+        if want.is_none() && !open.is_empty() {
+            return;
+        }
+        // **Said already**, by the operation inside it that overflowed.
+        if self.overflowed.contains(&span.start) {
+            return;
+        }
         let Some(folded) = self.constant_of(value) else {
             return;
         };
@@ -7349,23 +7447,38 @@ impl<'a> Checker<'a> {
             None if i64::try_from(folded.value).is_err() => "i64".to_string(),
             None => return,
         };
-        let fits = match ty.as_str() {
-            "i32" => i32::try_from(folded.value).is_ok(),
-            "i64" => i64::try_from(folded.value).is_ok(),
+        let bare = matches!(value, Expr::LitInt(_));
+        self.a_number_that_does_not_fit(folded.value, bare, &ty, span, None);
+    }
+
+    /// `NK1116` for a number and the type it has to fit, where it does not;
+    /// nothing where it does. `why` is a note saying where the type came from,
+    /// for one the uses decided ([ADR-249](../../docs/specification/adr/adr-249.md)).
+    fn a_number_that_does_not_fit(
+        &mut self,
+        value: i128,
+        bare: bool,
+        ty: &str,
+        span: &Span,
+        why: Option<String>,
+    ) {
+        let fits = match ty {
+            "i32" => i32::try_from(value).is_ok(),
+            "i64" => i64::try_from(value).is_ok(),
             // **And the byte**, which needed no range here while it had no
             // crossed form: once `const B: u8 = …` is something this compiler
             // writes, `let x: u8 = 300` writing it is `rustc` about the
             // generated file ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-            "u8" => u8::try_from(folded.value).is_ok(),
+            "u8" => u8::try_from(value).is_ok(),
             // ADR-248 D1 and D2.
-            "u32" => u32::try_from(folded.value).is_ok(),
-            "u64" => u64::try_from(folded.value).is_ok(),
+            "u32" => u32::try_from(value).is_ok(),
+            "u64" => u64::try_from(value).is_ok(),
             _ => return,
         };
         if fits {
             return;
         }
-        let (low, high) = match ty.as_str() {
+        let (low, high) = match ty {
             "i32" => (i32::MIN as i128, i32::MAX as i128),
             "u8" => (u8::MIN as i128, u8::MAX as i128),
             "u32" => (u32::MIN as i128, u32::MAX as i128),
@@ -7375,11 +7488,11 @@ impl<'a> Checker<'a> {
         // A bare literal says its own digits; anything folded says what it came
         // to, because the expression is on the line the caret is under and the
         // number is the part the reader cannot see.
-        let message = match value {
-            Expr::LitInt(text) => format!("`{text}` does not fit in an `{ty}`"),
-            _ => format!(
-                "this comes to {}, which does not fit in an `{ty}`",
-                folded.value
+        let message = match bare {
+            true => format!("`{value}` does not fit in {} `{ty}`", an_or_a(ty)),
+            false => format!(
+                "this comes to {value}, which does not fit in {} `{ty}`",
+                an_or_a(ty)
             ),
         };
         self.checked.findings.push(Finding {
@@ -7391,14 +7504,13 @@ impl<'a> Checker<'a> {
             // name is *said*: a reader says "you-eight" and "eye-thirty-two",
             // and `an u8` is the kind of sentence that makes a message look
             // generated.
-            notes: vec![format!(
+            notes: std::iter::once(format!(
                 "{} `{ty}` holds {low} to {high} (Part I, 2.2)",
-                match ty.starts_with('i') {
-                    true => "an",
-                    false => "a",
-                }
-            )],
-            help: Some(match ty.as_str() {
+                an_or_a(ty)
+            ))
+            .chain(why)
+            .collect(),
+            help: Some(match ty {
                 "i32" => "write `i64` where the number needs it".to_string(),
                 "u8" => "a `u8` is one byte, so write `i32` or `i64` where the number \
                          is a count rather than a byte"
@@ -7407,7 +7519,7 @@ impl<'a> Checker<'a> {
                 "u64" => "a `u64` is the widest number this language has, so this \
                           computation has to be arranged to stay inside it"
                     .to_string(),
-                _ if folded.value > 0 && u64::try_from(folded.value).is_ok() => {
+                _ if value > 0 && u64::try_from(value).is_ok() => {
                     "a number above an `i64` and not negative is a `u64`'s: write the \
                      type beside it, `let x: u64 = …`"
                         .to_string()
@@ -7432,6 +7544,19 @@ impl<'a> Checker<'a> {
         crate::fold::constant_of(expr, &|name| {
             let (ty, constant) = self.local(self.parsed.text(name))?;
             let value = constant?;
+            // **An open number pins nothing yet**
+            // ([ADR-249](../../docs/specification/adr/adr-249.md) D3): its uses
+            // have not all been seen, and what it comes to is held to the type
+            // they decide once they have.
+            if self
+                .binding(self.parsed.text(name))
+                .is_some_and(|local| local.open_number.is_some())
+            {
+                return Some(Constant {
+                    value,
+                    pinned: None,
+                });
+            }
             Some(Constant {
                 // **A name pins, and a literal does not**
                 // ([ADR-063](../../docs/specification/adr/adr-063.md) D2). A
@@ -7449,6 +7574,261 @@ impl<'a> Checker<'a> {
                 value,
             })
         })
+    }
+
+    /// The entry an open number was joined into
+    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D1).
+    fn open_root(&self, mut at: usize) -> usize {
+        while let Some(number) = self.open_numbers.get(&at) {
+            if number.joined == at {
+                break;
+            }
+            at = number.joined;
+        }
+        at
+    }
+
+    /// **The open numbers a value is made of**: a name bound to one, through
+    /// the operations whose result is of their operands' type - arithmetic, a
+    /// bit operation, a negation. A call, a cast and a comparison make a value
+    /// of a type of their own and stop it; so does a shift's count, which is
+    /// any integer (ADR-248 D3).
+    fn open_numbers_in(&self, expr: &Expr, out: &mut Vec<usize>) {
+        match expr {
+            Expr::Variable(name) => {
+                if let Some(at) = self
+                    .binding(self.parsed.text(*name))
+                    .and_then(|local| local.open_number)
+                {
+                    out.push(self.open_root(at));
+                }
+            }
+            Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
+                self.open_numbers_in(lhs, out);
+                if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    self.open_numbers_in(rhs, out);
+                }
+            }
+            Expr::Unary {
+                op: UnaryOp::Neg | UnaryOp::Not,
+                expr,
+            } => self.open_numbers_in(expr, out),
+            _ => {}
+        }
+    }
+
+    /// **A value that is nothing but numbers**: literals and open numbers,
+    /// joined by the operations [`Self::open_numbers_in`] walks. A `let` of one
+    /// is an open number itself (D1).
+    fn number_shaped(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::LitInt(_) => true,
+            Expr::Variable(name) => self
+                .binding(self.parsed.text(*name))
+                .is_some_and(|local| local.open_number.is_some()),
+            Expr::Binary { op, lhs, rhs, .. } if an_operation_of_one_type(*op) => {
+                self.number_shaped(lhs) && self.number_shaped(rhs)
+            }
+            Expr::Unary {
+                op: UnaryOp::Neg | UnaryOp::Not,
+                expr,
+            } => self.number_shaped(expr),
+            _ => false,
+        }
+    }
+
+    /// **A use asks the open numbers in a value for a type** (D2): a type
+    /// standing beside it (`beside`), or an index, which takes any integer.
+    fn number_asked(&mut self, value: &Expr, want: &Ty, at: &Span, beside: bool) {
+        let Some(ty) = integer_named(&value_of_a_copy(want.unseen())) else {
+            return;
+        };
+        let mut open = Vec::new();
+        self.open_numbers_in(value, &mut open);
+        for number in open {
+            if let Some(number) = self.open_numbers.get_mut(&number) {
+                number.asks.push((ty.clone(), at.clone(), beside));
+            }
+        }
+    }
+
+    /// **One operation, one type**: the open numbers on both sides of it are
+    /// one question from here on (D1).
+    fn open_numbers_joined(&mut self, numbers: &[usize]) {
+        let Some((&first, rest)) = numbers.split_first() else {
+            return;
+        };
+        let head = self.open_root(first);
+        for &other in rest {
+            let other = self.open_root(other);
+            if other != head
+                && let Some(number) = self.open_numbers.get_mut(&other)
+            {
+                number.joined = head;
+            }
+        }
+    }
+
+    /// **A number given to an open one**: its own value at the `let`, or one
+    /// assigned to it later (D3).
+    fn open_number_given(&mut self, number: usize, value: &Expr, span: &Span) {
+        let mut joined = vec![number];
+        self.open_numbers_in(value, &mut joined);
+        self.open_numbers_joined(&joined);
+        let pure = crate::fold::constant_of(value, &crate::fold::nothing_is_known);
+        let derived = match pure {
+            Some(_) => None,
+            None => self.constant_of(value),
+        };
+        let mut literals = Vec::new();
+        literals_in(value, &mut literals);
+        let Some(entry) = self.open_numbers.get_mut(&number) else {
+            return;
+        };
+        if let Some(folded) = &pure {
+            entry
+                .given
+                .push((folded.value, span.clone(), matches!(value, Expr::LitInt(_))));
+        }
+        if let Some(folded) = derived {
+            entry.derived.push((folded.value, span.clone()));
+        }
+        entry.written.push((
+            span.start,
+            literals,
+            pure.as_ref().is_some_and(crate::fold::wants_widening),
+        ));
+    }
+
+    /// **Every open number of a body, decided** once the body has been walked
+    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D2-D4).
+    fn numbers_typed_by_their_uses(&mut self) {
+        let numbers = std::mem::take(&mut self.open_numbers);
+        let root = |mut at: usize| loop {
+            let joined = numbers[&at].joined;
+            if joined == at {
+                return at;
+            }
+            at = joined;
+        };
+        let mut groups: BTreeMap<usize, Vec<&OpenNumber>> = BTreeMap::new();
+        for (at, number) in &numbers {
+            groups.entry(root(*at)).or_default().push(number);
+        }
+        for (head, members) in groups {
+            let head = &numbers[&head];
+            let mut beside: Vec<(String, Span)> = Vec::new();
+            let mut indexed = false;
+            for (ty, at, stands_beside) in members.iter().flat_map(|m| &m.asks) {
+                match stands_beside {
+                    true => beside.push((ty.clone(), at.clone())),
+                    false => indexed = true,
+                }
+            }
+            beside.sort_by_key(|(_, at)| at.start);
+            let mut types: Vec<&(String, Span)> = Vec::new();
+            for ask in &beside {
+                if !types.iter().any(|(ty, _)| *ty == ask.0) {
+                    types.push(ask);
+                }
+            }
+            // **Two uses that ask two types** (D2): the language below would
+            // say *mismatched types* about the generated file.
+            if let [(first, _), (second, at), ..] = types.as_slice() {
+                let (first, second, at) = (first.clone(), second.clone(), at.clone());
+                self.a_number_asked_for_two_types(&head.name, &first, &second, &at);
+                continue;
+            }
+            let decided = match types.first() {
+                Some((ty, _)) => Some(ty.clone()),
+                None if indexed => Some("i64".to_string()),
+                None => None,
+            };
+            // **Where no use asks, the first type that holds what it is given**
+            // (D3, ADR-060 D2) - `i32`, else `i64`.
+            let held = decided.clone().unwrap_or_else(|| {
+                let small = members
+                    .iter()
+                    .flat_map(|m| &m.given)
+                    .all(|(value, _, _)| i32::try_from(*value).is_ok());
+                match small {
+                    true => "i32".to_string(),
+                    false => "i64".to_string(),
+                }
+            });
+            let why = decided.as_ref().map(|ty| {
+                format!(
+                    "`{}` is {} `{ty}` because of how it is used (Part I, 2.4)",
+                    head.name,
+                    an_or_a(ty)
+                )
+            });
+            // What it is given first; what an operation over it comes to only
+            // where that held, so one cause is one refusal.
+            let before = self.checked.findings.len();
+            for member in &members {
+                for (value, at, bare) in &member.given {
+                    self.a_number_that_does_not_fit(*value, *bare, &held, at, why.clone());
+                }
+            }
+            if self.checked.findings.len() == before {
+                for (value, at) in members.iter().flat_map(|m| &m.derived) {
+                    if self
+                        .checked
+                        .findings
+                        .iter()
+                        .skip(before)
+                        .any(|f| f.span == *at)
+                    {
+                        continue;
+                    }
+                    self.a_number_that_does_not_fit(*value, false, &held, at, why.clone());
+                }
+            }
+            // **The type is written** (D4), and a literal the emitter would
+            // otherwise give an `i64`'s suffix is given this one.
+            if let Some(ty) = decided {
+                for member in &members {
+                    self.checked.number_lets.insert(member.at.start, ty.clone());
+                    for (statement, literals, widened) in &member.written {
+                        let suffixed =
+                            *widened || literals.iter().any(|v| i32::try_from(*v).is_err());
+                        if ty == "i64" || !suffixed {
+                            continue;
+                        }
+                        for value in literals {
+                            self.checked
+                                .unsigned_literals
+                                .insert((*statement, *value), ty.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `NK1200`: one number, two uses, two types
+    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D2).
+    fn a_number_asked_for_two_types(&mut self, name: &str, first: &str, second: &str, at: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: at.clone(),
+            code: "NK1200",
+            message: format!(
+                "`{name}` is used as {} `{first}` and here as {} `{second}`",
+                an_or_a(first),
+                an_or_a(second)
+            ),
+            notes: vec![
+                "a number takes the type its uses ask for, and these ask for two \
+                 (Part I, 2.4)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write the one it is, `let {name}: {first} = …`, and convert with `as` \
+                 where the other is wanted"
+            )),
+        });
     }
 
     /// `self` is a reserved word, and this is the one position the grammar
@@ -7575,6 +7955,63 @@ impl<'a> Checker<'a> {
     /// cannot evaluate is the ordinary case, and it aborts at run time with the
     /// Nikaia line the table names (ADR-044). Only a zero it can *prove* is
     /// refused.
+    /// **`NK1116` at the operation that overflows**, wherever it stands
+    /// (0.0.251, `open-work.md` §1.27): in an `f"…"` hole, a condition, a list,
+    /// a receiver - not only where a `let`, a `return` or a parameter stands
+    /// beside it. Where a name pinned the type
+    /// ([ADR-063](../../docs/specification/adr/adr-063.md) D2) the operation
+    /// has one, and a constant that does not fit it is refused here rather than
+    /// by `rustc`'s *this arithmetic operation will overflow* about the
+    /// generated file.
+    ///
+    /// **The innermost that overflows, once**: the operands are walked first,
+    /// so one that overflowed has already said so for this statement, and the
+    /// operation around it says nothing more.
+    fn an_operation_that_overflows(&mut self, op: BinaryOp, lhs: &Expr, rhs: &Expr, span: &Span) {
+        if !matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
+        ) || self.overflowed.contains(&span.start)
+        {
+            return;
+        }
+        let (Some(left), Some(right)) = (self.constant_of(lhs), self.constant_of(rhs)) else {
+            return;
+        };
+        let Some(ty) = left.pinned.clone().or(right.pinned.clone()) else {
+            return;
+        };
+        let value = match op {
+            BinaryOp::Add => left.value.checked_add(right.value),
+            BinaryOp::Sub => left.value.checked_sub(right.value),
+            BinaryOp::Mul => left.value.checked_mul(right.value),
+            BinaryOp::Div => left.value.checked_div(right.value),
+            _ => left.value.checked_rem(right.value),
+        };
+        let Some(value) = value else {
+            return;
+        };
+        // **An open number in it is measured with that number**, once its
+        // uses have decided what it is (ADR-249 D3) - and a refusal there
+        // names the cause.
+        let mut open = Vec::new();
+        self.open_numbers_in(lhs, &mut open);
+        self.open_numbers_in(rhs, &mut open);
+        if !open.is_empty() {
+            for number in open {
+                if let Some(number) = self.open_numbers.get_mut(&number) {
+                    number.derived.push((value, span.clone()));
+                }
+            }
+            return;
+        }
+        let before = self.checked.findings.len();
+        self.a_number_that_does_not_fit(value, false, &ty, span, None);
+        if self.checked.findings.len() > before {
+            self.overflowed.insert(span.start);
+        }
+    }
+
     fn divisor_is_not_zero(&mut self, op: BinaryOp, rhs: &Expr, span: &Span) {
         if !matches!(op, BinaryOp::Div | BinaryOp::Rem) {
             return;
@@ -7765,25 +8202,39 @@ impl<'a> Checker<'a> {
                         Ty::named("String")
                     }
                     None => {
+                        // **A number nothing typed is open**
+                        // ([ADR-249](../../docs/specification/adr/adr-249.md)
+                        // D1): its uses decide, once the body has been walked,
+                        // and what it is given is held to that type then.
+                        //
                         // **No annotation, and a type all the same** where an
                         // operand's declaration pinned one: `let a: i32 = …`
                         // then `let b = a + 1` is arithmetic in an `i32`, and
                         // that is the sum ADR-043 §3 left to `rustc`.
-                        self.constant_fits(value, None, span);
-                        // **A constant an `i32` does not hold is an `i64`**
-                        // ([ADR-063](../../docs/specification/adr/adr-063.md)
-                        // D1): it takes the first type that holds it, and the
-                        // emitter writes it so. Said here too (0.0.250), so
-                        // `let b = 3000000000` then `a + b` over an `i32` `a`
-                        // is `NK1199` in this language's words and not
-                        // `rustc`'s *cannot add `i64` to `i32`*.
-                        match (&found, self.constant_of(value)) {
-                            (Ty::Unknown, Some(folded)) if crate::fold::wants_widening(&folded) => {
-                                Ty::named("i64")
-                            }
-                            _ => found,
+                        if !(found == Ty::Unknown && self.number_shaped(value)) {
+                            self.constant_fits(value, None, span);
                         }
+                        found
                     }
+                };
+                let open = match ty {
+                    None if bound == Ty::Unknown && self.number_shaped(value) => {
+                        self.open_numbers.insert(
+                            span.start,
+                            OpenNumber {
+                                name: name.clone(),
+                                at: span.clone(),
+                                joined: span.start,
+                                asks: Vec::new(),
+                                given: Vec::new(),
+                                derived: Vec::new(),
+                                written: Vec::new(),
+                            },
+                        );
+                        self.open_number_given(span.start, value, span);
+                        Some(span.start)
+                    }
+                    _ => None,
                 };
                 // **An empty list has no element type, and D2 says where one
                 // comes from**
@@ -7830,6 +8281,7 @@ impl<'a> Checker<'a> {
                     // is a `comptime`'s, which is the one that *must* fold.
                     built: None,
                     empty_list: pending,
+                    open_number: open,
                     literal: match (ty, value) {
                         (None, Expr::LitStr { text, .. }) => Some(text.clone()),
                         _ => None,
@@ -7951,6 +8403,32 @@ impl<'a> Checker<'a> {
                     None => self.text_literal(&into, value, true).unwrap_or(found),
                     Some(_) => found,
                 };
+                // **An assignment is a use of both sides, and a number given
+                // to the one on the left**
+                // ([ADR-249](../../docs/specification/adr/adr-249.md) D2, D3):
+                // `n = xs.len()` makes an open `n` an `i64`, `n = 3000000000`
+                // is held to whatever `n` is, and `total = n` asks `n` for
+                // `total`'s type. A shift's count is any integer and asks
+                // nothing.
+                if !matches!(op, Some(BinaryOp::Shl | BinaryOp::Shr)) {
+                    let open = match target {
+                        Expr::Variable(name) => self
+                            .binding(self.parsed.text(*name))
+                            .and_then(|local| local.open_number)
+                            .map(|at| self.open_root(at)),
+                        _ => None,
+                    };
+                    match open {
+                        Some(_) if integer_named(&value_of_a_copy(found.unseen())).is_some() => {
+                            self.number_asked(target, &found, span, true);
+                        }
+                        Some(number) if self.number_shaped(value) => {
+                            self.open_number_given(number, value, span);
+                        }
+                        _ => {}
+                    }
+                    self.number_asked(value, &into, span, true);
+                }
                 // **What is assigned is given to the place** (ADR-213 D3).
                 if op.is_none() {
                     let to = match target {
@@ -9725,6 +10203,7 @@ impl<'a> Checker<'a> {
                 let left = self.expr(lhs, span);
                 let right = self.expr(rhs, span);
                 self.divisor_is_not_zero(*op, rhs, span);
+                self.an_operation_that_overflows(*op, lhs, rhs, span);
                 // **The stamp sticks**
                 // ([ADR-111](../../docs/specification/adr/adr-111.md) D2):
                 // `stand + 100` is a `Seen[i64]` and `stand > 100` a
@@ -9757,6 +10236,22 @@ impl<'a> Checker<'a> {
                             self.literals_are(side, &unsigned, span);
                         }
                     }
+                }
+                // **An operation is a use of the numbers on both sides**
+                // ([ADR-249](../../docs/specification/adr/adr-249.md) D1, D2):
+                // a side with a type asks the other for it, and two open sides
+                // are one number's question from here on. A shift's count is
+                // any integer and is neither.
+                if !matches!(
+                    op,
+                    BinaryOp::And | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr
+                ) {
+                    self.number_asked(lhs, &right, at, true);
+                    self.number_asked(rhs, &left, at, true);
+                    let mut both = Vec::new();
+                    self.open_numbers_in(lhs, &mut both);
+                    self.open_numbers_in(rhs, &mut both);
+                    self.open_numbers_joined(&both);
                 }
                 let outcome = match op {
                     // **`&`, `|`, `^` and the shifts take integers** (D3): a
@@ -10000,6 +10495,15 @@ impl<'a> Checker<'a> {
                     self.checked
                         .slice_indices
                         .insert((span.start, argument_shape(index)));
+                }
+                // **An index is a use that prefers an `i64`**
+                // ([ADR-249](../../docs/specification/adr/adr-249.md) D2): a
+                // length and an index are one (ADR-048 D1), and the language
+                // below takes any integer through `index::at` - so it is asked
+                // only where nothing else asks.
+                if !a_range && matches!(crate::contracts::ty::base(name), "Vec" | "List" | "Array")
+                {
+                    self.number_asked(index, &Ty::named("i64"), span, false);
                 }
                 if a_range {
                     return match (crate::contracts::ty::base(name), args.as_slice()) {
@@ -11845,6 +12349,12 @@ impl<'a> Checker<'a> {
         what: &str,
         message: impl FnOnce(&str, &str) -> String,
     ) {
+        // **A place that says its type is a use of the numbers put there**
+        // ([ADR-249](../../docs/specification/adr/adr-249.md) D2): a field, a
+        // `let`'s annotation, what a function hands back.
+        if let Some(value) = value {
+            self.number_asked(value, want, &span, true);
+        }
         // **A view into a position both kinds of text flow into** is borrowed
         // as it is (ADR-222 D3, ADR-223 D3): that is what the position is for.
         // The position reads as text of its own, so a view is what needs
@@ -17624,6 +18134,7 @@ impl<'a> Checker<'a> {
             built: None,
             immutable: None,
             empty_list: None,
+            open_number: None,
         });
     }
 
@@ -18806,6 +19317,7 @@ impl<'a> Checker<'a> {
             built: evaluated,
             immutable: None,
             empty_list: None,
+            open_number: None,
         });
         Ty::Tuple(Vec::new())
     }
@@ -19854,6 +20366,33 @@ fn convert(found: &Ty, want: &Ty) -> String {
 ///
 /// A view or a type with arguments is neither: `&i32` is a reference and
 /// `Vec[i32]` is a list, and a number does not stand beside either of them.
+/// **The operations whose result is of their operands' type**: arithmetic and
+/// the bit operators ([ADR-249](../../docs/specification/adr/adr-249.md) D1).
+fn an_operation_of_one_type(op: BinaryOp) -> bool {
+    !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or)
+}
+
+/// Every integer literal in a value, for the suffix the emitter may owe it.
+fn literals_in(expr: &Expr, out: &mut Vec<i128>) {
+    match expr {
+        Expr::LitInt(value) => out.push(*value),
+        Expr::Binary { lhs, rhs, .. } => {
+            literals_in(lhs, out);
+            literals_in(rhs, out);
+        }
+        Expr::Unary { expr, .. } => literals_in(expr, out),
+        _ => {}
+    }
+}
+
+/// **`an i32` and `a u64`**: the article as the name is said (`NK1116`'s rule).
+fn an_or_a(ty: &str) -> &'static str {
+    match ty.starts_with('i') {
+        true => "an",
+        false => "a",
+    }
+}
+
 fn integer_named(ty: &Ty) -> Option<String> {
     let Ty::Named { name, args, view } = ty else {
         return None;

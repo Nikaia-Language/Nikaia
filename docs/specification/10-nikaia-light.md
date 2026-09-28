@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.250 (Draft)
+**Version:** 0.0.251 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -474,6 +474,16 @@ The use is asked first and the size second. So `small` may still become an
 `i64`, and `big` never has to be annotated to be one. A number too large for an
 `i64` is refused.
 
+**A use is anything the function does with the name**: the parameter it is
+handed to, a typed value it meets in an operation or a comparison, an annotated
+`let`, a field or a `return` it goes into, a value assigned to it or from it,
+and an index, which asks for an `i64` only where nothing else asks. The compiler
+reads every use in the function and writes down the type it decides, among all
+five integer types. Two uses that ask for two types are refused (`NK1200`), with
+the annotation to write. Where no use asks, what the name is given decides:
+`let mut n = 1` followed by `n = 3000000000` is an `i64`, and a value it is
+given that the decided type does not hold is `NK1116`, naming the use.
+
 **A sum of numbers is a number**, so the same rule decides it:
 
 ```nika
@@ -496,7 +506,10 @@ The way out is the annotation on the third line.
 The question is about the **value**, not the digits: `-2147483648` is an `i32`.
 `NK1116` answers the case where a type **stands beside** the literal (an
 annotated `let`, a `return` against a declared result, an argument whose
-parameter says what it takes) and is silent otherwise (Part III, C.4). A
+parameter says what it takes) and is silent otherwise (Part III, C.4). An
+operation over names whose type is pinned is asked wherever it stands - in an
+`f"…"` hole, a condition, a list - and refused once, at the innermost operation
+that overflows. A
 constant is widened where an `i64` holds it and refused with `NK1116` where no
 type does or where a name pinned a narrower one. Two positions take their type
 from **where they stand** and are left alone: a sequence index and a repeat

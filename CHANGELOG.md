@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.251] — 2026-09-28
+
+**A number without an annotation is typed by its uses, and this compiler decides
+it** ([ADR-249](docs/specification/adr/adr-249.md)). Part I 2.4's *the use
+decides* had been the language below's inference; ADR-248's `u64` and `u32`
+gave a number a second answer, and an index gave `rustc` none.
+
+- **An unannotated `let` of numbers is open** (D1) until the function has been
+  read: the parameter it is handed to, a typed value it meets in an operation
+  or a comparison, an annotation, a field, a `return` and an assignment each
+  ask for a type (D2); an index asks for an `i64` only where nothing else does.
+  `let b = 3000000000` handed to a `u64` or put in a `u32` compiles, where it
+  was `NK1102` and `NK1103`.
+- **`NK1200`**: two uses that ask for two types, naming both, with the
+  annotation to write.
+- **Where no use asks, what it is given decides** (D3): `let mut n = 1` then
+  `n = 3000000000` is an `i64`. A value the decided type does not hold is
+  `NK1116` with a note naming the use - `let a: i32 = 1`, `let b = 3000000000`,
+  `a + b` is refused at `b`, once, where it was `NK1199`.
+- **The type is written into the generated `let`** (D4): `let i: i64 = 0;`.
+  `v[i].push(x)` over `let i = 0` runs (`open-work.md` §1.28, closed), and the
+  lowered `std` sources carry their counters' types.
+- **A constant operation that overflows is `NK1116` wherever it stands** (D5):
+  in an `f"…"` hole, a condition, a list, a receiver - once, at the innermost
+  operation - where `rustc` said *this arithmetic operation will overflow*
+  (`open-work.md` §1.27, closed).
+- `NK1116` says *a `u8`* and *an `i32`* as the names are said.
+
 ## [0.0.250] — 2026-09-28
 
 **`u64`, `u32` and the bit operators** ([ADR-248](docs/specification/adr/adr-248.md)),

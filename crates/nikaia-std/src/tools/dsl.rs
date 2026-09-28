@@ -7,7 +7,7 @@
 pub fn parameters(body: &str) -> Vec<String> {
     let c: Vec<char> = body.chars().collect::<Vec<_>>();
     let mut found: Vec<String> = Vec::new();
-    let mut i = 0;
+    let mut i: i64 = 0;
     while i < c.len() as i64 {
         if *nikaia_std::index::get(&c, nikaia_std::index::at(i)) != ':' {
             i += 1;
@@ -19,8 +19,8 @@ pub fn parameters(body: &str) -> Vec<String> {
             i += 2;
             continue;
         }
-        let start = i + 1;
-        let mut end = start;
+        let start: i64 = i + 1;
+        let mut end: i64 = start;
         while end < c.len() as i64 && a_name_goes_on(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
         if end > start && a_name_begins(*nikaia_std::index::get(&c, nikaia_std::index::at(start))) {
             let mut name: String = String::new();

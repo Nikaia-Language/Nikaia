@@ -170,11 +170,13 @@ fn a_literal_above_an_i64_is_a_u64s() {
     assert!(parse_to_ast("fn main() {\n    let x: u64 = 18446744073709551616\n}\n").is_err());
 }
 
-/// **An unannotated constant an `i32` does not hold is an `i64`** (ADR-063 D1),
-/// and the checker says so too (0.0.250): `let b = 3000000000` beside an
-/// `i32` is `NK1199`, where it was `rustc`'s *cannot add `i64` to `i32`*. With
-/// nothing pinning `a`, the literal takes its type from the use and the sum is
-/// an `i64`.
+/// **An unannotated constant takes its type from its uses**
+/// ([ADR-249](../../../docs/specification/adr/adr-249.md)): with nothing
+/// pinning `a`, the three names are one number, no use asks, and what they are
+/// given does not fit an `i32` - so the sum is an `i64`. Beside an `i32` `a`,
+/// `b` is asked to be an `i32` by `a + b`, and `3000000000` does not fit one:
+/// `NK1116` at `b`, naming the use, where it was `rustc`'s *cannot add `i64` to
+/// `i32`*.
 #[test]
 fn a_large_constant_is_an_i64_and_mixes_with_nothing_else() {
     runs(
@@ -195,8 +197,12 @@ fn a_large_constant_is_an_i64_and_mixes_with_nothing_else() {
          }\n",
     );
     assert!(
-        pinned.iter().any(|f| f.code == "NK1199"
-            && f.message == "this puts an `i32` and an `i64` in one operation"),
+        pinned.iter().any(|f| f.code == "NK1116"
+            && f.message == "`3000000000` does not fit in an `i32`"
+            && f.notes
+                .iter()
+                .any(|n| n.contains("`b` is an `i32` because of how it is used"))),
         "{pinned:#?}"
     );
+    assert_eq!(pinned.len(), 1, "one cause, one refusal: {pinned:#?}");
 }

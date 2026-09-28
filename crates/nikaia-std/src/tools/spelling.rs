@@ -49,7 +49,7 @@ pub fn one_edit_apart(a: &str, b: &str) -> bool {
 // this was written - see `contracts::sync`.
 fn one_put_in(long: &str, short: &str) -> bool {
     let kept: Vec<char> = short.chars().collect::<Vec<_>>();
-    let mut at = 0;
+    let mut at: i64 = 0;
     let mut skipped = false;
     for c in long.chars() { if at < kept.len() as i64 && *nikaia_std::index::get(&kept, nikaia_std::index::at(at)) == c { at += 1; } else if skipped { return false; } else { skipped = true; } }
     true

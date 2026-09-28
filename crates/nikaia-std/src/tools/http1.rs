@@ -108,7 +108,7 @@ pub fn read<'a>(written: &Written<'a>) -> Read<'a> {
     let target = *nikaia_std::index::get(&written.words, 1);
     if !(*nikaia_std::index::get(&written.words, 2)).starts_with("HTTP/1.") { return refused("400 a version this does not speak"); }
     if method != "GET" && method != "POST" { return refused("400 a method this does not answer"); }
-    let mut length = 0;
+    let mut length: i64 = 0;
     let mut keep_alive = false;
     let mut headers: Vec<Header<'_>> = vec![];
     for field in written.fields.iter() {

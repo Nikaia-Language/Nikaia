@@ -1148,6 +1148,8 @@ struct Emitter<'p> {
     copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
     unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
+    /// [`check::Checked::number_lets`].
+    number_lets: std::collections::BTreeMap<usize, String>,
     /// [`check::Checked::changed_elements`].
     changed_elements: std::collections::BTreeSet<(usize, String)>,
     /// The arguments that are a count in `usize` below, by the entry the checker
@@ -2343,6 +2345,7 @@ impl<'p> Emitter<'p> {
             owned_loops: propagation.owned_loops,
             copied_loop_bindings: propagation.copied_loop_bindings,
             unsigned_literals: propagation.unsigned_literals,
+            number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
@@ -6017,7 +6020,15 @@ impl<'p> Emitter<'p> {
                 let annotation = match ty {
                     Some(_) if put.is_some() || packed => String::new(),
                     Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
-                    None => String::new(),
+                    // **A number its uses typed is written with the type**
+                    // ([ADR-249](../../docs/specification/adr/adr-249.md) D4):
+                    // this compiler decided it, and the language below's own
+                    // inference is not asked a second time - which is what left
+                    // `v[i].push(x)` over a bare `let i = 0` without an answer.
+                    None => match self.number_lets.get(&span.start) {
+                        Some(ty) => format!(": {ty}"),
+                        None => String::new(),
+                    },
                 };
                 *self.holding.borrow_mut() = None;
                 if packed {
