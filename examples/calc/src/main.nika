@@ -6,7 +6,9 @@
 // Shows: a `grammar` block, precedence and recursion as rules, an `enum` and a
 // tuple pattern in `match`, and `catch` on a parse that fails.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints against `tests/` (ADR-245 D8) and runs the `test` blocks
+// at the end of this file.
 
 use std::cli
 
@@ -87,4 +89,24 @@ fn main() throws {
     }
 
     println(f"{source} = {value}")
+}
+
+// **What the grammar promises, as tests** (ADR-245 D1): `nikaia test` runs
+// each in a process of its own, and `nikaia build` leaves them out.
+
+test "multiplication binds tighter than addition" {
+    let value = Calc::expr("2 + 3 * 4")
+    assert(value == 14)
+}
+
+test "subtraction and division fold from the left" {
+    let difference = Calc::expr("10 - 4 - 3")
+    let quotient = Calc::expr("100 / 10 / 5")
+    assert(difference == 3)
+    assert(quotient == 2)
+}
+
+test "a missing operand is refused" {
+    let value = Calc::expr("2 +") catch { return }
+    panic(f"`2 +` parsed, as {value}")
 }

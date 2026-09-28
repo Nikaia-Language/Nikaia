@@ -294,7 +294,7 @@ where
     // **A float keeps the sign it always had.** `-1.16e+00` and `-1..5` both
     // begin with digits and are not integers, and the rules that read them are
     // tried after this one — so a signed match here would take the `-1` and
-    // leave the rest stranded, which is what `examples/n-body.nika` said the
+    // leave the rest stranded, which is what `examples/n-body/src/main.nika` said the
     // first time this ran. Refusing hands the `-` back to the unary operator
     // and the number to whichever rule it belongs to.
     if signed && radix == 10 && matches!(bytes.get(at), Some(b'.' | b'e' | b'E')) {

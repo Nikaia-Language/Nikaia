@@ -58,11 +58,7 @@ fn ledger(source: &Path, scratch: &Path, threads: &str) -> Vec<u8> {
 fn the_ledger_is_the_same_bytes_in_a_second_process() {
     let mut compared = 0;
 
-    let mut examples: Vec<PathBuf> = std::fs::read_dir(repo_root().join("examples"))
-        .expect("the examples directory")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "nika"))
-        .collect();
+    let mut examples: Vec<PathBuf> = common::standalone_programs(&repo_root().join("examples"));
     // Sorted for the same reason D8 bans consuming a directory listing in
     // filesystem order: a test whose coverage depends on `readdir` reports a
     // different thing on ext4 and on APFS.

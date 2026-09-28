@@ -157,7 +157,7 @@ fn a_kept_parameter_keeps_its_owned_argument() {
 /// **A value that copies is not lent.** A `&i64` parameter costs a dereference
 /// at every use and buys nothing, and the borrow it takes out is one a caller
 /// mutating the same place would collide with — `E0502` about a file nobody
-/// wrote, which is the shape `examples/n-body.nika` met in D4's step.
+/// wrote, which is the shape `examples/n-body/src/main.nika` met in D4's step.
 #[test]
 fn a_copy_type_is_not_lent() {
     let rust = lowered(
@@ -173,7 +173,7 @@ fn a_copy_type_is_not_lent() {
 /// The parameter is a view in the declaration already, so what has to fit is
 /// the argument *with* the reference the compiler writes. Asking the other
 /// question refused `count(dna)` for a `dna` every caller had been writing
-/// `count(&dna)` for — `examples/k-nucleotide.nika`, where that was met.
+/// `count(&dna)` for — `examples/k-nucleotide/src/main.nika`, where that was met.
 #[test]
 fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
     let printed = ran(

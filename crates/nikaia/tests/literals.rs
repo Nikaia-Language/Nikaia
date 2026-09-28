@@ -1,6 +1,6 @@
 //! What a literal is, and what survives the lowering.
 //!
-//! Three of these came out of writing `examples/json.nika`, which is what the
+//! Three of these came out of writing `examples/json/src/main.nika`, which is what the
 //! examples are for: a character literal was not a thing the language had, a
 //! string could not hold a `\u{…}` escape, and output could not be composed
 //! without a newline attached to every piece.
@@ -45,7 +45,7 @@ fn the_awkward_characters_are_characters() {
 }
 
 /// Kap 3.4: a character is a pattern, which is what makes a `match` over
-/// `chars()` read as one - `examples/json.nika` decodes its escapes that way.
+/// `chars()` read as one - `examples/json/src/main.nika` decodes its escapes that way.
 #[test]
 fn a_character_literal_is_a_pattern() {
     let source = "fn f(c: char) { match c { 'n' => { println(\"newline\") } else => { } } }";
@@ -118,7 +118,7 @@ fn a_hole_may_hold_a_string_literal() {
 
 /// **A brace is a brace** (ADR-035 D1).
 ///
-/// The case this was written for is `examples/json.nika`, where a program
+/// The case this was written for is `examples/json/src/main.nika`, where a program
 /// whose job is to print `{` had to write `print("{{}}")` - and every string
 /// in every program paid for a feature one string in four uses.
 #[test]

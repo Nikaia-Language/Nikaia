@@ -1495,7 +1495,7 @@ signature = "(ref String) -> String"
 doc = "The same text, owned rather than borrowed."
 
 # Written down because the corpus asks for it - `line.to_uppercase()` in
-# `examples/k-nucleotide.nika` - and because it is sayable: a case fold hands
+# `examples/k-nucleotide/src/main.nika` - and because it is sayable: a case fold hands
 # back an owned `String`, whatever it was given. It was the example a test used
 # for *"a signature nobody has written"*, which is a bad thing to hold a test
 # still with: every real `std` name is a candidate for being written, so a test

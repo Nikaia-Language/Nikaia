@@ -1,0 +1,7 @@
+2 sections
+[server]
+  host = 0.0.0.0
+  port = 8080
+[limits]
+  max_body = 1048576
+  timeout = 30s

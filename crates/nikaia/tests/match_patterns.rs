@@ -2,7 +2,7 @@
 //! ([ADR-137](../../../docs/specification/adr/adr-137.md) D1, D2, D3).
 //!
 //! `match` matched a literal, a path with bindings and the catch-all, and
-//! nothing else. The absence was visible in the corpus: `examples/calc.nika`
+//! nothing else. The absence was visible in the corpus: `examples/calc/src/main.nika`
 //! matched `step.0` and then read `step.1` in every arm, because it could not
 //! match `step`.
 //!
@@ -240,7 +240,8 @@ fn an_or_pattern_covers_each_variant_it_names() {
 /// opened with.
 #[test]
 fn the_calculator_matches_the_pair() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/calc.nika");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/calc/src/main.nika");
     let source = std::fs::read_to_string(path).expect("calc.nika");
     assert!(source.contains("match step {"), "it still matches `step.0`");
     // The comment beside it *names* the old shape, which is the point of a

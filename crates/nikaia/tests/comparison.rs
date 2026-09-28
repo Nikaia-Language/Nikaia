@@ -92,7 +92,7 @@ fn a_float_anywhere_takes_the_second_word_away() {
 /// **And it is a walk and not a look at the syntax**: a `struct` holding a type
 /// that holds a float is the same answer, however far down.
 ///
-/// `examples/json.nika` is what found this: `Json::Number(f64)` made `Json`
+/// `examples/json/src/main.nika` is what found this: `Json::Number(f64)` made `Json`
 /// `PartialEq`, and `Document { value: Json }` was derived `Eq` beside it —
 /// *the trait bound `Json<'a>: Eq is not satisfied*, about a generated file.
 #[test]

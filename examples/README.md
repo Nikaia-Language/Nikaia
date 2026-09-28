@@ -9,18 +9,31 @@ by a path ([ADR-069](../docs/specification/adr/adr-069.md) D1). Everything else 
 on its own, so the pair is the only place in this directory where the dependency arm is written
 down rather than described.
 
+**Eight of them are packages that test themselves**
+([ADR-245](../docs/specification/adr/adr-245.md) D8): `calc/`, `access-log/`, `config/`,
+`json/`, `n-body/`, `k-nucleotide/`, `escaping/` and `trend/` each hold `nikaia.toml`,
+`src/main.nika` and a `tests/` directory in which `NAME.stdout` is what the program must print,
+with `NAME.args` and `NAME.stdin` as what it is given. In one of them:
+
+```text
+nikaia run -- "2 + 3 * 4"      # in examples/calc
+nikaia test --both-settings    # every output test, and calc's `test` blocks, at both settings
+```
+
+`crates/nikaia/tests/examples.rs` runs `nikaia test --both-settings` in a copy of each.
+
 | | what it is | runs |
 | :--- | :--- | :--- |
 | [`1brc.nika`](1brc.nika) | the One Billion Row Challenge: a frame, a parallel fold, a billion rows | ✅ `crates/nikaia/tests/one_brc.rs` |
-| [`calc.nika`](calc.nika) | a four-function calculator: the grammar protocol at its smallest | ✅ `crates/nikaia/tests/examples.rs` |
-| [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
-| [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
-| [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
-| [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
-| [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
-| [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
+| [`calc/`](calc/) | a four-function calculator: the grammar protocol at its smallest | ✅ `nikaia test`: its own `tests/` |
+| [`access-log/`](access-log/) | a web log summarised: several fields per line, a report at the end | ✅ `nikaia test`: its own `tests/` |
+| [`config/`](config/) | an INI file with comments: a grammar that defines its own whitespace | ✅ `nikaia test`: its own `tests/` |
+| [`json/`](json/) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `nikaia test`: its own `tests/` |
+| [`n-body/`](n-body/) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `nikaia test`: its own `tests/` |
+| [`k-nucleotide/`](k-nucleotide/) | the CLBG benchmark: FASTA on standard input, counted | ✅ `nikaia test`: its own `tests/` |
+| [`escaping/`](escaping/) | an HTML table: the template escapes, the type says what is markup | ✅ `nikaia test`: its own `tests/` |
 | [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
-| [`trend.nika`](trend.nika) | ten days of readings, looked at **from the end**: a pipeline turned round without a copy, and a range walked twice | ✅ `crates/nikaia/tests/examples.rs` |
+| [`trend/`](trend/) | ten days of readings, looked at **from the end**: a pipeline turned round without a copy, and a range walked twice | ✅ `nikaia test`: its own `tests/` |
 | [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
@@ -28,8 +41,8 @@ down rather than described.
 | [`hello-http/`](hello-http/) | a **server**, and a program that reaches `http` **by a path**: one address and one function that decides | ✅ `crates/nikaia/tests/project.rs`, over a real socket |
 | [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
-Each of the twelve single programs is compiled and run **at both settings**, and their output
-must be identical — that is the claim the switches rest on, and a test is where it belongs
+Each of the twelve single programs - eight of them packages now - is compiled and run **at both
+settings**, and their output must be identical — that is the claim the switches rest on, and a test is where it belongs
 rather than in a paragraph. The pair is built once, through its consumer, because what it is
 there to show is the dependency arm rather than a body of code. Each is the real file: the
 tests read the examples rather than a copy, so an example cannot drift from what is checked.
@@ -191,9 +204,9 @@ CoreMark (embedded C microbenchmark).
 
 1. `1brc` — validates the 0.0.7 claims, needs only file IO. ✅ [`1brc.nika`](1brc.nika)
 2. CLBG `n-body` — first comparable number against other languages. ✅
-   [`n-body.nika`](n-body.nika), matching the published output for n = 1000 to the digit.
+   [`n-body.nika`](n-body/src/main.nika), matching the published output for n = 1000 to the digit.
 3. CLBG `reverse-complement` and `k-nucleotide` — stdin/stdout IO with exact expected output.
-   ✅ [`k-nucleotide.nika`](k-nucleotide.nika); `reverse-complement` needs binary output, which
+   ✅ [`k-nucleotide.nika`](k-nucleotide/src/main.nika); `reverse-complement` needs binary output, which
    `std::io` specifies as `bytes` and does not yet have.
 4. TechEmpower `fortunes` — once an HTTP stack and a DB driver exist.
 
@@ -490,7 +503,7 @@ holes at compile time, every hole goes through `html::Render`, and a hole in a p
 cannot make safe is refused with the position named. The type decides what a hole may hold —
 `Raw` renders itself, text renders escaped, a type with no impl cannot go in a template — which
 is ADR-017 D2 put where `rustc` can act on it - the Nikaia compiler emits the same call for every
-hole and does not have to know which case it is. `examples/escaping.nika` is the whole of it in one page.
+hole and does not have to know which case it is. `examples/escaping/src/main.nika` is the whole of it in one page.
 
 **Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
 the file is markup and an editor that highlights it keeps working, with `:rows` captured from the

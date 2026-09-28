@@ -1,0 +1,10 @@
+moving average over 3 days, latest first:
+  25
+  23
+  21
+day over day, latest first:
+  24 -> 28: 4
+  25 -> 24: -1
+  22 -> 25: 3
+peak: day 9, 28
+every third day, from today back: 28 22 17 12

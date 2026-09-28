@@ -7,7 +7,8 @@
 // Shows: a `dsl html` template, a `<for>` loop inside it, and `html::Raw` for
 // markup the program built itself.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints against `tests/` (ADR-245 D8).
 
 use std::html
 

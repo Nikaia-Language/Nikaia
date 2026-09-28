@@ -146,12 +146,12 @@ ship something that only works single-threaded.
 
 Real programs live in [`examples/`](../examples/). Copy one into `src/main.nika` and run it:
 
-* [`calc.nika`](../examples/calc.nika): a four-function calculator built from a grammar.
+* [`calc.nika`](../examples/calc/src/main.nika): a four-function calculator built from a grammar.
   `nikaia run -- "2 + 3 * 4"`
 * [`tally.nika`](../examples/tally.nika): counts the lines piped into it, in constant
   memory.
-* [`access-log.nika`](../examples/access-log.nika): a web access log summarised.
-* [`json.nika`](../examples/json.nika), [`config.nika`](../examples/config.nika): a JSON
+* [`access-log.nika`](../examples/access-log/src/main.nika): a web access log summarised.
+* [`json.nika`](../examples/json/src/main.nika), [`config.nika`](../examples/config/src/main.nika): a JSON
   document and an INI file with comments, parsed.
 * [`1brc.nika`](../examples/1brc.nika): the One Billion Row Challenge.
 * [`hello-http/`](../examples/hello-http/): a project with a dependency, serving HTTP.

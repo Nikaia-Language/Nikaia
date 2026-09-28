@@ -1,6 +1,6 @@
 // Parses a JSON file into a tree and prints it back, two spaces per level.
 //
-//     nikaia run -- data.json
+//     nikaia run -- tests/data.json
 //     {
 //       "name": "a\nb",
 //       …
@@ -14,7 +14,8 @@
 // views of the input and decoded only when asked, and a `match` the compiler
 // checks for missing cases.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints against `tests/` (ADR-245 D8).
 
 use std::fs
 use std::cli

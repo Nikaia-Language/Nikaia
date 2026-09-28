@@ -474,7 +474,7 @@ spends microseconds, and a lambda run a million times over a list is what
 a remark: `HashMap::and_modify` describes a *Rust* signature, which takes a
 plain closure whatever the ledger's `sync` says, and writing the future shape
 for it produced *expected `()`, found `Pin<Box<…>>`* against
-`examples/access-log.nika`. The shape is written only where the signature was
+`examples/access-log/src/main.nika`. The shape is written only where the signature was
 declared in this language.
 
 *And the run shape gained a `&` at 0.0.166*: `&impl AsyncFn(A) -> R`, because a
@@ -820,10 +820,11 @@ order the pieces depend on each other:
 
 1. ~~**D2 and D3**~~ — built at 0.0.239 (`tests/assert.rs`).
 2. ~~**D1 and D7**~~ — built at 0.0.240 (`tests/nikaia_test.rs`).
-3. ~~**D8**~~ — built at 0.0.241. **Left:** the programs in `examples/` are
-   to be its first users, and most of them are single files rather than
-   packages, so each needs a directory before its expected output - in its
-   comments today - can be a `tests/NAME.stdout`.
+3. ~~**D8**~~ — built at 0.0.241; eight programs in `examples/` are packages
+   with output tests since 0.0.242, and `calc/` carries `test` blocks.
+   **Left:** `tally`, `report` and `inventory/`, whose result is a file they
+   write - an output test compares standard output only, so their table stays
+   in `tests/examples.rs` until one can name a file too.
 4. ~~**D6**~~ — built at 0.0.241; every row says *run time*. D4 and D5 need no
    work before a prover exists; D3 is what keeps them open.
 

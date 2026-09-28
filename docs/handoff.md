@@ -149,7 +149,7 @@ Both halves are upstream now (winnow-grammar#5):
 
 Nikaia's own grammar labels `expr`, `unary_expr`, `stmt`, `item` and
 `type_ref`; `.nika` grammars can use the same syntax (Part II, 10.6), and
-`examples/calc.nika` does. `unary_expr` is labelled as well as `expr` for a
+`examples/calc/src/main.nika` does. `unary_expr` is labelled as well as `expr` for a
 reason worth keeping: `1 + ` fails inside `add_tail`, whose operand is a
 `mul_expr`, so the label on `expr` never sees it.
 
@@ -165,7 +165,7 @@ this file touched it.
 (winnow-grammar#11, ADR 15 point 13). It lands in both places at once, because
 both go through the same call: the compiler's messages for `.nika` files, and
 the errors a *generated* program prints about its own input — the `catch` in
-`examples/access-log.nika` shows the rejected line and points at the character,
+`examples/access-log/src/main.nika` shows the rejected line and points at the character,
 which `crates/nikaia/tests/examples.rs` checks end to end. What is still not
 there, against a rustc diagnostic: a file name in front of the message (the
 driver knows the input, not where it came from) and `= help:` lines.
@@ -239,7 +239,7 @@ is left is 3 and 4, and neither is a performance question.
    is compiled where it is written, every hole goes through `html::Render`, a
    hole in a position escaping cannot make safe is refused with the position
    named, and `<for row in :rows>` repeats a body. **The `render` function in
-   `fortunes.nika` lowers and runs today**, and `examples/escaping.nika` is the
+   `fortunes.nika` lowers and runs today**, and `examples/escaping/src/main.nika` is the
    whole contract in one page.
 
    Since [ADR-022](specification/adr/adr-022.md) removed the `fn:` form, the

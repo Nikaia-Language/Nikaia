@@ -1,7 +1,7 @@
 // Parses an INI-style configuration file and prints it back, section by
 // section, in the order it was written.
 //
-//     nikaia run -- app.conf
+//     nikaia run -- tests/app.conf
 //     2 sections
 //     [server]
 //       host = 0.0.0.0
@@ -15,7 +15,8 @@
 // collects into a `Vec`, and a result tree whose strings are all slices of
 // the input.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints against `tests/` (ADR-245 D8).
 
 use std::fs
 use std::cli

@@ -453,11 +453,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut checked = 0;
     for dir in ["examples", "benches", "crates/nikaia-std/src"] {
-        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
+        for path in common::standalone_programs(&root.join(dir)) {
             if path.extension().and_then(|e| e.to_str()) != Some("nika") {
                 continue;
             }

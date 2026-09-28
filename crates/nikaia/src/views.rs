@@ -45,7 +45,7 @@
 //      tie it to something other than this parameter;
 //   4. a task's body, which outlives the call by construction.
 //
-// Everything else is left alone, and deliberately: `examples/k-nucleotide.nika`
+// Everything else is left alone, and deliberately: `examples/k-nucleotide/src/main.nika`
 // writes views of `seq` into a `HashMap[&str, Tally]` it returns, and that is
 // correct because the result *is* `seq`'s buffer - case 3 asks exactly that
 // question before it reports anything. A local whose declared type holds a view

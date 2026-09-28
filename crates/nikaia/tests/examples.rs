@@ -13,6 +13,13 @@
 //! differs. A test that ran one setting would leave the interesting half
 //! unchecked.
 //!
+//! **Most examples check themselves now**
+//! ([ADR-245](../../../docs/specification/adr/adr-245.md) D8): eight are
+//! packages whose expected output is `tests/NAME.stdout` beside them, and this
+//! file runs `nikaia test --both-settings` in a copy of each. The table below
+//! keeps the three whose result is a *file* they write, which an output test
+//! does not see.
+//!
 //! `1brc.nika` has a test of its own (`one_brc.rs`), because it checks more
 //! than its output. The last test here makes sure no example escapes both.
 
@@ -73,201 +80,6 @@ struct Run {
 
 /// The examples that run. An entry here is a promise that `cargo test` keeps.
 const RUNNABLE: &[Example] = &[
-    Example {
-        file: "calc.nika",
-        input: None,
-        stdin: None,
-        args: &["2 + 3 * (10 - 4) / 2"],
-        expected: "2 + 3 * (10 - 4) / 2 = 11",
-        wrote: None,
-    },
-    Example {
-        file: "access-log.nika",
-        input: Some(Input {
-            name: "access.log",
-            contents: "\
-203.0.113.7 GET /index.html 200 5120
-203.0.113.7 GET /style.css 200 1024
-198.51.100.4 POST /api/order 201 512
-198.51.100.4 GET /missing 404 0
-203.0.113.7 GET /index.html 200 5120
-",
-        }),
-        stdin: None,
-        args: &["{input}"],
-        // Sorted by path; /index.html was hit twice, and the 404 is the one
-        // failure. The counts are what makes the merge visible: with parallelism
-        // the five lines are parsed by several accumulators and added up.
-        // By hits, descending; ties keep the name order the first sort put
-        // them in - which is the compound order two stable sorts state.
-        expected: "\
-5 requests, 1 failed
-/index.html 2 10240
-/api/order 1 512
-/missing 1 0
-/style.css 1 1024",
-        wrote: None,
-    },
-    Example {
-        file: "config.nika",
-        input: Some(Input {
-            name: "app.conf",
-            // A comment on its own line, one after a value, and a blank line:
-            // all three are `WS` here, which is what defining `WS` buys.
-            contents: "\
-# app.conf - the front door
-[server]
-host = 0.0.0.0
-port = 8080          # the usual one
-
-# what a request may cost
-[limits]
-max_body = 1048576
-timeout = 30s
-",
-        }),
-        stdin: None,
-        args: &["{input}"],
-        expected: "\
-2 sections
-[server]
-  host = 0.0.0.0
-  port = 8080
-[limits]
-  max_body = 1048576
-  timeout = 30s",
-        wrote: None,
-    },
-    Example {
-        file: "json.nika",
-        input: Some(Input {
-            name: "data.json",
-            contents: "{\"name\": \"a\\nb\", \"tags\": [1, 2.5, true, null], \"empty\": {}}\n",
-        }),
-        stdin: None,
-        args: &["{input}"],
-        // The document back, two spaces a level, with the string bodies
-        // printed raw - and one line that had to decode one: `a\nb` is four
-        // characters in the file and three in the value.
-        expected: "\
-{
-  \"name\": \"a\\nb\",
-  \"tags\": [
-    1,
-    2.5,
-    true,
-    null
-  ],
-  \"empty\": {}
-}
-longest string: 3 characters",
-        wrote: None,
-    },
-    Example {
-        file: "n-body.nika",
-        input: None,
-        stdin: None,
-        args: &["1000"],
-        // The Computer Language Benchmarks Game's published output for
-        // n = 1000, to the digit. That is what makes this example worth
-        // having: the number is not ours to choose, so the arithmetic either
-        // agrees with thirty other languages or it does not.
-        expected: "\
--0.169075164
--0.169087605",
-        wrote: None,
-    },
-    Example {
-        file: "k-nucleotide.nika",
-        input: None,
-        // On a pipe, which is the point of the example (ADR-019). Three
-        // sections so that picking the third is a real choice, and the second
-        // in lower case so that the uppercasing is doing something.
-        stdin: Some(
-            ">ONE Homo sapiens alu\n\
-             GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\n\
-             GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\n\
-             >TWO IUB ambiguity codes\n\
-             cttBtatcatatgctaKggNcataaaSatgtaaaDcDRtBggDtctttataattcBgtcg\n\
-             >THREE Homo sapiens frequency\n\
-             aacacttcaccaggtatcgtgaaggctcaagattacccagagaacctttgcaatataaga\n\
-             atatgtatgcagcattaccctaagtaattatattctttttctgactcaaagtgacaagcc\n\
-             ctagtgtatattaaatcggtatatttgggaaattcctcaaactatcctaatcaggtagcc\n",
-        ),
-        args: &[],
-        // The benchmark's own report, on 180 characters instead of 25 MB:
-        // every single character and every pair as a percentage, most frequent
-        // first with ties in alphabetical order, then five named fragments.
-        expected: "\
-A 33.333
-T 30.000
-C 20.556
-G 16.111
-
-TA 11.173
-AA 10.615
-AT 10.615
-TT 8.380
-AG 7.263
-CA 6.704
-CC 6.145
-CT 6.145
-TC 6.145
-AC 5.028
-GT 5.028
-GA 4.469
-TG 4.469
-GC 3.352
-GG 3.352
-CG 1.117
-
-3\tGGT
-3\tGGTA
-0\tGGTATT
-0\tGGTATTTTAATT
-0\tGGTATTTTAATTTATAGT",
-        wrote: None,
-    },
-    Example {
-        file: "escaping.nika",
-        input: None,
-        stdin: None,
-        args: &[],
-        // Every character that changes what HTML means is gone from the three
-        // rows that hold text: `<` and `&` in a name, the quotes around a note,
-        // an apostrophe, and a `</td>` that is not a tag here. The fourth is
-        // the one the program built as markup and said so with a type - it
-        // keeps its `<em>`, and the name inside it is escaped once, by the call
-        // that made the promise.
-        expected: "\
-<table>
-        <tr class=\"odd\"><td>Ada</td><td>fine</td></tr>\
-<tr class=\"even\"><td>a&lt;b &amp; c</td><td>&quot;quoted&quot;</td></tr>\
-<tr class=\"odd\"><td>O&#39;Hara</td><td>&lt;/td&gt; is not a tag here</td></tr>
-        </table>
-<tr class=\"odd\"><td>Ada</td><td><em>Ada</em></td></tr>",
-        wrote: None,
-    },
-    Example {
-        file: "trend.nika",
-        input: None,
-        stdin: None,
-        args: &[],
-        // ADR-212's program: every answer is a pipeline walked from its back
-        // end, and a range walked twice. Worked out by hand, not read off a run.
-        expected: "\
-moving average over 3 days, latest first:
-  25
-  23
-  21
-day over day, latest first:
-  24 -> 28: 4
-  25 -> 24: -1
-  22 -> 25: 3
-peak: day 9, 28
-every third day, from today back: 28 22 17 12",
-        wrote: None,
-    },
     Example {
         file: "tally.nika",
         input: None,
@@ -499,11 +311,13 @@ fn no_example_is_neither_run_nor_declared() {
             let known = RUNNABLE.iter().any(|e| e.file.starts_with(&prefix))
                 || DIRECTORIES_CHECKED_ELSEWHERE
                     .iter()
-                    .any(|(dir, _)| *dir == name);
+                    .any(|(dir, _)| *dir == name)
+                || checks_itself(&path);
             assert!(
                 known,
-                "examples/{name}/ is in no list in tests/examples.rs: add its entry \
-                 file to RUNNABLE with what it prints, or the directory to \
+                "examples/{name}/ is in no list in tests/examples.rs and has no \
+                 `tests/NAME.stdout`: give it an output test (ADR-245 D8), add its \
+                 entry file to RUNNABLE with what it prints, or the directory to \
                  DIRECTORIES_CHECKED_ELSEWHERE with the test that checks it"
             );
             continue;
@@ -527,6 +341,79 @@ fn no_example_is_neither_run_nor_declared() {
     }
 
     assert!(seen > 0, "no examples found in {}", dir.display());
+}
+
+/// **An example that is a package with output tests checks itself**
+/// ([ADR-245](../../../docs/specification/adr/adr-245.md) D8): its expected
+/// output is `tests/NAME.stdout` beside it, and whatever `test` blocks it
+/// writes are its own.
+fn checks_itself(dir: &Path) -> bool {
+    dir.join("nikaia.toml").is_file()
+        && std::fs::read_dir(dir.join("tests")).is_ok_and(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .any(|entry| entry.path().extension().is_some_and(|x| x == "stdout"))
+        })
+}
+
+/// **Every example package passes `nikaia test`, at both settings** - which
+/// runs its output tests against the program and its `test` blocks against
+/// the test build, and fails an outcome that differs between the settings
+/// (ADR-245 D7). Run in a copy, because a project build writes `target/`
+/// into the project, and the examples are the repository's.
+#[test]
+fn every_example_package_passes_its_own_tests() {
+    let mut packages: Vec<PathBuf> = std::fs::read_dir(repo_root().join("examples"))
+        .expect("read examples directory")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| checks_itself(path))
+        .collect();
+    packages.sort();
+    assert!(packages.len() >= 8, "{packages:?}");
+    for package in packages {
+        let name = package
+            .file_name()
+            .expect("a name")
+            .to_string_lossy()
+            .to_string();
+        let copy = common::scratch_dir(&format!("example-package-{name}"));
+        copy_tree(&package, &copy);
+        let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args(["test", "--both-settings", "--project"])
+            .arg(&copy)
+            .env(
+                "NIKAIA_CACHE_DIR",
+                repo_root().join("target").join("nikaia-project-tests"),
+            )
+            .env_remove("CARGO_TARGET_DIR")
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(
+            out.status.success(),
+            "examples/{name} fails its own tests:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::remove_dir_all(&copy).ok();
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("a directory");
+    for entry in std::fs::read_dir(from).expect("read a directory") {
+        let path = entry.expect("an entry").path();
+        let name = path.file_name().expect("a name");
+        if name == "target" {
+            continue;
+        }
+        match path.is_dir() {
+            true => copy_tree(&path, &to.join(name)),
+            false => {
+                std::fs::copy(&path, to.join(name)).expect("copy a file");
+            }
+        }
+    }
 }
 
 /// Every file the specification-level list names must actually be there, so a
@@ -560,7 +447,7 @@ fn the_lists_name_files_that_exist() {
 /// the claim its comment makes.
 #[test]
 fn a_malformed_line_is_reported_and_no_summary_is_printed() {
-    let (dir, binary) = build("access-log.nika", Build::default());
+    let (dir, binary) = build("access-log/src/main.nika", Build::default());
 
     // The status is two digits where the format fixes three.
     let log = dir.join("broken.log");
@@ -624,7 +511,7 @@ fn a_malformed_line_is_reported_and_no_summary_is_printed() {
 /// message, and this is the only place all four are exercised together.
 #[test]
 fn a_missing_operand_is_reported_as_an_expression() {
-    let (dir, binary) = build("calc.nika", Build::default());
+    let (dir, binary) = build("calc/src/main.nika", Build::default());
 
     let run = Command::new(&binary)
         .arg("2 +")

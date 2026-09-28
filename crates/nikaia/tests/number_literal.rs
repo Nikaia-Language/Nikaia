@@ -195,7 +195,7 @@ fn a_minus_that_is_not_against_the_digits_is_the_operator() {
 }
 
 /// **A float keeps the sign it always had**, and that is what
-/// `examples/n-body.nika` said the first time this rule ran: `-1.16e+00` begins
+/// `examples/n-body/src/main.nika` said the first time this rule ran: `-1.16e+00` begins
 /// with digits and is not an integer, so a signed match would take the `-1` and
 /// leave the rest stranded.
 #[test]

@@ -145,7 +145,7 @@ fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
 /// rather than emptying one somebody still holds.
 ///
 /// It is what a body that hands an element to a callee which **keeps** it has
-/// to say — `all.push(v)` in `examples/json.nika`, and `or_insert(counts)` in
+/// to say — `all.push(v)` in `examples/json/src/main.nika`, and `or_insert(counts)` in
 /// `access-log.nika`, both of which this step rewrote.
 #[test]
 fn a_drain_takes_the_elements_away() {
@@ -225,7 +225,7 @@ fn a_let_over_a_place_is_a_view() {
 ///
 /// `let mi = self.bodies[i].mass` over an `f64` is a copy, and a `&` there is a
 /// borrow held across the loop that writes the same field — `E0502` about a
-/// file nobody wrote. `examples/n-body.nika` is where that was met, and
+/// file nobody wrote. `examples/n-body/src/main.nika` is where that was met, and
 /// [`moves_away`] is the same answer `NK2101` reads.
 #[test]
 fn a_let_over_a_place_that_copies_is_not_a_view() {

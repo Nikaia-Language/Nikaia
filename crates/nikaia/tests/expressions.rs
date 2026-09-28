@@ -1,5 +1,5 @@
 //! How an expression is written, and what the lowering owes it. All of these
-//! came out of `examples/n-body.nika`, which is arithmetic and nothing else.
+//! came out of `examples/n-body/src/main.nika`, which is arithmetic and nothing else.
 
 use nikaia::ast::{Expr, Item, Stmt};
 use nikaia::emit::{Build, emit_program};
@@ -160,7 +160,7 @@ fn a_number_is_not_an_identifier() {
 /// right for `let x = if c { a } else { b }` and wrong for a guard: the last
 /// statement of a branch was written as the branch's *value*, so
 /// `if n < k { return counts }` came out as `if n < k { counts }` and the
-/// function carried on. Found by `examples/k-nucleotide.nika`, where the types
+/// function carried on. Found by `examples/k-nucleotide/src/main.nika`, where the types
 /// happened to disagree; in a function returning nothing it would have
 /// compiled.
 #[test]

@@ -140,6 +140,36 @@ pub fn externs() -> Vec<String> {
     .collect()
 }
 
+/// **The programs a corpus sweep reads in `dir`**: every `.nika` directly in
+/// it, and the one file of each package there whose `src/` holds one
+/// ([ADR-245](../../../../docs/specification/adr/adr-245.md) D8 moved most of
+/// `examples/` into packages of a file each, with their output tests beside
+/// them). A package of several files is not a standalone program - one of
+/// its files names types another declares - and is left to the test that
+/// builds it. Sorted, so what a sweep covers does not depend on `readdir`.
+#[allow(dead_code)]
+pub fn standalone_programs(dir: &Path) -> Vec<PathBuf> {
+    let nika = |dir: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|e| e == "nika"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut found = nika(dir);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if let [only] = nika(&entry.path().join("src")).as_slice() {
+            found.push(only.clone());
+        }
+    }
+    found.sort();
+    found
+}
+
 /// A scratch directory of this test's own. The tests run in parallel threads
 /// of one process, and two of them sharing a file name means one compiles the
 /// other's code.

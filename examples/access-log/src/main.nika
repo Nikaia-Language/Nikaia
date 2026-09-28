@@ -1,7 +1,7 @@
 // Summarises a web server's access log: how many requests, how many failed,
 // and the hits and bytes sent per path, busiest first.
 //
-//     nikaia run -- access.log
+//     nikaia run -- tests/access.log
 //     5 requests, 1 failed
 //     /index.html 2 10240
 //     /api/order 1 512
@@ -13,7 +13,8 @@
 // Shows: a `grammar` for lines of several fields, a parallel `par_fold`, a
 // parse error caught and printed, and a two-key sort done as two stable sorts.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints against `tests/` (ADR-245 D8).
 
 use std::fs
 use std::cli

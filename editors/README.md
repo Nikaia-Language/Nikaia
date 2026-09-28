@@ -28,7 +28,7 @@ Rust's with different words:
 | `throws`, `throw`, `catch`, `??` | Part I 7.1, ADR-023, ADR-025 | `catch` is an ordinary keyword in expression position; `throws` carries no type; `??` is the coalescing operator |
 | `sync` | Part II 12.1 | `storage.modifier.sync`, on either side of the return type |
 | `fn { … }` | Part I 5.2/5.3, ADR-022 | the one lambda form, including the trailing form outside the parentheses and a chain continuing after its `}` |
-| `seq { … }` | ADR-033 D7 | a keyword only where a block follows it — `seq` is also a perfectly good variable name, and `examples/k-nucleotide.nika` uses it as one |
+| `seq { … }` | ADR-033 D7 | a keyword only where a block follows it — `seq` is also a perfectly good variable name, and `examples/k-nucleotide/src/main.nika` uses it as one |
 | `spawn`, `access`, `access_all`, `par_iter`, `await`, `join` | Part II 11–12 | `spawn` as a keyword; the rest as `support.function.concurrency`, because they are methods that demand a `sync` lambda |
 | `Shared`, `Locked`, `Cleanup`, `Drop`, `Error` | Part I 6.2/6.4 | `support.class` |
 | `Vec[i64]`, `HashMap[&str, Stats]` | Part I 4.6 | square brackets, never angle |

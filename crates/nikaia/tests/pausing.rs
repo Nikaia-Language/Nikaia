@@ -133,7 +133,7 @@ fn a_main_that_cannot_pause_is_called_directly() {
 /// D6: a recursive pausing function is boxed, because a recursive `async fn` is
 /// an infinitely sized future.
 ///
-/// `examples/json.nika` is where this was found rather than reasoned about: its
+/// `examples/json/src/main.nika` is where this was found rather than reasoned about: its
 /// `show` and `longest` are both recursive and both pausing, so the corpus had
 /// the edge on the day the step landed. `rustc` says *"recursion in an async fn
 /// requires boxing"* about the generated file, which is the C.1 class.

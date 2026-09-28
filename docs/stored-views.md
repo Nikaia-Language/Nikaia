@@ -104,7 +104,7 @@ the same in both: **where does this parameter's view go?**
 reached from `self` whose declared type holds a view; a field of a struct or enum
 the function builds; the result, where the result holds a view of a buffer that is
 not this parameter's; a task's body. Anything else is not a destination — which is
-what keeps `examples/k-nucleotide.nika` out of it (§4).
+what keeps `examples/k-nucleotide/src/main.nika` out of it (§4).
 
 **The second** looks at what the view is stored *into*. A field is declared, and
 its declaration says which buffer it points into ([ADR-008] D1). So where the
@@ -189,7 +189,7 @@ follows carriers **by name** (a name that ever carries the view keeps carrying i
 and never treats a local as a destination, precisely because it cannot answer this.
 
 **(c) A solver, because the answer is a unification and not a reachability.**
-`examples/k-nucleotide.nika` is the case that makes this concrete:
+`examples/k-nucleotide/src/main.nika` is the case that makes this concrete:
 
 ```nika
 fn count(seq: &str, k: usize) -> HashMap[&str, Tally] {
@@ -232,12 +232,12 @@ Two of the seven are there, one is there and discarded, four are not.
 The obvious next step is (b) alone: let a local whose declared type holds a view
 be a destination. It was built as a throwaway probe and run over the corpus.
 
-**It refuses `examples/k-nucleotide.nika`:**
+**It refuses `examples/k-nucleotide/src/main.nika`:**
 
 ```text
 lowered: 32      (33 before)
 refused: 23      (22 before)
-FAIL ./examples/k-nucleotide.nika :: error[NK2302]: `count` keeps `seq` past this
+FAIL ./examples/k-nucleotide/src/main.nika :: error[NK2302]: `count` keeps `seq` past this
      call, and `seq: &str` does not say which buffer it views
 ```
 

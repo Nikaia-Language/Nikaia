@@ -96,7 +96,7 @@ fn init_and_merge_are_walked_too() {
 /// **The shapes the real programs write are untouched**, which is the half that
 /// decides whether this refusal costs anything.
 ///
-/// `examples/1brc.nika` and `examples/access-log.nika` both write
+/// `examples/1brc.nika` and `examples/access-log/src/main.nika` both write
 /// `par_fold(RULE, Type::new, fn(acc, m) { acc.record(m) }, Type::merge)` — a
 /// path as a value in two of the three positions, and a method on a binding
 /// whose type is `?` in the third.
@@ -178,11 +178,7 @@ fn nothing_in_the_corpus_is_newly_refused() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join(directory);
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
+        for path in common::standalone_programs(&root) {
             if path.extension().is_none_or(|e| e != "nika") {
                 continue;
             }

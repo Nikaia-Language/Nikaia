@@ -265,7 +265,7 @@ fn a_field_of_an_indexed_element_compiles_and_runs() {
 /// since `At` is implemented for a range of every signed type and all of them
 /// answer the same `usize`. A range built out of **names** is an `i64` one and
 /// has to be converted, which is [ADR-048](../../../docs/specification/adr/adr-048.md)
-/// D1's whole trade. `examples/k-nucleotide.nika` writes the second shape.
+/// D1's whole trade. `examples/k-nucleotide/src/main.nika` writes the second shape.
 #[test]
 fn a_slice_of_text_is_converted_where_the_range_is_computed() {
     let printed = ran(

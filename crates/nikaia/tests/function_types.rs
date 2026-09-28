@@ -290,7 +290,7 @@ fn a_kept_parameter_keeps_the_boxed_closure() {
 /// said so out loud: `and_modify` is a hand-written description of a **Rust**
 /// signature, which takes a plain closure whatever the ledger's `sync` column
 /// says. Writing the future shape for one produced
-/// *expected `()`, found `Pin<Box<…>>`* against `examples/access-log.nika`.
+/// *expected `()`, found `Pin<Box<…>>`* against `examples/access-log/src/main.nika`.
 ///
 /// So the shape is written only where the signature was **declared here**.
 #[test]

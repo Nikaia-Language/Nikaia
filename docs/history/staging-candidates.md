@@ -119,7 +119,7 @@ Where it costs something today:
 
 | Site | Alternatives | Note |
 | :--- | ---: | :--- |
-| `examples/json.nika:69-78` `rule value` | 9 (6 literal-led) | a `Json::Object` pays 8 failed compares |
+| `examples/json/src/main.nika:69-78` `rule value` | 9 (6 literal-led) | a `Json::Object` pays 8 failed compares |
 | `crates/nikaia/src/parser/mod.rs:854` `cmp_op` | 6 | a two-byte peek would decide in one step |
 | `crates/nikaia/src/parser/mod.rs:747` `assign_op` | 5 | |
 | `crates/nikaia/src/parser/mod.rs:268` `receiver` | 3, sharing a `"&"` prefix | factoring a common prefix is a second, distinct win |

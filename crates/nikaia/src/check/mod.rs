@@ -10390,7 +10390,7 @@ impl<'a> Checker<'a> {
         // see, because the binding is in the markup around it.
         //
         // Measured: widening `NK1117` to a name in an expression refused
-        // `examples/escaping.nika` for its `{r.shade}` until this frame existed.
+        // `examples/escaping/src/main.nika` for its `{r.shade}` until this frame existed.
         for (hole, bound) in crate::emit::literal_expressions_bound(self.parsed, literal) {
             let frame: Vec<Local> = bound
                 .into_iter()

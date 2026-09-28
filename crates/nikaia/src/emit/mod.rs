@@ -11700,7 +11700,7 @@ fn truncating(method: &str) -> Option<&'static str> {
 /// edge).
 ///
 /// A recursive `async fn` has an infinitely sized future, and `rustc` says so:
-/// *"recursion in an async fn requires boxing"*. `examples/json.nika` has two of
+/// *"recursion in an async fn requires boxing"*. `examples/json/src/main.nika` has two of
 /// them - `show` and `longest` both walk a tree - so this is not a case to meet
 /// later, it is the corpus on day one.
 ///

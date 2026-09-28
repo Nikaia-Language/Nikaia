@@ -333,7 +333,7 @@ comes from. `pub` makes something visible outside its package.
 
 Nikaia can describe a text format as a **grammar** inside the program and get a parser
 for it, instead of splitting strings by hand or reaching for regular expressions. It is
-too large for this page. [`examples/calc.nika`](../examples/calc.nika) is a complete
+too large for this page. [`examples/calc/src/main.nika`](../examples/calc/src/main.nika) is a complete
 calculator in about 100 lines.
 
 📖 **Specification:** [Part II, Chapter 10 Metaprogramming](../docs/specification/20-nikaia-advance.md#chapter-10-metaprogramming-code-that-writes-code)

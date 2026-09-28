@@ -53,7 +53,7 @@ fn program(body: &str) -> String {
     )
 }
 
-/// **The reproduction**, which is the line from `examples/n-body.nika` that the
+/// **The reproduction**, which is the line from `examples/n-body/src/main.nika` that the
 /// `catch`-binding round was written against: `text.len()` is in the ledger and
 /// carries no `throws`, so there is nothing for the handler to do.
 #[test]
@@ -134,7 +134,7 @@ fn a_nested_catch_leaves_the_outer_one_alone() {
 /// [ADR-023](../../../docs/specification/adr/adr-023.md) D9: a parse failure
 /// leaves the parser as the Nikaia error it is and lands in the `catch` beside
 /// the `dsl`. It is not a call and carries no contract, so the walk had to be
-/// told — which is what `examples/access-log.nika`, `calc`, `config`, `json`,
+/// told — which is what `examples/access-log/src/main.nika`, `calc`, `config`, `json`,
 /// `k-nucleotide` and `report` did, all at once, the first time this ran over
 /// the corpus.
 #[test]
@@ -168,11 +168,7 @@ fn nothing_in_the_corpus_is_newly_refused() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join(directory);
-        let Ok(entries) = std::fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
+        for path in common::standalone_programs(&root) {
             if path.extension().is_none_or(|e| e != "nika") {
                 continue;
             }

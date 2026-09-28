@@ -224,8 +224,8 @@ grammar rules**, and every number is a median of five runs.
 | :--- | ---: | ---: | ---: |
 | `blocks.nika` (2,000 blocks, 2,000 statements) | 410,934,530 | 412,264,526 | +0.324 % |
 | `many.nika` (1 block, 2,002 statements) | 116,047,192 | 116,050,312 | +0.003 % |
-| `examples/json.nika` | 40,833,960 | 40,953,318 | +0.292 % |
-| `examples/k-nucleotide.nika` | 16,589,311 | 16,613,053 | +0.143 % |
+| `examples/json/src/main.nika` | 40,833,960 | 40,953,318 | +0.292 % |
+| `examples/k-nucleotide/src/main.nika` | 16,589,311 | 16,613,053 | +0.143 % |
 | `examples/tally.nika` | 9,034,400 | 9,046,157 | +0.130 % |
 
 **The contrast between the first two rows is the whole mechanism.** Two thousand
@@ -246,8 +246,8 @@ Put the two arms where they read most naturally — beside `return_stmt`, ahead 
 | :--- | ---: | ---: | ---: |
 | `many.nika` (2,002 assignments) | 116,050,326 | 117,531,152 | **+1.276 %** |
 | `blocks.nika` (2,000 `return`s) | 412,383,029 | 412,384,482 | +0.000 % |
-| `examples/json.nika` | 40,962,680 | 41,094,257 | +0.321 % |
-| `examples/k-nucleotide.nika` | 16,620,755 | 16,647,489 | +0.161 % |
+| `examples/json/src/main.nika` | 40,962,680 | 41,094,257 | +0.321 % |
+| `examples/k-nucleotide/src/main.nika` | 16,620,755 | 16,647,489 | +0.161 % |
 
 1,480,826 instructions over 2,002 statements is **740 per statement** — the cost
 of two keyword matches that fail, and of recording that they could have matched.

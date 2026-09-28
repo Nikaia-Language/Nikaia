@@ -277,7 +277,7 @@ fn panic_ends_the_program_at_the_nikaia_line() {
 }
 
 /// **A map read off a value that came out of a `catch`** (0.0.230, `open-work.md`
-/// §1.18). `examples/access-log.nika` without its `??` reached `rustc`: the
+/// §1.18). `examples/access-log/src/main.nika` without its `??` reached `rustc`: the
 /// `catch` around the parse typed as nothing, so `report.paths[path]` was a
 /// lookup on a map nobody knew, and the field read after it was not refused.
 /// The `catch` is the guarded value's type where its handler leaves.

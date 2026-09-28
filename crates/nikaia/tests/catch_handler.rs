@@ -124,7 +124,7 @@ fn main() {
 /// **The whole point, measured where the user stands**: `rustc` on the emitted
 /// file, and nothing about a name nobody wrote.
 ///
-/// The fixture is the line from `examples/n-body.nika` that found this.
+/// The fixture is the line from `examples/n-body/src/main.nika` that found this.
 #[test]
 fn the_reproduction_compiles_without_a_warning() {
     let rust = lowered(

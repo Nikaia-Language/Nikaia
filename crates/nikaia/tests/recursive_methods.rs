@@ -147,7 +147,7 @@ fn a_recursive_sync_method_is_left_alone() {
 }
 
 /// **The free-function case still works**, which is what step 2 built and what
-/// this must not disturb: `examples/json.nika`'s recursion is through free
+/// this must not disturb: `examples/json/src/main.nika`'s recursion is through free
 /// functions.
 #[test]
 fn a_recursive_pausing_function_is_still_boxed() {

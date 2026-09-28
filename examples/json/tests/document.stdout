@@ -1,0 +1,11 @@
+{
+  "name": "a\nb",
+  "tags": [
+    1,
+    2.5,
+    true,
+    null
+  ],
+  "empty": {}
+}
+longest string: 3 characters

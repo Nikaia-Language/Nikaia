@@ -280,7 +280,7 @@ in struct_item
 
 It reaches two places at once, because both go through the same `render`: the
 compiler's own messages for `.nika` files, which is every row here, and the
-errors a *generated* program prints for its own input — `examples/access-log.nika`
+errors a *generated* program prints for its own input — `examples/access-log/src/main.nika`
 shows the rejected log line and points at the character, and
 `crates/nikaia/tests/examples.rs` checks that end to end. The caret is as wide
 as the token that was found; a line too long to print is windowed around the

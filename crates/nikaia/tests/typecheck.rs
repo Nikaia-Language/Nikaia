@@ -53,11 +53,28 @@ fn no_program_in_the_repository_has_a_type_error() {
 
     for dir in ["examples", "crates/nikaia-std/src"] {
         let dir = repo_root().join(dir);
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-            .map(|entry| entry.expect("dir entry").path())
-            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("nika"))
-            .collect();
+        let nika = |dir: &std::path::Path| -> Vec<PathBuf> {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .map(|entry| entry.expect("dir entry").path())
+                        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("nika"))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut paths: Vec<PathBuf> = nika(&dir);
+        assert!(!paths.is_empty(), "nothing to check in {}", dir.display());
+        // **An example that is a package of one file** is checked as one
+        // (ADR-245 D8 moved eight of them into packages). A package of several
+        // is checked with its siblings by the test that builds it; alone, one
+        // of its files names types another declares.
+        for entry in std::fs::read_dir(&dir).expect("read the directory") {
+            let src = entry.expect("dir entry").path().join("src");
+            if let [only] = nika(&src).as_slice() {
+                paths.push(only.clone());
+            }
+        }
         paths.sort();
 
         for path in paths {
@@ -1262,7 +1279,7 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
 /// Two sources were missing, and the corpus is what found them:
 ///
 /// * a **template's `<for>`** — `<for r in :rows>{r.name}</for>` declares `r`
-///   for the holes inside it (ADR-017), which `examples/escaping.nika` writes;
+///   for the holes inside it (ADR-017), which `examples/escaping/src/main.nika` writes;
 /// * a **config option** — `fn f(a: i64; separator: &str = " ")` (Part I 5.1)
 ///   was simply absent from the checker's scope frame, which nothing noticed
 ///   while a name in an expression was never asked about.
@@ -1315,7 +1332,7 @@ fn main() { f(gone) }",
 #[test]
 fn a_template_binding_and_a_config_option_declare_a_name() {
     for source in [
-        // A template's `<for>`, which is `examples/escaping.nika`'s shape.
+        // A template's `<for>`, which is `examples/escaping/src/main.nika`'s shape.
         r#"
 struct Row { name: String }
 fn table(rows: Vec[Row]) -> String {

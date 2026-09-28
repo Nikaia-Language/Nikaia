@@ -125,7 +125,7 @@ use std::collections
     );
 }
 
-/// `examples/k-nucleotide.nika`'s shape: views of the parameter are written into
+/// `examples/k-nucleotide/src/main.nika`'s shape: views of the parameter are written into
 /// a map the function hands back. Correct, because the result points into that
 /// parameter's buffer and nothing else's - and the one thing this check may not
 /// do is refuse it.

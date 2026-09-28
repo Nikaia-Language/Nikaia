@@ -701,7 +701,7 @@ fn classify(
         // parameter would therefore hand `rustc` a file nobody wrote
         // (Part III C.1) for every arm that uses a copied payload.
         //
-        // `examples/json.nika`'s `show` is where that was met. It is a limit of
+        // `examples/json/src/main.nika`'s `show` is where that was met. It is a limit of
         // the emitter and is written down as one; when a deref can be written,
         // this arm goes and nothing else changes.
         Expr::Match { value, .. } => {

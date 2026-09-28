@@ -143,7 +143,7 @@ boundary, and a missing `digit_value` import — which is what four `tests/error
 two fixtures are in the corpus to do.
 
 **Zero is the finding, and the reason it is zero is in the corpus itself.** `examples/1brc.nika`
-and `examples/access-log.nika` both want exactly D2's situation — look a key up, add it if
+and `examples/access-log/src/main.nika` both want exactly D2's situation — look a key up, add it if
 it is not there, keep using it — and both write it as
 `.entry(k).and_modify fn { … }.or_insert_with fn { … }`. That is the **entry-style API**
 D2 names as its own fallback ("if the alpha regresses, the fallback is desugaring the known
@@ -256,7 +256,7 @@ and which rustc says so about. That is an honest complaint about dead code in pl
 different program, and nothing in `examples/`, `tests/` or `crates/nikaia-std` writes it: the
 whole corpus is unchanged at both switches, on the pinned nightly and on stable, at dev and
 release, and `tests/errors/EXPECTED.txt` does not move. What *does* change in the corpus is
-`examples/json.nika`'s `longest`, whose four arms each end in a `return` and now say so; it
+`examples/json/src/main.nika`'s `longest`, whose four arms each end in a `return` and now say so; it
 compiles and prints what it printed.
 
 ### 3.3.2 The elided key lifetime: not fixed, because the fix is a decision

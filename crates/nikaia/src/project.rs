@@ -2396,10 +2396,18 @@ pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
         .collect()
 }
 
-/// Run a built program with its arguments and its standard input.
-fn outcome_of(binary: &Path, args: &[String], stdin: &[u8]) -> Result<std::process::Output> {
+/// Run a built program with its arguments and its standard input, in the
+/// package's directory: an output test's `.args` names its input files the way
+/// the package's own tree has them, `tests/access.log` (ADR-245 D8).
+fn outcome_of(
+    binary: &Path,
+    args: &[String],
+    stdin: &[u8],
+    dir: &Path,
+) -> Result<std::process::Output> {
     use std::io::Write;
     let mut child = std::process::Command::new(binary)
+        .current_dir(dir)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -2448,7 +2456,7 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     for (k, test) in suite.tests.iter().enumerate() {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.test_builds {
-            let out = outcome_of(binary, &[k.to_string()], &[])?;
+            let out = outcome_of(binary, &[k.to_string()], &[], suite.root)?;
             outcomes.push((
                 setting.clone(),
                 Outcome {
@@ -2471,7 +2479,7 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     for output in suite.outputs {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.programs {
-            let out = outcome_of(binary, &output.args, &output.stdin)?;
+            let out = outcome_of(binary, &output.args, &output.stdin, suite.root)?;
             outcomes.push((
                 setting.clone(),
                 Outcome {
