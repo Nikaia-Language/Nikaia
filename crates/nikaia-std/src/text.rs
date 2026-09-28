@@ -21,8 +21,10 @@ pub fn parse_i64(text: &str) -> Option<i64> {
             negative = c == '-';
             continue;
         }
-        if c < '0' || c > '9' { return None; }
-        let d = digit_value(c) as i64;
+        let d = match c {
+            '0'..='9' => digit_value(c) as i64,
+            _ => return None,
+        };
         if value < (least + d) / 10 { return None; }
         value = value * 10 - d;
         digits += 1;

@@ -63,10 +63,10 @@ pub fn parse_i64(text: ref String) -> i64? sync {
             negative = c == '-'
             continue
         }
-        if c < '0' || c > '9' {
-            return null
+        let d = match c {
+            '0'..'9' => digit_value(c) as i64,
+            else => return null,
         }
-        let d = digit_value(c) as i64
         if value < (least + d) / 10 {
             return null
         }
