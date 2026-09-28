@@ -167,3 +167,61 @@ fn main() throws {
          fn main() {\n    let a = (2 + 3);\n    let b = (a * 4);\n    let c = (b + z);\n}\n",
     );
 }
+
+/// **The first piece of the compiler written in Nikaia** (0.0.238):
+/// `std/tools/spelling.nika`, lowered ahead of time and called from the
+/// checker's and `dsl`'s *did you mean* as ordinary Rust. The Rust it
+/// replaced is gone, so these cases are what hold the answers where they were.
+#[test]
+fn the_compilers_spelling_is_nikaia() {
+    use nikaia_std::tools::spelling::{distance, one_edit_apart};
+    let d = |a: &str, b: &str| distance(a, b);
+    assert_eq!(d("name", "name"), 0);
+    assert_eq!(d("", "abc"), 3);
+    assert_eq!(d("abc", ""), 3);
+    assert_eq!(d("nmae", "name"), 1, "two neighbours swapped are one edit");
+    assert_eq!(d("kitten", "sitting"), 3);
+    assert_eq!(d("lenght", "length"), 1);
+    assert_eq!(d("prnitln", "println"), 1);
+    let one = |a: &str, b: &str| one_edit_apart(a, b);
+    assert!(one("id", "ids"), "one put in");
+    assert!(one("ids", "id"), "one taken out");
+    assert!(one("name", "nome"), "one changed");
+    assert!(!one("name", "name"), "the same word is not a near miss");
+    assert!(!one("nmae", "name"), "a swap is two edits here");
+    assert!(!one("id", "idss"));
+    assert!(!one("abc", "xbz"));
+}
+
+/// **What moving that piece needed from the lowering** (0.0.238), in a program
+/// of its own: a cell of a list of lists written in place, and an element of a
+/// list lent to the function compared with a value - both of which reached
+/// `rustc` as a file nobody wrote.
+#[test]
+fn a_table_is_written_in_place_and_a_lent_element_compares() {
+    let source = "fn count(long: ref Vec[char], short: ref Vec[char]) -> i64 {\n\
+                  \x20   let mut n = 0\n\
+                  \x20   for c in long {\n\
+                  \x20       if short[0] == c { n += 1 }\n\
+                  \x20       if c == 'x' { n += 10 }\n\
+                  \x20       if c != short[0] && c < 'z' { n += 100 }\n\
+                  \x20   }\n\
+                  \x20   return n\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let mut d: Vec[Vec[i64]] = Vec()\n\
+                  \x20   for i in 0..<3 {\n\
+                  \x20       let mut row: Vec[i64] = Vec()\n\
+                  \x20       for j in 0..<3 { row.push(0) }\n\
+                  \x20       d.push(row)\n\
+                  \x20   }\n\
+                  \x20   d[1][2] = 7\n\
+                  \x20   d[2][0] = d[1][2] + 1\n\
+                  \x20   println(f\"{d[1][2]} {d[2][0]} {d[0][0]}\")\n\
+                  \x20   let a: Vec[char] = \"abxa\".chars().collect()\n\
+                  \x20   let b: Vec[char] = \"a\".chars().collect()\n\
+                  \x20   println(f\"{count(a, b)}\")\n\
+                  }\n";
+    runs("table-and-view", source, "7 8 0\n212\n");
+}

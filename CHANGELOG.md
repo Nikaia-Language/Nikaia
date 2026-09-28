@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.238] — 2026-09-28
+
+**The first piece of the compiler is written in Nikaia** - ADR-196's route,
+used to take Rust out of the compiler.
+
+- `std/tools/spelling.nika`: the edit distance behind the checker's *did you
+  mean* (optimal string alignment, so a swap of two neighbours is one edit)
+  and `dsl`'s narrower *one edit apart*. Lowered ahead of time by
+  `nikaia lower-std` to `spelling.rs`, committed, `include!`d as
+  `nikaia_std::tools::spelling` and called as ordinary Rust; the two Rust
+  functions it replaces are deleted. `tests/self_hosting.rs` holds the answers.
+- **What the move needed from the lowering**, each a program that reached
+  `rustc` as a file nobody wrote:
+  - a cell of a list of lists written in place (`d[i][j] = v`) - the base of
+    an index write is now written as a place all the way down;
+  - a `for` over a list lent to the function (`long: ref Vec[char]`) bound a
+    name of **unknown** type, so everything about it went unchecked; it binds
+    the element now;
+  - a view of a number, `char` or `bool` compared with a value
+    (`short[at] == c`, `c == 'x'` where `c` is lent) is read, the way ADR-233
+    D4 already reads one for arithmetic. Two views still compare as they are.
+- A read of a read (`d[i][j]`) is `get(get(&d, i), j)` and no longer
+  `get(&(*get(&d, i)), j)`, a borrow of a deref that `clippy` refuses in a
+  `std` written in Nikaia.
+- `nikaia-std` names itself `nikaia_std` (`extern crate self`), so a module
+  lowered into it resolves the paths the emitter writes.
+
 ## [0.0.237] — 2026-09-28
 
 **`std` reads a whole number from text** — `atoi`, written in Nikaia.

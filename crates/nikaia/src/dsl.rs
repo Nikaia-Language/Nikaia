@@ -299,37 +299,7 @@ fn nearest<'a>(name: &str, declared: &'a [String]) -> Option<&'a str> {
     declared
         .iter()
         .map(String::as_str)
-        .find(|candidate| one_edit_apart(name, candidate))
-}
-
-fn one_edit_apart(a: &str, b: &str) -> bool {
-    if a == b {
-        return false;
-    }
-    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
-    match a.len().abs_diff(b.len()) {
-        0 => a.iter().zip(&b).filter(|(x, y)| x != y).count() == 1,
-        1 => {
-            let (long, short) = if a.len() > b.len() {
-                (&a, &b)
-            } else {
-                (&b, &a)
-            };
-            let mut i = 0;
-            let mut skipped = false;
-            for c in long.iter() {
-                if short.get(i) == Some(c) {
-                    i += 1;
-                } else if skipped {
-                    return false;
-                } else {
-                    skipped = true;
-                }
-            }
-            true
-        }
-        _ => false,
-    }
+        .find(|candidate| nikaia_std::tools::spelling::one_edit_apart(name, candidate))
 }
 
 fn list<'a>(names: impl Iterator<Item = &'a str>) -> String {

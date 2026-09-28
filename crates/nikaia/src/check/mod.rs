@@ -721,6 +721,11 @@ pub struct Checked {
     /// there, and the emitter copies the number out at the head of the arm, so
     /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// **A comparison's side that is a view of a copied value, where the other
+    /// side is the value** (0.0.238), by statement and the side's shape: the
+    /// language below compares a `char` with a `char` and not with a `&char`,
+    /// so the emitter reads the view (`*c`).
+    pub compared_views: BTreeSet<(usize, String)>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1650,6 +1655,8 @@ pub struct Propagation {
     pub boxed_reads: BTreeSet<(usize, String)>,
     /// [`Checked::copied_bindings`].
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// [`Checked::compared_views`].
+    pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -1843,6 +1850,7 @@ pub fn propagation_against(
         boxed_members: checked.boxed_members,
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
+        compared_views: checked.compared_views,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -4656,6 +4664,51 @@ impl<'a> Checker<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// **A view of a copied value compared with the value** (0.0.238).
+    ///
+    /// `for c in word { if c == 'x' { … } }` lends `word`, so `c` is a view of a
+    /// `char`, and the language below compares a `char` with a `char` and not
+    /// with a `&char`: *can't compare `char` with `&char`* about a file nobody
+    /// wrote. ADR-233 D4 already reads a view of a number as the number for
+    /// arithmetic; this is the same reading for a comparison. Recorded only
+    /// where the other side is known and is not a view, so two views still
+    /// compare as they are.
+    fn a_view_compared_with_a_value(
+        &mut self,
+        lhs: &Expr,
+        left: &Ty,
+        rhs: &Expr,
+        right: &Ty,
+        span: &Span,
+    ) {
+        // **A name a `for` lends is a view below whatever its type says**
+        // (`Local::lent`, the question `a_cast_over_a_lent_binding` asks for
+        // the same reason): the checker types `c` in `for c in word` as the
+        // element, and the language below binds a `&char`.
+        let lent = |side: &Expr| -> bool {
+            matches!(side, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+        };
+        let copied = |ty: &Ty| -> bool {
+            matches!(ty, Ty::Named { name, view: false, .. }
+                if is_number(name) || matches!(name.as_str(), "char" | "bool"))
+        };
+        let is_view = |side: &Expr, ty: &Ty| copies_as_a_view(ty) || (lent(side) && copied(ty));
+        let is_value = |side: &Expr, ty: &Ty| !ty.is_unknown() && !ty.is_a_view() && !lent(side);
+        let read_left = is_view(lhs, left) && is_value(rhs, right);
+        let read_right = is_view(rhs, right) && is_value(lhs, left);
+        if read_left {
+            self.checked
+                .compared_views
+                .insert((span.start, argument_shape(lhs)));
+        }
+        if read_right {
+            self.checked
+                .compared_views
+                .insert((span.start, argument_shape(rhs)));
         }
     }
 
@@ -9175,9 +9228,13 @@ impl<'a> Checker<'a> {
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
                         self.a_type_that_does_not_compare(&left, &right, at);
+                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, span);
                         Ty::named("bool")
                     }
-                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Ty::named("bool"),
+                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, span);
+                        Ty::named("bool")
+                    }
                     // **A `+` where either side is text is a concatenation**
                     // ([ADR-081](../../docs/specification/adr/adr-081.md) D2),
                     // and it comes to a `String` whichever side was owned. This
@@ -18604,12 +18661,15 @@ fn declares_a_type(parsed: &Parsed, name: &str) -> bool {
 
 fn element_of(over: &Ty, bindings: usize) -> Ty {
     match over {
-        Ty::Named { name, args, view } if bindings == 1 && !view && args.len() == 1 => {
-            match name.as_str() {
-                "Vec" | "List" => args[0].clone(),
-                _ => Ty::Unknown,
-            }
-        }
+        // **A list lent to the function is walked the same way** (0.0.238):
+        // `for c in long` over a `long: ref Vec[char]` binds each `char`, and
+        // the binding is a view below either way (`Local::lent`). Answering
+        // `Unknown` for the view left every such binding unchecked, and a
+        // comparison of it with a value reached `rustc` as `char == &char`.
+        Ty::Named { name, args, .. } if bindings == 1 && args.len() == 1 => match name.as_str() {
+            "Vec" | "List" => args[0].clone(),
+            _ => Ty::Unknown,
+        },
         // **An array's element is its first argument**
         // ([ADR-152](../../docs/specification/adr/adr-152.md) D4), and the
         // second is the length, which is why the arm above does not reach it:
@@ -19252,45 +19312,20 @@ const NOT_STD: &[(&str, &str)] = &[(
 )];
 
 /// The closest field name, when one is close enough to be worth suggesting.
+///
+/// The distance is `std`'s, written in Nikaia (`tools/spelling.nika`, 0.0.238):
+/// an edit is a character put in, taken out or changed, and two neighbours
+/// that swapped count as one.
 fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
     among
         .iter()
-        .map(|candidate| (distance(name, candidate), *candidate))
+        .map(|candidate| {
+            let d = nikaia_std::tools::spelling::distance(name, candidate);
+            (usize::try_from(d).unwrap_or(usize::MAX), *candidate)
+        })
         .filter(|(d, _)| *d * 3 <= name.len().max(1))
         .min_by_key(|(d, _)| *d)
         .map(|(_, candidate)| candidate)
-}
-
-/// Edit distance counting a swapped pair as **one** edit.
-///
-/// Plain Levenshtein charges two for `nmae` against `name`, which puts the most
-/// common typo there is outside any threshold worth having. This is the
-/// optimal-string-alignment variant, which charges one.
-fn distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for (i, row) in d.iter_mut().enumerate() {
-        row[0] = i;
-    }
-    for (j, cell) in d[0].iter_mut().enumerate() {
-        *cell = j;
-    }
-
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            let cost = usize::from(a[i - 1] != b[j - 1]);
-            let mut best = (d[i - 1][j] + 1)
-                .min(d[i][j - 1] + 1)
-                .min(d[i - 1][j - 1] + cost);
-            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
-                best = best.min(d[i - 2][j - 2] + 1);
-            }
-            d[i][j] = best;
-        }
-    }
-
-    d[a.len()][b.len()]
 }
 
 /// `a` or `an` in front of a word, which may be spelled in backticks.

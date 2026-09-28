@@ -1431,6 +1431,8 @@ struct Emitter<'p> {
     boxed_reads: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_bindings` (0.0.236).
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::compared_views` (0.0.238).
+    compared_views: std::collections::BTreeSet<(usize, String)>,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
     /// around one call by `call` and read by `args`, as `hold_args` is.
@@ -2375,6 +2377,7 @@ impl<'p> Emitter<'p> {
             boxed_members: propagation.boxed_members,
             boxed_reads: propagation.boxed_reads,
             copied_bindings: propagation.copied_bindings,
+            compared_views: propagation.compared_views,
             boxed_args: std::cell::RefCell::new(None),
             mut_args: propagation.mut_args,
             copied_args: propagation.copied_args,
@@ -7155,74 +7158,7 @@ impl<'p> Emitter<'p> {
                     // here, it stood around every read: `m[k] ?? 0` and
                     // `let x = m[k]` were `rustc` warnings about a file nobody
                     // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-                    let slicing = self.slices(flow.statement, index);
-                    match slicing {
-                        true => out.push("nikaia_std::index::get(&"),
-                        false => out.push("*nikaia_std::index::get(&"),
-                    }
-                    self.postfix_base(out, base, depth, flow)?;
-                    out.push(", ");
-                    // **The literal exception belongs to the read as well**, and
-                    // it was missing here: `xs[0]` as a *read* went through
-                    // `at(…)` whatever was in the brackets, and `at`'s `I` has
-                    // nothing to infer itself from. Alone that survived, because
-                    // an integer literal defaults late and `usize` is what every
-                    // `At` for a number answers with — but a **field read on the
-                    // element** needs the type *before* the defaulting, so
-                    // `rows[1].a` was `cannot infer type` about the generated
-                    // file, for both an `Array` and a `Vec`. That is [Part III
-                    // C.1](../../docs/specification/30-nikaia-tooling.md)'s
-                    // class and the very thing the paragraph above says this
-                    // exception exists to prevent.
-                    //
-                    // **And a range written in literals is in the
-                    // exception**, which it was not while the `*` above stood
-                    // over one. `at` cannot settle a bare `1..=2`: `At` is
-                    // implemented for a `RangeInclusive` of every signed type
-                    // and each answers the same `RangeInclusive<usize>`, so
-                    // there is nothing to infer `I` *from* and what came back
-                    // was `cannot infer type` about the generated file. Handed
-                    // over as written it settles itself, because
-                    // `RangeInclusive<usize>` is the only one of them that is a
-                    // `SliceIndex<[V]>` — which is what the exception says
-                    // everywhere else it applies.
-                    //
-                    // **Except where it counts from the end.** `xs[-2..-1]` is
-                    // an index out of bounds and says so at run time
-                    // ([ADR-048](../../../docs/specification/adr/adr-048.md)
-                    // D1) — but only if it reaches run time, and handed over as
-                    // written it does not: `-2` against a `usize` is *the trait
-                    // `Neg` is not implemented for `usize`*, about a type the
-                    // program never named. So a range with a negation in it
-                    // goes back through the conversion, **widened**, because an
-                    // `i64` is the one width this language indexes with and
-                    // `at` has nothing else to read it off.
-                    let counts_down = slicing && a_negation_inside(index);
-                    // **A key the map keeps nothing of is lent** (ADR-213 D1),
-                    // and a key is not a position, so `at` does not see it.
-                    let key = self.map_key(flow.statement, index);
-                    match (key, only_literals(index) && !counts_down) {
-                        (Some(form), _) => self.key(out, form, index, depth, flow)?,
-                        (None, true) => self.index_expr(out, index, depth, flow.inferred())?,
-                        (None, false) => {
-                            out.push("nikaia_std::index::at(");
-                            let flow = match counts_down {
-                                true => flow.widened(),
-                                false => flow,
-                            };
-                            self.index_expr(out, index, depth, flow)?;
-                            out.push(")");
-                        }
-                    }
-                    out.push(")");
-                    // **A held struct is read through its handle** (ADR-221
-                    // D4): what the brackets answer is then the struct, over
-                    // no longer than the read, exactly as for a list of plain
-                    // structs.
-                    if self.reads_through_handle(flow, base) {
-                        out.push(".get()");
-                    }
-                    return Ok(());
+                    return self.index_read(out, base, index, depth, flow, true);
                 }
                 self.postfix_base(out, base, depth, flow)?;
                 match only_literals(index) {
@@ -7629,8 +7565,20 @@ impl<'p> Emitter<'p> {
                 // mean the same in both languages, so `value * 10 + n` should
                 // come out the way it went in.
                 let here = precedence(*op);
+                // **A view compared with a value is read** (0.0.238,
+                // `check::Checked::compared_views`).
+                let read = |side: &Expr| {
+                    self.compared_views
+                        .contains(&(flow.statement, crate::check::argument_shape(side)))
+                };
+                if read(lhs) {
+                    out.push("*");
+                }
                 self.nested(out, lhs, here, depth, flow)?;
                 out.push(&format!(" {} ", binary_op(*op)));
+                if read(rhs) {
+                    out.push("*");
+                }
                 self.nested(out, rhs, here + 1, depth, flow)?;
             }
             // **A fallback that jumps is a `match` and not a closure**
@@ -10531,6 +10479,109 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
         }
+    }
+
+    /// **A read through the brackets** (ADR-114 D4): `*get(&base, at(i))`,
+    /// or without the `*` where `deref` is off - which is how a read that is
+    /// itself the base of a read is written (0.0.238).
+    fn index_read(
+        &self,
+        out: &mut Out,
+        base: &Expr,
+        index: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+        deref: bool,
+    ) -> Result<()> {
+        let slicing = self.slices(flow.statement, index);
+        if deref && !slicing {
+            out.push("*");
+        }
+        // **A read of a read is handed the reference it already is**
+        // (0.0.238): `d[i][j]` over a list of lists was
+        // `get(&(*get(&d, i)), j)`, a borrow of a deref - what `clippy`
+        // refuses in a `std` written in Nikaia (`tools/spelling.nika`), and
+        // noise in every program. The inner read answers a `&T` before its
+        // `*`, which is what the outer one takes; a map's read (a `T?`), a
+        // run and a read through a handle keep the long way round.
+        match base {
+            Expr::Index {
+                base: inner,
+                index: at,
+            } if !self.slices(flow.statement, at)
+                && self.map_key(flow.statement, at).is_none()
+                && !self.reads_through_handle(flow, inner) =>
+            {
+                out.push("nikaia_std::index::get(");
+                self.index_read(out, inner, at, depth, flow, false)?;
+            }
+            _ => {
+                out.push("nikaia_std::index::get(&");
+                self.postfix_base(out, base, depth, flow)?;
+            }
+        }
+        out.push(", ");
+        // **The literal exception belongs to the read as well**, and
+        // it was missing here: `xs[0]` as a *read* went through
+        // `at(…)` whatever was in the brackets, and `at`'s `I` has
+        // nothing to infer itself from. Alone that survived, because
+        // an integer literal defaults late and `usize` is what every
+        // `At` for a number answers with — but a **field read on the
+        // element** needs the type *before* the defaulting, so
+        // `rows[1].a` was `cannot infer type` about the generated
+        // file, for both an `Array` and a `Vec`. That is [Part III
+        // C.1](../../docs/specification/30-nikaia-tooling.md)'s
+        // class and the very thing the paragraph above says this
+        // exception exists to prevent.
+        //
+        // **And a range written in literals is in the
+        // exception**, which it was not while the `*` above stood
+        // over one. `at` cannot settle a bare `1..=2`: `At` is
+        // implemented for a `RangeInclusive` of every signed type
+        // and each answers the same `RangeInclusive<usize>`, so
+        // there is nothing to infer `I` *from* and what came back
+        // was `cannot infer type` about the generated file. Handed
+        // over as written it settles itself, because
+        // `RangeInclusive<usize>` is the only one of them that is a
+        // `SliceIndex<[V]>` — which is what the exception says
+        // everywhere else it applies.
+        //
+        // **Except where it counts from the end.** `xs[-2..-1]` is
+        // an index out of bounds and says so at run time
+        // ([ADR-048](../../../docs/specification/adr/adr-048.md)
+        // D1) — but only if it reaches run time, and handed over as
+        // written it does not: `-2` against a `usize` is *the trait
+        // `Neg` is not implemented for `usize`*, about a type the
+        // program never named. So a range with a negation in it
+        // goes back through the conversion, **widened**, because an
+        // `i64` is the one width this language indexes with and
+        // `at` has nothing else to read it off.
+        let counts_down = slicing && a_negation_inside(index);
+        // **A key the map keeps nothing of is lent** (ADR-213 D1),
+        // and a key is not a position, so `at` does not see it.
+        let key = self.map_key(flow.statement, index);
+        match (key, only_literals(index) && !counts_down) {
+            (Some(form), _) => self.key(out, form, index, depth, flow)?,
+            (None, true) => self.index_expr(out, index, depth, flow.inferred())?,
+            (None, false) => {
+                out.push("nikaia_std::index::at(");
+                let flow = match counts_down {
+                    true => flow.widened(),
+                    false => flow,
+                };
+                self.index_expr(out, index, depth, flow)?;
+                out.push(")");
+            }
+        }
+        out.push(")");
+        // **A held struct is read through its handle** (ADR-221
+        // D4): what the brackets answer is then the struct, over
+        // no longer than the read, exactly as for a list of plain
+        // structs.
+        if self.reads_through_handle(flow, base) {
+            out.push(".get()");
+        }
+        Ok(())
     }
 
     /// The thing a `.` or a `[` is applied to, parenthesised where it binds

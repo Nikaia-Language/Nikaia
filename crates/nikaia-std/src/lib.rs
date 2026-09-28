@@ -23,6 +23,13 @@
 // checks, and this crate uses it through a safe API.
 #![forbid(unsafe_code)]
 
+// **A lowered `.nika` names this crate the way a program does**: the emitter
+// writes `nikaia_std::index::get(…)`, and a module lowered into this crate
+// itself (`tools/spelling.nika` was the first to index a list, 0.0.238) needs
+// that path to resolve here too. Rust's own idiom for it, so the lowering
+// needs no second spelling for code that lives in `std`.
+extern crate self as nikaia_std;
+
 pub mod abort;
 pub mod boxed;
 pub mod bytes;
@@ -87,6 +94,15 @@ pub mod text {
 /// complains, about a file nobody wrote. `open-work.md` §1.7 carries it, and it
 /// is older than this module - `use std::<anything>` has always been accepted.
 pub mod tools {
+    /// **How close one word is to another**, for the compiler's *did you
+    /// mean*: `src/tools/spelling.nika`, lowered to `src/tools/spelling.rs`
+    /// and committed beside it. The first piece of the compiler moved from
+    /// Rust to Nikaia (0.0.238); the checker and `dsl` call it as ordinary
+    /// Rust functions.
+    pub mod spelling {
+        include!("tools/spelling.rs");
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.
