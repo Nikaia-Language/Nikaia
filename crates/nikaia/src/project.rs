@@ -2448,23 +2448,8 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     let total = suite.tests.len() + suite.outputs.len();
     let plural = if total == 1 { "" } else { "s" };
     println!("running {total} test{plural}");
-    // (what it is called, what each setting did)
+    // (what it is called, what each setting did, the output test it is)
     let mut failed: Vec<(String, Vec<(String, Outcome)>, Option<&OutputTest>)> = Vec::new();
-    let mut report = |label: String,
-                      outcomes: Vec<(String, Outcome)>,
-                      output: Option<&OutputTest>| {
-        let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
-        let passed = agree && outcomes.iter().all(|(_, o)| o.passed);
-        let verdict = match (passed, agree) {
-            (true, _) => "ok",
-            (false, true) => "FAILED",
-            (false, false) => "FAILED (the settings disagree)",
-        };
-        println!("{label} ... {verdict}");
-        if !passed {
-            failed.push((label, outcomes, output));
-        }
-    };
     for (k, test) in suite.tests.iter().enumerate() {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.test_builds {
@@ -2484,7 +2469,9 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
             shown_path(&test.path, suite.root),
             test.line
         );
-        report(label, outcomes, None);
+        if !verdict(&label, &outcomes) {
+            failed.push((label, outcomes, None));
+        }
     }
     for output in suite.outputs {
         let mut outcomes = Vec::new();
@@ -2500,7 +2487,9 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
             ));
         }
         let label = format!("output \"{}\" (tests/{}.stdout)", output.name, output.name);
-        report(label, outcomes, Some(output));
+        if !verdict(&label, &outcomes) {
+            failed.push((label, outcomes, Some(output)));
+        }
     }
     if !failed.is_empty() {
         println!("\nfailures:");
@@ -2536,6 +2525,20 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
         failed.len()
     );
     Ok(if failed.is_empty() { 0 } else { 1 })
+}
+
+/// Print one test's line, and say whether it passed: at every setting, and the
+/// same way at each.
+fn verdict(label: &str, outcomes: &[(String, Outcome)]) -> bool {
+    let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
+    let passed = agree && outcomes.iter().all(|(_, o)| o.passed);
+    let said = match (passed, agree) {
+        (true, _) => "ok",
+        (false, true) => "FAILED",
+        (false, false) => "FAILED (the settings disagree)",
+    };
+    println!("{label} ... {said}");
+    passed
 }
 
 /// A test's file as the project names it.

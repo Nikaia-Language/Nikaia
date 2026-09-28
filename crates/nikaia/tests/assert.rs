@@ -269,6 +269,41 @@ fn a_program_may_declare_its_own_assert() {
     assert_eq!(stdout, "mine: false\n");
 }
 
+/// **`--asserts` names every claim and how it is held** (D6). Nothing proves
+/// one yet, so every row is *run time*; the report is what will show a
+/// prover's progress.
+#[test]
+fn asserts_reports_every_claim() {
+    let source = "fn half(n: i64) -> i64 sync {\n\
+                  \x20   assert(n % 2 == 0; message: \"an even number\")\n\
+                  \x20   return n / 2\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let h = half(4)\n\
+                  \x20   assert(h == 2)\n\
+                  }\n";
+    let dir = common::scratch_dir("assert-report");
+    std::fs::write(dir.join("claims.nika"), source).expect("write");
+    let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&dir)
+        .args(["--input", "claims.nika", "--output", "claims.rs", "--asserts"])
+        .output()
+        .expect("the nikaia binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        stdout.contains(
+            "asserts in claims.nika: 2 - proved 0, refuted 0, at run time 2\n\
+             \x20 claims.nika:2  assert(n % 2 == 0; message: \"an even number\")  run time: \
+             nothing proves it yet\n\
+             \x20 claims.nika:8  assert(h == 2)  run time: nothing proves it yet\n"
+        ),
+        "{stdout}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// **No `Ok(())` after a statement that never comes back** (0.0.240): a
 /// `throws` function ending in `panic(…)` or `return` was lowered with an
 /// `Ok(())` after it, and `rustc` warned *unreachable expression* about a file

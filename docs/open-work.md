@@ -812,7 +812,7 @@ stricter form D4 mentions (`f: fn(…) sync` under a plain `sync`), not of
 
 ### 2.48. `nikaia test`, and `assert` as a claim
 
-[ADR-245](specification/adr/adr-245.md), accepted; D1, D2, D3 and D7 are built. It
+[ADR-245](specification/adr/adr-245.md), accepted; everything a compiler without a prover can do is built. It
 answers what §2.41 left open — `assert` was the one name on the prelude's list
 ([ADR-154](specification/adr/adr-154.md) D1) that `std` did not have, and
 [ADR-162](specification/adr/adr-162.md) D3's test sees it once it does. In the
@@ -820,11 +820,12 @@ order the pieces depend on each other:
 
 1. ~~**D2 and D3**~~ — built at 0.0.239 (`tests/assert.rs`).
 2. ~~**D1 and D7**~~ — built at 0.0.240 (`tests/nikaia_test.rs`).
-3. **D8:** `tests/NAME.stdout` with optional `.stdin` and `.args`. The programs in
-   `examples/` are its first users: their expected outputs are in their
-   comments.
-4. **D6:** `nikaia --asserts`, every row *run time* until there is a prover.
-   D4 and D5 need no work before a prover exists; D3 is what keeps them open.
+3. ~~**D8**~~ — built at 0.0.241. **Left:** the programs in `examples/` are
+   to be its first users, and most of them are single files rather than
+   packages, so each needs a directory before its expected output - in its
+   comments today - can be a `tests/NAME.stdout`.
+4. ~~**D6**~~ — built at 0.0.241; every row says *run time*. D4 and D5 need no
+   work before a prover exists; D3 is what keeps them open.
 
 ### 2.49. What is left of a type that holds itself
 

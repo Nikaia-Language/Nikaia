@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.240 (Draft)
+**Version:** 0.0.241 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -29,7 +29,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 ### 13.2. Core Commands
 * `nikaia build`: compiles the project.
 * `nikaia run`: compiles and executes.
-* `nikaia test`: runs the package's `test` blocks, each in a process of its own (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
+* `nikaia test`: runs the package's `test` blocks, each in a process of its own, and its output tests, `tests/NAME.stdout` (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
 * `nikaia bench`: runs performance benchmarks.
 * `nikaia fmt`: formats the source.
 * `nikaia describe <crate>`: writes the draft ledger for a Rust crate the program calls, from the crate's own `pub` signatures (15.2). `--project` names the project directory. The default walks up from the working directory to the nearest `nikaia.toml`.
@@ -352,6 +352,10 @@ test "a blank line is counted" {
 A test's body may pause and may fail. A test **fails** on an error that leaves its body, which is printed in its long form (the site and the chain), on a false `assert` (14.2), or on a `panic`. `nikaia test` builds the package once with its tests compiled in and runs **each test in a process of its own**, so a test that stops the program does not stop the others. It prints a line per test, the output of each failing one, and a summary, and it exits unsuccessfully where any test failed.
 
 Each test runs under the `user_parallelism` the project names. `nikaia test --both-settings` runs each at `no` and at `yes`, and a test whose outcome differs between the two fails with both outcomes shown: a program means the same at both settings (Part I 1.2), so a difference is a fault of the compiler.
+
+**An output test is three files and no code** ([ADR-245](adr/adr-245.md) D8). In a package's `tests/` directory, `NAME.stdout` makes `NAME` a test of the package's program: `nikaia test` builds the program as `nikaia build` does, runs it with the arguments in `NAME.args` (one per line, none where the file is absent) and the input in `NAME.stdin` (empty where it is absent), and the test passes where the program ends successfully and prints exactly `NAME.stdout`, byte for byte. A failing one shows what was expected and what was printed. Output tests run beside a package's `test` blocks, and at both settings under `--both-settings`.
+
+**`nikaia --asserts`** ([ADR-245](adr/adr-245.md) D6), beside `--overlaps`, `--sharing` and `--tethers`, prints every `assert` of the program by line, and whether the compiler proved it, refuted it or left it to run time. Nothing proves a claim yet, so every row says *run time*.
 
 ### 14.2. Assertions: a claim the compiler may prove
 *[ADR-245](adr/adr-245.md) D2 to D4. Built: `assert` and its checks; nothing is proved yet.*

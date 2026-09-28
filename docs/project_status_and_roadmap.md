@@ -34,7 +34,7 @@ is correct, because the big one is what is actually in the way.
 
 *In plain words: what works today, what does not, and where a bug report helps most.*
 
-**Pre-alpha, as of 0.0.240.** The table above shows 74.4 % —
+**Pre-alpha, as of 0.0.241.** The table above shows 74.4 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -59,7 +59,7 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 | :--- | :--- | :--- |
 | depend on a Nikaia package by version | refused | there is no registry yet; `path = "…"` dependencies only |
 | use a crate from crates.io | refused until you run `nikaia describe <crate>` and commit what it writes | foreign code is described before it is called; works, but it is a step |
-| write tests | **done** | `test "name" { … }` blocks and `nikaia test` ([ADR-245](specification/adr/adr-245.md)), with `assert` whose failure names its operands' values. Output tests (`tests/NAME.stdout`) are not yet |
+| write tests | **done** | `test "name" { … }` blocks and `nikaia test` ([ADR-245](specification/adr/adr-245.md)), with `assert` whose failure names its operands' values, and output tests (`tests/NAME.stdout`) |
 | format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](../editors/) has syntax highlighting only |
 | put a **view** of text into a **published** (`pub`) field or result that also gets text of its own | refused, and the message says why and what copies nothing | every user of a published field or result reads and builds its representation, which is fixed before they exist. A published *parameter* takes either kind from its own package and text of its own from others ([ADR-232](specification/adr/adr-232.md)). Everywhere else a declared `String` or `String?` — field, result, parameter, `let`, the elements of a `Vec` or a map, from inside an `f"…"` hole too — becomes a view, or either per value, by what flows into it ([ADR-222](specification/adr/adr-222.md), [223](specification/adr/adr-223.md), [224](specification/adr/adr-224.md)) |
 | put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |

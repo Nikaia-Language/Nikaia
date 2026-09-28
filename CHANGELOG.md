@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.241] — 2026-09-28
+
+**Output tests, and `--asserts`** — ADR-245 D8 and D6, built.
+
+- `tests/NAME.stdout` in a package makes `NAME` a test of its program, with
+  `NAME.stdin` as its input and `NAME.args` as its arguments, one a line.
+  `nikaia test` builds the program as `nikaia build` does, runs it, and the
+  test passes where it ends successfully and prints exactly the file; a
+  failing one shows what was expected and what was printed. They run beside
+  the package's `test` blocks, and at both settings under `--both-settings`.
+  Each build is kept where the next one does not overwrite it: the test build
+  and the program land at the same path.
+- **`nikaia --asserts`**, beside `--overlaps`, `--sharing` and `--tethers`:
+  every `assert` by line, and whether it was proved, refuted or left to run
+  time. Every row says *run time*, because nothing proves a claim yet.
+- ADR-245 is built as far as a compiler without a prover can build it. What
+  is left in `open-work.md` §2.48 is moving the single-file programs in
+  `examples/` into packages, so their expected outputs can be output tests.
+
 ## [0.0.240] — 2026-09-28
 
 **`nikaia test`** — ADR-245 D1 and D7, built.

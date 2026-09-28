@@ -161,6 +161,65 @@ fn a_test_is_checked_by_the_test_build_and_by_nothing_else() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **An output test is three files and no code** (D8): `tests/NAME.stdout`,
+/// and beside it what the program is given. The program is built as every
+/// other build builds it, run with the arguments and the input, and passes
+/// where it ends successfully and prints exactly the file. A `test` block in
+/// the same package runs beside them, from its own build.
+#[test]
+fn an_output_test_is_what_the_program_prints() {
+    let dir = a_project(
+        "nikaia-test-output",
+        &[(
+            "main.nika",
+            "use std::cli\n\
+             use std::io\n\
+             \n\
+             fn main() throws {\n\
+             \x20   let who = cli::args().nth(1) ?? \"nobody\"\n\
+             \x20   let text = io::read_to_string()\n\
+             \x20   let mut n = 0\n\
+             \x20   for line in text.split(\"\\n\") {\n\
+             \x20       if line != \"\" {\n\
+             \x20           n += 1\n\
+             \x20       }\n\
+             \x20   }\n\
+             \x20   println(f\"{who}: {n} lines\")\n\
+             }\n\
+             \n\
+             test \"a block beside the output tests\" {\n\
+             \x20   assert(1 + 1 == 2)\n\
+             }\n",
+        )],
+    );
+    let tests = dir.join("tests");
+    std::fs::create_dir_all(&tests).expect("tests/");
+    for (name, text) in [
+        ("two.stdout", "ada: 2 lines\n"),
+        ("two.stdin", "a\nb\n"),
+        ("two.args", "ada\n"),
+        ("none.stdout", "nobody: 0 lines\n"),
+        ("wrong.stdout", "something else\n"),
+    ] {
+        std::fs::write(tests.join(name), text).expect("an output test");
+    }
+    let out = nikaia(&["test"], &dir);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    for line in [
+        "running 4 tests",
+        "test \"a block beside the output tests\" (src/main.nika:16) ... ok",
+        "output \"none\" (tests/none.stdout) ... ok",
+        "output \"two\" (tests/two.stdout) ... ok",
+        "output \"wrong\" (tests/wrong.stdout) ... FAILED",
+        "expected:\nsomething else\n\nprinted:\nnobody: 0 lines\n",
+        "test result: FAILED. 3 passed; 1 failed",
+    ] {
+        assert!(stdout.contains(line), "missing `{line}`:\n{}", said(&out));
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// **No test is not a failure**, and it is said rather than built.
 #[test]
 fn a_package_without_tests_says_so() {
