@@ -820,11 +820,10 @@ order the pieces depend on each other:
 
 1. ~~**D2 and D3**~~ — built at 0.0.239 (`tests/assert.rs`).
 2. ~~**D1 and D7**~~ — built at 0.0.240 (`tests/nikaia_test.rs`).
-3. ~~**D8**~~ — built at 0.0.241; eight programs in `examples/` are packages
-   with output tests since 0.0.242, and `calc/` carries `test` blocks.
-   **Left:** `tally`, `report` and `inventory/`, whose result is a file they
-   write - an output test compares standard output only, so their table stays
-   in `tests/examples.rs` until one can name a file too.
+3. ~~**D8**~~ — built at 0.0.241, and extended by
+   [ADR-247](specification/adr/adr-247.md) at 0.0.243: every program in
+   `examples/` that runs is a package that tests itself, the files it writes
+   included, and `tests/examples.rs` holds no expected output.
 4. ~~**D6**~~ — built at 0.0.241; every row says *run time*. D4 and D5 need no
    work before a prover exists; D3 is what keeps them open.
 
@@ -853,7 +852,7 @@ They are written down here so that the next reader does not measure them again.
   correct and says so. `nikaia build` inside `examples/hello-http` compiles it
   and its `http` dependency and finishes clean; `crates/nikaia/tests/project.rs`
   is where that is a gate.
-* **`examples/inventory/page.nika`** is one file of a package whose `Entry` is
+* **`examples/inventory/src/page.nika`** is one file of a package whose `Entry` is
   declared in `stock.nika` beside it. Compiled alone it is a file referring to a
   type nothing in it declares, which is `NK1135` doing its job.
 

@@ -278,7 +278,7 @@ is left is 3 and 4, and neither is a performance question.
   block is the same implicit call. `NK2701`. The ownership half is why
   `fs::lines` is **gone** rather than waiting — it would have had an iterator
   hand out views into a buffer it owns, and the shape that works is two calls.
-  `io::lines()` exists and `examples/tally.nika` runs it.
+  `io::lines()` exists and `examples/tally/src/main.nika` runs it.
 * **The type checker** — [ADR-024](specification/adr/adr-024.md). Eight `NK1xxx`
   codes, answered from the ledger, before a line of Rust is emitted. The design
   is one value: `?`, the absence of a claim. An error is reported only where

@@ -162,7 +162,7 @@ fn the_chain_off_keys_resolves() {
 /// It said `-> Lines`, a named type whose `iterates` column carried the failing
 /// step. That worked for the `for` and for nothing else: the binding had no type,
 /// so `line.len()` inside the loop was a method on `?`. Six of
-/// `examples/tally.nika`'s `.len()` calls were among the 35 §1 counts.
+/// `examples/tally/src/main.nika`'s `.len()` calls were among the 35 §1 counts.
 #[test]
 fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
     let program = "use std::io\n\
@@ -324,7 +324,7 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
 ///
 /// *Loose*, because this harness hands each file over alone and a **package** is
 /// several files that see one another with no `use` (Part I 9.1):
-/// `examples/inventory/page.nika` builds an `Entry` its sibling declares, so
+/// `examples/inventory/src/page.nika` builds an `Entry` its sibling declares, so
 /// `NK1135` there is the harness's limitation and not a refusal of the program.
 /// The files `nikaia --input` sweeps are the ones checkable this way, which is
 /// the top level of `examples/` and `std`'s own sources.

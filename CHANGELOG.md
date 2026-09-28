@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.243] — 2026-09-28
+
+**A program whose result is a file is tested like one that prints** —
+ADR-247, decided after comparing how other languages and test tools do it: no
+language has syntax for it, and the tools agree on a directory per test, trees
+in and out, blessed expectations and differences.
+
+- **Every output test runs in a fresh directory of its own** (D1), removed
+  afterwards: nothing a program writes reaches the package.
+- **`NAME.in/` and `NAME.out/`** (D2): what goes in is copied into that
+  directory first; each file `NAME.out/` names must be there afterwards with
+  exactly its bytes. A test is a `NAME.stdout`, a `NAME.out/` or both.
+- **`nikaia test --bless`** (D3) writes the expectations from what the program
+  did - standard output and the files `NAME.out/` names - for a run that ended
+  well and, at `--both-settings`, agreed. A new test starts empty and is
+  blessed; the review is the diff in version control.
+- **A failure is a line difference** (D4), `-` expected and `+` produced,
+  with two lines of context.
+- **`fs::scratch()`** (D5): a fresh, empty directory as an `fs::Root`, for a
+  `test` block to write under. Under `nikaia test` it lives in the test's own
+  directory and goes with it. `test` blocks run in the package's directory.
+- `tally/`, `report/` and `inventory/` are packages now, each testing the file
+  it writes; `inventory/` also has a `test` block that writes under
+  `fs::scratch()`. `tests/examples.rs` holds no expected output of its own any
+  more: all eleven runnable examples test themselves. The examples whose inputs
+  lay loose in `tests/` keep them in `NAME.in/`. Three generated files committed
+  under `examples/inventory/` by an old `--input` run are gone.
+- **`std` gains `str::contains` and `str::ends_with`**, found by the first
+  `assert` about a page: an `assert` may only call what the ledger says
+  changes nothing.
+- Part III 14.1, the `std::fs` section and the table of `NK` codes
+  (`NK1190`'s wider reach, `NK1194`-`NK1196`) are written.
+
 ## [0.0.242] — 2026-09-28
 
 **The examples test themselves** — ADR-245 D8's first users.
@@ -3186,7 +3219,7 @@ and it waits on a decision rather than on work.
 
 - **`let __nikaia_value = { … }?; Ok(__nikaia_value)`.** The lowering of an entry is a block holding `let _source = &*data` and a stream over it; inside `Ok(…?)` those temporaries live to the end of the **enclosing** block, past the local that owns the text. A `let` makes the block a **statement**, so they drop at the `;` and ahead of the local — [ADR-164](docs/specification/adr/adr-164.md) D1's `ARM_VALUE` trick one construct over, and `rustc`'s own hint: *save the expression's value in a new local variable*.
 - **Only where the lowering writes the borrow**, which is the one shape this emitter can be sure of: it is the emitter's own `_source`, not something a program's expression left behind. Every other tail keeps `Ok(x)`, because a line the generated file does not need is a line a reader has to skip.
-- **It was the tail and not the grammar**, which is why the corpus stayed green: the same call bound to a name first compiled and ran, and so did the tail form over a **parameter**, because then no local owns the buffer. `examples/report.nika` writes the first shape. `tests/project.rs` **builds and runs** the broken one, since the emitted text looked right and `rustc` is what refused it.
+- **It was the tail and not the grammar**, which is why the corpus stayed green: the same call bound to a name first compiled and ran, and so did the tail form over a **parameter**, because then no local owns the buffer. `examples/report/src/main.nika` writes the first shape. `tests/project.rs` **builds and runs** the broken one, since the emitted text looked right and `rustc` is what refused it.
 
 ## [0.0.135] — 2026-09-21
 
@@ -4018,7 +4051,7 @@ question 0.0.102 asked. And naming it made a **miscompilation** visible.
 
 ### Found
 
-- **A grammar entry in tail position over a local that owns its input** does not compile — `rustc` refuses the generated file with `E0597`, because the tail wrapper writes `Ok({ … }?)` and the block's temporaries outlive the local. Found by this record's own test; the same call bound to a name first compiles and runs, and `examples/report.nika` writes that shape, which is why the corpus is green. `docs/open-work.md` §1 carries it with its reproduction.
+- **A grammar entry in tail position over a local that owns its input** does not compile — `rustc` refuses the generated file with `E0597`, because the tail wrapper writes `Ok({ … }?)` and the block's temporaries outlive the local. Found by this record's own test; the same call bound to a name first compiles and runs, and `examples/report/src/main.nika` writes that shape, which is why the corpus is green. `docs/open-work.md` §1 carries it with its reproduction.
 
 ### Changed
 
@@ -4199,7 +4232,7 @@ pausing sequence but the `for` is refused now
 
 ### Measured
 
-- **`examples/tally.nika` runs end to end**, through a pipe: five lines, two blank, longest 31 characters, and the same file appended. That is the proof — the unit tests say where a line ends, and this says the program still works.
+- **`examples/tally/src/main.nika` runs end to end**, through a pipe: five lines, two blank, longest 31 characters, and the same file appended. That is the proof — the unit tests say where a line ends, and this says the program still works.
 - Every other loop keeps the shape it had — a container, a range, a `map`'s result — asserted rather than hoped for, because the other kind of mistake here is every program in the language.
 
 ### Left open
@@ -5012,7 +5045,7 @@ Three sweep failures that are not failures, measured once and written down.
 
 ### Found
 
-- **A loop of `nikaia --input` over every `.nika` file in the tree reports three refusals, and all three are the loop's method.** `examples/hello-http/src/main.nika` and `examples/fortunes.nika` write `use http`, and a package reached by name is declared in `[dependencies]` — which lives in `nikaia.toml`, which `--input` does not read. `nikaia build` inside `examples/hello-http` compiles it and its dependency and finishes clean. `examples/inventory/page.nika` is one file of a package whose `Entry` is declared beside it, so compiled alone it is `NK1135` doing its job.
+- **A loop of `nikaia --input` over every `.nika` file in the tree reports three refusals, and all three are the loop's method.** `examples/hello-http/src/main.nika` and `examples/fortunes.nika` write `use http`, and a package reached by name is declared in `[dependencies]` — which lives in `nikaia.toml`, which `--input` does not read. `nikaia build` inside `examples/hello-http` compiles it and its dependency and finishes clean. `examples/inventory/src/page.nika` is one file of a package whose `Entry` is declared beside it, so compiled alone it is `NK1135` doing its job.
 - **What is actually open about `fortunes.nika` is neither of those.** It is written at specification level, and `examples/README.md` lists its gaps: **G6**, the runtime binding that lets a handler see the request ([ADR-018](docs/specification/adr/adr-018.md)), and the `postgres` block — the database driver, which is itself blocked. Its `render` lowers and runs today.
 
 ### Changed
@@ -5776,7 +5809,7 @@ a measurement that one record made about itself turns out to be wrong.
 
 - **[ADR-105](docs/specification/adr/adr-105.md), steps 1 and 2.** The type language had a name, arguments, a variable, a view, a tuple, a function type and `?`, and no word for what `keys()`, `chars()` and `io::lines()` hand back: elements of a type, produced one at a time when asked for, with no length until the end. So those entries said `-> ?`, and because a method is found through its receiver's type, everything called on such a value was unfound too. `Seq[T]` and `Par[T]` now parse with `sync`/`throws` after them for the **step**, write themselves back, bind through their item, answer as a receiver, and a `for` over one binds its item. A program cannot write either, and `NK1135` says so by the rule that refuses `Widgit`.
 - **Written:** `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`, `HashMap::drain`, `io::lines`, and six consumers under the receiver's own word — `Seq::collect`, `Seq::count`, `Seq::nth`, `Seq::join`, `Seq::map`, `Seq::filter`.
-- **`io::lines` was the one that mattered.** It said `-> Lines`, a named type whose `iterates = "throws"` column carried the failing step — which worked for the `for` and for nothing else: the binding had no type, so `line.len()` inside the loop was a method on `?`, and six of `examples/tally.nika`'s `.len()` calls were among the ones the record counts. `Seq[String] throws` says both things in one place, and the fallible-step rule reads either.
+- **`io::lines` was the one that mattered.** It said `-> Lines`, a named type whose `iterates = "throws"` column carried the failing step — which worked for the `for` and for nothing else: the binding had no type, so `line.len()` inside the loop was a method on `?`, and six of `examples/tally/src/main.nika`'s `.len()` calls were among the ones the record counts. `Seq[String] throws` says both things in one place, and the fallible-step rule reads either.
 - **The message describes a `Seq` rather than naming it**: `NK2701` reads *a `for` over a sequence of `String` binds one name*, because a program cannot write `Seq[String]` and a message that names a spelling its reader has no way to type is the shape [Part III C.1](docs/specification/30-nikaia-tooling.md) is about. It said `Lines` before, which the program could not write either.
 - **And one claim the record makes about the corpus did not survive being measured.** *Every one of the 35 unanswered method calls downstream of a `?` that is a sequence* is not what the corpus shows: **38** before these entries and **33** after, with the rest downstream of a receiver with no type for other reasons — `tail.drain()` in `json.nika` where `tail` is a field nothing types, `map` on the result of a `catch` in `access-log.nika`. `MethodCalls::unanswered` exists so that number can be checked again rather than remembered, and `crates/nikaia/tests/sequences.rs` holds it as a ceiling.
 - **`par_iter` has no entry**, which is the record's own *it waits for a program* read strictly: nothing in the tree calls it, and `par_fold` is a grammar driver and not this. The word is in the type language and binds, so the entry is one line the day something asks.
@@ -5992,7 +6025,7 @@ package: **a library for other languages, and the ignore pattern.**
 
 ### Changed (the compiler writes the `&` at the call)
 
-- **[ADR-094](docs/specification/adr/adr-094.md) D1 and D2, step 3 of five — the one the first two steps were built for.** A parameter the callee only **reads** is declared `&T` in the lowering and given its `&` at every call, so `page(entries)` is the line, `page(&entries)` is refused, and the caller writes no reference anywhere the compiler writes one. Every `&` at a call in `examples/` goes, and `examples/report.nika`'s comment explaining that `count` has to be read before `page(entries, total)` *"consumes"* them goes with it.
+- **[ADR-094](docs/specification/adr/adr-094.md) D1 and D2, step 3 of five — the one the first two steps were built for.** A parameter the callee only **reads** is declared `&T` in the lowering and given its `&` at every call, so `page(entries)` is the line, `page(&entries)` is refused, and the caller writes no reference anywhere the compiler writes one. Every `&` at a call in `examples/` goes, and `examples/report/src/main.nika`'s comment explaining that `count` has to be read before `page(entries, total)` *"consumes"* them goes with it.
 - **One answer in two positions.** `contracts::keeps::lends` is called by the emitter to write the **declaration** and by the checker to write the **argument**, because the two disagreeing is a `&&T` or a moved value in the language below — `rustc` about a file nobody wrote, which is the one thing [Part III C.1](docs/specification/30-nikaia-tooling.md) forbids.
 - **Four things are not lent**, each of them the record's polarity being spent rather than a gap: a parameter the `keeps` column names; a value that **copies**, where a `&i64` costs a dereference at every use and buys nothing; an argument that is **already a view**; and a **method's** argument, for the reason `touches` gives for asking a weaker question — which entry `acc.record(m)` goes to is the type checker's answer and the emitter has none ([ADR-028](docs/specification/adr/adr-028.md)), so a call the checker does not walk would hand a value into a `&T`.
 - **Three things the record had not said, each found on the corpus.** **Which fit to ask depends on the parameter's kind**: a parameter written `&str` is a view in the declaration already, so what has to fit it is the argument *with* the reference the compiler writes — asking the other question refused `count(dna)` in `k-nucleotide.nika`, and asking this one everywhere refused `record(Stats(2))`. **The refusal goes after the fit and never on a type nothing pinned**: a `&i64` handed to a `&Request` stays `NK1102`, and `Ty::Unknown` fits everything, which is the right answer for an absent claim ([ADR-024](docs/specification/adr/adr-024.md) D1) and no ground to refuse punctuation on. **But `Unknown` may not skip the writing** — a guard placed one line too early took the `&` off `inventory/main.nika`'s `render(entries, total)` while leaving its parameter a view.
@@ -6188,7 +6221,7 @@ package: **a library for other languages, and the ignore pattern.**
 
 - **[ADR-094](docs/specification/adr/adr-094.md) D4, step 2 of five — and the first step that changes what programs mean.** `for e in entries { … }` used to take `entries` away; it leaves it where it was now, so `entries.len()` on the next line is a program rather than `rustc`'s *use of moved value* about a file nobody wrote. `let s = totals.stations[name]` and `let name = config.name` are views, because the language below refuses to move a value out of a container or out of a borrowed field — a move there was never what the line meant.
 - **Off the shape of the expression and not off a column**, which is why the step needed no ledger: a **place** is lent, and a call, a range or a literal owns what it made. `for i in 0..3` and `for line in io::lines()` are untouched.
-- **Three things the record had not said, each found on the corpus rather than reasoned about.** **`.iter()` and not `&`**: the iterated name may already *be* a view — `examples/inventory/stock.nika`'s `total(entries: &Vec[Entry])` — and `&entries` is then `&&Vec<Entry>`, which Rust does not iterate, while `.iter()` reads the same through any number of references and the emitter has no types to tell them apart ([ADR-028](docs/specification/adr/adr-028.md)). **`drain()` had to be built**: D4 names `for x in xs.drain()` as the written form of taking the elements away and `std` had no such entry, so a body that hands an element to a callee which *keeps* it had no way to say so — `or_insert(counts)` in `access-log.nika`, `all.push(v)` in `json.nika`, four loops in all. It is `into_iter` below, because D4's words are *removing a name from scope*. **And a `let` over a place that copies must not lend**: `let mi = self.bodies[i].mass` over an `f64` is a copy, and a `&` there is a borrow held across the loop that writes the same field — `E0502`, met in `examples/n-body/src/main.nika`.
+- **Three things the record had not said, each found on the corpus rather than reasoned about.** **`.iter()` and not `&`**: the iterated name may already *be* a view — `examples/inventory/src/stock.nika`'s `total(entries: &Vec[Entry])` — and `&entries` is then `&&Vec<Entry>`, which Rust does not iterate, while `.iter()` reads the same through any number of references and the emitter has no types to tell them apart ([ADR-028](docs/specification/adr/adr-028.md)). **`drain()` had to be built**: D4 names `for x in xs.drain()` as the written form of taking the elements away and `std` had no such entry, so a body that hands an element to a callee which *keeps* it had no way to say so — `or_insert(counts)` in `access-log.nika`, `all.push(v)` in `json.nika`, four loops in all. It is `into_iter` below, because D4's words are *removing a name from scope*. **And a `let` over a place that copies must not lend**: `let mi = self.bodies[i].mass` over an `f64` is a copy, and a `&` there is a borrow held across the loop that writes the same field — `E0502`, met in `examples/n-body/src/main.nika`.
 - **So the `let` half asks the checker and the `for` half does not.** Which of the two a place is, is a question about the **type**, and the emitter has none — so `Checked::lent_lets` answers it with the same `moves_away` that `NK2101` reads, and where it cannot type the place it says nothing. That silence is where every program already is, and it is the reason the new refusal is narrower than the record's sentence: **`NK1137`** refuses a `&` written in front of a `for`'s list, and not yet one in a `let`, because there the written `&` is still a program's only way to say what the line means. `open-work.md` carries that limit as the next thing.
 - **Eight tests in `crates/nikaia/tests/lending.rs`**, three of them compiled and **run** — the loop that leaves its list behind, a `for` over a parameter that is already a view, and a `drain()` that hands its elements to a `push`.
 - **The corpus moved eight lines**: four loops gained `.drain()`, two `&` came off (`report.nika`'s loop head and `n-body.nika`'s `let`), and two `&` stayed, at the two places the checker cannot type yet.
@@ -7109,7 +7142,7 @@ package: **a library for other languages, and the ignore pattern.**
 
 - **`NK1117` reaches a name inside an expression.** It used to fire only where a statement *was* one name, so `let n = q + 1` was passed over in silence and `rustc` refused the generated file about a name the user did write — the [Part III C.1](docs/specification/30-nikaia-tooling.md) class. The `docs/open-work.md` entry said this needed a decision because *"the list of what counts as declaring a name has to be complete before the rule can be widened, and today it is not"*. That was right, and the corpus is what said which two sources were missing.
 - **A template's `<for>` declares a name** — `<for r in :rows>{r.name}</for>` (Part II 10.6, [ADR-017](docs/specification/adr/adr-017.md)) — and the hole walk did not know it, because `template_holes` flattened a `<for>` and dropped its binding. `examples/escaping/src/main.nika` is what found it: widening the rule refused its `{r.shade}` until the walk carried a scope.
-- **A config option is a parameter** (Part I 5.1) and was simply absent from the checker's scope frame. Nothing noticed while a name in an expression was never asked about; `examples/tally.nika`'s `f"{lines}{separator}{blank}"` names one. That is a defect the widening *found* rather than caused.
+- **A config option is a parameter** (Part I 5.1) and was simply absent from the checker's scope frame. Nothing noticed while a name in an expression was never asked about; `examples/tally/src/main.nika`'s `f"{lines}{separator}{blank}"` names one. That is a defect the widening *found* rather than caused.
 - **One mistake, one finding.** The statement-position call is gone — a statement that is one name is an expression statement, so the walk reaches it — and where the withdrawn-`a`/`b`/`c` message applies, the general one stands aside, because the specific message says what happened to the form and the general one only that a name is unknown.
 - **`quote { … }` was the last row of `docs/spec-promises.md` marked *"means something else"*, and it is a refusal now.** `let q = quote { 1 + 1 }` parsed as `let q = quote` and a block, and lowered in silence. The construct (Part II 10.3) is still unbuilt; it no longer means something else without saying so.
 - `let n = 1_000` is caught in an expression too, which is where the misparse the statement rule was built for actually appears.
@@ -8032,7 +8065,7 @@ package: **a library for other languages, and the ignore pattern.**
 - **One ledger for the project** (Part III, 13.5), and the contracts are inferred over all of it **at once** - because `sync` is a fixpoint over the call graph (ADR-027 D1), and a call graph that stopped at a file boundary would answer differently depending on which file was read first. Modules are recorded in name order, not in the order their imports were discovered.
 - **[ADR-021](docs/specification/adr/adr-021.md) D13 is narrowed honestly.** 13.1 asks the cache key to cover each source that took part, and knowing what took part means parsing the entry - so *on a hit nothing is parsed* becomes **nothing is parsed twice**. A hit still saves the lowering, the checks and the inference, which is the larger part. A single file is unchanged down to the key's bytes.
 - **The source map records which file**, so [ADR-012](docs/specification/adr/adr-012.md) survives the join: a `rustc` message about the third module lands in the third module.
-- **`examples/inventory/`** is the first program here made of more than one file - the same program `examples/report.nika` is, in three. Both are kept on purpose: a reader can see what a boundary buys and what it costs on a program small enough to hold in the head. The example harness reads a *program* rather than a file, so an example may be one file or several and the tests do not care which.
+- **`examples/inventory/`** is the first program here made of more than one file - the same program `examples/report/src/main.nika` is, in three. Both are kept on purpose: a reader can see what a boundary buys and what it costs on a program small enough to hold in the head. The example harness reads a *program* rather than a file, so an example may be one file or several and the tests do not care which.
 - **What it does not do, and why each is where it is** (ADR-030 §7): a grammar is not visible across modules (the emitter reads grammars out of the file it is emitting, and the fix points the right way - the file about reading a stock list is where reading one belongs); field privacy is enforced by the language below and not reported as `NK1110`, because the ledger records a field's type and not yet its visibility; and a hole in an interpolated string is not type-checked at all, because it is parsed in the emitter - pre-existing, and now worth naming.
 
 ### Decided and built (0.0.8 - ADR-029: a higher-order function does what its lambda does)
@@ -8105,7 +8138,7 @@ package: **a library for other languages, and the ignore pattern.**
 - **A default is a literal.** An arbitrary expression would raise a question with no obvious answer - whether it is evaluated where the function is declared or where it is called - and that is worth deciding when something needs it. Writing a configuration parameter *without* a default is a parse error that says why.
 - **`NK1109`**: a call names an option the callee does not have, with the one that was probably meant. Also reported where the callee has no `;` at all, which is a different mistake and says so.
 - **The checker found one of its own bugs on the first program that used the feature.** An interpolated string was typed `&str`; it lowers to `format!`, and a `format!` is a `String`. Two spellings in Nikaia, two types below - and the checker follows the lowering rather than the syntax. Pinned by a test.
-- **`examples/tally.nika` uses both halves**: it declares an option and passes one to `fs::write`, appending its summary to a run log.
+- **`examples/tally/src/main.nika` uses both halves**: it declares an option and passes one to `fs::write`, appending its summary to a run log.
 
 ### Decided and built (0.0.8 - ADR-025: a loop can fail, and the rule was already written)
 
@@ -8115,14 +8148,14 @@ package: **a library for other languages, and the ignore pattern.**
 - **`NK2701`, and a range of its own** (D5) - `NK27xx`, *implicit calls*, in the shape `NK2601` set: *this function can fail because a turn of this loop can fail · help: declare the error: add `throws` to this function*.
 - **`fs::lines` and `fs::bytes` are removed from Part III 17.1** (D3), not deferred - the way [ADR-009](docs/specification/adr/adr-009.md) closed G4. `lines(path)` was to open the file *and* yield tethered `&str`, so the value would own the buffer and hand out views into itself: the one thing an iterator may not do, and the reason the language below allocates a string per line for the same function. The shape that works is two calls - `fs::map(path)` owns the pages, `.lines()` borrows views of them - and that separation **is** the model Part I 6.6 and ADR-008 rest on. For a record-per-line file the language already has something better than a sequence of lines: `@frame(boundary: "\n")`, which is what `1brc.nika`, `access-log.nika` and `config.nika` all use. None of them iterates lines.
 - **`io::lines()` exists**, because a pipe is genuinely different: its bytes do not exist until they are read (ADR-019 D1), so the failure cannot be moved to the call. Its lines are **owned**, which 17.1 already specified for its own reason and which is also what keeps it expressible - an iterator may hand out views into a buffer it does not own, and never into one it does.
-- **`examples/tally.nika`**, the tenth running example and the first whose **memory does not grow with its input**: one line alive at a time, however long the pipe. `k-nucleotide.nika` reads all of standard input, which is right for FASTA and wrong for a log that never ends; this is the other half.
+- **`examples/tally/src/main.nika`**, the tenth running example and the first whose **memory does not grow with its input**: one line alive at a time, however long the pipe. `k-nucleotide.nika` reads all of standard input, which is right for FASTA and wrong for a log that never ends; this is the other half.
 - **The ledger has a third kind of fact in it** (D6): `iterates = "throws"` on a type contract, carried by `std.contracts` for `io::Lines`. Second extension, second time it was one key.
 - **The emitter reads the type checker's answers for the first time** (D7). It asks [ADR-024](docs/specification/adr/adr-024.md)'s checker which `for` iterates a fallible stream, so `for line in io::lines()` and `let s = io::lines()` followed by `for line in s` are the same thing - matching on the name would have caught the first and quietly missed the second. The checker was built to report; it turns out to be what tells the emitter what to emit.
 
 ### Added (0.0.8 - `std` can write a file)
 
 - **`fs::write(path, data)` and `fs::read(path)`** (Part III, 17.1). Every example in this repository ended at `println`, and a program that cannot produce a file is not a tool. `write` creates the file or truncates it, which is what `write` means everywhere; `read` is the bytes half of `read_to_string`, for input that is not text and where nothing downstream is going to cut a `&str` out of it.
-- **`examples/report.nika`**, the ninth running example and the first whose result is a **file**: a stock list in, an HTML page out. It is also `escaping.nika`'s claim tested against data that was not written to make the point - the `&`, the `"` and the `<` come out of the *input file*, which is where they come from in every program that has ever had an escaping bug.
+- **`examples/report/src/main.nika`**, the ninth running example and the first whose result is a **file**: a stock list in, an HTML page out. It is also `escaping.nika`'s claim tested against data that was not written to make the point - the `&`, the `"` and the `<` come out of the *input file*, which is where they come from in every program that has ever had an escaping bug.
 - **The example harness checks the file, not the line about it.** `crates/nikaia/tests/examples.rs` gained `wrote:` beside `input:` and `stdin:`, and `{output}` beside `{input}`, so an example whose deliverable is a file is checked by reading it back - under both profiles, which must agree on it as they must agree on what is printed.
 - **A rule for the hand-written half of `std.contracts`, and the bug it fixes.** A parameter whose Rust type is a *bound* rather than a type is recorded `?`. `fs::write(path: impl AsRef<Path>, data: impl AsRef<[u8]>)` accepts a `String` and a `&str` and a buffer, so writing `&str` there would make the type checker refuse `fs::write(path, text)` for a `String` - a correct program, rejected, which is the one thing [ADR-024](docs/specification/adr/adr-024.md) promises cannot happen. `fs::map` and `fs::read_to_string` carried exactly that mistake and now do not. The arity is still checked; the type is not claimed, because there is no one type. Pinned by a test.
 

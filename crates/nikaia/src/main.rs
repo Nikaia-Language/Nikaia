@@ -221,6 +221,13 @@ pub enum Command {
         /// at both (Part I 1.2), so a difference is a compiler fault (D7).
         #[arg(long)]
         both_settings: bool,
+        /// Write each output test's expectations from what the program did:
+        /// `NAME.stdout`, and the files its `NAME.out/` names
+        /// ([ADR-247](../../../docs/specification/adr/adr-247.md) D3). Only a
+        /// run that ended successfully, and at `--both-settings` only one whose
+        /// two runs agree. Review the change in version control.
+        #[arg(long)]
+        bless: bool,
     },
     /// Re-lower the sysroot's `std` from its `.nika` sources (ADR-002 D4).
     ///
@@ -497,7 +504,8 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         Command::Test {
             project,
             both_settings,
-        } => return test_command(args, project.clone(), *both_settings),
+            bless,
+        } => return test_command(args, project.clone(), *both_settings, *bless),
         Command::LowerStd { sysroot } => return lower_std(sysroot.clone()),
         Command::Describe {
             crate_name,
@@ -535,7 +543,12 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
 /// `nikaia test` ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7,
 /// D8): the test build and the program, each once per setting asked for, then
 /// every test run against them.
-fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> Result<i32> {
+fn test_command(
+    args: &Cli,
+    directory: Option<PathBuf>,
+    both_settings: bool,
+    bless: bool,
+) -> Result<i32> {
     let start = match directory {
         Some(directory) => directory,
         None => std::env::current_dir().context("finding the working directory")?,
@@ -552,7 +565,7 @@ fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> 
     if tests.is_empty() && outputs.is_empty() {
         println!(
             "no tests: nothing in this package is a `test \"…\" {{ … }}` block, and \
-             `tests/` holds no `NAME.stdout`"
+             `tests/` holds no `NAME.stdout` and no `NAME.out/`"
         );
         return Ok(0);
     }
@@ -604,6 +617,7 @@ fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> 
         outputs: &outputs,
         programs: &programs,
         root: &project.root,
+        bless,
     })
 }
 

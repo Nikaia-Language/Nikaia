@@ -56,7 +56,7 @@ Three shapes carry most of it:
 * **A `for` consumes.** `for e in entries { … }` followed by `entries.len()` is
   accepted by the checker and refused by `rustc` with *use of moved value* — in
   Rust's words, about a file nobody wrote, which Part III C.1 calls a compiler
-  bug. Reproduced with a nine-line probe. `examples/report.nika` even carries a
+  bug. Reproduced with a nine-line probe. `examples/report/src/main.nika` even carries a
   comment explaining that `count` has to be read *before* `page(entries, total)`
   because rendering "consumes" the entries. A reader from any other language
   will write it the other way round, every time.

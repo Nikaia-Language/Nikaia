@@ -368,6 +368,42 @@ pub async fn write(
         .map_err(|e| crate::io::IoError::of(e, &asked))
 }
 
+/// Where `nikaia test` puts a test's own directory, for [`scratch`]
+/// ([ADR-247](../../../docs/specification/adr/adr-247.md) D5).
+pub const TEST_DIR_VAR: &str = "NIKAIA_TEST_DIR";
+
+/// **A fresh, empty directory, as a [`Root`]**
+/// ([ADR-247](../../../docs/specification/adr/adr-247.md) D5): what a test
+/// hands a function that writes, so that what it writes is checked to stay
+/// inside a place of the test's own (ADR-108 D3).
+///
+/// Under `nikaia test` it is made inside the test's own directory, which the
+/// runner removes when the test's process ends. Anywhere else it is a new
+/// directory under the system's temporary directory, left to the operating
+/// system as any temporary file is. Each call is a new directory: two tests,
+/// or two calls in one, never share one.
+pub fn scratch() -> Result<Root, crate::io::IoError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    let under = match std::env::var_os(TEST_DIR_VAR) {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::env::temp_dir(),
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let name = format!(
+        "nikaia-scratch-{}-{}-{nanos}",
+        std::process::id(),
+        CALLS.fetch_add(1, Ordering::Relaxed)
+    );
+    let dir = under.join(name);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| crate::io::IoError::of(e, &dir.display().to_string()))?;
+    Ok(Root::Dir(dir.display().to_string()))
+}
+
 /// **A file written through a buffer, flushed when it is done with**
 /// ([ADR-239](../../../docs/specification/adr/adr-239.md) D6): what `create`
 /// hands back, and the first type in `std` whose cleanup needs I/O.

@@ -212,11 +212,94 @@ fn an_output_test_is_what_the_program_prints() {
         "output \"none\" (tests/none.stdout) ... ok",
         "output \"two\" (tests/two.stdout) ... ok",
         "output \"wrong\" (tests/wrong.stdout) ... FAILED",
-        "expected:\nsomething else\n\nprinted:\nnobody: 0 lines\n",
+        "standard output (- expected, + printed):\n+ nobody: 0 lines\n- something else\n",
         "test result: FAILED. 3 passed; 1 failed",
     ] {
         assert!(stdout.contains(line), "missing `{line}`:\n{}", said(&out));
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A program whose result is a file** ([ADR-247](../../../docs/specification/adr/adr-247.md)):
+/// it runs in a fresh directory of its own (D1) with `NAME.in/` copied in and
+/// `NAME.out/` compared after (D2); nothing reaches the package; `--bless`
+/// writes the expectations from what it did (D3); a failure is a difference
+/// (D4); and a `test` block writes under `fs::scratch()` (D5).
+#[test]
+fn a_file_the_program_writes_is_an_expectation_and_is_blessed() {
+    let dir = a_project(
+        "nikaia-test-files",
+        &[(
+            "main.nika",
+            "use std::cli\n\
+             use std::fs\n\
+             \n\
+             fn shout(text: ref String) -> String {\n\
+             \x20   return text.to_uppercase()\n\
+             }\n\
+             \n\
+             fn main() throws {\n\
+             \x20   let from = cli::args().nth(1) ?? \"in.txt\"\n\
+             \x20   let to = cli::args().nth(2) ?? \"out.txt\"\n\
+             \x20   let text = fs::read_to_string(ref from, fs::Root::Anywhere)\n\
+             \x20   fs::write(ref to, fs::Root::Anywhere, shout(text))\n\
+             \x20   println(\"written\")\n\
+             }\n\
+             \n\
+             test \"a file written under a scratch root reads back\" {\n\
+             \x20   let root = fs::scratch()\n\
+             \x20   fs::write(\"loud.txt\", root, shout(\"hi\"))\n\
+             \x20   let back = fs::read_to_string(\"loud.txt\", root)\n\
+             \x20   assert(back == \"HI\")\n\
+             }\n",
+        )],
+    );
+    let tests = dir.join("tests");
+    std::fs::create_dir_all(tests.join("loud.in")).expect("loud.in/");
+    std::fs::create_dir_all(tests.join("loud.out")).expect("loud.out/");
+    std::fs::write(tests.join("loud.in/in.txt"), "one\ntwo\n").expect("input");
+    std::fs::write(tests.join("loud.args"), "in.txt\nout.txt\n").expect("args");
+    // Started empty and blessed, as D3 says a new test is.
+    std::fs::write(tests.join("loud.stdout"), "").expect("stdout");
+    std::fs::write(tests.join("loud.out/out.txt"), "").expect("out");
+
+    let first = nikaia(&["test"], &dir);
+    let said_first = String::from_utf8_lossy(&first.stdout).to_string();
+    assert_eq!(first.status.code(), Some(1), "{}", said(&first));
+    for words in [
+        "output \"loud\" (tests/loud.stdout) ... FAILED",
+        "standard output (- expected, + printed):\n+ written\n",
+        "out.txt (- expected, + written):\n+ ONE\n+ TWO\n",
+        "test \"a file written under a scratch root reads back\" (src/main.nika:16) ... ok",
+    ] {
+        assert!(
+            said_first.contains(words),
+            "missing `{words}`:\n{}",
+            said(&first)
+        );
+    }
+
+    let blessed = nikaia(&["test", "--both-settings", "--bless"], &dir);
+    assert!(blessed.status.success(), "{}", said(&blessed));
+    assert!(
+        String::from_utf8_lossy(&blessed.stdout)
+            .contains("output \"loud\" (tests/loud.stdout) ... blessed"),
+        "{}",
+        said(&blessed)
+    );
+    assert_eq!(
+        std::fs::read_to_string(tests.join("loud.stdout")).expect("blessed"),
+        "written\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tests.join("loud.out/out.txt")).expect("blessed"),
+        "ONE\nTWO\n"
+    );
+
+    let again = nikaia(&["test", "--both-settings"], &dir);
+    assert!(again.status.success(), "{}", said(&again));
+    // **Nothing the program wrote reached the package** (D1).
+    assert!(!dir.join("out.txt").exists() && !dir.join("tests/out.txt").exists());
     std::fs::remove_dir_all(&dir).ok();
 }
 

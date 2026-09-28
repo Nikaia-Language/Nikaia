@@ -323,7 +323,7 @@ fn a_parameter_passed_on_to_a_lending_callee_is_lent_too() {
 /// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). `Unknown`
 /// is the one that nearly got in: it fits everything, so it reaches the
 /// recording, and a guard placed one line too early took `&entries` off
-/// `examples/inventory/main.nika`'s `render` while leaving its parameter a view.
+/// `examples/inventory/src/main.nika`'s `render` while leaving its parameter a view.
 ///
 /// **What `Unknown` may do is silence the refusal**, and that half is here too:
 /// a written `&` over a value nothing pinned is left where it is, and it lowers

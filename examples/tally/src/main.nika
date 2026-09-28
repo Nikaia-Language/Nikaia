@@ -11,7 +11,8 @@
 // Shows: reading standard input line by line, a loop that can fail, and
 // named options after the `;` in a signature and at a call.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints and the file it writes against `tests/` (ADR-247).
 
 use std::io
 use std::fs

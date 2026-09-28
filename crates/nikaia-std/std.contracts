@@ -277,6 +277,17 @@ provenance = "trusted"
 signature = "(path: ?, root: ref Root) -> String"
 doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read or is not UTF-8. The bytes came from\nthe program's own machine, so what it hands back is **trusted**: a map keyed\non it is hashed with the fast function."
 
+# **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
+# directory is one system call, the same size of blocking as `cli::args`'s read.
+[fn."fs::scratch"]
+pub = true
+sync = true
+throws = ["io::IoError"]
+touches = ["file write"]
+provenance = "trusted"
+signature = "() -> Root"
+doc = "A fresh, empty directory, as an `fs::Root::Dir`.\n\nWhat a test hands a function that writes, so that what it writes stays inside a\nplace of the test's own. Under `nikaia test` it is inside the test's own\ndirectory, removed when the test ends; elsewhere it is a new directory under the\nsystem's temporary directory. Every call is a new one."
+
 [fn."fs::write"]
 pub = true
 touches = ["file(path) write"]
@@ -327,7 +338,7 @@ doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holdin
 # a named type whose `iterates` column below carried the failing step - which
 # worked for the `for` and for nothing else: `for line in io::lines()` bound a
 # `line` of no type at all, so `line.len()` was a method on `?` and the six
-# `.len()` calls of `examples/tally.nika` were among the 35 §1 counts.
+# `.len()` calls of `examples/tally/src/main.nika` were among the 35 §1 counts.
 #
 # `Seq[String] pauses throws` says three things in one place: the element is a
 # `String`, so the binding has a type; `throws` is the one spelling of *a step
@@ -1486,6 +1497,23 @@ sync = true
 touches = []
 signature = "(ref String, prefix: ?) -> bool"
 doc = "Whether the text begins with this."
+
+[fn."str::ends_with"]
+pub = true
+sync = true
+touches = []
+signature = "(ref String, suffix: ?) -> bool"
+doc = "Whether the text ends with this."
+
+# **Found by the first test to claim something about a page** (ADR-247): an
+# `assert` may only call what the ledger says changes nothing, and without this
+# entry `page.contains("…")` was a method nothing describes.
+[fn."str::contains"]
+pub = true
+sync = true
+touches = []
+signature = "(ref String, part: ?) -> bool"
+doc = "Whether this appears anywhere in the text."
 
 [fn."str::to_string"]
 pub = true

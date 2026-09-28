@@ -1,27 +1,21 @@
-//! Every example that claims to run, compiled and run.
+//! Every example that claims to run, checked.
 //!
-//! `examples/README.md` divides the directory in two: files that the bootstrap
+//! `examples/README.md` divides the directory in two: programs the bootstrap
 //! compiler handles today, and files written at specification level to find out
-//! what the specification forgot. Only the first kind can be checked, and this
-//! is where that check lives - lower the real file, compile the emitted Rust
-//! with the `rustc` that built this test, run the binary, compare what it
-//! printed.
+//! what the specification forgot. Only the first kind can be checked.
 //!
-//! At **both settings of `user_parallelism`**, and the outputs must be equal.
-//! That is the claim the switches rest on (Part I 1.2): the same source
-//! compiles either way and means the same thing, only the runtime underneath
-//! differs. A test that ran one setting would leave the interesting half
-//! unchecked.
-//!
-//! **Most examples check themselves now**
-//! ([ADR-245](../../../docs/specification/adr/adr-245.md) D8): eight are
-//! packages whose expected output is `tests/NAME.stdout` beside them, and this
-//! file runs `nikaia test --both-settings` in a copy of each. The table below
-//! keeps the three whose result is a *file* they write, which an output test
-//! does not see.
+//! **The examples check themselves**
+//! ([ADR-245](../../../docs/specification/adr/adr-245.md) D8,
+//! [ADR-247](../../../docs/specification/adr/adr-247.md)): each is a package
+//! whose `tests/` says what it must print and write - `NAME.stdout`,
+//! `NAME.out/`, with `NAME.in/`, `.args` and `.stdin` as what it is given - and
+//! this file runs `nikaia test --both-settings` in a copy of each. At **both
+//! settings of `user_parallelism`**, because that is the claim the switches
+//! rest on (Part I 1.2): the same source means the same thing either way.
 //!
 //! `1brc.nika` has a test of its own (`one_brc.rs`), because it checks more
-//! than its output. The last test here makes sure no example escapes both.
+//! than its output. The last tests here make sure no example escapes both, and
+//! two ask what an example's comment claims about a bad input.
 
 mod common;
 
@@ -34,158 +28,6 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// An example, and what running it must print.
-struct Example {
-    /// The file under `examples/`.
-    file: &'static str,
-    /// A file written into the scratch directory first. `{input}` in `args`
-    /// stands for its path.
-    input: Option<Input>,
-    /// Fed to the program on **standard input**, for the examples that read it
-    /// (ADR-019). A pipe is not a path, so this is not `input` with a flag.
-    stdin: Option<&'static str>,
-    args: &'static [&'static str],
-    /// Compared after trimming, so a trailing newline is not a test.
-    ///
-    /// It may not name a path: the two builds run in scratch directories of
-    /// their own, so an example that echoed one would print something
-    /// different under each and `the_profiles_agree_on_every_example` would be
-    /// right to say so.
-    expected: &'static str,
-    /// A file the example is expected to **write**. `{output}` in `args`
-    /// stands for its path, and what it holds afterwards is compared here.
-    ///
-    /// Standard output is not the only thing a program produces, and an
-    /// example whose result is a file would otherwise be checked by the one
-    /// line it prints about it.
-    wrote: Option<Output>,
-}
-
-struct Input {
-    name: &'static str,
-    contents: &'static str,
-}
-
-struct Output {
-    name: &'static str,
-    contents: &'static str,
-}
-
-/// What running an example produced.
-struct Run {
-    printed: String,
-    /// The contents of the file it was expected to write.
-    wrote: Option<String>,
-}
-
-/// The examples that run. An entry here is a promise that `cargo test` keeps.
-const RUNNABLE: &[Example] = &[
-    Example {
-        file: "tally.nika",
-        input: None,
-        // A pipe, and the point of the example: the program never holds more
-        // than one line, however long the stream is (ADR-025 D4).
-        stdin: Some(
-            "one\n\
-             \n\
-             the longest line in this stream\n\
-             \n\
-             three\n",
-        ),
-        args: &["{output}"],
-        expected: "\
-5 lines, 2 blank
-longest: 31 characters
-the longest line in this stream",
-        // The run log it appends to, which is where Kap 5.1's `append: true`
-        // ends up: a tab, because the call names `separator` too.
-        wrote: Some(Output {
-            name: "tally.log",
-            contents: "5\t2",
-        }),
-    },
-    Example {
-        // The same program as `report.nika`, in three files (Part I, 9.1).
-        // Having both is the point: what a module boundary buys and what it
-        // costs, on a program small enough to hold in the head.
-        file: "inventory/main.nika",
-        input: Some(Input {
-            name: "stock.csv",
-            contents: "\
-tools;Bolts & Nuts;12
-paper;<plain> A4;40
-tools;3\" Clamp;5
-paper;Card </td>;7
-",
-        }),
-        stdin: None,
-        args: &["{input}", "{output}"],
-        expected: "4 items, 64 in total",
-        wrote: Some(Output {
-            name: "report.html",
-            contents: "\
-<html>
-        <head><title>Stock</title></head>
-        <body>
-        <h1>Stock</h1>
-        <table>
-        <tr><th>Category</th><th>Item</th><th>Count</th></tr>
-        <tr><td>paper</td><td>&lt;plain&gt; A4</td><td>40</td></tr>\
-<tr><td>tools</td><td>Bolts &amp; Nuts</td><td>12</td></tr>\
-<tr><td>paper</td><td>Card &lt;/td&gt;</td><td>7</td></tr>\
-<tr><td>tools</td><td>3&quot; Clamp</td><td>5</td></tr>
-        </table>
-        <p>64 in total</p>
-        </body>
-        </html>",
-        }),
-    },
-    Example {
-        file: "report.nika",
-        input: Some(Input {
-            name: "stock.csv",
-            // Item names as people type them, which is where an escaping bug
-            // comes from: an ampersand, a quote, an angle bracket, and one
-            // that reads like a closing tag.
-            contents: "\
-tools;Bolts & Nuts;12
-paper;<plain> A4;40
-tools;3\" Clamp;5
-paper;Card </td>;7
-",
-        }),
-        stdin: None,
-        args: &["{input}", "{output}"],
-        // Path-free on purpose: what a run says on standard output has to be
-        // the same under both builds, and the two run in scratch
-        // directories of their own. The page is the deliverable and is
-        // checked as one, below.
-        expected: "4 items, 64 in total",
-        wrote: Some(Output {
-            name: "report.html",
-            // Sorted by count, descending. Every one of the four characters
-            // that changes what HTML means arrived from the *input file* and
-            // is gone from the page: `&`, `<`, `>` and `"`. That is
-            // ADR-017 D1 with something real to escape.
-            contents: "\
-<html>
-        <head><title>Stock</title></head>
-        <body>
-        <h1>Stock</h1>
-        <table>
-        <tr><th>Category</th><th>Item</th><th>Count</th></tr>
-        <tr><td>paper</td><td>&lt;plain&gt; A4</td><td>40</td></tr>\
-<tr><td>tools</td><td>Bolts &amp; Nuts</td><td>12</td></tr>\
-<tr><td>paper</td><td>Card &lt;/td&gt;</td><td>7</td></tr>\
-<tr><td>tools</td><td>3&quot; Clamp</td><td>5</td></tr>
-        </table>
-        <p>64 in total</p>
-        </body>
-        </html>",
-        }),
-    },
-];
-
 /// Written at specification level: they say what the language is meant to look
 /// like and the bootstrap compiler does not handle them yet. Each one's gaps
 /// are listed in `examples/README.md`.
@@ -194,8 +36,8 @@ const SPECIFICATION_LEVEL: &[&str] = &["fortunes.nika"];
 /// Runnable, but with a test of its own that checks more than the output.
 const COVERED_ELSEWHERE: &[&str] = &["1brc.nika"];
 
-/// Directories under `examples/` that no entry in `RUNNABLE` reaches into,
-/// because their check lives in another test file. Each is named together with
+/// Directories under `examples/` that do not check themselves, because their
+/// check lives in another test file. Each is named together with
 /// that test, so a directory cannot sit here unchecked and so a deleted test
 /// leaves a name pointing at nothing.
 const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
@@ -226,68 +68,6 @@ const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
 ];
 
 #[test]
-fn every_runnable_example_prints_what_it_promises() {
-    for example in RUNNABLE {
-        for how in [Build::default(), Build::parallel()] {
-            let run = build_and_run(example, how);
-            assert_eq!(
-                run.printed.trim(),
-                example.expected,
-                "{} under {how:?}",
-                example.file
-            );
-        }
-    }
-}
-
-/// An example whose result is a **file** is checked by the file.
-///
-/// `report.nika` prints one line about a page it wrote; checking that line
-/// would check almost nothing. This reads the page back.
-#[test]
-fn every_example_that_writes_a_file_writes_the_right_one() {
-    let mut checked = 0;
-    for example in RUNNABLE.iter().filter(|e| e.wrote.is_some()) {
-        let wrote = example.wrote.as_ref().expect("filtered above");
-        for how in [Build::default(), Build::parallel()] {
-            let run = build_and_run(example, how);
-            assert_eq!(
-                run.wrote.as_deref().map(str::trim),
-                Some(wrote.contents),
-                "{} wrote a different {} under {how:?}",
-                example.file,
-                wrote.name
-            );
-        }
-        checked += 1;
-    }
-    assert!(checked > 0, "no example writes a file any more");
-}
-
-/// The two builds are one language, not two dialects: same source, same
-/// output. Checked separately from the value above so a failure says which of
-/// the two claims broke.
-#[test]
-fn the_switches_agree_on_every_example() {
-    for example in RUNNABLE {
-        let sequential = build_and_run(example, Build::default());
-        let parallel = build_and_run(example, Build::parallel());
-        assert_eq!(
-            sequential.printed, parallel.printed,
-            "{} prints differently between builds",
-            example.file
-        );
-        assert_eq!(
-            sequential.wrote, parallel.wrote,
-            "{} writes a different file between builds",
-            example.file
-        );
-    }
-}
-
-/// An example is either checked or declared unfinished. Adding a file to
-/// `examples/` without deciding which is what this catches.
-#[test]
 fn no_example_is_neither_run_nor_declared() {
     let dir = repo_root().join("examples");
     let mut seen = 0;
@@ -299,26 +79,23 @@ fn no_example_is_neither_run_nor_declared() {
             .and_then(|n| n.to_str())
             .expect("utf-8 file name");
 
-        // A directory is an example too. It is either a program spread over
-        // several files, in which case some RUNNABLE entry reaches into it, or
-        // a package, in which case PACKAGES says where it is checked.
+        // A directory is an example too: a package that checks itself, or
+        // one DIRECTORIES_CHECKED_ELSEWHERE says where it is checked.
         if path.is_dir() {
             if name == "target" {
                 continue;
             }
             seen += 1;
-            let prefix = format!("{name}/");
-            let known = RUNNABLE.iter().any(|e| e.file.starts_with(&prefix))
-                || DIRECTORIES_CHECKED_ELSEWHERE
-                    .iter()
-                    .any(|(dir, _)| *dir == name)
+            let known = DIRECTORIES_CHECKED_ELSEWHERE
+                .iter()
+                .any(|(dir, _)| *dir == name)
                 || checks_itself(&path);
             assert!(
                 known,
-                "examples/{name}/ is in no list in tests/examples.rs and has no \
-                 `tests/NAME.stdout`: give it an output test (ADR-245 D8), add its \
-                 entry file to RUNNABLE with what it prints, or the directory to \
-                 DIRECTORIES_CHECKED_ELSEWHERE with the test that checks it"
+                "examples/{name}/ checks nothing: give it an output test \
+                 (`tests/NAME.stdout` or `tests/NAME.out/`, ADR-245 D8, ADR-247), \
+                 or add the directory to DIRECTORIES_CHECKED_ELSEWHERE with the \
+                 test that checks it"
             );
             continue;
         }
@@ -328,15 +105,13 @@ fn no_example_is_neither_run_nor_declared() {
         }
         seen += 1;
 
-        let known = RUNNABLE.iter().any(|e| e.file == name)
-            || SPECIFICATION_LEVEL.contains(&name)
-            || COVERED_ELSEWHERE.contains(&name);
+        let known = SPECIFICATION_LEVEL.contains(&name) || COVERED_ELSEWHERE.contains(&name);
 
         assert!(
             known,
-            "examples/{name} is in neither list in tests/examples.rs: add it to \
-             RUNNABLE with what it prints, or to SPECIFICATION_LEVEL with its gaps \
-             in examples/README.md"
+            "examples/{name} is a loose file no test runs: make it a package with \
+             an output test (ADR-245 D8), or add it to SPECIFICATION_LEVEL with its \
+             gaps in examples/README.md"
         );
     }
 
@@ -350,9 +125,12 @@ fn no_example_is_neither_run_nor_declared() {
 fn checks_itself(dir: &Path) -> bool {
     dir.join("nikaia.toml").is_file()
         && std::fs::read_dir(dir.join("tests")).is_ok_and(|entries| {
-            entries
-                .filter_map(|entry| entry.ok())
-                .any(|entry| entry.path().extension().is_some_and(|x| x == "stdout"))
+            entries.filter_map(|entry| entry.ok()).any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|x| x == "stdout" || x == "out")
+            })
         })
 }
 
@@ -370,7 +148,7 @@ fn every_example_package_passes_its_own_tests() {
         .filter(|path| checks_itself(path))
         .collect();
     packages.sort();
-    assert!(packages.len() >= 8, "{packages:?}");
+    assert!(packages.len() >= 11, "{packages:?}");
     for package in packages {
         let name = package
             .file_name()
@@ -422,10 +200,6 @@ fn copy_tree(from: &Path, to: &Path) {
 fn the_lists_name_files_that_exist() {
     for name in SPECIFICATION_LEVEL.iter().chain(COVERED_ELSEWHERE) {
         let path = repo_root().join("examples").join(name);
-        assert!(path.exists(), "{} is listed but not there", path.display());
-    }
-    for example in RUNNABLE {
-        let path = repo_root().join("examples").join(example.file);
         assert!(path.exists(), "{} is listed but not there", path.display());
     }
     for (name, checked_by) in DIRECTORIES_CHECKED_ELSEWHERE {
@@ -578,83 +352,4 @@ fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     );
 
     (dir, binary)
-}
-
-/// Lower, compile, run, and hand back what it produced.
-fn build_and_run(example: &Example, how: Build) -> Run {
-    let (dir, binary) = build(example.file, how);
-
-    let input_path = example.input.as_ref().map(|input| {
-        let path = dir.join(input.name);
-        std::fs::write(&path, input.contents).expect("write the example's input");
-        path
-    });
-    let output_path = example.wrote.as_ref().map(|wrote| dir.join(wrote.name));
-
-    let args: Vec<String> = example
-        .args
-        .iter()
-        .map(|arg| substitute(arg, input_path.as_deref(), output_path.as_deref()))
-        .collect();
-
-    let mut command = Command::new(&binary);
-    command.args(&args);
-
-    let run = match example.stdin {
-        None => command.output().expect("run the compiled example"),
-        Some(text) => {
-            // A pipe, not a redirected file: what the program sees is what
-            // ADR-019 is about.
-            let mut child = command
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect("spawn the compiled example");
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .expect("the child's stdin")
-                .write_all(text.as_bytes())
-                .expect("write to the child's stdin");
-            child.wait_with_output().expect("run the compiled example")
-        }
-    };
-    assert!(
-        run.status.success(),
-        "{} failed under {how:?}: {}",
-        example.file,
-        String::from_utf8_lossy(&run.stderr)
-    );
-
-    let printed = String::from_utf8_lossy(&run.stdout).into_owned();
-    let wrote = output_path.as_ref().map(|path| {
-        std::fs::read_to_string(path).unwrap_or_else(|e| {
-            panic!(
-                "{} said it wrote {}, and it is not there: {e}",
-                example.file,
-                path.display()
-            )
-        })
-    });
-
-    let _ = std::fs::remove_dir_all(&dir);
-    Run { printed, wrote }
-}
-
-/// `{input}` stands for the path the example's input was written to, and
-/// `{output}` for the path it is expected to write.
-fn substitute(arg: &str, input: Option<&Path>, output: Option<&Path>) -> String {
-    let mut arg = arg.to_string();
-    for (name, path) in [("{input}", input), ("{output}", output)] {
-        match path {
-            Some(path) => arg = arg.replace(name, &path.display().to_string()),
-            None => assert!(
-                !arg.contains(name),
-                "an argument names {name} but the example declares none"
-            ),
-        }
-    }
-    arg
 }

@@ -119,7 +119,7 @@ fn a_for_over_something_that_is_not_a_place_owns_it() {
 /// iterate. `.iter()` reads the same through any number of references, and this
 /// emitter has no types to tell the two apart with
 /// ([ADR-028](../../../docs/specification/adr/adr-028.md)). Found by
-/// `examples/inventory/stock.nika`, whose `total` takes exactly that parameter.
+/// `examples/inventory/src/stock.nika`, whose `total` takes exactly that parameter.
 #[test]
 fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
     let printed = ran(

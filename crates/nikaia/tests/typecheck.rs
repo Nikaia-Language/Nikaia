@@ -1341,7 +1341,7 @@ fn table(rows: Vec[Row]) -> String {
     } eod
 }
 "#,
-        // A config option, which is `examples/tally.nika`'s.
+        // A config option, which is `examples/tally/src/main.nika`'s.
         r#"
 fn summary(lines: i64; separator: ref String = " ") -> String {
     return f"{lines}{separator}"

@@ -10,7 +10,8 @@
 // Shows: a `grammar` with `@frame`, sorting by a key, and a `dsl html` page
 // written to a file with `fs::write`.
 //
-// To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks
+// what it prints and the file it writes against `tests/` (ADR-247).
 
 use std::fs
 use std::cli

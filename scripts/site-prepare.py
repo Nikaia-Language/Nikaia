@@ -15,7 +15,7 @@ Six things:
    shows plain text rather than downloading it, and the link's `download`
    attribute names the saved file `tally.nika` again.
 
-6. **`_redirects`, which sends `/examples/tally.nika` to that page.** The
+6. **`_redirects`, which sends `/examples/tally/src/main.nika` to that page.** The
    address a reader has — from the README, from a search result, from a link
    written before the pages existed — is the program's own, and it should
    open the page, not a download. Cloudflare follows a redirect before it
@@ -153,7 +153,7 @@ def relink_examples_index(root, written):
 
 
 def redirects(root, written):
-    """`/examples/tally.nika` → `/examples/tally`, one line per program."""
+    """`/examples/tally/src/main.nika` → `/examples/tally`, one line per program."""
     lines = []
     for page in written:
         url = "/" + page.relative_to(root).with_suffix("").as_posix()

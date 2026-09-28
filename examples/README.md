@@ -9,15 +9,18 @@ by a path ([ADR-069](../docs/specification/adr/adr-069.md) D1). Everything else 
 on its own, so the pair is the only place in this directory where the dependency arm is written
 down rather than described.
 
-**Eight of them are packages that test themselves**
-([ADR-245](../docs/specification/adr/adr-245.md) D8): `calc/`, `access-log/`, `config/`,
-`json/`, `n-body/`, `k-nucleotide/`, `escaping/` and `trend/` each hold `nikaia.toml`,
-`src/main.nika` and a `tests/` directory in which `NAME.stdout` is what the program must print,
-with `NAME.args` and `NAME.stdin` as what it is given. In one of them:
+**Eleven of them are packages that test themselves**
+([ADR-245](../docs/specification/adr/adr-245.md) D8, [ADR-247](../docs/specification/adr/adr-247.md)):
+`calc/`, `access-log/`, `config/`, `json/`, `n-body/`, `k-nucleotide/`, `escaping/`, `trend/`,
+`tally/`, `report/` and `inventory/` each hold `nikaia.toml`, `src/` and a `tests/` directory:
+`NAME.stdout` is what the program must print and `NAME.out/` the files it must write;
+`NAME.in/` is copied into the directory it runs in, and `NAME.args` and `NAME.stdin` are what it
+is given. Each test runs in a fresh directory of its own. In one of them:
 
 ```text
 nikaia run -- "2 + 3 * 4"      # in examples/calc
 nikaia test --both-settings    # every output test, and calc's `test` blocks, at both settings
+nikaia test --bless            # write the expectations from what the program did; review the diff
 ```
 
 `crates/nikaia/tests/examples.rs` runs `nikaia test --both-settings` in a copy of each.
@@ -32,16 +35,16 @@ nikaia test --both-settings    # every output test, and calc's `test` blocks, at
 | [`n-body/`](n-body/) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `nikaia test`: its own `tests/` |
 | [`k-nucleotide/`](k-nucleotide/) | the CLBG benchmark: FASTA on standard input, counted | ✅ `nikaia test`: its own `tests/` |
 | [`escaping/`](escaping/) | an HTML table: the template escapes, the type says what is markup | ✅ `nikaia test`: its own `tests/` |
-| [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
+| [`report/`](report/) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `nikaia test`: its own `tests/`, the file it writes included |
 | [`trend/`](trend/) | ten days of readings, looked at **from the end**: a pipeline turned round without a copy, and a range walked twice | ✅ `nikaia test`: its own `tests/` |
-| [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
-| [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
+| [`tally/`](tally/) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `nikaia test`: its own `tests/`, the file it writes included |
+| [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `nikaia test`: its own `tests/`, the file it writes included |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
 | [`http/`](http/) | the `http` **package**: what a handler is given and gives back, and **the server** — one connection at a time, with the caps as options | ✅ through its consumer |
 | [`hello-http/`](hello-http/) | a **server**, and a program that reaches `http` **by a path**: one address and one function that decides | ✅ `crates/nikaia/tests/project.rs`, over a real socket |
 | [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
-Each of the twelve single programs - eight of them packages now - is compiled and run **at both
+Each of the twelve programs - eleven of them packages now - is compiled and run **at both
 settings**, and their output must be identical — that is the claim the switches rest on, and a test is where it belongs
 rather than in a paragraph. The pair is built once, through its consumer, because what it is
 there to show is the dependency arm rather than a body of code. Each is the real file: the
@@ -247,7 +250,7 @@ an option; a default is a literal, because deciding when an expression would be 
 doing when something needs it. `NK1109` is a call that names an option the callee does not have,
 with the one that was probably meant.
 
-`examples/tally.nika` uses both halves: it declares one option and passes one to `fs::write`.
+`examples/tally/src/main.nika` uses both halves: it declares one option and passes one to `fs::write`.
 
 **G17 — a stream of lines that can fail while it is being read.** *Decided and implemented*
 ([ADR-025](../docs/specification/adr/adr-025.md)). Found by trying to build `fs::lines` and
@@ -275,7 +278,7 @@ record-per-line file the language has something better than a sequence of lines 
 None of them iterates lines.
 
 `io::lines()` exists, because a pipe is genuinely different — its bytes do not exist until they
-are read, so the failure cannot be moved to the call — and `examples/tally.nika` is it running.
+are read, so the failure cannot be moved to the call — and `examples/tally/src/main.nika` is it running.
 
 **G1 — `std::fs` named no functions.** The module was described ("looks blocking, is async")
 but had no surface. Now specified in Part III, 17.1: whole-file (`read`, `read_to_string`,

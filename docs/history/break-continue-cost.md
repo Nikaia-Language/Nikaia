@@ -226,7 +226,7 @@ grammar rules**, and every number is a median of five runs.
 | `many.nika` (1 block, 2,002 statements) | 116,047,192 | 116,050,312 | +0.003 % |
 | `examples/json/src/main.nika` | 40,833,960 | 40,953,318 | +0.292 % |
 | `examples/k-nucleotide/src/main.nika` | 16,589,311 | 16,613,053 | +0.143 % |
-| `examples/tally.nika` | 9,034,400 | 9,046,157 | +0.130 % |
+| `examples/tally/src/main.nika` | 9,034,400 | 9,046,157 | +0.130 % |
 
 **The contrast between the first two rows is the whole mechanism.** Two thousand
 statements in one block cost 3,120 instructions — nothing. Two thousand

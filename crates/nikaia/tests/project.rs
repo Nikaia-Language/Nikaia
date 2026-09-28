@@ -2226,7 +2226,7 @@ fn a_head_the_next_file_declares_is_not_refused() {
 /// **It was the tail and not the grammar**: the same call bound to a name
 /// first compiled and ran, and so did the tail form where the input is a
 /// **parameter**, because then no local owns the buffer.
-/// `examples/report.nika` writes the first shape, which is why the corpus was
+/// `examples/report/src/main.nika` writes the first shape, which is why the corpus was
 /// green while this was broken.
 ///
 /// **This builds and runs**, because that is the only thing that sees it: the

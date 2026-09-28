@@ -1,7 +1,7 @@
 // Summarises a web server's access log: how many requests, how many failed,
 // and the hits and bytes sent per path, busiest first.
 //
-//     nikaia run -- tests/access.log
+//     nikaia run -- tests/five-requests.in/access.log
 //     5 requests, 1 failed
 //     /index.html 2 10240
 //     /api/order 1 512

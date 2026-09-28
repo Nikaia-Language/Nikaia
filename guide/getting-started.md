@@ -148,7 +148,7 @@ Real programs live in [`examples/`](../examples/). Copy one into `src/main.nika`
 
 * [`calc.nika`](../examples/calc/src/main.nika): a four-function calculator built from a grammar.
   `nikaia run -- "2 + 3 * 4"`
-* [`tally.nika`](../examples/tally.nika): counts the lines piped into it, in constant
+* [`tally.nika`](../examples/tally/src/main.nika): counts the lines piped into it, in constant
   memory.
 * [`access-log.nika`](../examples/access-log/src/main.nika): a web access log summarised.
 * [`json.nika`](../examples/json/src/main.nika), [`config.nika`](../examples/config/src/main.nika): a JSON

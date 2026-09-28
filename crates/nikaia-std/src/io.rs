@@ -470,7 +470,7 @@ mod lines_tests {
     //! Asked of the buffer directly rather than of standard input: there is one
     //! of those per process, a test may not consume it, and what is in question
     //! here is not the read but what is done with what came back. The read
-    //! itself is asserted by `examples/tally.nika`, which runs end to end.
+    //! itself is asserted by `examples/tally/src/main.nika`, which runs end to end.
 
     use super::Lines;
 

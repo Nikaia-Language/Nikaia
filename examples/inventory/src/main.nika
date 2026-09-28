@@ -7,8 +7,9 @@
 //
 // Shows: one package in several files, and `pub`.
 //
-// To run it, copy the three `.nika` files into `src/` of a project
-// (guide/getting-started.md).
+// A package: `nikaia run` in this directory runs it, and `nikaia test` checks what
+// it prints and the page it writes against `tests/` (ADR-247), and runs the test
+// at the end of this file.
 //
 // A package is a directory, and its files share one namespace. So there is no
 // `use` between them: `read`, `total` and `render` are simply called here.
@@ -43,4 +44,17 @@ fn main() throws {
     }
 
     println(f"{count} items, {total} in total")
+}
+
+// **A test writes under a root of its own** (ADR-247 D5): `fs::scratch()` is a
+// fresh directory, removed when the test ends, and the page goes under it the
+// way `main` writes it anywhere.
+test "the page escapes the stock file, and is written as it was made" {
+    let entries = read("tools;Bolts & Nuts;12\n")
+    let page = render(entries, 12)
+    assert(page.contains("Bolts &amp; Nuts"))
+    let root = fs::scratch()
+    fs::write("page.html", root, ref page)
+    let back = fs::read_to_string("page.html", root)
+    assert(back == page)
 }

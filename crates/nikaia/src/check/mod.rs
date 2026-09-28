@@ -4100,7 +4100,7 @@ impl<'a> Checker<'a> {
         // default - and none of that changes that the body may use it. It was
         // missing from this frame, which nothing noticed while an undeclared
         // name was only refused in statement position: measured on
-        // `examples/tally.nika`, whose `f"{lines}{separator}{blank}"` names one.
+        // `examples/tally/src/main.nika`, whose `f"{lines}{separator}{blank}"` names one.
         for option in config {
             frame.push(Local::free(
                 self.parsed.text(option.name).to_string(),

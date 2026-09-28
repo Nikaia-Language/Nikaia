@@ -2334,20 +2334,59 @@ fn executable_in(messages: &str) -> Option<std::path::PathBuf> {
 /// **What one test did, at one setting** ([ADR-245](../../docs/specification/adr/adr-245.md) D1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Outcome {
+    /// Whether the process ended successfully.
+    ended_well: bool,
     passed: bool,
-    stdout: String,
+    stdout: Vec<u8>,
     stderr: String,
+    /// Each file the test's `NAME.out/` names, and what the program wrote
+    /// under that name - nothing where it wrote nothing
+    /// ([ADR-247](../../docs/specification/adr/adr-247.md) D2).
+    files: Vec<(String, Option<Vec<u8>>)>,
 }
 
-/// **An output test** ([ADR-245](../../docs/specification/adr/adr-245.md) D8):
-/// `tests/NAME.stdout` in the package, and beside it, optionally, what the
-/// program is given - `NAME.stdin`, and `NAME.args` with one argument a line.
+/// **An output test** ([ADR-245](../../docs/specification/adr/adr-245.md) D8,
+/// [ADR-247](../../docs/specification/adr/adr-247.md) D2): named by a
+/// `tests/NAME.stdout` or a `tests/NAME.out/`, with what goes in beside them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputTest {
     pub name: String,
-    pub expected: Vec<u8>,
+    /// The package's `tests/`, where its expectations are blessed to.
+    pub dir: PathBuf,
+    /// `NAME.stdout`, where there is one.
+    pub stdout: Option<Vec<u8>>,
+    /// `NAME.out/`: each file by the name it has under the working directory.
+    pub files: Vec<(String, Vec<u8>)>,
+    /// `NAME.in/`, copied into the working directory before the run.
+    pub inputs: Option<PathBuf>,
     pub stdin: Vec<u8>,
     pub args: Vec<String>,
+}
+
+/// Every file under `dir`, by its name relative to it with `/` between the
+/// parts, sorted.
+fn files_under(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).with_context(|| format!("reading {}", at.display()))? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let relative = path
+                .strip_prefix(dir)
+                .expect("a file under the directory walked")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            found.push((relative, path));
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// The package's output tests, by name. A `tests/` that is not there holds
@@ -2358,13 +2397,20 @@ pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Ok(Vec::new());
     };
-    let mut names: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|x| x == "stdout"))
-        .filter_map(|path| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
-        .collect();
-    names.sort();
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+        match (path.extension().and_then(|x| x.to_str()), stem) {
+            (Some("stdout"), Some(stem)) if path.is_file() => {
+                names.insert(stem);
+            }
+            (Some("out"), Some(stem)) if path.is_dir() => {
+                names.insert(stem);
+            }
+            _ => {}
+        }
+    }
     let optional = |path: PathBuf| -> Result<Option<Vec<u8>>> {
         match std::fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
@@ -2375,8 +2421,20 @@ pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
     names
         .into_iter()
         .map(|name| {
-            let expected = std::fs::read(dir.join(format!("{name}.stdout")))
-                .with_context(|| format!("reading tests/{name}.stdout"))?;
+            let stdout = optional(dir.join(format!("{name}.stdout")))?;
+            let out = dir.join(format!("{name}.out"));
+            let files = match out.is_dir() {
+                true => files_under(&out)?
+                    .into_iter()
+                    .map(|(relative, path)| {
+                        std::fs::read(&path)
+                            .with_context(|| format!("reading {}", path.display()))
+                            .map(|bytes| (relative, bytes))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                false => Vec::new(),
+            };
+            let inputs = Some(dir.join(format!("{name}.in"))).filter(|p| p.is_dir());
             let stdin = optional(dir.join(format!("{name}.stdin")))?.unwrap_or_default();
             let args = optional(dir.join(format!("{name}.args")))?
                 .map(|bytes| {
@@ -2388,7 +2446,10 @@ pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
                 .unwrap_or_default();
             Ok(OutputTest {
                 name,
-                expected,
+                dir: dir.clone(),
+                stdout,
+                files,
+                inputs,
                 stdin,
                 args,
             })
@@ -2396,18 +2457,60 @@ pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
         .collect()
 }
 
-/// Run a built program with its arguments and its standard input, in the
-/// package's directory: an output test's `.args` names its input files the way
-/// the package's own tree has them, `tests/access.log` (ADR-245 D8).
+/// **A directory of a test's own, removed when it goes**
+/// ([ADR-247](../../docs/specification/adr/adr-247.md) D1).
+struct Sandbox(PathBuf);
+
+impl Sandbox {
+    fn new() -> Result<Sandbox> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static MADE: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "nikaia-test-{}-{}",
+            std::process::id(),
+            MADE.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A directory left by a run that was killed has this name only if the
+        // process id came round again; what is in it is that run's, not ours.
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("making a directory for a test at {}", dir.display()))?;
+        Ok(Sandbox(dir))
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn copy_into(from: &Path, to: &Path) -> Result<()> {
+    for (relative, path) in files_under(from)? {
+        let target = to.join(&relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&path, &target)
+            .with_context(|| format!("copying {} for a test", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Run a built program with its arguments and its standard input, in `dir`,
+/// with `own` as the directory `fs::scratch` makes its directories in
+/// ([ADR-247](../../docs/specification/adr/adr-247.md) D5).
 fn outcome_of(
     binary: &Path,
     args: &[String],
     stdin: &[u8],
     dir: &Path,
+    own: &Path,
 ) -> Result<std::process::Output> {
     use std::io::Write;
     let mut child = std::process::Command::new(binary)
         .current_dir(dir)
+        .env(nikaia_std::fs::TEST_DIR_VAR, own)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -2435,34 +2538,44 @@ pub struct Suite<'a> {
     /// One build of the program per setting, where there are output tests.
     pub programs: &'a [(String, PathBuf)],
     pub root: &'a Path,
+    /// `--bless` ([ADR-247](../../docs/specification/adr/adr-247.md) D3).
+    pub bless: bool,
 }
 
-/// **Run each test in a process of its own and say how each went**
-/// ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7, D8).
+/// **Run each test in a process and a directory of its own, and say how each
+/// went** ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7, D8;
+/// [ADR-247](../../docs/specification/adr/adr-247.md)).
 ///
 /// A `test` block fails on an error that leaves it, a false `assert` or a
 /// `panic` - each of which ends its process unsuccessfully. An output test
-/// fails where the program does not end successfully or prints anything but
-/// its `.stdout`, byte for byte. At two settings either fails as well where the
-/// two outcomes differ, because the meaning of a program is the same at both
-/// (Part I 1.2) and a difference is a fault of this compiler. A failing test
-/// does not stop the others.
+/// fails where the program does not end successfully, or prints anything but
+/// its `.stdout`, or leaves any file its `.out/` names other than byte for
+/// byte. At two settings either fails as well where the two outcomes differ,
+/// because the meaning of a program is the same at both (Part I 1.2) and a
+/// difference is a fault of this compiler. A failing test does not stop the
+/// others.
 pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     let total = suite.tests.len() + suite.outputs.len();
     let plural = if total == 1 { "" } else { "s" };
     println!("running {total} test{plural}");
-    // (what it is called, what each setting did, the output test it is)
     let mut failed: Vec<Failed<'_>> = Vec::new();
     for (k, test) in suite.tests.iter().enumerate() {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.test_builds {
-            let out = outcome_of(binary, &[k.to_string()], &[], suite.root)?;
+            // In the package's directory, as Go's tests run in theirs, so a
+            // test reads what the package holds; what it writes goes under
+            // `fs::scratch()`, inside `own`.
+            let own = Sandbox::new()?;
+            let out = outcome_of(binary, &[k.to_string()], &[], suite.root, &own.0)?;
+            let ended_well = out.status.success();
             outcomes.push((
                 setting.clone(),
                 Outcome {
-                    passed: out.status.success(),
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    ended_well,
+                    passed: ended_well,
+                    stdout: out.stdout,
                     stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    files: Vec::new(),
                 },
             ));
         }
@@ -2479,17 +2592,49 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     for output in suite.outputs {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.programs {
-            let out = outcome_of(binary, &output.args, &output.stdin, suite.root)?;
+            let own = Sandbox::new()?;
+            if let Some(inputs) = &output.inputs {
+                copy_into(inputs, &own.0)?;
+            }
+            let out = outcome_of(binary, &output.args, &output.stdin, &own.0, &own.0)?;
+            let files: Vec<(String, Option<Vec<u8>>)> = output
+                .files
+                .iter()
+                .map(|(relative, _)| (relative.clone(), std::fs::read(own.0.join(relative)).ok()))
+                .collect();
+            let ended_well = out.status.success();
+            let printed_right = output
+                .stdout
+                .as_ref()
+                .is_none_or(|want| *want == out.stdout);
+            let wrote_right = output
+                .files
+                .iter()
+                .zip(&files)
+                .all(|((_, want), (_, got))| got.as_ref() == Some(want));
             outcomes.push((
                 setting.clone(),
                 Outcome {
-                    passed: out.status.success() && out.stdout == output.expected,
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    ended_well,
+                    passed: ended_well && printed_right && wrote_right,
+                    stdout: out.stdout,
                     stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    files,
                 },
             ));
         }
-        let label = format!("output \"{}\" (tests/{}.stdout)", output.name, output.name);
+        let label = format!("output \"{}\" (tests/{})", output.name, named_by(output));
+        if suite.bless {
+            match bless(output, &outcomes)? {
+                Blessed::Unchanged => println!("{label} ... ok"),
+                Blessed::Written => println!("{label} ... blessed"),
+                Blessed::Refused(why) => {
+                    println!("{label} ... FAILED ({why}, so it is not blessed)");
+                    failed.push((label, outcomes, Some(output)));
+                }
+            }
+            continue;
+        }
         if !verdict(&label, &outcomes) {
             failed.push((label, outcomes, Some(output)));
         }
@@ -2508,14 +2653,8 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
                     println!("at user-parallelism = {setting}:");
                 }
                 match output {
-                    Some(output) => {
-                        println!(
-                            "expected:\n{}\nprinted:\n{}",
-                            String::from_utf8_lossy(&output.expected),
-                            outcome.stdout
-                        );
-                    }
-                    None => print!("{}", outcome.stdout),
+                    Some(output) => explain_output(output, outcome),
+                    None => print!("{}", String::from_utf8_lossy(&outcome.stdout)),
                 }
                 eprint!("{}", outcome.stderr);
             }
@@ -2528,6 +2667,150 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
         failed.len()
     );
     Ok(if failed.is_empty() { 0 } else { 1 })
+}
+
+/// What names an output test in its report: its `.stdout`, or its `.out/`.
+fn named_by(output: &OutputTest) -> String {
+    match output.stdout.is_some() {
+        true => format!("{}.stdout", output.name),
+        false => format!("{}.out/", output.name),
+    }
+}
+
+/// **What an output test got wrong, as differences**
+/// ([ADR-247](../../docs/specification/adr/adr-247.md) D4).
+fn explain_output(output: &OutputTest, outcome: &Outcome) {
+    if !outcome.ended_well {
+        println!("the program did not end successfully");
+    }
+    if let Some(want) = &output.stdout
+        && *want != outcome.stdout
+    {
+        println!("standard output (- expected, + printed):");
+        print!("{}", difference(want, &outcome.stdout));
+    }
+    for ((relative, want), (_, got)) in output.files.iter().zip(&outcome.files) {
+        match got {
+            None => println!("{relative}: not written"),
+            Some(got) if got != want => {
+                println!("{relative} (- expected, + written):");
+                print!("{}", difference(want, got));
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+/// **A line difference** ([ADR-247](../../docs/specification/adr/adr-247.md)
+/// D4): `-` an expected line, `+` a produced one, and two lines of context
+/// around each change, from a longest common subsequence of the lines.
+fn difference(expected: &[u8], produced: &[u8]) -> String {
+    let (Ok(expected), Ok(produced)) =
+        (std::str::from_utf8(expected), std::str::from_utf8(produced))
+    else {
+        return "  the bytes differ, and they are not text\n".to_string();
+    };
+    let a: Vec<&str> = expected.lines().collect();
+    let b: Vec<&str> = produced.lines().collect();
+    if a == b {
+        return "  the same lines; they differ in the line break at the end\n".to_string();
+    }
+    // A table the size of both texts; past this, the two are shown whole.
+    if (a.len() + 1) * (b.len() + 1) > 4_000_000 {
+        return format!("  expected:\n{expected}\n  produced:\n{produced}\n");
+    }
+    let mut common = vec![vec![0u32; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            common[i][j] = match a[i] == b[j] {
+                true => common[i + 1][j + 1] + 1,
+                false => common[i + 1][j].max(common[i][j + 1]),
+            };
+        }
+    }
+    // (' ', '-' or '+', the line)
+    let mut steps: Vec<(char, &str)> = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            steps.push((' ', a[i]));
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || common[i][j + 1] >= common[i + 1][j]) {
+            steps.push(('+', b[j]));
+            j += 1;
+        } else {
+            steps.push(('-', a[i]));
+            i += 1;
+        }
+    }
+    const CONTEXT: usize = 2;
+    let near: Vec<bool> = (0..steps.len())
+        .map(|at| {
+            let from = at.saturating_sub(CONTEXT);
+            let to = (at + CONTEXT + 1).min(steps.len());
+            steps[from..to].iter().any(|(mark, _)| *mark != ' ')
+        })
+        .collect();
+    let mut out = String::new();
+    let mut skipped = false;
+    for ((mark, line), shown) in steps.iter().zip(&near) {
+        if !shown {
+            skipped = true;
+            continue;
+        }
+        if skipped {
+            out.push_str("  …\n");
+            skipped = false;
+        }
+        out.push_str(&format!("{mark} {line}\n"));
+    }
+    out
+}
+
+/// What `--bless` did with one output test.
+enum Blessed {
+    Unchanged,
+    Written,
+    Refused(&'static str),
+}
+
+/// **`--bless`** ([ADR-247](../../docs/specification/adr/adr-247.md) D3):
+/// what the program printed becomes `NAME.stdout`, where the test has one,
+/// and each file it wrote becomes the `NAME.out/` entry of that name. Only a
+/// run that ended successfully, and at two settings only one whose runs
+/// agree: a difference between the settings is a fault, never an expectation.
+fn bless(output: &OutputTest, outcomes: &[(String, Outcome)]) -> Result<Blessed> {
+    let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
+    let Some((_, first)) = outcomes.first() else {
+        return Ok(Blessed::Unchanged);
+    };
+    if !agree {
+        return Ok(Blessed::Refused("the settings disagree"));
+    }
+    if !first.ended_well {
+        return Ok(Blessed::Refused("the program did not end successfully"));
+    }
+    if first.files.iter().any(|(_, got)| got.is_none()) {
+        return Ok(Blessed::Refused("a file its .out/ names was not written"));
+    }
+    if first.passed {
+        return Ok(Blessed::Unchanged);
+    }
+    if output.stdout.is_some() {
+        let path = output.dir.join(format!("{}.stdout", output.name));
+        std::fs::write(&path, &first.stdout)
+            .with_context(|| format!("blessing {}", path.display()))?;
+    }
+    for (relative, got) in &first.files {
+        let path = output
+            .dir
+            .join(format!("{}.out", output.name))
+            .join(relative);
+        std::fs::write(&path, got.as_deref().unwrap_or_default())
+            .with_context(|| format!("blessing {}", path.display()))?;
+    }
+    Ok(Blessed::Written)
 }
 
 /// A test that failed: what it is called, what each setting did, and the

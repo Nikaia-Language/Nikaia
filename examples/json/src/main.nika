@@ -1,6 +1,6 @@
 // Parses a JSON file into a tree and prints it back, two spaces per level.
 //
-//     nikaia run -- tests/data.json
+//     nikaia run -- tests/document.in/data.json
 //     {
 //       "name": "a\nb",
 //       …
