@@ -133,6 +133,16 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub tethers: bool,
 
+    /// Print every `assert`, and for each whether the compiler proved it,
+    /// refuted it or left it to run time
+    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D6).
+    ///
+    /// Nothing proves a claim yet, so every row says *run time*; the report is
+    /// here so that a prover's progress is visible, and so that a reader can
+    /// ask why a check is still emitted.
+    #[arg(long, global = true)]
+    pub asserts: bool,
+
     /// Print what a `T::fields` loop was unrolled to, for the types actually
     /// used ([ADR-088](../../../docs/specification/adr/adr-088.md) D6,
     /// [ADR-181](../../../docs/specification/adr/adr-181.md)).
@@ -324,6 +334,7 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
             tethers: args.tethers,
             trust: args.trust,
             comptime: args.comptime,
+            asserts: args.asserts,
         },
     )?;
 
@@ -515,13 +526,15 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
             tethers: args.tethers,
             trust: args.trust,
             comptime: args.comptime,
+            asserts: args.asserts,
         },
         args.allow_read_from_list.as_deref(),
     )
 }
 
-/// `nikaia test` ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7):
-/// one test build per setting asked for, then every test run against each.
+/// `nikaia test` ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7,
+/// D8): the test build and the program, each once per setting asked for, then
+/// every test run against them.
 fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> Result<i32> {
     let start = match directory {
         Some(directory) => directory,
@@ -535,35 +548,66 @@ fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> 
     let tests =
         nikaia::modules::Program::read_for_tests(&project.entry(), &project.packages()?, true)?
             .tests;
-    if tests.is_empty() {
-        println!("no tests: nothing in this package is a `test \"…\" {{ … }}` block");
+    let outputs = project::output_tests(&project.root)?;
+    if tests.is_empty() && outputs.is_empty() {
+        println!(
+            "no tests: nothing in this package is a `test \"…\" {{ … }}` block, and \
+             `tests/` holds no `NAME.stdout`"
+        );
         return Ok(0);
     }
     let settings: Vec<String> = match both_settings {
         true => vec!["no".to_string(), "yes".to_string()],
         false => vec![project.settings.user_parallelism.clone()],
     };
-    let mut binaries = Vec::new();
-    for setting in settings {
-        let mut built = Project::open(&start, args.target.as_deref(), Some(&setting))?;
-        built.settings.tests = true;
-        let (code, binary) = built.drive_to(
-            "test",
-            &[],
-            args.no_cache,
-            args.locked,
-            project::Explain::default(),
-            args.allow_read_from_list.as_deref(),
-        )?;
-        if code != 0 {
-            return Ok(code);
+    // **Each binary is kept where the next build will not overwrite it**: the
+    // test build and the program land at the same path, and so do the two
+    // settings.
+    let kept = project.root.join("target").join("nikaia").join("tests");
+    std::fs::create_dir_all(&kept).context("making a place for the test builds")?;
+    let mut test_builds = Vec::new();
+    let mut programs = Vec::new();
+    for setting in &settings {
+        for (wanted, testing) in [(!tests.is_empty(), true), (!outputs.is_empty(), false)] {
+            if !wanted {
+                continue;
+            }
+            let mut built = Project::open(&start, args.target.as_deref(), Some(setting))?;
+            built.settings.tests = testing;
+            let (code, binary) = built.drive_to(
+                "build",
+                &[],
+                args.no_cache,
+                args.locked,
+                project::Explain::default(),
+                args.allow_read_from_list.as_deref(),
+            )?;
+            if code != 0 {
+                return Ok(code);
+            }
+            let Some(binary) = binary else {
+                anyhow::bail!("the build finished and named no program to run");
+            };
+            let name = format!(
+                "{}-{setting}",
+                if testing { "tests" } else { "program" }
+            );
+            let copy = kept.join(name);
+            std::fs::copy(&binary, &copy)
+                .with_context(|| format!("keeping {}", binary.display()))?;
+            match testing {
+                true => test_builds.push((setting.clone(), copy)),
+                false => programs.push((setting.clone(), copy)),
+            }
         }
-        let Some(binary) = binary else {
-            anyhow::bail!("the test build finished and named no program to run");
-        };
-        binaries.push((setting, binary));
     }
-    project::run_tests(&binaries, &tests, &project.root)
+    project::run_tests(&project::Suite {
+        tests: &tests,
+        test_builds: &test_builds,
+        outputs: &outputs,
+        programs: &programs,
+        root: &project.root,
+    })
 }
 
 /// What the manifest still accepts and the compiler no longer reads.

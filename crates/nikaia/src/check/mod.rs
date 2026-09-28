@@ -19529,6 +19529,41 @@ fn unviewed(ty: &Ty) -> Ty {
     }
 }
 
+/// **`--asserts`** ([ADR-245](../../docs/specification/adr/adr-245.md) D6):
+/// every `assert` of one file, by line, and how the compiler holds it. Today
+/// every one is held at run time (D4): there is no prover yet, and the report
+/// exists so that the day there is one, its progress can be read here.
+pub fn claims_report(
+    parsed: &Parsed,
+    source: &str,
+    path: &str,
+    own: &Ledger,
+    library: &Ledger,
+) -> String {
+    let checked = check(parsed, own, library);
+    let mut rows: Vec<(usize, &Claim)> = checked
+        .claims
+        .iter()
+        .map(|((start, _), claim)| {
+            let line = source[..(*start).min(source.len())].matches('\n').count() + 1;
+            (line, claim)
+        })
+        .collect();
+    rows.sort_by_key(|(line, _)| *line);
+    let mut out = format!(
+        "asserts in {path}: {} - proved 0, refuted 0, at run time {}\n",
+        rows.len(),
+        rows.len()
+    );
+    for (line, claim) in rows {
+        out.push_str(&format!(
+            "  {path}:{line}  {}  run time: nothing proves it yet\n",
+            claim.written
+        ));
+    }
+    out
+}
+
 /// Whether an expression is a literal of a kind other than `kind` (`"bool"`
 /// or `"text"`): the one answer a literal whose type is settled below gives
 /// here.

@@ -1533,11 +1533,19 @@ pub struct Explain {
     /// [ADR-088](../../docs/specification/adr/adr-088.md) D6's report: what a
     /// `T::fields` loop was unrolled to, for the types actually used.
     pub comptime: bool,
+    /// [ADR-245](../../docs/specification/adr/adr-245.md) D6's report: every
+    /// `assert`, and whether it was proved, refuted or left to run time.
+    pub asserts: bool,
 }
 
 impl Explain {
     pub fn asked(&self) -> bool {
-        self.overlaps || self.sharing || self.tethers || self.trust || self.comptime
+        self.overlaps
+            || self.sharing
+            || self.tethers
+            || self.trust
+            || self.comptime
+            || self.asserts
     }
 }
 
@@ -1615,6 +1623,18 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
             print!(
                 "{}",
                 crate::contracts::tether::report(&unit.parsed, &program.contracts)
+            );
+        }
+        if want.asserts {
+            print!(
+                "{}",
+                crate::check::claims_report(
+                    &unit.parsed,
+                    &unit.source,
+                    &unit.path.display().to_string(),
+                    &program.contracts,
+                    &library,
+                )
             );
         }
         if want.trust {
@@ -2324,30 +2344,131 @@ struct Outcome {
     stderr: String,
 }
 
+/// **An output test** ([ADR-245](../../docs/specification/adr/adr-245.md) D8):
+/// `tests/NAME.stdout` in the package, and beside it, optionally, what the
+/// program is given - `NAME.stdin`, and `NAME.args` with one argument a line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputTest {
+    pub name: String,
+    pub expected: Vec<u8>,
+    pub stdin: Vec<u8>,
+    pub args: Vec<String>,
+}
+
+/// The package's output tests, by name. A `tests/` that is not there holds
+/// none; a file that is there and cannot be read is an error, not a test that
+/// quietly has no input.
+pub fn output_tests(root: &Path) -> Result<Vec<OutputTest>> {
+    let dir = root.join("tests");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|x| x == "stdout"))
+        .filter_map(|path| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    let optional = |path: PathBuf| -> Result<Option<Vec<u8>>> {
+        match std::fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+        }
+    };
+    names
+        .into_iter()
+        .map(|name| {
+            let expected = std::fs::read(dir.join(format!("{name}.stdout")))
+                .with_context(|| format!("reading tests/{name}.stdout"))?;
+            let stdin = optional(dir.join(format!("{name}.stdin")))?.unwrap_or_default();
+            let args = optional(dir.join(format!("{name}.args")))?
+                .map(|bytes| {
+                    String::from_utf8_lossy(&bytes)
+                        .lines()
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(OutputTest {
+                name,
+                expected,
+                stdin,
+                args,
+            })
+        })
+        .collect()
+}
+
+/// Run a built program with its arguments and its standard input.
+fn outcome_of(binary: &Path, args: &[String], stdin: &[u8]) -> Result<std::process::Output> {
+    use std::io::Write;
+    let mut child = std::process::Command::new(binary)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("running {}", binary.display()))?;
+    if let Some(mut input) = child.stdin.take() {
+        // A program that stops reading early closes the pipe, which is its
+        // business and not a failure of the run.
+        let _ = input.write_all(stdin);
+    }
+    child
+        .wait_with_output()
+        .with_context(|| format!("running {}", binary.display()))
+}
+
+/// What `nikaia test` runs: the package's `test` blocks, against the test
+/// build, and its output tests, against the program - each built once per
+/// setting asked for.
+pub struct Suite<'a> {
+    pub tests: &'a [modules::TestCase],
+    /// One test build per setting, where there are blocks.
+    pub test_builds: &'a [(String, PathBuf)],
+    pub outputs: &'a [OutputTest],
+    /// One build of the program per setting, where there are output tests.
+    pub programs: &'a [(String, PathBuf)],
+    pub root: &'a Path,
+}
+
 /// **Run each test in a process of its own and say how each went**
-/// ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7).
+/// ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7, D8).
 ///
-/// `binaries` is one test build per setting of `user_parallelism` that was
-/// asked for. A test fails on an error that leaves it, a false `assert` or a
-/// `panic` - each of which ends its process unsuccessfully - and at two
-/// settings it fails as well where the two outcomes differ, because the
-/// meaning of a program is the same at both (Part I 1.2) and a difference is
-/// a fault of this compiler. A failing test does not stop the others.
-pub fn run_tests(
-    binaries: &[(String, PathBuf)],
-    tests: &[modules::TestCase],
-    root: &Path,
-) -> Result<i32> {
-    let plural = if tests.len() == 1 { "" } else { "s" };
-    println!("running {} test{plural}", tests.len());
-    let mut failed: Vec<(usize, Vec<(String, Outcome)>)> = Vec::new();
-    for (k, test) in tests.iter().enumerate() {
-        let mut outcomes: Vec<(String, Outcome)> = Vec::new();
-        for (setting, binary) in binaries {
-            let out = std::process::Command::new(binary)
-                .arg(k.to_string())
-                .output()
-                .with_context(|| format!("running {}", binary.display()))?;
+/// A `test` block fails on an error that leaves it, a false `assert` or a
+/// `panic` - each of which ends its process unsuccessfully. An output test
+/// fails where the program does not end successfully or prints anything but
+/// its `.stdout`, byte for byte. At two settings either fails as well where the
+/// two outcomes differ, because the meaning of a program is the same at both
+/// (Part I 1.2) and a difference is a fault of this compiler. A failing test
+/// does not stop the others.
+pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
+    let total = suite.tests.len() + suite.outputs.len();
+    let plural = if total == 1 { "" } else { "s" };
+    println!("running {total} test{plural}");
+    // (what it is called, what each setting did)
+    let mut failed: Vec<(String, Vec<(String, Outcome)>, Option<&OutputTest>)> = Vec::new();
+    let mut report = |label: String,
+                      outcomes: Vec<(String, Outcome)>,
+                      output: Option<&OutputTest>| {
+        let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
+        let passed = agree && outcomes.iter().all(|(_, o)| o.passed);
+        let verdict = match (passed, agree) {
+            (true, _) => "ok",
+            (false, true) => "FAILED",
+            (false, false) => "FAILED (the settings disagree)",
+        };
+        println!("{label} ... {verdict}");
+        if !passed {
+            failed.push((label, outcomes, output));
+        }
+    };
+    for (k, test) in suite.tests.iter().enumerate() {
+        let mut outcomes = Vec::new();
+        for (setting, binary) in suite.test_builds {
+            let out = outcome_of(binary, &[k.to_string()], &[])?;
             outcomes.push((
                 setting.clone(),
                 Outcome {
@@ -2357,47 +2478,58 @@ pub fn run_tests(
                 },
             ));
         }
-        let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
-        let passed = agree && outcomes.iter().all(|(_, o)| o.passed);
-        let verdict = match (passed, agree) {
-            (true, _) => "ok",
-            (false, true) => "FAILED",
-            (false, false) => "FAILED (the settings disagree)",
-        };
-        println!(
-            "test \"{}\" ({}:{}) ... {verdict}",
+        let label = format!(
+            "test \"{}\" ({}:{})",
             test.title,
-            shown_path(&test.path, root),
+            shown_path(&test.path, suite.root),
             test.line
         );
-        if !passed {
-            failed.push((k, outcomes));
+        report(label, outcomes, None);
+    }
+    for output in suite.outputs {
+        let mut outcomes = Vec::new();
+        for (setting, binary) in suite.programs {
+            let out = outcome_of(binary, &output.args, &output.stdin)?;
+            outcomes.push((
+                setting.clone(),
+                Outcome {
+                    passed: out.status.success() && out.stdout == output.expected,
+                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                },
+            ));
         }
+        let label = format!("output \"{}\" (tests/{}.stdout)", output.name, output.name);
+        report(label, outcomes, Some(output));
     }
     if !failed.is_empty() {
         println!("\nfailures:");
-        for (k, outcomes) in &failed {
-            let test = &tests[*k];
-            println!(
-                "\n--- \"{}\" ({}:{})",
-                test.title,
-                shown_path(&test.path, root),
-                test.line
-            );
+        for (label, outcomes, output) in &failed {
+            println!("\n--- {label}");
             let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
-            for (setting, outcome) in outcomes {
-                if agree && !std::ptr::eq(outcome, &outcomes[0].1) {
-                    continue;
-                }
+            let shown = match agree {
+                true => &outcomes[..1],
+                false => &outcomes[..],
+            };
+            for (setting, outcome) in shown {
                 if !agree {
                     println!("at user-parallelism = {setting}:");
                 }
-                print!("{}", outcome.stdout);
+                match output {
+                    Some(output) => {
+                        println!(
+                            "expected:\n{}\nprinted:\n{}",
+                            String::from_utf8_lossy(&output.expected),
+                            outcome.stdout
+                        );
+                    }
+                    None => print!("{}", outcome.stdout),
+                }
                 eprint!("{}", outcome.stderr);
             }
         }
     }
-    let passed = tests.len() - failed.len();
+    let passed = total - failed.len();
     println!(
         "\ntest result: {}. {passed} passed; {} failed",
         if failed.is_empty() { "ok" } else { "FAILED" },
