@@ -5997,7 +5997,13 @@ impl<'p> Emitter<'p> {
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
                 out.push("; nikaia_std::index::set(&mut ");
-                self.expr(out, base, depth, flow)?;
+                // **The container written into is a place** (0.0.238):
+                // `d[i][j] = v` writes into the list `d[i]`, and read as
+                // `*index::get(&d, …)` that list is behind a shared reference -
+                // `rustc`'s *cannot borrow data in a `&` reference as mutable*
+                // about a file nobody wrote. As a place it is `d[at(i)]`, which
+                // the language below lends mutably.
+                self.expr(out, base, depth, flow.place())?;
                 // **A key the map keeps goes in as it is** (ADR-213 D1): it is
                 // not a position, and `at` is for positions.
                 match self.map_key(span.start, index) {
