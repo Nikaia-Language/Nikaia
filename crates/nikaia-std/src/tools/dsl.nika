@@ -1,0 +1,72 @@
+// crates/nikaia-std/src/tools/dsl.nika
+//
+// **The holes of a `dsl` block's body**, for the compiler's deferred
+// parameters (ADR-007 D4).
+//
+// The second piece of the compiler moved from Rust to Nikaia (0.0.247), by
+// ADR-196's route, the one `spelling.nika` took: written here, lowered ahead
+// of time by `nikaia lower-std` to `dsl.rs` beside it, `include!`d as
+// `nikaia_std::tools::dsl`, and called from the compiler's `dsl` module as an
+// ordinary Rust function. `tests/self_hosting.rs` holds it to the behaviour of
+// the Rust it replaced, and every deferred-parameter DSL in the tests goes
+// through it.
+
+/// The `:name` holes of a body, each once, in the order the body first names
+/// them - empty where there are none.
+///
+/// `a::b` is a path and `12:30` is a time, so neither is a hole. **A scan, and
+/// therefore an approximation**: a colon and a name inside the foreign
+/// syntax's own string literal (`SELECT ':id'`) is read as one, because telling
+/// them apart means knowing where that language's strings begin, which is a
+/// grammar's job (ADR-007 D4). A false hole is a refused call rather than a
+/// wrong program: the parameter it invents has to be passed, and the message
+/// names it.
+pub fn parameters(body: ref String) -> Vec[String] sync {
+    let c: Vec[char] = body.chars().collect()
+    let mut found: Vec[String] = Vec()
+    let mut i = 0
+    while i < c.len() {
+        if c[i] != ':' {
+            i += 1
+            continue
+        }
+        // `a::b` is a path and `::` is not a hole - neither half of it.
+        let before = i > 0 && c[i - 1] == ':'
+        let after = i + 1 < c.len() && c[i + 1] == ':'
+        if before || after {
+            i += 2
+            continue
+        }
+        let start = i + 1
+        let mut end = start
+        while end < c.len() && a_name_goes_on(c[end]) {
+            end += 1
+        }
+        // A name may not begin with a digit: `12:30` is a time, not a hole.
+        if end > start && !a_digit(c[start]) {
+            let mut name: String = String()
+            for k in start..<end {
+                name.push(c[k])
+            }
+            if !found.contains(name) {
+                found.push(name)
+            }
+            i = end
+        } else {
+            i += 1
+        }
+    }
+    return found
+}
+
+// A character a name goes on with: a letter, a digit or `_`, in ASCII - which
+// is what the compiler's own names are. Asked of the text of the set rather
+// than of two ranges, because `c >= 'a' && c <= 'z'` and a `match` that hands
+// back `true` or `false` both lower to Rust that `clippy` refuses in `std`.
+fn a_name_goes_on(c: char) -> bool sync {
+    return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".contains(c)
+}
+
+fn a_digit(c: char) -> bool sync {
+    return "0123456789".contains(c)
+}

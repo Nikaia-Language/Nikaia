@@ -193,6 +193,41 @@ fn the_compilers_spelling_is_nikaia() {
     assert!(!one("abc", "xbz"));
 }
 
+/// **The second piece, a `dsl` body's holes** (0.0.247), held to what the Rust
+/// it replaced answered: a path and a time are not holes, a name is taken once
+/// and in the order the body names it, and a body without one has none.
+#[test]
+fn the_compilers_dsl_holes_are_nikaia() {
+    use nikaia_std::tools::dsl::parameters;
+    assert_eq!(
+        parameters("SELECT * FROM users WHERE id = :id AND name = :name"),
+        vec!["id", "name"]
+    );
+    assert_eq!(
+        parameters("a::b and ::c"),
+        Vec::<String>::new(),
+        "a path is not a hole"
+    );
+    assert_eq!(
+        parameters("at 12:30"),
+        Vec::<String>::new(),
+        "a time is not a hole"
+    );
+    assert_eq!(
+        parameters(":a :b :a"),
+        vec!["a", "b"],
+        "each once, first first"
+    );
+    assert_eq!(parameters(":user_id2."), vec!["user_id2"]);
+    assert_eq!(parameters("no holes here"), Vec::<String>::new());
+    assert_eq!(parameters(":"), Vec::<String>::new());
+    assert_eq!(
+        parameters("x = :ä"),
+        Vec::<String>::new(),
+        "a name is ASCII"
+    );
+}
+
 /// **What moving that piece needed from the lowering** (0.0.238), in a program
 /// of its own: a cell of a list of lists written in place, and an element of a
 /// list lent to the function compared with a value - both of which reached

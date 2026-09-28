@@ -103,6 +103,14 @@ pub mod tools {
         include!("tools/spelling.rs");
     }
 
+    /// **The holes of a `dsl` block's body**: `src/tools/dsl.nika`, lowered
+    /// to `src/tools/dsl.rs` and committed beside it. The second piece of the
+    /// compiler moved from Rust to Nikaia (0.0.247); the compiler's `dsl`
+    /// module calls it.
+    pub mod dsl {
+        include!("tools/dsl.rs");
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.

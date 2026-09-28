@@ -37,51 +37,13 @@ use crate::parser::Parsed;
 const TEMPLATE: &str = "html";
 
 /// The deferred parameters of one `dsl … { … } eod` body, in the order the body
-/// first names them.
+/// first names them, and empty where it names none.
 ///
-/// Empty where the body has no `:name` at all, which is the case that is not a
-/// deferred-parameter DSL and is left alone.
-///
-/// **A scan, and therefore an approximation.** `a::b` is a path and `12:30` is
-/// a time, so neither is a hole - but a colon-and-name inside the foreign
-/// syntax's own string literal (`SELECT ':id'`) is read as one, because telling
-/// them apart means knowing where that language's strings begin. D4 gives that
-/// job to the grammar (`meta::parameter`), and no grammar reaches this compiler
-/// yet. A false hole is a *refused* call rather than a wrong program: the
-/// parameter it invents has to be passed, and the message names it.
+/// **Written in Nikaia** (0.0.247): `nikaia-std/src/tools/dsl.nika`, whose
+/// comment says what the scan reads and what it cannot tell apart. This is the
+/// call, kept so that the compiler's callers name a `dsl` question in `dsl`.
 pub fn parameters(body: &str) -> Vec<String> {
-    let bytes = body.as_bytes();
-    let mut found: Vec<String> = Vec::new();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if bytes[i] != b':' {
-            i += 1;
-            continue;
-        }
-        // `a::b` is a path and `::` is not a hole - neither half of it.
-        if (i > 0 && bytes[i - 1] == b':') || bytes.get(i + 1) == Some(&b':') {
-            i += 2;
-            continue;
-        }
-        let start = i + 1;
-        let mut end = start;
-        while end < bytes.len() && (bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric()) {
-            end += 1;
-        }
-        // A name may not begin with a digit: `12:30` is a time, not a hole.
-        if end > start && !bytes[start].is_ascii_digit() {
-            let name = body[start..end].to_string();
-            if !found.contains(&name) {
-                found.push(name);
-            }
-            i = end;
-        } else {
-            i += 1;
-        }
-    }
-
-    found
+    nikaia_std::tools::dsl::parameters(body)
 }
 
 /// Whether a `dsl <target> { … } eod` body's holes are deferred parameters.
