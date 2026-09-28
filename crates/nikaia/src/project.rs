@@ -2444,7 +2444,7 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     let plural = if total == 1 { "" } else { "s" };
     println!("running {total} test{plural}");
     // (what it is called, what each setting did, the output test it is)
-    let mut failed: Vec<(String, Vec<(String, Outcome)>, Option<&OutputTest>)> = Vec::new();
+    let mut failed: Vec<Failed<'_>> = Vec::new();
     for (k, test) in suite.tests.iter().enumerate() {
         let mut outcomes = Vec::new();
         for (setting, binary) in suite.test_builds {
@@ -2521,6 +2521,10 @@ pub fn run_tests(suite: &Suite<'_>) -> Result<i32> {
     );
     Ok(if failed.is_empty() { 0 } else { 1 })
 }
+
+/// A test that failed: what it is called, what each setting did, and the
+/// output test it is, where it is one.
+type Failed<'a> = (String, Vec<(String, Outcome)>, Option<&'a OutputTest>);
 
 /// Print one test's line, and say whether it passed: at every setting, and the
 /// same way at each.
