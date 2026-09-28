@@ -184,7 +184,7 @@ where
 /// text. **The radix is a spelling** (D2): `0xFF` is `255` and takes the first
 /// type that holds it, exactly as `255` does
 /// ([ADR-060](../../../docs/specification/adr/adr-060.md)).
-fn number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i64, ParseError>
+fn number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i128, ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
@@ -206,7 +206,7 @@ where
 /// inside it. `- 5` and `-x` are the unary operator they always were, and
 /// `a - 5` never reaches this at all — a binary operator is matched by the rule
 /// that wrote it, not by the operand's.
-fn negative_number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i64, ParseError>
+fn negative_number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i128, ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
@@ -214,7 +214,7 @@ where
 }
 
 /// The two above, which differ in one byte at the front.
-fn number_at<'a, S>(i: &mut ParseInput<'a, S>, signed: bool) -> Result<i64, ParseError>
+fn number_at<'a, S>(i: &mut ParseInput<'a, S>, signed: bool) -> Result<i128, ParseError>
 where
     S: Clone + std::fmt::Debug,
 {
@@ -308,12 +308,15 @@ where
     }
     let number = match wrong {
         Some(_) => 0,
-        None => match i64::from_str_radix(&value, radix) {
-            Ok(number) => number,
-            Err(_) => {
+        // **As wide as a `u64` holds** ([ADR-248](../../../docs/specification/adr/adr-248.md)
+        // D2), and as low as an `i64` does: which of the two a number is, is
+        // asked where a type stands beside it (`NK1116`).
+        None => match i128::from_str_radix(&value, radix) {
+            Ok(number) if number <= u64::MAX as i128 && number >= i64::MIN as i128 => number,
+            _ => {
                 wrong = Some(
-                    "this number does not fit the widest integer this language has, \
-                     which is `i64` (Part I, 2.2)",
+                    "this number does not fit the widest integers this language has, \
+                     which are `u64` and `i64` (Part I, 2.2)",
                 );
                 0
             }
@@ -967,7 +970,26 @@ pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr, ast::Sp
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
             span,
+            grouped: false,
         })
+}
+
+/// A parenthesised expression, which is the expression - with a bit operation
+/// marked as written inside them ([ADR-248](../../../docs/specification/adr/adr-248.md)
+/// D4): that is the one place the tree has to remember a parenthesis.
+pub fn grouped(e: ast::Expr) -> ast::Expr {
+    match e {
+        ast::Expr::Binary {
+            op, lhs, rhs, span, ..
+        } => ast::Expr::Binary {
+            op,
+            lhs,
+            rhs,
+            span,
+            grouped: true,
+        },
+        other => other,
+    }
 }
 
 pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
@@ -1017,8 +1039,8 @@ grammar! {
         // above ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3,
         // [ADR-136](../../../../docs/specification/adr/adr-136.md) D1).
         extern rule same_line -> ();
-        extern rule number_lit -> i64;
-        extern rule negative_number_lit -> i64;
+        extern rule number_lit -> i128;
+        extern rule negative_number_lit -> i128;
         extern rule doc_here -> Option<String>;
 
         // --- Entry Point ---
@@ -1777,7 +1799,7 @@ grammar! {
                     is_tuple: false,
                     is_nullable: false,
                     code: None,
-                    count: Some(n),
+                    count: i64::try_from(n).ok(),
                     is_mut: false,
                     is_slice: false,
                     either: false,
@@ -2325,13 +2347,17 @@ grammar! {
                 Stmt::For { bindings, iter, body }
             }
 
+        // **`_` is a position of a destructured tuple here too** (Part I 2.1,
+        // 0.0.250): `for (_, bucket) in order` ignores the half it does not
+        // need, as `let (name, _) = pair()` does. It parsed in the `let` and
+        // not here, and a name nobody reads is a warning below.
         rule for_bindings -> Vec<Symbol> =
-            "(" head:NAME tail:ident_tail* ")" -> {
+            "(" head:let_name tail:let_name_tail* ")" -> {
                 let mut names = vec![head];
                 names.extend(tail);
                 names
             }
-          | n:NAME -> { vec![n] }
+          | n:let_name -> { vec![n] }
 
         rule ident_tail -> Symbol = "," n:NAME -> { n }
 
@@ -2346,6 +2372,11 @@ grammar! {
           | "-=" -> { Some(BinaryOp::Sub) }
           | "*=" -> { Some(BinaryOp::Mul) }
           | "/=" -> { Some(BinaryOp::Div) }
+          | "&=" -> { Some(BinaryOp::BitAnd) }
+          | "|=" -> { Some(BinaryOp::BitOr) }
+          | "^=" -> { Some(BinaryOp::BitXor) }
+          | "<<=" -> { Some(BinaryOp::Shl) }
+          | ">>=" -> { Some(BinaryOp::Shr) }
           | "=" -> { None }
 
         // **A statement whose expression is a jump *is* that statement**
@@ -2560,11 +2591,44 @@ grammar! {
         rule and_tail -> (BinaryOp, Expr, Span) @= "&&" e:cmp_expr -> { (BinaryOp::And, e, _span) }
 
         rule cmp_expr -> Expr =
-            head:add_expr tail:cmp_tail? -> {
+            head:bit_or_expr tail:cmp_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:add_expr -> { (op, e, _span) }
+        rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:bit_or_expr -> { (op, e, _span) }
+
+        // **The bit operators, below the comparisons and above the sums**
+        // ([ADR-248](../../../../docs/specification/adr/adr-248.md) D4): Rust's
+        // and Go's order, `|` then `^` then `&` then the shifts. Each one-
+        // character operator is kept off its two-character neighbour - `|` off
+        // `||` and `|=`, `&` off `&&` and `&=`, `^` off `^=` - so a line that
+        // writes the other is read as the other.
+        rule bit_or_expr -> Expr =
+            head:bit_xor_expr tail:bit_or_tail* -> { fold_binary(head, tail) }
+
+        rule bit_or_tail -> (BinaryOp, Expr, Span) @=
+            "|" not("|") not("=") e:bit_xor_expr -> { (BinaryOp::BitOr, e, _span) }
+
+        rule bit_xor_expr -> Expr =
+            head:bit_and_expr tail:bit_xor_tail* -> { fold_binary(head, tail) }
+
+        rule bit_xor_tail -> (BinaryOp, Expr, Span) @=
+            "^" not("=") e:bit_and_expr -> { (BinaryOp::BitXor, e, _span) }
+
+        rule bit_and_expr -> Expr =
+            head:shift_expr tail:bit_and_tail* -> { fold_binary(head, tail) }
+
+        rule bit_and_tail -> (BinaryOp, Expr, Span) @=
+            "&" not("&") not("=") e:shift_expr -> { (BinaryOp::BitAnd, e, _span) }
+
+        rule shift_expr -> Expr =
+            head:add_expr tail:shift_tail* -> { fold_binary(head, tail) }
+
+        rule shift_tail -> (BinaryOp, Expr, Span) @= op:shift_op e:add_expr -> { (op, e, _span) }
+
+        rule shift_op -> BinaryOp =
+            "<<" not("=") -> { BinaryOp::Shl }
+          | ">>" not("=") -> { BinaryOp::Shr }
 
         // `<=` before `<`: the shorter one would win otherwise and leave `=`
         // to be read as an assignment.
@@ -3114,7 +3178,7 @@ grammar! {
             }
 
         rule paren_expr -> Expr =
-            "(" e:expr ")" -> { e }
+            "(" e:expr ")" -> { grouped(e) }
 
         // A tuple and a grouping, which a reader tells apart by the comma and a
         // PEG tells apart by trying the longer one first.

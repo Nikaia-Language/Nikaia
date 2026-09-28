@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.249 (Draft)
+**Version:** 0.0.250 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -215,6 +215,12 @@ Nikaia provides basic types to represent simple values.
     * `u8`: one byte. It has the same conversion and arithmetic names as the
       other integer types. A file read whole is a `Bytes` (`fs::read`): one
       shared buffer of them, handed on by a count and not copied.
+      `text.bytes()` is a text's UTF-8, one `u8` at a time.
+    * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the
+      bits are the point: a hash, a mask, a wire format's field
+      ([ADR-248](adr/adr-248.md)). No two integer types mix on their own:
+      `a + b` over a `u64` and an `i64` is refused (`NK1199`), and the
+      conversion is written with `as`.
 * **Floats:** numbers with decimal points.
     * `f64`: a double-precision floating-point number. A literal may carry an
       **exponent**: `1.5e-4`, `2e3`, `9.54791938424326609e-04`.
@@ -275,10 +281,11 @@ beside it is refused with `NK1117` because nothing declares it (Part III, C.3).
 A word that stands on its own is read as a name, so `assert c` is refused the
 same way.
 
-**A number too wide for an `i64` is refused** (Part III C.1).
+**A number too wide for a `u64` is refused** (Part III C.1), and one above
+an `i64` is a `u64`'s: `let basis: u64 = 0xcbf29ce484222325`.
 
-**These four are the integer types a program writes.** The specification does
-not offer others (`u32`, `u64`, `usize`). A **length** is an `i64`:
+**These five are the integer types a program writes:** `i64`, `i32`, `u8`,
+`u64` and `u32`. The specification does not offer others (`usize`, `i8`). A **length** is an `i64`:
 `for i in 0..<xs.len()` gives an `i64`, `xs[i]` takes one, and neither
 conversion is written, because the compiler emits both. A negative index
 reports as an access out of bounds (Part III, A.2).
@@ -307,8 +314,35 @@ let n = a + b                                     // aborts if it does not fit
 The names are `wrapping_add`, `wrapping_sub`, `wrapping_mul`, `wrapping_div`,
 `wrapping_neg`, `wrapping_abs`, `wrapping_shl`, `wrapping_shr`, and the same
 names with `saturating_`, except that there is no `saturating_shl` and no
-`saturating_shr`. They exist for `i32` and `i64`. There is no operator for
-either.
+`saturating_shr`. They exist for `i32`, `i64`, `u32` and `u64`; an unsigned
+type has no `_neg` and no `_abs`. There is no operator for either.
+
+**The bits of an integer are reached with operators**
+([ADR-248](adr/adr-248.md)): `&`, `|`, `^`, `<<` and `>>`, and `!`, which on
+an integer flips every bit. Both sides are one integer type, except a shift's
+count, which may be any. A shift loses the bits it moves out, and a count as
+large as the type is wide aborts; `>>` fills with zeros on an unsigned type and
+with the sign on a signed one. They bind tighter than a comparison, and one
+written beside a comparison is written in parentheses (`NK1197`), because C
+reads `a & mask == 0` the other way:
+
+```nika
+fn fnv(key: ref String) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325
+    for b in key.bytes() {
+        hash ^= b as u64
+        hash = hash.wrapping_mul(0x100000001b3)
+    }
+    return hash
+}
+
+fn main() {
+    let h = fnv("hello")
+    println(f"{h >> 32} {(h & 0xff) == 0x0b}")
+}
+```
+
+On a `bool` they are refused (`NK1198`): `&&` and `||` join two `bool`s.
 
 **A conversion is written `as`, and one that may not fit aborts too.**
 

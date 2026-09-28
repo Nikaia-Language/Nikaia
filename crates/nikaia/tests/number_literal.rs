@@ -170,11 +170,27 @@ fn the_most_negative_i64_parses() {
     assert!(rust.contains("-9223372036854775808i64"), "{rust}");
 }
 
-/// **And the digits alone are still refused**, which is the other half: what the
-/// sign buys is one number, not a wider type.
+/// **And the digits alone are still refused as an `i64`**, which is the other
+/// half: what the sign buys is one number, not a wider type. Since 0.0.250 they
+/// are a `u64`'s (ADR-248 D2), so it is the checker that says so, pointing at
+/// the type - and past a `u64` the parser still refuses the number.
 #[test]
 fn the_same_digits_without_the_sign_are_still_refused() {
-    assert!(refused("    let n = 9223372036854775808").contains("does not fit the widest integer"));
+    let found = findings(
+        "fn main() {
+    let n = 9223372036854775808
+}
+",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1116"
+            && f.message.contains("does not fit in an `i64`")
+            && f.help.as_deref().is_some_and(|h| h.contains("`u64`"))),
+        "{found:#?}"
+    );
+    assert!(
+        refused("    let n = 18446744073709551616").contains("does not fit the widest integers")
+    );
 }
 
 /// **Only where the `-` sits directly in front of the digits.** `- 5` and `-x`

@@ -1,0 +1,175 @@
+// crates/nikaia-std/src/tools/fixed.nika
+//
+// **The table a `comptime` map crosses as** (ADR-176 D2, D3), built while the
+// program is built.
+//
+// The fourth piece of the compiler moved from Rust to Nikaia (0.0.250), by
+// ADR-196's route: lowered ahead of time by `nikaia lower-std` to `fixed.rs`
+// beside it, `include!`d as `nikaia_std::tools::fixed`, and called from the
+// compiler's `fixed` module. It is the program ADR-248 was decided for: FNV-1a
+// is a `u64`, `^` and a wrapping multiply over a text's bytes, and CHD cuts the
+// hash apart with shifts - none of which the language had.
+//
+// **Two shapes under one type.** Under twelve keys the table is the keys in
+// the order they were written, and `Fixed::get` walks them; from twelve it is
+// CHD - buckets by one part of the hash, a displacement pair per bucket, one
+// slot per key. Twelve is where the two cross in
+// `docs/history/fixed-map-lookup.md` §6.
+//
+// **The hash here and the hash `std::fixed` computes at run time are one
+// function written twice**, in two languages now. What holds them together is
+// `crates/nikaia/tests/fixed_map.rs`, which runs a program over both table
+// shapes: a table built with a hash the lookup does not compute answers
+// nothing.
+
+/// Where a scan stops being as good as a hash.
+pub comptime HASHED_FROM: i64 = 12
+
+/// A table, ready to be written into a `const`.
+pub struct Table {
+    pub seed: u64,
+    // Empty for a small table, which is read by walking it.
+    pub disps: Vec[(u32, u32)],
+    // In slot order where there are displacements, in written order where
+    // there are not.
+    pub keys: Vec[String],
+    // Beside `keys`, element for element: where each key was written.
+    pub order: Vec[i64],
+}
+
+/// FNV-1a over the key's bytes, from an offset basis the seed is folded into.
+pub fn fnv(key: ref String, seed: u64) -> u64 sync {
+    let mut hash: u64 = 0xcbf29ce484222325 ^ seed
+    for b in key.bytes() {
+        hash ^= b as u64
+        hash = hash.wrapping_mul(0x100000001b3)
+    }
+    return hash
+}
+
+/// CHD's displacement, as the `phf` crate writes it.
+pub fn displace(f1: u32, f2: u32, d1: u32, d2: u32) -> u32 sync {
+    return d2.wrapping_add(f1.wrapping_mul(d1)).wrapping_add(f2)
+}
+
+/// The table for these keys, in the order they were written - or nothing,
+/// where no seed worked.
+///
+/// CHD's own literature says that does not happen for a sane bucket count, and
+/// this reports it rather than looping: a build that hangs is worse than one
+/// that says it could not.
+pub fn build(keys: ref Array[String]) -> Table? sync {
+    let n = keys.len()
+    if n < HASHED_FROM {
+        let mut written: Vec[String] = []
+        let mut order: Vec[i64] = []
+        for at in 0..<n {
+            written.push(keys[at].clone())
+            order.push(at)
+        }
+        return Table { seed: 0, disps: [], keys: written, order }
+    }
+    // Five keys to a bucket, which is what the `phf` crate uses.
+    let mut buckets = (n + 4) / 5
+    if buckets < 1 {
+        buckets = 1
+    }
+    for seed in 0..<200 {
+        let table = attempt(keys, seed as u64, buckets, n)
+        if table != null {
+            return table
+        }
+    }
+    return null
+}
+
+// One seed's try: every key into a slot of its own, or nothing.
+fn attempt(keys: ref Array[String], seed: u64, buckets: i64, n: i64) -> Table? sync {
+    // Each key where it was written and the two halves of its hash the
+    // displacement works on, by the bucket the third part names.
+    let mut by_bucket: Vec[Vec[(i64, u32, u32)]] = []
+    for _ in 0..<buckets {
+        by_bucket.push([])
+    }
+    for at in 0..<n {
+        let hash = fnv(keys[at], seed)
+        let g = (hash >> 32).truncating_u32()
+        let f1 = hash.truncating_u32()
+        let f2 = (hash >> 16).truncating_u32()
+        by_bucket[(g as i64) % buckets].push((at, f1, f2))
+    }
+
+    // **The fullest bucket first**, which is what makes CHD terminate: the
+    // hard placements happen while the table is empty. Ties in the order of
+    // the buckets.
+    let mut order: Vec[(i64, i64)] = []
+    for b in 0..<buckets {
+        let size = by_bucket[b].len()
+        if size > 0 {
+            order.push((0 - size, b))
+        }
+    }
+    order.sort()
+
+    let mut disps: Vec[(u32, u32)] = []
+    for _ in 0..<buckets {
+        disps.push((0, 0))
+    }
+    // The key each slot holds, or -1 for none yet.
+    let mut slots: Vec[i64] = []
+    for _ in 0..<n {
+        slots.push(-1)
+    }
+    for (_, bucket) in order {
+        let mut placed = false
+        let mut d1: u32 = 0
+        while !placed && (d1 as i64) < n {
+            let mut d2: u32 = 0
+            while !placed && (d2 as i64) < n {
+                let mut taken: Vec[(i64, i64)] = []
+                let mut fits = true
+                for (at, f1, f2) in by_bucket[bucket] {
+                    let slot = (displace(f1, f2, d1, d2) as i64) % n
+                    let mut clash = slots[slot] >= 0
+                    for t in taken {
+                        if t.0 == slot {
+                            clash = true
+                        }
+                    }
+                    if clash {
+                        fits = false
+                        break
+                    }
+                    taken.push((slot, at))
+                }
+                if fits {
+                    disps[bucket] = (d1, d2)
+                    for (slot, at) in taken {
+                        slots[slot] = at
+                    }
+                    placed = true
+                }
+                d2 += 1
+            }
+            d1 += 1
+        }
+        if !placed {
+            return null
+        }
+    }
+
+    // **Every slot holds a key, because the table is minimal**: `n` keys into
+    // `n` slots. An empty slot would need a key no lookup can equal, and there
+    // is none - so a gap is a failed attempt and the next seed is tried,
+    // rather than a hole papered over.
+    let mut written: Vec[String] = []
+    let mut at_of: Vec[i64] = []
+    for slot in slots {
+        if slot < 0 {
+            return null
+        }
+        written.push(keys[slot].clone())
+        at_of.push(slot)
+    }
+    return Table { seed, disps, keys: written, order: at_of }
+}

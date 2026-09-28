@@ -4,6 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.250] — 2026-09-28
+
+**`u64`, `u32` and the bit operators** ([ADR-248](docs/specification/adr/adr-248.md)),
+decided because `fixed.rs` asked for them - and **`fixed.rs` is Nikaia**, the
+fourth piece of the compiler moved by ADR-196's route.
+
+- **Two integer types** (D1): `u64` and `u32`, with every rule `i64`, `i32` and
+  `u8` have - an overflow aborts, `wrapping_`, `saturating_` and `truncating_`
+  name the other answers, `as` converts and is checked where it may not fit.
+  **No two number types mix on their own**: `u64 + i64` is `NK1199`, and so is
+  `i32 + i64`, which reached `rustc` before.
+- **A literal as wide as a `u64`** (D2): `0xcbf29ce484222325` is a `u64`'s;
+  with only `i64` beside it, `NK1116` names `u64`. An unannotated `let` whose
+  constant an `i32` does not hold is an `i64` to the checker too, so
+  `let b = 3000000000` beside an `i32` is refused in this language's words.
+- **`& | ^ << >>`, `!` on an integer, and `&= |= ^= <<= >>=`** (D3-D5), in
+  Rust's order. A bit operator beside a comparison is `NK1197`, the
+  parenthesised line handed over; on a `bool` it is `NK1198`, naming `&&`.
+- **`text.bytes()`** (D6): the UTF-8, one `u8` at a time.
+- **`tools/fixed.nika`**: FNV-1a and CHD, lowered to `tools/fixed.rs`; the
+  compiler's `fixed` module calls it.
+- **Lowering, found writing it**: a call that changes an element
+  (`v[i].push(x)`) reaches the element as a place rather than through a read;
+  `for x in v[i]` iterates the element; `x == null` is `x.is_none()`; a borrow
+  of a lent read is not written twice; a literal above `i64::MAX` carries a
+  `u64` suffix.
+- **`_` in a `for` binding**: `for (_, bucket) in order`, `for _ in 0..<n`.
+- Recorded, not fixed: an `i32` sum that overflows inside an `f"…"` hole
+  (`open-work.md` §1.27), and an untyped index into an element a call changes
+  (§1.28).
+
 ## [0.0.249] — 2026-09-28
 
 **Three things the lowering wrote that it should not have**, each found moving

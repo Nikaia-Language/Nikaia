@@ -659,6 +659,19 @@ impl Out {
 
     /// Render into a buffer of its own, so the caller can decide what to do
     /// with the result before committing to it.
+    /// **Takes back a `&` just written**, where what follows is already the
+    /// reference it asked for (0.0.250): `&*get(&v, i)` is `get(&v, i)`, and
+    /// the long form is what `clippy` refuses in `std`. Not `&&`, which is the
+    /// operator, and not `&mut `, which ends in a space. A `&` at the end of the
+    /// buffer is inside no recorded span, so the map is untouched.
+    fn take_lend(&mut self) -> bool {
+        if self.buf.ends_with('&') && !self.buf.ends_with("&&") {
+            self.buf.pop();
+            return true;
+        }
+        false
+    }
+
     fn scratch(f: impl FnOnce(&mut Out) -> Result<()>) -> Result<Out> {
         let mut out = Out::default();
         f(&mut out)?;
@@ -1133,6 +1146,10 @@ struct Emitter<'p> {
     /// The lent `for` bindings read by value at the body's head
     /// ([`check::Checked::copied_loop_bindings`]).
     copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// [`check::Checked::unsigned_literals`].
+    unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
+    /// [`check::Checked::changed_elements`].
+    changed_elements: std::collections::BTreeSet<(usize, String)>,
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
@@ -2325,6 +2342,8 @@ impl<'p> Emitter<'p> {
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
             copied_loop_bindings: propagation.copied_loop_bindings,
+            unsigned_literals: propagation.unsigned_literals,
+            changed_elements: propagation.changed_elements,
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
@@ -6391,6 +6410,10 @@ impl<'p> Emitter<'p> {
                     // below's own** (ADR-212 D3): it is walked once, where it
                     // stands, and needs to be nothing more.
                     Expr::Range { .. } => self.bare_range(out, iter, depth, flow)?,
+                    // **An element walked is a read with a postfix after it**
+                    // (0.0.250): `(*get(&v, i)).iter()`, parenthesised, where
+                    // `*get(&v, i).iter()` dereferenced the iterator.
+                    _ if lends => self.postfix_base(out, iter, depth, flow)?,
                     _ => self.expr(out, iter, depth, flow)?,
                 }
                 if lends {
@@ -6781,7 +6804,12 @@ impl<'p> Emitter<'p> {
 
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
-            Expr::LitInt(v) => out.push(&integer_literal(*v, flow.widen)),
+            // **A literal in an unsigned place carries that type's suffix**
+            // (ADR-248 D1), ahead of the widening a bare one gets.
+            Expr::LitInt(v) => match self.unsigned_literals.get(&(flow.statement, *v)) {
+                Some(ty) => out.push(&format!("{v}{ty}")),
+                None => out.push(&integer_literal(*v, flow.widen)),
+            },
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr { .. } | Expr::LitInterpolated(_) => {
                 self.string(out, expr, depth, flow)?
@@ -7353,7 +7381,11 @@ impl<'p> Emitter<'p> {
                     // here, it stood around every read: `m[k] ?? 0` and
                     // `let x = m[k]` were `rustc` warnings about a file nobody
                     // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-                    return self.index_read(out, base, index, depth, flow, true);
+                    //
+                    // **A read that is lent is the reference it already was**
+                    // (0.0.250): the `&` in front and the `*` cancel.
+                    let lent = !self.slices(flow.statement, index) && out.take_lend();
+                    return self.index_read(out, base, index, depth, flow, !lent);
                 }
                 self.postfix_base(out, base, depth, flow)?;
                 match only_literals(index) {
@@ -7699,7 +7731,7 @@ impl<'p> Emitter<'p> {
                 // rather than left for `integer_literal` to answer about a number
                 // that is one too large.
                 if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr)
-                    && i32::try_from(-(*v as i128)).is_ok()
+                    && i32::try_from(-*v).is_ok()
                 {
                     // The suffix still applies: a small negative number
                     // inside a constant written wide is written wide too,
@@ -7733,6 +7765,7 @@ impl<'p> Emitter<'p> {
                 lhs,
                 rhs,
                 span: at,
+                ..
             } => {
                 // **A constant sum takes the first type that holds it**, the
                 // way a constant does
@@ -7766,6 +7799,27 @@ impl<'p> Emitter<'p> {
                     out.push(", ");
                     self.concatenated(out, rhs, depth, flow)?;
                     out.push(")");
+                    return Ok(());
+                }
+                // **`x == null` asks whether there is one** (0.0.250):
+                // `x.is_none()`, which needs nothing of what `x` holds, where
+                // `x == None` needs it to compare - and is what `clippy`
+                // refuses in `std`.
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne)
+                    && let Some(side) = match (lhs.as_ref(), rhs.as_ref()) {
+                        (Expr::LitNull, other) | (other, Expr::LitNull)
+                            if !matches!(other, Expr::LitNull) =>
+                        {
+                            Some(other)
+                        }
+                        _ => None,
+                    }
+                {
+                    self.postfix_base(out, side, depth, flow)?;
+                    out.push(match op {
+                        BinaryOp::Eq => ".is_none()",
+                        _ => ".is_some()",
+                    });
                     return Ok(());
                 }
                 // Parenthesised only where precedence needs it: the operators
@@ -10734,6 +10788,18 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
         tight: bool,
     ) -> Result<()> {
+        // **An element the call changes is written as the place it is**
+        // (`check::Checked::changed_elements`).
+        let flow = match receiver {
+            Some(expr)
+                if self
+                    .changed_elements
+                    .contains(&(flow.statement, crate::check::argument_shape(expr))) =>
+            {
+                flow.place()
+            }
+            _ => flow,
+        };
         match (receiver, tight) {
             (Some(expr), true) => self.nested(out, expr, u8::MAX, depth, flow),
             (Some(expr), false) => self.postfix_base(out, expr, depth, flow),
@@ -11581,10 +11647,13 @@ fn repeat_suffix(rep: Repeat) -> String {
 ///
 /// The value and not the digits, which is why `-2147483648` never reaches here
 /// as `2147483648`: the negation is folded at the `Unary` arm above.
-fn integer_literal(value: i64, widen: bool) -> String {
-    match i32::try_from(value) {
-        Ok(_) if !widen => value.to_string(),
-        _ => format!("{value}i64"),
+fn integer_literal(value: i128, widen: bool) -> String {
+    match (i32::try_from(value), i64::try_from(value)) {
+        (Ok(_), _) if !widen => value.to_string(),
+        (_, Ok(_)) => format!("{value}i64"),
+        // **Above an `i64` only a `u64` holds it** (ADR-248 D2), and the
+        // checker has already refused it anywhere else.
+        _ => format!("{value}u64"),
     }
 }
 
@@ -11733,8 +11802,14 @@ fn is_count(callee: &str, at: usize) -> bool {
 
 fn precedence(op: BinaryOp) -> u8 {
     match op {
-        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 10,
-        BinaryOp::Add | BinaryOp::Sub => 9,
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 14,
+        BinaryOp::Add | BinaryOp::Sub => 13,
+        // Rust's order below the sums (ADR-248 D4), so a bit operation is
+        // parenthesised where the tree needs it and written bare where not.
+        BinaryOp::Shl | BinaryOp::Shr => 12,
+        BinaryOp::BitAnd => 11,
+        BinaryOp::BitXor => 10,
+        BinaryOp::BitOr => 9,
         BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             7
         }
@@ -11758,6 +11833,11 @@ fn binary_op(op: BinaryOp) -> &'static str {
         BinaryOp::Ge => ">=",
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
     }
 }
 
@@ -11947,6 +12027,9 @@ fn truncating(method: &str) -> Option<&'static str> {
     match method.strip_prefix("truncating_")? {
         "i32" => Some("i32"),
         "i64" => Some("i64"),
+        // ADR-248 D1.
+        "u32" => Some("u32"),
+        "u64" => Some("u64"),
         _ => None,
     }
 }

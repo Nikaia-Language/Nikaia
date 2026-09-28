@@ -1264,9 +1264,17 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
         .find(|f| f.code == "NK1116")
         .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
     assert!(it.message.contains("does not fit in an `i64`"), "{it:#?}");
+    // A value an `i64` does not hold and a `u64` does is pointed at the
+    // `u64` (ADR-248 D2); one past both is told the widest there is.
     assert!(
-        it.help.as_deref().is_some_and(|h| h.contains("widest")),
+        it.help.as_deref().is_some_and(|h| h.contains("`u64`")),
         "every error names a way out (Part III C.2): {it:#?}"
+    );
+    let past = findings("fn main() { let huge = 18000000000000000000 + 18000000000000000000 }");
+    assert!(
+        past.iter()
+            .any(|f| f.code == "NK1116" && f.help.as_deref().is_some_and(|h| h.contains("widest"))),
+        "{past:#?}"
     );
 }
 
@@ -1661,7 +1669,9 @@ impl Tally {
 /// reported nothing at all.
 #[test]
 fn a_cast_to_a_type_the_page_does_not_offer_is_refused() {
-    for into in ["usize", "isize", "u32", "u64", "u128", "i8", "i16", "i128"] {
+    // `u32` and `u64` left this list at 0.0.250: a program asked
+    // (ADR-248 D1).
+    for into in ["usize", "isize", "u128", "i8", "i16", "i128"] {
         let (code, message) = one(&format!(
             "fn main() {{ let n: i64 = 3\n let x = n as {into} }}"
         ));
@@ -1679,7 +1689,7 @@ fn a_cast_to_a_type_the_page_does_not_offer_is_refused() {
 /// list would refuse a program for a reason nothing on the page states.
 #[test]
 fn a_cast_to_a_type_the_page_offers_is_accepted() {
-    for into in ["i32", "i64", "u8", "f64"] {
+    for into in ["i32", "i64", "u8", "u32", "u64", "f64"] {
         let found = findings(&format!(
             "fn main() {{ let n: i64 = 3\n let x = n as {into} }}"
         ));

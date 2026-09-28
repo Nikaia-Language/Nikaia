@@ -332,7 +332,7 @@ impl<'a> BuildTime<'a> {
 
     fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {
         match expr {
-            Expr::LitInt(value) => Ok(Value::Int(*value as i128)),
+            Expr::LitInt(value) => Ok(Value::Int(*value)),
             Expr::LitFloat(written) => written
                 .parse()
                 .map(Value::Float)
@@ -634,6 +634,23 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::Gt => Some(Value::Bool(a > b)),
                 BinaryOp::Ge => Some(Value::Bool(a >= b)),
                 BinaryOp::And | BinaryOp::Or => None,
+                // **The bit operators, on the value as it is held**
+                // ([ADR-248](../../docs/specification/adr/adr-248.md) D3): an
+                // `i128` holds every `u64` and `i64` with the bits they have,
+                // and whether the result fits the type it goes into is
+                // `NK1116`'s, as for a sum. A count outside the width is not
+                // evaluated (D5).
+                BinaryOp::BitAnd => Some(Value::Int(a & b)),
+                BinaryOp::BitOr => Some(Value::Int(a | b)),
+                BinaryOp::BitXor => Some(Value::Int(a ^ b)),
+                BinaryOp::Shl => u32::try_from(b)
+                    .ok()
+                    .and_then(|b| a.checked_shl(b))
+                    .map(Value::Int),
+                BinaryOp::Shr => u32::try_from(b)
+                    .ok()
+                    .and_then(|b| a.checked_shr(b))
+                    .map(Value::Int),
             }
             .ok_or(Refusal::Unevaluable),
             // **Arithmetic over floats**, which has no `checked_` half: a
@@ -655,7 +672,7 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::Le => Some(Value::Bool(a <= b)),
                 BinaryOp::Gt => Some(Value::Bool(a > b)),
                 BinaryOp::Ge => Some(Value::Bool(a >= b)),
-                BinaryOp::And | BinaryOp::Or => None,
+                _ => None,
             }
             .ok_or(Refusal::Unevaluable),
             // **Part I 4.7's `+` over text**, and only that one. A comparison

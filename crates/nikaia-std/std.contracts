@@ -687,6 +687,182 @@ touches = []
 signature = "(f64) -> i64"
 doc = "The whole part of an `f64`, as an `i64`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
+# **`u64` and `u32` have the arithmetic names every integer has**
+# ([ADR-248](../../docs/specification/adr/adr-248.md) D1): wrapping and stopping
+# at the limit, for the two unsigned types a program asked for. No `_neg` and no
+# `_abs`, which an unsigned number has nothing to say with.
+
+[fn."u32::wrapping_add"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Addition that **wraps** at the ends of a `u32` instead of aborting."
+
+[fn."u32::wrapping_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Subtraction that **wraps** at the ends of a `u32` instead of aborting."
+
+[fn."u32::wrapping_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Multiplication that **wraps** at the ends of a `u32` instead of aborting:\nwhat a hash is made of."
+
+[fn."u32::wrapping_div"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Division, which for a `u32` cannot overflow and is the plain division."
+
+[fn."u32::wrapping_shl"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, i64) -> u32"
+doc = "A shift left that takes the count modulo the width instead of aborting."
+
+[fn."u32::wrapping_shr"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, i64) -> u32"
+doc = "A shift right that takes the count modulo the width instead of aborting."
+
+[fn."u32::saturating_add"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Addition that **stops** at the ends of a `u32` instead of aborting."
+
+[fn."u32::saturating_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Subtraction that **stops** at zero instead of aborting."
+
+[fn."u32::saturating_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Multiplication that **stops** at the largest `u32` instead of aborting."
+
+[fn."u32::saturating_div"]
+pub = true
+sync = true
+touches = []
+signature = "(u32, u32) -> u32"
+doc = "Division, which for a `u32` cannot overflow and is the plain division."
+
+[fn."u64::wrapping_add"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Addition that **wraps** at the ends of a `u64` instead of aborting."
+
+[fn."u64::wrapping_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Subtraction that **wraps** at the ends of a `u64` instead of aborting."
+
+[fn."u64::wrapping_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Multiplication that **wraps** at the ends of a `u64` instead of aborting:\nwhat a hash is made of."
+
+[fn."u64::wrapping_div"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Division, which for a `u64` cannot overflow and is the plain division."
+
+[fn."u64::wrapping_shl"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, i64) -> u64"
+doc = "A shift left that takes the count modulo the width instead of aborting."
+
+[fn."u64::wrapping_shr"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, i64) -> u64"
+doc = "A shift right that takes the count modulo the width instead of aborting."
+
+[fn."u64::saturating_add"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Addition that **stops** at the ends of a `u64` instead of aborting."
+
+[fn."u64::saturating_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Subtraction that **stops** at zero instead of aborting."
+
+[fn."u64::saturating_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Multiplication that **stops** at the largest `u64` instead of aborting."
+
+[fn."u64::saturating_div"]
+pub = true
+sync = true
+touches = []
+signature = "(u64, u64) -> u64"
+doc = "Division, which for a `u64` cannot overflow and is the plain division."
+
+# **Keeping the low digits into an unsigned type** (ADR-043 D7, ADR-248 D1):
+# `hash.truncating_u32()` is the low half of a `u64`, said rather than assumed.
+
+[fn."u64::truncating_u32"]
+pub = true
+sync = true
+touches = []
+signature = "(u64) -> u32"
+doc = "The low 32 bits of a `u64`, as a `u32`."
+
+[fn."i64::truncating_u32"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> u32"
+doc = "The low 32 bits of an `i64`, as a `u32`."
+
+[fn."u64::truncating_i64"]
+pub = true
+sync = true
+touches = []
+signature = "(u64) -> i64"
+doc = "The 64 bits of a `u64`, read as an `i64`: a number above the largest `i64`\ncomes out negative."
+
+[fn."i64::truncating_u64"]
+pub = true
+sync = true
+touches = []
+signature = "(i64) -> u64"
+doc = "The 64 bits of an `i64`, read as a `u64`: a negative number comes out above\nthe largest `i64`."
+
 [fn."collections::HashMap::entry"]
 pub = true
 sync = true
@@ -952,6 +1128,14 @@ sync = true
 touches = []
 signature = "() -> String"
 doc = "Text with nothing in it. It is written `String()`."
+
+[fn."String::bytes"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> Seq[u8] sync ends"
+doc = "The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).\n\nThey are **bytes** and not characters: a character outside ASCII is more than\none of them. A hash is over these."
 
 [fn."String::chars"]
 pub = true
@@ -1493,6 +1677,14 @@ sync = "from(f)"
 mutates = true
 signature = "(ref Vec[$T], f: fn(ref $T)) -> ?"
 doc = "Put the elements in the order of what the function returns, in place.\n\nIt is **stable**, so a sort by one key after a sort by another leaves the\nfirst as the tie-breaker."
+
+[fn."str::bytes"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> Seq[u8] sync ends"
+doc = "The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).\n\nThey are **bytes** and not characters: a character outside ASCII is more than\none of them. A hash is over these."
 
 [fn."str::chars"]
 pub = true

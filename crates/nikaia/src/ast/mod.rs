@@ -317,7 +317,10 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub enum Expr {
     // Primitive
-    LitInt(i64),
+    /// An integer literal, as large as a `u64` holds
+    /// ([ADR-248](../../../docs/specification/adr/adr-248.md) D2). Whether it
+    /// fits is asked where a type stands beside it (`NK1116`).
+    LitInt(i128),
     /// Kap 3.4: `match value { 1 => …, _ => … }`. An expression, like `if`.
     Match {
         value: Box<Expr>,
@@ -547,6 +550,11 @@ pub enum Expr {
         /// is what the grammar has in hand where the node is built, and
         /// uniqueness is the only property a key needs.
         span: Span,
+        /// **Written inside parentheses** - `(a & mask) == 0`. A bit operator
+        /// beside a comparison has to be, and the tree keeps no parentheses
+        /// otherwise ([ADR-248](../../../docs/specification/adr/adr-248.md)
+        /// D4, `NK1197`).
+        grouped: bool,
     },
 
     /// Part I 3.5: `x?.field`, safe navigation.
@@ -1018,6 +1026,31 @@ pub enum BinaryOp {
     Ge,
     And,
     Or,
+    /// `&`, `|`, `^`, `<<`, `>>` on integers
+    /// ([ADR-248](../../../docs/specification/adr/adr-248.md) D3).
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+impl BinaryOp {
+    /// One of the five bit operators.
+    pub fn is_bitwise(self) -> bool {
+        matches!(
+            self,
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+        )
+    }
+
+    /// One of the six comparisons.
+    pub fn is_comparison(self) -> bool {
+        matches!(
+            self,
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+        )
+    }
 }
 
 // --- Part II, Kapitel 10: Grammatiken ---

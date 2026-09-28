@@ -113,6 +113,15 @@ pub mod tools {
         include!("tools/dsl.rs");
     }
 
+    /// **The table a `comptime` map crosses as**: `src/tools/fixed.nika`,
+    /// FNV-1a and CHD, lowered to `src/tools/fixed.rs` and committed beside it
+    /// ([ADR-248](../../../docs/specification/adr/adr-248.md), 0.0.250). The
+    /// compiler's `fixed` module calls it while it builds a program;
+    /// `crate::fixed` is the lookup a program runs, and computes the same hash.
+    pub mod fixed {
+        include!("tools/fixed.rs");
+    }
+
     /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
     /// grammar and the rules a server answers by, lowered to
     /// `src/tools/http1.rs` and committed beside it

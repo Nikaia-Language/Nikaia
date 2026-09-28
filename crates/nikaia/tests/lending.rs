@@ -214,9 +214,10 @@ fn a_let_over_a_place_is_a_view() {
     );
     // The read is `index::get`, which hands back a **view** of the element —
     // which is what this test is about, one spelling on
-    // ([ADR-161](../../../docs/specification/adr/adr-161.md) D6).
+    // ([ADR-161](../../../docs/specification/adr/adr-161.md) D6). Since 0.0.250
+    // without the `&*` around it, which cancelled out.
     assert!(
-        rust.contains("let row = &*nikaia_std::index::get(&store.rows,"),
+        rust.contains("let row = nikaia_std::index::get(&store.rows,"),
         "{rust}"
     );
 }

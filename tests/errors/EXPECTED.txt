@@ -26,7 +26,7 @@ Parse error:
 unexpected end of input, expected `}` at line 3, column 1
    3 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `||`, block comment, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `[`, `^`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `|`, `||`, block comment, digits, identifier, statement
 in block
 in fn_item
 in item
@@ -38,7 +38,7 @@ Parse error:
 expected `]`; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `!=`, `%`, `&&`, `*`, `+`, `,`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `as`, `catch`, `with`, `||`, block comment
+note: also possible here: `!=`, `%`, `&&`, `&`, `*`, `+`, `,`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `^`, `as`, `catch`, `with`, `|`, `||`, block comment
 in list_lit
 in primary_expr
 in postfix_expr
@@ -46,6 +46,10 @@ in unary_expr
 in cast_expr
 in mul_expr
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -106,6 +110,10 @@ in cast_expr
 in mul_expr
 in add_tail
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -147,6 +155,10 @@ in unary_expr
 in cast_expr
 in mul_expr
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -180,6 +192,10 @@ in unary_expr
 in cast_expr
 in mul_expr
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -313,6 +329,10 @@ in unary_expr
 in cast_expr
 in mul_expr
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -394,6 +414,10 @@ in unary_expr
 in cast_expr
 in mul_expr
 in add_expr
+in shift_expr
+in bit_and_expr
+in bit_xor_expr
+in bit_or_expr
 in cmp_expr
 in and_expr
 in or_expr
@@ -425,7 +449,7 @@ Parse error:
 unexpected end of input, expected `}` at line 4, column 1
    4 | 
        ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `||`, block comment, digits, identifier, statement
+note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `[`, `^`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `|`, `||`, block comment, digits, identifier, statement
 in block
 in fn_item
 in item

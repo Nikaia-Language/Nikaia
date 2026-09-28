@@ -64,7 +64,7 @@ pub fn nothing_is_known(_: Symbol) -> Option<Constant> {
 pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
     match expr {
         Expr::LitInt(value) => Some(Constant {
-            value: *value as i128,
+            value: *value,
             pinned: None,
         }),
         Expr::Variable(name) => name_is(*name),

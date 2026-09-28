@@ -44,7 +44,13 @@ use winnow_grammar::Symbol as Ident;
 /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4), this one is which
 /// types a program may **write**. `bool`, `char`, `String` and `&str` are types
 /// of this language and no conversion between them narrows anything.
-const OFFERED: [&str; 8] = ["i32", "i64", "u8", "f64", "bool", "char", "String", "str"];
+const OFFERED: [&str; 10] = [
+    "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "String", "str",
+];
+
+/// The number types a program writes (Part I 2.2,
+/// [ADR-248](../../docs/specification/adr/adr-248.md) D1).
+const OFFERED_NUMBERS: [&str; 6] = ["i32", "i64", "u8", "u32", "u64", "f64"];
 
 /// The note every `NK25xx` carries, because it is the reason the code exists.
 ///
@@ -385,6 +391,16 @@ pub struct Checked {
     /// the same thing, so nothing the program can see changes. The `for`'s
     /// half of what `copied_bindings` is for a `match` arm.
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// **An integer literal whose place is an unsigned type**, by the byte the
+    /// statement starts at and the value, and the type
+    /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). The emitter
+    /// writes the suffix: a number above an `i32` is otherwise given `i64`'s,
+    /// which is right for a bare `let` and wrong beside a `u64`.
+    pub unsigned_literals: BTreeMap<(usize, i128), String>,
+    /// **A list element a method call changes**, by statement and the
+    /// receiver's shape: the emitter writes it as the place it is,
+    /// `xs[at(i)].push(…)`, and not as a read.
+    pub changed_elements: BTreeSet<(usize, String)>,
     /// The arguments that are a **count the language below takes in `usize`**,
     /// by the byte the statement starts at, the method as written and the
     /// position ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
@@ -1574,6 +1590,10 @@ pub struct Propagation {
     pub owned_loops: BTreeSet<usize>,
     /// [`Checked::copied_loop_bindings`].
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// [`Checked::unsigned_literals`].
+    pub unsigned_literals: BTreeMap<(usize, i128), String>,
+    /// [`Checked::changed_elements`].
+    pub changed_elements: BTreeSet<(usize, String)>,
     /// [`Checked::count_args`].
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::map_keys`].
@@ -1836,6 +1856,8 @@ pub fn propagation_against(
         pausing_loops: checked.pausing_loops,
         owned_loops: checked.owned_loops,
         copied_loop_bindings: checked.copied_loop_bindings,
+        unsigned_literals: checked.unsigned_literals,
+        changed_elements: checked.changed_elements,
         count_args: checked.count_args,
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
@@ -4298,9 +4320,13 @@ impl<'a> Checker<'a> {
             return;
         };
         let (from, into_name) = (from.as_str(), into.as_str());
-        const NUMERIC: [&str; 4] = ["i32", "i64", "f64", "u8"];
-        let always_fits =
-            from == into_name || into_name == "f64" || (from, into_name) == ("i32", "i64");
+        const NUMERIC: [&str; 6] = ["i32", "i64", "f64", "u8", "u32", "u64"];
+        let always_fits = from == into_name
+            || into_name == "f64"
+            || matches!(
+                (from, into_name),
+                ("i32", "i64") | ("u8", "i32" | "i64" | "u32" | "u64") | ("u32", "i64" | "u64")
+            );
         let checked = NUMERIC.contains(&from) && NUMERIC.contains(&into_name) && !always_fits;
 
         let at = (span.start, into.clone());
@@ -7309,6 +7335,9 @@ impl<'a> Checker<'a> {
         // pinned. Neither, and there is nothing to measure against - which is
         // the literal-alone case that must stay accepted (C.4).
         let named = want.and_then(integer_named);
+        if let Some(unsigned) = named.as_deref().filter(|n| matches!(*n, "u32" | "u64")) {
+            self.literals_are(value, unsigned, span);
+        }
         let ty = match named.or(folded.pinned) {
             Some(ty) => ty,
             // **Nothing beside it and nothing pinning it**, which is the
@@ -7328,6 +7357,9 @@ impl<'a> Checker<'a> {
             // writes, `let x: u8 = 300` writing it is `rustc` about the
             // generated file ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
             "u8" => u8::try_from(folded.value).is_ok(),
+            // ADR-248 D1 and D2.
+            "u32" => u32::try_from(folded.value).is_ok(),
+            "u64" => u64::try_from(folded.value).is_ok(),
             _ => return,
         };
         if fits {
@@ -7336,6 +7368,8 @@ impl<'a> Checker<'a> {
         let (low, high) = match ty.as_str() {
             "i32" => (i32::MIN as i128, i32::MAX as i128),
             "u8" => (u8::MIN as i128, u8::MAX as i128),
+            "u32" => (u32::MIN as i128, u32::MAX as i128),
+            "u64" => (u64::MIN as i128, u64::MAX as i128),
             _ => (i64::MIN as i128, i64::MAX as i128),
         };
         // A bare literal says its own digits; anything folded says what it came
@@ -7369,7 +7403,16 @@ impl<'a> Checker<'a> {
                 "u8" => "a `u8` is one byte, so write `i32` or `i64` where the number \
                          is a count rather than a byte"
                     .to_string(),
-                _ => "an `i64` is the widest number this language has, so this \
+                "u32" => "write `u64` where the number needs it".to_string(),
+                "u64" => "a `u64` is the widest number this language has, so this \
+                          computation has to be arranged to stay inside it"
+                    .to_string(),
+                _ if folded.value > 0 && u64::try_from(folded.value).is_ok() => {
+                    "a number above an `i64` and not negative is a `u64`'s: write the \
+                     type beside it, `let x: u64 = …`"
+                        .to_string()
+                }
+                _ => "an `i64` is the widest signed number this language has, so this \
                       computation has to be arranged to stay inside it"
                     .to_string(),
             }),
@@ -7727,7 +7770,19 @@ impl<'a> Checker<'a> {
                         // then `let b = a + 1` is arithmetic in an `i32`, and
                         // that is the sum ADR-043 §3 left to `rustc`.
                         self.constant_fits(value, None, span);
-                        found
+                        // **A constant an `i32` does not hold is an `i64`**
+                        // ([ADR-063](../../docs/specification/adr/adr-063.md)
+                        // D1): it takes the first type that holds it, and the
+                        // emitter writes it so. Said here too (0.0.250), so
+                        // `let b = 3000000000` then `a + b` over an `i32` `a`
+                        // is `NK1199` in this language's words and not
+                        // `rustc`'s *cannot add `i64` to `i32`*.
+                        match (&found, self.constant_of(value)) {
+                            (Ty::Unknown, Some(folded)) if crate::fold::wants_widening(&folded) => {
+                                Ty::named("i64")
+                            }
+                            _ => found,
+                        }
                     }
                 };
                 // **An empty list has no element type, and D2 says where one
@@ -7977,7 +8032,8 @@ impl<'a> Checker<'a> {
                 let mut frame: Vec<Local> = Vec::new();
                 for (b, element) in bindings.iter().zip(elements) {
                     let name = self.parsed.text(*b).to_string();
-                    let copied = lent && a_copy_by_value(&element);
+                    // `_` is read nowhere, so nothing is read out of it.
+                    let copied = lent && name != "_" && a_copy_by_value(&element);
                     if copied {
                         self.checked
                             .copied_loop_bindings
@@ -8761,6 +8817,17 @@ impl<'a> Checker<'a> {
                             &format!("`{name}` changes what it is called on"),
                         );
                         self.a_shared_name_changed_in_parallel(&root, span);
+                        // **An element a call changes is a place** (0.0.250):
+                        // `by_bucket[b].push(x)` writes through the index, and
+                        // the read `*get(…)` it was written as cannot be
+                        // changed - `rustc` about the generated file.
+                        if matches!(receiver.as_ref(), Expr::Index { index, .. }
+                            if !matches!(index.as_ref(), Expr::Range { .. }))
+                        {
+                            self.checked
+                                .changed_elements
+                                .insert((span.start, argument_shape(receiver)));
+                        }
                     }
                 }
                 self.a_copy_under_another_name(receiver, *method, args, span);
@@ -9632,7 +9699,13 @@ impl<'a> Checker<'a> {
                     // insisting on `bool` and being wrong the day one arrives.
                     UnaryOp::Not => {
                         let boolean = Ty::named("bool");
-                        if inner.fits(&boolean) {
+                        // **`!` on an integer flips its bits**
+                        // ([ADR-248](../../docs/specification/adr/adr-248.md)
+                        // D3), and the integer is what it makes.
+                        let value = value_of_a_copy(inner.unseen());
+                        if integer_named(&value).is_some() {
+                            value
+                        } else if inner.fits(&boolean) {
                             boolean
                         } else {
                             Ty::Unknown
@@ -9647,6 +9720,7 @@ impl<'a> Checker<'a> {
                 lhs,
                 rhs,
                 span: at,
+                ..
             } => {
                 let left = self.expr(lhs, span);
                 let right = self.expr(rhs, span);
@@ -9659,7 +9733,49 @@ impl<'a> Checker<'a> {
                 // came from — which is what lets `set` refuse it and every
                 // other sink take it.
                 let stamped = left.is_seen() || right.is_seen();
+                // **A bit operator beside a comparison is parenthesised**
+                // ([ADR-248](../../docs/specification/adr/adr-248.md) D4).
+                if op.is_comparison() {
+                    self.a_bit_operation_beside_a_comparison(*op, lhs, rhs, at);
+                }
+                // **Two number types in one operation** (D1): `u64 + i64` is
+                // `rustc`'s *mismatched types* about the generated file.
+                if !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    self.two_number_types(*op, &left, &right, at);
+                }
+                // **A literal beside an unsigned side is of that side's type**
+                // (ADR-248 D1), and the emitter is told so.
+                if !matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    for (side, other, count) in [(lhs, &right, false), (rhs, &left, true)] {
+                        let other = value_of_a_copy(other.unseen());
+                        if count && matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                            continue;
+                        }
+                        if let Some(unsigned) =
+                            integer_named(&other).filter(|n| matches!(n.as_str(), "u32" | "u64"))
+                        {
+                            self.literals_are(side, &unsigned, span);
+                        }
+                    }
+                }
                 let outcome = match op {
+                    // **`&`, `|`, `^` and the shifts take integers** (D3): a
+                    // `bool` has `&&` and `||`, which say it once.
+                    BinaryOp::BitAnd
+                    | BinaryOp::BitOr
+                    | BinaryOp::BitXor
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr => {
+                        self.a_bit_operator_on_something_else(*op, &left, &right, at);
+                        let left = value_of_a_copy(left.unseen());
+                        let right = value_of_a_copy(right.unseen());
+                        match (op, left.is_unknown()) {
+                            // A shift is its left side's, whatever counts it.
+                            (BinaryOp::Shl | BinaryOp::Shr, _) => left,
+                            (_, true) => right,
+                            _ => left,
+                        }
+                    }
                     BinaryOp::And | BinaryOp::Or => {
                         self.expect_bool(&left, span, "`&&` and `||` join two `bool`s");
                         self.expect_bool(&right, span, "`&&` and `||` join two `bool`s");
@@ -10283,6 +10399,177 @@ impl<'a> Checker<'a> {
             )),
         });
         true
+    }
+
+    /// Every integer literal a constant expression is made of, recorded as
+    /// being of an unsigned type ([`Checked::unsigned_literals`]).
+    fn literals_are(&mut self, value: &Expr, ty: &str, span: &Span) {
+        match value {
+            Expr::LitInt(v) => {
+                self.checked
+                    .unsigned_literals
+                    .insert((span.start, *v), ty.to_string());
+            }
+            Expr::Binary { lhs, rhs, op, .. } => {
+                self.literals_are(lhs, ty, span);
+                // A shift's count is its own type, not the shifted one's.
+                if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    self.literals_are(rhs, ty, span);
+                }
+            }
+            Expr::Unary { expr, .. } => self.literals_are(expr, ty, span),
+            _ => {}
+        }
+    }
+
+    /// **`NK1197`: a bit operator written beside a comparison without
+    /// parentheses** ([ADR-248](../../docs/specification/adr/adr-248.md) D4).
+    ///
+    /// This language binds `&` tighter than `==`, so `a & mask == 0` is
+    /// `(a & mask) == 0` - and C binds it the other way, so a reader who learned
+    /// C reads the line as something else. The parenthesis ends the question for
+    /// both, and the message hands it over.
+    fn a_bit_operation_beside_a_comparison(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        at: &Span,
+    ) {
+        let bare = |side: &Expr| matches!(side, Expr::Binary { op, grouped: false, .. } if op.is_bitwise());
+        if !bare(lhs) && !bare(rhs) {
+            return;
+        }
+        let side = |e: &Expr| match bare(e) {
+            true => format!("({})", written(self.parsed, e)),
+            false => written(self.parsed, e),
+        };
+        let compared = match op {
+            BinaryOp::Eq => "==",
+            BinaryOp::Ne => "!=",
+            BinaryOp::Lt => "<",
+            BinaryOp::Le => "<=",
+            BinaryOp::Gt => ">",
+            _ => ">=",
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: at.clone(),
+            code: "NK1197",
+            message: "a bit operator beside a comparison is written in parentheses".to_string(),
+            notes: vec![
+                "this language binds `&`, `|`, `^` and the shifts tighter than a comparison, \
+                 and C binds them looser - so the same line reads two ways, and the \
+                 parenthesis says which (Part I, 2.2)"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{} {compared} {}`", side(lhs), side(rhs))),
+        });
+    }
+
+    /// **`NK1198`: `&`, `|`, `^` or a shift on something that is not an
+    /// integer** ([ADR-248](../../docs/specification/adr/adr-248.md) D3). A
+    /// `bool` is pointed at `&&` and `||`; a side whose type is not known is not
+    /// asked about (Part III C.4).
+    fn a_bit_operator_on_something_else(&mut self, op: BinaryOp, left: &Ty, right: &Ty, at: &Span) {
+        let written = match op {
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            BinaryOp::Shl => "<<",
+            _ => ">>",
+        };
+        for side in [left, right] {
+            let side = value_of_a_copy(side.unseen());
+            if side.is_unknown() || integer_named(&side).is_some() {
+                continue;
+            }
+            let help = match (&side, op) {
+                (Ty::Named { name, .. }, BinaryOp::BitAnd) if name == "bool" => {
+                    "`&&` joins two `bool`s".to_string()
+                }
+                (Ty::Named { name, .. }, BinaryOp::BitOr) if name == "bool" => {
+                    "`||` joins two `bool`s".to_string()
+                }
+                (Ty::Named { name, .. }, BinaryOp::BitXor) if name == "bool" => {
+                    "two `bool`s that differ are `a != b`".to_string()
+                }
+                _ => "a bit operator works on the bits of an integer: `i32`, `i64`, `u8`, \
+                      `u32` or `u64`"
+                    .to_string(),
+            };
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: at.clone(),
+                code: "NK1198",
+                message: format!("`{written}` takes integers, and this is a `{side}`"),
+                notes: vec![
+                    "the bit operators work on the bits of an integer (Part I, 2.2)".to_string(),
+                ],
+                help: Some(help),
+            });
+            return;
+        }
+    }
+
+    /// **`NK1199`: two number types in one operation**
+    /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). No two of them
+    /// mix silently, and the conversion is written with `as`; a shift's count
+    /// is the one side that may be any integer. Only where both sides are known
+    /// (Part III C.4).
+    fn two_number_types(&mut self, op: BinaryOp, left: &Ty, right: &Ty, at: &Span) {
+        if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+            return;
+        }
+        let (
+            Ty::Named {
+                name: l, args: la, ..
+            },
+            Ty::Named {
+                name: r, args: ra, ..
+            },
+        ) = (
+            value_of_a_copy(left.unseen()),
+            value_of_a_copy(right.unseen()),
+        )
+        else {
+            return;
+        };
+        if l == r
+            || !la.is_empty()
+            || !ra.is_empty()
+            || !OFFERED_NUMBERS.contains(&l.as_str())
+            || !OFFERED_NUMBERS.contains(&r.as_str())
+        {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: at.clone(),
+            code: "NK1199",
+            // The article as the name is said: "an eye-sixty-four", "a
+            // you-sixty-four" - NK1116's rule.
+            message: {
+                let a = |t: &str| match t.starts_with('i') {
+                    true => "an",
+                    false => "a",
+                };
+                format!(
+                    "this puts {} `{l}` and {} `{r}` in one operation",
+                    a(&l),
+                    a(&r)
+                )
+            },
+            notes: vec![
+                "no two number types mix on their own: a conversion is written, so that \
+                 where a value may not fit is on the page (Part I, 2.2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "convert one side with `as`: `… as {l}` or `… as {r}`, whichever the \
+                 result should be"
+            )),
+        });
     }
 
     /// **A `??` whose left side is a view and whose fallback owns** (`NK1185`,
@@ -16891,7 +17178,7 @@ impl<'a> Checker<'a> {
         if *view {
             return;
         }
-        const NUMBERS: [&str; 6] = ["i32", "i64", "u8", "f64", "bool", "char"];
+        const NUMBERS: [&str; 8] = ["i32", "i64", "u8", "u32", "u64", "f64", "bool", "char"];
         if args.is_empty() && NUMBERS.contains(&want.as_str()) {
             self.a_cast_over_a_lent_binding(value, span);
             return;
@@ -19574,7 +19861,7 @@ fn integer_named(ty: &Ty) -> Option<String> {
     if !args.is_empty() || *view {
         return None;
     }
-    matches!(name.as_str(), "i32" | "i64" | "u8").then(|| name.clone())
+    matches!(name.as_str(), "i32" | "i64" | "u8" | "u32" | "u64").then(|| name.clone())
 }
 
 /// The value a block ends in: its last statement, where that is an expression.
@@ -19953,8 +20240,12 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => 3,
-                BinaryOp::Add | BinaryOp::Sub => 4,
-                BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 5,
+                BinaryOp::BitOr => 4,
+                BinaryOp::BitXor => 5,
+                BinaryOp::BitAnd => 6,
+                BinaryOp::Shl | BinaryOp::Shr => 7,
+                BinaryOp::Add | BinaryOp::Sub => 8,
+                BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 9,
             };
             let here = binds(op);
             let side = |e: &Expr, right: bool| match e {
@@ -19981,6 +20272,11 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
                 BinaryOp::Ge => ">=",
                 BinaryOp::And => "&&",
                 BinaryOp::Or => "||",
+                BinaryOp::BitAnd => "&",
+                BinaryOp::BitOr => "|",
+                BinaryOp::BitXor => "^",
+                BinaryOp::Shl => "<<",
+                BinaryOp::Shr => ">>",
             };
             format!("{lhs} {op} {rhs}")
         }
@@ -20345,7 +20641,9 @@ impl Comparable<'_> {
             // `NaN != NaN`. It is the one primitive the two questions differ on,
             // and every type holding one differs with it however far down.
             "f64" => how == Strength::Compares,
-            "i32" | "i64" | "u8" | "bool" | "char" | "String" | "str" | "Bytes" => true,
+            "i32" | "i64" | "u8" | "u32" | "u64" | "bool" | "char" | "String" | "str" | "Bytes" => {
+                true
+            }
             // A container compares when what it holds does.
             "Vec"
             | "List"
@@ -20422,7 +20720,7 @@ fn copies(ty: &Ty) -> bool {
             *view
                 || matches!(
                     name.as_str(),
-                    "i32" | "i64" | "u8" | "f64" | "bool" | "char"
+                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char"
                 )
         }
         _ => false,
