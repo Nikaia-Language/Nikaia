@@ -1540,12 +1540,7 @@ pub struct Explain {
 
 impl Explain {
     pub fn asked(&self) -> bool {
-        self.overlaps
-            || self.sharing
-            || self.tethers
-            || self.trust
-            || self.comptime
-            || self.asserts
+        self.overlaps || self.sharing || self.tethers || self.trust || self.comptime || self.asserts
     }
 }
 

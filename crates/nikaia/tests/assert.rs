@@ -287,11 +287,21 @@ fn asserts_reports_every_claim() {
     std::fs::write(dir.join("claims.nika"), source).expect("write");
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .current_dir(&dir)
-        .args(["--input", "claims.nika", "--output", "claims.rs", "--asserts"])
+        .args([
+            "--input",
+            "claims.nika",
+            "--output",
+            "claims.rs",
+            "--asserts",
+        ])
         .output()
         .expect("the nikaia binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(
         stdout.contains(
             "asserts in claims.nika: 2 - proved 0, refuted 0, at run time 2\n\

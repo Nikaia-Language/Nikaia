@@ -588,10 +588,7 @@ fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> 
             let Some(binary) = binary else {
                 anyhow::bail!("the build finished and named no program to run");
             };
-            let name = format!(
-                "{}-{setting}",
-                if testing { "tests" } else { "program" }
-            );
+            let name = format!("{}-{setting}", if testing { "tests" } else { "program" });
             let copy = kept.join(name);
             std::fs::copy(&binary, &copy)
                 .with_context(|| format!("keeping {}", binary.display()))?;

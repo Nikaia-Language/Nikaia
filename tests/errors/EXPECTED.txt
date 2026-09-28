@@ -294,7 +294,7 @@ Parse error:
 expected end of input; found unexpected token `/` at line 3, column 1
    3 | / ein kaputter Kommentar
        ^
-note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, block comment, item
+note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `test`, `trait`, `use`, block comment, item
 in COMMENT
 in item 2
 in WS
@@ -415,7 +415,7 @@ Parse error:
 expected end of input; found unexpected token `}` at line 3, column 1
    3 | }
        ^
-note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `trait`, `use`, block comment, item
+note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `test`, `trait`, `use`, block comment, item
 in COMMENT
 in item 2
 in WS
