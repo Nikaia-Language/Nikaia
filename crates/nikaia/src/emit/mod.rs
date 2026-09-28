@@ -4413,7 +4413,16 @@ impl<'p> Emitter<'p> {
             out.push("\n");
             i += 1;
         }
-        if !returns_value {
+        // **Not after a statement that never comes back** (0.0.240): a body
+        // that ends in `panic(…)`, `throw` or `return` has left before the
+        // `Ok(())`, and `rustc` said *unreachable expression* about a file
+        // nobody wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+        let leaves = body.stmts.last().is_some_and(|stmt| match &stmt.node {
+            Stmt::Return(_) => true,
+            Stmt::Expr(expr) => jumps(expr) || self.never_returns(expr),
+            _ => false,
+        });
+        if !returns_value && !leaves {
             out.push(&format!("{inner_pad}Ok(())\n"));
         }
         out.push(&pad);

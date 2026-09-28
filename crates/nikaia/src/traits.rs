@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Item, Span};
+use crate::ast::{Item, Receiver, Span};
 use crate::check::{Finding, Severity};
 use crate::contracts::Ledger;
 use crate::parser::Parsed;
@@ -37,6 +37,7 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
             continue;
         };
         let named = parsed.text(*trait_name).to_string();
+        found.extend(receivers(parsed, &named, methods));
         // A trait this unit does not declare is one nothing here can check
         // against: `impl Error for ConfigError` names a trait the compiler reads
         // rather than one a `.nika` file wrote (ADR-023 D3), and a trait a
@@ -74,6 +75,114 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
         }
     }
     found.sort_by_key(|f| f.span.start);
+    found
+}
+
+/// **`NK1196`: a method takes its `self` another way than the trait says**
+/// (0.0.240).
+///
+/// `impl Error for E { fn message(self) … }` against `Error`'s
+/// `message(ref self)` lowered as written, and `rustc` refused the generated
+/// file - *cannot move out of `*self`* - about a line nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). Asked of
+/// the three traits the language names and of a trait declared in this file;
+/// one declared elsewhere keeps its receivers out of reach here, and silence is
+/// the answer about a declaration that is not in view.
+fn receivers(
+    parsed: &Parsed,
+    trait_name: &str,
+    methods: &[crate::ast::Spanned<Item>],
+) -> Vec<Finding> {
+    let written = |receiver: Option<&Receiver>| match receiver {
+        None => "no `self`",
+        Some(Receiver {
+            is_ref: true,
+            is_mut: true,
+        }) => "`ref mut self`",
+        Some(Receiver {
+            is_ref: true,
+            is_mut: false,
+        }) => "`ref self`",
+        Some(Receiver {
+            is_ref: false,
+            is_mut: true,
+        }) => "`mut self`",
+        Some(Receiver {
+            is_ref: false,
+            is_mut: false,
+        }) => "`self`",
+    };
+    let language = |method: &str| -> Option<Option<Receiver>> {
+        let shared = Receiver {
+            is_ref: true,
+            is_mut: false,
+        };
+        let changed = Receiver {
+            is_ref: true,
+            is_mut: true,
+        };
+        match (trait_name, method) {
+            ("Error", "message") => Some(Some(shared)),
+            ("Drop", "drop") | ("Cleanup", "cleanup") => Some(Some(changed)),
+            _ => None,
+        }
+    };
+    let declared_here = parsed
+        .program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            Item::Trait { name, methods, .. } if parsed.text(*name) == trait_name => Some(methods),
+            _ => None,
+        });
+    let mut found = Vec::new();
+    for method in methods {
+        let Item::Fn {
+            name: Some(name),
+            receiver,
+            ..
+        } = &method.node
+        else {
+            continue;
+        };
+        let name = parsed.text(*name);
+        let wanted = match declared_here {
+            Some(declared) => declared
+                .iter()
+                .find(|m| parsed.text(m.node.name) == name)
+                .map(|m| m.node.receiver),
+            None => language(name),
+        };
+        let Some(wanted) = wanted else {
+            continue;
+        };
+        let same = match (&wanted, receiver) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.is_ref == b.is_ref && a.is_mut == b.is_mut,
+            _ => false,
+        };
+        if same {
+            continue;
+        }
+        found.push(Finding {
+            severity: Severity::Error,
+            span: method.span.clone(),
+            code: "NK1196",
+            message: format!(
+                "`{trait_name}`'s `{name}` takes {}, and this takes {}",
+                written(wanted.as_ref()),
+                written(receiver.as_ref())
+            ),
+            notes: vec![
+                "an implementation takes its value the way the trait declares it, because a caller through the trait hands it over that way (Part I, 4.7)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "take it as {}, as `{trait_name}` declares",
+                written(wanted.as_ref())
+            )),
+        });
+    }
     found
 }
 

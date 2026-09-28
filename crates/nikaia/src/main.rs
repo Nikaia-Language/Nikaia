@@ -198,6 +198,20 @@ pub enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Run the project's `test` blocks, each in a process of its own
+    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D1, D7).
+    ///
+    /// The program is built once with its tests compiled in; each test then
+    /// runs by itself, and a failing one does not stop the others.
+    Test {
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Run every test at `user_parallelism = no` and at `yes`, and fail a
+        /// test whose outcome differs between them: a program means the same
+        /// at both (Part I 1.2), so a difference is a compiler fault (D7).
+        #[arg(long)]
+        both_settings: bool,
+    },
     /// Re-lower the sysroot's `std` from its `.nika` sources (ADR-002 D4).
     ///
     /// The release step, and the *only* way `std`'s Nikaia half is lowered. It
@@ -469,6 +483,10 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
         Command::Run { project, args } => ("run", project.clone(), args.clone()),
+        Command::Test {
+            project,
+            both_settings,
+        } => return test_command(args, project.clone(), *both_settings),
         Command::LowerStd { sysroot } => return lower_std(sysroot.clone()),
         Command::Describe {
             crate_name,
@@ -500,6 +518,52 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         },
         args.allow_read_from_list.as_deref(),
     )
+}
+
+/// `nikaia test` ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7):
+/// one test build per setting asked for, then every test run against each.
+fn test_command(args: &Cli, directory: Option<PathBuf>, both_settings: bool) -> Result<i32> {
+    let start = match directory {
+        Some(directory) => directory,
+        None => std::env::current_dir().context("finding the working directory")?,
+    };
+    let project = Project::open(
+        &start,
+        args.target.as_deref(),
+        args.user_parallelism.as_deref(),
+    )?;
+    let tests =
+        nikaia::modules::Program::read_for_tests(&project.entry(), &project.packages()?, true)?
+            .tests;
+    if tests.is_empty() {
+        println!("no tests: nothing in this package is a `test \"…\" {{ … }}` block");
+        return Ok(0);
+    }
+    let settings: Vec<String> = match both_settings {
+        true => vec!["no".to_string(), "yes".to_string()],
+        false => vec![project.settings.user_parallelism.clone()],
+    };
+    let mut binaries = Vec::new();
+    for setting in settings {
+        let mut built = Project::open(&start, args.target.as_deref(), Some(&setting))?;
+        built.settings.tests = true;
+        let (code, binary) = built.drive_to(
+            "test",
+            &[],
+            args.no_cache,
+            args.locked,
+            project::Explain::default(),
+            args.allow_read_from_list.as_deref(),
+        )?;
+        if code != 0 {
+            return Ok(code);
+        }
+        let Some(binary) = binary else {
+            anyhow::bail!("the test build finished and named no program to run");
+        };
+        binaries.push((setting, binary));
+    }
+    project::run_tests(&binaries, &tests, &project.root)
 }
 
 /// What the manifest still accepts and the compiler no longer reads.

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.239 (Draft)
+**Version:** 0.0.240 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -146,8 +146,8 @@ reserved word. The reserved words are:
 as        break     catch     comptime  continue  dsl       else      enum
 extern    false     fn        for       grammar   if        impl      in
 let       match     mut       null      overlap   pub       ref       return
-select    self      spawn     struct    sync      throw     throws    trait
-true      unsafe    use       while     with
+select    self      spawn     struct    sync      test      throw     throws
+trait     true      unsafe    use       while     with
 ```
 
 A name that is a reserved word does not parse, and the parse error names the
@@ -176,6 +176,9 @@ block, and the `unsafe { … }` a call into one is written in (Part III 15.1).
 waits and takes the first to finish (Part II, 12.4).
 
 **`break` and `continue` are reserved for their constructs** (3.3).
+
+**`test` is reserved for its construct**: a `test "name" { … }` block of the
+package it stands in (Part III 14.1).
 
 **`loop`, `const`, `macro`, `quote` and `from` are ordinary names.** A declared
 `loop`, `quote` or `from` is a name like any other. Where nothing declares one

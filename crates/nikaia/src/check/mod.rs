@@ -4425,6 +4425,33 @@ impl<'a> Checker<'a> {
     /// **Only a type the library names exactly, and only with nothing in the
     /// parentheses.** A type this compiler cannot see is not asked about, and a
     /// call with arguments may be a foreign tuple struct's own constructor.
+    /// `NK1190` for a struct of the program's own: it declares no anonymous
+    /// constructor (`impl T { pub fn(…) … }`, ADR-140 D2), so a call has
+    /// nothing to be lowered to, and the literal is the way it is built.
+    fn a_struct_called_without_a_constructor(&mut self, name: &str, span: &Span) {
+        let fields = self
+            .structs
+            .get(name)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(|f| format!("{}: …", f.name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1190",
+            message: format!("`{name}` declares no constructor, so it cannot be called"),
+            notes: vec![format!(
+                "a type is called through its anonymous constructor, `impl {name} {{ pub fn(…) … }}` (ADR-140 D2), and `{name}` has none"
+            )],
+            help: Some(format!("build it with a literal: `{name} {{ {fields} }}`")),
+        });
+    }
+
     fn a_constructor_nothing_describes(&mut self, name: &str, args: &[Expr], span: &Span) {
         if !args.is_empty()
             || !self.library.types.contains_key(name)
@@ -7974,6 +8001,18 @@ impl<'a> Checker<'a> {
                         self.a_sequence_is_taken(name, &ty, span);
                         ty
                     }
+                    // **`assert` is called** (ADR-245 D2): the statement
+                    // form Part III 14.1 used to write, `assert c`, is the
+                    // name alone and then `c`, and the name is only ever the
+                    // head of a call.
+                    None if self.the_prelude_assert(expr) => {
+                        self.an_assert_of_another_shape(
+                            "`assert` is a function, and is called: write `assert(cond)`"
+                                .to_string(),
+                            span,
+                        );
+                        Ty::Unknown
+                    }
                     None => {
                         // **The specific message wins.** A free `a`, `b` or `c`
                         // is the mistake a reader of the old specification
@@ -10799,6 +10838,14 @@ impl<'a> Checker<'a> {
                 self.expr(&option.value, span);
             }
             return Ty::named(&name);
+        }
+
+        // **A type of the program's own with no constructor, called** (0.0.240):
+        // `NotANumber(text)` against `struct NotANumber { text: String }`
+        // lowered to `NotANumber::new(…)`, and `rustc` said *no function named
+        // `new`* about a file nobody wrote. A struct is built with a literal.
+        if !args.is_empty() && self.structs.contains_key(&name) && self.resolve(&name).is_none() {
+            self.a_struct_called_without_a_constructor(&name, span);
         }
 
         // A tuple variant of an enum declared here - `Op::Plus(1)` - is a value

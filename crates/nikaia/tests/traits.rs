@@ -1006,3 +1006,66 @@ fn an_impl_of_a_declared_trait_is_silent() {
                    fn main() { let h = Handle { name: \"a\" } }\n";
     assert!(findings(dropped).is_empty(), "{:#?}", findings(dropped));
 }
+
+/// **`NK1196`: a method takes its `self` the way the trait declares**
+/// (0.0.240). `fn message(self)` under `Error`'s `message(ref self)`, or
+/// `fn name(self)` under a trait of this file that wrote `ref self`, lowered
+/// as written and `rustc` said *cannot move out of `*self`* about a file
+/// nobody wrote. The right receiver is a program that runs.
+#[test]
+fn a_method_takes_self_the_way_its_trait_declares() {
+    let mine = "trait Named {\n\
+                \x20   fn name(ref self) -> String\n\
+                }\n\
+                \n\
+                struct P {\n\
+                \x20   n: String,\n\
+                }\n\
+                \n\
+                impl Named for P {\n\
+                \x20   fn name(self) -> String {\n\
+                \x20       return self.n\n\
+                \x20   }\n\
+                }\n\
+                \n\
+                fn main() {\n\
+                \x20   println(P { n: \"a\" }.name())\n\
+                }\n";
+    let found: Vec<_> = findings(mine)
+        .into_iter()
+        .filter(|f| f.code == "NK1196")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(
+        found[0]
+            .message
+            .contains("takes `ref self`, and this takes `self`"),
+        "{}",
+        found[0].message
+    );
+
+    let language = "struct Missing {\n\
+                    \x20   what: String,\n\
+                    }\n\
+                    \n\
+                    impl Error for Missing {\n\
+                    \x20   fn message(self) -> String {\n\
+                    \x20       return self.what\n\
+                    \x20   }\n\
+                    }\n\
+                    \n\
+                    fn main() {\n\
+                    }\n";
+    assert!(
+        findings(language)
+            .iter()
+            .any(|f| f.code == "NK1196" && f.message.contains("`Error`'s `message`")),
+        "{:#?}",
+        findings(language)
+    );
+
+    let fixed = mine
+        .replace("fn name(self)", "fn name(ref self)")
+        .replace("return self.n", "return self.n.clone()");
+    assert_eq!(ran("receiver-agrees", &fixed), "a\n");
+}

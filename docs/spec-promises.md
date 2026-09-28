@@ -45,7 +45,7 @@ the Result column; every other row is the original run.
 | `const NAME: T = …` (item) | II 10.2, I 9.2 | parse error: *expected end of input; found `const`* |
 | `const NAME = …` (in a body) | II 10.2 | parses as `const; LIMIT = 10;` — **re-run**, and refused now: `NK1117` on the name |
 | `select { … }` | II 12.4 | parse error: *expected expression; found `>`* (at the arm's `=>`) |
-| `test "name" { … }` | III 14.1 | parse error: *expected end of input; found `test`* |
+| `test "name" { … }` | III 14.1 | **built** ([ADR-245](specification/adr/adr-245.md) D1): compiled only by `nikaia test`, each run in a process of its own |
 | `test "name" (u: User) { … }` | III 14.3 | parse error: *expected end of input; found `test`* |
 | `bench "name" { … }` | III 14.4 | parse error: *expected end of input; found `bench`* |
 | `assert cond` | III 14.1, 14.2 | parses as `assert; b != 0;` — **re-run**, and refused now: `NK1117`, *"nothing declares `assert`, and this statement is just that name"*. The assertion still does not exist; it no longer disappears in silence |
@@ -94,7 +94,8 @@ the Result column; every other row is the original run.
 | `nikaia build`, `nikaia run` | III 13.2 | **built** |
 | `nikaia lower-std` | III 13.2b | **built** |
 | `nikaia new` | III 13.1 | `error: unrecognized subcommand 'new'` |
-| `nikaia test`, `nikaia bench`, `nikaia fmt` | III 13.2 | not present |
+| `nikaia test` | III 13.2 | **built** ([ADR-245](specification/adr/adr-245.md) D1, D7), with `--both-settings` |
+| `nikaia bench`, `nikaia fmt` | III 13.2 | not present |
 | `nikaia explain <code>`, `nikaia explain --tethers` | I 6.6, 7.1 | `error: unrecognized subcommand 'explain'` |
 | `nikaia build --with-asserts` | III 14.2 | **withdrawn** ([ADR-245](specification/adr/adr-245.md) D4): no build removes an `assert`, so there is nothing for the flag to put back |
 | `nikaia bench --history` | III 14.4 | no such command |

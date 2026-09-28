@@ -54,6 +54,9 @@ const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 /// The third switch's word, down the same channel
 /// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
+/// Set where the build is `nikaia test`'s
+/// ([ADR-245](../../docs/specification/adr/adr-245.md) D1).
+const TESTS_VAR: &str = "NIKAIA_TESTS";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
@@ -93,6 +96,11 @@ pub struct Settings {
     pub target: String,
     pub user_parallelism: String,
     pub reentrancy_check: String,
+    /// **Whether this is `nikaia test`'s build**
+    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D1): the program's
+    /// `test` blocks are compiled, and its `main` runs them by number. A
+    /// choice like the others, so the cache and the wrapper both see it.
+    pub tests: bool,
 }
 
 impl Settings {
@@ -122,6 +130,7 @@ impl Settings {
             target,
             user_parallelism,
             reentrancy_check,
+            tests: false,
         })
     }
 
@@ -141,6 +150,12 @@ impl Settings {
                 OsString::from(&self.reentrancy_check),
             ),
         ]
+        .into_iter()
+        .chain(
+            self.tests
+                .then(|| (TESTS_VAR.to_string(), OsString::from("1"))),
+        )
+        .collect()
     }
 
     /// What the driver put in the environment. Absent means the wrapper was run
@@ -156,6 +171,7 @@ impl Settings {
             target,
             user_parallelism,
             reentrancy_check,
+            tests: std::env::var_os(TESTS_VAR).is_some(),
         })
     }
 
@@ -172,8 +188,11 @@ impl Settings {
     pub fn choices(&self) -> Choices {
         Choices::new(
             format!(
-                "{}/{}/{}",
-                self.target, self.user_parallelism, self.reentrancy_check
+                "{}/{}/{}{}",
+                self.target,
+                self.user_parallelism,
+                self.reentrancy_check,
+                if self.tests { "/tests" } else { "" }
             ),
             "rust",
         )
@@ -665,24 +684,24 @@ pub fn lower_reading(
     // project*, which is what a `nikaia.toml` declares; a directory of loose
     // examples is a directory of programs, and compiling one of them must not
     // pull in the other ten (ADR-047 D1, `modules::collect_one`).
-    let program = match layout.in_project {
-        true => modules::Program::read_with(input, packages)?,
-        false => modules::Program::read_one(input)?,
+    let program = match (settings.tests, layout.in_project) {
+        (true, in_project) => modules::Program::read_for_tests(input, packages, in_project)?,
+        (false, true) => modules::Program::read_with(input, packages)?,
+        (false, false) => modules::Program::read_one(input)?,
     };
+    let key_source = program.sources().join("\n// --- unit ---\n");
     // **What the output names is part of the key** (0.0.239): the abort table
     // names each file as it was handed to the compiler (ADR-044 D1), so a
     // lowering cached for `/abs/one.nika` and reused for `one.nika` named the
-    // first path in the second program's aborts. The names go in as the table
-    // writes them.
-    let named: Vec<String> = program
-        .units
-        .iter()
-        .map(|unit| unit.path.display().to_string())
-        .collect();
-    let key_source = format!(
-        "// --- named ---\n{}\n{}",
-        named.join("\n"),
-        program.sources().join("\n// --- unit ---\n")
+    // first path in the second program's aborts. A choice, and not part of
+    // the source, because the source's hash is the lockfile's.
+    let choices = choices.naming(
+        program
+            .units
+            .iter()
+            .map(|unit| unit.path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
     );
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
 
@@ -1896,6 +1915,21 @@ impl Project {
         // **The list this build reads under** (ADR-072 D2), or `None` for D1.
         allowlist: Option<&Path>,
     ) -> Result<i32> {
+        self.drive_to(subcommand, program_args, no_cache, locked, want, allowlist)
+            .map(|(code, _)| code)
+    }
+
+    /// [`Project::drive`], handing back the binary the build made as well -
+    /// which is what `nikaia test` runs, once per test.
+    pub fn drive_to(
+        &self,
+        subcommand: &str,
+        program_args: &[String],
+        no_cache: bool,
+        locked: bool,
+        want: Explain,
+        allowlist: Option<&Path>,
+    ) -> Result<(i32, Option<PathBuf>)> {
         let entry = self.entry();
         if !entry.is_file() {
             refuse!(
@@ -2049,6 +2083,7 @@ impl Project {
         // work happens once, and the decision is made where it can be reported.
         let (mut code, messages) = cargo.messages("build", &target_args)?;
         self.report(&messages, allowlist)?;
+        let binary = executable_in(&messages);
         if code == 0 && subcommand == "run" {
             // **The built program is run directly, and that is Part III C.1
             // rather than a shortcut.** `cargo run` is a second invocation that
@@ -2086,7 +2121,7 @@ impl Project {
                      in nikaia.lock: {error:#}"
             );
         }
-        Ok(code)
+        Ok((code, binary))
     }
 
     /// Say what the backend said, against the `.nika` line it was about.
@@ -2121,7 +2156,13 @@ impl Project {
         // **With the packages**, or a `use` line would be read against an empty
         // set and the translation of somebody else's error would be a refusal of
         // a program that is fine.
-        let mut program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
+        // **The program the build lowered**, test build included (ADR-245
+        // D1): a test build's entry has its dispatcher, and a map rebuilt
+        // from the other program places a warning in the wrong file.
+        let mut program = match self.settings.tests {
+            true => modules::Program::read_for_tests(&self.entry(), &self.packages()?, true)?,
+            false => modules::Program::read_with(&self.entry(), &self.packages()?)?,
+        };
         // **The same reads the build lowered under** (ADR-072, ADR-177). This
         // lowering has to be the lowering, or an item the build wrote a `const`
         // for is refused here and the backend's message never arrives.
@@ -2273,6 +2314,105 @@ fn executable_in(messages: &str) -> Option<std::path::PathBuf> {
         .filter(|value| value["reason"] == "compiler-artifact")
         .filter_map(|value| value["executable"].as_str().map(std::path::PathBuf::from))
         .next_back()
+}
+
+/// **What one test did, at one setting** ([ADR-245](../../docs/specification/adr/adr-245.md) D1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Outcome {
+    passed: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// **Run each test in a process of its own and say how each went**
+/// ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7).
+///
+/// `binaries` is one test build per setting of `user_parallelism` that was
+/// asked for. A test fails on an error that leaves it, a false `assert` or a
+/// `panic` - each of which ends its process unsuccessfully - and at two
+/// settings it fails as well where the two outcomes differ, because the
+/// meaning of a program is the same at both (Part I 1.2) and a difference is
+/// a fault of this compiler. A failing test does not stop the others.
+pub fn run_tests(
+    binaries: &[(String, PathBuf)],
+    tests: &[modules::TestCase],
+    root: &Path,
+) -> Result<i32> {
+    let plural = if tests.len() == 1 { "" } else { "s" };
+    println!("running {} test{plural}", tests.len());
+    let mut failed: Vec<(usize, Vec<(String, Outcome)>)> = Vec::new();
+    for (k, test) in tests.iter().enumerate() {
+        let mut outcomes: Vec<(String, Outcome)> = Vec::new();
+        for (setting, binary) in binaries {
+            let out = std::process::Command::new(binary)
+                .arg(k.to_string())
+                .output()
+                .with_context(|| format!("running {}", binary.display()))?;
+            outcomes.push((
+                setting.clone(),
+                Outcome {
+                    passed: out.status.success(),
+                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                },
+            ));
+        }
+        let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
+        let passed = agree && outcomes.iter().all(|(_, o)| o.passed);
+        let verdict = match (passed, agree) {
+            (true, _) => "ok",
+            (false, true) => "FAILED",
+            (false, false) => "FAILED (the settings disagree)",
+        };
+        println!(
+            "test \"{}\" ({}:{}) ... {verdict}",
+            test.title,
+            shown_path(&test.path, root),
+            test.line
+        );
+        if !passed {
+            failed.push((k, outcomes));
+        }
+    }
+    if !failed.is_empty() {
+        println!("\nfailures:");
+        for (k, outcomes) in &failed {
+            let test = &tests[*k];
+            println!(
+                "\n--- \"{}\" ({}:{})",
+                test.title,
+                shown_path(&test.path, root),
+                test.line
+            );
+            let agree = outcomes.windows(2).all(|pair| pair[0].1 == pair[1].1);
+            for (setting, outcome) in outcomes {
+                if agree && !std::ptr::eq(outcome, &outcomes[0].1) {
+                    continue;
+                }
+                if !agree {
+                    println!("at user-parallelism = {setting}:");
+                }
+                print!("{}", outcome.stdout);
+                eprint!("{}", outcome.stderr);
+            }
+        }
+    }
+    let passed = tests.len() - failed.len();
+    println!(
+        "\ntest result: {}. {passed} passed; {} failed",
+        if failed.is_empty() { "ok" } else { "FAILED" },
+        failed.len()
+    );
+    Ok(if failed.is_empty() { 0 } else { 1 })
+}
+
+/// A test's file as the project names it.
+fn shown_path(path: &Path, root: &Path) -> String {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    path.strip_prefix(&root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 /// Run it, with the program's own arguments and every stream its own.

@@ -569,11 +569,11 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 37] = [
+pub const RESERVED_WORDS: [&str; 38] = [
     "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
     "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub", "ref",
-    "return", "select", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true",
-    "unsafe", "use", "while", "with",
+    "return", "select", "self", "spawn", "struct", "sync", "test", "throw", "throws", "trait",
+    "true", "unsafe", "use", "while", "with",
 ];
 
 /// The note a parse error gets when what it tripped over is a reserved word.
@@ -1133,6 +1133,14 @@ grammar! {
           | d:doc_here c:comptime_item -> { Spanned::documented(c, _span, d) }
           | d:doc_here e:extern_item -> { Spanned::documented(e, _span, d) }
           | d:doc_here i:fn_item -> { Spanned::documented(i, _span, d) }
+          | d:doc_here t:test_item -> { Spanned::documented(t, _span, d) }
+
+        // **`test "name" { … }`**
+        // ([ADR-245](../../../../docs/specification/adr/adr-245.md) D1): where a
+        // `fn` may stand, seeing what the package sees. Compiled only by
+        // `nikaia test` - `modules` leaves it out of every other build.
+        rule test_item -> Item =
+            KW_TEST title:STRING body:block -> { Item::Test { name: title, body } }
 
         // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
         // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1).
@@ -3342,6 +3350,7 @@ grammar! {
         rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
         rule KW_COMPTIME = "comptime" not(ident)
+        rule KW_TEST = "test" not(ident)
         rule KW_CONTINUE = "continue" not(ident)
         rule KW_DSL = "dsl" not(ident)
         rule KW_ELSE = "else" not(ident)
@@ -3521,6 +3530,11 @@ grammar! {
           // The number that allowed it is **zero**: nothing in `examples/`, in
           // `tests/` or in the three pages writes it as a name.
           | KW_SELECT -> { 0 }
+          // **`test`, with its construct**
+          // ([ADR-245](../../../../docs/specification/adr/adr-245.md) D1).
+          // Measured when the record was written: no name in the tree's
+          // `.nika` files is `test`.
+          | KW_TEST -> { 0 }
 
 
         // The compiler's identifier.

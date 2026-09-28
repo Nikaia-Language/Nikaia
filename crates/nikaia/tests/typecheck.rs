@@ -1500,14 +1500,16 @@ fn a_word_this_language_does_not_know_is_refused() {
         parse_to_ast("fn main() {\n    unsafe { println(\"x\") }\n}").is_ok(),
         "`unsafe` and a block is a construct now, not a name nothing declares"
     );
-    for (source, name) in [
-        ("fn main() {\n    let c = true\n    assert c\n}", "assert"),
-        ("fn main() {\n    println(f\"{_000}\")\n}", "_000"),
-    ] {
-        let (code, message) = one(source);
-        assert_eq!(code, "NK1117", "{source}");
-        assert!(message.contains(name), "{message}");
-    }
+    let (code, message) = one("fn main() {\n    println(f\"{_000}\")\n}");
+    assert_eq!(code, "NK1117");
+    assert!(message.contains("_000"), "{message}");
+    // **`assert` left this list with its construct**
+    // ([ADR-245](../../../docs/specification/adr/adr-245.md) D2): it is a
+    // function now, and the statement form Part III 14.1 used to write is the
+    // name alone - which is told how the call is written.
+    let (code, message) = one("fn main() {\n    let c = true\n    assert c\n}");
+    assert_eq!(code, "NK1195");
+    assert!(message.contains("assert(cond)"), "{message}");
 }
 
 /// And the names that **are** declared are not refused - the half that decides

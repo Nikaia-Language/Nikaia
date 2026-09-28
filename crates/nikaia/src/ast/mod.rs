@@ -164,7 +164,11 @@ pub enum Item {
         opaque: Vec<Spanned<OpaqueType>>,
     },
 
-    // Part III, Kap 14.1: test "Name" { ... }
+    /// `test "a blank line is counted" { … }`
+    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D1, Part III
+    /// 14.1): a test of the package it stands in. The name is kept as written,
+    /// escapes and all, as a string literal's text is. `modules` removes it
+    /// from every build but `nikaia test`'s, which turns it into a function.
     Test {
         name: String,
         body: Block,

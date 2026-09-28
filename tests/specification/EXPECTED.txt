@@ -105,7 +105,7 @@
 20-nikaia-advance.md #24 lowered (a body)  let data = [1, 2, 3]
 20-nikaia-advance.md #25 refused (a body) [NK1117,NK1181]  // Subject: The Task (Lambda)
 30-nikaia-tooling.md #1 lowered (as written)  // build.nika
-30-nikaia-tooling.md #2 refused (a body) [NK1117]  test "Addition" {
+30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
 30-nikaia-tooling.md #3 lowered (as written)  fn divide(a: i64, b: i64) -> i64 sync {
 30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
 30-nikaia-tooling.md #5 fragment (as written)  impl Generator for User {

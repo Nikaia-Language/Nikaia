@@ -510,7 +510,30 @@ pub struct Program {
     /// worse than none: this is the very ledger the package was inferred with, so
     /// there is nothing to get wrong.
     pub as_its_own: std::collections::BTreeMap<String, crate::contracts::Ledger>,
+    /// **The program's `test` blocks**, in the order `nikaia test` numbers
+    /// them ([ADR-245](../../../docs/specification/adr/adr-245.md) D1). Empty
+    /// in every build but a test build, which is the only one that keeps them.
+    pub tests: Vec<TestCase>,
 }
+
+/// One `test "…" { … }` of the program, as `nikaia test` names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestCase {
+    /// The title as written, escapes and all.
+    pub title: String,
+    pub path: PathBuf,
+    /// The line the block starts on.
+    pub line: usize,
+}
+
+/// The name the `k`th test's function has in a test build.
+fn test_function(k: usize) -> String {
+    format!("__nikaia_test_{k}")
+}
+
+/// The function a test build's entry dispatches from, before it takes `main`'s
+/// place.
+const DISPATCH: &str = "__nikaia_tests";
 
 impl Program {
     /// Parse every file, and infer the contracts of all of them together.
@@ -536,7 +559,39 @@ impl Program {
         Self::of(collect_one(entry)?, &[])
     }
 
-    fn of(units: Vec<Unit>, dependencies: &[Dependency]) -> Result<Program> {
+    /// **The program as `nikaia test` builds it**
+    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D1): every
+    /// `test` block of the program's own files is a function, and the entry's
+    /// `main` is replaced by one that runs the test whose number it is given
+    /// as its first argument - so the program is compiled once and each test
+    /// runs in a process of its own. A package that is a dependency keeps no
+    /// tests; nor does an entry with no test, which is then the program as
+    /// every other build sees it.
+    pub fn read_for_tests(
+        entry: &Path,
+        dependencies: &[Dependency],
+        in_project: bool,
+    ) -> Result<Program> {
+        let units = match in_project {
+            true => collect_with(entry, dependencies)?,
+            false => collect_one(entry)?,
+        };
+        let (units, tests) = with_tests_as_functions(units)?;
+        let mut program = Self::of(units, dependencies)?;
+        program.tests = tests;
+        Ok(program)
+    }
+
+    fn of(mut units: Vec<Unit>, dependencies: &[Dependency]) -> Result<Program> {
+        // **A `test` block is compiled only by `nikaia test`** (ADR-245 D1),
+        // which has turned every one it runs into a function by now: what is
+        // left is left out.
+        for unit in &mut units {
+            unit.parsed
+                .program
+                .items
+                .retain(|item| !matches!(item.node, Item::Test { .. }));
+        }
         let mut contracts = crate::contracts::Ledger::empty();
         let mut as_its_own: std::collections::BTreeMap<String, crate::contracts::Ledger> =
             std::collections::BTreeMap::new();
@@ -604,6 +659,7 @@ impl Program {
             described: crate::contracts::Ledger::default(),
             contracts,
             as_its_own,
+            tests: Vec::new(),
         })
     }
 
@@ -752,6 +808,139 @@ impl Program {
 
         Ok(Lowered { rust, map })
     }
+}
+
+/// **Every `test` block of the program's own files, as a function**, and the
+/// entry's `main` replaced by the one that runs them by number
+/// ([ADR-245](../../../docs/specification/adr/adr-245.md) D1).
+///
+/// The dispatcher is Nikaia, appended to the entry's text and parsed with it,
+/// so it goes through every check and the one lowering a program does: a test
+/// body may pause and may fail, and `main` is where both are already answered
+/// (ADR-038 D4). A test's function `throws`, so a failure that leaves its body
+/// leaves `main` - which prints it and ends the process unsuccessfully.
+fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestCase>)> {
+    let own: Vec<usize> = (0..units.len())
+        .filter(|&at| units[at].package.is_none())
+        .collect();
+    let count: usize = own
+        .iter()
+        .map(|&at| {
+            units[at]
+                .parsed
+                .program
+                .items
+                .iter()
+                .filter(|item| matches!(item.node, Item::Test { .. }))
+                .count()
+        })
+        .sum();
+    if count == 0 || units.is_empty() || units[0].package.is_some() {
+        return Ok((units, Vec::new()));
+    }
+
+    // The entry first, because it is parsed again with the dispatcher in it.
+    let entry = &units[0];
+    let cli = entry
+        .parsed
+        .program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            Item::Import { path, alias }
+                if path.len() == 2
+                    && entry.parsed.text(path[0]) == "std"
+                    && entry.parsed.text(path[1]) == "cli" =>
+            {
+                Some(alias.map_or("cli", |a| entry.parsed.text(a)).to_string())
+            }
+            _ => None,
+        });
+    let mut text = entry.source.clone();
+    text.push('\n');
+    if cli.is_none() {
+        text.push_str("use std::cli\n");
+    }
+    let cli = cli.unwrap_or_else(|| "cli".to_string());
+    text.push_str(&format!(
+        "fn {DISPATCH}() throws {{\n    let which = {cli}::args().nth(1) ?? \"\"\n"
+    ));
+    for k in 0..count {
+        text.push_str(&format!(
+            "    if which == \"{k}\" {{\n        {}()\n        return\n    }}\n",
+            test_function(k)
+        ));
+    }
+    text.push_str("    panic(f\"this build has no test numbered `{which}`\")\n}\n");
+    let mut parsed = parser::parse_to_ast(&text)
+        .with_context(|| format!("{} with its tests", entry.path.display()))?;
+    // `main` gives its name to the dispatcher and goes.
+    let mut main = None;
+    let interner = parsed.interner.clone();
+    parsed.program.items.retain(|item| match &item.node {
+        Item::Fn {
+            name: Some(name), ..
+        } if interner.resolve(*name) == "main" => {
+            main = Some(*name);
+            false
+        }
+        _ => true,
+    });
+    let main = match main {
+        Some(name) => name,
+        None => match parser::parse_expression(&parsed.interner, "main")? {
+            crate::ast::Expr::Variable(name) => name,
+            _ => anyhow::bail!("`main` did not parse as a name"),
+        },
+    };
+    for item in &mut parsed.program.items {
+        if let Item::Fn {
+            name: Some(name), ..
+        } = &mut item.node
+            && parsed.interner.resolve(*name) == DISPATCH
+        {
+            *name = main;
+        }
+    }
+    units[0].parsed = parsed;
+
+    let mut tests = Vec::new();
+    for at in own {
+        let unit = &mut units[at];
+        for item in &mut unit.parsed.program.items {
+            let Item::Test { name: title, body } = &item.node else {
+                continue;
+            };
+            let name =
+                match parser::parse_expression(&unit.parsed.interner, &test_function(tests.len()))?
+                {
+                    crate::ast::Expr::Variable(name) => name,
+                    _ => anyhow::bail!("a test's function name did not parse as a name"),
+                };
+            tests.push(TestCase {
+                title: title.clone(),
+                path: unit.path.clone(),
+                line: unit.source[..item.span.start.min(unit.source.len())]
+                    .matches('\n')
+                    .count()
+                    + 1,
+            });
+            item.node = Item::Fn {
+                name: Some(name),
+                generics: Vec::new(),
+                receiver: None,
+                args: Vec::new(),
+                config: Vec::new(),
+                spread: None,
+                ret_type: None,
+                body: body.clone(),
+                is_sync: false,
+                is_public: false,
+                throws: true,
+            };
+        }
+    }
+    Ok((units, tests))
 }
 
 fn std_ledger() -> crate::contracts::Ledger {

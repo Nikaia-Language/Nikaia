@@ -268,3 +268,53 @@ fn a_program_may_declare_its_own_assert() {
     assert!(ok, "{stderr}");
     assert_eq!(stdout, "mine: false\n");
 }
+
+/// **No `Ok(())` after a statement that never comes back** (0.0.240): a
+/// `throws` function ending in `panic(…)` or `return` was lowered with an
+/// `Ok(())` after it, and `rustc` warned *unreachable expression* about a file
+/// nobody wrote. `nikaia test`'s own entry ends that way, which is where it
+/// was found.
+#[test]
+fn a_body_that_leaves_is_not_followed_by_ok() {
+    let source = "fn check(n: i64) throws {\n\
+                  \x20   if n > 0 {\n\
+                  \x20       return\n\
+                  \x20   }\n\
+                  \x20   panic(\"negative\")\n\
+                  }\n\
+                  \n\
+                  fn done() throws {\n\
+                  \x20   println(\"done\")\n\
+                  \x20   return\n\
+                  }\n\
+                  \n\
+                  fn main() throws {\n\
+                  \x20   check(1)\n\
+                  \x20   done()\n\
+                  }\n";
+    let dir = common::scratch_dir("assert-leaves");
+    std::fs::write(dir.join("leaves.nika"), source).expect("write");
+    let lowered = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&dir)
+        .args(["--input", "leaves.nika", "--output", "leaves.rs"])
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(
+        lowered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lowered.stderr)
+    );
+    let compiled = common::compile(
+        &dir.join("leaves.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            &dir.join("leaves").to_string_lossy(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&compiled.stderr);
+    assert!(compiled.status.success(), "{said}");
+    assert!(!said.contains("unreachable"), "{said}");
+    std::fs::remove_dir_all(&dir).ok();
+}

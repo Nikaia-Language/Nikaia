@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.239 (Draft)
+**Version:** 0.0.240 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -29,7 +29,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 ### 13.2. Core Commands
 * `nikaia build`: compiles the project.
 * `nikaia run`: compiles and executes.
-* `nikaia test`: runs unit tests and fuzzers.
+* `nikaia test`: runs the package's `test` blocks, each in a process of its own (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
 * `nikaia bench`: runs performance benchmarks.
 * `nikaia fmt`: formats the source.
 * `nikaia describe <crate>`: writes the draft ledger for a Rust crate the program calls, from the crate's own `pub` signatures (15.2). `--project` names the project directory. The default walks up from the working directory to the nearest `nikaia.toml`.
@@ -337,13 +337,21 @@ A method with no entry is an unknown, and an unknown costs every function that c
 Testing and verification are part of the language.
 
 ### 14.1. Unit Tests (`test`)
-A `test` block checks specific inputs. `test` blocks are compiled only during `nikaia test`.
+*[ADR-245](adr/adr-245.md) D1 and D7. Built.*
+
+A `test "name" { … }` block checks specific inputs. It stands where a `fn` may, in any file of the package, and sees what the package sees, private names included. Only `nikaia test` compiles it: `nikaia build` and `nikaia run` leave it out, unchecked.
 
 ```nika
-test "Addition" {
-    assert(1 + 1 == 2)
+test "a blank line is counted" {
+    let (lines, blank) = count("a\n\nb")
+    assert(lines == 3)
+    assert(blank == 1; message: "an empty line is blank")
 }
 ```
+
+A test's body may pause and may fail. A test **fails** on an error that leaves its body, which is printed in its long form (the site and the chain), on a false `assert` (14.2), or on a `panic`. `nikaia test` builds the package once with its tests compiled in and runs **each test in a process of its own**, so a test that stops the program does not stop the others. It prints a line per test, the output of each failing one, and a summary, and it exits unsuccessfully where any test failed.
+
+Each test runs under the `user_parallelism` the project names. `nikaia test --both-settings` runs each at `no` and at `yes`, and a test whose outcome differs between the two fails with both outcomes shown: a program means the same at both settings (Part I 1.2), so a difference is a fault of the compiler.
 
 ### 14.2. Assertions: a claim the compiler may prove
 *[ADR-245](adr/adr-245.md) D2 to D4. Built: `assert` and its checks; nothing is proved yet.*

@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.240] — 2026-09-28
+
+**`nikaia test`** — ADR-245 D1 and D7, built.
+
+- `test "name" { … }` stands where a `fn` may, in any file of a package, and
+  sees what the package sees. `test` is a reserved word. `nikaia build` and
+  `nikaia run` leave every test out, unchecked; `nikaia test` compiles them.
+- **One build, one process per test.** The test build turns each block into a
+  function and replaces the entry's `main` with one that runs the test whose
+  number it is given; `nikaia test` then runs the program once per test. A
+  failing test does not stop the others. A test fails on an error that leaves
+  it (printed in its long form), a false `assert` or a `panic`; the command
+  prints a line per test, what each failing one said and a summary, and exits
+  `1` where any failed.
+- **`--both-settings`** builds at `user_parallelism = no` and `yes` and fails a
+  test whose outcome differs between them (D7).
+- The test build is a choice like the target: the cache and the Cargo wrapper
+  both see it, and a warning in a test build is placed against the file it is
+  about.
+- **Defects found by the first tests written with it**, each a `rustc`
+  message about a file nobody wrote:
+  - a `throws` function ending in `panic(…)` or `return` had an `Ok(())`
+    after it, and `rustc` warned *unreachable expression*;
+  - a struct of the program's own called like a function with no constructor
+    lowered to `T::new(…)` - now `NK1190`, which hands over the literal;
+  - an `impl` method taking `self` where the trait declares `ref self` (for a
+    trait of the file, or `Error`, `Drop` and `Cleanup`) - now `NK1196`.
+- Part III 14.1 and 13.2 describe it; Part I 2.1 lists `test`.
+
 ## [0.0.239] — 2026-09-28
 
 **`assert` is a claim** — ADR-245 D2 and D3, built.

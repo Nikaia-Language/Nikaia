@@ -83,6 +83,13 @@ pub struct Choices {
     /// because a refused build records nothing, while one that *added* a claim
     /// hit an entry recorded before the word was there.
     pub describes: String,
+    /// **The names the output writes for its files** (0.0.239): the abort
+    /// table names each file as it was handed to the compiler (ADR-044 D1),
+    /// so `/abs/one.nika` and `one.nika` are two lowerings of one source.
+    /// Here and not in the unit's `source`, because that hash is what the
+    /// lockfile records, and a path the checkout moves has no place there
+    /// (D7).
+    pub names: String,
 }
 
 impl Choices {
@@ -92,6 +99,7 @@ impl Choices {
             backend: backend.into(),
             reads: String::new(),
             describes: String::new(),
+            names: String::new(),
         }
     }
 
@@ -99,6 +107,14 @@ impl Choices {
     pub fn reading(self, digest: impl Into<String>) -> Self {
         Self {
             reads: digest.into(),
+            ..self
+        }
+    }
+
+    /// The same, with the names the output writes for its files.
+    pub fn naming(self, names: impl Into<String>) -> Self {
+        Self {
+            names: names.into(),
             ..self
         }
     }
@@ -256,6 +272,7 @@ impl Key {
         // change to one has to invalidate — for the reason the line above
         // exists, one boundary over.
         b.field("describes", &choices.describes);
+        b.field("names", &choices.names);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same

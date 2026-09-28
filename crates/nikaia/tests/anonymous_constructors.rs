@@ -215,3 +215,32 @@ fn a_std_type_with_no_constructor_is_refused_here() {
         "`io::IoError` is a type, and nothing describes a constructor for it"
     );
 }
+
+/// **A struct of the program's own is built with a literal** (0.0.240):
+/// called like a function with no anonymous constructor declared, it lowered to
+/// `T::new(…)` and `rustc` said *no function named `new`* about a file nobody
+/// wrote. `NK1190` says so, and hands over the literal.
+#[test]
+fn a_struct_without_a_constructor_is_not_called() {
+    let source = "struct NotANumber {\n\
+                  \x20   text: String,\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let e = NotANumber(\"x\")\n\
+                  \x20   println(e.text)\n\
+                  }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    let found: Vec<_> = nikaia::check::check(&parsed, &own, &library)
+        .findings
+        .into_iter()
+        .filter(|f| f.code == "NK1190")
+        .collect();
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some("build it with a literal: `NotANumber { text: … }`")
+    );
+}
