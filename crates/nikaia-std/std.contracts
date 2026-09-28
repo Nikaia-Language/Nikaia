@@ -284,6 +284,13 @@ throws = ["io::IoError"]
 signature = "(path: ?, root: ref Root, data: ?; append: bool = false, create: bool = true)"
 doc = "Write data to a file.\n\n`create` makes the file where there is none and `append` adds to the end\nrather than replacing what is there. It fails where the path cannot be\nwritten."
 
+[fn."assert"]
+pub = true
+sync = true
+touches = []
+signature = "(cond: bool; message: ref String = \"\")"
+doc = "Claim that `cond` holds whenever this line is reached.\n\nA false claim stops the program, as `panic` does, and says the claim as it\nwas written and the value of each operand of its comparison. The condition\nmay not pause, fail, touch anything or change a value, so that the compiler\ncan later prove it and leave the check out (ADR-245)."
+
 [fn."print"]
 pub = true
 sync = true

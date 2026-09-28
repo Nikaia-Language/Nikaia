@@ -50,7 +50,7 @@ the Result column; every other row is the original run.
 | `bench "name" { … }` | III 14.4 | parse error: *expected end of input; found `bench`* |
 | `assert cond` | III 14.1, 14.2 | parses as `assert; b != 0;` — **re-run**, and refused now: `NK1117`, *"nothing declares `assert`, and this statement is just that name"*. The assertion still does not exist; it no longer disappears in silence |
 | `assert cond, "message"` | III 14.2 | parse error: *expected `}`; found `,`* |
-| `assert(cond)` | — | parses as a call to a function named `assert` |
+| `assert(cond)`, `assert(cond; message: …)` | III 14.2 | **built** ([ADR-245](specification/adr/adr-245.md) D2, D3): a prelude function the compiler knows; a condition that could pause, fail, touch or change anything is `NK1194`, another shape `NK1195`, and a false one stops the program naming its line, its claim and its operands' values |
 | `extern "C" { … }` | III 15.1 | parse error: *expected end of input; found `extern`* |
 | `unsafe { … }` | III 15.1, 16.3 | parses as `unsafe; { puts("hi") }` — **re-run**, and refused now: `NK1117` on the name |
 | `break`, `continue` | I 3.3 | **built** ([ADR-073](specification/adr/adr-073.md)): name for name, and the rule that bounds them is `NK1126` — a jump may not leave a lambda, a task, an `overlap` branch or a DSL fold's step, each being a function in the language below. **A row added by a construct arriving rather than by a probe**: before the record the two words parsed as nothing at all, since [ADR-071](specification/adr/adr-071.md) had reserved them, so the probe that belongs beside the others here is `break x` — refused, `NK1127`, because a jump takes no value and a value after one would otherwise be a statement of its own |
@@ -96,7 +96,7 @@ the Result column; every other row is the original run.
 | `nikaia new` | III 13.1 | `error: unrecognized subcommand 'new'` |
 | `nikaia test`, `nikaia bench`, `nikaia fmt` | III 13.2 | not present |
 | `nikaia explain <code>`, `nikaia explain --tethers` | I 6.6, 7.1 | `error: unrecognized subcommand 'explain'` |
-| `nikaia build --with-asserts` | III 14.2 | no such flag |
+| `nikaia build --with-asserts` | III 14.2 | **withdrawn** ([ADR-245](specification/adr/adr-245.md) D4): no build removes an `assert`, so there is nothing for the flag to put back |
 | `nikaia bench --history` | III 14.4 | no such command |
 | `--locked`, `--overlaps`, `--trust`, `--explain`, `--no-cache`, `--target`, `--user-parallelism`, `--backend` | III 13.2, 13.5, I 8.1.2 | **built** |
 

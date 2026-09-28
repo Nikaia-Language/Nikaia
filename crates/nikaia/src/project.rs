@@ -669,7 +669,21 @@ pub fn lower_reading(
         true => modules::Program::read_with(input, packages)?,
         false => modules::Program::read_one(input)?,
     };
-    let key_source = program.sources().join("\n// --- unit ---\n");
+    // **What the output names is part of the key** (0.0.239): the abort table
+    // names each file as it was handed to the compiler (ADR-044 D1), so a
+    // lowering cached for `/abs/one.nika` and reused for `one.nika` named the
+    // first path in the second program's aborts. The names go in as the table
+    // writes them.
+    let named: Vec<String> = program
+        .units
+        .iter()
+        .map(|unit| unit.path.display().to_string())
+        .collect();
+    let key_source = format!(
+        "// --- named ---\n{}\n{}",
+        named.join("\n"),
+        program.sources().join("\n// --- unit ---\n")
+    );
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
 
     // An entry that predates an artifact this build needs is a miss, not a

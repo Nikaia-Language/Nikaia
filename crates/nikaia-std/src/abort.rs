@@ -47,6 +47,78 @@ pub fn panic(message: impl std::fmt::Display) -> ! {
     std::panic!("{message}")
 }
 
+/// **A false `assert`**
+/// ([ADR-245](../../../docs/specification/adr/adr-245.md) D2): unrecoverable,
+/// as a `panic` is, and saying what only the compiler knew - the claim as it
+/// was written and the value of each operand of its comparison, by the name
+/// it was written with. The hook above puts the `.nika` line in front.
+///
+/// ```text
+/// src/tally.nika:4: the program stopped: assertion failed: an empty line is blank
+///     assert(blank == 1; message: "an empty line is blank")
+///     blank is 2
+/// ```
+#[track_caller]
+pub fn assertion_failed(
+    written: &str,
+    message: Option<&dyn std::fmt::Display>,
+    operands: &[(&str, Option<String>)],
+) -> ! {
+    std::panic!("{}", failed_claim(written, message, operands))
+}
+
+/// The text [`assertion_failed`] stops with.
+fn failed_claim(
+    written: &str,
+    message: Option<&dyn std::fmt::Display>,
+    operands: &[(&str, Option<String>)],
+) -> String {
+    let mut text = String::from("assertion failed");
+    if let Some(message) = message {
+        text.push_str(&format!(": {message}"));
+    }
+    text.push_str(&format!("\n    {written}"));
+    for (name, value) in operands {
+        if let Some(value) = value {
+            text.push_str(&format!("\n    {name} is {value}"));
+        }
+    }
+    text
+}
+
+/// **An operand of a claim, printed where it can be**
+/// ([ADR-245](../../../docs/specification/adr/adr-245.md) D2).
+///
+/// The compiler writes `(&&Operand(&x)).shown()` for each operand of a false
+/// `assert`'s comparison, and does not know whether `x`'s type prints: an
+/// integer literal's type is settled only below. Method lookup answers it -
+/// [`ShownByDebug`] is found first and exists only where the type is `Debug`;
+/// [`ShownByNothing`], one reference further down, is the answer otherwise, and
+/// the operand is left out of the message rather than the program refused.
+pub struct Operand<'a, T: ?Sized>(pub &'a T);
+
+/// The operand prints as the language below writes it: `2`, `"abc"`, `'x'`.
+pub trait ShownByDebug {
+    fn shown(self) -> Option<String>;
+}
+
+impl<T: std::fmt::Debug + ?Sized> ShownByDebug for &&Operand<'_, T> {
+    fn shown(self) -> Option<String> {
+        Some(format!("{:?}", self.0))
+    }
+}
+
+/// The operand does not print, and the message says nothing about it.
+pub trait ShownByNothing {
+    fn shown(self) -> Option<String>;
+}
+
+impl<T: ?Sized> ShownByNothing for &Operand<'_, T> {
+    fn shown(self) -> Option<String> {
+        None
+    }
+}
+
 /// Install the hook that translates an abort's location.
 ///
 /// **What it does not do is the important half.** A location the table does not
@@ -101,6 +173,36 @@ mod tests {
         (24, "src/parse.nika", 41),
         (99, "src/main.nika", 7),
     ];
+
+    #[test]
+    fn a_failed_claim_names_what_it_claimed() {
+        let values = [("blank", Some("2".to_string())), ("xs", None)];
+        assert_eq!(
+            failed_claim("assert(blank == 1)", None, &values),
+            "assertion failed\n    assert(blank == 1)\n    blank is 2"
+        );
+        let message: &dyn std::fmt::Display = &"an empty line is blank";
+        assert_eq!(
+            failed_claim("assert(ok)", Some(message), &[]),
+            "assertion failed: an empty line is blank\n    assert(ok)"
+        );
+    }
+
+    /// Lookup picks `Debug` where there is one, and nothing where there is
+    /// not - a type with no `Debug` is left out rather than refused.
+    // The `&&` is the point: it is what the emitter writes, and lookup falls
+    // back one reference where the type is not `Debug`.
+    #[allow(clippy::needless_borrow)]
+    #[test]
+    fn an_operand_prints_where_it_can() {
+        struct Opaque;
+        assert_eq!((&&Operand(&2)).shown(), Some("2".to_string()));
+        assert_eq!(
+            (&&Operand(&"a".to_string())).shown(),
+            Some("\"a\"".to_string())
+        );
+        assert_eq!((&&Operand(&Opaque)).shown(), None);
+    }
 
     #[test]
     fn a_known_line_is_translated() {

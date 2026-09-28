@@ -462,3 +462,52 @@ fn a_hit_still_writes_the_ledger_and_still_answers_locked() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **What the output names is part of the key** (0.0.239). The abort table
+/// names each file as it was handed to the compiler (ADR-044 D1), and the key
+/// named it relative to its root - so `nikaia --input /abs/one.nika` followed
+/// by `nikaia --input one.nika` served the first lowering to the second, and
+/// an abort in it named a path the user never wrote. Each form lowers once and
+/// names itself; the same form again is still a hit.
+#[test]
+fn a_file_named_another_way_is_not_served_the_other_name() {
+    let dir = common::scratch_dir("cache-named");
+    std::fs::write(
+        dir.join("one.nika"),
+        "fn main() {\n    let z = 1\n    println(f\"{z}\")\n}\n",
+    )
+    .expect("source");
+    let cache = dir.join("cache");
+    let lower = |input: &str| {
+        let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .current_dir(&dir)
+            .args(["--input", input, "--output", "one.rs"])
+            .env("NIKAIA_CACHE_DIR", &cache)
+            .output()
+            .expect("the nikaia binary runs");
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let said = String::from_utf8_lossy(&run.stdout).to_string();
+        let rust = std::fs::read_to_string(dir.join("one.rs")).expect("the Rust");
+        (said.contains("from cache"), rust)
+    };
+    let absolute = dir.join("one.nika").to_string_lossy().to_string();
+    let (hit, rust) = lower(&absolute);
+    assert!(!hit);
+    assert!(rust.contains(&format!("{absolute:?}")), "{rust}");
+    let (hit, rust) = lower("one.nika");
+    assert!(
+        !hit,
+        "the relative name was served the absolute one's lowering"
+    );
+    assert!(
+        rust.contains("\"one.nika\"") && !rust.contains(&absolute),
+        "{rust}"
+    );
+    let (hit, _) = lower("one.nika");
+    assert!(hit, "the same name again is a hit");
+    std::fs::remove_dir_all(&dir).ok();
+}

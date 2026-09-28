@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.239] — 2026-09-28
+
+**`assert` is a claim** — ADR-245 D2 and D3, built.
+
+- `assert(cond)` and `assert(cond; message: "…")`: a prelude function the
+  compiler knows, so it needs no `use` and costs no reserved word; a program
+  that declares its own `fn assert` calls its own. A false claim stops the
+  program, as `panic` does, and says the `.nika` line, the message, the claim
+  as written and the value of each operand of its comparison:
+
+  ```text
+  src/math.nika:2: the program stopped: assertion failed: division by zero
+      assert(b != 0; message: "division by zero")
+      b is 0
+  ```
+
+  An operand whose type has no printed form is left out rather than the
+  program refused (`nikaia_std::abort::Operand`).
+- **`NK1194`: the condition changes nothing.** Every call in it must be
+  `sync`, throw nothing, touch nothing and change nothing, and one nothing
+  describes is not known to; a block, a jump, a `?` or a task in it is refused
+  the same way. That is what keeps a later proof possible (D3), and why reading
+  an operand again for the message is the same value.
+- **`NK1195`**: an `assert` with other than one `bool` and a text `message:`.
+- Every claim is checked at run time, at every build (D4): Part III 14.2 is
+  rewritten, and its release-build removal and `--with-asserts` are gone.
+- **Defect: a cached lowering named another invocation's file.** The abort
+  table names each file as it was handed to the compiler, and the cache key
+  named it relative to its root, so `nikaia --input /abs/one.nika` then
+  `nikaia --input one.nika` served the first lowering to the second, and its
+  aborts named a path nobody wrote. The names the output writes are in the key
+  now (`tests/cache.rs`).
+
 ## [0.0.238] — 2026-09-28
 
 **The first piece of the compiler is written in Nikaia** - ADR-196's route,

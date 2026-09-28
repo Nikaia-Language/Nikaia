@@ -152,6 +152,10 @@ pub mod prelude {
     // a program that reaches a state it has no answer for should not need an
     // import to say so.
     pub use crate::abort::panic;
+    // **How a false `assert` prints its operands**
+    // ([ADR-245](../../../docs/specification/adr/adr-245.md) D2): the emitter
+    // writes `.shown()` on each, and a method needs its trait in scope.
+    pub use crate::abort::{ShownByDebug as _, ShownByNothing as _};
     pub use crate::bytes::Bytes;
     pub use crate::cli;
     pub use crate::collections;

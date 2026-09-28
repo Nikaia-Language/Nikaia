@@ -1433,6 +1433,8 @@ struct Emitter<'p> {
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::claims` ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
+    claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
     /// around one call by `call` and read by `args`, as `hold_args` is.
@@ -2378,6 +2380,7 @@ impl<'p> Emitter<'p> {
             boxed_reads: propagation.boxed_reads,
             copied_bindings: propagation.copied_bindings,
             compared_views: propagation.compared_views,
+            claims: propagation.claims,
             boxed_args: std::cell::RefCell::new(None),
             mut_args: propagation.mut_args,
             copied_args: propagation.copied_args,
@@ -7958,6 +7961,45 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **An `assert` is a claim checked here** (ADR-245 D2, D4): nothing
+        // proves one yet, so each is a test at run time, and the failure is
+        // written with what only this compiler knew - the claim as written
+        // and its operands by name. The condition changes nothing (D3), which
+        // is what makes reading an operand a second time, for the message,
+        // the same value it compared.
+        if let ([condition], Expr::Variable(name)) = (args, func)
+            && self.text(*name) == crate::check::ASSERT
+            && let Some(claim) = self
+                .claims
+                .get(&(flow.statement, crate::check::argument_shape(condition)))
+        {
+            out.push("if !(");
+            self.expr(out, condition, depth, flow)?;
+            out.push(&format!(
+                ") {{ nikaia_std::abort::assertion_failed({:?}, ",
+                claim.written
+            ));
+            match config.iter().find(|c| self.text(c.name) == "message") {
+                Some(message) => {
+                    out.push("Some(&(");
+                    self.expr(out, &message.value, depth, flow)?;
+                    out.push(")), ");
+                }
+                None => out.push("None, "),
+            }
+            out.push("&[");
+            if let Expr::Binary { lhs, rhs, .. } = condition {
+                let shown = [(&claim.left, lhs), (&claim.right, rhs)];
+                for (label, operand) in shown {
+                    let Some(label) = label else { continue };
+                    out.push(&format!("({label:?}, (&&nikaia_std::abort::Operand(&("));
+                    self.expr(out, operand, depth, flow)?;
+                    out.push("))).shown()), ");
+                }
+            }
+            out.push("]) }");
+            return Ok(());
+        }
         // **A kept function value called by name** is the closure it holds,
         // awaited where its type may pause and propagated where it may fail.
         if let Expr::Variable(name) = func {

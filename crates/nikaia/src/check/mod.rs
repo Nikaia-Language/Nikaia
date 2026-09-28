@@ -168,6 +168,20 @@ pub struct StoredCode {
     pub free: BTreeSet<String>,
 }
 
+/// **One `assert`** ([ADR-245](../../docs/specification/adr/adr-245.md) D2):
+/// what its failure says, which only the compiler knows - the claim as it was
+/// written, and the operands of its comparison by the names they were written
+/// with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Claim {
+    /// `assert(blank == 1; message: "…")`, rewritten from the tree.
+    pub written: String,
+    /// The comparison's left operand, where its value can be shown: `blank`.
+    pub left: Option<String>,
+    /// The same for the right.
+    pub right: Option<String>,
+}
+
 /// Whether an expression names a **place that outlives the statement**
 /// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
 ///
@@ -726,6 +740,11 @@ pub struct Checked {
     /// language below compares a `char` with a `char` and not with a `&char`,
     /// so the emitter reads the view (`*c`).
     pub compared_views: BTreeSet<(usize, String)>,
+    /// **Every `assert`, and what its failure shows**
+    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), by statement
+    /// and the shape of its condition. Nothing proves a claim yet, so every
+    /// one here is checked at run time (D4).
+    pub claims: BTreeMap<(usize, String), Claim>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1657,6 +1676,8 @@ pub struct Propagation {
     pub copied_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::compared_views`].
     pub compared_views: BTreeSet<(usize, String)>,
+    /// [`Checked::claims`].
+    pub claims: BTreeMap<(usize, String), Claim>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -1851,6 +1872,7 @@ pub fn propagation_against(
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
         compared_views: checked.compared_views,
+        claims: checked.claims,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -4665,6 +4687,246 @@ impl<'a> Checker<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Whether a call is to the **prelude's `assert`**
+    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), and not to a
+    /// name the program declared itself.
+    fn the_prelude_assert(&self, func: &Expr) -> bool {
+        matches!(func, Expr::Variable(name) if self.parsed.text(*name) == ASSERT)
+            && self.lookup(ASSERT).is_none()
+            && !self.own.functions.contains_key(ASSERT)
+    }
+
+    /// **`assert(cond; message: …)`** ([ADR-245](../../docs/specification/adr/adr-245.md)
+    /// D2, D3): one `bool`, one option, and a condition that changes nothing.
+    ///
+    /// Typed here and not through [`Checker::call`], because what the
+    /// condition calls is the question: a frame of [`StoredCode`] around it
+    /// collects every method it resolves, and its free calls are read off the
+    /// tree. A condition that pauses, fails, touches anything or changes a
+    /// value is `NK1194`: the rule that keeps a proof possible (D3), and the
+    /// reason evaluating it a second time for the failure message is harmless.
+    fn an_assert(&mut self, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
+        let unit = Ty::named("()");
+        let [condition] = args else {
+            self.an_assert_of_another_shape(
+                format!(
+                    "`assert` claims one condition, and this hands it {}",
+                    args.len()
+                ),
+                span,
+            );
+            for arg in args {
+                self.expr(arg, span);
+            }
+            return unit;
+        };
+        self.stored_frames.push(StoredCode::default());
+        let found = self.expr(condition, span);
+        let frame = self.stored_frames.pop().unwrap_or_default();
+        self.expect_bool(&found, span, "an `assert` claims a `bool`");
+        // A number's type is settled below, so the check above cannot see
+        // `assert(5)`; the literal is its own answer.
+        if is_a_literal_other_than(condition, "bool") {
+            self.an_assert_of_another_shape(
+                "an `assert` claims a `bool`, and this is a literal of another type".to_string(),
+                span,
+            );
+        }
+        let mut message = None;
+        for option in config {
+            let name = self.parsed.text(option.name).to_string();
+            let found = self.expr(&option.value, span);
+            if name != "message" {
+                self.an_assert_of_another_shape(
+                    format!("`assert` has no option `{name}`; its one option is `message:`"),
+                    span,
+                );
+                continue;
+            }
+            let not_text = is_a_literal_other_than(&option.value, "text")
+                || (!found.is_unknown()
+                    && !found.fits(&Ty::named("String"))
+                    && !found.fits(&Ty::view("str")));
+            if not_text {
+                self.an_assert_of_another_shape(
+                    match found.is_unknown() {
+                        true => "an `assert`'s `message:` is text, and this is a literal of \
+                                 another type"
+                            .to_string(),
+                        false => format!("an `assert`'s `message:` is text, and this is `{found}`"),
+                    },
+                    span,
+                );
+            }
+            message = Some(&option.value);
+        }
+
+        let mut not_pure: Vec<String> = Vec::new();
+        if frame.unresolved {
+            not_pure.push(
+                "it calls a method nothing describes, so nothing says it changes nothing"
+                    .to_string(),
+            );
+        }
+        for key in &frame.resolved {
+            if let Some((_, contract)) = self.method(key)
+                && let Some(why) = not_pure_because(contract)
+            {
+                not_pure.push(format!("`{key}` {why}"));
+            }
+        }
+        self.a_claim_reaches(condition, &mut not_pure);
+        if !not_pure.is_empty() {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1194",
+                message: "the condition of an `assert` has to change nothing".to_string(),
+                notes: not_pure
+                    .into_iter()
+                    .chain(std::iter::once(
+                        "an `assert` is a claim the compiler may later prove, so its condition \
+                         may not pause, fail, touch anything or change a value (ADR-245 D3)"
+                            .to_string(),
+                    ))
+                    .collect(),
+                help: Some(
+                    "compute the value first, with `let`, and claim something about the name"
+                        .to_string(),
+                ),
+            });
+        }
+
+        // **What the failure shows** (D2): the operands of a comparison, by
+        // the names they were written with, where their value can be printed.
+        let (left, right) = match condition {
+            Expr::Binary {
+                op:
+                    BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge,
+                lhs,
+                rhs,
+                ..
+            } => (self.shown_operand(lhs), self.shown_operand(rhs)),
+            _ => (None, None),
+        };
+        let mut claimed = format!("{ASSERT}({}", written(self.parsed, condition));
+        if let Some(value) = message {
+            claimed.push_str(&format!("; message: {}", written(self.parsed, value)));
+        }
+        claimed.push(')');
+        self.checked.claims.insert(
+            (span.start, argument_shape(condition)),
+            Claim {
+                written: claimed,
+                left,
+                right,
+            },
+        );
+        unit
+    }
+
+    /// `NK1195`: an `assert` written in a shape it does not have.
+    fn an_assert_of_another_shape(&mut self, message: String, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1195",
+            message,
+            notes: vec![
+                "`assert(cond)` or `assert(cond; message: \"…\")` (ADR-245 D2)".to_string(),
+            ],
+            help: None,
+        });
+    }
+
+    /// An operand whose value an `assert`'s failure can show: anything but a
+    /// literal, which shows nothing it does not already say. Whether its type
+    /// can be printed is the language below's to answer
+    /// (`nikaia_std::abort::Operand`), because an integer literal's type is
+    /// not settled here.
+    fn shown_operand(&self, operand: &Expr) -> Option<String> {
+        let literal = matches!(
+            operand,
+            Expr::LitInt(_)
+                | Expr::LitFloat(_)
+                | Expr::LitStr { .. }
+                | Expr::LitChar(_)
+                | Expr::LitBool(_)
+                | Expr::LitNull
+        ) || matches!(operand, Expr::Unary { op: UnaryOp::Neg, expr }
+            if matches!(**expr, Expr::LitInt(_) | Expr::LitFloat(_)));
+        (!literal).then(|| written(self.parsed, operand))
+    }
+
+    /// The free calls and the forms in a claim that are not a read
+    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D3). Methods are
+    /// the frame's; this is what the tree says.
+    fn a_claim_reaches(&self, condition: &Expr, not_pure: &mut Vec<String>) {
+        let mut found: Vec<String> = Vec::new();
+        crate::contracts::sync::visit_expr(self.parsed, condition, &mut |expr| {
+            let form = match expr {
+                Expr::Spawn { .. } => Some("starts a task"),
+                Expr::Select(_) => Some("waits in a `select`"),
+                Expr::Overlap(_) => Some("runs an `overlap`"),
+                Expr::Dsl { .. } => Some("runs a `dsl` block"),
+                Expr::Asm { .. } | Expr::Unsafe(_) => Some("runs `unsafe` code"),
+                Expr::Try(_) | Expr::Throw(_) | Expr::TryCatch { .. } => Some("can fail"),
+                Expr::Return(_) | Expr::Break | Expr::Continue => Some("jumps"),
+                Expr::Block(_) | Expr::If { .. } | Expr::Match { .. } | Expr::Closure { .. } => {
+                    Some("holds a block, which may change something")
+                }
+                _ => None,
+            };
+            if let Some(form) = form {
+                found.push(format!("the condition {form}"));
+            }
+            let Expr::Call { func, .. } = expr else {
+                return;
+            };
+            let name = match func.as_ref() {
+                Expr::Variable(name) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments) => self.parsed.unaliased(
+                    &segments
+                        .iter()
+                        .map(|s| self.parsed.text(*s))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                ),
+                _ => {
+                    found.push("the condition calls something that is not a name".to_string());
+                    return;
+                }
+            };
+            // A value is made, not a call made: a variant, a type's
+            // constructor, a hull.
+            let constructs = self.variant_parts.contains_key(&name)
+                || self.declares_a_type(&name)
+                || is_hull(&name)
+                || name
+                    .split_once("::")
+                    .is_some_and(|(ty, variant)| self.is_variant(ty, variant));
+            if constructs {
+                return;
+            }
+            match self.resolve(&name) {
+                Some((_, contract)) => {
+                    if let Some(why) = not_pure_because(contract) {
+                        found.push(format!("`{name}` {why}"));
+                    }
+                }
+                None => found.push(format!(
+                    "nothing describes `{name}`, so nothing says it changes nothing"
+                )),
+            }
+        });
+        not_pure.extend(found);
     }
 
     /// **A view of a copied value compared with the value** (0.0.238).
@@ -8039,7 +8301,10 @@ impl<'a> Checker<'a> {
                 }
             }
 
-            Expr::Call { func, args, config } => self.call(func, args, config, span),
+            Expr::Call { func, args, config } => match self.the_prelude_assert(func) {
+                true => self.an_assert(args, config, span),
+                false => self.call(func, args, config, span),
+            },
 
             Expr::MethodCall {
                 receiver,
@@ -19214,6 +19479,186 @@ fn unviewed(ty: &Ty) -> Ty {
             view: false,
         },
         other => other.clone(),
+    }
+}
+
+/// Whether an expression is a literal of a kind other than `kind` (`"bool"`
+/// or `"text"`): the one answer a literal whose type is settled below gives
+/// here.
+fn is_a_literal_other_than(expr: &Expr, kind: &str) -> bool {
+    match expr {
+        Expr::LitBool(_) => kind != "bool",
+        Expr::LitStr { .. } | Expr::LitInterpolated(_) => kind != "text",
+        Expr::LitInt(_) | Expr::LitFloat(_) | Expr::LitChar(_) | Expr::LitNull => true,
+        _ => false,
+    }
+}
+
+/// The prelude's claim ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
+pub const ASSERT: &str = "assert";
+
+/// Why a call cannot stand in an `assert`'s condition, or nothing where it can
+/// ([ADR-245](../../docs/specification/adr/adr-245.md) D3): it may pause, may
+/// fail, touches something or changes a value. A `touches` nobody wrote is not
+/// an answer, and counts as touching.
+fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
+    if !contract.sync.is_sync() {
+        return Some("can pause");
+    }
+    if !contract.throws.is_empty() {
+        return Some("can fail");
+    }
+    if contract.mutates {
+        return Some("changes what it is called on");
+    }
+    if !contract.touches_known || !contract.touches.is_empty() {
+        return Some("touches something outside the program's values");
+    }
+    if contract.touches_a_lock.holds() {
+        return Some("takes a lock");
+    }
+    None
+}
+
+/// **An expression as it was written**, near enough, rewritten from the tree:
+/// the parser keeps no text, and an `assert`'s failure names its condition
+/// ([ADR-245](../../docs/specification/adr/adr-245.md) D2). What this does not
+/// spell out it writes as `…`, which a reader recognises and nothing parses.
+pub fn written(parsed: &Parsed, expr: &Expr) -> String {
+    let w = |e: &Expr| written(parsed, e);
+    let list = |items: &[Expr]| {
+        items
+            .iter()
+            .map(|e| written(parsed, e))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let options = |config: &[ast::ConfigArg]| {
+        config
+            .iter()
+            .map(|c| format!("{}: {}", parsed.text(c.name), written(parsed, &c.value)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let call = |args: &[Expr], config: &[ast::ConfigArg]| match config.is_empty() {
+        true => format!("({})", list(args)),
+        false if args.is_empty() => format!("(; {})", options(config)),
+        false => format!("({}; {})", list(args), options(config)),
+    };
+    // A side that binds looser than the operator it stands under is written
+    // in the parentheses it needed.
+    let operand = |e: &Expr| match e {
+        Expr::Binary { .. } | Expr::Coalesce { .. } | Expr::Cast { .. } => format!("({})", w(e)),
+        _ => w(e),
+    };
+    match expr {
+        Expr::LitInt(v) => v.to_string(),
+        Expr::LitFloat(v) => v.clone(),
+        Expr::LitBool(b) => b.to_string(),
+        Expr::LitChar(c) => format!("'{c}'"),
+        Expr::LitStr { text, .. } => format!("\"{text}\""),
+        Expr::LitInterpolated(text) => format!("f\"{text}\""),
+        Expr::LitNull => "null".to_string(),
+        Expr::Variable(name) => parsed.text(*name).to_string(),
+        Expr::Path(segments) => segments
+            .iter()
+            .map(|s| parsed.text(*s))
+            .collect::<Vec<_>>()
+            .join("::"),
+        Expr::Field { base, name } => format!("{}.{}", operand(base), parsed.text(*name)),
+        Expr::SafeField { base, name } => format!("{}?.{}", operand(base), parsed.text(*name)),
+        Expr::Index { base, index } => format!("{}[{}]", operand(base), w(index)),
+        Expr::Call { func, args, config } => format!("{}{}", w(func), call(args, config)),
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            config,
+        } => format!(
+            "{}.{}{}",
+            operand(receiver),
+            parsed.text(*method),
+            call(args, config)
+        ),
+        Expr::SafeMethod {
+            receiver,
+            method,
+            args,
+            config,
+        } => format!(
+            "{}?.{}{}",
+            operand(receiver),
+            parsed.text(*method),
+            call(args, config)
+        ),
+        Expr::Unary { op, expr } => {
+            let op = match op {
+                ast::UnaryOp::Neg => "-",
+                ast::UnaryOp::Not => "!",
+                ast::UnaryOp::Ref => "&",
+            };
+            format!("{op}{}", operand(expr))
+        }
+        Expr::Binary { op, lhs, rhs, .. } => {
+            // Parentheses where the tree needs them and nowhere else, so the
+            // claim reads as it was written: a side that binds looser than
+            // this operator, or as loosely on the right.
+            let binds = |op: &BinaryOp| match op {
+                BinaryOp::Or => 1,
+                BinaryOp::And => 2,
+                BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge => 3,
+                BinaryOp::Add | BinaryOp::Sub => 4,
+                BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 5,
+            };
+            let here = binds(op);
+            let side = |e: &Expr, right: bool| match e {
+                Expr::Binary { op: inner, .. }
+                    if binds(inner) < here || (right && binds(inner) == here) =>
+                {
+                    format!("({})", w(e))
+                }
+                Expr::Binary { .. } => w(e),
+                _ => operand(e),
+            };
+            let (lhs, rhs) = (side(lhs, false), side(rhs, true));
+            let op = match op {
+                BinaryOp::Add => "+",
+                BinaryOp::Sub => "-",
+                BinaryOp::Mul => "*",
+                BinaryOp::Div => "/",
+                BinaryOp::Rem => "%",
+                BinaryOp::Eq => "==",
+                BinaryOp::Ne => "!=",
+                BinaryOp::Lt => "<",
+                BinaryOp::Le => "<=",
+                BinaryOp::Gt => ">",
+                BinaryOp::Ge => ">=",
+                BinaryOp::And => "&&",
+                BinaryOp::Or => "||",
+            };
+            format!("{lhs} {op} {rhs}")
+        }
+        Expr::Coalesce { value, fallback } => {
+            format!("{} ?? {}", operand(value), operand(fallback))
+        }
+        Expr::Tuple(items) => format!("({})", list(items)),
+        Expr::ListLit { items, .. } => format!("[{}]", list(items)),
+        Expr::Range {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            operand(start),
+            if *inclusive { ".." } else { "..<" },
+            operand(end)
+        ),
+        _ => "…".to_string(),
     }
 }
 

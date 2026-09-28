@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.238 (Draft)
+**Version:** 0.0.239 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -341,25 +341,32 @@ A `test` block checks specific inputs. `test` blocks are compiled only during `n
 
 ```nika
 test "Addition" {
-    assert 1 + 1 == 2
+    assert(1 + 1 == 2)
 }
 ```
 
-### 14.2. Runtime Assertions (Design by Contract)
-An `assert` statement inside an ordinary function enforces a precondition or an invariant.
+### 14.2. Assertions: a claim the compiler may prove
+*[ADR-245](adr/adr-245.md) D2 to D4. Built: `assert` and its checks; nothing is proved yet.*
 
-**Compiler behaviour:**
-* **Debug profile:** assertions are active. A false condition panics with a detailed message.
-* **Release profile:** assertions are removed, unless the build enables them with `nikaia build --with-asserts`.
+`assert(cond)` and `assert(cond; message: "…")` claim that `cond` holds whenever the line is reached. `assert` is a prelude function the compiler knows, not a statement: it needs no `use` and costs no reserved word, and a program that declares its own `fn assert` calls its own.
+
+**The condition changes nothing.** It may not pause, may not fail, and may not touch or change anything: every call in it has to be `sync`, throw nothing, touch nothing (`touches = []`) and change nothing, and a call nothing describes is not known to. A condition that could is refused where it is written (`NK1194`), because a condition with an effect would make the program depend on whether the check is performed, and a condition that reads the world has no value a compiler could prove. `assert` takes one `bool` and one option, `message:`, which is text (`NK1195`).
+
+**A claim is held the same way at every build.** For each `assert` the compiler proves it (and emits no check), refutes it with values that reach it false (a warning, D5), or checks it at run time. No build option chooses: an assertion is not removed from a release build, as an overflow check is not (Part I 2.2). Today the compiler proves nothing, so every `assert` is checked at run time.
+
+**A false claim stops the program**, as `panic` does (A.2), and says what only the compiler knew: the line, the message, the claim as written, and the value of each operand of its comparison - a literal's value is already on the line, and an operand whose type has no printed form is left out.
 
 ```nika
-fn divide(a: i32, b: i32) -> i32 {
-    // Precondition: Denominator must not be zero.
-    // In Release mode, this check disappears.
-    assert b != 0, "Division by zero prohibited"
-    
+fn divide(a: i64, b: i64) -> i64 sync {
+    assert(b != 0; message: "division by zero")
     return a / b
 }
+```
+
+```text
+src/math.nika:2: the program stopped: assertion failed: division by zero
+    assert(b != 0; message: "division by zero")
+    b is 0
 ```
 
 ### 14.3. Property-Based Testing (Fuzzing)
