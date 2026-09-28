@@ -1611,6 +1611,14 @@ touches = []
 signature = "(c: char) -> i32"
 doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a digit is not a question this answers: it hands\nback whatever the subtraction comes to."
 
+[fn."text::parse_i64"]
+pub = true
+sync = true
+touches = []
+views = ["text: borrowed"]
+signature = "(text: ref String) -> i64?"
+doc = "The whole number this text writes, or nothing where it writes none.\n\nAn optional `-` or `+`, then decimal digits, and nothing else: no space, no\n`_`, no point. A number too large for an `i64` is nothing too, because the\ntext does not write an `i64`. `text::parse_i64(s) ?? 0` is the usual way to\nread one; a program that has to say *why* a text is not a number looks at\nit with a grammar, where `dec[i64](digit+)` reports where it went wrong."
+
 # What the program was started with, and the one type here that says it **may
 # cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so
 # `contracts::send` cannot walk them and would answer "nobody said" - which is

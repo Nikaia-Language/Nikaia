@@ -6,3 +6,30 @@
 // this was written - see `contracts::sync`.
 pub fn digit_value(c: char) -> i32 { c as i32 - 48 }
 
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn parse_i64(text: &str) -> Option<i64> {
+    let least: i64 = -9223372036854775807i64 - 1i64;
+    let mut value: i64 = 0;
+    let mut negative = false;
+    let mut digits = 0;
+    let mut first = true;
+    for c in text.chars() {
+        let signed = first && (c == '-' || c == '+');
+        first = false;
+        if signed {
+            negative = c == '-';
+            continue;
+        }
+        if c < '0' || c > '9' { return None; }
+        let d = digit_value(c) as i64;
+        if value < (least + d) / 10 { return None; }
+        value = value * 10 - d;
+        digits += 1;
+    }
+    if digits == 0 { return None; }
+    if negative { return Some(value); }
+    if value == least { return None; }
+    Some(0 - value)
+}
+

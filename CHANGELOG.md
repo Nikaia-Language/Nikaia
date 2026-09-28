@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.237] — 2026-09-28
+
+**`std` reads a whole number from text** — `atoi`, written in Nikaia.
+
+- `text::parse_i64(s) -> i64?` in `std/text.nika`, beside `digit_value`: an
+  optional `-` or `+` and decimal digits, and `null` where the text writes no
+  `i64` - empty, a stray character, a space, or one past either end of the
+  range. It counts downward so the smallest `i64` is a number and not an
+  overflow. `null` and not an error, because *is this a number* has one answer
+  to a caller that only asks that; a text whose shape has to be explained is a
+  grammar's, with `dec[T](p)`.
+- **The miniature compiler is a test now** (`tests/self_hosting.rs`): a
+  grammar, a syntax tree that holds itself, a check for names nothing declares,
+  and Rust written out as text, with none of the three workarounds it needed
+  at 0.0.231. A change that stops it building is a step back on the road to a
+  compiler written in Nikaia.
+- Part III 17 lists `std::text`.
+
 ## [0.0.236] — 2026-09-27
 
 **A type may hold itself** — ADR-246, the owner's answer to *how a type holds

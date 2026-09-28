@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.236 (Draft)
-**Date:** 2026-09-27
+**Version:** 0.0.237 (Draft)
+**Date:** 2026-09-28
 
 ---
 
@@ -1070,6 +1070,12 @@ hash for a map keyed by the input: fast, fixed seed - no adversary chooses these
 An untrusted map is seeded randomly, so **its iteration order is not stable between runs**. A program that needs an order asks for it explicitly.
 
 **Other key modules:**
+* **`std::text`**: what text says, written in Nikaia (`std/text.nika`).
+  `text::parse_i64(s)` is the whole number `s` writes - an optional sign and
+  digits - or nothing where it writes none, a number too large for an `i64`
+  included: `text::parse_i64(s) ?? 0`. `text::digit_value(c)` is one digit's
+  value. A text whose shape has to be explained when it is wrong is a grammar's
+  to read, with `dec[T](p)` (Part II 10.8).
 * **`std::json`**: serialization using compile-time code generation, with zero-allocation parsing where possible.
 * **`std::cli`**: parsers for command-line arguments, environment variables and ANSI terminal colours.
 * **`std::net`**: low-level TCP sockets for building custom protocols — `listen`,

@@ -26,3 +26,61 @@
 pub fn digit_value(c: char) -> i32 sync {
     return c as i32 - 48
 }
+
+/// The whole number this text writes, or nothing where it writes none.
+///
+/// An optional `-` or `+`, then decimal digits, and nothing else: no space, no
+/// `_`, no point. A number too large for an `i64` is nothing too, because the
+/// text does not write an `i64`. `text::parse_i64(s) ?? 0` is the usual way to
+/// read one; a program that has to say *why* a text is not a number looks at
+/// it with a grammar, where `dec[i64](digit+)` reports where it went wrong.
+//
+// Written in Nikaia for the reason this file exists (ADR-014 D1), and the
+// first function here that a compiler written in Nikaia needs: reading a
+// number literal is `atoi`, and `std` had no way to do it.
+//
+// **The value is counted downward**, from `0` towards `least`: an `i64` has
+// one more negative value than positive ones, so counting up would overflow on
+// `-9223372036854775808`, the one text that writes the smallest `i64`. Before
+// each digit the check asks whether `value * 10 - d` would pass `least` -
+// `(least + d) / 10` rounds towards zero, which for a negative number is up,
+// so a `value` below it is one step too far.
+//
+// **`null` where Rust's `parse` has an error**: the reasons it gives - empty,
+// not a digit, too large - are one answer to a program that only asks *is this
+// a number*, and the absence is data, as a key that is not in a map is
+// (ADR-114 D1).
+pub fn parse_i64(text: ref String) -> i64? sync {
+    let least: i64 = -9223372036854775807 - 1
+    let mut value: i64 = 0
+    let mut negative = false
+    let mut digits = 0
+    let mut first = true
+    for c in text.chars() {
+        let signed = first && (c == '-' || c == '+')
+        first = false
+        if signed {
+            negative = c == '-'
+            continue
+        }
+        if c < '0' || c > '9' {
+            return null
+        }
+        let d = digit_value(c) as i64
+        if value < (least + d) / 10 {
+            return null
+        }
+        value = value * 10 - d
+        digits += 1
+    }
+    if digits == 0 {
+        return null
+    }
+    if negative {
+        return value
+    }
+    if value == least {
+        return null
+    }
+    return 0 - value
+}
