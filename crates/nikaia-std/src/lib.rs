@@ -76,7 +76,9 @@ pub mod text {
     include!("text.rs");
 }
 
-/// **Nikaia that the toolchain uses and `std` does not publish.**
+/// **Nikaia that the toolchain - or `std` itself, below its surface - uses and
+/// `std` does not publish.** `http1` is the second kind: the text half of
+/// `crate::http1`, which a program reaches through that module and never here.
 ///
 /// A directory of its own, because a `.nika` beside `lib.rs` means something:
 /// that `std` offers it, and that `std.contracts` has to carry every `pub`
@@ -109,6 +111,30 @@ pub mod tools {
     /// module calls it.
     pub mod dsl {
         include!("tools/dsl.rs");
+    }
+
+    /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
+    /// grammar and the rules a server answers by, lowered to
+    /// `src/tools/http1.rs` and committed beside it
+    /// ([ADR-038](../../../docs/specification/adr/adr-038.md) D6, 0.0.247).
+    /// `crate::http1` keeps the bytes and calls this for the text.
+    pub mod http1 {
+        include!("tools/http1.rs");
+
+        /// **The one call a Rust caller makes into the grammar**, for
+        /// `rust::file`'s reason: the generated `Http1::parse_head()` hands
+        /// back a parser rather than a result, and a Rust caller has no
+        /// emitter to write the four lines that turn one into the other.
+        pub fn written(text: &str) -> Result<Written<'_>, crate::grammar::ParseError> {
+            use winnow::Parser;
+            let mut stream = winnow_grammar::ParseInput::<()> {
+                state: winnow_grammar::ParseContext::<()>::default(),
+                input: winnow::stream::LocatingSlice::new(text),
+            };
+            Http1::parse_head()
+                .parse_next(&mut stream)
+                .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
+        }
     }
 
     /// **A Rust file's public surface**, read by a Nikaia grammar:

@@ -262,3 +262,28 @@ fn a_target_with_no_query_answers_nothing() {
     assert_eq!(head.target(), "/plain");
     assert_eq!(head.query("q"), None);
 }
+
+/// **The head is read in Nikaia now** (0.0.247, `src/tools/http1.nika`), and
+/// two readings of the Rust it replaced are held here, because they are the
+/// ones a grammar written from scratch gets differently: a line without a
+/// colon says nothing and is skipped, and two spaces in a row are an empty
+/// word between them - so the version is the fourth word, and refused.
+#[test]
+fn what_the_rust_parser_read_the_grammar_reads() {
+    let read = buffer(&[b"GET /a?b=1 HTTP/1.1\r\nno colon here\r\nHost:  x \r\n\r\n"]);
+    let head = read.head().expect("a head");
+    assert_eq!(head.target(), "/a?b=1");
+    assert_eq!(head.path(), "/a");
+    assert_eq!(head.header("HOST"), Some("x"));
+    assert_eq!(
+        head.headers(),
+        1,
+        "the line without a colon is not a header"
+    );
+
+    let doubled = buffer(&[b"GET  / HTTP/1.1\r\n\r\n"]);
+    assert_eq!(
+        format!("{}", doubled.head().expect_err("refused")),
+        "400 a version this does not speak"
+    );
+}

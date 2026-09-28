@@ -3,10 +3,12 @@
 //!
 //! `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no
 //! chunked transfer and no TLS. That record's own scope, and its own staging:
-//! **the parser is Rust here and moving it into a Nikaia grammar is a later
-//! step** — self-hosting the protocol is not the MVP, and the route it will
-//! take when it moves is [ADR-196](../../../docs/specification/adr/adr-196.md)
-//! D2's.
+//! **the parser was Rust here and is a Nikaia grammar now** (0.0.247,
+//! [ADR-038](../../../docs/specification/adr/adr-038.md) D6), by
+//! [ADR-196](../../../docs/specification/adr/adr-196.md)'s route:
+//! `src/tools/http1.nika`. What stays here is the bytes - the buffer a socket
+//! fills, where a head ends, whether it is text - and the `Head` a program is
+//! handed.
 //!
 //! **Not named `http`**, and that is not a taste: a program reaches a *package*
 //! by that word ([ADR-069](../../../docs/specification/adr/adr-069.md) D1), and
@@ -277,66 +279,33 @@ impl Head {
 
 /// The request line and the headers, where the head is already known to be text
 /// and `size` bytes long.
+///
+/// **Read in Nikaia** (0.0.247): `src/tools/http1.nika` is the grammar and the
+/// rules - which methods, which version, what a `Content-Length` has to be -
+/// and this is the handover. The grammar reads every head that ended, so a
+/// failure of it is a head this module has no words for, and it is refused as
+/// one rather than guessed at.
 fn parse(text: &str, size: i64) -> Result<Head, IoError> {
-    let mut lines = text.split("\r\n");
-    let request_line = lines.next().unwrap_or("");
-    let mut words = request_line.split(' ');
-    let (Some(method), Some(path), Some(version)) = (words.next(), words.next(), words.next())
-    else {
+    let Ok(written) = crate::tools::http1::written(text) else {
         return Err(IoError::Other(
-            "400 a request line that is not three words".into(),
+            "400 a request head this does not read".into(),
         ));
     };
-    if !version.starts_with("HTTP/1.") {
-        return Err(IoError::Other("400 a version this does not speak".into()));
+    let read = crate::tools::http1::read(&written);
+    if !read.refused.is_empty() {
+        return Err(IoError::Other(read.refused.into()));
     }
-    // **The two methods and no others** (D5). A `PUT` refused by name is a
-    // server saying what it is; one quietly routed as a `GET` is a server
-    // guessing.
-    if method != "GET" && method != "POST" {
-        return Err(IoError::Other("400 a method this does not answer".into()));
-    }
-
-    let mut length = 0_i64;
-    let mut keep_alive = false;
-    let mut headers: Vec<(String, String)> = Vec::new();
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        // A header's name does not care about case, and its value's surrounding
-        // blanks are not part of it.
-        let name = name.trim().to_ascii_lowercase();
-        let value = value.trim();
-        headers.push((name.clone(), value.to_string()));
-        match name.as_str() {
-            "content-length" => match value.parse::<i64>() {
-                Ok(n) if n >= 0 => length = n,
-                _ => {
-                    return Err(IoError::Other(
-                        "400 a content-length that is not a count".into(),
-                    ));
-                }
-            },
-            "connection" => keep_alive = value.eq_ignore_ascii_case("keep-alive"),
-            "transfer-encoding" => {
-                // **Refused and not ignored** (D5: no chunked). A server that
-                // ignored this would read a chunk header as a body.
-                return Err(IoError::Other(
-                    "400 a transfer-encoding this does not speak".into(),
-                ));
-            }
-            _ => {}
-        }
-    }
-
     Ok(Head {
-        method: method.to_string(),
-        path: path.to_string(),
-        length,
+        method: read.method.to_string(),
+        path: read.target.to_string(),
+        length: read.length,
         size,
-        keep_alive,
-        headers,
+        keep_alive: read.keep_alive,
+        headers: read
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value.to_string()))
+            .collect(),
     })
 }
 

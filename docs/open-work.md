@@ -34,6 +34,21 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
+### 1.26. `list(item, sep)` reaches a backend that has no such element
+
+Found at 0.0.247, writing the HTTP/1.1 head as a grammar. Part II 10.8's table
+has `list(item, sep)` - *`item`, separated by `sep`, zero or more* - and the
+emitter writes it through as it was written. The backend reads `list` as a rule
+of the grammar's own and `(WORD, " ")` as a group, and the macro says *expected
+ident* about the generated file ([Part III
+C.1](specification/30-nikaia-tooling.md)). `winnow-grammar` names a `separated`
+among the built-ins its parser accepts, and generates nothing for it. Evidence:
+`rule head -> Written = words:list(WORD, " ") "\r\n" …` in
+`nikaia-std/src/tools/http1.nika`, lowered by `nikaia lower-std` at 0.0.247;
+that file writes the repetition out instead (`first:WORD rest:MORE*`). Either
+the element is built on the backend, or it is refused by name with that
+spelling handed over, as `NK1187` does for `tag` and `digit1`.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

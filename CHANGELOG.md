@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.247] — 2026-09-28
+
+**Two more pieces of Rust are Nikaia**, by ADR-196's route: written as `.nika`
+under `nikaia-std/src/tools/`, lowered ahead of time by `nikaia lower-std`,
+committed beside it and `include!`d.
+
+- **The holes of a `dsl` body** (`tools/dsl.nika`): the compiler's scan for
+  `:name` deferred parameters. `dsl::parameters` in the compiler is the call,
+  and `tests/self_hosting.rs` holds it to the Rust it replaced.
+- **The HTTP/1.1 request head** (`tools/http1.nika`, ADR-038 D6, ADR-194 D5):
+  a grammar that reads the request line and the lines with a colon, and `read`,
+  which says what a server answers and what it refuses - `GET` and `POST`,
+  `HTTP/1.x`, a `Content-Length` that is a count, no `Transfer-Encoding` - with
+  every refusal in the words it had. `std::http1` keeps the bytes: the buffer,
+  where a head ends, whether it is text. The roadmap's *parsing moved into
+  Nikaia* step is done.
+- **`use std::M` in a module of `std`'s Nikaia half is the import itself**:
+  such a module is lowered without the prelude, so `use std::text` wrote only a
+  comment and `text::parse_i64` below it named nothing.
+- **Found and recorded, not fixed**: `list(item, sep)` (Part II 10.8) reaches a
+  backend that has no such element (`open-work.md` §1.26); `http1.nika` writes
+  the repetition out.
+
 ## [0.0.246] — 2026-09-28
 
 **Patterns, lookups and a map's lists**: found by writing a graph and a few

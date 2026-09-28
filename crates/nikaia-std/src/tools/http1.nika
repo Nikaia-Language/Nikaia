@@ -1,0 +1,181 @@
+// crates/nikaia-std/src/tools/http1.nika
+//
+// **What an HTTP/1.1 request head says**, read by a Nikaia grammar
+// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D6,
+// [ADR-194](../../../../docs/specification/adr/adr-194.md) D5: *the parser is
+// Rust until it is not*).
+//
+// This is the text half of `std::http1` (0.0.247). It reaches `std` the way
+// ADR-196 D1 says Nikaia reaches Rust: lowered ahead of time by
+// `nikaia lower-std` to the `http1.rs` beside this file, `include!`d as
+// `nikaia_std::tools::http1`, and called from `src/http1.rs`. What stayed Rust
+// is the **bytes**: the buffer a socket fills, where the head ends, and
+// whether it is text - the grammar reads text, and deciding that some bytes
+// are text is the step before it.
+//
+// **Two halves, and the line between them is on purpose.** The grammar says
+// what the head *is written as*: the words of the request line and the lines
+// that have a colon. `read` says what it *means* and what is refused: which
+// methods, which version, a `Content-Length` that is a count, no
+// `Transfer-Encoding`. A grammar that refused a `PUT` would be refusing it with
+// a parser's message; `read` refuses it with the one a server sends back.
+//
+// **The grammar reads every head that ended**: one that has no three words or
+// a line without a colon is read too, and `read` says what is wrong with it.
+// That is what the Rust it replaced did - a line without a colon is skipped, as
+// it was - and every refusal keeps its words, which `tests/http1.rs` and the
+// server's own test hold.
+
+use std::text
+
+// One line of the head with a colon in it: what is before the first one, and
+// what is after it, blanks and all.
+pub struct Field {
+    pub name: ref String,
+    pub value: ref String,
+}
+
+// What a line of the head turned out to be.
+pub enum Line {
+    Field(Field),
+    Skip,
+}
+
+// The head as it was written: the request line cut at every space - its first
+// word, and the ones after it - and the lines that have a colon.
+pub struct Written {
+    pub first: ref String,
+    pub rest: Vec[ref String],
+    pub fields: Vec[Field],
+}
+
+// A header as a program asks for it: the name in lower case, the value with
+// its blanks taken off.
+pub struct Header {
+    pub name: String,
+    pub value: ref String,
+}
+
+// What the head says, or why it is refused: `refused` is the message a server
+// sends back, and empty where the head is one this answers.
+pub struct Read {
+    pub refused: ref String,
+    pub method: ref String,
+    pub target: ref String,
+    pub length: i64,
+    pub keep_alive: bool,
+    pub headers: Vec[Header],
+}
+
+grammar Http1 {
+
+    // A space is part of what a request line says, so nothing is skipped.
+    rule WS = "" { }
+
+    // The head, which ends in an empty line - the only one it has, since the
+    // buffer hands over the text up to the first.
+    //
+    // The request line is a word and then every ` word` after it, which is
+    // what `list(WORD, " ")` would say - and `list` reaches a backend that has
+    // no such element (`open-work.md` §1.26).
+    pub rule head -> Written =
+        first:WORD rest:MORE* "\r\n" lines:line* "\r\n" eof {
+            Written { first, rest, fields: fields(lines) }
+        }
+
+    // A word of the request line: anything up to a space or the line's end.
+    // Two spaces in a row are an empty word between them, as they were.
+    rule WORD -> ref String = w:text(WORD_PIECE*) { w }
+    rule MORE -> ref String = " " w:WORD { w }
+    rule WORD_PIECE = not(" ") not("\r\n") any { }
+
+    rule line -> Line =
+          n:text(NAME_PIECE*) ":" v:text(REST_PIECE*) "\r\n" {
+              Line::Field(Field { name: n, value: v })
+          }
+        | OTHER "\r\n" { Line::Skip }
+
+    rule NAME_PIECE = not(":") not("\r\n") any { }
+    rule REST_PIECE = not("\r\n") any { }
+    // A line with no colon, which says nothing this reads.
+    rule OTHER = REST_PIECE+ { }
+}
+
+// The fields among the lines, in the order they came.
+fn fields(lines: Vec[Line]) -> Vec[Field] {
+    let mut all = Vec()
+    for line in lines.drain() {
+        // Both variants by name, for `rust.nika`'s reason: a single pattern
+        // beside an `else` is an `if let` written the long way to `clippy`.
+        match line {
+            Line::Field(f) => { all.push(f) }
+            Line::Skip => { }
+        }
+    }
+    return all
+}
+
+/// What a head says, or the message a server sends back instead.
+///
+/// `GET` and `POST`, `HTTP/1.x`, a `Content-Length` that is a count, and no
+/// `Transfer-Encoding` - [ADR-194](../../../../docs/specification/adr/adr-194.md)
+/// D5's protocol. Asked in the order the Rust it replaced asked it, so a head
+/// that is wrong twice is refused for the same reason it was.
+pub fn read(written: Written) -> Read sync {
+    if written.rest.len() < 2 {
+        return refused("400 a request line that is not three words")
+    }
+    let method = written.first
+    let target = written.rest[0]
+    if !written.rest[1].starts_with("HTTP/1.") {
+        return refused("400 a version this does not speak")
+    }
+    // **The two methods and no others** (D5). A `PUT` refused by name is a
+    // server saying what it is; one quietly routed as a `GET` is a server
+    // guessing.
+    if method != "GET" && method != "POST" {
+        return refused("400 a method this does not answer")
+    }
+    let mut length = 0
+    let mut keep_alive = false
+    let mut headers: Vec[Header] = []
+    for field in written.fields {
+        // A header's name does not care about case, and its value's
+        // surrounding blanks are not part of it.
+        let name = field.name.trim().to_lowercase()
+        let value = field.value.trim()
+        if name == "content-length" {
+            let n = text::parse_i64(value) ?? -1
+            if n < 0 {
+                return refused("400 a content-length that is not a count")
+            }
+            length = n
+        } else if name == "connection" {
+            keep_alive = value.to_lowercase() == "keep-alive"
+        } else if name == "transfer-encoding" {
+            // **Refused and not ignored** (D5: no chunked). A server that
+            // ignored this would read a chunk header as a body.
+            return refused("400 a transfer-encoding this does not speak")
+        }
+        headers.push(Header { name, value })
+    }
+    return Read {
+        refused: "",
+        method,
+        target,
+        length,
+        keep_alive,
+        headers,
+    }
+}
+
+fn refused(why: ref String) -> Read sync {
+    return Read {
+        refused: why,
+        method: "",
+        target: "",
+        length: 0,
+        keep_alive: false,
+        headers: [],
+    }
+}

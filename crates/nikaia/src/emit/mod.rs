@@ -3191,6 +3191,21 @@ impl<'p> Emitter<'p> {
                     .map(|s| self.text(*s))
                     .collect::<Vec<_>>()
                     .join("::");
+                // **Inside `std` there is no prelude to bring it in**
+                // (0.0.247): a module of `std`'s Nikaia half is lowered without
+                // one (`emit_std`), so `use std::text` has to be the import
+                // itself, or `text::parse_i64` below it names nothing and
+                // `rustc` says so about the generated file.
+                if self.is_std
+                    && alias.is_none()
+                    && let [first, module] = path.split("::").collect::<Vec<_>>()[..]
+                    && first == "std"
+                {
+                    out.push(&format!(
+                        "#[allow(unused_imports)]\nuse nikaia_std::{module};\n"
+                    ));
+                    return Ok(());
+                }
                 match alias {
                     Some(alias) => out.push(&format!("// use {path} as {}\n", self.text(*alias))),
                     None => out.push(&format!("// use {path}\n")),
