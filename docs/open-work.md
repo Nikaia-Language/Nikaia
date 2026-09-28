@@ -34,60 +34,6 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.24. A `Shared` field of a type and the value put in it disagree on the count
-
-Found at 0.0.234, measuring how a type can hold itself. In
-
-```nika
-enum E { Leaf(i64), Add(Shared[E], Shared[E]) }
-fn main() { let e = E::Add(Shared(E::Leaf(2)), Shared(E::Leaf(3))) }
-```
-
-the variant lowers as `Add(std::sync::Arc<E>, std::sync::Arc<E>)` and the
-construction as `E::Add(std::rc::Rc::new(…), std::rc::Rc::new(…))`, and
-`rustc` says *expected `Shared[E]`, found `Shared[E]`*. Which count a `Shared`
-gets is decided per value ([ADR-037](specification/adr/adr-037.md) D7); a value
-written straight into a field has to take the field's.
-
-### 1.23. A `sync` function cannot call a parameter whose type says `sync`
-
-Found at 0.0.233, working out [ADR-244](specification/adr/adr-244.md). Part I
-5.4 C says a function type written with `sync` cannot pause, and a call site
-holds a lambda to it (`NK2206` refuses a pausing lambda passed to such a
-parameter, measured). The body of the function that takes it does not read the
-same word:
-
-```nika
-pub fn apply(f: fn(i64) -> i64 sync, x: i64) -> i64 sync { return f(x) }
-```
-
-is refused with `NK2202: apply is sync, and f can pause` - the message a
-parameter *without* `sync` gets, and correctly so there. The check of the body
-does not read the `sync` on the parameter's type. Evidence:
-the line above with a `main` that calls it, built with `nikaia run` at 0.0.233.
-
-### 1.25. A `?.` chain through two nullable fields of a lent value takes the first one out
-
-Found at 0.0.236, writing a linked list. Measured, with no recursion in it:
-
-```nika
-struct C { v: i64 }
-struct B { c: C? }
-struct A { b: B? }
-
-fn f(a: ref A) -> i64 {
-    return a.b?.c?.v ?? -1
-}
-```
-
-lowers `a.b?.c` to `a.b.and_then(|it| it.c.as_ref())`, and `rustc` says
-*cannot move out of `a.b` which is behind a shared reference* about a file
-nobody wrote ([Part III C.1](specification/30-nikaia-tooling.md)). The
-receiver is lent only where the member copies
-([ADR-189](specification/adr/adr-189.md) D1), and a member that is itself a
-`T?` is not one; where the chain reaches on, the first step has to be lent and
-the second an option of a view.
-
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
@@ -806,9 +752,8 @@ built. In the order the pieces depend on each other:
    `"inferred"` and can now pause, with the line and the call chain to it.
 
 Part I (the signature's `sync`) and Part III 13.5 (what `"inferred"` means to a
-consumer) take the rules when they are built. §1.23 is in the way of the
-stricter form D4 mentions (`f: fn(…) sync` under a plain `sync`), not of
-`sync(f)`.
+consumer) take the rules when they are built. The stricter form D4 mentions
+(`f: fn(…) sync` under a plain `sync`) is built.
 
 ### 2.48. `nikaia test`, and `assert` as a claim
 

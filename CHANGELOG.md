@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.244] — 2026-09-28
+
+**Four programs that reached `rustc` as a file nobody wrote**, each found by
+running something and each kept, as the program that found it, in
+`crates/nikaia/tests/defects_found_running.rs`, run at both settings of
+`user_parallelism`.
+
+- **A `sync` function calls a parameter whose type says `sync`**
+  (`open-work.md` §1.23). The caller is held to the word (`NK2206`), so the
+  body may take it at it; it was refused with `NK2202`. A parameter without
+  the word still is.
+- **A `Shared` written into a variant takes the variant's count** (§1.24). The
+  part was declared with one count and the value built with another, and
+  `rustc` said *expected `Shared[E]`, found `Shared[E]`*. A variant's part now
+  has a place of its own in the sharing count, as a field has.
+- **A `?.` chain through two nullable fields of a lent value** (§1.25) lends
+  the first step when the member it reaches comes out as a view, as it did
+  when the member copies.
+- **A function called by its bare name that nothing declares is `NK1117`**,
+  with the near miss where there is one (*did you mean `doubled`?*). It
+  lowered as written and `rustc` said *cannot find function*. A name brought
+  in by a `use` item is declared.
+- The specification's programs: five blocks that call a helper they never
+  declare (`wide`, `serve`, `load_users`, `fetch_config`, `load`) are refused
+  by `NK1117` now instead of by `rustc`; `EXPECTED.txt` and `COMPILES.txt`
+  are regenerated. A test in `tests/modules.rs` that compiled one file of a
+  package through `--input` without its manifest gains one.
+
 ## [0.0.243] — 2026-09-28
 
 **A program whose result is a file is tested like one that prints** —

@@ -10848,8 +10848,11 @@ impl<'p> Emitter<'p> {
             if i > 0 {
                 out.push(", ");
             }
-            self.hull_count
-                .set(part_counts.as_ref().and_then(|counts| counts.get(i).copied()));
+            self.hull_count.set(
+                part_counts
+                    .as_ref()
+                    .and_then(|counts| counts.get(i).copied()),
+            );
             // **A part of a variant that is boxed is built in its box**
             // ([ADR-246](../../docs/specification/adr/adr-246.md) D3), around
             // everything else this argument is written with.

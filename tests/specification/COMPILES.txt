@@ -2,7 +2,6 @@
 10-nikaia-light.md #2 compiles
 10-nikaia-light.md #6 compiles
 10-nikaia-light.md #7 compiles
-10-nikaia-light.md #8 refused
 10-nikaia-light.md #9 compiles
 10-nikaia-light.md #11 compiles
 10-nikaia-light.md #12 compiles
@@ -28,15 +27,12 @@
 10-nikaia-light.md #49 compiles
 10-nikaia-light.md #50 compiles
 10-nikaia-light.md #51 compiles
-10-nikaia-light.md #53 refused
 10-nikaia-light.md #54 refused
 10-nikaia-light.md #57 compiles
 10-nikaia-light.md #58 compiles
 10-nikaia-light.md #59 compiles
 10-nikaia-light.md #62 compiles
-10-nikaia-light.md #64 refused
 10-nikaia-light.md #65 compiles
-10-nikaia-light.md #70 refused
 10-nikaia-light.md #75 compiles
 10-nikaia-light.md #76 compiles
 10-nikaia-light.md #77 compiles

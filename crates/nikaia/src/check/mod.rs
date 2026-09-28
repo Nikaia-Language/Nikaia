@@ -4384,7 +4384,18 @@ impl<'a> Checker<'a> {
             || self.variant_parts.contains_key(name)
             || is_hull(name)
             || MultiLock::named(name).is_some()
-            || matches!(name, "panic" | ASSET | ASSERT);
+            || matches!(name, "panic" | ASSET | ASSERT)
+            // **A name a `use` writes last, or as its alias**, is left alone
+            // as the trait check leaves it: whether a `use` brings a name in
+            // is not this check's to decide, and refusing a program that is
+            // right is the one thing it may not do (C.4).
+            || self.parsed.program.items.iter().any(|item| {
+                matches!(&item.node, Item::Import { path, alias }
+                    if alias.map_or_else(
+                        || path.last().is_some_and(|last| self.parsed.text(*last) == name),
+                        |alias| self.parsed.text(alias) == name,
+                    ))
+            });
         if declared {
             return;
         }
@@ -4399,7 +4410,9 @@ impl<'a> Checker<'a> {
         known.push("panic");
         let help = match nearest(name, &known) {
             Some(near) => format!("did you mean `{near}`?"),
-            None => format!("declare it with `fn {name}(…)`, or call it through the package that has it"),
+            None => format!(
+                "declare it with `fn {name}(…)`, or call it through the package that has it"
+            ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,

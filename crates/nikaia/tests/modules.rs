@@ -366,6 +366,14 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
                 "main.nika",
                 "fn main() {\n\x20   println(f\"{seven()}\")\n}\n",
             ),
+            // **A manifest, so `--input` reads the package** (ADR-047 D1).
+            // Without one the entry is compiled on its own, `seven` is
+            // declared by nothing in it, and since 0.0.244 that is `NK1117`
+            // rather than a lowering `rustc` would have refused.
+            (
+                "nikaia.toml",
+                "[package]\nname = \"silent\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     );
 
