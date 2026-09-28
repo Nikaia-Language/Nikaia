@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.245] — 2026-09-28
+
+**Loops, keys and lists of functions**: six programs found by writing small
+ones and running them, each kept in `crates/nikaia/tests/defects_found_running.rs`
+and run at both settings of `user_parallelism`.
+
+- **A `for` binding is a binding of its own.** `for (k, v) in seen`, after an
+  outer `k` had been written into the map as a key, read the loop's `k` as the
+  one handed over and refused a correct program with `NK2105`. A read and a
+  hand-over are now compared only where they name the same binding, which
+  every binding carries a number for; a read of the outer `k` after the loop
+  is still refused.
+- **A `for` over several names binds each part's type**: a map's key and
+  value, and the parts of a list's pairs. Both were unknown, so nothing about
+  either was checked.
+- **A number, a `bool` or a `char` a `for` binds out of a place is the
+  element.** The body opens with `let n = nikaia_std::num::value(n);`, so the
+  name is the value in every position below, where ADR-182 had told only a cast
+  and an annotated `let`: a field took a `&i64` and `rustc` refused it.
+- **Text a `for` lends is a view**, typed as one, so keeping it without a copy
+  is `NK1106` (or its neighbour) with *write `.clone()`* instead of `rustc`'s
+  *expected `String`, found `&String`*.
+- **One map key read and written in one statement**, `m[k.clone()] =
+  (m[k.clone()] ?? 0) + 1`: the read's lent form was the write's too. The
+  checker's record of a key says which of the two it is about.
+- **`Vec::pop` is in `std`'s ledger.** Without it every function that popped
+  was taken to pause and lowered `async`, and a generic type's own `pop`
+  calling its list's was read as calling itself.
+- **A function type as a list's element** (Part I 5.3): a lambda written in
+  the list is kept as a named one is, and a parameter that is a list of
+  functions holds kept ones rather than the run shape, which is a bound and
+  cannot be an element.
+
 ## [0.0.244] — 2026-09-28
 
 **Four programs that reached `rustc` as a file nobody wrote**, each found by

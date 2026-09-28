@@ -324,8 +324,10 @@ fn a_narrowing_cast_over_a_for_binding_still_aborts() {
          \x20   for n in NS { println(f\"{n as u8}\") }\n\
          }\n",
     );
+    // The value is read out of the view where the loop's body opens
+    // (0.0.245), so the check goes around the name, which is the value.
     assert!(
-        rust.contains("u8::try_from(nikaia_std::num::value("),
+        rust.contains("let n = nikaia_std::num::value(n);") && rust.contains("u8::try_from(n)"),
         "the check goes around the value and not the view: {rust}"
     );
 }

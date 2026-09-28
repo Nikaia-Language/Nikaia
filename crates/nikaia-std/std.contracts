@@ -1274,6 +1274,18 @@ keeps = ["value"]
 signature = "(ref Vec[$T], value: $T)"
 doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
+# **Taking the last element off** (0.0.245). Nothing described it, so `xs.pop()`
+# was a call no ledger knew: every function that popped was taken to pause and
+# lowered `async`, and inside a generic type's own `pop` the call was read as
+# that method calling itself.
+[fn."Vec::pop"]
+pub = true
+sync = true
+mutates = true
+touches = []
+signature = "(ref Vec[$T]) -> $T?"
+doc = "Take the last element off the list and hand it back, or `null` where the\nlist is empty."
+
 # **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
 # program wrote `a + b`. It was reached before only because a method nothing
 # describes fails open.

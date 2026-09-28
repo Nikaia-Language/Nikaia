@@ -1130,12 +1130,15 @@ struct Emitter<'p> {
     /// The `for`s over a name holding a sequence, which is handed over rather
     /// than lent ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
     owned_loops: std::collections::BTreeSet<usize>,
+    /// The lent `for` bindings read by value at the body's head
+    /// ([`check::Checked::copied_loop_bindings`]).
+    copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
     /// How a key goes into a map's brackets where the map's keys are owned
     /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
-    map_keys: std::collections::BTreeMap<(usize, String), crate::check::KeyForm>,
+    map_keys: std::collections::BTreeMap<(usize, String, bool), crate::check::KeyForm>,
     /// Indexes that are a range kept in a name (ADR-215 D3).
     slice_indices: std::collections::BTreeSet<(usize, String)>,
     /// `std` copies, written `to_owned` (ADR-215 D4).
@@ -2317,6 +2320,7 @@ impl<'p> Emitter<'p> {
             fallible_loops: propagation.loops,
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
+            copied_loop_bindings: propagation.copied_loop_bindings,
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
@@ -5094,6 +5098,21 @@ impl<'p> Emitter<'p> {
     ) -> String {
         let mut out = String::new();
 
+        // **A function inside a container is a value the container holds**
+        // (Part I 5.3), so it is kept, even in a parameter the body only runs:
+        // `fs: ref Vec[fn(i64) -> i64]` is a list of kept functions, and the
+        // run shape - `impl AsyncFn` - is a bound, which a list's element
+        // cannot be. It was written as one, and `rustc` refused the call.
+        if ty.code.is_none()
+            && (ty.is_tuple || !ty.generics.is_empty())
+            && *self.in_parameter.borrow()
+        {
+            let inside = self.in_parameter.replace(false);
+            let written = self.ty_counted(ty, lifetimes, count);
+            *self.in_parameter.borrow_mut() = inside;
+            return written;
+        }
+
         // `(A, B)` in both languages, and the parts are the arguments.
         if ty.is_tuple {
             let parts: Vec<String> = ty
@@ -6053,7 +6072,7 @@ impl<'p> Emitter<'p> {
                 self.expr(out, base, depth, flow.place())?;
                 // **A key the map keeps goes in as it is** (ADR-213 D1): it is
                 // not a position, and `at` is for positions.
-                match self.map_key(span.start, index) {
+                match self.map_key(span.start, index, true) {
                     Some(form) => {
                         out.push(", ");
                         self.key(out, form, index, depth, flow)?;
@@ -6314,13 +6333,34 @@ impl<'p> Emitter<'p> {
                     .fallible_loops
                     .contains(&span.start)
                     .then(|| format!("let {names} = {names}?;"));
+                // **A number, a `bool` or a `char` is read out of the view
+                // once, where the body opens** (`Checked::copied_loop_bindings`):
+                // then the name is the element in every position below, and
+                // not only at a cast and an annotated `let`
+                // ([ADR-182](../../docs/specification/adr/adr-182.md) D1, D5).
+                let copied = bindings
+                    .iter()
+                    .filter(|b| {
+                        self.copied_loop_bindings
+                            .contains(&(span.start, self.text(**b).to_string()))
+                    })
+                    .map(|b| {
+                        let name = self.name(*b);
+                        format!("let {name} = nikaia_std::num::value({name});")
+                    })
+                    .collect::<String>();
+                let opening = match (unwrap, copied.is_empty()) {
+                    (unwrap, true) => unwrap,
+                    (None, false) => Some(copied),
+                    (Some(unwrap), false) => Some(format!("{unwrap} {copied}")),
+                };
                 self.block_opening_with(
                     out,
                     body,
                     depth,
                     flow.inside_a_loop(),
                     Tail::Statement,
-                    unwrap.as_deref(),
+                    opening.as_deref(),
                 )?;
             }
             // A `return` that ends a *function body* is that function's
@@ -6593,9 +6633,14 @@ impl<'p> Emitter<'p> {
     /// How the checker said this key goes into a map's brackets, where the
     /// map's keys are owned ([ADR-213](../../docs/specification/adr/adr-213.md)
     /// D1).
-    fn map_key(&self, statement: usize, index: &Expr) -> Option<crate::check::KeyForm> {
+    fn map_key(
+        &self,
+        statement: usize,
+        index: &Expr,
+        written: bool,
+    ) -> Option<crate::check::KeyForm> {
         self.map_keys
-            .get(&(statement, crate::check::argument_shape(index)))
+            .get(&(statement, crate::check::argument_shape(index), written))
             .copied()
     }
 
@@ -10617,7 +10662,7 @@ impl<'p> Emitter<'p> {
                 base: inner,
                 index: at,
             } if !self.slices(flow.statement, at)
-                && self.map_key(flow.statement, at).is_none()
+                && self.map_key(flow.statement, at, false).is_none()
                 && !self.reads_through_handle(flow, inner) =>
             {
                 out.push("nikaia_std::index::get(");
@@ -10667,7 +10712,7 @@ impl<'p> Emitter<'p> {
         let counts_down = slicing && a_negation_inside(index);
         // **A key the map keeps nothing of is lent** (ADR-213 D1),
         // and a key is not a position, so `at` does not see it.
-        let key = self.map_key(flow.statement, index);
+        let key = self.map_key(flow.statement, index, false);
         match (key, only_literals(index) && !counts_down) {
             (Some(form), _) => self.key(out, form, index, depth, flow)?,
             (None, true) => self.index_expr(out, index, depth, flow.inferred())?,

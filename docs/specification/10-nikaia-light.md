@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.244 (Draft)
+**Version:** 0.0.245 (Draft)
 **Date:** 2026-09-28
 
 ---
@@ -645,7 +645,10 @@ list's brackets reads a **run** of it, `ref Array[T]`, whether the range is
 written there or kept in a name.
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
-still there when the loop is over. Taking the elements away is written,
+still there when the loop is over. A binding is a view of its element, so an
+element kept past the turn, text in a field for instance, is kept as a copy,
+`.clone()`; a number, a `bool` and a `char` are the element itself. A map is
+walked as pairs, `for (key, value) in scores`. Taking the elements away is written,
 `for x in xs.drain()` (6.5). A `&` written in front of the list is refused with
 `NK1137`, because the compiler writes that reference.
 

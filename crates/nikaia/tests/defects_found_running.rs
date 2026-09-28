@@ -1,7 +1,8 @@
-//! **Four programs that reached `rustc` as a file nobody wrote** (0.0.244),
-//! each found by running something and kept as the program that found it
-//! (`open-work.md` §1.23, §1.24, §1.25, and a bare call nothing declares).
-//! Every one is run, at both settings of `user_parallelism`.
+//! **Programs that reached `rustc` as a file nobody wrote, or were refused
+//! though correct**, each found by running something and kept as the program
+//! that found it: 0.0.244's four (`open-work.md` §1.23, §1.24, §1.25, and a
+//! bare call nothing declares) and 0.0.245's loops, keys and lists of
+//! functions. Every program is run, at both settings of `user_parallelism`.
 
 mod common;
 
@@ -174,5 +175,186 @@ fn a_bare_call_nothing_declares_is_refused() {
             Some("did you mean `doubled`?")
         )),
         "{messages:#?}"
+    );
+}
+
+/// **A `for` binding is a binding of its own** (0.0.245): `for (k, v) in seen`
+/// after an outer `k` was written into the map as a key read the loop's `k` as
+/// the one handed over, and refused a correct program with `NK2105`. A read of
+/// the outer one after the loop is still refused.
+#[test]
+fn a_loop_binding_is_not_the_name_it_shadows() {
+    runs(
+        "loop-shadow",
+        "use std::collections\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut seen: collections::HashMap[String, i64] = collections::HashMap()\n\
+         \x20   let k = \"b\".clone()\n\
+         \x20   seen[k] = 2\n\
+         \x20   let mut kept: Vec[String] = []\n\
+         \x20   for (k, v) in seen {\n\
+         \x20       kept.push(f\"{k}={v}\")\n\
+         \x20   }\n\
+         \x20   println(kept[0])\n\
+         }\n",
+        "b=2\n",
+    );
+    let source = "fn main() {\n\
+         \x20   let mut kept: Vec[String] = []\n\
+         \x20   let k = \"b\".clone()\n\
+         \x20   kept.push(k)\n\
+         \x20   for (k, v) in [(\"x\".clone(), 1)] {\n\
+         \x20       println(f\"{k} {v}\")\n\
+         \x20   }\n\
+         \x20   println(k)\n\
+         }\n";
+    let outer = source.find("println(k)").expect("the read after the loop");
+    let handed: Vec<usize> = findings(source)
+        .iter()
+        .filter(|f| f.code == "NK2105")
+        .map(|f| f.span.start)
+        .collect();
+    assert_eq!(
+        handed,
+        vec![outer],
+        "the outer `k`, read after the loop, was handed over, and the loop's is another"
+    );
+}
+
+/// **A number, a `bool` or a `char` a `for` binds out of a place is the
+/// element** (0.0.245): the body opens by reading it through the view, so a
+/// field, a comparison and a map's value take it as they take any number. A
+/// field was `rustc`'s *expected `i64`, found `&i64`*. And a `for (k, v)` over a
+/// map or a list of pairs binds the parts' types, where both were unknown.
+#[test]
+fn a_number_a_loop_binds_is_the_number() {
+    runs(
+        "loop-copies",
+        "use std::collections\n\
+         \n\
+         struct W { count: i64, first: bool }\n\
+         \n\
+         fn main() {\n\
+         \x20   let nums: Vec[i64] = [3, 4]\n\
+         \x20   let mut out: Vec[W] = []\n\
+         \x20   for n in nums {\n\
+         \x20       out.push(W { count: n, first: n == 3 })\n\
+         \x20   }\n\
+         \x20   let mut seen: collections::HashMap[String, i64] = collections::HashMap()\n\
+         \x20   seen[\"a\".clone()] = 5\n\
+         \x20   for (k, v) in seen {\n\
+         \x20       out.push(W { count: v, first: k == \"a\" })\n\
+         \x20   }\n\
+         \x20   let pairs: Vec[(String, i64)] = [(\"x\".clone(), 6)]\n\
+         \x20   for (name, v) in pairs {\n\
+         \x20       out.push(W { count: v, first: false })\n\
+         \x20   }\n\
+         \x20   for w in out {\n\
+         \x20       println(f\"{w.count} {w.first}\")\n\
+         \x20   }\n\
+         }\n",
+        "3 true\n4 false\n5 true\n6 false\n",
+    );
+}
+
+/// **A binding lent text is a view of it** (0.0.245), and one put where text
+/// of its own is kept is refused with the copy to write - `rustc` said
+/// *expected `String`, found `&String`*.
+#[test]
+fn text_a_loop_lends_is_kept_only_as_a_copy() {
+    let found = findings(
+        "struct Word { text: String }\n\
+         \n\
+         fn main() {\n\
+         \x20   let names: Vec[String] = [\"a\".clone()]\n\
+         \x20   let mut out: Vec[Word] = []\n\
+         \x20   for s in names {\n\
+         \x20       out.push(Word { text: s })\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1106"
+                && f.help.as_deref() == Some("write `.clone()` to copy it here")),
+        "{found:#?}"
+    );
+}
+
+/// **One key, read and written in one statement** (0.0.245): the read lends
+/// it and the write hands it over, and the read's form was the write's too.
+#[test]
+fn a_key_read_and_written_in_one_statement() {
+    runs(
+        "key-twice",
+        "use std::collections\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut seen: collections::HashMap[String, i64] = collections::HashMap()\n\
+         \x20   for w in \"a b a\".split(\" \") {\n\
+         \x20       seen[w.clone()] = (seen[w.clone()] ?? 0) + 1\n\
+         \x20   }\n\
+         \x20   let a = seen[\"a\".clone()] ?? 0\n\
+         \x20   println(f\"{a} {seen.len()}\")\n\
+         }\n",
+        "2 2\n",
+    );
+}
+
+/// **`pop` is described** (0.0.245): a call no ledger knew made every function
+/// that popped `async`, and inside a generic type's own `pop` the list's
+/// `pop` was read as the method calling itself.
+#[test]
+fn a_generic_stack_pops() {
+    runs(
+        "stack",
+        "struct Stack[T] { items: Vec[T] }\n\
+         \n\
+         impl Stack[T] {\n\
+         \x20   fn push(ref mut self, x: T) {\n\
+         \x20       self.items.push(x)\n\
+         \x20   }\n\
+         \x20   fn pop(ref mut self) -> T? {\n\
+         \x20       return self.items.pop()\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut s = Stack { items: [] }\n\
+         \x20   s.push(1)\n\
+         \x20   s.push(2)\n\
+         \x20   let top = s.pop() ?? 0\n\
+         \x20   println(f\"{top} {s.items.len()}\")\n\
+         }\n",
+        "2 1\n",
+    );
+}
+
+/// **A function type stands as a list's element** (Part I 5.3, 0.0.245): a
+/// lambda written in the list is kept as a named one is, and a parameter that
+/// is a list of functions holds kept ones.
+#[test]
+fn a_list_of_functions_is_run() {
+    runs(
+        "function-list",
+        "fn make_adder(n: i64) -> fn(i64) -> i64 {\n\
+         \x20   return fn(x) { x + n }\n\
+         }\n\
+         \n\
+         fn apply_all(fs: ref Vec[fn(i64) -> i64], x: i64) -> i64 {\n\
+         \x20   let mut v = x\n\
+         \x20   for f in fs {\n\
+         \x20       v = f(v)\n\
+         \x20   }\n\
+         \x20   return v\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let fs: Vec[fn(i64) -> i64] = [make_adder(1), fn(x) { x * 2 }]\n\
+         \x20   println(f\"{apply_all(fs, 5)}\")\n\
+         }\n",
+        "12\n",
     );
 }

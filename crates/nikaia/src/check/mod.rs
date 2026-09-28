@@ -376,14 +376,28 @@ pub struct Checked {
     /// over as it is. The emitter has no types, so which loops these are is
     /// answered here, as `pausing_loops` is.
     pub owned_loops: BTreeSet<usize>,
+    /// **A `for` binding a number, a `bool` or a `char` out of a place it
+    /// lends**, by the byte the loop starts at and the name: the loop's body
+    /// opens by reading the value through the view, so the name is the element
+    /// everywhere below - a field, an argument, a comparison - and not only at
+    /// the two constructs [ADR-182](../../docs/specification/adr/adr-182.md)
+    /// told (a cast and an annotated `let`). A view of a copy and the copy say
+    /// the same thing, so nothing the program can see changes. The `for`'s
+    /// half of what `copied_bindings` is for a `match` arm.
+    pub copied_loop_bindings: BTreeSet<(usize, String)>,
     /// The arguments that are a **count the language below takes in `usize`**,
     /// by the byte the statement starts at, the method as written and the
     /// position ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// How each key goes into the brackets of a map whose keys are owned, by
-    /// the byte the statement starts at and the key's shape
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
-    pub map_keys: BTreeMap<(usize, String), KeyForm>,
+    /// the byte the statement starts at, the key's shape and whether it is
+    /// written ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
+    ///
+    /// **Whether it is written is part of the key** (0.0.245): `m[k.clone()]
+    /// = (m[k.clone()] ?? 0) + 1` spells one key twice in one statement, once
+    /// read and once written, and the read's lent form was the write's too -
+    /// `index::set(&mut m, &(k.to_owned()), …)`, which `rustc` refused.
+    pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
     /// Indexes that are a **range kept in a name**, by the byte the statement
     /// starts at and the index's shape: a slice, like a range written in the
     /// brackets ([ADR-215](../../docs/specification/adr/adr-215.md) D3).
@@ -1558,10 +1572,12 @@ pub struct Propagation {
     pub pausing_loops: BTreeSet<usize>,
     /// [`Checked::owned_loops`].
     pub owned_loops: BTreeSet<usize>,
+    /// [`Checked::copied_loop_bindings`].
+    pub copied_loop_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::count_args`].
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::map_keys`].
-    pub map_keys: BTreeMap<(usize, String), KeyForm>,
+    pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
     /// [`Checked::slice_indices`].
     pub slice_indices: BTreeSet<(usize, String)>,
     /// [`Checked::owned_copies`].
@@ -1819,6 +1835,7 @@ pub fn propagation_against(
         loops: checked.fallible_loops,
         pausing_loops: checked.pausing_loops,
         owned_loops: checked.owned_loops,
+        copied_loop_bindings: checked.copied_loop_bindings,
         count_args: checked.count_args,
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
@@ -2251,6 +2268,17 @@ struct Local {
     /// the scope is the one `scope` already keeps, so an inner `let xs = []`
     /// and an outer `xs` are two questions and not one.
     empty_list: Option<usize>,
+    /// **Which binding this is**, of all the ones a name has had: a number no
+    /// other binding gets. A `for (k, v) in seen` inside the life of an outer
+    /// `k` binds another `k`, and a read of it is not a read of the one that
+    /// was handed over (`NK2105`). By name alone the two were one.
+    id: usize,
+}
+
+/// A number no other binding gets, for [`Local::id`].
+fn a_new_binding() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A binding that did not say `mut`: where it was written, and which of the two
@@ -2294,6 +2322,7 @@ impl Local {
             immutable: local.immutable.clone(),
             changing: local.changing,
             empty_list: local.empty_list,
+            id: local.id,
         }
     }
 
@@ -2308,6 +2337,7 @@ impl Local {
             built: None,
             immutable: None,
             empty_list: None,
+            id: a_new_binding(),
         }
     }
 }
@@ -2953,6 +2983,9 @@ struct Taken {
     until: Option<usize>,
     /// What took it, in words (`NK2105`).
     to: String,
+    /// Which binding of the path's first name was taken ([`Local::id`]): a
+    /// read of another binding of the same name is not a read of it.
+    binding: Option<usize>,
 }
 
 /// **One read**: of what, in which statement, on which path, in which order.
@@ -2961,6 +2994,8 @@ struct Read {
     at: usize,
     choices: Choices,
     seq: usize,
+    /// Which binding of the path's first name it read ([`Local::id`]).
+    binding: Option<usize>,
 }
 
 /// An expression's address, which is what tells two reads of one name apart
@@ -4075,6 +4110,7 @@ impl<'a> Checker<'a> {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
             frame.push(Local {
+                id: a_new_binding(),
                 literal: None,
                 name,
                 ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
@@ -5937,6 +5973,7 @@ impl<'a> Checker<'a> {
     ) -> Local {
         let asked = self.at_a_write_door && !mutable.contains(&name);
         Local {
+            id: a_new_binding(),
             literal: None,
             name: self.parsed.text(name).to_string(),
             ty,
@@ -7716,6 +7753,7 @@ impl<'a> Checker<'a> {
                     task.push((name.clone(), bound.clone(), span.start));
                 }
                 self.bind_local(Local {
+                    id: a_new_binding(),
                     name,
                     ty: bound,
                     constant,
@@ -7913,7 +7951,7 @@ impl<'a> Checker<'a> {
                 // container is walked by view and as often as one likes, which
                 // is why the record is keyed on the type being a `Seq`.
                 self.a_sequence_is_walked(iter, &over, span);
-                let element = element_of(&over, bindings.len());
+                let elements = elements_of(&over, bindings.len());
                 // **A name that holds a sequence is handed over, not lent**
                 // (ADR-212 D4): the emitter writes no `.iter()` for it, and the
                 // binding is each element itself.
@@ -7928,13 +7966,29 @@ impl<'a> Checker<'a> {
                 // not see through a reference. The predicate is the emitter's
                 // own, so the two cannot answer differently.
                 let lent = crate::emit::is_a_place(iter) && !owned;
-                let frame: Vec<Local> = bindings
-                    .iter()
-                    .map(|b| Local {
-                        lent,
-                        ..Local::free(self.parsed.text(*b).to_string(), element.clone())
-                    })
-                    .collect();
+                let mut frame: Vec<Local> = Vec::new();
+                for (b, element) in bindings.iter().zip(elements) {
+                    let name = self.parsed.text(*b).to_string();
+                    let copied = lent && a_copy_by_value(&element);
+                    if copied {
+                        self.checked
+                            .copied_loop_bindings
+                            .insert((span.start, name.clone()));
+                    }
+                    // **A binding lent something that does not copy is a
+                    // view of it**, and typed as one: what keeps it needs its
+                    // own, and says so where the view would be kept (`NK1105`
+                    // and its neighbours), rather than `rustc` saying
+                    // *expected `String`, found `&String`*.
+                    let element = match lent && !copied && matches!(element, Ty::Named { .. }) {
+                        true => view_of(&element),
+                        false => element,
+                    };
+                    frame.push(Local {
+                        lent: lent && !copied,
+                        ..Local::free(name, element)
+                    });
+                }
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a `for` binding");
                 }
@@ -12481,7 +12535,7 @@ impl<'a> Checker<'a> {
             };
             self.checked
                 .map_keys
-                .insert((span.start, argument_shape(index)), form);
+                .insert((span.start, argument_shape(index), writing), form);
             return;
         }
         if keys.is_a_view() {
@@ -12512,7 +12566,7 @@ impl<'a> Checker<'a> {
         };
         self.checked
             .map_keys
-            .insert((span.start, argument_shape(index)), form);
+            .insert((span.start, argument_shape(index), writing), form);
     }
 
     /// **`NK1189`: a copy under another name than `.clone()`**
@@ -12730,11 +12784,13 @@ impl<'a> Checker<'a> {
         }
         self.read_seq += 1;
         self.read_index.insert(key, self.reads_on_paths.len());
+        let binding = self.binding(&path).map(|local| local.id);
         self.reads_on_paths.push(Read {
             path,
             at: span.start,
             choices: self.branch.clone(),
             seq: self.read_seq,
+            binding,
         });
     }
 
@@ -12757,6 +12813,9 @@ impl<'a> Checker<'a> {
 
     /// A taking, where it stands.
     fn taken(&self, path: String, ty: Ty, seq: usize, to: &str, span: &Span) -> Taken {
+        let binding = self
+            .binding(path.split('.').next().unwrap_or_default())
+            .map(|local| local.id);
         Taken {
             path,
             ty,
@@ -12766,6 +12825,7 @@ impl<'a> Checker<'a> {
             choices: self.branch.clone(),
             until: None,
             to: to.to_string(),
+            binding,
         }
     }
 
@@ -12783,6 +12843,7 @@ impl<'a> Checker<'a> {
             .iter()
             .filter(|read| {
                 overlaps(&read.path, &taken.path)
+                    && read.binding == taken.binding
                     && !apart(&taken.choices, &read.choices)
                     && taken.until.is_none_or(|end| read.at < end)
                     && (read.at >= taken.at || (read.at == taken.from && read.seq > taken.seq))
@@ -14654,6 +14715,14 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+        // **A lambda beside a function value is kept as that value is**
+        // (Part I 5.3): `[adder(1), fn(x) { x * 2 }]` is a list of one type,
+        // and the type is the one the other elements say.
+        if matches!(agreed, Ty::Fn { .. }) {
+            for item in items {
+                self.a_kept_lambda(&agreed, item, span);
+            }
+        }
         Ty::Named {
             name: "Vec".to_string(),
             args: vec![agreed],
@@ -15005,6 +15074,19 @@ impl<'a> Checker<'a> {
             Ty::Nullable(inner) => inner.as_ref(),
             other => other,
         };
+        // **An element of a list is kept by the list** (Part I 5.3): `let fs:
+        // Vec[fn(i64) -> i64] = [fn(x) { x + 1 }]` holds each lambda as the
+        // shared closure a field holds, and a bare closure among them was a
+        // type of its own below.
+        if let (Ty::Named { name, args, .. }, Expr::ListLit { items, .. }) = (want, value)
+            && matches!(name.as_str(), "Vec" | "List" | ty::ARRAY)
+            && let Some(element) = args.first()
+        {
+            for item in items {
+                self.a_kept_lambda(element, item, span);
+            }
+            return;
+        }
         if let (
             Ty::Fn {
                 is_sync, throws, ..
@@ -17178,6 +17260,7 @@ impl<'a> Checker<'a> {
     /// (ADR-043 D5). Only [`Stmt::Let`] ever passes anything but `None`.
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
         self.bind_local(Local {
+            id: a_new_binding(),
             literal: None,
             name,
             ty,
@@ -18352,6 +18435,7 @@ impl<'a> Checker<'a> {
         // the next constant that read it was `NK1127` although the one before
         // it had just been computed.
         self.bind_local(Local {
+            id: a_new_binding(),
             literal: None,
             name: bound,
             ty: held,
@@ -19037,6 +19121,46 @@ fn declares_a_type(parsed: &Parsed, name: &str) -> bool {
         };
         written.is_some_and(|written| parsed.text(written) == name)
     })
+}
+
+/// What each of a `for`'s bindings is: [`element_of`] for one, and for
+/// several the parts the element is taken apart into - a map's key and value,
+/// or a tuple's parts, position by position. Where the element cannot be taken
+/// apart into that many, every binding is unknown, as before.
+fn elements_of(over: &Ty, bindings: usize) -> Vec<Ty> {
+    if bindings == 1 {
+        return vec![element_of(over, 1)];
+    }
+    let parts = match over {
+        // `collections::HashMap` as written, or bare where the ledger keys it.
+        Ty::Named { name, args, .. } => match (
+            name.rsplit("::").next().unwrap_or_default(),
+            args.as_slice(),
+        ) {
+            ("HashMap" | "Map" | "BTreeMap" | "TrustedMap", [key, value]) if bindings == 2 => {
+                Some(vec![key.clone(), value.clone()])
+            }
+            ("Vec" | "List", [Ty::Tuple(parts)]) => Some(parts.clone()),
+            (name, [Ty::Tuple(parts), ..]) if name == ty::ARRAY => Some(parts.clone()),
+            _ => None,
+        },
+        Ty::Seq { item, .. } => match item.as_ref() {
+            Ty::Tuple(parts) => Some(parts.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    match parts {
+        Some(parts) if parts.len() == bindings => parts,
+        _ => vec![Ty::Unknown; bindings],
+    }
+}
+
+/// A number, a `bool` or a `char`: read through a view, the value is the same
+/// value ([`Checked::copied_loop_bindings`]).
+fn a_copy_by_value(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, view: false }
+        if args.is_empty() && (is_number(name) || matches!(name.as_str(), "bool" | "char")))
 }
 
 fn element_of(over: &Ty, bindings: usize) -> Ty {
