@@ -1179,6 +1179,10 @@ struct Emitter<'p> {
     /// Set while a parameter's type is written, where a function type the
     /// callee only runs is a closure argument rather than a kept value.
     in_parameter: std::cell::RefCell<bool>,
+    /// The rules of the grammar being written and the type each hands back,
+    /// lowered - for `list(item, sep)`, whose element type is the item rule's
+    /// ([`LIST_RULE`]).
+    grammar_rule_types: std::cell::RefCell<std::collections::BTreeMap<String, String>>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -2340,6 +2344,7 @@ impl<'p> Emitter<'p> {
             kept_functions: propagation.kept_functions,
             in_a_kept_call: std::cell::RefCell::new(false),
             in_parameter: std::cell::RefCell::new(false),
+            grammar_rule_types: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -4506,9 +4511,42 @@ impl<'p> Emitter<'p> {
         out.push("grammar! {\n");
         out.push(&format!("    grammar {} {{\n", self.text(def.name)));
 
+        *self.grammar_rule_types.borrow_mut() = def
+            .rules
+            .iter()
+            .filter_map(|rule| {
+                let ty = rule.ret_type.as_ref()?;
+                Some((
+                    self.text(rule.name).to_string(),
+                    self.ty(ty, Lifetimes::NAMED),
+                ))
+            })
+            .collect();
         for rule in &def.rules {
             out.push("\n");
             out.from(&rule.span, |out| self.grammar_rule(out, rule))?;
+        }
+        // **`list(item, sep)` is a rule the backend is given** (Part II
+        // 10.8, `open-work.md` §1.26 closed at 0.0.249): the backend has no
+        // such element and read `list` as a rule of the grammar's own, so each
+        // grammar that writes one gets the two template rules it lowers to -
+        // the first item, then every `sep item` after it, or nothing at all.
+        let lists = def
+            .rules
+            .iter()
+            .flat_map(|rule| &rule.alts)
+            .any(|alt| writes_a_list(self.parsed, &alt.pattern));
+        if lists {
+            out.push(&format!(
+                "\n        rule {LIST_RULE}<T>(item: Rule<T>, sep) -> Vec<T> =\n\
+                 \x20         first:item rest:{LIST_RULE}_more<T>(item = item, sep = sep)*\n\
+                 \x20           -> {{ let mut all = vec![first]; all.extend(rest); all }}\n\
+                 \x20       | \"\"\n\
+                 \x20           -> {{ Vec::new() }}\n\
+                 \n        rule {LIST_RULE}_more<T>(item: Rule<T>, sep) -> T =\n\
+                 \x20         sep x:item\n\
+                 \x20           -> {{ x }}\n"
+            ));
         }
 
         out.push("    }\n");
@@ -4582,6 +4620,31 @@ impl<'p> Emitter<'p> {
             }
             Pattern::Literal(text) => {
                 out.push(&format!("\"{text}\""));
+                Ok(())
+            }
+            Pattern::Ref {
+                name,
+                generics,
+                args,
+            } if self.text(*name) == "list" && generics.is_empty() && args.len() == 2 => {
+                out.push(LIST_RULE);
+                // The element type is the item rule's where this grammar
+                // declares it; a built-in is left to the backend to infer.
+                if let Pattern::Ref {
+                    name: item,
+                    args: none,
+                    ..
+                } = &args[0].node
+                    && none.is_empty()
+                    && let Some(ty) = self.grammar_rule_types.borrow().get(self.text(*item))
+                {
+                    out.push(&format!("<{ty}>"));
+                }
+                out.push("(item = ");
+                self.pattern(out, &args[0])?;
+                out.push(", sep = ");
+                self.pattern(out, &args[1])?;
+                out.push(")");
                 Ok(())
             }
             Pattern::Ref {
@@ -7059,6 +7122,26 @@ impl<'p> Emitter<'p> {
                 {
                     return self.match_over_a_sum(out, sum, arms, depth, flow);
                 }
+                // **A `match` that only answers `true` or `false` is a
+                // `matches!`** (0.0.249): the arms that say one answer, and
+                // `else` the other. The long form is what `clippy` refuses in
+                // `std`, so a `.nika` file there wrote around it.
+                if let Some(answer) = a_yes_or_no(arms) {
+                    if !answer {
+                        out.push("!");
+                    }
+                    out.push("matches!(");
+                    self.expr(out, value, depth, flow)?;
+                    out.push(", ");
+                    for (i, arm) in arms[..arms.len() - 1].iter().enumerate() {
+                        if i > 0 {
+                            out.push(" | ");
+                        }
+                        self.match_pattern(out, &arm.pattern, depth + 1, flow)?;
+                    }
+                    out.push(")");
+                    return Ok(());
+                }
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
                 let pad = "    ".repeat(depth + 1);
@@ -7406,6 +7489,18 @@ impl<'p> Emitter<'p> {
                         out.push(")");
                         out.push(after);
                     } else if let Some(value) = &field.value {
+                        // **`name: name` is written `name`** (0.0.249), as the
+                        // source may write it (Part I 4.1): the pair is what
+                        // `clippy` refuses in `std`, and a lowering that only
+                        // repeats the field's name adds nothing to say.
+                        if before.is_empty()
+                            && after.is_empty()
+                            && matches!(value, Expr::Variable(v) if self.text(*v) == self.text(field.name))
+                            && Out::scratch(|inner| self.expr(inner, value, depth, flow))?.buf
+                                == self.name(field.name)
+                        {
+                            continue;
+                        }
                         out.push(": ");
                         out.push(before);
                         self.expr(out, value, depth, flow)?;
@@ -11410,6 +11505,45 @@ fn frame_attribute(frame: &FrameAttr) -> String {
         "#[frame]".to_string()
     } else {
         format!("#[frame({})]", keys.join(", "))
+    }
+}
+
+/// What every arm but the last answers, where a `match` is one that only says
+/// `true` or `false`: those arms one answer, a last `else` the other, and no
+/// guard anywhere. `None` for every other `match`.
+fn a_yes_or_no(arms: &[crate::ast::MatchArm]) -> Option<bool> {
+    let (last, rest) = arms.split_last()?;
+    if rest.is_empty()
+        || !matches!(last.pattern, MatchPattern::Otherwise)
+        || arms.iter().any(|arm| arm.guard.is_some())
+    {
+        return None;
+    }
+    let Expr::LitBool(otherwise) = last.body else {
+        return None;
+    };
+    rest.iter()
+        .all(|arm| matches!(arm.body, Expr::LitBool(b) if b != otherwise))
+        .then_some(!otherwise)
+}
+
+/// The template rule `list(item, sep)` lowers to (Part II 10.8).
+const LIST_RULE: &str = "__nikaia_list";
+
+/// Whether a pattern writes `list(item, sep)` anywhere in it.
+fn writes_a_list(parsed: &Parsed, pattern: &Spanned<Pattern>) -> bool {
+    match &pattern.node {
+        Pattern::Seq(parts) | Pattern::Choice(parts) => {
+            parts.iter().any(|p| writes_a_list(parsed, p))
+        }
+        Pattern::Bind { pat, .. } | Pattern::Repeat { pat, .. } | Pattern::Group(pat) => {
+            writes_a_list(parsed, pat)
+        }
+        Pattern::Ref { name, args, .. } => {
+            (parsed.text(*name) == "list" && args.len() == 2)
+                || args.iter().any(|p| writes_a_list(parsed, p))
+        }
+        Pattern::Literal(_) | Pattern::Cut | Pattern::Fold(_) => false,
     }
 }
 

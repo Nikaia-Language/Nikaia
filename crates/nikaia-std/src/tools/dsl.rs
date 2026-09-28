@@ -22,7 +22,7 @@ pub fn parameters(body: &str) -> Vec<String> {
         let start = i + 1;
         let mut end = start;
         while end < c.len() as i64 && a_name_goes_on(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
-        if end > start && !a_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(start))) {
+        if end > start && a_name_begins(*nikaia_std::index::get(&c, nikaia_std::index::at(start))) {
             let mut name: String = String::new();
             for k in start..end { name.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
             if !found.contains(&name) { found.push(name); }
@@ -34,9 +34,9 @@ pub fn parameters(body: &str) -> Vec<String> {
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn a_name_goes_on(c: char) -> bool { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".contains(c) }
+fn a_name_goes_on(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') }
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-fn a_digit(c: char) -> bool { "0123456789".contains(c) }
+fn a_name_begins(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '_') }
 

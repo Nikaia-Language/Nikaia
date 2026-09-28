@@ -41,11 +41,10 @@ pub enum Line {
     Skip,
 }
 
-// The head as it was written: the request line cut at every space - its first
-// word, and the ones after it - and the lines that have a colon.
+// The head as it was written: the request line cut at every space, and the
+// lines that have a colon.
 pub struct Written {
-    pub first: ref String,
-    pub rest: Vec[ref String],
+    pub words: Vec[ref String],
     pub fields: Vec[Field],
 }
 
@@ -74,19 +73,14 @@ grammar Http1 {
 
     // The head, which ends in an empty line - the only one it has, since the
     // buffer hands over the text up to the first.
-    //
-    // The request line is a word and then every ` word` after it, which is
-    // what `list(WORD, " ")` would say - and `list` reaches a backend that has
-    // no such element (`open-work.md` §1.26).
     pub rule head -> Written =
-        first:WORD rest:MORE* "\r\n" lines:line* "\r\n" eof {
-            Written { first, rest, fields: fields(lines) }
+        words:list(WORD, " ") "\r\n" lines:line* "\r\n" eof {
+            Written { words, fields: fields(lines) }
         }
 
     // A word of the request line: anything up to a space or the line's end.
     // Two spaces in a row are an empty word between them, as they were.
     rule WORD -> ref String = w:text(WORD_PIECE*) { w }
-    rule MORE -> ref String = " " w:WORD { w }
     rule WORD_PIECE = not(" ") not("\r\n") any { }
 
     rule line -> Line =
@@ -122,12 +116,12 @@ fn fields(lines: Vec[Line]) -> Vec[Field] {
 /// D5's protocol. Asked in the order the Rust it replaced asked it, so a head
 /// that is wrong twice is refused for the same reason it was.
 pub fn read(written: Written) -> Read sync {
-    if written.rest.len() < 2 {
+    if written.words.len() < 3 {
         return refused("400 a request line that is not three words")
     }
-    let method = written.first
-    let target = written.rest[0]
-    if !written.rest[1].starts_with("HTTP/1.") {
+    let method = written.words[0]
+    let target = written.words[1]
+    if !written.words[2].starts_with("HTTP/1.") {
         return refused("400 a version this does not speak")
     }
     // **The two methods and no others** (D5). A `PUT` refused by name is a

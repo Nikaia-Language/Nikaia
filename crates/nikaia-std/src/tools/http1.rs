@@ -20,8 +20,7 @@ pub enum Line<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written<'a> {
-    pub first: &'a str,
-    pub rest: Vec<&'a str>,
+    pub words: Vec<&'a str>,
     pub fields: Vec<Field<'a>>,
 }
 
@@ -49,15 +48,11 @@ grammar! {
             -> { }
 
         pub rule head -> Written<'a> =
-            first:WORD rest:MORE* "\r\n" lines:line* "\r\n" eof
-            -> { Written { first, rest, fields: fields(lines) } }
+            words:__nikaia_list<&'a str>(item = WORD, sep = " ") "\r\n" lines:line* "\r\n" eof
+            -> { Written { words, fields: fields(lines) } }
 
         rule WORD -> &'a str =
             w:text(WORD_PIECE*)
-            -> { w }
-
-        rule MORE -> &'a str =
-            " " w:WORD
             -> { w }
 
         rule WORD_PIECE =
@@ -81,6 +76,16 @@ grammar! {
         rule OTHER =
             REST_PIECE+
             -> { }
+
+        rule __nikaia_list<T>(item: Rule<T>, sep) -> Vec<T> =
+          first:item rest:__nikaia_list_more<T>(item = item, sep = sep)*
+            -> { let mut all = vec![first]; all.extend(rest); all }
+        | ""
+            -> { Vec::new() }
+
+        rule __nikaia_list_more<T>(item: Rule<T>, sep) -> T =
+          sep x:item
+            -> { x }
     }
 }
 
@@ -98,10 +103,10 @@ fn fields(lines: Vec<Line<'_>>) -> Vec<Field<'_>> {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn read<'a>(written: &Written<'a>) -> Read<'a> {
-    if (written.rest.len() as i64) < 2 { return refused("400 a request line that is not three words"); }
-    let method = written.first;
-    let target = *nikaia_std::index::get(&written.rest, 0);
-    if !(*nikaia_std::index::get(&written.rest, 1)).starts_with("HTTP/1.") { return refused("400 a version this does not speak"); }
+    if (written.words.len() as i64) < 3 { return refused("400 a request line that is not three words"); }
+    let method = *nikaia_std::index::get(&written.words, 0);
+    let target = *nikaia_std::index::get(&written.words, 1);
+    if !(*nikaia_std::index::get(&written.words, 2)).starts_with("HTTP/1.") { return refused("400 a version this does not speak"); }
     if method != "GET" && method != "POST" { return refused("400 a method this does not answer"); }
     let mut length = 0;
     let mut keep_alive = false;

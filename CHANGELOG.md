@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.249] — 2026-09-28
+
+**Three things the lowering wrote that it should not have**, each found moving
+Rust into Nikaia at 0.0.248.
+
+- **`list(item, sep)` is lowered** (Part II 10.8, `open-work.md` §1.26): the
+  backend has no such element and read `list` as a rule of the grammar's own,
+  so the macro said *expected ident* about the generated file. Each grammar
+  that writes one is given two template rules it lowers to - the first item,
+  then every `sep item` after it, or nothing - with the element type taken
+  from the item rule where the grammar declares it. `tools/http1.nika` reads
+  its request line with `list(WORD, " ")` now.
+- **A `match` that only answers `true` or `false` is a `matches!`**: the arms
+  that give one answer, and `else` the other. The long form is what `clippy`
+  refuses in `std`, and `tools/dsl.nika` had asked a text of characters
+  instead of writing a range; it writes the range again.
+- **`name: name` in a struct literal is written `name`**, for the same reason.
+- `dsl.nika` asks whether a name *begins* (a letter or `_`) rather than
+  whether a character is a digit, which is the question and which `clippy`
+  reads without a complaint.
+
 ## [0.0.248] — 2026-09-28
 
 **Two more pieces of Rust are Nikaia**, by ADR-196's route: written as `.nika`

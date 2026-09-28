@@ -472,3 +472,76 @@ fn a_graph_over_a_map_of_lists() {
     );
     assert!(leaves.iter().all(|f| f.code != "NK1185"), "{leaves:#?}");
 }
+
+/// **`list(item, sep)` is a rule the backend is given** (Part II 10.8,
+/// `open-work.md` §1.26, 0.0.249): the backend has no such element and read
+/// `list` as a rule of the grammar's own, so the macro said *expected ident*
+/// about the generated file. An empty item between two separators is an item,
+/// and an empty input is an empty list.
+#[test]
+fn a_grammar_reads_a_list_with_a_separator() {
+    runs(
+        "grammar-list",
+        "grammar Csv {\n\
+         \x20   pub rule row -> Vec[ref String] = cells:list(CELL, \",\") eof { cells }\n\
+         \n\
+         \x20   rule CELL -> ref String = c:text(CELL_PIECE*) { c }\n\
+         \x20   rule CELL_PIECE = not(\",\") any { }\n\
+         \n\
+         \x20   pub rule numbers -> Vec[i64] = ns:list(number, \";\") eof { ns }\n\
+         \x20   rule number -> i64 = n:dec[i64](digit+) { n }\n\
+         }\n\
+         \n\
+         fn main() throws {\n\
+         \x20   let cells = Csv::row(\"a,,bc\")\n\
+         \x20   println(f\"{cells.len()} [{cells[0]}] [{cells[1]}] [{cells[2]}]\")\n\
+         \x20   let ns = Csv::numbers(\"1;22;333\")\n\
+         \x20   println(f\"{ns.len()} {ns[2]}\")\n\
+         \x20   let none = Csv::numbers(\"\")\n\
+         \x20   println(f\"{none.len()}\")\n\
+         }\n",
+        "3 [a] [] [bc]\n3 333\n0\n",
+    );
+}
+
+/// **What the lowering repeats, it says once** (0.0.249): a `match` that only
+/// answers `true` or `false` is a `matches!`, and `name: name` in a struct
+/// literal is `name`. Both long forms are what `clippy` refuses in `std`, so a
+/// `.nika` file there had to write around them - `tools/dsl.nika` asked a text
+/// of the set instead of a range, and `tools/http1.nika` wrote the shorthand.
+#[test]
+fn a_yes_or_no_match_and_a_field_named_as_its_value() {
+    let source = "struct P { x: i64, y: i64 }\n\
+                  \n\
+                  fn letter(c: char) -> bool {\n\
+                  \x20   return match c {\n\
+                  \x20       'a'..'z' | 'A'..'Z' => true,\n\
+                  \x20       else => false,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn not_small(n: i64) -> bool {\n\
+                  \x20   return match n {\n\
+                  \x20       0 | 1 | 2 => false,\n\
+                  \x20       else => true,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let x = 3\n\
+                  \x20   let y = 4\n\
+                  \x20   let p = P { x: x, y }\n\
+                  \x20   println(f\"{letter('q')} {letter('1')} {not_small(1)} {not_small(9)} {p.x + p.y}\")\n\
+                  }\n";
+    let rust = emit_program(&parse_to_ast(source).expect("it parses"), Build::default())
+        .expect("it lowers")
+        .rust;
+    for written in [
+        "matches!(c, 'a'..='z' | 'A'..='Z')",
+        "!matches!(n, 0 | 1 | 2)",
+        "P { x, y }",
+    ] {
+        assert!(rust.contains(written), "missing `{written}`:\n{rust}");
+    }
+    runs("yes-or-no", source, "true false false true 7\n");
+}
