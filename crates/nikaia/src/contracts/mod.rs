@@ -2035,11 +2035,25 @@ impl Ledger {
     /// `::len` in the ledger reaches nothing, then `xs.len()` reaches nothing
     /// whatever `xs` turns out to be. An over-approximation over the
     /// candidates, which is the direction ADR-033 D4 requires.
+    ///
+    /// **Only a method is a candidate**: an entry whose signature takes no
+    /// `self` is a function a call names by its path, and `x.lines()` never
+    /// reaches `io::lines()`. Counted in, it made every `text.lines()` over a
+    /// lent parameter keep it, because a function whose first parameter is not
+    /// a lent `self` reads, to [`keeps`], as one that takes its receiver whole
+    /// (found moving the ledger's reader to Nikaia, 0.0.258). An entry with no
+    /// signature is still a candidate - what it takes is unknown.
     pub fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
         let suffix = format!("::{method}");
         self.functions
             .iter()
             .filter(|(key, _)| key.ends_with(&suffix))
+            .filter(|(_, contract)| {
+                contract
+                    .signature
+                    .as_ref()
+                    .is_none_or(|s| s.params.first().is_some_and(|(name, _)| name == "self"))
+            })
             .map(|(key, contract)| (key.as_str(), contract))
             .collect()
     }
@@ -2440,60 +2454,59 @@ impl Ledger {
             Nothing,
         }
 
+        use nikaia_std::tools::ledger::Line;
+
         let mut ledger = Ledger::default();
         let mut section: Option<In> = None;
 
-        for (n, line) in text.lines().enumerate() {
-            let line = line.trim();
-            let at = || n + 1;
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if let Some(rest) = line.strip_prefix("[fn.\"") {
-                let name = quoted(rest, "]", at())?;
-                ledger.functions.entry(name.clone()).or_default();
-                section = Some(In::Fn(name));
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("[type.\"") {
-                let name = quoted(rest, "]", at())?;
-                ledger.types.entry(name.clone()).or_default();
-                section = Some(In::Type(name));
-                continue;
-            }
-            // **A trait's methods are not read here**, because they are the `fn`
-            // entries of this same file and reading them twice would let the two
-            // disagree. The set is filled from `functions` once the whole file is
-            // parsed, below.
-            if let Some(rest) = line.strip_prefix("[trait.\"") {
-                let name = quoted(rest, "]", at())?;
-                ledger.traits.entry(name).or_default();
-                section = Some(In::Nothing);
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("[impl.\"") {
-                let written = quoted(rest, "]", at())?;
-                let (trait_name, ty) = written.split_once(" for ").ok_or_else(|| {
-                    anyhow!("line {}: an `impl` entry is `A for T`: {written}", at())
-                })?;
-                ledger
-                    .implementations
-                    .entry(trait_name.trim().to_string())
-                    .or_default()
-                    .insert(ty.trim().to_string());
-                section = Some(In::Nothing);
-                continue;
-            }
-            if line == "[sources]" {
-                section = Some(In::Sources);
-                continue;
-            }
-
-            let (key, value) = line
-                .split_once('=')
-                .ok_or_else(|| anyhow!("line {}: not a key and a value: {line}", at()))?;
-            let (key, value) = (key.trim(), value.trim());
+        // **The file's shape is read in Nikaia** (`tools/ledger.nika`, 0.0.258,
+        // ADR-250): which lines say something, which open a table, where a key
+        // ends. What each table and key *means* is read here.
+        let lines =
+            nikaia_std::tools::ledger::lines(text).map_err(|refusal| anyhow!("{refusal}"))?;
+        for read in &lines {
+            let at = || usize::try_from(read.at).unwrap_or(0);
+            let (key, value) = match &read.line {
+                Line::Table { kind, name } => {
+                    let name = name.clone();
+                    match kind.as_str() {
+                        "fn" => {
+                            ledger.functions.entry(name.clone()).or_default();
+                            section = Some(In::Fn(name));
+                        }
+                        "type" => {
+                            ledger.types.entry(name.clone()).or_default();
+                            section = Some(In::Type(name));
+                        }
+                        // **A trait's methods are not read here**, because they
+                        // are the `fn` entries of this same file and reading
+                        // them twice would let the two disagree. The set is
+                        // filled from `functions` once the whole file is
+                        // parsed, below.
+                        "trait" => {
+                            ledger.traits.entry(name).or_default();
+                            section = Some(In::Nothing);
+                        }
+                        _ => {
+                            let (trait_name, ty) = name.split_once(" for ").ok_or_else(|| {
+                                anyhow!("line {}: an `impl` entry is `A for T`: {name}", at())
+                            })?;
+                            ledger
+                                .implementations
+                                .entry(trait_name.trim().to_string())
+                                .or_default()
+                                .insert(ty.trim().to_string());
+                            section = Some(In::Nothing);
+                        }
+                    }
+                    continue;
+                }
+                Line::Sources => {
+                    section = Some(In::Sources);
+                    continue;
+                }
+                Line::Pair { key, value } => (key.as_str(), value.as_str()),
+            };
 
             match (&section, key) {
                 (None, "version") => ledger.version = value.parse()?,
@@ -2917,13 +2930,6 @@ fn split_config(text: &str) -> (&str, Option<&str>) {
     (text, None)
 }
 
-fn quoted(rest: &str, close: &str, at: usize) -> Result<String> {
-    rest.strip_suffix(close)
-        .and_then(|r| r.strip_suffix('"'))
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("line {at}: unterminated section header"))
-}
-
 /// A value that may itself hold a quote - which a signature does, the moment an
 /// option's default is a string: `method: &str = "GET"`.
 /// **And a `\n` becomes `\\n`**, which is
@@ -2938,29 +2944,9 @@ fn escape(value: &str) -> String {
         .replace('\n', "\\n")
 }
 
+/// What a quoted value holds, read in Nikaia (`tools/ledger.nika`).
 fn unquote(value: &str, at: usize) -> Result<String> {
-    let inner = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .ok_or_else(|| anyhow!("line {at}: expected a quoted string, found `{value}`"))?;
-
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.next() {
-                // The only escape that means something other than itself, and
-                // `escape` above only ever writes it for a real line break: a
-                // backslash of the value's own is `\\\\` and reaches the arm
-                // below on its second character.
-                Some('n') => out.push('\n'),
-                Some(escaped) => out.push(escaped),
-                None => return Err(anyhow!("line {at}: a `\\` at the end of `{value}`")),
-            },
-            c => out.push(c),
-        }
-    }
-    Ok(out)
+    nikaia_std::tools::ledger::unquote(value).map_err(|refusal| anyhow!("line {at}: {refusal}"))
 }
 
 fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {
@@ -3067,17 +3053,10 @@ fn throws_of(value: &str, at: usize) -> Result<Vec<String>> {
     string_list(value, at)
 }
 
+/// A list's entries, unquoted, read in Nikaia (`tools/ledger.nika`): split
+/// where a comma stands **outside** quotes, so `"Pair(i64, i64)"` is one entry.
 fn string_list(value: &str, at: usize) -> Result<Vec<String>> {
-    let inner = value
-        .strip_prefix('[')
-        .and_then(|v| v.strip_suffix(']'))
-        .ok_or_else(|| anyhow!("line {at}: expected a list, found `{value}`"))?;
-    inner
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| unquote(s, at))
-        .collect()
+    nikaia_std::tools::ledger::list(value).map_err(|refusal| anyhow!("line {at}: {refusal}"))
 }
 
 /// The types Part I 2.2 offers, by name.

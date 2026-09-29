@@ -102,3 +102,40 @@ fn stds_ledger_is_written_in_nikaias_spelling() {
         assert!(!line.starts_with("returns = \"borrows("), "{line}");
     }
 }
+
+/// **A list's entries may hold a comma**: a variant with two payloads is
+/// `"Pair(i64, i64)"`, a struct-like one `"Named { a: i64, b: String }"`.
+/// The reader split the list at every comma, quoted or not, and a package whose
+/// enum had either could not be read back by its consumer.
+#[test]
+fn a_list_entry_holding_a_comma_reads_back_whole() {
+    let source = "pub enum Shape {\n\
+                  \x20   Pair(i64, i64),\n\
+                  \x20   Named { a: i64, b: String }\n\
+                  }";
+    let ledger = Ledger::infer(&parse_to_ast(source).expect("the source parses"));
+    let text = ledger.render();
+    assert!(text.contains("\"Pair(i64, i64)\""), "{text}");
+    let read = Ledger::parse(&text).expect("its own output parses");
+    assert_eq!(read.render(), text, "written again, the same bytes");
+    assert_eq!(read.types, ledger.types, "read back, the same contract");
+}
+
+/// **The reader's list, in Nikaia** (`tools/ledger.nika`): a comma inside
+/// quotes is the entry's, an escaped quote does not end one, `[]` and a
+/// trailing comma leave nothing, and what is not a list says so.
+#[test]
+fn the_list_reader_splits_outside_quotes_only() {
+    use nikaia_std::tools::ledger::list;
+    assert_eq!(
+        list(r#"["Pair(i64, i64)", "say \"a, b\"", "c",]"#).expect("a list"),
+        ["Pair(i64, i64)", "say \"a, b\"", "c"]
+    );
+    assert!(list("[]").expect("a list").is_empty());
+    assert!(
+        list("\"a\"")
+            .expect_err("not a list")
+            .to_string()
+            .contains("expected a list")
+    );
+}

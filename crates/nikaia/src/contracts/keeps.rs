@@ -394,18 +394,27 @@ fn uses_of(
     if parameters.is_empty() {
         return Some((key, Uses::default()));
     }
-    // **The parameters the author lent**: `ref self`, `ref mut self`, and an
-    // argument whose type is written `ref`. Each is a reference in the Rust
-    // whatever this walk decides, so a `match` over one already matches
-    // through a reference - the over-approximation in [`classify`]'s `match`
-    // arm is not for them (`open-work.md` §1.29, found at 0.0.254).
+    // **The parameters the author lent**: `ref self`, `ref mut self`, an
+    // argument whose type is written `ref`, and one written `mut`, which the
+    // callee changes in place ([ADR-094](../../../docs/specification/adr/adr-094.md)
+    // D3). Each is a reference in the Rust whatever this walk decides, so a
+    // `match` over one already matches through a reference - the
+    // over-approximation in [`classify`]'s `match` arm is not for them
+    // (`open-work.md` §1.29, found at 0.0.254).
     let mut lent: BTreeSet<String> = args
         .iter()
-        .filter(|a| a.ty.is_view)
+        .filter(|a| a.ty.is_view || a.mutable)
+        .map(|a| parsed.text(a.name).to_string())
+        .collect();
+    // Of those, the ones no body keeps: see below.
+    let mut unkept: BTreeSet<String> = args
+        .iter()
+        .filter(|a| a.mutable)
         .map(|a| parsed.text(a.name).to_string())
         .collect();
     if target.is_some() && receiver.as_ref().is_some_and(|r| r.is_ref) {
         lent.insert("self".to_string());
+        unkept.insert("self".to_string());
     }
 
     // **A result that is a view keeps nothing by returning.** `-> &str` hands
@@ -468,16 +477,16 @@ fn uses_of(
         walk.hand_over(value);
     }
     // **A receiver the author wrote `ref` is not kept** (`open-work.md`
-    // §1.29, found at 0.0.254 in the ledger `template.nika` lowers to). It is
-    // a reference by the author's word, which no walk here widens - a use that
-    // would need it whole is `NK1131`'s, and names `fn …(self)` as the way
-    // out. An argument written `ref` is not in this rule: a parse keeps the
-    // text its result views
-    // ([ADR-186](../../../docs/specification/adr/adr-186.md) D1), and that is
-    // how a caller learns it.
-    let unkept = |name: &String| name == "self" && lent.contains(name);
-    uses.kept.retain(|name| !unkept(name));
-    uses.passed.retain(|(name, _, _)| !unkept(name));
+    // §1.29, found at 0.0.254 in the ledger `template.nika` lowers to), **nor
+    // an argument written `mut`** (found at 0.0.258 in `ledger.nika`'s, where
+    // `entries.push(…)` kept the list it pushes to). Each is a reference by
+    // the author's word, which no walk here widens - a use that would need it
+    // whole is `NK1131`'s, and names `fn …(self)` as the way out. An argument
+    // written `ref` is not in this rule: a parse keeps the text its result
+    // views ([ADR-186](../../../docs/specification/adr/adr-186.md) D1), and
+    // that is how a caller learns it.
+    uses.kept.retain(|name| !unkept.contains(name));
+    uses.passed.retain(|(name, _, _)| !unkept.contains(name));
     Some((key, uses))
 }
 

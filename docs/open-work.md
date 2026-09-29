@@ -34,6 +34,18 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
+### 1.30. A parameter written `mut` handed away whole reaches `rustc`
+
+Found at 0.0.258, probing what `keeps` may drop for a `mut` argument.
+`fn store(mut out: Vec[String]) -> Box { return Box { items: out } }` lowers
+`out` as `&mut Vec<String>` (ADR-094 D3) and the struct literal as
+`Box { items: out }` - *mismatched types* about a file nobody wrote (Part III
+C.1). `return out` from `fn give(mut out: Vec[String]) -> Vec[String]` is the
+same. `NK1131` refuses exactly this for a field of a borrowed `self`; the fix
+is the same refusal for a `mut` parameter, naming `.clone()` and taking it
+without `mut` as the ways out. Before 0.0.258 `keeps` named `out` for both,
+which changed nothing: a `mut` parameter is `&mut` whatever the column says.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

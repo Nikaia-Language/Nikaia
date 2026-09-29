@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.258] — 2026-09-29
+
+**The ledger's reader is Nikaia, the half that knows the file's shape**
+([ADR-250](docs/specification/adr/adr-250.md) §5). `tools/ledger.nika` reads
+which lines of a `nikaia.contracts` say something, which open a table, where a
+key ends, what a quoted string holds and where a list's entry ends;
+`Ledger::parse` keeps what each key means. The toolchain is **2.3 %** Nikaia.
+
+- **Fixed, found by the move**: a list was split at every comma, quoted or
+  not. A package whose `pub enum` has a variant with two payloads,
+  `"Pair(i64, i64)"`, or whose `pub` field is a `HashMap[String, i64]`, wrote a
+  ledger its consumer refused (*expected a quoted string, found `"Pair(i64`*).
+  The Nikaia reader splits outside quotes.
+- **Fixed**: `text.lines()` over a lent parameter kept it, because
+  `Ledger::candidates` counted `io::lines()` - a function, no `self` - as a
+  method `lines` might be. Only an entry that takes `self` is a candidate.
+- **Fixed**: a parameter written `mut` was kept for being changed; it is a
+  `&mut` by the author's word (ADR-094 D3), like `ref mut self` at 0.0.257.
+- **Recorded**: a `mut` parameter handed away whole, `Box { items: out }`,
+  reaches `rustc` (`open-work.md` §1.30).
+- Tests: `ledger_spelling.rs` (a list entry with a comma reads back whole; the
+  reader's list directly), `keeps.rs` (a method name a free function shares; a
+  `mut` parameter).
+
 ## [0.0.257] — 2026-09-29
 
 **`keeps` no longer names a receiver the author lent** (`open-work.md` §1.29,

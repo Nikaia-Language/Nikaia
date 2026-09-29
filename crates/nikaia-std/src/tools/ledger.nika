@@ -1,0 +1,203 @@
+// crates/nikaia-std/src/tools/ledger.nika
+//
+// **How a ledger is written down, read back** (Part III 13.5, ADR-251).
+//
+// The sixth piece of the compiler moved from Rust to Nikaia (0.0.258), by
+// ADR-196's route and on ADR-250's road: lowered ahead of time by
+// `nikaia lower-std` to `ledger.rs` beside it, `include!`d as
+// `nikaia_std::tools::ledger`, and called from the compiler's
+// `Ledger::parse`, which is left holding what each key *means*.
+//
+// This is the half of the reader that knows the file's shape and nothing of
+// its words: which lines are comments, which open a table and what the table
+// is called, where a key ends and its value begins, what a quoted string holds
+// and where one entry of a list ends. `nikaia.contracts` is generated, so the
+// shapes are the ones `Ledger::render` writes - a small reader for a small
+// format, deliberately not a TOML parser (ADR-250 §3 keeps the `toml` crate
+// behind the manifest's adapter; this file was never read by it).
+//
+// **A list's entries are split where a comma stands outside quotes.** The Rust
+// this replaces split at every comma, and an entry that holds one - a variant
+// with two payloads, `"Pair(i64, i64)"`, or a field typed
+// `collections::HashMap[String, i64]` - could not be read back: a package with
+// either wrote a ledger its consumer refused.
+
+/// One line of a ledger that says something.
+pub enum Line {
+    /// `[fn."…"]`, `[type."…"]`, `[trait."…"]` or `[impl."…"]`: which kind
+    /// of table, and the name between its quotes, as written.
+    Table { kind: String, name: String },
+    /// `[sources]`, the one table whose name is not quoted.
+    Sources,
+    /// `key = value`, each trimmed, the value exactly as it stands.
+    Pair { key: String, value: String },
+}
+
+/// A line, and the line number a message about it names.
+pub struct Read {
+    pub at: i64,
+    pub line: Line,
+}
+
+/// Why a ledger is refused, in the words the compiler reports.
+pub enum Refused {
+    Because(String),
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return match self {
+            Refused::Because(why) => why.clone()
+        }
+    }
+}
+
+/// The lines of a ledger that say something, in order: a blank line and a `#`
+/// comment say nothing.
+pub fn lines(text: ref String) -> Vec[Read] throws {
+    let mut read: Vec[Read] = []
+    let mut n = 0
+    for raw in text.lines() {
+        n += 1
+        let line = raw.trim()
+        if line.len() == 0 || line.starts_with("#") {
+            continue
+        }
+        if line == "[sources]" {
+            read.push(Read { at: n, line: Line::Sources })
+            continue
+        }
+        let kind = table_kind(line)
+        if kind.len() > 0 {
+            read.push(Read { at: n, line: Line::Table { kind: kind.clone(), name: table_name(line, kind, n) } })
+            continue
+        }
+        read.push(Read { at: n, line: pair(line, n) })
+    }
+    return read
+}
+
+// The kind of table a line opens, or nothing where it opens none.
+fn table_kind(line: ref String) -> ref String sync {
+    if line.starts_with("[fn.\"") {
+        return "fn"
+    }
+    if line.starts_with("[type.\"") {
+        return "type"
+    }
+    if line.starts_with("[trait.\"") {
+        return "trait"
+    }
+    if line.starts_with("[impl.\"") {
+        return "impl"
+    }
+    return ""
+}
+
+// What stands between `[kind."` and `"]`.
+fn table_name(line: ref String, kind: ref String, n: i64) -> String throws {
+    let c: Vec[char] = line.chars().collect()
+    let start = kind.len() + 3
+    if !line.ends_with("\"]") || c.len() < start + 2 {
+        throw Refused::Because(f"line {n}: unterminated section header")
+    }
+    let mut name: String = ""
+    for k in start..<c.len() - 2 {
+        name.push(c[k])
+    }
+    return name
+}
+
+// `key = value`, split at the first `=`.
+fn pair(line: ref String, n: i64) -> Line throws {
+    let mut key: String = ""
+    let mut value: String = ""
+    let mut seen = false
+    for c in line.chars() {
+        if seen {
+            value.push(c)
+        } else if c == '=' {
+            seen = true
+        } else {
+            key.push(c)
+        }
+    }
+    if !seen {
+        throw Refused::Because(f"line {n}: not a key and a value: {line}")
+    }
+    return Line::Pair { key: key.trim().clone(), value: value.trim().clone() }
+}
+
+/// What a quoted string holds: `\n` is a line break, and a `\` before any
+/// other character is that character.
+pub fn unquote(value: ref String) -> String throws {
+    let c: Vec[char] = value.chars().collect()
+    if c.len() < 2 || c[0] != '"' || c[c.len() - 1] != '"' {
+        throw Refused::Because(f"expected a quoted string, found `{value}`")
+    }
+    let mut out: String = ""
+    let mut escaped = false
+    for k in 1..<c.len() - 1 {
+        if escaped {
+            if c[k] == 'n' {
+                out.push('\n')
+            } else {
+                out.push(c[k])
+            }
+            escaped = false
+        } else if c[k] == '\\' {
+            escaped = true
+        } else {
+            out.push(c[k])
+        }
+    }
+    if escaped {
+        throw Refused::Because(f"a `\\` at the end of `{value}`")
+    }
+    return out
+}
+
+/// The entries of `["a", "b"]`, each unquoted, split where a comma stands
+/// outside quotes.
+pub fn list(value: ref String) -> Vec[String] throws {
+    let c: Vec[char] = value.chars().collect()
+    if c.len() < 2 || c[0] != '[' || c[c.len() - 1] != ']' {
+        throw Refused::Because(f"expected a list, found `{value}`")
+    }
+    let mut entries: Vec[String] = []
+    let mut entry: String = ""
+    let mut quoted = false
+    let mut escaped = false
+    for k in 1..<c.len() - 1 {
+        let here = c[k]
+        if quoted {
+            if escaped {
+                escaped = false
+            } else if here == '\\' {
+                escaped = true
+            } else if here == '"' {
+                quoted = false
+            }
+            entry.push(here)
+        } else if here == ',' {
+            take(entry, entries)
+            entry = ""
+        } else {
+            if here == '"' {
+                quoted = true
+            }
+            entry.push(here)
+        }
+    }
+    take(entry, entries)
+    return entries
+}
+
+// One entry of a list, unquoted, where it is not empty: `[]` and a trailing
+// comma leave nothing to read.
+fn take(entry: ref String, mut entries: Vec[String]) throws {
+    let written = entry.trim()
+    if written.len() > 0 {
+        entries.push(unquote(written))
+    }
+}

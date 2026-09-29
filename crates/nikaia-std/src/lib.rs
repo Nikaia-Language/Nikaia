@@ -141,6 +141,15 @@ pub mod tools {
         include!("tools/template.rs");
     }
 
+    /// **How a ledger is written down, read back**: `src/tools/ledger.nika`,
+    /// the lines, tables, quoted strings and lists of `nikaia.contracts`
+    /// (Part III 13.5), lowered to `src/tools/ledger.rs` and committed beside
+    /// it (ADR-250, 0.0.258). The compiler's `Ledger::parse` calls it and keeps
+    /// what each key means.
+    pub mod ledger {
+        include!("tools/ledger.rs");
+    }
+
     /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
     /// grammar and the rules a server answers by, lowered to
     /// `src/tools/http1.rs` and committed beside it

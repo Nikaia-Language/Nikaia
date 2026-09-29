@@ -508,3 +508,37 @@ fn a_copied_receiver_a_method_takes_by_value_is_not_kept() {
         keeps(source, "lower")
     );
 }
+
+/// **A method call reaches methods only**: `text.lines()` is `str::lines`,
+/// never `io::lines()`, which takes no `self`. Counted as a candidate, the free
+/// function read as a method taking its receiver whole, and every
+/// `text.lines()` over a lent parameter kept it (found at 0.0.258, moving the
+/// ledger's reader to Nikaia).
+#[test]
+fn a_method_name_a_free_function_shares_does_not_keep_the_receiver() {
+    let source = "pub fn count(text: ref String) -> i64 {\n\
+                  \x20   let mut n = 0\n\
+                  \x20   for line in text.lines() {\n n += line.len()\n }\n\
+                  \x20   return n\n\
+                  }";
+    assert!(
+        keeps(source, "count").is_empty(),
+        "{:?}",
+        keeps(source, "count")
+    );
+}
+
+/// **A parameter written `mut` is changed in place and not kept**
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3): it is a `&mut`
+/// by the author's word, and `entries.push(…)` is what it is written for.
+#[test]
+fn a_parameter_written_mut_is_not_kept_for_being_changed() {
+    let source = "fn take(entry: ref String, mut entries: Vec[String]) {\n\
+                  \x20   entries.push(entry.clone())\n\
+                  }";
+    assert!(
+        keeps(source, "take").is_empty(),
+        "{:?}",
+        keeps(source, "take")
+    );
+}
