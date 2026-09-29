@@ -33,6 +33,7 @@ COMPILER_NIKA = {
     "fixed.nika": "fixed: FNV-1a and CHD (0.0.250)",
     "template.nika": "emit::template: the HTML scan (0.0.252)",
     "ledger.nika": "contracts: reading a ledger's lines and lists (0.0.258)",
+    "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
 }
 
 

@@ -24,6 +24,13 @@ use anyhow::{Context, Result};
 
 use crate::refused;
 
+// **Every decision the manifest makes is Nikaia** (`tools/manifest.nika`,
+// ADR-250): which `[build]` keys exist, have moved or are withdrawn, which
+// machines and keys `[build.<target>]` may carry, and which shape a dependency
+// is. The `toml` crate stays here, behind the adapter (ADR-250 §3): this module
+// reads the file and hands those questions plain text.
+use nikaia_std::tools::manifest as decide;
+
 /// Where a `nikaia.toml` was found, and what it said.
 ///
 /// Absent outside a project, which is not an error: a single `.nika` file
@@ -73,69 +80,10 @@ pub enum Dependency {
     Nikaia(toml::Value),
 }
 
-/// The keys `[build]` may carry. A key outside this set is a typo until proven
-/// otherwise, and saying so beats a switch that silently stayed at its default:
-/// `user_parallelism` with an underscore is the mistake this catches.
-///
-/// The list is `target`, `user-parallelism` (ADR-037 D5) and
-/// `reentrancy-check` ([ADR-039](../../../docs/specification/adr/adr-039.md)
-/// D8), plus the one key that has **moved out** - see [`MOVED`]. A key that is
-/// none of those, and that this compiler once had, is in [`WITHDRAWN`]:
-/// refused, but in its own words rather than as a typo.
-///
-/// **Part I 1.2 names the options rather than counting them**, and this is why:
-/// the count has been wrong twice (ADR-039 D8's own correction), so the page
-/// lists them and this list is what a manifest is checked against.
-const KNOWN: &[&str] = &[
-    "target",
-    "user-parallelism",
-    "reentrancy-check",
-    "cleanup-deadline",
-];
-
-/// The keys this compiler had and no longer has, with what to do instead.
-///
-/// Different from [`MOVED`] in the only way that matters to whoever wrote the
-/// key: a moved key still decides something, somewhere else, so the manifest
-/// keeps working and says where to look. A withdrawn key decides **nothing
-/// anywhere**, and a build that quietly ignored it would be a program behaving
-/// differently from the file that describes it.
-///
-/// `ordering` is [ADR-050](../../../docs/specification/adr/adr-050.md) D7. It
-/// existed to turn off the automatic reordering D1 withdrew, and a switch
-/// between two behaviours when there is one left is a question with no answer.
-const WITHDRAWN: &[(&str, &str)] = &[(
-    "ordering",
-    "statements run in the order they are written, so there is nothing left for it to turn off \
-     (ADR-050 D1 and D7). A program that wants two things to run together writes `overlap { … }`, \
-     and `--overlaps` says which branches did",
-)];
-
-/// The keys the manifest still accepts and the compiler no longer reads,
-/// with where each of them went.
-///
-/// `cleanup-deadline` is [ADR-038](../../../docs/specification/adr/adr-038.md)
-/// D5's move: how long a program waits at exit for pending cleanup
-/// ([ADR-006](../../../docs/specification/adr/adr-006.md) D5) is an operating
-/// property, and a build-time key cannot be tuned by the operator - who is not
-/// the person who compiled it. It stays accepted, with a note that says where
-/// it went, because refusing it would fail a manifest written to the
-/// specification that documented it.
-const MOVED: &[(&str, &str)] = &[(
-    "cleanup-deadline",
-    "the runtime configuration file `nikaia-runtime.toml`, read when the program \
-     starts by the person running it (ADR-038 D5). How long a program waits at \
-     exit is an operating property, and the compiler no longer reads this key",
-)];
-
-/// What a `[build.<target>]` table may carry (Part III 13.3). Same rule as
-/// `[build]`: a key nothing reads is a typo, and a silently ignored `opt_level`
-/// leaves a build at a setting its author believed they had changed.
-const KNOWN_CODEGEN: &[&str] = &["opt-level", "lto"];
-
-/// The machines `[build.<target>]` may name (ADR-037 D1). A table for a target
-/// that does not exist is codegen nothing will ever apply.
-const TARGETS: &[&str] = &["x86_64-linux", "aarch64-linux", "wasm32-unknown"];
+/// A refusal from `tools/manifest.nika`, in the words it gave.
+fn refusal(thrown: nikaia_std::error::Thrown<decide::Refused>) -> anyhow::Error {
+    refused!("{thrown}")
+}
 
 impl Manifest {
     /// Read the manifest governing `input`, if there is one.
@@ -197,19 +145,8 @@ impl Manifest {
                 manifest.codegen.insert(key.clone(), codegen(key, sub)?);
                 continue;
             }
-            if let Some((_, why)) = WITHDRAWN.iter().find(|(gone, _)| *gone == key.as_str()) {
-                return Err(refused!("`{key}` in `[build]` is withdrawn: {why}"));
-            }
-            if !KNOWN.contains(&key.as_str()) {
-                return Err(refused!(
-                    "unknown key `{key}` in `[build]` (expected one of: {})",
-                    KNOWN.join(", ")
-                ));
-            }
-            if let Some((_, went)) = MOVED.iter().find(|(moved, _)| *moved == key.as_str()) {
-                manifest
-                    .notes
-                    .push(format!("`{key}` in `[build]` has moved to {went}"));
+            if let decide::Switch::Moved(note) = decide::build_key(key).map_err(refusal)? {
+                manifest.notes.push(note);
                 // Not carried into `build`: a key nothing reads must not be
                 // reachable through `setting`, or a later reader would resolve
                 // it from the wrong file.
@@ -277,7 +214,7 @@ impl Manifest {
         self.dependencies
             .iter()
             .filter(|(_, declared)| matches!(declared, Dependency::Rust(_)))
-            .map(|(name, _)| name.replace('-', "_"))
+            .map(|(name, _)| decide::crate_name(name))
             .collect()
     }
 
@@ -316,20 +253,10 @@ fn table_of(document: &toml::Value, name: &str) -> BTreeMap<String, toml::Value>
 
 /// `[build.<target>]`, checked.
 fn codegen(target: &str, table: &toml::Table) -> Result<BTreeMap<String, toml::Value>> {
-    if !TARGETS.contains(&target) {
-        return Err(refused!(
-            "`[build.{target}]` names no machine (expected one of: {})",
-            TARGETS.join(", ")
-        ));
-    }
+    decide::codegen_table(target).map_err(refusal)?;
     let mut out = BTreeMap::new();
     for (key, value) in table {
-        if !KNOWN_CODEGEN.contains(&key.as_str()) {
-            return Err(refused!(
-                "unknown key `{key}` in `[build.{target}]` (expected one of: {})",
-                KNOWN_CODEGEN.join(", ")
-            ));
-        }
+        decide::codegen_key(target, key).map_err(refusal)?;
         out.insert(key.clone(), value.clone());
     }
     Ok(out)
@@ -343,34 +270,31 @@ fn codegen(target: &str, table: &toml::Table) -> Result<BTreeMap<String, toml::V
 fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> {
     let mut out = BTreeMap::new();
     for (name, value) in table_of(document, "dependencies") {
-        let kind = value.get("type").and_then(toml::Value::as_str);
-        match kind {
-            Some("rust") => {
+        let kind = value.get("type").map(|kind| match kind {
+            toml::Value::String(word) => word.clone(),
+            other => other.to_string(),
+        });
+        let path = value.get("path").and_then(toml::Value::as_str);
+        let shape = decide::dependency(
+            &name,
+            kind.is_some(),
+            kind.as_deref().unwrap_or(""),
+            path.is_some(),
+        )
+        .map_err(refusal)?;
+        let declared = match (shape, path) {
+            (decide::Shape::Rust, _) => {
                 let mut table = value
                     .as_table()
                     .cloned()
                     .expect("a value with a `type` key is a table");
                 table.remove("type");
-                out.insert(name, Dependency::Rust(toml::Value::Table(table)));
+                Dependency::Rust(toml::Value::Table(table))
             }
-            Some(other) => {
-                return Err(refused!(
-                    "dependency `{name}` has `type = \"{other}\"`, which names no ecosystem \
-                     (the only one spelled out is `rust`, for a crate from crates.io)"
-                ));
-            }
-            // A Nikaia package, and `path` is the one way of naming one that
-            // resolves (ADR-047 D2). Anything else is carried to the place that
-            // refuses it, with the reason.
-            None => match value.get("path").and_then(toml::Value::as_str) {
-                Some(path) => {
-                    out.insert(name, Dependency::Path(PathBuf::from(path)));
-                }
-                None => {
-                    out.insert(name, Dependency::Nikaia(value));
-                }
-            },
-        }
+            (decide::Shape::Path, Some(path)) => Dependency::Path(PathBuf::from(path)),
+            _ => Dependency::Nikaia(value.clone()),
+        };
+        out.insert(name, declared);
     }
     Ok(out)
 }
@@ -495,6 +419,33 @@ mod tests {
         let error = Manifest::parse("[dependencies]\nx = { type = \"c\", version = \"1\" }\n")
             .expect_err("an unknown ecosystem is refused");
         assert!(format!("{error:#}").contains("rust"), "{error:#}");
+    }
+
+    /// A `type` that is not a word names no ecosystem either. Before the
+    /// decision moved to `tools/manifest.nika` (ADR-250), `type = 1` was read
+    /// as no `type` at all, and the entry passed as a Nikaia package with its
+    /// marker silently ignored.
+    #[test]
+    fn a_dependency_type_that_is_not_a_word_is_refused() {
+        let error = Manifest::parse("[dependencies]\nx = { type = 1, path = \"../x\" }\n")
+            .expect_err("a type that is no word is refused");
+        let said = format!("{error:#}");
+        assert!(said.contains("`x`"), "{said}");
+        assert!(said.contains("names no ecosystem"), "{said}");
+    }
+
+    /// A Nikaia package by path, and the name Cargo gives a crate key.
+    #[test]
+    fn a_path_dependency_is_a_path_and_a_crate_key_is_underscored() {
+        let manifest = Manifest::parse(
+            "[dependencies]\nhttp = { path = \"../http\" }\nhyper-shim = { type = \"rust\", version = \"1\" }\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            manifest.dependencies()["http"],
+            Dependency::Path(PathBuf::from("../http"))
+        );
+        assert!(manifest.foreign_crates().contains("hyper_shim"));
     }
 
     /// ADR-038 D5 moved it to the runtime configuration file. It is still

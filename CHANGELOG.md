@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.260] — 2026-09-29
+
+**What `nikaia.toml` may say is decided in Nikaia**
+([ADR-250](docs/specification/adr/adr-250.md) §5). `tools/manifest.nika`
+decides which `[build]` keys exist, have moved or are withdrawn, which machines
+and keys `[build.<target>]` may carry, and which of the three shapes a
+dependency is; `Manifest::parse` reads the file with the `toml` crate, which
+stays behind the adapter (ADR-250 §3), and asks it about every key. The
+toolchain is **2.5 %** Nikaia.
+
+- **Found by the move and fixed**: `x = { type = 1, path = "../x" }` was read
+  as a dependency with no `type`, and passed as a Nikaia package with its
+  marker silently ignored. A `type` that is not a word names no ecosystem, and
+  is refused like `type = "c"`.
+- ADR-250 D2 no longer says `manifest` needs a TOML grammar; §3's correction
+  (0.0.253) keeps the crate, and D2 now says so too.
+
 ## [0.0.259] — 2026-09-29
 
 **A read's answer reaped by another thread wakes its reader**

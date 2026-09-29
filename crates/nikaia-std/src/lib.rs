@@ -150,6 +150,16 @@ pub mod tools {
         include!("tools/ledger.rs");
     }
 
+    /// **What `nikaia.toml` may say, and what each key does**:
+    /// `src/tools/manifest.nika`, the `[build]` keys that exist, have moved or
+    /// are withdrawn, the machines and keys of `[build.<target>]`, and the
+    /// three shapes of a dependency, lowered to `src/tools/manifest.rs` and
+    /// committed beside it (ADR-250). The compiler's `Manifest::parse` reads
+    /// the file with the `toml` crate and asks this about every key.
+    pub mod manifest {
+        include!("tools/manifest.rs");
+    }
+
     /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
     /// grammar and the rules a server answers by, lowered to
     /// `src/tools/http1.rs` and committed beside it

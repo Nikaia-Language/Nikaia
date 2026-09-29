@@ -1,0 +1,179 @@
+// crates/nikaia-std/src/tools/manifest.nika
+//
+// **What `nikaia.toml` may say, and what each key does** (ADR-037 D5,
+// ADR-002 D1, ADR-047 D2, Part III 13.3).
+//
+// The seventh piece of the compiler moved from Rust to Nikaia, by ADR-196's
+// route and on ADR-250's road: lowered ahead of time by `nikaia lower-std` to
+// `manifest.rs` beside it, `include!`d as `nikaia_std::tools::manifest`, and
+// called from the compiler's `Manifest::parse`.
+//
+// **The `toml` crate stays behind the adapter** (ADR-250 §3): the compiler
+// reads the file with it and hands this module keys, table names and the words
+// a value says - plain text. What moved is every decision the manifest makes:
+// which `[build]` keys exist, which have moved and which are withdrawn, which
+// machines a `[build.<target>]` table may name and what it may carry, and which
+// of the three shapes a dependency is.
+
+/// Why a manifest is refused, in the words the compiler reports.
+pub enum Refused {
+    Because(String),
+}
+
+impl Error for Refused {
+    fn message(ref self) -> String {
+        return match self {
+            Refused::Because(why) => why.clone()
+        }
+    }
+}
+
+/// What a `[build]` key does with its value.
+pub enum Switch {
+    /// Carried to the parser that owns the setting, as written.
+    Kept,
+    /// Accepted and read by nothing here: the note says where it went.
+    Moved(String),
+}
+
+/// The keys `[build]` may carry. A key outside these is a typo until proven
+/// otherwise, and saying so beats a switch that silently stayed at its
+/// default: `user_parallelism` with an underscore is the mistake this catches.
+/// Part I 1.2 names the options rather than counting them, and this list is
+/// what a manifest is checked against.
+pub fn known() -> Vec[String] {
+    return ["target", "user-parallelism", "reentrancy-check", "cleanup-deadline"]
+}
+
+// A key this compiler had and no longer has, with what to do instead, or
+// nothing. A withdrawn key decides **nothing anywhere**, and a build that
+// ignored it would run a program that differs from the file describing it.
+// `ordering` is ADR-050 D7: it turned off the reordering D1 withdrew.
+fn withdrawn(key: ref String) -> String {
+    if key == "ordering" {
+        return "statements run in the order they are written, so there is nothing left for it to turn off (ADR-050 D1 and D7). A program that wants two things to run together writes `overlap { … }`, and `--overlaps` says which branches did"
+    }
+    return ""
+}
+
+// A key the manifest still accepts and the compiler no longer reads, with where
+// it went, or nothing. `cleanup-deadline` is ADR-038 D5's move: how long a
+// program waits at exit is an operating property, tuned by whoever runs it.
+fn moved(key: ref String) -> String {
+    if key == "cleanup-deadline" {
+        return "the runtime configuration file `nikaia-runtime.toml`, read when the program starts by the person running it (ADR-038 D5). How long a program waits at exit is an operating property, and the compiler no longer reads this key"
+    }
+    return ""
+}
+
+/// What a `[build]` key does: kept, moved with a note, or refused - as
+/// withdrawn in its own words, or as a typo naming the keys there are.
+pub fn build_key(key: ref String) -> Switch throws {
+    let gone = withdrawn(key)
+    if gone.len() > 0 {
+        throw Refused::Because(f"`{key}` in `[build]` is withdrawn: {gone}")
+    }
+    if !contains(known(), key) {
+        let expected = joined(known())
+        throw Refused::Because(f"unknown key `{key}` in `[build]` (expected one of: {expected})")
+    }
+    let went = moved(key)
+    if went.len() > 0 {
+        return Switch::Moved(f"`{key}` in `[build]` has moved to {went}")
+    }
+    return Switch::Kept
+}
+
+/// The machines a `[build.<target>]` table may name (ADR-037 D1). A table for
+/// a target that does not exist is codegen nothing will ever apply.
+pub fn targets() -> Vec[String] {
+    return ["x86_64-linux", "aarch64-linux", "wasm32-unknown"]
+}
+
+/// What a `[build.<target>]` table may carry (Part III 13.3). Same rule as
+/// `[build]`: a silently ignored `opt_level` leaves a build at a setting its
+/// author believed they had changed.
+pub fn codegen_keys() -> Vec[String] {
+    return ["opt-level", "lto"]
+}
+
+/// `[build.<target>]` names a machine, or is refused naming the ones there are.
+pub fn codegen_table(target: ref String) throws {
+    if !contains(targets(), target) {
+        let expected = joined(targets())
+        throw Refused::Because(f"`[build.{target}]` names no machine (expected one of: {expected})")
+    }
+}
+
+/// A key of `[build.<target>]` is one it may carry, or is refused.
+pub fn codegen_key(target: ref String, key: ref String) throws {
+    if !contains(codegen_keys(), key) {
+        let expected = joined(codegen_keys())
+        throw Refused::Because(f"unknown key `{key}` in `[build.{target}]` (expected one of: {expected})")
+    }
+}
+
+/// Which of the three shapes a `[dependencies]` entry is (ADR-002 D1,
+/// ADR-047 D2).
+pub enum Shape {
+    /// `type = "rust"`: a crate, handed to Cargo without the marker.
+    Rust,
+    /// `path = "…"`: a Nikaia package, read as part of this program.
+    Path,
+    /// Any other way of naming a Nikaia package: carried to the place that
+    /// refuses it, with the reason, since nothing has decided a registry.
+    Nikaia,
+}
+
+/// The shape of dependency `name`, from the `type` it says (where `typed`)
+/// and whether it says a `path`. A `type` other than `rust` names no
+/// ecosystem, and is refused rather than guessed at.
+pub fn dependency(name: ref String, typed: bool, kind: ref String, has_path: bool) -> Shape throws {
+    if typed {
+        if kind == "rust" {
+            return Shape::Rust
+        }
+        throw Refused::Because(f"dependency `{name}` has `type = \"{kind}\"`, which names no ecosystem (the only one spelled out is `rust`, for a crate from crates.io)")
+    }
+    if has_path {
+        return Shape::Path
+    }
+    return Shape::Nikaia
+}
+
+/// The name a program writes for the crate a manifest key declares
+/// (ADR-104 D1): `hyper-shim` is `hyper_shim::serve_once`, because that is the
+/// crate name Cargo makes of the key.
+pub fn crate_name(key: ref String) -> String {
+    let mut name: String = ""
+    for c in key.chars() {
+        if c == '-' {
+            name.push('_')
+        } else {
+            name.push(c)
+        }
+    }
+    return name
+}
+
+// Whether `words` holds `word`.
+fn contains(words: ref Array[String], word: ref String) -> bool {
+    for w in words {
+        if w == word {
+            return true
+        }
+    }
+    return false
+}
+
+// `a, b, c`, the way a message names the choices.
+fn joined(words: ref Array[String]) -> String {
+    let mut out: String = ""
+    for w in words {
+        if out.len() > 0 {
+            out.push_str(", ")
+        }
+        out.push_str(w)
+    }
+    return out
+}
