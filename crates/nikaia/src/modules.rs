@@ -541,6 +541,14 @@ fn test_function(k: usize) -> String {
     format!("__nikaia_test_{k}")
 }
 
+/// Whether a function is a `test` block a test build turned into one
+/// ([`test_function`]): its `assert`s are the test's verdict, not claims the
+/// prover holds ([ADR-256](../../docs/specification/adr/adr-256.md) D2).
+pub fn is_a_test_function(name: &str) -> bool {
+    name.strip_prefix("__nikaia_test_")
+        .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// The function a test build's entry dispatches from, before it takes `main`'s
 /// place.
 const DISPATCH: &str = "__nikaia_tests";

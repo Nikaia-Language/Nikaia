@@ -214,6 +214,11 @@ impl<'a> Prover<'a> {
             return;
         };
         let own = name.map(|n| self.parsed.text(n).to_string());
+        // A `test` block `nikaia test` has already turned into a function is
+        // still a test (D2).
+        let was_a_test = own
+            .as_deref()
+            .is_some_and(crate::modules::is_a_test_function);
         let mut scope = Scope::default();
         let mut params = BTreeSet::new();
         if receiver.is_some() {
@@ -249,7 +254,9 @@ impl<'a> Prover<'a> {
             no_precondition,
             top: true,
         };
+        self.in_test = was_a_test;
         self.block(body, &mut scope, &at);
+        self.in_test = false;
     }
 
     /// Walk a block; whether it always leaves.
