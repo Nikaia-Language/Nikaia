@@ -8262,6 +8262,16 @@ impl<'p> Emitter<'p> {
                 .claims
                 .get(&(flow.statement, crate::check::argument_shape(condition)))
         {
+            // **A claim held before the program runs costs nothing when it
+            // does** ([ADR-256](../../docs/specification/adr/adr-256.md) D1,
+            // D3): only a test's `assert` is still a check.
+            if matches!(
+                claim.held,
+                Some(crate::prove::Held::Proved | crate::prove::Held::Precondition(_))
+            ) {
+                out.push("()");
+                return Ok(());
+            }
             out.push("if !(");
             self.expr(out, condition, depth, flow)?;
             out.push(&format!(

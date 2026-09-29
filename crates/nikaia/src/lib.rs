@@ -21,6 +21,7 @@ pub mod manifest;
 pub mod modules;
 pub mod parser;
 pub mod project;
+pub mod prove;
 pub mod specbook;
 pub mod sysroot;
 pub mod text_tiers;

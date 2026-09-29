@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.271] — 2026-09-29
+
+**Every `assert` outside a test is proved while the program is built**
+([ADR-256](docs/specification/adr/adr-256.md)), or the program is refused.
+A check at run time was a cost nobody wrote down and an abort nobody planned
+for; now there is none.
+
+- `crates/nikaia/src/prove.rs`: linear whole-number claims, proved by
+  Fourier-Motzkin with integer tightening from the branch an `if` is in, what a
+  jump with its condition after it rules out (`return 0 if b == 0`, ADR-255),
+  a `for` over a range, a `let`'s value and the claims before. Sound, and
+  incomplete: what it cannot prove is `NK1202`.
+- An unproved claim about parameters at the top of a free function is its
+  **precondition**: every call proves it (`NK1203`). Not yet on a `pub fn`, a
+  method or a function handed on as a value (`NK1204`).
+- A claim about data from outside the program (ADR-010) is refused with the
+  guard to write instead.
+- A test's `assert` is still the test's verdict. `--asserts` says for each
+  claim how it is held. Part III 14.2, ADR-245's header and C.3 say so.
+
+## [0.0.270] — 2026-09-29
+
+**What the specification's examples found in the compiler**, fixed.
+
+- `NK2606` is no longer raised for a failure caught inside the lambda.
+- `NK1191` covers arithmetic on a declared struct or enum, and `xs += [3]`;
+  `NK1201`: a list, a map or a set in an `f"…"` hole.
+- A function without parameters may leave out its parentheses (Part I 5.1).
+- `fs::Root::Dir("site")` lowers its literal to a `String`; a DSL statement's
+  parameters handed to something that is no driver are `NK1109`, and the
+  `dsl X from e` help says `X::rule(e)`.
+- Whether a call through a name nothing declares (`nowhere::wobble(1)`) is
+  refused here or left to `rustc` is on `open-decisions.md`: the fix found for
+  it contradicted Part III C.4 and was taken back.
+
 ## [0.0.269] — 2026-09-29
 
 **A jump may carry its condition after it** ([ADR-255](docs/specification/adr/adr-255.md)).

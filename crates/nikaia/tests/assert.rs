@@ -1,8 +1,8 @@
 //! **`assert`, a claim** ([ADR-245](../../../docs/specification/adr/adr-245.md)
 //! D2, D3): a prelude function the compiler knows, whose condition changes
-//! nothing, and whose failure says the claim as written and the value of each
-//! operand of its comparison. Every test here runs the program, at both
-//! settings of `user_parallelism`.
+//! nothing. Outside a test it is proved while the program is built
+//! ([ADR-256](../../../docs/specification/adr/adr-256.md)); a program runs
+//! here at both settings of `user_parallelism`.
 
 mod common;
 
@@ -89,103 +89,46 @@ fn refused(source: &str, code: &str) -> Vec<String> {
         .collect()
 }
 
-/// **Claims that hold change nothing**: the program runs to its end. Methods
-/// the ledger calls pure, a function of the program's own, text, a view a
-/// `for` lends and a struct's field are all things a condition may read.
+/// **Claims the prover holds change nothing**
+/// ([ADR-256](../../../docs/specification/adr/adr-256.md) D1): the program
+/// runs to its end, at both settings, and no check was written for any of
+/// them.
 #[test]
-fn claims_that_hold_let_the_program_run() {
-    let source = "struct P {\n\
-                  \x20   x: i64,\n\
-                  }\n\
-                  \n\
-                  fn double(n: i64) -> i64 sync {\n\
-                  \x20   return n * 2\n\
-                  }\n\
-                  \n\
-                  fn check(xs: ref Vec[i64], name: ref String) sync {\n\
-                  \x20   assert(xs.len() == 3)\n\
-                  \x20   assert(name == \"ab\"; message: f\"name was {name}\")\n\
-                  \x20   for c in name.chars() {\n\
-                  \x20       assert(c != 'z')\n\
-                  \x20   }\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let xs = [1, 2, 3]\n\
-                  \x20   let p = P { x: 4 }\n\
-                  \x20   assert(xs[0] < xs[2])\n\
-                  \x20   assert(double(p.x) == 8)\n\
-                  \x20   assert(p.x == 4 && !xs.is_empty())\n\
-                  \x20   check(xs, \"ab\")\n\
-                  \x20   for c in \"abc\".chars() {\n\
-                  \x20       assert(c < 'd')\n\
-                  \x20   }\n\
-                  \x20   println(\"all held\")\n\
-                  }\n";
-    let (ok, stdout, stderr) = outcome("hold", source);
-    assert!(ok, "{stderr}");
-    assert_eq!(stdout, "all held\n");
-}
-
-/// **A false claim stops the program and says what it claimed** (D2): the
-/// `.nika` line, the message, the claim as written and each operand's value
-/// by the name it was written with. What came before it ran; nothing after.
-#[test]
-fn a_false_claim_names_its_line_its_claim_and_its_operands() {
-    let source = "fn double(n: i64) -> i64 sync {\n\
-                  \x20   return n * 2\n\
+fn claims_the_compiler_proves_let_the_program_run() {
+    let source = "fn clamp(n: i64) -> i64 sync {\n\
+                  \x20   return 0 if n < 0\n\
+                  \x20   assert(n >= 0)\n\
+                  \x20   return n\n\
                   }\n\
                   \n\
                   fn main() {\n\
                   \x20   let blank = 2\n\
-                  \x20   let word = \"ab\"\n\
-                  \x20   assert(word == \"ab\")\n\
-                  \x20   println(\"before\")\n\
-                  \x20   assert(blank + 1 == double(blank); message: \"an empty line is blank\")\n\
-                  \x20   println(\"after\")\n\
+                  \x20   assert(blank + 1 == 3)\n\
+                  \x20   for i in 0..<3 {\n\
+                  \x20       assert(i < 3 && !(i < 0))\n\
+                  \x20   }\n\
+                  \x20   println(f\"all held {clamp(0 - 4)}\")\n\
                   }\n";
-    let (ok, stdout, stderr) = outcome("false", source);
-    assert!(!ok, "a false claim ended the program successfully");
-    assert_eq!(stdout, "before\n");
-    assert!(
-        stderr.contains(
-            "claims.nika:10: the program stopped: assertion failed: an empty line is blank\n\
-             \x20   assert(blank + 1 == double(blank); message: \"an empty line is blank\")\n\
-             \x20   blank + 1 is 3\n\
-             \x20   double(blank) is 4\n"
-        ),
-        "{stderr}"
-    );
+    let (ok, stdout, stderr) = outcome("hold", source);
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, "all held 0\n");
 }
 
-/// **Text shows as text, and what cannot print is left out** rather than the
-/// program refused: a struct has no printed form, so its operand is not in the
-/// message, and the claim still is.
+/// **A false claim never reaches the program** (ADR-256 D1): it is refused
+/// while the program is built. What a false claim says when it *runs* is a
+/// test's (`nikaia_test.rs`), the one place an `assert` is still a check.
 #[test]
-fn an_operand_that_does_not_print_is_left_out() {
-    let source = "struct P {\n\
-                  \x20   x: i64,\n\
-                  }\n\
-                  \n\
-                  fn same(a: ref P, b: ref P) -> bool sync {\n\
-                  \x20   return a.x == b.x\n\
-                  }\n\
-                  \n\
-                  fn main() {\n\
-                  \x20   let name = \"ab\"\n\
-                  \x20   let p = P { x: 1 }\n\
-                  \x20   assert(same(p, p) != false)\n\
-                  \x20   assert(name != \"ab\")\n\
-                  }\n";
-    let (ok, _, stderr) = outcome("unprinted", source);
-    assert!(!ok);
+fn a_false_claim_is_refused_before_the_program_runs() {
+    let found = refused(
+        "fn main() {\n\
+         \x20   let blank = 2\n\
+         \x20   assert(blank + 1 == 4; message: \"an empty line is blank\")\n\
+         }\n",
+        "NK1202",
+    );
     assert!(
-        stderr.contains(
-            "assertion failed\n\
-             \x20   assert(name != \"ab\")\n\
-             \x20   name is \"ab\"\n"
-        ),
-        "{stderr}"
+        found[0].starts_with("The compiler can't prove `blank + 1 == 4`."),
+        "{found:?}"
     );
 }
 
@@ -269,19 +212,20 @@ fn a_program_may_declare_its_own_assert() {
     assert_eq!(stdout, "mine: false\n");
 }
 
-/// **`--asserts` names every claim and how it is held** (D6). Nothing proves
-/// one yet, so every row is *run time*; the report is what will show a
-/// prover's progress.
+/// **`--asserts` names every claim and how it is held** (D6): proved, or a
+/// precondition its callers prove (ADR-256 D3).
 #[test]
 fn asserts_reports_every_claim() {
     let source = "fn half(n: i64) -> i64 sync {\n\
-                  \x20   assert(n % 2 == 0; message: \"an even number\")\n\
+                  \x20   assert(n >= 0; message: \"not negative\")\n\
                   \x20   return n / 2\n\
                   }\n\
                   \n\
                   fn main() {\n\
-                  \x20   let h = half(4)\n\
-                  \x20   assert(h == 2)\n\
+                  \x20   let k = half(4)\n\
+                  \x20   let four = 4\n\
+                  \x20   assert(four == 4)\n\
+                  \x20   println(f\"{k}\")\n\
                   }\n";
     let dir = common::scratch_dir("assert-report");
     std::fs::write(dir.join("claims.nika"), source).expect("write");
@@ -304,10 +248,11 @@ fn asserts_reports_every_claim() {
     );
     assert!(
         stdout.contains(
-            "asserts in claims.nika: 2 - proved 0, refuted 0, at run time 2\n\
-             \x20 claims.nika:2  assert(n % 2 == 0; message: \"an even number\")  run time: \
-             nothing proves it yet\n\
-             \x20 claims.nika:8  assert(h == 2)  run time: nothing proves it yet\n"
+            "asserts in claims.nika: 2 - proved 1, preconditions 1, checked by a test 0, \
+             refused 0\n\
+             \x20 claims.nika:2  assert(n >= 0; message: \"not negative\")  precondition of \
+             `half`: its callers prove it\n\
+             \x20 claims.nika:9  assert(four == 4)  proved\n"
         ),
         "{stdout}"
     );

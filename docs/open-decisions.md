@@ -133,3 +133,28 @@ it; nothing compiles the comment.
 
 **What this file recommends:** the comment says what 15.2 says — the call is
 allowed because of the types it is handed, not because of the crate.
+
+### Whether a call through a name nothing declares is refused here
+
+**What is blocked.** `let t = nowhere::wobble(1)` passes the check and is
+refused by `rustc` (*unresolved module*), which is Part III C.1's class — the
+language below speaking about a file nobody wrote. `Foo::Baz`, a value through
+the same head, is already `NK1181`. A fix refusing the call too was written
+and taken back, because it contradicts Part III C.4 as the checker practises
+it: *a call nothing describes says nothing here*, `rustc` still checks the
+emitted crate, and ADR-005 D7 reports its refusal against the `.nika` line
+(`typecheck.rs`, `a_callee_no_ledger_describes_is_not_guessed_at`).
+`examples/fortunes.nika`'s `env::var(…)` relies on that silence today.
+
+**Why it is the owner's.** C.1 and C.4 disagree about this one case, and each
+is a rule the specification states.
+
+**The options.** (1) Refuse it with `NK1181` wherever the checker knows every
+package and crate the program may name — a project build — and stay silent in
+a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
+`rustc`'s message the answer.
+
+**What this file recommends: (1).** In a project the set of heads is known, so
+refusing an unknown one is not a guess; `fortunes.nika` would write
+`use std::env`.
+

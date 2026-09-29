@@ -203,6 +203,10 @@ pub struct StoredCode {
 /// with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Claim {
+    /// How the compiler holds it ([ADR-256](../../docs/specification/adr/adr-256.md)):
+    /// only a test's claim is checked when it runs, and the emitter writes
+    /// nothing for any other.
+    pub held: Option<crate::prove::Held>,
     /// `assert(blank == 1; message: "…")`, rewritten from the tree.
     pub written: String,
     /// The comparison's left operand, where its value can be shown: `blank`.
@@ -800,8 +804,8 @@ pub struct Checked {
     pub compared_views: BTreeSet<(usize, String)>,
     /// **Every `assert`, and what its failure shows**
     /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), by statement
-    /// and the shape of its condition. Nothing proves a claim yet, so every
-    /// one here is checked at run time (D4).
+    /// and the shape of its condition, and how each is held
+    /// ([ADR-256](../../docs/specification/adr/adr-256.md)).
     pub claims: BTreeMap<(usize, String), Claim>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
@@ -1292,6 +1296,17 @@ fn walked<'a>(
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
+    // **Every `assert` outside a test is proved, or the program is refused**
+    // ([ADR-256](../../docs/specification/adr/adr-256.md)). After the walk,
+    // because the checker is what decided which calls are the prelude's.
+    let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
+    let proved = crate::prove::prove(parsed, library, &keys);
+    checker.checked.findings.extend(proved.findings);
+    for (key, held) in proved.held {
+        if let Some(claim) = checker.checked.claims.get_mut(&key) {
+            claim.held = Some(held);
+        }
+    }
     // A naked view parameter that is kept past the call (`NK2302`). Also a
     // separate walk, and for the same reason: it asks where a *value* goes
     // rather than what a type is. It reads both ledgers, because **a call says
@@ -5472,6 +5487,7 @@ impl<'a> Checker<'a> {
         self.checked.claims.insert(
             (span.at(), argument_shape(condition)),
             Claim {
+                held: None,
                 written: claimed,
                 left,
                 right,
@@ -21174,9 +21190,9 @@ fn unviewed(ty: &Ty) -> Ty {
 }
 
 /// **`--asserts`** ([ADR-245](../../docs/specification/adr/adr-245.md) D6):
-/// every `assert` of one file, by line, and how the compiler holds it. Today
-/// every one is held at run time (D4): there is no prover yet, and the report
-/// exists so that the day there is one, its progress can be read here.
+/// every `assert` of one file, by line, and how the compiler holds it: proved,
+/// a precondition its callers prove, a test's check, or refused
+/// ([ADR-256](../../docs/specification/adr/adr-256.md)).
 pub fn claims_report(
     parsed: &Parsed,
     source: &str,
@@ -21194,16 +21210,28 @@ pub fn claims_report(
         })
         .collect();
     rows.sort_by_key(|(line, _)| *line);
+    use crate::prove::Held;
+    let count = |want: fn(&Held) -> bool| {
+        rows.iter()
+            .filter(|(_, c)| c.held.as_ref().is_some_and(want))
+            .count()
+    };
     let mut out = format!(
-        "asserts in {path}: {} - proved 0, refuted 0, at run time {}\n",
+        "asserts in {path}: {} - proved {}, preconditions {}, checked by a test {}, refused {}\n",
         rows.len(),
-        rows.len()
+        count(|h| matches!(h, Held::Proved)),
+        count(|h| matches!(h, Held::Precondition(_))),
+        count(|h| matches!(h, Held::ByTheTest)),
+        count(|h| matches!(h, Held::Refused)),
     );
     for (line, claim) in rows {
-        out.push_str(&format!(
-            "  {path}:{line}  {}  run time: nothing proves it yet\n",
-            claim.written
-        ));
+        let how = match &claim.held {
+            Some(Held::Proved) => "proved".to_string(),
+            Some(Held::Precondition(f)) => format!("precondition of `{f}`: its callers prove it"),
+            Some(Held::ByTheTest) => "checked when the test runs".to_string(),
+            Some(Held::Refused) | None => "refused: the compiler can't prove it".to_string(),
+        };
+        out.push_str(&format!("  {path}:{line}  {}  {how}\n", claim.written));
     }
     out
 }
