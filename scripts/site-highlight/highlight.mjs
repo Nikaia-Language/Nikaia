@@ -184,9 +184,11 @@ for await (const file of htmlFiles(site)) {
   if (!count) continue;
 
   // Every `<pre>` on the page is now Shiki's, or this script no longer knows
-  // the shape Jekyll emits and the site would publish half-themed.
+  // the shape Jekyll emits and the site would publish half-themed. A
+  // `<pre class="diagnostic">` is the one exception: a compiler message written
+  // into a page already coloured, which `assets/css/nikaia.css` styles itself.
   for (const [tag] of html.matchAll(/<pre[^>]*>/g)) {
-    if (!/class="[^"]*\bshiki\b/.test(tag)) missed.push(`${file}: ${tag}`);
+    if (!/class="[^"]*\b(shiki|diagnostic)\b/.test(tag)) missed.push(`${file}: ${tag}`);
   }
 
   await writeFile(file, html);
