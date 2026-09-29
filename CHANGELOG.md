@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.261] — 2026-09-29
+
+**The syntax tree moves to Nikaia whole, and a `Span` is two `u32`**
+([ADR-252](docs/specification/adr/adr-252.md)), the record ADR-250 D2 asked
+for before the tree moves. The leaves are gone - `fixed`, `emit::template` and
+`manifest` are Nikaia - and every module left reads the tree, which no Nikaia
+module can read while Rust declares it. The owner chose the tree moving whole
+and `u32` offsets.
+
+- **D1**: `tools/ast.nika` will declare all 35 types, and `crate::ast`
+  re-exports them; the Rust that stays reads the Nikaia declaration, and
+  nothing converts.
+- **D2**: `Span { start: u32, end: u32 }`, a copy; a source over 4 GiB is
+  refused; the `at` offsets are `u32`.
+- **D3**: `Spanned[T]` is a Nikaia generic struct, and ADR-246 D1 places the
+  boxes.
+- **D4**, found by reading the tree against the language: it has no `Copy`
+  for a declared type, no number that holds `LitInt`'s `i128` range, no way
+  for a Rust crate's type (`winnow_grammar::Symbol`) to copy or compare, and
+  no `Default`. Each is its own package before the move; the literal becomes a
+  magnitude and a sign rather than the language gaining `i128`.
+- **D5**: the order - `Span` in Rust first, then `LitInt`, then the language,
+  then the move.
+
 ## [0.0.260] — 2026-09-29
 
 **What `nikaia.toml` may say is decided in Nikaia**
