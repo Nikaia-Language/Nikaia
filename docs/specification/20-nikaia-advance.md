@@ -278,18 +278,22 @@ out of the body as written. A call that omits one is refused with `NK1112`. A
 call that passes a name the statement has no hole for is refused with `NK1113`:
 
 ```text
-error[NK1112]: `query` needs `:target_age`, and this call does not pass it
-  --> users.nika:17:5
-  17 |     let users = query.execute(targt_age: min_age)
-           ^
-     = the statement's parameters are `:target_age`
-     help: pass it by name: `target_age: …`
-error[NK1113]: `query` has no parameter `:targt_age`
-  --> users.nika:17:5
-  17 |     let users = query.execute(targt_age: min_age)
-           ^
-     = the statement's parameters are `:target_age`
-     help: did you mean `target_age`?
+error[NK1112]: `query` needs `:target_age`, but this call doesn't pass it.
+   --> users.nika:17:5
+    |
+ 17 |     let users = query.execute(targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: The statement's parameters are `:target_age`.
+    = help: Pass it after the `;`: `target_age: …`.
+error[NK1113]: `query` has no parameter called `:targt_age`.
+   --> users.nika:17:5
+    |
+ 17 |     let users = query.execute(targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: The statement's parameters are `:target_age`.
+    = help: Did you mean `target_age`?
 ```
 
 A `:name` is a hole where the body wrote `:` and a name. A path (`a::b`) and a
@@ -708,16 +712,15 @@ is not there yet is a disk read with no call in the source, and inside a door it
 is a disk read with the lock held.
 
 ```text
-error[NK2201]: `len` reads a file, and this runs with a lock held
+error[NK2201]: `len` reads a file, but you're holding a lock here.
   --> main.nika:7:9
-   7 |         n = n + page.len()
-               ^
-     = `Mapped` is a file held as memory, so reading it is a page fault - a disk
-       read, which is what a door's block may not wait for (Part II, 12.2)
-     = it is neither a pause nor a second lock, which is why `NK2202` and
-       `NK2203` say nothing about it
-     help: read what you need before the door and hand the value in, so the
-           block works on memory that is already there
+   |
+ 7 |         n = n + page.len()
+   |         ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `Mapped` is a file mapped into memory, so reading it can wait on the disk, and a block that holds a lock must never wait.
+   = note: This wait doesn't show up as a pause or a second lock, which is why it gets its own message.
+   = help: Read what you need before taking the lock, and pass the value in.
 ```
 
 The claim is the **type's own**: `fs::Mapped` records `touches = ["file read"]`
@@ -865,23 +868,14 @@ task::scope fn(s) {
 A task that needs I/O is a background task, not a scoped one. A program starts it with `spawn` (the task takes ownership, Part I 8.3) and collects the result through its handle. A scoped task that can pause is refused with `NK2102` where tasks run in parallel:
 
 ```text
-error[NK2102]: tasks inside `task::scope` must be `sync` where they run in parallel
-  --> worker.nika:12
-   |
-12 |     s.spawn fn { fetch_url(url) }
-   |                 ^^^^^^^^^^^^^^ `fetch_url` performs network I/O
-   |
-  note: a scope promises to wait for its tasks. On multiple CPU cores this
-        promise only holds for pure computations (`sync` functions), which
-        finish on their own — a task waiting on the network might not.
-  help: choose one of the following:
-        1. keep it in the scope, but make the work pure:
-           mark the function `sync` (and do the I/O before the scope)
-        2. run it as a background task instead — it will take ownership
-           of its variables, so clone what you still need first:
-           let target = url.clone()
-           let handle = spawn fn { fetch_url(target) }
-           let result = handle.join()
+error[NK2102]: A task in `task::scope` has to be `sync` here, but `fetch_url` does network I/O.
+   --> worker.nika:12:18
+    |
+ 12 |     s.spawn fn { fetch_url(url) }
+    |                  ^^^^^^^^^^^^^^ network I/O here
+    |
+    = note: A scope promises to wait for its tasks. With tasks running in parallel, that promise only holds for work that finishes on its own (`sync` functions), and a task waiting on the network might not.
+    = help: Do the I/O before the scope and keep only the computation in it, or run it as a background task: `let target = url.clone()`, then `let handle = spawn fn { fetch_url(target) }` and `handle.join()`.
 ```
 
 At `no` the runtime owns all task state and tears a scope down synchronously. The language exposes no way to leak a live scope.

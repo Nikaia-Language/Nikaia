@@ -727,7 +727,7 @@ Three rules govern them:
   `n`:
 
   ```
-  error[NK1133]: nothing after a `break` in the same block is reached
+  error[NK1133]: Nothing after `break` in the same block can run.
   ```
 
 * **There is no label.** `break` acts on the loop it is written in, and there
@@ -1346,7 +1346,7 @@ called anything. A body that uses `a`, `b` or `c` without declaring it names
 something nothing declares:
 
 ```text
-error[NK1117]: nothing declares `a`, and this statement is just that name
+error[NK1117]: `a` isn't declared anywhere.
 ```
 
 **Trailing Syntax**
@@ -1578,8 +1578,14 @@ fn connect(url: String) -> Shared[Connection] {
 A plain value where a shared one is wanted is refused with `NK1115`:
 
 ```text
-error[NK1115]: `serve` takes a shared value, and `db` is not one
-  help: write `Shared(db)` - a hull you can see is one you write
+error[NK1115]: `serve` takes a shared value, but `db` isn't one.
+   --> main.nika:11:5
+    |
+ 11 |     serve(db)
+    |     ^^^^^^^^^
+    |
+    = note: It's declared as `serve(db: Shared[Db])`.
+    = help: Wrap it: `Shared(db)`.
 ```
 
 A shared value may be returned, and a number may be shared: `SharedMut(0)` is a
@@ -1736,15 +1742,14 @@ value dies can fail, and one that does not declare `throws` is refused with
 resource:
 
 ```text
-error[NK2605]: this function can fail because the cleanup of `f` can fail
-  --> report.nika:2
+error[NK2605]: This function can fail, because cleaning up `f` can fail.
+  --> report.nika:2:5
    |
  2 |     let f = fs::create("report.txt", fs::Root::Anywhere)
-   |     ^
-   = `f` is a `fs::Writer`, whose cleanup runs where it dies - at the end of
-     this block - and can fail, so the function that owns it can fail with it
-  help: declare it with `throws`, or close it where the failure should be
-        handled: `f.close() catch { … }`
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `f` is a `fs::Writer`. Its cleanup runs at the end of this block and can fail, so the function can fail with it.
+   = help: Declare the function with `throws`, or close it yourself where you want to handle the failure: `f.close() catch { … }`.
 ```
 
 Two refinements:
@@ -2016,16 +2021,17 @@ for u in users {
 ```
 
 ```text
-error[NK2301]: cannot change `users` while looping over it
-  --> main.nika:4
+error[NK2301]: You're changing `users` while a loop is still reading it.
+  --> main.nika:4:9
    |
+ 2 | for u in users {
+   |          ----- the loop reads `users` here
+ 3 |     if u.is_duplicate() {
  4 |         users.remove(u)
-   |         ^^^^^^^^^^^^^^^ the loop is still reading `users`
+   |         ^^^^^^^^^^^^^^^ changed here
    |
-  note: removing items mid-loop would invalidate the loop's position
-        (this is a crash or silent bug in most languages)
-  help: use the built-in method that does this safely:
-        users.retain fn (user) { !user.is_duplicate() }
+   = note: Removing items mid-loop would lose the loop's place. In most languages that's a crash or a silent bug.
+   = help: Use the method that does this safely: `users.retain fn (user) { !user.is_duplicate() }`.
 ```
 
 For every known pattern of this kind, the standard library provides a safe,
@@ -2131,19 +2137,21 @@ call may **pause** (8.1), a block's end may **pause and fail** (6.4), a call may
 not say `throws`, is refused with `NK2605`:
 
 ```text
-error[NK2605]: this function can fail because `liest` can fail
+error[NK2605]: This function can fail, because `liest` can fail.
   --> app.nika:2:23
-   2 | fn ruft() -> String { return liest() }
-                             ^
-     = `liest` carries `throws = ["io::IoError"]` in the contracts this program is built against (Part III, 13.5)
-     = nothing marks a failing call, so a failure leaves at a call exactly as it leaves at a block's closing brace or a loop's step
-     help: declare the error: add `throws` to `ruft` - or handle it at the call, `… catch { … }` (Part I, 7.1)
+   |
+ 2 | fn ruft() -> String { return liest() }
+   |                       ^^^^^^^^^^^^^^
+   |
+   = note: `liest` can fail with `io::IoError`.
+   = note: A call that can fail looks like any other call, so its failure passes straight through this function unless you handle it.
+   = help: Add `throws` to `ruft`, or handle it at the call: `… catch { … }`.
 ```
 
 for `fn liest() -> String throws { return fs::read_to_string("x.txt", fs::Root::Anywhere) }` one
-line above. The shape is Appendix C.4's: the caret is on the statement, the
-note is the contract quoted from the ledger the call was resolved against, and
-the help names the two ways out.
+line above. The shape is Appendix C.4's: the statement is underlined, the
+first note says what the call can fail with, as the ledger the call was
+resolved against records it (13.5), and the help names the two ways out.
 
 **Handling: `catch`.** The block supplies the replacement value, or it leaves
 the function.
@@ -2396,19 +2404,15 @@ println(message)             // OK: `message` never left
 Data moved into a task and used again afterwards is refused with `NK2101`:
 
 ```text
-error[NK2101]: this background task takes ownership of `message`
-  --> main.nika:3
+error[NK2101]: You're using `message` after a background task took it.
+  --> main.nika:4:5
    |
- 3 | spawn fn { println(message) }
-   |                   ^^^^^^^ moved into the task here
- 4 | println(message)
-   | --------------- but `message` is used again afterwards
+ 4 |     println(message)
+   |     ^
    |
-  note: a task started with `spawn` may outlive this function,
-        so it cannot merely borrow your variables — it takes them with it
-  help: clone before the task is built, and give the task the copy:
-        let copy = message.clone()
-        spawn fn { println(copy) }
+   = note: A task started with `spawn` may outlive this function, so it takes the variables it uses with it. `message` is a `String`, so it went to the task.
+   = note: Numbers, `bool`s, views and `Shared[T]` handles aren't taken: they're copied.
+   = help: Make a copy before starting the task and give the task the copy: `let copy = message.clone()`, then use `copy` inside the task.
 ```
 
 **`NK2101` belongs to the data case only.** A handle on a `Shared[T]` used again
@@ -2553,11 +2557,14 @@ by giving one a value in a struct literal, is refused with `NK1110`, and the
 message says which package keeps it:
 
 ```text
-error[NK1110]: `secret` is private to `utils`
-   4 |     let n = utils::secret()
-           ^
-     = an item is private to the package that declares it unless it says `pub` (Part I, 9.2)
-     help: write `pub fn secret` in `utils`, or reach it through something that is public
+error[NK1110]: You can't use `secret` from here: it's private to `utils`.
+  --> main.nika:4:5
+   |
+ 4 |     let n = utils::secret()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Everything is private to its package unless it's declared `pub`.
+   = help: Write `pub fn secret` in `utils`, or use something it makes public.
 ```
 
 ### 9.3. Granular Control
