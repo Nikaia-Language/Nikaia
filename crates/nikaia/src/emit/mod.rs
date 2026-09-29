@@ -2259,7 +2259,9 @@ impl<'p> Emitter<'p> {
                     structs.insert(*name);
                 }
                 Item::Import { .. } => uses_std = true,
-                Item::Fn { throws: true, .. } => fails = true,
+                Item::Fn {
+                    can_throw: true, ..
+                } => fails = true,
                 Item::Impl {
                     trait_name: _,
                     target,
@@ -2784,7 +2786,7 @@ impl<'p> Emitter<'p> {
                     config,
                     spread: None,
                     ret_type: None,
-                    throws,
+                    can_throw: throws,
                     ..
                 } if self.text(*name) == MAIN && args.is_empty() && config.is_empty() => {
                     Some(*throws)
@@ -3631,7 +3633,7 @@ impl<'p> Emitter<'p> {
             },
             None => "()".to_string(),
         };
-        let outcome = if method.throws {
+        let outcome = if method.can_throw {
             format!("Result<{returned}, Box<dyn std::error::Error>>")
         } else {
             returned
@@ -3652,7 +3654,7 @@ impl<'p> Emitter<'p> {
         // demand would refuse them. It is a requirement of the executor this
         // program is built for, written here — not a claim about a type, which
         // is `contracts::send`'s and is the same at both settings.
-        let ret = match (is_sync, method.ret_type.is_some() || method.throws) {
+        let ret = match (is_sync, method.ret_type.is_some() || method.can_throw) {
             (false, _) => {
                 let send = match self.build.user_parallelism {
                     UserParallelism::Yes => " + Send",
@@ -3798,7 +3800,7 @@ impl<'p> Emitter<'p> {
             body,
             is_sync,
             is_public,
-            throws,
+            can_throw: throws,
             ..
         } = item
         else {
@@ -5279,7 +5281,7 @@ impl<'p> Emitter<'p> {
                 .iter()
                 .map(|g| self.ty_counted(g, lifetimes, count))
                 .collect();
-            let outcome = match (&code.result, code.throws) {
+            let outcome = match (&code.result, code.can_throw) {
                 (Some(r), false) => self.ty_counted(r, lifetimes, count),
                 (Some(r), true) => format!(
                     "Result<{}, Box<dyn std::error::Error>>",
@@ -5355,7 +5357,7 @@ impl<'p> Emitter<'p> {
                 );
             }
             if code.is_sync {
-                let shape = match (&code.result, code.throws) {
+                let shape = match (&code.result, code.can_throw) {
                     (None, false) => String::new(),
                     _ => format!(" -> {outcome}"),
                 };

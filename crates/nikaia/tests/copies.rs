@@ -87,3 +87,34 @@ fn a_copy_declared_below_its_holder_is_found() {
     );
     assert!(derive_of(&rust, "Outer").contains("Copy"), "{rust}");
 }
+
+/// **A generic struct is seen through** (ADR-252 §5): `Spanned[Pattern]`
+/// holds a `Pattern` inline, so a `Pattern` holding one is on a ring and the
+/// member is boxed; and `Spanned[Stmt]` compares only if `Stmt` does, so a
+/// `Block` of them derives no `PartialEq` a `Stmt` without one would refuse.
+/// Both reached `rustc` before, found by lowering the compiler's own tree.
+#[test]
+fn a_generic_struct_is_seen_through_for_rings_and_comparison() {
+    let rust = lowered(
+        "struct Spanned[T] { node: T, at: u32 }\n\
+         enum Pattern { Cut, Group(Spanned[Pattern]), Seq(Vec[Spanned[Pattern]]) }\n\
+         enum Stmt { Say(String), Nested(Vec[Stmt]), Code(fn(i64) -> i64) }\n\
+         struct Block { stmts: Vec[Spanned[Stmt]] }\n\
+         fn main() { print(\"x\") }\n",
+    );
+    assert!(rust.contains("Group(Box<Spanned<Pattern>>)"), "{rust}");
+    assert!(rust.contains("Seq(Vec<Spanned<Pattern>>)"), "{rust}");
+    assert!(!derive_of(&rust, "Block").contains("PartialEq"), "{rust}");
+    let dir = common::scratch_dir("generic-seen-through");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let out = common::compile(
+        &file,
+        &["-o", dir.join("program").to_str().expect("utf-8 path")],
+    );
+    assert!(
+        out.status.success(),
+        "{}\n{rust}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

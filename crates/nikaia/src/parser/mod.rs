@@ -1292,7 +1292,7 @@ grammar! {
                     config: params.config,
                     ret_type: ret,
                     is_sync: sync,
-                    throws,
+                    can_throw: throws,
                 }, Span::from(_span), d)
             }
 
@@ -1343,7 +1343,7 @@ grammar! {
                     is_sync: sync,
                     sync_by,
                     is_public: vis.is_some(),
-                    throws,
+                    can_throw: throws,
                 }
             }
 
@@ -1889,7 +1889,7 @@ grammar! {
                     code: Some(Box::new(Code {
                         result,
                         is_sync: s.is_some(),
-                        throws: t.is_some(),
+                        can_throw: t.is_some(),
                     })),
                     count: None,
                     is_mut: false,
