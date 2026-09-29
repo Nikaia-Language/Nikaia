@@ -641,7 +641,7 @@ fn a_bound_is_in_the_signature_and_reads_back() {
     )
     .render();
     assert!(
-        written.contains(r#"signature = "[T: Speaks](x: $T) -> String""#),
+        written.contains(r#"signature = "[T: Speaks](x: T) -> String""#),
         "{written}"
     );
     let read = Ledger::parse(&written).expect("its own output parses");

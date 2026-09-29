@@ -31,6 +31,7 @@ pub mod locks;
 pub mod order;
 pub mod send;
 pub mod sharing;
+pub mod spelling;
 pub mod sync;
 pub mod tether;
 pub mod throws;
@@ -1903,8 +1904,13 @@ impl Ledger {
                     // the unit that declared the function, so a call from another
                     // package was answered by `rustc` about the type it picked
                     // ([`open-work.md`](../../../docs/open-work.md) §1.10).
+                    // **Only a parameter with a bound**: one with none is
+                    // declared by its use in the signature (ADR-251 D4 writes
+                    // every one in brackets), and every reader of this list
+                    // asks for a bound.
                     bounds: generics
                         .iter()
+                        .filter(|g| !g.bounds.is_empty())
                         .map(|g| {
                             (
                                 parsed.text(g.name).to_string(),
@@ -2177,15 +2183,29 @@ impl Ledger {
             match &contract.sync {
                 Sync::Asserted => out.push_str("sync = true\n"),
                 Sync::Inferred => out.push_str("sync = \"inferred\"\n"),
-                Sync::From(name) => out.push_str(&format!("sync = \"from({name})\"\n")),
+                // **The source's own word** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+                // D4, [ADR-251](../../../../docs/specification/adr/adr-251.md) D4).
+                Sync::From(name) => out.push_str(&format!("sync = \"sync({name})\"\n")),
                 Sync::No => {}
             }
             if !contract.throws.is_empty() {
                 out.push_str(&format!("throws = {}\n", throws_text(&contract.throws)));
             }
-            if !contract.borrows.is_empty() {
+            // **In Nikaia's spelling** (ADR-251 D4): what the result points
+            // into is written `ref(a | b)` in the signature's result, and the
+            // receiver as the source writes it. `returns` and `mutates` are
+            // written only where the signature has no place for them - a
+            // result with no `ref` in it, a function with no receiver.
+            let spelled = contract.signature.as_ref().map(|signature| {
+                spelling::spell(&signature.text(), name, &contract.borrows, contract.mutates)
+            });
+            let (borrows_said, mutates_said) = spelled
+                .as_ref()
+                .map(|s| (s.borrows_said, s.mutates_said))
+                .unwrap_or((false, false));
+            if !contract.borrows.is_empty() && !borrows_said {
                 out.push_str(&format!(
-                    "returns = \"borrows({})\"\n",
+                    "returns = \"ref({})\"\n",
                     contract.borrows.join(" | ")
                 ));
             }
@@ -2206,7 +2226,7 @@ impl Ledger {
             // Beside `keeps`, because the two together are what a caller has to
             // know before it may hand a name over rather than lend it
             // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3).
-            if contract.mutates {
+            if contract.mutates && !mutates_said {
                 out.push_str("mutates = true\n");
             }
             // Beside `touches`, which is the other column about what a body
@@ -2265,8 +2285,8 @@ impl Ledger {
             if contract.ends_by_length {
                 out.push_str("ends_by_length = true\n");
             }
-            if let Some(signature) = &contract.signature {
-                out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
+            if let Some(spelled) = &spelled {
+                out.push_str(&format!("signature = \"{}\"\n", escape(&spelled.text)));
             }
         }
 
@@ -2482,6 +2502,19 @@ impl Ledger {
                         "sync" => entry.sync = sync_of(value, at())?,
                         "throws" => entry.throws = throws_of(value, at())?,
                         "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
+                        // **Read back from Nikaia's spelling** (ADR-251 D4):
+                        // the receiver says whether the call changes it, and
+                        // a `ref(a | b)` in the result where it points.
+                        "signature" => {
+                            let read = spelling::unspell(&unquote(value, at())?, name);
+                            if read.mutates {
+                                entry.mutates = true;
+                            }
+                            if !read.borrows.is_empty() {
+                                entry.borrows = read.borrows;
+                            }
+                            entry.signature = Some(Signature::parse(&read.text)?);
+                        }
                         "keeps" => entry.keeps = string_list(value, at())?,
                         "mutates" => entry.mutates = value == "true",
                         "locks" => {
@@ -2542,9 +2575,6 @@ impl Ledger {
                                     })
                                 })
                                 .collect::<Result<Vec<_>>>()?
-                        }
-                        "signature" => {
-                            entry.signature = Some(Signature::parse(&unquote(value, at())?)?)
                         }
                         "ends_by_length" => entry.ends_by_length = value == "true",
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
@@ -2919,10 +2949,13 @@ fn unquote(value: &str, at: usize) -> Result<String> {
 }
 
 fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {
+    // `ref(a | b)` is Nikaia's spelling (ADR-251 D4); `borrows(…)` the one
+    // before it, still read.
     let inner = value
-        .strip_prefix("borrows(")
+        .strip_prefix("ref(")
+        .or_else(|| value.strip_prefix("borrows("))
         .and_then(|v| v.strip_suffix(')'))
-        .ok_or_else(|| anyhow!("line {at}: expected `borrows(…)`, found `{value}`"))?;
+        .ok_or_else(|| anyhow!("line {at}: expected `ref(…)`, found `{value}`"))?;
     Ok(inner
         .split('|')
         .map(str::trim)
@@ -2944,7 +2977,8 @@ fn sync_of(value: &str, at: usize) -> Result<Sync> {
         "\"inferred\"" => Ok(Sync::Inferred),
         other => {
             let named = other
-                .strip_prefix("\"from(")
+                .strip_prefix("\"sync(")
+                .or_else(|| other.strip_prefix("\"from("))
                 .and_then(|rest| rest.strip_suffix(")\""))
                 .map(str::trim)
                 .filter(|name| !name.is_empty());
@@ -2952,7 +2986,7 @@ fn sync_of(value: &str, at: usize) -> Result<Sync> {
                 Some(name) => Ok(Sync::From(name.to_string())),
                 None => Err(anyhow!(
                     "line {at}: `sync` is `true` (the source says so), `\"inferred\"` \
-                     (the body implies it) or `\"from(f)\"` (its lambda decides), \
+                     (the body implies it) or `\"sync(f)\"` (its lambda decides), \
                      not `{other}`"
                 )),
             }

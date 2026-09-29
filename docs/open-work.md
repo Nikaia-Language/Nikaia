@@ -34,6 +34,19 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
+### 1.29. `keeps` names a `ref` receiver a body only reads
+
+Found at 0.0.254, reading the ledger `tools/template.nika` lowers to.
+`Position::escapable(ref self) -> bool`, whose body is one `match self`, is
+recorded `keeps = ["self"]`, and `Scan::feed(ref mut self, c: char)`
+`keeps = ["c"]` for a `char`. Both are the column's fail-closed direction
+(ADR-094 D2: a use the walk cannot resolve counts as keeping), so no program is
+wrong for it, but a reader of the contract sees a lent receiver kept. Filtering
+`ref` parameters out is not the fix: `read(data: ref String) -> Vec[Entry]`
+keeps `data` because the result holds views into it (ADR-186 D1,
+`tests/keeps.rs`). The walk is taught that a `match` on a view, and a copy of
+a number or a character, keeps nothing.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

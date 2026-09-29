@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.254] — 2026-09-29
+
+**The ledger speaks Nikaia where Nikaia can say it**
+([ADR-251](docs/specification/adr/adr-251.md) D4, D5).
+
+- **A receiver is written as the source writes it**: `(ref self)`,
+  `(ref mut self, c: char)`, and `self: ref T` where its type is not the entry's
+  own. `mutates = true` beside the signature is gone.
+- **Where a result points is `ref(a | b)` in the result**:
+  `-> ref(self) String`, `-> Seq[ref(self) T]`. `returns` stays only where the
+  result has no `ref` to carry it, and is spelled `returns = "ref(self)"`.
+- **A type variable is declared in brackets**, `[T](x: T) -> T`,
+  `[K, V](mut self: ref collections::HashMap[K, V], key: ?) -> Entry[V]`, where
+  `$T` stood.
+- **A promise about a lambda is `sync = "sync(f)"`**, the word ADR-244 D4 gives
+  the source, where `"from(f)"` stood.
+- One module, `contracts::spelling`, writes and reads it; the reader still takes
+  the spelling before it. `std.contracts` and the `hyper_shim` descriptions
+  moved line by line, comments kept, and each reads to exactly the contract it
+  was.
+- The words the language lacks stay (D5) - `keeps`, `touches`, `locks`,
+  `crosses`, `threads`, `provenance`, `compares`, `iterates`, `sharing`, `Seq`,
+  `Par`, `Seen`, `?` - and Part III 13.5 says so.
+- Recorded: `keeps` names a `ref` receiver a body only reads (`open-work.md`
+  §1.29), fail-closed and not yet precise.
+
 ## [0.0.253] — 2026-09-29
 
 **The ledger is the contract, and what it was derived from is beside it**

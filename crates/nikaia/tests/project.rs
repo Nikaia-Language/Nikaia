@@ -2404,7 +2404,7 @@ fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
     let ledger = std::fs::read_to_string(allowed.join("handler/nikaia.contracts"))
         .expect("the package writes its ledger");
     assert!(
-        ledger.contains(r#"signature = "[H: Handler](h: $H) -> String""#),
+        ledger.contains(r#"signature = "[H: Handler](h: H) -> String""#),
         "{ledger}"
     );
     std::fs::remove_dir_all(&allowed).ok();

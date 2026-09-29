@@ -80,13 +80,13 @@
 # that runs a lambda - `Vec::sort_by_key`, `Entry::and_modify` - where a
 # `touches = []` would be a claim about somebody else's code.
 #
-# **And `sync`'s answer to that does not transfer here.** `sync = "from(f)"`
+# **And `sync`'s answer to that does not transfer here.** `sync = "sync(f)"`
 # (ADR-029 D3) lets a higher-order function say "the lambda decides", sound
 # because `sync` is a fact about a whole *function* and the lambda's body is
 # walked as part of the function that writes it. `touches` is consumed per
 # **statement**, and nothing walks a lambda for an effect - so "the lambda
 # decides", read as "this call adds nothing", would buy an overlap on an
-# incomplete touch set. There is no `touches = "from(f)"`, and the entry a
+# incomplete touch set. There is no `touches = "sync(f)"`, and the entry a
 # higher-order function would need says *add* what the lambda reaches rather
 # than assume it away (ADR-029 D3, and `contracts::order`'s `Expr::Closure`
 # arm).
@@ -157,10 +157,9 @@ signature = "() -> Args"
 [fn."Args::nth"]
 pub = true
 sync = true
-mutates = true
 touches = ["args read"]
 provenance = "trusted"
-signature = "(ref Args, at: i64) -> String?"
+signature = "(ref mut self, at: i64) -> String?"
 
 # Write text to standard error, with no line break after it.
 [fn."eprint"]
@@ -206,24 +205,21 @@ crosses = true
 pub = true
 sync = true
 touches = []
-mutates = true
-signature = "(ref Writer, text: ?)"
+signature = "(mut self: ref Writer, text: ?)"
 
 # Write what is held to the file now.
 [fn."fs::Writer::flush"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
-mutates = true
-signature = "(ref Writer)"
+signature = "(mut self: ref Writer)"
 
 # What being done with a writer does: it is flushed.
 [fn."fs::Writer::cleanup"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
-mutates = true
-signature = "(ref Writer)"
+signature = "(mut self: ref Writer)"
 
 # **Where a value with a cleanup dies** ([ADR-239](../../docs/specification/adr/adr-239.md)
 # D2). The compiler records one of these as a call wherever such a value may
@@ -250,7 +246,7 @@ signature = "()"
 pub = true
 touches = []
 throws = ["cleanup::Failure"]
-signature = "(?)"
+signature = "(self: ?)"
 
 # A file as memory, without reading it into any of its own.
 #
@@ -276,8 +272,7 @@ sync = true
 # An unnamed read conflicts with every file touch, which is the safe direction:
 # `[]` would claim an `fs::write` to the same file may be reordered across it.
 touches = ["file read"]
-returns = "borrows(self)"
-signature = "(ref Mapped) -> ref String"
+signature = "(self: ref Mapped) -> ref(self) String"
 
 # The whole of a file, as bytes.
 #
@@ -367,7 +362,7 @@ signature = "(text: ?)"
 pub = true
 sync = true
 touches = []
-returns = "borrows(text)"
+returns = "ref(text)"
 signature = "(text: ref String) -> ?"
 
 # Promise that `markup` is already HTML: the one constructor of `html::Raw`,
@@ -428,10 +423,10 @@ signature = "() -> String"
 # Whether this pauses is the lambda's answer and not its own.
 [fn."list::ListExt::map"]
 pub = true
-sync = "from(f)"
+sync = "sync(f)"
 # The list goes in by value and a new one comes out, which is what the language
-# below's trait does; `$U` is what the lambda comes to (ADR-212 D5).
-signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
+# below's trait does; `U` is what the lambda comes to (ADR-212 D5).
+signature = "[T, U](self: Vec[T], f: fn(T) -> U) -> Vec[U]"
 
 # --- Written by hand: the collections and text the language below provides ---
 #
@@ -448,7 +443,7 @@ signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
 # an entry does claim is its **arity**, which is checked - so the risk of being
 # wrong here is real and the corpus is what holds it down.
 #
-# **A signature may name its receiver's type arguments** (ADR-031): `$V` in
+# **A signature may name its receiver's type arguments** (ADR-031): `V` in
 # `HashMap::entry` is whatever the map holds, bound at the call site and
 # substituted away. A variable that stays unbound becomes `?`, never a name.
 # The rule for where one may appear is narrow and deliberate: **in what flows
@@ -458,9 +453,9 @@ signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
 # than their type parameters suggest (`get` by anything the key borrows as), so
 # a variable there would reject correct code.
 #
-# **A higher-order method says `sync = "from(f)"`.** Whether `and_modify` pauses
+# **A higher-order method says `sync = "sync(f)"`.** Whether `and_modify` pauses
 # depends on the lambda it is given, and the ledger can say "it depends" since
-# ADR-029 D3: `from(f)` names the parameter that decides, and a caller reads it
+# ADR-029 D3: `sync(f)` names the parameter that decides, and a caller reads it
 # as "this call adds no pausing of its own". `sync = true` here would be a
 # promise about somebody else's code, and before `from` existed the honest
 # alternative was to say nothing and cost every caller its inferred `sync`.
@@ -479,7 +474,7 @@ signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
 pub = true
 sync = true
 touches = []
-signature = "(f64) -> f64"
+signature = "(self) -> f64"
 
 # The square root. A negative number gives not-a-number, which is what the
 # hardware hands back rather than a failure.
@@ -487,7 +482,7 @@ signature = "(f64) -> f64"
 pub = true
 sync = true
 touches = []
-signature = "(f64) -> f64"
+signature = "(self) -> f64"
 
 # ## Arithmetic that does not abort (ADR-043 D2, D3)
 #
@@ -515,21 +510,21 @@ signature = "(f64) -> f64"
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Subtraction that **wraps** at the ends of an `i32` instead of aborting.
 [fn."i32::wrapping_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Multiplication that **wraps** at the ends of an `i32` instead of aborting.
 [fn."i32::wrapping_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Division that **wraps** instead of aborting.
 #
@@ -540,7 +535,7 @@ signature = "(i32, i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Negation that **wraps** instead of aborting: the most negative `i32`
 # negates to itself.
@@ -548,7 +543,7 @@ signature = "(i32, i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> i32"
+signature = "(self) -> i32"
 
 # The number without its sign, **wrapping** instead of aborting: the most
 # negative `i32` comes back unchanged.
@@ -556,7 +551,7 @@ signature = "(i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> i32"
+signature = "(self) -> i32"
 
 # Shift left, with the number of places taken around the width of an `i32`
 # rather than aborting. Bits shifted off the top are lost, as a shift always
@@ -565,7 +560,7 @@ signature = "(i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32, places: ?) -> i32"
+signature = "(self, places: ?) -> i32"
 
 # Shift right, with the number of places taken around the width of an `i32`
 # rather than aborting. The sign bit is carried in, because an `i32` is signed.
@@ -573,28 +568,28 @@ signature = "(i32, places: ?) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32, places: ?) -> i32"
+signature = "(self, places: ?) -> i32"
 
 # Addition that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_add"]
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Subtraction that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Multiplication that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Division that **stops** at the ends of an `i32` instead of aborting.
 #
@@ -604,7 +599,7 @@ signature = "(i32, i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32, i32) -> i32"
+signature = "(self, i32) -> i32"
 
 # Negation that **stops** at the ends of an `i32` instead of aborting: the
 # most negative `i32` negates to the most positive one.
@@ -612,7 +607,7 @@ signature = "(i32, i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> i32"
+signature = "(self) -> i32"
 
 # The number without its sign, **stopping** at the ends of an `i32` instead of
 # aborting: the most negative `i32` comes back as the most positive one.
@@ -620,28 +615,28 @@ signature = "(i32) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> i32"
+signature = "(self) -> i32"
 
 # Addition that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_add"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Subtraction that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Multiplication that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Division that **wraps** instead of aborting.
 #
@@ -652,7 +647,7 @@ signature = "(i64, i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Negation that **wraps** instead of aborting: the most negative `i64`
 # negates to itself.
@@ -660,7 +655,7 @@ signature = "(i64, i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> i64"
+signature = "(self) -> i64"
 
 # The number without its sign, **wrapping** instead of aborting: the most
 # negative `i64` comes back unchanged.
@@ -668,7 +663,7 @@ signature = "(i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> i64"
+signature = "(self) -> i64"
 
 # Shift left, with the number of places taken around the width of an `i64`
 # rather than aborting. Bits shifted off the top are lost, as a shift always
@@ -677,7 +672,7 @@ signature = "(i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64, places: ?) -> i64"
+signature = "(self, places: ?) -> i64"
 
 # Shift right, with the number of places taken around the width of an `i64`
 # rather than aborting. The sign bit is carried in, because an `i64` is signed.
@@ -685,28 +680,28 @@ signature = "(i64, places: ?) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64, places: ?) -> i64"
+signature = "(self, places: ?) -> i64"
 
 # Addition that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_add"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Subtraction that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Multiplication that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Division that **stops** at the ends of an `i64` instead of aborting.
 #
@@ -716,7 +711,7 @@ signature = "(i64, i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64, i64) -> i64"
+signature = "(self, i64) -> i64"
 
 # Negation that **stops** at the ends of an `i64` instead of aborting: the
 # most negative `i64` negates to the most positive one.
@@ -724,7 +719,7 @@ signature = "(i64, i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> i64"
+signature = "(self) -> i64"
 
 # The number without its sign, **stopping** at the ends of an `i64` instead of
 # aborting: the most negative `i64` comes back as the most positive one.
@@ -732,7 +727,7 @@ signature = "(i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> i64"
+signature = "(self) -> i64"
 
 # **Truncation has a name**, and the name carries the destination
 # ([ADR-043](../../docs/specification/adr/adr-043.md) D7). Since D4 a conversion
@@ -761,7 +756,7 @@ signature = "(i64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> i32"
+signature = "(self) -> i32"
 
 # The whole part of an `f64`, as an `i32`, with the digits that do not fit
 # dropped.
@@ -772,7 +767,7 @@ signature = "(i64) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(f64) -> i32"
+signature = "(self) -> i32"
 
 # The whole part of an `f64`, as an `i64`, with the digits that do not fit
 # dropped.
@@ -783,7 +778,7 @@ signature = "(f64) -> i32"
 pub = true
 sync = true
 touches = []
-signature = "(f64) -> i64"
+signature = "(self) -> i64"
 
 # **`u64` and `u32` have the arithmetic names every integer has**
 # ([ADR-248](../../docs/specification/adr/adr-248.md) D1): wrapping and stopping
@@ -795,14 +790,14 @@ signature = "(f64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Subtraction that **wraps** at the ends of a `u32` instead of aborting.
 [fn."u32::wrapping_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Multiplication that **wraps** at the ends of a `u32` instead of aborting:
 # what a hash is made of.
@@ -810,70 +805,70 @@ signature = "(u32, u32) -> u32"
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Division, which for a `u32` cannot overflow and is the plain division.
 [fn."u32::wrapping_div"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # A shift left that takes the count modulo the width instead of aborting.
 [fn."u32::wrapping_shl"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, i64) -> u32"
+signature = "(self, i64) -> u32"
 
 # A shift right that takes the count modulo the width instead of aborting.
 [fn."u32::wrapping_shr"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, i64) -> u32"
+signature = "(self, i64) -> u32"
 
 # Addition that **stops** at the ends of a `u32` instead of aborting.
 [fn."u32::saturating_add"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Subtraction that **stops** at zero instead of aborting.
 [fn."u32::saturating_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Multiplication that **stops** at the largest `u32` instead of aborting.
 [fn."u32::saturating_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Division, which for a `u32` cannot overflow and is the plain division.
 [fn."u32::saturating_div"]
 pub = true
 sync = true
 touches = []
-signature = "(u32, u32) -> u32"
+signature = "(self, u32) -> u32"
 
 # Addition that **wraps** at the ends of a `u64` instead of aborting.
 [fn."u64::wrapping_add"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Subtraction that **wraps** at the ends of a `u64` instead of aborting.
 [fn."u64::wrapping_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Multiplication that **wraps** at the ends of a `u64` instead of aborting:
 # what a hash is made of.
@@ -881,56 +876,56 @@ signature = "(u64, u64) -> u64"
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Division, which for a `u64` cannot overflow and is the plain division.
 [fn."u64::wrapping_div"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # A shift left that takes the count modulo the width instead of aborting.
 [fn."u64::wrapping_shl"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, i64) -> u64"
+signature = "(self, i64) -> u64"
 
 # A shift right that takes the count modulo the width instead of aborting.
 [fn."u64::wrapping_shr"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, i64) -> u64"
+signature = "(self, i64) -> u64"
 
 # Addition that **stops** at the ends of a `u64` instead of aborting.
 [fn."u64::saturating_add"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Subtraction that **stops** at zero instead of aborting.
 [fn."u64::saturating_sub"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Multiplication that **stops** at the largest `u64` instead of aborting.
 [fn."u64::saturating_mul"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # Division, which for a `u64` cannot overflow and is the plain division.
 [fn."u64::saturating_div"]
 pub = true
 sync = true
 touches = []
-signature = "(u64, u64) -> u64"
+signature = "(self, u64) -> u64"
 
 # **Keeping the low digits into an unsigned type** (ADR-043 D7, ADR-248 D1):
 # `hash.truncating_u32()` is the low half of a `u64`, said rather than assumed.
@@ -940,14 +935,14 @@ signature = "(u64, u64) -> u64"
 pub = true
 sync = true
 touches = []
-signature = "(u64) -> u32"
+signature = "(self) -> u32"
 
 # The low 32 bits of an `i64`, as a `u32`.
 [fn."i64::truncating_u32"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> u32"
+signature = "(self) -> u32"
 
 # The 64 bits of a `u64`, read as an `i64`: a number above the largest `i64`
 # comes out negative.
@@ -955,7 +950,7 @@ signature = "(i64) -> u32"
 pub = true
 sync = true
 touches = []
-signature = "(u64) -> i64"
+signature = "(self) -> i64"
 
 # The 64 bits of an `i64`, read as a `u64`: a negative number comes out above
 # the largest `i64`.
@@ -963,7 +958,7 @@ signature = "(u64) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> u64"
+signature = "(self) -> u64"
 
 # The place in the map this key names, whether or not anything is there yet.
 #
@@ -972,19 +967,18 @@ signature = "(i64) -> u64"
 [fn."collections::HashMap::entry"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["key"]
-signature = "(ref collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
+signature = "[K, V](mut self: ref collections::HashMap[K, V], key: ?) -> Entry[V]"
 
-# `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
-# borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `$K`
+# `key: ?` and not `key: K`, deliberately. Rust's `get` takes anything the key
+# borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `K`
 # would reject it. The rule is ADR-031's: a variable says what flows *out*, and
 # `?` stays for what flows *in*.
-# **A key may not be there**, which is what `-> $V` used to deny.
+# **A key may not be there**, which is what `-> V` used to deny.
 #
 # It was not a thin entry but a **wrong** one, and the difference shows in what
-# it cost: with `get` claiming a `$V`, `counts.get(k)?.n` - the honest Nikaia
+# it cost: with `get` claiming a `V`, `counts.get(k)?.n` - the honest Nikaia
 # spelling - was refused as `NK1121` *"reaches through a `Tally`, which cannot
 # be absent"*, while `counts.get(k).map_or(0, …)` compiled by writing Rust's
 # `Option` surface through a hole. So the ledger refused the correct program and
@@ -992,13 +986,13 @@ signature = "(ref collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
 # rule standing on its head.
 # What this key names, or nothing where the key is not there.
 #
-# A key is data and may be absent, which is why this hands back a `$V?`: the
+# A key is data and may be absent, which is why this hands back a `V?`: the
 # shape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`.
 [fn."collections::HashMap::get"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V], key: ?) -> $V?"
+signature = "[K, V](self: ref collections::HashMap[K, V], key: ?) -> V?"
 
 # **Written into, by name** ([ADR-215](../../docs/specification/adr/adr-215.md)
 # D1): `m[k] = v` is this language's form, and this is the same write under the
@@ -1011,10 +1005,9 @@ signature = "(ref collections::HashMap[$K, $V], key: ?) -> $V?"
 [fn."collections::HashMap::insert"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["key", "value"]
-signature = "(ref collections::HashMap[$K, $V], key: $K, value: $V) -> $V?"
+signature = "[K, V](mut self: ref collections::HashMap[K, V], key: K, value: V) -> V?"
 
 # The keys, one at a time.
 #
@@ -1024,14 +1017,14 @@ signature = "(ref collections::HashMap[$K, $V], key: $K, value: $V) -> $V?"
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $K] sync sized"
+signature = "[K, V](self: ref collections::HashMap[K, V]) -> Seq[ref K] sync sized"
 
 # How many pairs the map holds.
 [fn."collections::HashMap::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[?, ?]) -> i64"
+signature = "(self: ref collections::HashMap[?, ?]) -> i64"
 
 # A map with nothing in it. It is written `HashMap()`.
 [fn."collections::HashMap::new"]
@@ -1049,7 +1042,7 @@ signature = "() -> collections::HashMap[?, ?]"
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V], key: ?) -> bool"
+signature = "[K, V](self: ref collections::HashMap[K, V], key: ?) -> bool"
 
 # --- The other three collections, constructed (0.0.232) ----------------------
 #
@@ -1078,32 +1071,30 @@ signature = "() -> collections::HashSet[?]"
 [fn."collections::HashSet::insert"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["value"]
-signature = "(ref collections::HashSet[$T], value: $T) -> bool"
+signature = "[T](mut self: ref collections::HashSet[T], value: T) -> bool"
 
 # Whether the set holds this value.
 [fn."collections::HashSet::contains"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashSet[$T], value: ?) -> bool"
+signature = "[T](self: ref collections::HashSet[T], value: ?) -> bool"
 
 # Take a value out of the set, and say whether it was there.
 [fn."collections::HashSet::remove"]
 pub = true
 sync = true
-mutates = true
 touches = []
-signature = "(ref collections::HashSet[$T], value: ?) -> bool"
+signature = "[T](mut self: ref collections::HashSet[T], value: ?) -> bool"
 
 # How many values the set holds.
 [fn."collections::HashSet::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashSet[?]) -> i64"
+signature = "(self: ref collections::HashSet[?]) -> i64"
 
 # A set with nothing in it, kept in order. It is written `collections::BTreeSet()`.
 [fn."collections::BTreeSet::new"]
@@ -1118,24 +1109,23 @@ signature = "() -> collections::BTreeSet[?]"
 [fn."collections::BTreeSet::insert"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["value"]
-signature = "(ref collections::BTreeSet[$T], value: $T) -> bool"
+signature = "[T](mut self: ref collections::BTreeSet[T], value: T) -> bool"
 
 # Whether the set holds this value.
 [fn."collections::BTreeSet::contains"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::BTreeSet[$T], value: ?) -> bool"
+signature = "[T](self: ref collections::BTreeSet[T], value: ?) -> bool"
 
 # How many values the set holds.
 [fn."collections::BTreeSet::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::BTreeSet[?]) -> i64"
+signature = "(self: ref collections::BTreeSet[?]) -> i64"
 
 # A map with nothing in it, kept in the keys' order. It is written
 # `collections::BTreeMap()`.
@@ -1152,41 +1142,40 @@ signature = "() -> collections::BTreeMap[?, ?]"
 [fn."collections::BTreeMap::insert"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["key", "value"]
-signature = "(ref collections::BTreeMap[$K, $V], key: $K, value: $V) -> $V?"
+signature = "[K, V](mut self: ref collections::BTreeMap[K, V], key: K, value: V) -> V?"
 
 # What this key names, or nothing where the key is not there.
 [fn."collections::BTreeMap::get"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> $V?"
+signature = "[K, V](self: ref collections::BTreeMap[K, V], key: ?) -> V?"
 
 # Whether the map holds this key.
 [fn."collections::BTreeMap::contains_key"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> bool"
+signature = "[K, V](self: ref collections::BTreeMap[K, V], key: ?) -> bool"
 
 # How many pairs the map holds.
 [fn."collections::BTreeMap::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::BTreeMap[?, ?]) -> i64"
+signature = "(self: ref collections::BTreeMap[?, ?]) -> i64"
 
 # The values, one at a time, in the order the keys come out in.
 [fn."collections::HashMap::values"]
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $V] sync sized"
+signature = "[K, V](self: ref collections::HashMap[K, V]) -> Seq[ref V] sync sized"
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
-# is what `from(f)` says (ADR-029). Sound because the lambda runs *during* the
+# is what `sync(f)` says (ADR-029). Sound because the lambda runs *during* the
 # call: its body belongs to the function that writes it, and its calls are
 # counted there. A method that **stored** its lambda could not say this.
 # Change the value that is already there, and leave an empty place alone.
@@ -1194,8 +1183,8 @@ signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $V] sync sized"
 # Whether this pauses is the lambda's answer and not its own.
 [fn."Entry::and_modify"]
 pub = true
-sync = "from(f)"
-signature = "(Entry[$V], f: fn(ref $V)) -> Entry[$V]"
+sync = "sync(f)"
+signature = "[V](self: Entry[V], f: fn(ref V)) -> Entry[V]"
 
 # The value that is there, putting this one in first where there is none.
 #
@@ -1205,7 +1194,7 @@ pub = true
 sync = true
 touches = []
 keeps = ["value"]
-signature = "(Entry[$V], value: ?) -> ref $V"
+signature = "[V](self: Entry[V], value: ?) -> ref V"
 
 # Also runs its lambda, before it returns.
 # The same as `or_insert`, with the value built only where one is needed.
@@ -1213,8 +1202,8 @@ signature = "(Entry[$V], value: ?) -> ref $V"
 # Whether this pauses is the lambda's answer and not its own.
 [fn."Entry::or_insert_with"]
 pub = true
-sync = "from(f)"
-signature = "(Entry[$V], f: fn()) -> ref $V"
+sync = "sync(f)"
+signature = "[V](self: Entry[V], f: fn()) -> ref V"
 
 # `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
 # It is here rather than inferred for the reason the whole of this section is
@@ -1234,7 +1223,7 @@ signature = "(Entry[$V], f: fn()) -> ref $V"
 # `deref` is the one entry, and it is what makes `serve(ref db)` mean something.
 # ADR-042 D2 sees a container through to what it holds wherever its ledger
 # records a `deref`, and D2's own note says `Shared` is seen through "the moment
-# it has a `deref` entry, with no further decision". This is that entry. `$T` is
+# it has a `deref` entry, with no further decision". This is that entry. `T` is
 # bound by the receiver (ADR-031), which is why one line answers for every
 # `Shared` a program writes rather than for one instantiation.
 # What the handle holds.
@@ -1245,8 +1234,7 @@ signature = "(Entry[$V], f: fn()) -> ref $V"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Shared[$T]) -> ref $T"
+signature = "[T](self: ref Shared[T]) -> ref(self) T"
 
 # `String()` reaches nothing and hands back an empty one. Four adjacent pairs in
 # `examples/` named it as the callee nobody had described, which is what asked
@@ -1268,8 +1256,8 @@ signature = "() -> String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[u8] sync ends"
+returns = "ref(self)"
+signature = "(ref self) -> Seq[u8] sync ends"
 
 # The characters, one at a time.
 #
@@ -1279,8 +1267,8 @@ signature = "(ref String) -> Seq[u8] sync ends"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[char] sync ends"
+returns = "ref(self)"
+signature = "(ref self) -> Seq[char] sync ends"
 
 # How many **bytes** the text is.
 #
@@ -1290,38 +1278,36 @@ signature = "(ref String) -> Seq[char] sync ends"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> i64"
+signature = "(ref self) -> i64"
 
 # Add one character to the end of the text.
 [fn."String::push"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["c"]
-signature = "(ref String, c: char)"
+signature = "(ref mut self, c: char)"
 
 # Add text to the end of this text.
 [fn."String::push_str"]
 pub = true
 sync = true
-mutates = true
 touches = []
-signature = "(ref String, text: ?)"
+signature = "(ref mut self, text: ?)"
 
 # Whether the list holds nothing.
 [fn."Vec::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Vec[?]) -> bool"
+signature = "(self: ref Vec[?]) -> bool"
 
 # How many elements the list holds.
 [fn."Vec::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Vec[?]) -> i64"
+signature = "(self: ref Vec[?]) -> i64"
 
 # **An array knows its own length, and nothing said so.** `Array[T, N]` carries
 # its length in its type (ADR-152), and below it is `[T; N]`, which has `.len()`
@@ -1350,48 +1336,48 @@ crosses = true
 
 # What this key names, or nothing where the key is not there.
 #
-# A key is data and may be absent, which is why this hands back a `$V?` - the
+# A key is data and may be absent, which is why this hands back a `V?` - the
 # same shape `collections::HashMap::get` has, and the same `?? 0` after it.
 [fn."Fixed::get"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Fixed[$K, $V], key: ?) -> $V?"
+signature = "[K, V](self: ref Fixed[K, V], key: ?) -> V?"
 
 # Whether this key is one of the table's.
 [fn."Fixed::has"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Fixed[$K, $V], key: ?) -> bool"
+signature = "[K, V](self: ref Fixed[K, V], key: ?) -> bool"
 
 # How many pairs the table holds.
 [fn."Fixed::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Fixed[$K, $V]) -> i64"
+signature = "[K, V](self: ref Fixed[K, V]) -> i64"
 
 # Whether the table holds nothing.
 [fn."Fixed::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Fixed[$K, $V]) -> bool"
+signature = "[K, V](self: ref Fixed[K, V]) -> bool"
 
 # How many elements the array holds. It is the length in its type.
 [fn."Array::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Array[?, ?]) -> i64"
+signature = "(self: ref Array[?, ?]) -> i64"
 
 # Whether the array holds nothing.
 [fn."Array::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Array[?, ?]) -> bool"
+signature = "(self: ref Array[?, ?]) -> bool"
 
 # A list with nothing in it. It is written `Vec()`.
 [fn."Vec::new"]
@@ -1410,7 +1396,7 @@ signature = "() -> Vec[?]"
 pub = true
 sync = true
 touches = []
-signature = "(ref Vec[$T]) -> Vec[$T]"
+signature = "[T](self: ref Vec[T]) -> Vec[T]"
 
 # The elements, one at a time, **taken out** of the list.
 #
@@ -1421,7 +1407,7 @@ signature = "(ref Vec[$T]) -> Vec[$T]"
 pub = true
 sync = true
 touches = []
-signature = "(Vec[$T]) -> Seq[$T] sync ends sized"
+signature = "[T](self: Vec[T]) -> Seq[T] sync ends sized"
 
 # The pairs, one at a time, **taken out** of the map.
 #
@@ -1432,7 +1418,7 @@ signature = "(Vec[$T]) -> Seq[$T] sync ends sized"
 pub = true
 sync = true
 touches = []
-signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync sized"
+signature = "[K, V](self: collections::HashMap[K, V]) -> Seq[(K, V)] sync sized"
 
 # --- What is produced step by step, and what walks it ------------------------
 #
@@ -1444,7 +1430,7 @@ signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync sized"
 #
 # The words after it say what one **step** may do, as they do after a function
 # type, and there are **three** states rather than two
-# ([ADR-172](../../docs/specification/adr/adr-172.md) D1). `Seq[$K] sync` on
+# ([ADR-172](../../docs/specification/adr/adr-172.md) D1). `Seq[K] sync` on
 # `keys` is a step that reads memory; `Seq[String] pauses` on `io::lines` is a
 # step that suspends; a `map`'s step runs the lambda, so it says neither and is
 # read as *nobody said*, which keeps the blocking form. The two ways of being
@@ -1458,7 +1444,7 @@ signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync sized"
 # ([ADR-212](../../docs/specification/adr/adr-212.md) D1): `ends` - it can be
 # walked from the back; `sized` - its length is known before it is walked;
 # `replays` - walking it does not use it up, which only a range does. In a
-# receiver's position they are a **demand** (`rev` writes `Seq[$T] ends`); on a
+# receiver's position they are a **demand** (`rev` writes `Seq[T] ends`); on a
 # result they **pass through** (D2): the result has a word the entry writes
 # where every sequence handed in has it too. `ends_by_length` says the result is
 # walked from the back only where the length of what went in is known, which is
@@ -1472,7 +1458,7 @@ pub = true
 sync = true
 touches = []
 # The walk is what consumes it (D2): the sequence goes in by value.
-signature = "(Seq[$T]) -> Vec[$T]"
+signature = "[T](self: Seq[T]) -> Vec[T]"
 
 # How many elements the sequence produces.
 #
@@ -1484,7 +1470,7 @@ sync = true
 touches = []
 # `i64`, which is what `Vec::len` says for the same reason: this language's
 # integer is not Rust's `usize`, and the emitter writes the cast.
-signature = "(Seq[$T]) -> i64"
+signature = "[T](self: Seq[T]) -> i64"
 
 # The element at a position, or nothing where the sequence is shorter than that.
 #
@@ -1494,7 +1480,7 @@ pub = true
 sync = true
 touches = []
 # **There may not be one**, which is `Args::nth`'s shape one type over.
-signature = "(Seq[$T], at: i64) -> $T?"
+signature = "[T](self: Seq[T], at: i64) -> T?"
 
 # Everything the sequence produces, written one after another with this text
 # between them.
@@ -1502,23 +1488,23 @@ signature = "(Seq[$T], at: i64) -> $T?"
 pub = true
 sync = true
 touches = []
-signature = "(Seq[$T], sep: ref String) -> String"
+signature = "[T](self: Seq[T], sep: ref String) -> String"
 
-# `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
+# `sync = "sync(f)"` for the reason `list::ListExt::map` has it: the step is the
 # lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
 # D3). The **result's** step words are left off for the same reason, one level
 # down: a step of this may pause exactly when the lambda may, and the type
 # language has no way to say *whatever the lambda says*. What its elements
-# **are** it does say since ADR-212 D5: `$U` is what the lambda comes to.
+# **are** it does say since ADR-212 D5: `U` is what the lambda comes to.
 # Each element through a function.
 #
 # The elements are produced as they are asked for, so nothing is walked until
 # something walks the result. Whether a step pauses is the lambda's answer.
 [fn."Seq::map"]
 pub = true
-sync = "from(f)"
+sync = "sync(f)"
 touches = []
-signature = "(Seq[$T], f: fn($T) -> $U) -> Seq[$U] ends sized"
+signature = "[T, U](self: Seq[T], f: fn(T) -> U) -> Seq[U] ends sized"
 
 # Only the elements the function says yes to.
 #
@@ -1526,11 +1512,11 @@ signature = "(Seq[$T], f: fn($T) -> $U) -> Seq[$U] ends sized"
 # step pauses is the lambda's answer.
 [fn."Seq::filter"]
 pub = true
-sync = "from(f)"
+sync = "sync(f)"
 touches = []
 # The element type survives a filter, which is the one place a `Seq` entry says
 # more than `?`.
-signature = "(Seq[$T], f: fn($T)) -> Seq[$T] ends"
+signature = "[T](self: Seq[T], f: fn(T)) -> Seq[T] ends"
 
 # --- The rest of a pipeline ([ADR-212](../../docs/specification/adr/adr-212.md) D5)
 #
@@ -1541,15 +1527,15 @@ signature = "(Seq[$T], f: fn($T)) -> Seq[$T] ends"
 
 # **Each element handed to a lambda, and nothing handed back**
 # ([ADR-235](../../docs/specification/adr/adr-235.md) D1): the walk that exists
-# for what the lambda does. `from(f)` for `map`'s reason.
+# for what the lambda does. `sync(f)` for `map`'s reason.
 # Each element through a function, for what the function does.
 #
 # It walks the whole sequence, one element at a time.
 [fn."Seq::for_each"]
 pub = true
-sync = "from(f)"
+sync = "sync(f)"
 touches = []
-signature = "(Seq[$T], f: fn($T))"
+signature = "[T](self: Seq[T], f: fn(T))"
 
 # The same elements, from the last to the first.
 #
@@ -1560,7 +1546,7 @@ pub = true
 sync = true
 touches = []
 # `ends` on the receiver is the demand: `io::lines().rev()` is `NK2703`.
-signature = "(Seq[$T] ends) -> Seq[$T] ends sized"
+signature = "[T](self: Seq[T] ends) -> Seq[T] ends sized"
 
 # Pairs, one element of each, until the shorter of the two ends.
 [fn."Seq::zip"]
@@ -1568,7 +1554,7 @@ pub = true
 sync = true
 touches = []
 ends_by_length = true
-signature = "(Seq[$T], other: Seq[$U]) -> Seq[($T, $U)] ends sized"
+signature = "[T, U](self: Seq[T], other: Seq[U]) -> Seq[(T, U)] ends sized"
 
 # The first `n` elements, or all of them where there are fewer.
 [fn."Seq::take"]
@@ -1576,7 +1562,7 @@ pub = true
 sync = true
 touches = []
 ends_by_length = true
-signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
+signature = "[T](self: Seq[T], n: i64) -> Seq[T] ends sized"
 
 # Everything after the first `n` elements.
 [fn."Seq::skip"]
@@ -1584,7 +1570,7 @@ pub = true
 sync = true
 touches = []
 ends_by_length = true
-signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
+signature = "[T](self: Seq[T], n: i64) -> Seq[T] ends sized"
 
 # The first element, and then every `step`-th after it.
 #
@@ -1594,7 +1580,7 @@ pub = true
 sync = true
 touches = []
 ends_by_length = true
-signature = "(Seq[$T], step: i64) -> Seq[$T] ends sized"
+signature = "[T](self: Seq[T], step: i64) -> Seq[T] ends sized"
 
 # **The list's elements on every core at once** (Part II 12.6,
 # [ADR-235](../../docs/specification/adr/adr-235.md) D1). A `Par` has `Seq`'s
@@ -1609,8 +1595,7 @@ signature = "(Seq[$T], step: i64) -> Seq[$T] ends sized"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Vec[$T]) -> Par[ref $T] sync ends sized"
+signature = "[T](self: ref Vec[T]) -> Par[ref(self) T] sync ends sized"
 
 # The elements, one at a time, **lent**: the list stays where it is.
 #
@@ -1620,8 +1605,7 @@ signature = "(ref Vec[$T]) -> Par[ref $T] sync ends sized"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Vec[$T]) -> Seq[ref $T] sync ends sized"
+signature = "[T](self: ref Vec[T]) -> Seq[ref(self) T] sync ends sized"
 
 # The list in runs of `n` elements, the last one shorter where it does not
 # divide evenly.
@@ -1631,8 +1615,7 @@ signature = "(ref Vec[$T]) -> Seq[ref $T] sync ends sized"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
+signature = "[T](self: ref Vec[T], n: i64) -> Seq[ref(self) Array[T]] sync ends sized"
 
 # Every run of `n` elements in a row, each one starting one further on.
 #
@@ -1641,8 +1624,7 @@ signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
+signature = "[T](self: ref Vec[T], n: i64) -> Seq[ref(self) Array[T]] sync ends sized"
 
 # Add a value to the end of the list.
 #
@@ -1651,10 +1633,9 @@ signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
 [fn."Vec::push"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["value"]
-signature = "(ref Vec[$T], value: $T)"
+signature = "[T](mut self: ref Vec[T], value: T)"
 
 # **Whether a list holds a value** (0.0.246): a lookup, lent as a set's is.
 # Nothing described it, so `seen.contains(n)` lowered with the value handed
@@ -1664,7 +1645,7 @@ signature = "(ref Vec[$T], value: $T)"
 pub = true
 sync = true
 touches = []
-signature = "(ref Vec[$T], value: ?) -> bool"
+signature = "[T](self: ref Vec[T], value: ?) -> bool"
 
 # **Taking the last element off** (0.0.245). Nothing described it, so `xs.pop()`
 # was a call no ledger knew: every function that popped was taken to pause and
@@ -1675,9 +1656,8 @@ signature = "(ref Vec[$T], value: ?) -> bool"
 [fn."Vec::pop"]
 pub = true
 sync = true
-mutates = true
 touches = []
-signature = "(ref Vec[$T]) -> $T?"
+signature = "[T](mut self: ref Vec[T]) -> T?"
 
 # **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
 # program wrote `a + b`. It was reached before only because a method nothing
@@ -1688,10 +1668,9 @@ signature = "(ref Vec[$T]) -> $T?"
 [fn."Vec::extend"]
 pub = true
 sync = true
-mutates = true
 touches = []
 keeps = ["items"]
-signature = "(ref Vec[$T], items: Vec[$T])"
+signature = "[T](mut self: ref Vec[T], items: Vec[T])"
 
 # Put the elements in their natural order, in place.
 #
@@ -1700,9 +1679,8 @@ signature = "(ref Vec[$T], items: Vec[$T])"
 [fn."Vec::sort"]
 pub = true
 sync = true
-mutates = true
 touches = []
-signature = "(ref Vec[?])"
+signature = "(mut self: ref Vec[?])"
 
 # Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
 # Written down so the checker can resolve them: without an entry a call is "a
@@ -1710,7 +1688,7 @@ signature = "(ref Vec[?])"
 # own idiom cannot be `sync`, which `docs/mutex-floor.md` §3.1 found before these
 # existed.
 #
-# `sync = "from(f)"` (ADR-029 D3) on the two that take a lambda: the lambda
+# `sync = "sync(f)"` (ADR-029 D3) on the two that take a lambda: the lambda
 # decides, which is the whole of ADR-005 D6's rule - the door itself never
 # pauses, and what runs inside it is the caller's own code. Waiting to acquire is
 # not pausing: the rule is about a suspension point while a lock is *held*, and
@@ -1728,7 +1706,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(ref Locked[$T]) -> Seen[$T]"
+signature = "[T](self: ref Locked[T]) -> Seen[T]"
 
 # Put a value in, whatever is there now.
 #
@@ -1740,7 +1718,7 @@ touches = ["lock write"]
 sync = true
 keeps = ["value"]
 locks = true
-signature = "(ref Locked[$T], value: $T)"
+signature = "[T](self: ref Locked[T], value: T)"
 
 
 # **The one door for a stamped value** (ADR-111 D5). `kasse.set(neu; after:
@@ -1755,7 +1733,7 @@ signature = "(ref Locked[$T], value: $T)"
 # program reads, and a caller that has to declare `throws` is owed it.
 #
 # **The witness is a view and the value is not.** The value is stored and the
-# witness is only read, so `seen: ref $T` - a witness taken by value would be moved
+# witness is only read, so `seen: ref T` - a witness taken by value would be moved
 # out of the caller, and reading what was seen after asking whether it still
 # holds is an ordinary thing to write. `keeps = ["value"]` says the same thing
 # from the other side.
@@ -1771,7 +1749,7 @@ sync = true
 throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
-signature = "(ref Locked[$T], value: $T, seen: ref $T)"
+signature = "[T](self: ref Locked[T], value: T, seen: ref T)"
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
 # door that answers a question about a large value without copying it.
@@ -1782,9 +1760,9 @@ signature = "(ref Locked[$T], value: $T, seen: ref $T)"
 [fn."Locked::access"]
 pub = true
 touches = ["lock read"]
-sync = "from(f)"
+sync = "sync(f)"
 locks = true
-signature = "(ref Locked[$T], f: fn(ref $T)) -> ?"
+signature = "[T](self: ref Locked[T], f: fn(ref T)) -> ?"
 
 # **Where locked data changes** (D2). The old value goes in by value and the new
 # one comes back, so no handle into the inside ever exists - and `old` is an
@@ -1798,12 +1776,12 @@ signature = "(ref Locked[$T], f: fn(ref $T)) -> ?"
 [fn."Locked::update"]
 pub = true
 touches = ["lock write"]
-sync = "from(f)"
-# `fn($T)` and not `fn($T) -> $T`: this ledger's type language has no result on a
+sync = "sync(f)"
+# `fn(T)` and not `fn(T) -> T`: this ledger's type language has no result on a
 # lambda, which is a limit of the ledger rather than of the door. What it is read
 # for here is the arity and the `sync` column.
 locks = true
-signature = "(ref Locked[$T], f: fn($T))"
+signature = "[T](self: ref Locked[T], f: fn(T))"
 
 # `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
 # several parts own at once and any of them may change. **It is one name here and
@@ -1816,7 +1794,7 @@ signature = "(ref Locked[$T], f: fn($T))"
 # then what the lambda sees is an ordinary view.
 #
 # There is no constructor entry for the same reason there is none for `Locked` or
-# `Shared`: this ledger's type language binds `$T` from the **receiver** (ADR-031),
+# `Shared`: this ledger's type language binds `T` from the **receiver** (ADR-031),
 # and a constructor has none - the type argument would have to come from what is
 # handed in. So `SharedMut(0)` is the compiler's to type, the way `T?`'s `Some(…)`
 # is (ADR-064 D2).
@@ -1829,7 +1807,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(ref SharedMut[$T]) -> Seen[$T]"
+signature = "[T](self: ref SharedMut[T]) -> Seen[T]"
 
 # Put a value in, whatever is there now.
 #
@@ -1841,7 +1819,7 @@ touches = ["lock write"]
 sync = true
 keeps = ["value"]
 locks = true
-signature = "(ref SharedMut[$T], value: $T)"
+signature = "[T](self: ref SharedMut[T], value: T)"
 
 # Put a value in **only if** what is held is still what was seen.
 #
@@ -1854,7 +1832,7 @@ sync = true
 throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
-signature = "(ref SharedMut[$T], value: $T, seen: ref $T)"
+signature = "[T](self: ref SharedMut[T], value: T, seen: ref T)"
 
 # Read what this value holds, in place, without copying it.
 #
@@ -1863,9 +1841,9 @@ signature = "(ref SharedMut[$T], value: $T, seen: ref $T)"
 [fn."SharedMut::access"]
 pub = true
 touches = ["lock read"]
-sync = "from(f)"
+sync = "sync(f)"
 locks = true
-signature = "(ref SharedMut[$T], f: fn(ref $T)) -> ?"
+signature = "[T](self: ref SharedMut[T], f: fn(ref T)) -> ?"
 
 # Change what this value holds: the old one goes in and the new one comes back.
 #
@@ -1873,15 +1851,15 @@ signature = "(ref SharedMut[$T], f: fn(ref $T)) -> ?"
 [fn."SharedMut::update"]
 pub = true
 touches = ["lock write"]
-sync = "from(f)"
-signature = "(ref SharedMut[$T], f: fn($T))"
+sync = "sync(f)"
+signature = "[T](self: ref SharedMut[T], f: fn(T))"
 
 # **The two doors over several locks** (Part II 12.3, ADR-065). They take the
 # locks and then the block, and the acquisition order is by address so that two
 # tasks naming the same two locks the other way round still take them alike.
 #
 # **No `signature`, and that is the decision rather than a gap** (ADR-065 D1).
-# This ledger's type language binds `$T` from a receiver (ADR-031); a door over
+# This ledger's type language binds `T` from a receiver (ADR-031); a door over
 # several locks has none, the locks hold different types, and how many there are
 # is open. So the compiler types these itself, the way it types `SharedMut(0)`.
 # What the ledger *can* say is the `sync` column, and that is the half a caller
@@ -1895,7 +1873,7 @@ signature = "(ref SharedMut[$T], f: fn($T))"
 [fn."access_all"]
 pub = true
 touches = ["lock read"]
-sync = "from(f)"
+sync = "sync(f)"
 
 # Change several locked values at once.
 #
@@ -1905,7 +1883,7 @@ sync = "from(f)"
 [fn."update_all"]
 pub = true
 touches = ["lock write"]
-sync = "from(f)"
+sync = "sync(f)"
 
 # Put the elements in the order of what the function returns, in place.
 #
@@ -1913,9 +1891,8 @@ sync = "from(f)"
 # first as the tie-breaker.
 [fn."Vec::sort_by_key"]
 pub = true
-sync = "from(f)"
-mutates = true
-signature = "(ref Vec[$T], f: fn(ref $T)) -> ?"
+sync = "sync(f)"
+signature = "[T](mut self: ref Vec[T], f: fn(ref T)) -> ?"
 
 # The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).
 #
@@ -1925,8 +1902,8 @@ signature = "(ref Vec[$T], f: fn(ref $T)) -> ?"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[u8] sync ends"
+returns = "ref(self)"
+signature = "(self: ref String) -> Seq[u8] sync ends"
 
 # The characters, one at a time.
 #
@@ -1936,8 +1913,8 @@ signature = "(ref String) -> Seq[u8] sync ends"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[char] sync ends"
+returns = "ref(self)"
+signature = "(self: ref String) -> Seq[char] sync ends"
 
 # How many **bytes** the text is.
 #
@@ -1947,7 +1924,7 @@ signature = "(ref String) -> Seq[char] sync ends"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> i64"
+signature = "(self: ref String) -> i64"
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
 # (ADR-054 D2). The conversion is emitted at the call and a negative count
@@ -1961,7 +1938,7 @@ signature = "(ref String) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(ref String, n: i64) -> String"
+signature = "(self: ref String, n: i64) -> String"
 
 # **Asked for by `tools/template.nika`** (0.0.252), the HTML scan the
 # compiler's template DSL runs: a blank ends an unquoted attribute, and an
@@ -1972,7 +1949,7 @@ signature = "(ref String, n: i64) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(char) -> bool"
+signature = "(self) -> bool"
 
 # The character in lower case where it is an ASCII letter, and itself
 # otherwise.
@@ -1980,21 +1957,21 @@ signature = "(char) -> bool"
 pub = true
 sync = true
 touches = []
-signature = "(char) -> char"
+signature = "(self) -> char"
 
 # Whether the text begins with this.
 [fn."str::starts_with"]
 pub = true
 sync = true
 touches = []
-signature = "(ref String, prefix: ?) -> bool"
+signature = "(self: ref String, prefix: ?) -> bool"
 
 # Whether the text ends with this.
 [fn."str::ends_with"]
 pub = true
 sync = true
 touches = []
-signature = "(ref String, suffix: ?) -> bool"
+signature = "(self: ref String, suffix: ?) -> bool"
 
 # **Found by the first test to claim something about a page** (ADR-247): an
 # `assert` may only call what the ledger says changes nothing, and without this
@@ -2004,14 +1981,14 @@ signature = "(ref String, suffix: ?) -> bool"
 pub = true
 sync = true
 touches = []
-signature = "(ref String, part: ?) -> bool"
+signature = "(self: ref String, part: ?) -> bool"
 
 # The same text, owned rather than borrowed.
 [fn."str::to_string"]
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(self: ref String) -> String"
 
 # Written down because the corpus asks for it - `line.to_uppercase()` in
 # `examples/k-nucleotide/src/main.nika` - and because it is sayable: a case fold hands
@@ -2028,7 +2005,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(self: ref String) -> String"
 
 # The same text with every character in lower case, as owned text.
 #
@@ -2037,7 +2014,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(self: ref String) -> String"
 
 # The same text with every character in upper case, as new text.
 #
@@ -2046,7 +2023,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(ref self) -> String"
 
 # The same text with every character in lower case, as new text.
 #
@@ -2055,7 +2032,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(ref self) -> String"
 
 # **The way out `NK1131` names, so it has to be described here**
 # ([ADR-083](../../docs/specification/adr/adr-083.md)). A field of a borrowed
@@ -2074,7 +2051,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(ref self) -> String"
 
 # The same for a view, which is what a `ref String` field or a literal is cloned from.
 # A copy of the text, owned by whoever asked for it.
@@ -2084,7 +2061,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-signature = "(ref String) -> String"
+signature = "(self: ref String) -> String"
 
 # The same text with the white space at both ends left off.
 #
@@ -2094,8 +2071,7 @@ signature = "(ref String) -> String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> ref String"
+signature = "(self: ref String) -> ref(self) String"
 
 # **What cuts text into views says so** ([ADR-225](../../docs/specification/adr/adr-225.md)
 # D1). Each hands back views into the text it is called on, which is what lets
@@ -2106,16 +2082,14 @@ signature = "(ref String) -> ref String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> ref String"
+signature = "(self: ref String) -> ref(self) String"
 
 # The same text with the white space at the end left off, as a view into it.
 [fn."str::trim_end"]
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> ref String"
+signature = "(self: ref String) -> ref(self) String"
 
 # The lines of the text, each a view into it, without its line ending.
 #
@@ -2124,16 +2098,14 @@ signature = "(ref String) -> ref String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[ref String] sync ends"
+signature = "(self: ref String) -> Seq[ref(self) String] sync ends"
 
 # The pieces of the text between each `sep`, each a view into it.
 [fn."str::split"]
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String, sep: ?) -> Seq[ref String] sync ends"
+signature = "(self: ref String, sep: ?) -> Seq[ref(self) String] sync ends"
 
 # The words of the text - the pieces between runs of white space - each a view
 # into it.
@@ -2141,8 +2113,7 @@ signature = "(ref String, sep: ?) -> Seq[ref String] sync ends"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref String) -> Seq[ref String] sync ends"
+signature = "(self: ref String) -> Seq[ref(self) String] sync ends"
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
@@ -2221,7 +2192,7 @@ touches = []
 # The doc below already said it: *the same failure `fs::read_to_string` has*.
 # Since ADR-158 D1 that failure has a name, so this says it in the column too.
 throws = ["io::IoError"]
-signature = "(foreign::CStr) -> String"
+signature = "(self) -> String"
 
 # The arguments the program was started with.
 #
@@ -2369,7 +2340,7 @@ pub = true
 # way of saying it can pause - and the emitter turns that into the `.await`
 # (ADR-055 D2).
 #
-# `$T` is bound by the receiver (ADR-031), so one line answers for every
+# `T` is bound by the receiver (ADR-031), so one line answers for every
 # `TaskHandle` a program writes. It takes `self` by value because a value can
 # only be joined once.
 #
@@ -2382,7 +2353,7 @@ pub = true
 # waits. A handle can be joined once, because joining takes it.
 [fn."TaskHandle::join"]
 pub = true
-signature = "(TaskHandle[$T]) -> $T"
+signature = "[T](self: TaskHandle[T]) -> T"
 
 # **One mechanism, said three ways rather than three things**
 # ([ADR-148](../../docs/specification/adr/adr-148.md) D3): a program's own
@@ -2408,7 +2379,7 @@ signature = "(TaskHandle[$T]) -> $T"
 [fn."TaskHandle::cancel"]
 pub = true
 sync = true
-signature = "(TaskHandle[$T])"
+signature = "[T](self: TaskHandle[T])"
 
 # A value several parts of a program own at once.
 #
@@ -2449,70 +2420,70 @@ compares = true
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many minutes, as a span of time.
 [fn."i32::minutes"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many seconds, as a span of time.
 [fn."i32::seconds"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many thousandths of a second, as a span of time.
 [fn."i32::millis"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many millionths of a second, as a span of time.
 [fn."i32::micros"]
 pub = true
 sync = true
 touches = []
-signature = "(i32) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many hours, as a span of time.
 [fn."i64::hours"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many minutes, as a span of time.
 [fn."i64::minutes"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many seconds, as a span of time.
 [fn."i64::seconds"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many thousandths of a second, as a span of time.
 [fn."i64::millis"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # This many millionths of a second, as a span of time.
 [fn."i64::micros"]
 pub = true
 sync = true
 touches = []
-signature = "(i64) -> time::Duration"
+signature = "(self) -> time::Duration"
 
 # **In `std::time` and not in the prelude**
 # ([ADR-154](../../docs/specification/adr/adr-154.md) D2): the rule the list is
@@ -2541,7 +2512,7 @@ signature = "(span: time::Duration)"
 # that binds them was already built (ADR-098). What this block costs is four
 # entries.
 #
-# `-> (Sender[$T], Receiver[$T])` names the shape a `let` destructures. The
+# `-> (Sender[T], Receiver[T])` names the shape a `let` destructures. The
 # variable stays unbound - nothing at the call says what the channel carries -
 # so it becomes `?`, which is ADR-031's rule and is enough: what the two methods
 # need from it is the *type name*, so that `tx.send(…)` resolves to the entry
@@ -2555,7 +2526,7 @@ signature = "(span: time::Duration)"
 pub = true
 sync = true
 touches = []
-signature = "(capacity: i64) -> (channel::Sender[$T], channel::Receiver[$T])"
+signature = "[T](capacity: i64) -> (channel::Sender[T], channel::Receiver[T])"
 
 # The sending end of a channel.
 #
@@ -2585,9 +2556,9 @@ pub = true
 # waits.
 [fn."channel::Sender::send"]
 pub = true
-signature = "(ref channel::Sender[$T], value: ?)"
+signature = "[T](self: ref channel::Sender[T], value: ?)"
 
-# **`-> $T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
+# **`-> T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
 # stream rather than a failure, so `??` is what reads it (Part I 3.5) and
 # nothing here `throws`.
 # The next value, or `null` where every sender is gone.
@@ -2596,7 +2567,7 @@ signature = "(ref channel::Sender[$T], value: ?)"
 # is what reads it. It gives the thread up rather than holding it.
 [fn."channel::Receiver::recv"]
 pub = true
-signature = "(ref channel::Receiver[$T]) -> $T?"
+signature = "[T](self: ref channel::Receiver[T]) -> T?"
 
 # --- The collections outside the prelude (ADR-154 D3) ------------------------
 #
@@ -2739,7 +2710,7 @@ signature = "(address: ref String) -> net::Connection"
 pub = true
 touches = ["socket read"]
 throws = ["io::IoError"]
-signature = "(ref Listener) -> net::Connection"
+signature = "(self: ref Listener) -> net::Connection"
 
 # The address it is **bound** to, which is what a caller that asked for port `0`
 # needs to know. Memory, so it touches nothing and cannot pause.
@@ -2750,7 +2721,7 @@ signature = "(ref Listener) -> net::Connection"
 pub = true
 sync = true
 touches = []
-signature = "(ref Listener) -> String"
+signature = "(self: ref Listener) -> String"
 
 # **The first untrusted source `std` has** (ADR-010 D2), which this file's own
 # header predicted by name: *the untrusted ones - `http`, `net`, `db` - arrive
@@ -2761,11 +2732,10 @@ signature = "(ref Listener) -> String"
 # else chose these bytes.
 [fn."net::Connection::read"]
 pub = true
-mutates = true
 touches = ["socket read"]
 throws = ["io::IoError"]
 provenance = "untrusted"
-signature = "(ref Connection) -> Bytes"
+signature = "(mut self: ref Connection) -> Bytes"
 
 # `?` for the bytes, for `fs::write`'s reason: it takes a `Bytes`, a `ref String`\
 # and a buffer, and writing one of them here would refuse a correct program.
@@ -2775,17 +2745,16 @@ signature = "(ref Connection) -> Bytes"
 # useful with: the loop that would follow one is inside this.
 [fn."net::Connection::write"]
 pub = true
-mutates = true
 touches = ["socket write"]
 throws = ["io::IoError"]
-signature = "(ref Connection, bytes: ?)"
+signature = "(mut self: ref Connection, bytes: ?)"
 
 # Who is on the other end.
 [fn."net::Connection::peer"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Connection) -> String"
+signature = "(self: ref Connection) -> String"
 
 # Close it now rather than when it is dropped.
 #
@@ -2795,7 +2764,7 @@ signature = "(ref Connection) -> String"
 pub = true
 sync = true
 touches = ["socket write"]
-signature = "(Connection)"
+signature = "(self: Connection)"
 
 # --- `http1`: HTTP/1.1's text half (ADR-194 D5) -------------------------------
 #
@@ -2856,16 +2825,15 @@ signature = "() -> http1::Buffer"
 [fn."http1::Buffer::take"]
 pub = true
 sync = true
-mutates = true
 touches = []
-signature = "(ref Buffer, more: ?)"
+signature = "(mut self: ref Buffer, more: ?)"
 
 # How many bytes have arrived.
 [fn."http1::Buffer::len"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Buffer) -> i64"
+signature = "(self: ref Buffer) -> i64"
 
 # **`0` is *not yet*** rather than a missing value, and the shape was chosen for
 # what it lets a caller write: `while ended == 0` is one condition where a loop
@@ -2883,7 +2851,7 @@ pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
-signature = "(ref Buffer, cap: i64) -> i64"
+signature = "(self: ref Buffer, cap: i64) -> i64"
 
 # What the head says, where `head_end` said there is one.
 #
@@ -2895,7 +2863,7 @@ pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
-signature = "(ref Buffer) -> http1::Head"
+signature = "(self: ref Buffer) -> http1::Head"
 
 # The bytes from `at` on, as text.
 #
@@ -2906,15 +2874,14 @@ pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
-signature = "(ref Buffer, at: i64) -> String"
+signature = "(self: ref Buffer, at: i64) -> String"
 
 # `GET` or `POST`, as it was written.
 [fn."http1::Head::method"]
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Head) -> ref String"
+signature = "(self: ref Head) -> ref(self) String"
 
 # The path, **without** the query string, and **not decoded** (ADR-018 D4, which
 # writes `path()` and `query()` as two things).
@@ -2922,8 +2889,7 @@ signature = "(ref Head) -> ref String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Head) -> ref String"
+signature = "(self: ref Head) -> ref(self) String"
 
 # The whole request target as it was written, query string and all.
 #
@@ -2933,8 +2899,7 @@ signature = "(ref Head) -> ref String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Head) -> ref String"
+signature = "(self: ref Head) -> ref(self) String"
 
 # **`String?` and not an empty string** (ADR-018 D4: *Kap 3.5's nullable*): a name
 # the client did not write and one it wrote empty are two different facts, and a
@@ -2949,8 +2914,7 @@ signature = "(ref Head) -> ref String"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Head, name: ?) -> ref String?"
+signature = "(self: ref Head, name: ?) -> ref(self) String?"
 
 # What the client sent under this name, or nothing where it sent none.
 #
@@ -2962,8 +2926,7 @@ signature = "(ref Head, name: ?) -> ref String?"
 pub = true
 sync = true
 touches = []
-returns = "borrows(self)"
-signature = "(ref Head, name: ?) -> ref String?"
+signature = "(self: ref Head, name: ?) -> ref(self) String?"
 
 # How many headers there are, which is what a program counts before it decides a
 # client is being unreasonable.
@@ -2971,14 +2934,14 @@ signature = "(ref Head, name: ?) -> ref String?"
 pub = true
 sync = true
 touches = []
-signature = "(ref Head) -> i64"
+signature = "(self: ref Head) -> i64"
 
 # What `Content-Length` said, or `0` where it said nothing.
 [fn."http1::Head::length"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Head) -> i64"
+signature = "(self: ref Head) -> i64"
 
 # How many bytes of the buffer the head took, so a caller knows where the body
 # starts.
@@ -2986,7 +2949,7 @@ signature = "(ref Head) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(ref Head) -> i64"
+signature = "(self: ref Head) -> i64"
 
 # Whether the client asked for the connection to stay open.
 #
@@ -2997,7 +2960,7 @@ signature = "(ref Head) -> i64"
 pub = true
 sync = true
 touches = []
-signature = "(ref Head) -> bool"
+signature = "(self: ref Head) -> bool"
 
 # --- `Bytes`: how many there are ----------------------------------------------
 #
@@ -3011,11 +2974,11 @@ signature = "(ref Head) -> bool"
 pub = true
 sync = true
 touches = []
-signature = "(ref Bytes) -> i64"
+signature = "(ref self) -> i64"
 
 # Whether there are none.
 [fn."Bytes::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(ref Bytes) -> bool"
+signature = "(ref self) -> bool"

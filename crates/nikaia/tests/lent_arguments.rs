@@ -432,8 +432,14 @@ fn the_mutates_column_renders_and_parses_back() {
         "`ref self` is not a claim to change anything"
     );
 
+    // **Written the way the source writes it** (ADR-251 D4): the receiver
+    // says `ref mut self`, and no key beside the signature repeats it.
     let rendered = ledger.render();
-    assert!(rendered.contains("mutates = true"), "{rendered}");
+    assert!(
+        rendered.contains("signature = \"(ref mut self, temp: i64)\""),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("mutates = true"), "{rendered}");
     let read = nikaia::contracts::Ledger::parse(&rendered).expect("its own output parses");
     assert!(read.functions["Stats::add"].mutates);
     assert_eq!(read.render(), rendered);

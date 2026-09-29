@@ -472,9 +472,10 @@ fn a_signature_is_translated_by_the_table() {
         text.contains("signature = \"(n: i64) -> String?\""),
         "{text}"
     );
-    // A type parameter is the ledger's variable.
+    // A type parameter is the ledger's variable, declared in brackets the way
+    // Nikaia declares one (ADR-251 D4).
     assert!(
-        text.contains("signature = \"(value: $T) -> String\""),
+        text.contains("signature = \"[T](value: T) -> String\""),
         "{text}"
     );
     // And a type this cannot account for is `?` — the absence of a claim, for
@@ -661,14 +662,14 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
         (
             "serve",
             vec![
-                "[fn.\"hyper_shim::across_a_thread\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"(value: $T) -> String\"",
+                "[fn.\"hyper_shim::across_a_thread\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"[T](value: T) -> String\"",
                 "[fn.\"hyper_shim::serve_once\"]\npub = true\nsync = true\nsignature = \"(port: i64) -> String\"",
             ],
         ),
         (
             "crossing",
             vec![
-                "[fn.\"hyper_shim::across_a_thread\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"(value: $T) -> String\"",
+                "[fn.\"hyper_shim::across_a_thread\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"[T](value: T) -> String\"",
                 "[fn.\"hyper_shim::local_handle\"]\npub = true\nsync = true\nkeeps = [\"name\"]\nsignature = \"(name: String) -> hyper_shim::LocalHandle\"",
                 "[type.\"hyper_shim::LocalHandle\"]\npub = true\ncrosses = false",
             ],
@@ -676,7 +677,7 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
         (
             "smuggled",
             vec![
-                "[fn.\"hyper_shim::across_a_thread_unchecked\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"(value: $T) -> String\"",
+                "[fn.\"hyper_shim::across_a_thread_unchecked\"]\npub = true\nsync = true\nkeeps = [\"value\"]\nsignature = \"[T](value: T) -> String\"",
             ],
         ),
     ] {

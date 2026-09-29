@@ -46,7 +46,7 @@ keeps = ["name"]
 signature = "(name: String) -> hyper_shim::LocalHandle"
 
 # `T: Describe + Send + 'static`. The bound is on the **parameter** and the
-# ledger's type language spells a variable `$T`; what the bound says about
+# ledger declares a type variable in brackets, `[T]`; what the bound says about
 # crossing is a property of the argument the caller passes, which is the
 # caller's own to answer (Part III 15.2).
 [fn."hyper_shim::across_a_thread"]
@@ -59,7 +59,7 @@ sync = true
 # word that makes `NK2502` ask a described call at all (D2).
 threads = true
 keeps = ["value"]
-signature = "(value: $T) -> String"
+signature = "[T](value: T) -> String"
 
 # The same crossing with the bound removed - the hole `examples/foreign-runtime/`
 # exists to measure. It is described exactly as its signature reads, because a
@@ -69,7 +69,7 @@ pub = true
 sync = true
 threads = true
 keeps = ["value"]
-signature = "(value: $T) -> String"
+signature = "[T](value: T) -> String"
 
 # **An empty field list means "nothing recorded" and not "nothing inside"**
 # (Part III 15.2). The fields are Rust's and no signature names them.
