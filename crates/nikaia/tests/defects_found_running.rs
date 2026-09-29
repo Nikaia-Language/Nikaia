@@ -24,6 +24,12 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 fn runs(purpose: &str, source: &str, expected: &str) {
+    runs_in(purpose, source, expected, |_| {});
+}
+
+/// [`runs`], in the scratch directory once `prepare` has put there what the
+/// program reads.
+fn runs_in(purpose: &str, source: &str, expected: &str, prepare: fn(&std::path::Path)) {
     let found = findings(source);
     assert!(found.is_empty(), "{purpose}: {found:#?}");
     for how in [Build::default(), Build::parallel()] {
@@ -42,7 +48,11 @@ fn runs(purpose: &str, source: &str, expected: &str) {
             "{purpose} did not compile at {how:?}:\n{}\n--- emitted ---\n{rust}",
             String::from_utf8_lossy(&compiled.stderr)
         );
-        let out = Command::new(&binary).output().expect("run it");
+        prepare(&dir);
+        let out = Command::new(&binary)
+            .current_dir(&dir)
+            .output()
+            .expect("run it");
         assert!(out.status.success(), "{purpose} failed at {how:?}");
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
@@ -542,4 +552,35 @@ fn a_yes_or_no_match_and_a_field_named_as_its_value() {
         assert!(rust.contains(written), "missing `{written}`:\n{rust}");
     }
     runs("yes-or-no", source, "true false false true 7\n");
+}
+
+/// **A `std` variant built from a literal**: `fs::Root::Dir("site")` passed the
+/// check and reached `rustc` as `Dir("site")`, a `&str` where `fs.rs` declares
+/// `Dir(String)`. The ledger named `fs::Root` without its cases, so the checker
+/// had no payload for the literal to meet; it carries `variants` now, and a
+/// positional one is built by its constructor as a declared enum's is. The
+/// signatures say `ref fs::Root`, the name a caller writes, so a parameter of
+/// that type is a root too - it was `NK1102` against `ref Root`.
+#[test]
+fn a_root_under_a_directory_built_from_a_literal() {
+    runs_in(
+        "root-dir-literal",
+        "use std::fs\n\
+         \n\
+         fn load(root: ref fs::Root) -> String throws {\n\
+         \x20   return fs::read_to_string(\"index.html\", root)\n\
+         }\n\
+         \n\
+         fn main() throws {\n\
+         \x20   let page = fs::map(\"index.html\", fs::Root::Dir(\"site\"))\n\
+         \x20   let root = fs::Root::Dir(\"site\")\n\
+         \x20   let again = load(root)\n\
+         \x20   println(f\"{again.len()}\")\n\
+         }\n",
+        "6\n",
+        |dir| {
+            std::fs::create_dir_all(dir.join("site")).expect("the site directory");
+            std::fs::write(dir.join("site/index.html"), "<p>hi\n").expect("the page");
+        },
+    );
 }

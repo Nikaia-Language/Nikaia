@@ -3554,8 +3554,21 @@ impl<'a> Checker<'a> {
                 for variant in &contract.variants {
                     let key = format!("{name}::{}", variant.name);
                     self.variant_owner.insert(key.clone(), name.clone());
-                    if !variant.holds.is_empty() {
-                        self.structs.insert(key, variant.holds.clone());
+                    // **A positional variant is built by its constructor**, as
+                    // a declared enum's is: `fs::Root::Dir("site")` has to meet
+                    // `Dir(String)` so the literal is made text of its own
+                    // (ADR-207 D2). Recorded as a struct it was a type called
+                    // with no constructor, or, before the ledger said what
+                    // `Dir` holds, a `&str` handed to `rustc`.
+                    match variant.positional && !variant.holds.is_empty() {
+                        true => {
+                            let parts = variant.holds.iter().map(|f| f.ty.clone()).collect();
+                            self.variant_parts.insert(key, parts);
+                        }
+                        false if !variant.holds.is_empty() => {
+                            self.structs.insert(key, variant.holds.clone());
+                        }
+                        false => {}
                     }
                 }
                 self.enums.insert(
@@ -21595,11 +21608,11 @@ fn an(what: &str) -> String {
 /// compiler has to know and the ledger does not carry.
 ///
 /// **Empty for every other missing argument**, which is what keeps this from
-/// being a habit: the parameter has to be named `root` *and* typed `Root`.
+/// being a habit: the parameter has to be named `root` *and* typed `fs::Root`.
 fn a_root_is_one_of_two(wanted: &[(String, Ty)]) -> String {
     let is_a_root = wanted
         .iter()
-        .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "Root");
+        .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "fs::Root");
     match is_a_root {
         false => String::new(),
         true => ". The root is either `fs::Root::Dir(store)`, which keeps the path inside \
