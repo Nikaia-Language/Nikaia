@@ -181,6 +181,7 @@ fn receivers(
                 "take it as {}, as `{trait_name}` declares",
                 written(wanted.as_ref())
             )),
+            labels: Vec::new(),
         });
     }
     found
@@ -238,6 +239,7 @@ fn pausing(
                 "take `sync` off `{trait_name}`'s `{method}`, or give the body nothing that \
                  pauses - a file read, a sleep, a `.join()`"
             )),
+            labels: Vec::new(),
         });
     }
     if declared.throws.is_empty() && !contract.throws.is_empty() {
@@ -259,6 +261,7 @@ fn pausing(
                 "write `throws` on `{trait_name}`'s `{method}`, or handle the failure in the \
                  body with `catch`"
             )),
+            labels: Vec::new(),
         });
     }
     found
@@ -289,6 +292,7 @@ fn not_in_the_trait(trait_name: &str, target: &str, method: &str, span: &Span) -
             "move it into `impl {target}`, or declare `{method}` in `{trait_name}` if every \
              type that implements it should have one"
         )),
+        labels: Vec::new(),
     }
 }
 
@@ -315,5 +319,6 @@ fn incomplete(trait_name: &str, target: &str, missing: &BTreeSet<&String>, span:
                 _ => "them".to_string(),
             }
         )),
+        labels: Vec::new(),
     }
 }

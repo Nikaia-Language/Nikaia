@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.265] — 2026-09-29
+
+**A message says what you wrote, why it cannot work and what to write, at the
+places it is about** (Part III C.2, rule 5). Feedback on the website: its
+example message read like `rustc`'s.
+
+- **The renderer points at more than one place**, each underlined whole and
+  named: `^` under the place the error is, `-` under a place that explains it.
+  It had shown one `^` under a statement's first byte. `Finding::labels`
+  carries them; a finding without labels renders as before.
+- **`NK1138` and `NK1139` are the first two in the new voice**: *You're
+  changing `count`, but it wasn't declared as mutable.*, with the change and
+  the declaration both shown, and *Add `mut` where it's declared: `let mut
+  count`.* The report now stands where the change is, which is where the
+  reader's editor should go.
+- **The website shows the message whole**, generated from this compiler's
+  output, in a section of its own.
+- The other codes follow a family at a time (`open-work.md` §2.50).
+- Also in this package, from the road to moving the syntax tree (ADR-252 §5):
+  the tree's `throws` field is `can_throw`, a word Nikaia lets a field have;
+  and two compiler defects found by lowering a draft of `tools/ast.nika` are
+  fixed - a ring of types through a declared generic struct was not boxed, and
+  a generic struct was asked whether it compares about its parameter rather
+  than what it was given.
+
 ## [0.0.264] — 2026-09-29
 
 **A declared type whose every part is a copy derives `Copy`**

@@ -1025,6 +1025,34 @@ body {
   color: var(--shiki-dark);
 }
 
+/*
+ * A compiler message as the terminal shows it, on the same dark panel: the
+ * code and the place in red, a place that explains it in blue, the way out in
+ * green. Written by hand in `index.html`, not highlighted.
+ */
+.home-code.markdown-body pre.diagnostic {
+  color: #d6dde8;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.home-code.markdown-body pre.diagnostic code {
+  padding: 0;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .home-code.markdown-body pre.diagnostic code { font-size: 11px; }
+}
+
+.home-code.markdown-body pre.diagnostic b { color: #f2f5f9; }
+.home-code.markdown-body pre.diagnostic .d-error { color: #ff7b72; font-weight: 700; }
+.home-code.markdown-body pre.diagnostic .d-note { color: #79c0ff; font-weight: 700; }
+.home-code.markdown-body pre.diagnostic .d-help { color: #7ee787; font-weight: 700; }
+.home-code.markdown-body pre.diagnostic .d-gutter { color: #6e7b8f; }
+
 .compare {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

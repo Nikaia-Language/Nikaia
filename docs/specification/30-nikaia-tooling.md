@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.264 (Draft)
+**Version:** 0.0.265 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -1286,6 +1286,20 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 2. **Always say what to do next.** Every error names at least one concrete way out (clone, use `Shared`, use `retain`, mark a function `sync`, move the I/O out of the lock, …), as paste-ready code where possible.
 3. **Narrate cause chains.** An error caused by a change (through the ledger, 13.5) shows both sides: the edit that changed the contract and the caller that broke.
 4. **Positive guarantees over prohibitions.** Where the language removes a danger structurally (tethered slices, scope waiting), the documentation and the messages state the guarantee, such as *the buffer cannot die while a token lives*, not the forbidden thing.
+5. **Spoken to the reader, in plain sentences, at the places it is about.** A message says what *you* wrote, why it cannot work, and what to write instead, in the words a colleague would use: *You're changing `count`, but it wasn't declared as mutable.* Not *`count` is changed, and a `let` that is changed says `mut`*, which is correct and reads like a rule being recited. The source is shown at every place the explanation needs, each underlined whole and named: `^` under the place the error is, `-` under a place that explains it (*declared here without `mut`*). References to the specification and the decision records stay in the documentation, not in the message. The messages are being brought to this rule a family at a time; `NK1138` and `NK1139` are the first (0.0.265):
+
+   ```text
+   error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
+     --> app.nika:4:9
+      |
+    2 |     let count = 0
+      |         ----- declared here without `mut`
+     ...
+    4 |         count += n
+      |         ^^^^^ changed here
+      |
+      = help: Add `mut` where it's declared: `let mut count`.
+   ```
 
 ### C.3. Error Code Catalogue (NK codes)
 

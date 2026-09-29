@@ -879,6 +879,9 @@ pub fn render_sync_violation(
 /// relays (ADR-012). Part III C.2 asks for a headline, the reason, and one
 /// concrete way out; a `Finding` carries all three and this writes them down.
 pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str) -> String {
+    if !finding.labels.is_empty() {
+        return render_labelled(finding, path, source);
+    }
     let (line, column) = winnow_grammar::span::line_column(source, finding.span.at());
 
     let level = match finding.severity {
@@ -897,6 +900,114 @@ pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str)
         out.push_str(&format!("     help: {help}\n"));
     }
     out
+}
+
+/// **A finding that points at more than one place**, each underlined whole
+/// and named (Part III C.2, rule 5):
+///
+/// ```text
+/// error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
+///   --> app.nika:4:9
+///    |
+///  2 |     let count = 0
+///    |         ----- declared here without `mut`
+///  4 |         count += n
+///    |         ^^^^^ changed here
+///    |
+///    = help: Add `mut` where it's declared: `let mut count`.
+/// ```
+///
+/// `^` marks the place the error is and `-` a place that explains it. The
+/// header names the first `^`, which is where the reader's editor should go.
+fn render_labelled(finding: &crate::check::Finding, path: &str, source: &str) -> String {
+    let level = match finding.severity {
+        crate::check::Severity::Error => "error",
+        crate::check::Severity::Warning => "warning",
+    };
+    let lines: Vec<&str> = source.split('\n').collect();
+    // Each label as (line, column, width), 1-based, found in the text.
+    let mut placed: Vec<(usize, usize, usize, &crate::check::Label)> = finding
+        .labels
+        .iter()
+        .map(|label| {
+            let (line, column) = winnow_grammar::span::line_column(source, label.span.at());
+            let text = lines.get(line - 1).copied().unwrap_or("");
+            let (column, width) = word_in(text, column, &label.word);
+            (line, column, width, label)
+        })
+        .collect();
+    placed.sort_by_key(|(line, column, _, _)| (*line, *column));
+    let (line, column) = placed
+        .iter()
+        .find(|(_, _, _, label)| label.main)
+        .map(|(line, column, _, _)| (*line, *column))
+        .unwrap_or_else(|| winnow_grammar::span::line_column(source, finding.span.at()));
+
+    let gutter = placed
+        .iter()
+        .map(|(line, ..)| line.to_string().len())
+        .max()
+        .unwrap_or(1);
+    let bar = format!("{} |", " ".repeat(gutter + 1));
+    let mut out = format!("{level}[{}]: {}\n", finding.code, finding.message);
+    out.push_str(&format!(
+        "{}--> {path}:{line}:{column}\n",
+        " ".repeat(gutter + 1)
+    ));
+    out.push_str(&bar);
+    out.push('\n');
+    let mut shown = None;
+    for (line, column, width, label) in &placed {
+        if shown != Some(*line) {
+            if shown.is_some_and(|last| line - last > 1) {
+                out.push_str(&format!("{}...\n", " ".repeat(gutter + 2)));
+            }
+            let text = lines.get(line - 1).copied().unwrap_or("");
+            out.push_str(&format!(" {line:>gutter$} | {}\n", text.trim_end()));
+            shown = Some(*line);
+        }
+        let mark = if label.main { "^" } else { "-" };
+        out.push_str(&format!(
+            "{bar} {}{} {}\n",
+            " ".repeat(column - 1),
+            mark.repeat(*width),
+            label.text
+        ));
+    }
+    out.push_str(&bar);
+    out.push('\n');
+    let indent = " ".repeat(gutter + 2);
+    for note in &finding.notes {
+        out.push_str(&format!("{indent}= note: {note}\n"));
+    }
+    if let Some(help) = &finding.help {
+        out.push_str(&format!("{indent}= help: {help}\n"));
+    }
+    out
+}
+
+/// Where `word` stands in `line` at or after 1-based `column`, as a whole
+/// word, and how wide it is. Where it is not there, the statement's own
+/// column and one character, which is what every finding showed before.
+fn word_in(line: &str, column: usize, word: &str) -> (usize, usize) {
+    let boundary = |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+    let from = line
+        .char_indices()
+        .nth(column.saturating_sub(1))
+        .map_or(line.len(), |(at, _)| at);
+    let found = [from, 0].into_iter().find_map(|start| {
+        line[start..]
+            .match_indices(word)
+            .map(|(at, _)| start + at)
+            .find(|&at| {
+                boundary(line[..at].chars().next_back())
+                    && boundary(line[at + word.len()..].chars().next())
+            })
+    });
+    match found {
+        Some(at) if !word.is_empty() => (line[..at].chars().count() + 1, word.chars().count()),
+        _ => (column, 1),
+    }
 }
 
 /// Byte offset -> line and column, computed once per file.

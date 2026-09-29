@@ -793,6 +793,25 @@ before the arm opens it; and a nullable field boxed inside its option, so a
 `null` costs no allocation. D1-D4 are built and `tests/recursive_types.rs`
 runs them.
 
+### 2.50. Every message in plain words, at the places it is about
+
+Part III C.2 rule 5 (0.0.265): a message says what *you* wrote, why it cannot
+work and what to write instead, in a colleague's words, with every place it
+needs underlined whole and named. It came from feedback on the website's
+example, which read like the language below's messages: correct, and recited.
+
+**Built**: `Finding::labels` and the renderer that shows them (`^` where the
+error is, `-` where it is explained, the whole name underlined), and `NK1138`
+and `NK1139` in the new voice, pinned whole by
+`mut_bindings::a_let_changed_without_mut_is_explained_at_both_places`.
+
+**Unbuilt**: the other codes, about 125, which still show one `^` under a
+statement's first byte and a headline such as *`count` is changed, and a
+`let` that is changed says `mut`*. Taken a family at a time, most-seen first:
+the types a call is handed (`NK1101`-`NK1106`), a value used after it moved
+(`NK21xx`), then the rest. Each family also loses its references to the
+specification and the decision records from the text a reader sees.
+
 ## 3. Upkeep
 
 A page that says something a later decision made false.

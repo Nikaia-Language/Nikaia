@@ -304,6 +304,7 @@ fn finding(stored: &Stored) -> Finding {
              \x20      or take a copy of the text with `.clone()`, which costs one allocation \
              and says so (Part I, 6.6)"
         )),
+        labels: Vec::new(),
     }
 }
 

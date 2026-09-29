@@ -148,6 +148,7 @@ fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
         help: Some(format!(
             "run `nikaia describe {crate_name}` and read the diff before you believe it"
         )),
+        labels: Vec::new(),
     }
 }
 
@@ -169,6 +170,7 @@ fn undescribed(crate_name: &str, span: &Span) -> Finding {
                 .to_string(),
         ],
         help: Some(format!("run `nikaia describe {crate_name}`")),
+        labels: Vec::new(),
     }
 }
 

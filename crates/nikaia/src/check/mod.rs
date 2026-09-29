@@ -101,6 +101,30 @@ pub struct Finding {
     pub notes: Vec<String>,
     /// One concrete way out. Part III C.2 requires it of every diagnostic.
     pub help: Option<String>,
+    /// **The places in the source it points at**, each with what happens
+    /// there (Part III C.2, rule 5): `declared here`, `changed here`. Empty
+    /// for a finding that points at its statement alone, which is how every
+    /// finding read before 0.0.265.
+    pub labels: Vec<Label>,
+}
+
+/// One place a [`Finding`] points at, and what it says there.
+///
+/// The checker knows a statement and not the bytes of the source, so a label
+/// names the **word** it is about and the renderer, which holds the text,
+/// underlines that word where it first stands at or after the statement's
+/// start - the whole name, where a single `^` under a statement's first byte
+/// said nothing about which part of it was meant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
+    /// The statement it is in.
+    pub span: Span,
+    /// What to underline, as written.
+    pub word: String,
+    /// What happens there, in a few words.
+    pub text: String,
+    /// The place the error is: `^` under it, where another place gets `-`.
+    pub main: bool,
 }
 
 /// Where one function's method calls went (ADR-028).
@@ -3825,6 +3849,7 @@ impl<'a> Checker<'a> {
                     ),
                 },
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -3885,6 +3910,7 @@ impl<'a> Checker<'a> {
                 Some(near) => format!("did you mean `use std::{near}`?"),
                 None => format!("`std` offers: {}", offered.join(", ")),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -3938,6 +3964,7 @@ impl<'a> Checker<'a> {
                              not name this one (ADR-120 D1, D3) - {why}"
                         )],
                         help: Some(format!("write {instead}")),
+                        labels: Vec::new(),
                     });
                 }
                 let _ = generics;
@@ -4172,6 +4199,7 @@ impl<'a> Checker<'a> {
                 "name a parameter of `{key}` that takes a function and runs it, or write \
                  plain `sync` where nothing it is handed can pause"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -4634,6 +4662,7 @@ impl<'a> Checker<'a> {
                      meant to be a keyword, this language has no such keyword"
                 ),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -4699,6 +4728,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 
@@ -4795,6 +4825,7 @@ impl<'a> Checker<'a> {
                 "a type is called through its anonymous constructor, `impl {name} {{ pub fn(…) … }}` (ADR-140 D2), and `{name}` has none"
             )],
             help: Some(format!("build it with a literal: `{name} {{ {fields} }}`")),
+            labels: Vec::new(),
         });
     }
 
@@ -4817,6 +4848,7 @@ impl<'a> Checker<'a> {
                  could be lowered to"
             )],
             help: None,
+            labels: Vec::new(),
         });
     }
 
@@ -4861,6 +4893,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "say that `{name}` holds text of its own: `let mut {name}: String = \"{literal}\"`"
             )),
+            labels: Vec::new(),
         });
         true
     }
@@ -4903,6 +4936,7 @@ impl<'a> Checker<'a> {
             help: joining.then(|| {
                 "to add one list's elements to the end of another: `a.extend(b)`".to_string()
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -5076,6 +5110,7 @@ impl<'a> Checker<'a> {
                                 "bind the part to a name here and `match` on the name in the arm"
                                     .to_string(),
                             ),
+                            labels: Vec::new(),
                         });
                         continue;
                     }
@@ -5198,6 +5233,7 @@ impl<'a> Checker<'a> {
                     "compute the value first, with `let`, and claim something about the name"
                         .to_string(),
                 ),
+                labels: Vec::new(),
             });
         }
 
@@ -5245,6 +5281,7 @@ impl<'a> Checker<'a> {
                 "`assert(cond)` or `assert(cond; message: \"…\")` (ADR-245 D2)".to_string(),
             ],
             help: None,
+            labels: Vec::new(),
         });
     }
 
@@ -5456,6 +5493,7 @@ impl<'a> Checker<'a> {
                      `package::{written}`"
                 ),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -5537,6 +5575,7 @@ impl<'a> Checker<'a> {
                  that name, a `[dependencies]` line gives it a package, and \
                  `nikaia describe {head}` gives it a foreign crate"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -5573,6 +5612,7 @@ impl<'a> Checker<'a> {
                  A type that is not `T?` always has a value"
             )],
             help: Some(format!("write `{plain}`")),
+            labels: Vec::new(),
         });
     }
 
@@ -5625,6 +5665,7 @@ impl<'a> Checker<'a> {
                 "write `{safe}`, which answers `null` where there is nothing to reach \
                  on - or end the chain with `??` and reach into the value it gives"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -5709,6 +5750,7 @@ impl<'a> Checker<'a> {
                  declare the parameter as that type - a bound that says which types \
                  `{parameter}` may be is not built yet"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -5799,6 +5841,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{grammar}::{rule}(…)`")),
+            labels: Vec::new(),
         });
     }
 
@@ -6007,6 +6050,7 @@ impl<'a> Checker<'a> {
                      of the two it is comes from the callee's body, not from this line"
                 )],
                 help: Some("take the `&` off".to_string()),
+                labels: Vec::new(),
             });
             return true;
         }
@@ -6100,6 +6144,7 @@ impl<'a> Checker<'a> {
                  outside the block and hand the value in"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -6167,6 +6212,7 @@ impl<'a> Checker<'a> {
                  works on memory that is already there"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -6215,6 +6261,7 @@ impl<'a> Checker<'a> {
                 "change it instead: `fn(mut v) { v += 1 }` rather than `fn(v) { v + 1 }`"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -6394,6 +6441,7 @@ impl<'a> Checker<'a> {
                          failure should be handled, with `close() catch {{ … }}`"
                     ),
                 }),
+                labels: Vec::new(),
             });
         }
         Some(fails)
@@ -6469,6 +6517,7 @@ impl<'a> Checker<'a> {
                         .to_string(),
                 ],
                 help: Some(help),
+                labels: Vec::new(),
             });
         }
         if !wrote_cleanup {
@@ -6483,6 +6532,7 @@ impl<'a> Checker<'a> {
                         .to_string(),
                 ],
                 help: Some("write `fn cleanup(ref mut self) { … }`".to_string()),
+                labels: Vec::new(),
             });
         }
     }
@@ -6528,6 +6578,7 @@ impl<'a> Checker<'a> {
                  walk - `map` and then `collect` or `count` - or keep `{name}` in a \
                  `SharedMut` and change it through `update`"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -6550,7 +6601,7 @@ impl<'a> Checker<'a> {
     /// has, or whose candidates do not agree, is not one to refuse on;
     /// answering *it might change* would refuse a correct program, which is C.4
     /// and the worse of the two mistakes.
-    fn a_changed_binding_says_mut(&mut self, name: &str, how: &str) {
+    fn a_changed_binding_says_mut(&mut self, name: &str, how: &str, changed_at: Span) {
         self.changed.push(name.to_string());
         let Some(at) = self
             .binding(name)
@@ -6559,38 +6610,60 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        let (code, what, where_the_word_goes, way_out) = match at.kind {
+        // **Said to the reader, in sentences** (Part III C.2, rule 5): what
+        // they wrote, why it cannot work, and what to write instead. The two
+        // places are shown and named - where it changes and where it was
+        // declared - and the record behind the rule stays in the record.
+        let (code, message, notes, help) = match at.kind {
             Kind::Parameter => (
                 "NK1138",
-                "a parameter",
-                "`mut` in the declaration is where in-place change is written, and \
-                 the caller's value is what changes, exactly as it is for `&mut self` \
-                 (ADR-094 D3)",
+                format!(
+                    "You're changing the parameter `{name}`, but it wasn't declared as \
+                     mutable."
+                ),
+                // D3: a parameter's `mut` also decides what the caller sees.
+                vec![format!(
+                    "A parameter declared `mut {name}` is changed in place, so the caller \
+                     sees the change too."
+                )],
                 // D3 names both ways out, and the second is the one that keeps
                 // the caller's value as it was.
                 format!(
-                    "write `mut {name}` - or, if the caller's value should stay as it \
-                     was, take a copy with `let mut {name}_own = {name}`"
+                    "Write `mut {name}` in the parameter list. If the caller's value should \
+                     stay as it was, change a copy instead: `let mut {name}_own = {name}`."
                 ),
             ),
             Kind::Let => (
                 "NK1139",
-                "a `let`",
-                "a binding changes only where it says so (Part I, 2.1), and this one \
-                 does not",
-                format!("write `let mut {name}`"),
+                format!("You're changing `{name}`, but it wasn't declared as mutable."),
+                Vec::new(),
+                format!("Add `mut` where it's declared: `let mut {name}`."),
             ),
         };
         // Said once per binding: a body that changes one usually does so
-        // several times, and three carets on one declaration is noise.
+        // several times, and three reports about one declaration is noise.
         self.said_mut.insert(at.at.at());
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at.at,
+            span: changed_at,
             code,
-            message: format!("`{name}` is changed, and {what} that is changed says `mut`"),
-            notes: vec![format!("{how} - {where_the_word_goes}")],
-            help: Some(way_out),
+            message,
+            notes,
+            help: Some(help),
+            labels: vec![
+                Label {
+                    span: at.at,
+                    word: name.to_string(),
+                    text: "declared here without `mut`".to_string(),
+                    main: false,
+                },
+                Label {
+                    span: changed_at,
+                    word: name.to_string(),
+                    text: how.to_string(),
+                    main: true,
+                },
+            ],
         });
     }
 
@@ -6634,6 +6707,7 @@ impl<'a> Checker<'a> {
                 "{because}, so the reference is already what this line means (ADR-094 D4) - written twice it is a reference to a reference, which the language below reports about a file nobody wrote"
             )],
             help: Some("take the `&` off".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -6707,6 +6781,7 @@ impl<'a> Checker<'a> {
                  says what equality means for it"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -6770,6 +6845,7 @@ impl<'a> Checker<'a> {
                      `fn …(self)` where the method is meant to consume its subject"
                 ),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -7237,6 +7313,7 @@ impl<'a> Checker<'a> {
                          the front, and a `filter` does not know its length (ADR-212 D1)"
                 )],
                 help: Some(way.to_string()),
+                labels: Vec::new(),
             });
             return;
         }
@@ -7386,6 +7463,7 @@ impl<'a> Checker<'a> {
                     message,
                     notes: vec![note],
                     help: Some(way_out),
+                    labels: Vec::new(),
                 });
             }
         }
@@ -7494,6 +7572,7 @@ impl<'a> Checker<'a> {
                 }
                 _ => "write one of the types above, or none".to_string(),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -7688,6 +7767,7 @@ impl<'a> Checker<'a> {
                       computation has to be arranged to stay inside it"
                     .to_string(),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -7988,6 +8068,7 @@ impl<'a> Checker<'a> {
                 "write the one it is, `let {name}: {first} = …`, and convert with `as` \
                  where the other is wanted"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -8079,6 +8160,7 @@ impl<'a> Checker<'a> {
                     _ => "own",
                 }
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -8099,6 +8181,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("pick another name; `it`, `this` and `me` are all free".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -8202,6 +8285,7 @@ impl<'a> Checker<'a> {
                  test it before dividing"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -8520,10 +8604,10 @@ impl<'a> Checker<'a> {
                 // rooted at one, changes the caller's value and says `mut`.
                 if let Some(root) = self.rooted_at(target) {
                     let how = match target {
-                        Expr::Variable(_) => "this assigns to it",
-                        _ => "this assigns into it",
+                        Expr::Variable(_) => "changed here",
+                        _ => "changed here, through one of its parts",
                     };
-                    self.a_changed_binding_says_mut(&root, how);
+                    self.a_changed_binding_says_mut(&root, how, *span);
                     self.a_shared_name_changed_in_parallel(&root, span);
                 }
                 // **A write through the brackets is unchanged**
@@ -9466,7 +9550,8 @@ impl<'a> Checker<'a> {
                     if changes {
                         self.a_changed_binding_says_mut(
                             &root,
-                            &format!("`{name}` changes what it is called on"),
+                            &format!("changed here, by `{name}`"),
+                            *span,
                         );
                         self.a_shared_name_changed_in_parallel(&root, span);
                         // **An element a call changes is a place** (0.0.250):
@@ -10945,6 +11030,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "write `use std::{module}` at the top of the file, and `{key}(…)` here"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -10981,6 +11067,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `use std::{module}` at the top of the file")),
+            labels: Vec::new(),
         });
     }
 
@@ -11030,6 +11117,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{last}(…)` without the `{module}::`")),
+            labels: Vec::new(),
         });
     }
 
@@ -11073,6 +11161,7 @@ impl<'a> Checker<'a> {
                 "name the argument: `fn ({name}) {{ … }}`, or give it a name that says what \
                  it is - `fn (user) {{ user.id }}`"
             )),
+            labels: Vec::new(),
         });
         true
     }
@@ -11141,6 +11230,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{} {compared} {}`", side(lhs), side(rhs))),
+            labels: Vec::new(),
         });
     }
 
@@ -11184,6 +11274,7 @@ impl<'a> Checker<'a> {
                     "the bit operators work on the bits of an integer (Part I, 2.2)".to_string(),
                 ],
                 help: Some(help),
+                labels: Vec::new(),
             });
             return;
         }
@@ -11246,6 +11337,7 @@ impl<'a> Checker<'a> {
                 "convert one side with `as`: `… as {l}` or `… as {r}`, whichever the \
                  result should be"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -11322,6 +11414,7 @@ impl<'a> Checker<'a> {
                  `?? \"…\"` reads the same and costs nothing - or take the receiver's member \
                  by a name of its own first, where a `{fallback}` is what is wanted"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -11370,6 +11463,7 @@ impl<'a> Checker<'a> {
                 "copy what the map holds where a `{held}` of your own is wanted: \
                  `{written}?.clone() ?? …`"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -11421,6 +11515,7 @@ impl<'a> Checker<'a> {
                     text.replace('\\', "\\\\")
                 ),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -11480,6 +11575,7 @@ impl<'a> Checker<'a> {
                 "every string interpolated before ADR-035; now only `f\"…\"` does".to_string(),
             ],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 
@@ -11633,6 +11729,7 @@ impl<'a> Checker<'a> {
                         help: Some(format!(
                             "name `{SHARED_MUT}[T]` values, or `{LOCKED}[T]` fields"
                         )),
+                        labels: Vec::new(),
                     });
                     held.push(Ty::Unknown);
                 }
@@ -11714,6 +11811,7 @@ impl<'a> Checker<'a> {
             message: format!("`{}` is written `{}`", door.written(), door.shape()),
             notes: vec![wanted.to_string()],
             help: None,
+            labels: Vec::new(),
         });
     }
 
@@ -11768,6 +11866,7 @@ impl<'a> Checker<'a> {
                         .to_string(),
                 ],
                 help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
+                labels: Vec::new(),
             });
         }
         for inner in &ty.generics {
@@ -11789,6 +11888,7 @@ impl<'a> Checker<'a> {
                     "`{name}[T]` is made from a `T`: `{name}(value)` (Part I, 6.2)"
                 )],
                 help: None,
+                labels: Vec::new(),
             });
             return Ty::Unknown;
         }
@@ -11810,6 +11910,7 @@ impl<'a> Checker<'a> {
                         .to_string(),
                 ],
                 help: Some(format!("hand the `{inner}` on as it is")),
+                labels: Vec::new(),
             });
             return held;
         }
@@ -12207,6 +12308,7 @@ impl<'a> Checker<'a> {
                         format!("it takes {takes}{}", a_root_is_one_of_two(wanted))
                     }
                 }),
+                labels: Vec::new(),
             });
             return signature.result_or_unit();
         }
@@ -12436,6 +12538,7 @@ impl<'a> Checker<'a> {
                         }
                         _ => format!("make it a `{}`", want.text()),
                     }),
+                    labels: Vec::new(),
                 });
                 continue;
             }
@@ -12461,6 +12564,7 @@ impl<'a> Checker<'a> {
                     .chain(why)
                     .collect(),
                 help: Some(help),
+                labels: Vec::new(),
             });
         }
 
@@ -12816,6 +12920,7 @@ impl<'a> Checker<'a> {
             message: message(&found.text(), &want.text()),
             notes: Vec::new(),
             help: Some(convert(found, want)),
+            labels: Vec::new(),
         });
     }
 
@@ -12833,6 +12938,7 @@ impl<'a> Checker<'a> {
             help: Some(
                 "compare it: `x != 0`, `text != \"\"`, `xs.len() > 0` (Part I, 3.2)".to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -12930,6 +13036,7 @@ impl<'a> Checker<'a> {
                 "declare the error: add `throws` to `{function}` - or handle it at the \
                  call, `… catch {{ … }}` (Part I, 7.1)"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -12983,6 +13090,7 @@ impl<'a> Checker<'a> {
                  is are both answers; `nikaia build` without `--locked` records the new set"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -13061,6 +13169,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 
@@ -13154,6 +13263,7 @@ impl<'a> Checker<'a> {
                      callers what changed"
                         .to_string(),
                 ),
+                labels: Vec::new(),
             });
         }
         if seen.fails && !promised.may_fail {
@@ -13176,6 +13286,7 @@ impl<'a> Checker<'a> {
                      type, which is what says the callee has to answer for it"
                         .to_string(),
                 ),
+                labels: Vec::new(),
             });
         }
     }
@@ -13254,6 +13365,7 @@ impl<'a> Checker<'a> {
                         .to_string(),
                 ],
                 help: Some(before_walk),
+                labels: Vec::new(),
             });
         }
         if !self.inside_a_door {
@@ -13271,6 +13383,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(before_door),
+            labels: Vec::new(),
         });
     }
 
@@ -13317,6 +13430,7 @@ impl<'a> Checker<'a> {
                  pass wearing a grammar"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -13361,6 +13475,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "drop `sync` from `{caller}`, or move the call out of it"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -13501,6 +13616,7 @@ impl<'a> Checker<'a> {
                     "clone before the task is built, and give the task the copy: \
                      `let copy = {name}.clone()`, then use `copy` inside the task"
                 )),
+                labels: Vec::new(),
             });
         }
     }
@@ -13649,6 +13765,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{shown}.clone()`")),
+            labels: Vec::new(),
         });
     }
 
@@ -13751,6 +13868,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "hand over a copy each time: `{path}.clone()` where it is handed over"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -13794,6 +13912,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("hand over a copy: `{path}.clone()`")),
+            labels: Vec::new(),
         });
     }
 
@@ -13962,6 +14081,7 @@ impl<'a> Checker<'a> {
                     "if both need it, hand over a copy: `{name}.clone()` where it is \
                      handed over"
                 )),
+                labels: Vec::new(),
             });
         }
         self.checked.findings.extend(findings);
@@ -14045,6 +14165,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 
@@ -14098,6 +14219,7 @@ impl<'a> Checker<'a> {
                     "collect it first and walk the collection: \
                      `let {name} = {name}.collect()`"
                 )),
+                labels: Vec::new(),
             });
         }
         self.checked.findings.extend(findings);
@@ -14146,6 +14268,7 @@ impl<'a> Checker<'a> {
                         "take the value from the block instead: \
                          `let ({name}, …) = overlap {{ … }}`"
                     )),
+                    labels: Vec::new(),
                 });
             }
         }
@@ -14179,6 +14302,7 @@ impl<'a> Checker<'a> {
                     help: Some(
                         "if you meant them in order, write them as ordinary statements".to_string(),
                     ),
+                    labels: Vec::new(),
                 });
                 // One finding per branch: a branch that meets two others has
                 // one thing wrong with it, and three messages about it is the
@@ -14222,6 +14346,7 @@ impl<'a> Checker<'a> {
                  value from here, name it before the task and use it inside",
                 self.parsed.text(*first)
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -14285,6 +14410,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "declare the error: add `throws` to `{function}` - or handle it at the call, `… catch {{ … }}` (Part I, 7.1)"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -14352,6 +14478,7 @@ impl<'a> Checker<'a> {
                     "each turn of {name} can fail, and the failure is what the one binding unwraps"
                 )],
                 help: Some("bind one name and take the pair apart inside the loop".to_string()),
+                labels: Vec::new(),
             });
             return;
         }
@@ -14371,6 +14498,7 @@ impl<'a> Checker<'a> {
                  function, exactly as a failing call would"
             )],
             help: Some("declare the error: add `throws` to this function".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -14414,6 +14542,7 @@ impl<'a> Checker<'a> {
                 "write `pub {name}` in `{package}`, or reach it through something that is \
                  public - a type may keep its fields private and offer methods (Part I, 9.3)"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -14450,6 +14579,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "write `pub fn {item}` in `{module}`, or reach it through something that is public"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -14514,6 +14644,7 @@ impl<'a> Checker<'a> {
                 message: format!("`{name}` may not cross into a task, and this task uses it"),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
+                labels: Vec::new(),
             });
         }
     }
@@ -14592,6 +14723,7 @@ impl<'a> Checker<'a> {
                 ),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
+                labels: Vec::new(),
             });
         }
     }
@@ -14723,6 +14855,7 @@ impl<'a> Checker<'a> {
                 message: format!("{what} may not cross a thread, and `{callee}` may put it on one"),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
+                labels: Vec::new(),
             });
         }
     }
@@ -14795,6 +14928,7 @@ impl<'a> Checker<'a> {
                          called code then sees an ordinary value and no lock"
                     .to_string(),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -14861,6 +14995,7 @@ impl<'a> Checker<'a> {
                 }
                 None => "name one of the options it has".to_string(),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -14920,6 +15055,7 @@ impl<'a> Checker<'a> {
                 true => format!("write `{name}(option: value)`"),
                 false => "declare the `struct`, or correct the name".to_string(),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -14959,6 +15095,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{name} {{ {fields}: … }}`")),
+            labels: Vec::new(),
         });
     }
 
@@ -15043,6 +15180,7 @@ impl<'a> Checker<'a> {
                                  per shape"
                                     .to_string(),
                             ),
+                            labels: Vec::new(),
                         });
                         break;
                     }
@@ -15097,6 +15235,7 @@ impl<'a> Checker<'a> {
                 "write it out, with the fallback saying what an absent key counts as: \
                  `{slot} = ({slot} ?? 0) + 1`"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -15291,6 +15430,7 @@ impl<'a> Checker<'a> {
                  and binds what it caught"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -15526,6 +15666,7 @@ impl<'a> Checker<'a> {
                 again + 1
             )],
             help: Some("take one of them out, or make the key tell them apart".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -15547,6 +15688,7 @@ impl<'a> Checker<'a> {
                  while the program runs"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -15589,6 +15731,7 @@ impl<'a> Checker<'a> {
                  dependent one a `let`, where it is computed while the program runs"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -15635,6 +15778,7 @@ impl<'a> Checker<'a> {
                 "{way_out}. Or write `let {bound} = …`, where the value is meant to be \
                  computed while the program runs"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -15662,6 +15806,7 @@ impl<'a> Checker<'a> {
                 0 => "the array is empty, so no index is in it".to_string(),
                 _ => format!("the indices are 0 to {}", len - 1),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -15806,6 +15951,7 @@ impl<'a> Checker<'a> {
                  throw a value of it - an error carries what belongs to it"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -15867,6 +16013,7 @@ impl<'a> Checker<'a> {
                  is what a library's own surface is for, and `{handle}` is released by \
                  the function the block names"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -15899,6 +16046,7 @@ impl<'a> Checker<'a> {
                 "call the function in the `extern \"C\"` block that hands a `{handle}` \
                  back, and let its `cleanup` end it"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -16019,6 +16167,7 @@ impl<'a> Checker<'a> {
                 "write `{buffer}.len()`, or a constant the buffer's own length covers - an \
                  `Array[T, N]` carries its length and a `Vec[T]` does not"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -16991,6 +17140,7 @@ impl<'a> Checker<'a> {
             message,
             notes: vec![note],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 
@@ -17057,6 +17207,7 @@ impl<'a> Checker<'a> {
                  build-time value crosses in its view form (ADR-079 D1)"
             )],
             help: Some(way_out),
+            labels: Vec::new(),
         });
     }
 
@@ -17107,6 +17258,7 @@ impl<'a> Checker<'a> {
                      produce {had}"
                 ),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -17144,6 +17296,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("convert the one that does not fit, or write two lists".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -17175,6 +17328,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "write the type - `let {name}: Vec[i64] = []` - or give it a first element"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -17204,6 +17358,7 @@ impl<'a> Checker<'a> {
                  make the callee `sync` and reach nothing outside the build"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -17230,6 +17385,7 @@ impl<'a> Checker<'a> {
             help: Some(
                 "give the recursion a base case, or compute it while the program runs".to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -17271,6 +17427,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "write `{ty}(…)`, or `{ty}` where the constructor is the value"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -17340,6 +17497,7 @@ impl<'a> Checker<'a> {
                      nothing else (Part I, 4.3)"
                 )],
                 help: Some(help),
+                labels: Vec::new(),
             });
             return;
         }
@@ -17376,6 +17534,7 @@ impl<'a> Checker<'a> {
                 Some(near) => format!("read it from a value: `value.{near}`"),
                 None => format!("write `impl {ty} {{ … }}` if `{member}` is meant to be a method"),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -17410,6 +17569,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "write `fn describe[T: {bound}](value: T)` and `for x in T::{member}` inside it"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -17485,6 +17645,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("write the expression as a statement, or bind it to a name".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -17509,6 +17670,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("take one of the two `{field}` out")),
+            labels: Vec::new(),
         });
     }
 
@@ -17576,6 +17738,7 @@ impl<'a> Checker<'a> {
             message: format!("this build may not read `{path}`"),
             notes: vec![note],
             help: Some(way_out),
+            labels: Vec::new(),
         });
     }
 
@@ -17912,6 +18075,7 @@ impl<'a> Checker<'a> {
                  one is the same reading. Where a copy is what was meant, write it - \
                  `{name}.clone()` for a type that offers one"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -17938,6 +18102,7 @@ impl<'a> Checker<'a> {
                 "write `.name` or `.is(value)`; what a variant carries is read with a `match`"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -17955,6 +18120,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("write `.name` or `.of(value)`".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -18020,6 +18186,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(way_out),
+            labels: Vec::new(),
         });
     }
 
@@ -18110,6 +18277,7 @@ impl<'a> Checker<'a> {
             message,
             notes: vec![note],
             help: Some(way_out),
+            labels: Vec::new(),
         });
     }
 
@@ -18141,6 +18309,7 @@ impl<'a> Checker<'a> {
                  `fs::read(…, root)` to read the file while the program runs"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -18170,6 +18339,7 @@ impl<'a> Checker<'a> {
                  in the list"
                     .to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -18194,6 +18364,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("name the fields that change, or drop the `with`".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -18263,6 +18434,7 @@ impl<'a> Checker<'a> {
             },
             notes: vec![note],
             help: Some(way_out),
+            labels: Vec::new(),
         });
     }
 
@@ -18279,6 +18451,7 @@ impl<'a> Checker<'a> {
                 Some(near) => format!("did you mean `{near}`?"),
                 None => format!("add `{field}` to `{ty}`, or use one of the fields it has"),
             }),
+            labels: Vec::new(),
         });
     }
 
@@ -18680,6 +18853,7 @@ impl<'a> Checker<'a> {
             help: Some(
                 "delete the `catch` and its handler: the expression is the value".to_string(),
             ),
+            labels: Vec::new(),
         });
     }
 
@@ -18790,6 +18964,7 @@ impl<'a> Checker<'a> {
                      `if v > 100 { v = 0 }`"
                         .to_string(),
                 ),
+                labels: Vec::new(),
             });
         }
     }
@@ -18827,6 +19002,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("take the `&` off".to_string()),
+            labels: Vec::new(),
         });
     }
 
@@ -18867,6 +19043,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `unsafe {{ {name}(…) }}`")),
+            labels: Vec::new(),
         });
     }
 
@@ -18919,6 +19096,7 @@ impl<'a> Checker<'a> {
                 "write `{container}.set(neu; after: seen)`, where `seen` is what the lock \
                  handed out"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -18993,6 +19171,7 @@ impl<'a> Checker<'a> {
                     "write `{container}.update fn(mut v) {{ … }}`, which decides inside the \
                      lock (ADR-110 D1)"
                 )),
+                labels: Vec::new(),
             });
             return;
         }
@@ -19018,6 +19197,7 @@ impl<'a> Checker<'a> {
                     "write `{container}.update fn(mut v) {{ … }}` and take the decision inside \
                      the lock (ADR-110 D1)"
                 )),
+                labels: Vec::new(),
             });
         }
     }
@@ -19062,6 +19242,7 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some(format!("write `{bound}.set({})`", self.written(value))),
+            labels: Vec::new(),
         });
     }
 
@@ -19132,6 +19313,7 @@ impl<'a> Checker<'a> {
                 help: Some(
                     "take the type off, or bind one name and read the parts from it".to_string(),
                 ),
+                labels: Vec::new(),
             });
         }
         let parts = match found {
@@ -19462,6 +19644,7 @@ impl<'a> Checker<'a> {
                     "write `let {bound} = …` if it is meant to be computed while the \
                          program runs"
                 )),
+                labels: Vec::new(),
             }),
         }
 
@@ -19533,6 +19716,7 @@ impl<'a> Checker<'a> {
                  the loop assigns, or a `return`, where the function has nothing left to \
                  do after the `{word}`"
             )),
+            labels: Vec::new(),
         });
     }
 
@@ -19632,6 +19816,7 @@ impl<'a> Checker<'a> {
             message,
             notes: vec![note],
             help: Some(help),
+            labels: Vec::new(),
         });
     }
 

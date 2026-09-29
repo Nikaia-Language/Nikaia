@@ -133,9 +133,40 @@ fn main() throws {
       <div class="feature">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
         <h3>Errors in plain words</h3>
-        <p><code>error[NK1139]: `x` is changed, and a `let` that is changed says `mut`</code> —
-        and then <code>help: write `let mut x`</code>.</p>
+        <p>A mistake is explained the way a colleague would: what you wrote, why it cannot
+        work, and what to write instead, with the places it is about underlined.
+        <a href="#errors">See one below.</a></p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section class="home-section home-code-section" id="errors">
+  <div class="home-inner home-split">
+    <div class="home-split-text">
+      <h2>When something is wrong, it says so like a person would.</h2>
+      <p>
+        The compiler points at every place the explanation needs: <code>^</code> under the
+        line with the mistake, <code>-</code> under the line that explains it. Then it says
+        what to write instead.
+      </p>
+      <p>
+        No jargon about lifetimes or borrowing, and never an error about generated code you
+        did not write.
+      </p>
+      <p><a href="{{ "/docs/specification/30-nikaia-tooling.html#appendix-c-the-diagnostics-contract" | relative_url }}">The rules every message follows →</a></p>
+    </div>
+    <div class="home-code markdown-body">
+<pre class="diagnostic"><code><span class="d-error">error[NK1139]</span><b>: You're changing `count`, but it wasn't declared as mutable.</b>
+<span class="d-gutter">  --&gt;</span> app.nika:4:9
+<span class="d-gutter">   |</span>
+<span class="d-gutter"> 2 |</span>     let count = 0
+<span class="d-gutter">   |</span>         <span class="d-note">----- declared here without `mut`</span>
+<span class="d-gutter">   ...</span>
+<span class="d-gutter"> 4 |</span>         count += n
+<span class="d-gutter">   |</span>         <span class="d-error">^^^^^ changed here</span>
+<span class="d-gutter">   |</span>
+<span class="d-gutter">   =</span> <span class="d-help">help:</span> Add `mut` where it's declared: `let mut count`.</code></pre>
     </div>
   </div>
 </section>

@@ -411,3 +411,31 @@ fn only_the_two_written_bindings_are_asked() {
          }\n"
     ));
 }
+
+/// **The message as the reader sees it** (Part III C.2, rule 5): said in a
+/// sentence, with both places underlined whole and named, and the way out.
+/// Pinned whole, because the alignment of a caret under a name is exactly
+/// what a change elsewhere in the renderer would move without anyone looking.
+#[test]
+fn a_let_changed_without_mut_is_explained_at_both_places() {
+    let source = "fn main() {\n    let count = 0\n    for n in 0..<3 {\n        count += n\n    }\n    println(f\"{count}\")\n}\n";
+    let found = findings(source);
+    let finding = found
+        .iter()
+        .find(|f| f.code == "NK1139")
+        .expect("NK1139 is raised");
+    let rendered = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+    assert_eq!(
+        rendered,
+        "error[NK1139]: You're changing `count`, but it wasn't declared as mutable.\n\
+         \x20 --> app.nika:4:9\n\
+         \x20  |\n\
+         \x202 |     let count = 0\n\
+         \x20  |         ----- declared here without `mut`\n\
+         \x20  ...\n\
+         \x204 |         count += n\n\
+         \x20  |         ^^^^^ changed here\n\
+         \x20  |\n\
+         \x20  = help: Add `mut` where it's declared: `let mut count`.\n"
+    );
+}

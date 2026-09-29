@@ -227,6 +227,7 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
                     list(declared.iter().map(String::as_str))
                 )],
                 help: Some(format!("pass it after the `;`: `{parameter}: …`")),
+                labels: Vec::new(),
             });
         }
     }
@@ -252,6 +253,7 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
                 Some(near) => format!("did you mean `{near}`?"),
                 None => format!("write `:{name_passed}` in the statement, or drop it here"),
             }),
+            labels: Vec::new(),
         });
     }
 }

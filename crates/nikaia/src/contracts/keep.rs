@@ -1667,6 +1667,7 @@ fn element_refusal(
                 .to_string(),
         ],
         help: Some(help.to_string()),
+        labels: Vec::new(),
     }
 }
 
@@ -1678,6 +1679,7 @@ fn refusal(source: &Source, what: &str, why: &str, help: &str) -> crate::check::
         message: format!("{} {what}", capitalised(&source.named())),
         notes: vec![why.to_string()],
         help: Some(help.to_string()),
+        labels: Vec::new(),
     }
 }
 

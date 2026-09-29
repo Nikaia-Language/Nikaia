@@ -128,6 +128,7 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
         help: Some(format!(
             "declare `{name}` with `trait`, or leave the bound off - a parameter without one may be moved and passed and nothing else (ADR-074 D5)"
         )),
+        labels: Vec::new(),
     }
 }
 
@@ -202,6 +203,7 @@ fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding
             "rename one of the two - a `struct` and its anonymous constructor are already \
              one name, so `{name}` cannot also be a function of its own"
         )),
+        labels: Vec::new(),
     }
 }
 
@@ -640,6 +642,7 @@ fn a_length_nothing_here_can_give(parsed: &Parsed, ty: &Type, span: &Span) -> Fi
              to look at elements somebody else keeps, or `Array[{element}, N]` to write the \
              length down and have them laid out inline"
         )),
+        labels: Vec::new(),
     }
 }
 
@@ -669,6 +672,7 @@ fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
              words for both"
         )],
         help: Some(help.to_string()),
+        labels: Vec::new(),
     }
 }
 
@@ -736,5 +740,6 @@ fn nothing_declares(name: &str, known: &BTreeSet<String>, span: &Span) -> Findin
                  misspelling is the usual cause"
             ),
         }),
+        labels: Vec::new(),
     }
 }
