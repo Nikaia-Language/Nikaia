@@ -42,6 +42,15 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     nikaia::check::check(&parsed, &own, &library).findings
 }
 
+/// **The checker lets the driver use its spread**: `...args: Self::dsl` is a
+/// parameter, so `return args` names something declared. It was `NK1117`,
+/// which stopped `nikaia build` on this fixture while the lowering alone ran.
+#[test]
+fn a_spread_is_a_parameter_the_body_may_use() {
+    let found = findings(&fixture("sql_statement.nika"));
+    assert!(found.is_empty(), "{found:#?}");
+}
+
 /// The one that has to be true before any of the others are worth anything:
 /// the emitted Rust compiles, runs, and prints what the program says.
 #[test]

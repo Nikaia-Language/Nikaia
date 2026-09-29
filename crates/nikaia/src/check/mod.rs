@@ -4285,6 +4285,7 @@ impl<'a> Checker<'a> {
             receiver,
             args,
             config,
+            spread,
             ret_type,
             body,
             can_throw: throws,
@@ -4419,6 +4420,17 @@ impl<'a> Checker<'a> {
                 // caret on the wrong line is worse than no message. Its default
                 // is a literal (Part I 5.1), so a hull cannot stand here anyway.
                 Ty::from_ast(self.parsed, &option.ty).erase(&parameters),
+            ));
+        }
+        // **So is a spread** ([ADR-007](../../docs/specification/adr/adr-007.md)
+        // D5): `...args: Self::dsl` is the driver's one value holding what the
+        // statement left open, and its body hands it on. Missing from this
+        // frame, `return args` was `NK1117` in every driver. Its type is the
+        // statement's, which this checker does not see, so it is not guessed.
+        if let Some(spread) = spread {
+            frame.push(Local::free(
+                self.parsed.text(*spread).to_string(),
+                Ty::Unknown,
             ));
         }
 
