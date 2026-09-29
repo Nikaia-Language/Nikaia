@@ -438,7 +438,31 @@ impl Runtime {
         // sound because the *next* operation reconciles the ring before it
         // submits anything.
         let mut held = ring.lock().unwrap_or_else(|e| e.into_inner());
-        Some(f(&mut held))
+        let before = held.answered();
+        let out = f(&mut held);
+        // **An answer this call reaped may be another thread's**, and that
+        // thread learns of it here or not at all. The ring is shared: a poll
+        // or a park on one thread takes every completion off the queue, so a
+        // thread whose read finished while somebody else held the ring finds
+        // its slot answered and nothing else changed - no count moved, no bell
+        // rang - and a park it enters next waits for a completion that has
+        // already come. Where its read needs another turn, which only its own
+        // poll submits, that wait is for ever while any other operation is
+        // outstanding, with the ring's lock held and every thread behind it.
+        // Found as the arm64 CI job hanging in
+        // `many_threads_reading_and_writing_at_once_each_get_their_own_answer`
+        // (0.0.259).
+        //
+        // **Counted while the ring is still held**, which is what makes it
+        // impossible to miss: [`io::park_for`] reads the count under this same
+        // lock before it waits, so a park that follows this call sees it moved
+        // and returns, and one that came before it is the one that reaped.
+        if held.answered() != before {
+            let mut count = FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+            *count += 1;
+            BELL.notify_all();
+        }
+        Some(out)
     }
 }
 
@@ -1283,6 +1307,49 @@ mod tests {
             "the task nobody joined still ran to its end (ADR-055 D5)"
         );
         let _ = writing.join();
+    }
+
+    /// **An answer another thread reaps moves the generation** (0.0.259).
+    ///
+    /// The ring is one per process and every thread's poll and park takes all
+    /// of its completions off the queue, so a read's answer is often reaped by a
+    /// thread that is not waiting for it. The reader's park then has only the
+    /// generation to learn it by - it waits for a completion that has already
+    /// come otherwise, and where the read needs a second turn that only its own
+    /// poll submits, it waits for ever with the ring's lock held: the arm64 CI
+    /// job hung six hours in
+    /// `fs::many_threads_reading_and_writing_at_once_each_get_their_own_answer`.
+    ///
+    /// So: one read submitted and left alone, another read done start to end
+    /// on a second thread - which reaps both - and the count has to have moved.
+    /// On the fallback path there is no ring and nothing to hold.
+    #[test]
+    fn an_answer_another_thread_reaps_moves_the_generation() {
+        if handle().files() != Files::Completion {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nikaia-reaped-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let (mine, theirs) = (dir.join("mine"), dir.join("theirs"));
+        std::fs::write(&mine, "mine").expect("a file to read");
+        std::fs::write(&theirs, "theirs").expect("another");
+
+        let left_alone = io::reading(&mine);
+        // Long enough for the kernel to have answered it, so the second
+        // thread's reap is the one that takes it off the queue.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let since = io::generation();
+        let read = std::thread::spawn(move || exec::block_on(io::reading(&theirs)))
+            .join()
+            .expect("the second thread reads");
+        assert_eq!(read.expect("its read"), b"theirs");
+        assert!(
+            io::generation() > since,
+            "a completion reaped on another thread left the generation where it \
+             was, so a park waiting for it cannot learn it came"
+        );
+        assert_eq!(exec::block_on(left_alone).expect("the first read"), b"mine");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// **An expired `cleanup-deadline` is exit 70, said on the panic path**

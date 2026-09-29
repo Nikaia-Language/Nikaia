@@ -198,6 +198,16 @@ pub struct Ring {
     /// up, and a bounded park that gives up with this unchanged answers `false`
     /// the way the fallback park does.
     moved: u64,
+    /// Every **operation's** completion this ring has reaped - `moved` without
+    /// the bell's.
+    ///
+    /// What a caller that shares the ring between threads needs from it
+    /// (Nikaia's `rt::with_ring`): a completion reaped by one thread's
+    /// [`Ring::poll_slot`] or [`Ring::park`] may be another thread's answer,
+    /// and that thread cannot learn it from the ring, which it no longer
+    /// holds. The caller reads this before and after each call and says
+    /// *something moved* where the waiting thread will look.
+    answered: u64,
 }
 
 impl Ring {
@@ -228,6 +238,7 @@ impl Ring {
             bell: Bell(Arc::new(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))),
             bell_armed: false,
             moved: 0,
+            answered: 0,
         };
         ring.arm_bell();
         Ok(ring)
@@ -449,6 +460,15 @@ impl Ring {
         }
         self.reap();
         self.moved > before
+    }
+
+    /// How many operations' completions this ring has reaped, ever.
+    ///
+    /// A count and not a list: what it tells a caller sharing the ring is that
+    /// a call it just made may have taken somebody else's answer off the queue,
+    /// and the answer itself is in that somebody's slot.
+    pub fn answered(&self) -> u64 {
+        self.answered
     }
 
     /// Put the bell's poll on the ring, if it is not already there (D1).
@@ -702,6 +722,7 @@ impl Ring {
             }
             let slot = data as usize;
             self.unreaped -= 1;
+            self.answered += 1;
             let Some(job) = self.jobs.get_mut(slot).and_then(Option::as_mut) else {
                 // A completion for a slot nobody is waiting on: the buffer was
                 // already released because `outstanding` had reached zero.

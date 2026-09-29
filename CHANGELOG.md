@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.259] — 2026-09-29
+
+**A read's answer reaped by another thread wakes its reader**
+([ADR-121](docs/specification/adr/adr-121.md) §5). The arm64 CI job has hung
+six hours on every run since at least 0.0.252, in
+`fs::many_threads_reading_and_writing_at_once_each_get_their_own_answer`, and
+the job cancelled by the next push hid it.
+
+- **The defect**: the ring is shared, and a poll or a park on any thread reaps
+  every completion. A ring completion did not move the generation a park reads
+  first, so a reader whose answer another thread reaped parked for a
+  completion that had already come - for ever, where its read needed another
+  turn only its own poll submits and anything else was outstanding, with the
+  ring's lock held and every thread behind it.
+- **The fix**: `file_ring::Ring::answered` counts operations' completions
+  reaped; `rt::with_ring` moves the generation when a call reaped any, while
+  it still holds the ring.
+- `rt::tests::an_answer_another_thread_reaps_moves_the_generation` reaps one
+  thread's read on another and fails without the fix. The hang itself did not
+  reproduce here on x86 (16 runs of the binary, one core and four); the test
+  holds the invariant the park depends on.
+
 ## [0.0.258] — 2026-09-29
 
 **The ledger's reader is Nikaia, the half that knows the file's shape**
