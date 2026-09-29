@@ -31,9 +31,13 @@ fn the_two_spellings_are_the_two_ranges() {
 /// *one meaning per spelling*.
 #[test]
 fn the_old_inclusive_spelling_is_refused_by_name() {
-    let refused = parse_to_ast("fn main() { for i in 0..=5 { } }").expect_err("`..=` goes");
-    let message = refused.to_string();
-    assert!(message.contains("`..` includes its end"), "{message}");
+    let source = "fn main() { for i in 0..=5 { } }";
+    let refused = parse_to_ast(source).expect_err("`..=` goes");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let message = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+    assert!(message.contains("Nikaia has no `..=`."), "{message}");
+    assert!(message.contains("`0..n` already includes `n`"), "{message}");
     assert!(message.contains("0..n"), "{message}");
     assert!(message.contains("0..<n"), "{message}");
 }

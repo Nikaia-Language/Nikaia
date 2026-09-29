@@ -118,7 +118,7 @@ fn a_callee_that_stops_keeping_moves_it_back_and_a_field_counts() {
         told[0]
     );
     assert!(
-        told[0].notes[0].contains("through its field"),
+        told[0].notes[0].contains("through its `Handle` field"),
         "{:#?}",
         told[0]
     );

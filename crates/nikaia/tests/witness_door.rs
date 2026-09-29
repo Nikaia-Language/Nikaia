@@ -263,7 +263,13 @@ fn the_door_is_a_lock_taken_inside_a_lock() {
         .iter()
         .find(|f| f.code == "NK2203" && f.message.contains("set(after)"))
         .unwrap_or_else(|| panic!("{refused:#?}"));
-    assert!(about.message.contains("already held"), "{}", about.message);
+    assert!(
+        about
+            .message
+            .contains("takes a lock, but you're already holding one here"),
+        "{}",
+        about.message
+    );
 }
 
 /// **`NK2208`: the lowering, written as a door.**

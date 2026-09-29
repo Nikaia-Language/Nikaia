@@ -417,7 +417,8 @@ fn main() {
         refusal
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("self.value.clone()") && h.contains("(self)")),
+            .is_some_and(|h| h.contains("self.value.clone()")
+                && h.contains("take `self` instead of `ref self`")),
         "the ways out are what a program can write: {:?}",
         refusal.help
     );

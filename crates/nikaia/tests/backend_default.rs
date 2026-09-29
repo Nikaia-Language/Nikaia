@@ -194,8 +194,8 @@ fn the_explanations_answer_without_being_told_which_backend() {
 /// never answered by a different backend.
 ///
 /// `cranelift` and `llvm` were named by ADR-002 and never written, so the
-/// message says that nothing implements them and offers no remedy, because
-/// there is none to offer.
+/// message says that they don't exist yet and offers nothing to install,
+/// because there is nothing to install; it names the backends there are.
 #[test]
 fn a_backend_that_was_never_written_refuses_by_name() {
     for backend in ["cranelift", "llvm"] {
@@ -213,12 +213,16 @@ fn a_backend_that_was_never_written_refuses_by_name() {
         let said = String::from_utf8_lossy(&run.stderr);
         assert!(said.contains(backend), "the message must name it: {said}");
         assert!(
-            said.contains("not implemented"),
+            said.contains(&format!("The `{backend}` backend doesn't exist yet.")),
             "and say that nothing implements it: {said}"
         );
         assert!(
-            said.contains("nothing to install"),
+            !said.contains("install"),
             "and offer no remedy, because there is none: {said}"
+        );
+        assert!(
+            said.contains("Available: interpreter, rust."),
+            "but name the backends there are: {said}"
         );
     }
 }

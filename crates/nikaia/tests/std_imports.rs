@@ -48,7 +48,7 @@ fn a_use_that_names_a_type_from_the_list_says_to_drop_the_line() {
             .help
             .as_deref()
             .unwrap_or_default()
-            .contains("drop the line")
+            .contains("Remove the line: `String` is always available")
     );
 }
 
@@ -162,7 +162,9 @@ fn a_std_module_nobody_declared_is_refused_here() {
     let found = refused("use std::nosuchthing\n\nfn main() { println(\"x\") }\n");
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(
-        found[0].message.contains("`std` does not have"),
+        found[0]
+            .message
+            .contains("`std` has no module called `std::nosuchthing`"),
         "{:?}",
         found[0].message
     );
@@ -181,7 +183,7 @@ fn a_near_miss_is_named() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(
         found[0].help.as_deref(),
-        Some("did you mean `use std::collections`?")
+        Some("Did you mean `use std::collections`?")
     );
 }
 
@@ -196,7 +198,7 @@ fn the_toolchains_own_module_says_why_it_is_not_reachable() {
     assert_eq!(found.len(), 1, "{found:#?}");
     let note = found[0].notes.join(" ");
     assert!(note.contains("toolchain's own"), "{note}");
-    assert!(note.contains("ADR-196"), "{note}");
+    assert!(note.contains("a program cannot reach"), "{note}");
 }
 
 /// **A module a record names and the compiler has not built is accepted**, which

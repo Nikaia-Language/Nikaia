@@ -335,7 +335,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     assert!(
         finding
             .message
-            .contains("`fremd::irgendwas` can reach a lock through `counter`"),
+            .contains("`fremd::irgendwas` could reach a lock through `counter`"),
         "{}",
         finding.message
     );
@@ -343,7 +343,10 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     // The note names the type the source wrote, not what it expands to
     // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
     assert!(notes.contains("`SharedMut[i32]`"), "{notes}");
-    assert!(notes.contains("must not be able to reach"), "{notes}");
+    assert!(
+        notes.contains("code that might keep a lock could deadlock"),
+        "{notes}"
+    );
     let help = finding.help.as_deref().expect("a refusal has a way out");
     // Part III C.6 writes the way out as a line the program can be edited into.
     assert!(help.contains("fremd::irgendwas(counter.get())"), "{help}");
@@ -387,12 +390,18 @@ fn a_shared_does_not_go_into_a_call_this_compiler_cannot_see() {
     assert!(finding.message.contains("`handle`"), "{}", finding.message);
     let notes = finding.notes.join(" ");
     assert!(notes.contains("`Shared[String]`"), "{notes}");
-    assert!(notes.contains("each value"), "{notes}");
+    assert!(
+        notes.contains("how a shared value is counted is decided per value"),
+        "{notes}"
+    );
     // The sentence is not the lock's: nothing here is a lock, and a refusal
     // whose reason is about a lock would be wrong about this.
     assert!(!notes.contains("lock"), "{notes}");
     let help = finding.help.as_deref().expect("a refusal has a way out");
-    assert!(help.contains("a view of it or a copy"), "{help}");
+    assert!(
+        help.contains("a view or a copy, instead of the shared value"),
+        "{help}"
+    );
 
     // And into a task of our own the same value is fine, which is the pair: D1
     // is about a signature outside this language and nothing else.
@@ -663,7 +672,7 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
     let report = verdict_against_probe(source);
     assert!(!report.contains("together"), "{report}");
     assert!(
-        report.contains("would have to cross a thread"),
+        report.contains("would have to move to another thread"),
         "and the report says which refusal it was (ADR-033 D9): {report}"
     );
 
@@ -901,8 +910,11 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_task() {
     assert_eq!(finding.code, "NK2501");
     assert!(finding.message.contains("`handle`"), "{}", finding.message);
     let notes = finding.notes.join(" ");
-    assert!(notes.contains("thread of its own"), "{notes}");
-    assert!(notes.contains("LocalHandle"), "{notes}");
+    assert!(notes.contains("A task runs on its own thread"), "{notes}");
+    assert!(
+        notes.contains("`fremd::LocalHandle` is described as a value that can't move"),
+        "{notes}"
+    );
 
     // And the same program is silent where the line says nothing, which is what
     // keeps the refusal a claim about the ledger rather than about the shape.

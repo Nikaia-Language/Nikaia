@@ -219,12 +219,12 @@ fn a_pattern_inside_a_box_is_refused_with_the_way_that_works() {
         .collect();
     assert_eq!(found.len(), 1, "{:#?}", findings(source));
     assert!(
-        found[0].message.contains("`Expr::Add` at position 0"),
+        found[0].message.contains("part 0 of `Expr::Add`"),
         "{found:#?}"
     );
     assert_eq!(
         found[0].help.as_deref(),
-        Some("bind the part to a name here and `match` on the name in the arm")
+        Some("Bind the part to a name here, and `match` on that name inside the arm.")
     );
 }
 

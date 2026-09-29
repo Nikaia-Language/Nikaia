@@ -756,7 +756,7 @@ fn every_fallback_is_enumerated_with_a_remedy() {
         "{report}"
     );
     assert!(
-        report.contains("atomic is the floor and not a verdict"),
+        report.contains("An atomic count is the safe default. A plain count is an optimisation"),
         "and the report says which way the polarity runs: {report}"
     );
 }

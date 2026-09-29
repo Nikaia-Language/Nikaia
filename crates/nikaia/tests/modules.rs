@@ -273,8 +273,11 @@ fn a_use_naming_a_sibling_file_says_to_remove_it() {
         panic!("`use utils` names a file of this package");
     };
     let message = format!("{error:#}");
-    assert!(message.contains("already see one another"), "{message}");
-    assert!(message.contains("remove the line"), "{message}");
+    assert!(
+        message.contains("the files of a package already see each other"),
+        "{message}"
+    );
+    assert!(message.contains("Remove the line"), "{message}");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -293,7 +296,7 @@ fn a_use_naming_no_dependency_says_what_to_declare() {
     };
     let message = format!("{error:#}");
     assert!(
-        message.contains("no dependency is called `helpers`"),
+        message.contains("there's no dependency called `helpers`"),
         "{message}"
     );
     assert!(message.contains("[dependencies]"), "{message}");
@@ -312,7 +315,10 @@ fn a_use_with_a_path_is_refused_and_std_is_not() {
         panic!("a path names no package");
     };
     let message = format!("{error:#}");
-    assert!(message.contains("brings no name in"), "{message}");
+    assert!(
+        message.contains("`use` takes a package name only, not a path into it"),
+        "{message}"
+    );
     assert!(message.contains("`use net`"), "{message}");
     let _ = std::fs::remove_dir_all(dir);
 
@@ -341,7 +347,10 @@ fn one_name_per_file() {
     };
     let message = format!("{error:#}");
     assert!(message.contains("twice"), "{message}");
-    assert!(message.contains("One name per file"), "{message}");
+    assert!(
+        message.contains("Two packages can't have the same name in one file"),
+        "{message}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -666,24 +675,26 @@ fn a_use_that_brings_a_name_in_says_to_write_the_prefix() {
     for (source, says) in [
         (
             "use http::{Request}\n\nfn main() { }\n",
-            "names are not brought in",
+            "`use` can't bring in single names.",
         ),
         (
             "use http::*\n\nfn main() { }\n",
-            "nothing brings every name in",
+            "`use` can't bring in every name at once.",
         ),
     ] {
         let error = nikaia::parser::parse_to_ast(source)
             .err()
             .unwrap_or_else(|| panic!("{source} must be refused"));
-        let message = format!("{error:#}");
-        assert!(message.contains(says), "{message}");
+        let finding = nikaia::diagnostics::refused_finding(&error)
+            .unwrap_or_else(|| panic!("a parse error carries its finding: {error:#}"));
+        let message = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+        assert!(message.contains(&format!("error: {says}")), "{message}");
         assert!(
-            message.contains("`use http`"),
+            message.contains("= help: Write `use http`"),
             "and what to write: {message}"
         );
         // The caret is on the brace or the star, not on the line below it.
-        assert!(message.contains("column 11"), "{message}");
+        assert!(message.contains("--> app.nika:1:11"), "{message}");
     }
 
     // …and the three forms that are not this are untouched.

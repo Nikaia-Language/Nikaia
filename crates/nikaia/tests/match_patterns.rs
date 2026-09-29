@@ -148,18 +148,18 @@ fn a_range_pattern_includes_both_ends() {
 /// exclusive range is written by moving the end.
 #[test]
 fn an_exclusive_range_is_refused_in_a_pattern() {
-    let refused = parse_to_ast(
-        "fn band(code: i64) -> ref String {\n\
-         \x20   return match code {\n\
-         \x20       200..<300 => \"ok\",\n\
-         \x20       else => \"other\",\n\
-         \x20   }\n\
-         }\n",
-    )
-    .expect_err("`..<` is not a pattern");
-    let message = refused.to_string();
-    assert!(message.contains("not written in a pattern"), "{message}");
-    assert!(message.contains("200..298"), "{message}");
+    let source = "fn band(code: i64) -> ref String {\n\
+                  \x20   return match code {\n\
+                  \x20       200..<300 => \"ok\",\n\
+                  \x20       else => \"other\",\n\
+                  \x20   }\n\
+                  }\n";
+    let refused = parse_to_ast(source).expect_err("`..<` is not a pattern");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let message = nikaia::diagnostics::render_finding(finding, "band.nika", source);
+    assert!(message.contains("A pattern can't use `..<`."), "{message}");
+    assert!(message.contains("200..299"), "{message}");
 }
 
 /// **A pattern inside a pattern**, and `..` for the fields this one does not

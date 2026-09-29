@@ -212,7 +212,7 @@ fn a_std_type_with_no_constructor_is_refused_here() {
     assert_eq!(found.len(), 1, "{:#?}", every_finding(source));
     assert_eq!(
         found[0].message,
-        "`io::IoError` is a type, and nothing describes a constructor for it"
+        "You can't call `io::IoError(…)`: it has no constructor."
     );
 }
 
@@ -241,6 +241,6 @@ fn a_struct_without_a_constructor_is_not_called() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(
         found[0].help.as_deref(),
-        Some("build it with a literal: `NotANumber { text: … }`")
+        Some("Build it with a literal: `NotANumber { text: … }`.")
     );
 }

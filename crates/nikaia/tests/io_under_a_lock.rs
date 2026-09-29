@@ -78,18 +78,24 @@ fn the_refusal_names_the_page_fault_and_the_way_out() {
         .unwrap_or_else(|| panic!("{found:#?}"));
     assert!(refusal.message.contains("reads a file"), "{refusal:#?}");
     assert!(
-        refusal.notes.iter().any(|n| n.contains("page fault")),
+        refusal
+            .notes
+            .iter()
+            .any(|n| n.contains("reading it can wait on the disk")),
         "{refusal:#?}"
     );
     assert!(
-        refusal.notes.iter().any(|n| n.contains("`NK2202`")),
+        refusal
+            .notes
+            .iter()
+            .any(|n| n.contains("doesn't show up as a pause or a second lock")),
         "it says why the other two are silent:\n{refusal:#?}"
     );
     assert!(
         refusal
             .help
             .as_ref()
-            .is_some_and(|h| h.contains("before the door")),
+            .is_some_and(|h| h.contains("before taking the lock")),
         "{refusal:#?}"
     );
 }

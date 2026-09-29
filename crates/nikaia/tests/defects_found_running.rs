@@ -163,16 +163,16 @@ fn a_bare_call_nothing_declares_is_refused() {
     assert!(
         messages.contains(&(
             "NK1117",
-            "nothing declares a function `frobnicate`",
-            Some("declare it with `fn frobnicate(…)`, or call it through the package that has it")
+            "There's no function called `frobnicate`.",
+            Some("Declare it with `fn frobnicate(…)`, or call it through the package that has it.")
         )),
         "{messages:#?}"
     );
     assert!(
         messages.contains(&(
             "NK1117",
-            "nothing declares a function `dobled`",
-            Some("did you mean `doubled`?")
+            "There's no function called `dobled`.",
+            Some("Did you mean `doubled`?")
         )),
         "{messages:#?}"
     );
@@ -275,10 +275,8 @@ fn text_a_loop_lends_is_kept_only_as_a_copy() {
          }\n",
     );
     assert!(
-        found
-            .iter()
-            .any(|f| f.code == "NK1106"
-                && f.help.as_deref() == Some("write `.clone()` to copy it here")),
+        found.iter().any(|f| f.code == "NK1106"
+            && f.help.as_deref() == Some("Write `.clone()` to copy it here.")),
         "{found:#?}"
     );
 }

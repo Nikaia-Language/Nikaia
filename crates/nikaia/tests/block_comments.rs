@@ -82,14 +82,24 @@ fn a_line_comment_inside_a_block_comment_is_comment() {
 /// reader's to be told rather than the parser's.
 #[test]
 fn an_unclosed_block_comment_is_reported_at_its_opening() {
-    let said = lowered("fn main() {\n    /* never closed\n    println(\"x\")\n}\n")
-        .expect_err("an unclosed comment is a refusal");
-    assert!(said.contains("unclosed block comment"), "{said}");
+    let source = "fn main() {\n    /* never closed\n    println(\"x\")\n}\n";
+    let said = lowered(source).expect_err("an unclosed comment is a refusal");
+    assert!(
+        said.contains("This block comment is never closed."),
+        "{said}"
+    );
     assert!(
         said.contains("line 2, column 5"),
         "the opening and not the end of the file: {said}"
     );
-    assert!(said.contains("never closed"), "the line is shown: {said}");
+    let refused = parse_to_ast(source).expect_err("still a refusal");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let rendered = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+    assert!(
+        rendered.contains(" 2 |     /* never closed"),
+        "the line is shown: {rendered}"
+    );
 
     // And the *outer* opening where a nested one is what is missing a close:
     // the reader has one comment too few, and the one to fix is the one that is

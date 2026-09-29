@@ -387,7 +387,7 @@ fn the_two_console_handles_keep_their_order() {
              println(\"out2\")\n\
          }");
     assert!(
-        reason.contains("may be the same destination") && reason.contains("stderr"),
+        reason.contains("which might be the same place") && reason.contains("stderr"),
         "{reason}"
     );
     // … and the way out is named, because a refusal a reader can act on is
@@ -422,7 +422,10 @@ fn a_resource_this_compiler_cannot_name_reaches_everything() {
          }";
     let reason = why_with(source, Some(library.clone()));
 
-    assert!(reason.contains("does not know about"), "{reason}");
+    assert!(
+        reason.contains("which this version of Nikaia doesn't know"),
+        "{reason}"
+    );
     assert!(reason.contains("endpoint"), "{reason}");
     assert!(!reason.contains("together"), "{reason}");
 }

@@ -171,16 +171,14 @@ fn a_run_this_body_owns_is_refused_by_name() {
     let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1179").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     assert!(
-        refused[0]
-            .message
-            .contains("`Bag.items` is a view of a run"),
+        refused[0].message.contains("`Bag.items` only views a list"),
         "{:#?}",
         refused[0]
     );
     // **The way out names the parameter case**, because the two lines look the
     // same and only one of them needs a word.
     assert!(
-        refused[0].notes[1].contains("ADR-094 D1"),
+        refused[0].notes[1].contains("Passing a list to a parameter lends it automatically"),
         "{:#?}",
         refused[0].notes
     );

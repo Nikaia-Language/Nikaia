@@ -292,7 +292,7 @@ pub fn packages_of(
         if let Some(first) = seen.get(&root) {
             refuse!(
                 "`{name}` and `{first}` are the same package: both are {}.\n\
-                 The same path is the same package (ADR-047 D2), so two names for it \
+                 The same path is the same package, so two names for it \
                  would be two copies of every type it declares - name it once.",
                 root.display()
             );
@@ -312,7 +312,7 @@ pub fn packages_of(
         if announce && dependency.has_build_section() {
             eprintln!(
                 "note: `{}`'s own `[build]` is ignored: a package is built with the \
-                 settings of the program that uses it (ADR-047 D2).",
+                 settings of the program that uses it.",
                 name
             );
         }
@@ -479,8 +479,8 @@ pub fn members_of(entry_manifest: &Manifest, entry_root: &Path) -> Result<Vec<Me
             .package_name()
             .ok_or_else(|| {
                 refused!(
-                    "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
-                     name the crate (Part III 13.3)",
+                    "{}/nikaia.toml has no `[package] name`. Add one: every package needs \
+                     a name.",
                     root.display()
                 )
             })?
@@ -492,11 +492,9 @@ pub fn members_of(entry_manifest: &Manifest, entry_root: &Path) -> Result<Vec<Me
         // this is only ever two *different* packages wanting one name.
         if let Some(first) = out.iter().find(|m| m.name == name) {
             refuse!(
-                "two packages are both named `{name}`: {} and {}.\n\
-                 Each package is generated as its own crate (ADR-053 D1) and a crate is \
-                 named by its `[package] name`, so give one of them a name of its own - \
-                 the key a `use` line writes is set by whoever depends on it and does not \
-                 have to change.",
+                "Two packages are both called `{name}`: {} and {}.\n\
+                 Give one of them another `[package] name`. The name a `use` line writes \
+                 is set in `[dependencies]` and doesn't have to change.",
                 first.root.display(),
                 root.display()
             );
@@ -584,9 +582,8 @@ fn crate_root_of(root: &Path) -> Result<PathBuf> {
 
     beside.into_iter().next().ok_or_else(|| {
         refused!(
-            "{} has no `.nika` sources.\n\
-             A package is a directory with a `src/` in it (Part III 13.1), and a package \
-             with nothing in it is nothing to build.",
+            "{} has no `.nika` files, so there's nothing to build.\n\
+             Put the package's source files in its `src/` folder.",
             src.display()
         )
     })
@@ -798,9 +795,7 @@ pub fn lower_reading(
             // known, and a warning rather than a refusal — the line is a
             // permission that is no longer used, not a program that is wrong.
             for entry in reads.unused() {
-                eprintln!(
-                    "warning: the allowlist names `{entry}` and nothing read it (ADR-072 D8)"
-                );
+                eprintln!("warning: the allowlist names `{entry}` and nothing read it");
             }
 
             if let Some(cache) = &mut cache {
@@ -1267,7 +1262,7 @@ pub fn check(
     // function's, and the way out is moving the call out of the block.
     let paused_in_a_door = findings
         .iter()
-        .filter(|f| f.code == "NK2202" && f.message.ends_with("with a lock held"))
+        .filter(|f| f.code == "NK2202" && f.message.contains("holding a lock"))
         .count();
     if paused_in_a_door > 0 {
         refused.push(format!(
@@ -1296,7 +1291,30 @@ pub fn check(
             plural(under_a_lock)
         ));
     }
-    let rules = findings.len()
+    // **A place that can fail without saying so is `NK2605` and `NK2701`**, and
+    // nothing else: this line used to be the remainder, which named every rule
+    // the tally had no line for - a lock taken twice, a direct write to shared
+    // state - as a failure nobody declared.
+    let rules = count("NK2605") + count("NK2701");
+    if rules > 0 {
+        refused.push(format!(
+            "{rules} place{} that can fail without saying so",
+            plural(rules)
+        ));
+    }
+    // **The rules about locks** that are not a pause: a lock inside a lock,
+    // shared state written past its door, a value read from a lock and stored
+    // back, a door written by hand.
+    let locks = ["NK2203", "NK2204", "NK2205", "NK2207", "NK2208"]
+        .iter()
+        .map(|code| count(code))
+        .sum::<usize>();
+    if locks > 0 {
+        refused.push(format!("{locks} mistake{} with a lock", plural(locks)));
+    }
+    let others = findings.len()
+        - locks
+        - rules
         - types
         - crossings
         - reaching
@@ -1311,11 +1329,8 @@ pub fn check(
         - paused_in_a_door
         - pauses_forbidden
         - under_a_lock;
-    if rules > 0 {
-        refused.push(format!(
-            "{rules} place{} that can fail without saying so",
-            plural(rules)
-        ));
+    if others > 0 {
+        refused.push(format!("{others} other error{}", plural(others)));
     }
     let may_not = violations.len() + pausing;
     if may_not > 0 {
@@ -1361,7 +1376,7 @@ fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism:
         finding.notes.push(
             "`user_parallelism = no` runs nothing you wrote concurrently, so this build does \
              not perform the crossing - it is reported so that the same source still builds at \
-             `yes` (Part III, C.3)"
+             `yes`"
                 .to_string(),
         );
     }
@@ -1678,9 +1693,9 @@ impl Project {
         let layout = Layout::resolve(&start.join("nikaia.toml"));
         if !layout.in_project {
             refuse!(
-                "no `nikaia.toml` in {} or any directory above it.\n\
-                 A project build needs a manifest (Part III 13.1); a single file \
-                 is compiled with `nikaia --input {}`.",
+                "There's no `nikaia.toml` in {} or any folder above it.\n\
+                 `nikaia build` needs a project. To compile a single file, run \
+                 `nikaia --input {}`.",
                 start.display(),
                 start.join("main.nika").display()
             );
@@ -1697,7 +1712,7 @@ impl Project {
         let settings = Settings::resolve(&manifest, target, user_parallelism)?;
         if let Some(missing) = settings.build.target.unbuildable() {
             refuse!(
-                "cannot build for `{}` yet: {missing}",
+                "Building for `{}` isn't possible yet: {missing}",
                 settings.build.target.triple()
             );
         }
@@ -1820,14 +1835,11 @@ impl Project {
                 // answer in the place it is hardest to review
                 // ([ADR-002](../../docs/specification/adr/adr-002.md) D1 §5).
                 Dependency::Nikaia(_) => refuse!(
-                    "`{dependency}` is a Nikaia package named by a version, and a version \
-                     is not how one is found: no ADR names a registry, a version grammar \
-                     or a distribution format.\n\
-                     A Nikaia package is depended on **by path** today - write it as \
-                     `{dependency} = {{ path = \"../{dependency}\" }}` (ADR-047 D2) - and a \
-                     crate from crates.io as \
-                     `{dependency} = {{ type = \"rust\", version = \"…\" }}` \
-                     (Part III 13.3, ADR-002 D1)."
+                    "`{dependency}` is a Nikaia package given by version, but there's no \
+                     package registry yet.\n\
+                     Depend on it by path: `{dependency} = {{ path = \"../{dependency}\" }}`. \
+                     (A crate from crates.io is written \
+                     `{dependency} = {{ type = \"rust\", version = \"…\" }}`.)"
                 ),
             }
         }
@@ -1896,8 +1908,8 @@ impl Project {
             .package_name()
             .ok_or_else(|| {
                 refused!(
-                    "{}/nikaia.toml has no `[package] name`, and Cargo needs one to \
-                     name the crate (Part III 13.3)",
+                    "{}/nikaia.toml has no `[package] name`. Add one: every package needs \
+                     a name.",
                     root.display()
                 )
             })?
@@ -1955,7 +1967,7 @@ impl Project {
         let entry = self.entry();
         if !entry.is_file() {
             refuse!(
-                "{} is not there. A project's entry point is `{ENTRY}` (Part III 13.1).",
+                "{} is not there. A project's entry point is `{ENTRY}`.",
                 entry.display()
             );
         }
@@ -2283,10 +2295,9 @@ impl Project {
             return Ok(());
         }
 
-        let name = self
-            .manifest
-            .package_name()
-            .ok_or_else(|| refused!("the project has no `[package] name`"))?;
+        let name = self.manifest.package_name().ok_or_else(|| {
+            refused!("The project has no `[package] name`. Add one to `nikaia.toml`.")
+        })?;
         let resolved = resolved_versions(&self.build_dir().join("Cargo.lock"), name)?;
 
         let mut lock = Lockfile::load(

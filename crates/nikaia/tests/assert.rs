@@ -233,7 +233,7 @@ fn a_condition_that_could_change_something_is_refused() {
         "NK1194",
     );
     assert!(
-        unknown[0].contains("nothing describes `frobnicate`"),
+        unknown[0].contains("knows nothing about `frobnicate`"),
         "{unknown:?}"
     );
 }
@@ -243,9 +243,9 @@ fn a_condition_that_could_change_something_is_refused() {
 fn an_assert_of_another_shape_is_refused() {
     let shapes = [
         ("assert(5)", "a literal of another type"),
-        ("assert(true; msg: \"x\")", "no option `msg`"),
+        ("assert(true; msg: \"x\")", "no option called `msg`"),
         ("assert(true, false)", "hands it 2"),
-        ("assert(true; message: 3)", "`message:` is text"),
+        ("assert(true; message: 3)", "`message:` has to be text"),
     ];
     for (call, says) in shapes {
         let found = refused(&format!("fn main() {{\n    {call}\n}}\n"), "NK1195");

@@ -121,10 +121,8 @@ fn a_body_wrong_for_one_field_names_the_turn() {
         "one turn is wrong and one is right: {found:#?}"
     );
     assert!(
-        found[0]
-            .notes
-            .iter()
-            .any(|n| n == "unrolling `T::fields` for `User`, at field `name`"),
+        found[0].notes.iter().any(|n| n
+            == "This happened while going through `T::fields` for `User`, at the field `name`."),
         "{:#?}",
         found[0]
     );

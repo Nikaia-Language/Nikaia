@@ -47,13 +47,13 @@ fn a_write_straight_into_shared_mutable_state_names_the_door() {
     assert!(
         found[0]
             .message
-            .contains("holds shared mutable state, and this assigns to it directly"),
+            .contains("You can't assign to `kasse` directly: it holds shared mutable state."),
         "{:#?}",
         found[0]
     );
     assert_eq!(
         found[0].help.as_deref(),
-        Some("write `kasse.set(42)`"),
+        Some("Write `kasse.set(42)`."),
         "the door, with the value the author wrote in it"
     );
 }
@@ -69,13 +69,13 @@ fn a_value_that_cannot_be_rebuilt_is_an_ellipsis() {
     let found = coded(&program("    let n = 1\n    kasse = n"), "NK2204");
     assert_eq!(
         found[0].help.as_deref(),
-        Some("write `kasse.set(n)`"),
+        Some("Write `kasse.set(n)`."),
         "a name is rebuilt"
     );
     let found = coded(&program("    kasse = 1 + 2"), "NK2204");
     assert_eq!(
         found[0].help.as_deref(),
-        Some("write `kasse.set(…)`"),
+        Some("Write `kasse.set(…)`."),
         "and arithmetic is not guessed at"
     );
 }
@@ -89,7 +89,7 @@ fn a_set_that_reads_what_it_writes_names_the_third_door() {
     assert!(
         found[0]
             .message
-            .contains("stores a value that was read from a lock"),
+            .contains("stores a value that was read from `kasse` earlier"),
         "{:#?}",
         found[0]
     );

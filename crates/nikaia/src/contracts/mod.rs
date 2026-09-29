@@ -2558,9 +2558,8 @@ impl Ledger {
                                 "false" => Threads::MayNot,
                                 other => {
                                     return Err(anyhow::anyhow!(
-                                        "line {}: `threads` is `true` or `false`, not `{other}` \
-                                         - and leaving it out is the third answer, which is \
-                                         *nobody said* (ADR-193 D1)",
+                                        "line {}: `threads` is `true` or `false`, not \
+                                         `{other}`. (Leave it out if nobody knows.)",
                                         at()
                                     ));
                                 }

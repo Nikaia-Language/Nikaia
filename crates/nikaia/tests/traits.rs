@@ -965,10 +965,7 @@ fn an_impl_of_a_trait_nothing_declares_is_refused() {
     let bare = findings(&program("Connection"));
     assert_eq!(bare.len(), 1, "{bare:#?}");
     assert_eq!(bare[0].code, "NK1117", "{bare:#?}");
-    assert_eq!(
-        bare[0].message,
-        "nothing declares a trait called `Connection`"
-    );
+    assert_eq!(bare[0].message, "There's no trait called `Connection`.");
 
     // A path is asked about its head, which is `NK1181`'s question.
     let path = findings(&program("db::Connection"));
@@ -980,8 +977,11 @@ fn an_impl_of_a_trait_nothing_declares_is_refused() {
     let shape = findings(&program("Struct"));
     assert_eq!(shape.len(), 1, "{shape:#?}");
     assert_eq!(shape[0].code, "NK1117", "{shape:#?}");
-    assert_eq!(shape[0].message, "nothing declares a trait called `Struct`");
-    assert!(shape[0].notes[0].contains("ADR-088"), "{shape:#?}");
+    assert_eq!(shape[0].message, "There's no trait called `Struct`.");
+    assert!(
+        shape[0].notes[0].contains("is a `Struct` by how it's declared, not by an `impl`"),
+        "{shape:#?}"
+    );
 }
 
 /// **What declares a trait an `impl` may name**: the program's own `trait`,
@@ -1039,7 +1039,7 @@ fn a_method_takes_self_the_way_its_trait_declares() {
     assert!(
         found[0]
             .message
-            .contains("takes `ref self`, and this takes `self`"),
+            .contains("`Named`'s `name` takes `ref self`, but this one takes `self`"),
         "{}",
         found[0].message
     );

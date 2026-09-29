@@ -144,7 +144,7 @@ fn a_count_in_the_manifest_gets_the_same_answer_as_a_count_on_the_cli() {
     assert!(!run.status.success(), "a count must fail");
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        stderr.contains("not a count"),
+        stderr.contains("`user-parallelism` is `yes` or `no`, not a number"),
         "the reason belongs to the switch, not to the parser: {stderr}"
     );
 }

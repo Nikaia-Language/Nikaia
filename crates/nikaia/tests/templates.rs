@@ -163,8 +163,11 @@ fn an_unclosed_hole_is_refused() {
 #[test]
 fn another_dsl_target_says_what_it_needs() {
     let message = refuse("fn q() -> String { return dsl sql { SELECT 1 } eod }");
-    assert!(message.contains("has no hole"), "{message}");
-    assert!(message.contains("deferred-parameter DSL"), "{message}");
+    assert!(message.contains("has no `:name` holes"), "{message}");
+    assert!(
+        message.contains("`sql` isn't a language the compiler knows"),
+        "{message}"
+    );
 }
 
 // --- Control flow in the markup ---------------------------------------------

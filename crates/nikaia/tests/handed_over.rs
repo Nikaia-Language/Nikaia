@@ -183,7 +183,7 @@ fn a_value_pushed_is_given_away() {
          \x20   xs.push(name)\n\
          \x20   println(name)\n\
          }\n",
-        "handed to `push`",
+        "`name` again, but it was passed to `push`, which keeps it",
     );
 }
 
@@ -197,7 +197,7 @@ fn a_key_written_is_given_away() {
          \x20   m[name] = 2\n\
          \x20   println(name)\n\
          }\n",
-        "as a key",
+        "`name` again, but it was used as a map key",
     );
 }
 
@@ -211,7 +211,7 @@ fn a_field_holds_what_it_is_given() {
              \x20   println(name)\n\
              }}\n"
         ),
-        "`Person`'s `name`",
+        "`name` again, but it was stored in `Person.name`",
     );
     one_refusal(
         &format!(
@@ -221,7 +221,7 @@ fn a_field_holds_what_it_is_given() {
              \x20   println(name)\n\
              }}\n"
         ),
-        "`Person`'s `name`",
+        "`name` again, but it was stored in `Person.name`",
     );
 }
 
@@ -348,7 +348,7 @@ fn a_statement_that_hands_over_twice_is_refused() {
          \x20   let name: String = \"n\"\n\
          \x20   println(f\"{keep(name, name)}\")\n\
          }\n",
-        "handed to `keep`",
+        "`name` again, but it was passed to `keep`, which keeps it",
     );
 }
 
@@ -393,7 +393,7 @@ fn a_part_handed_over_leaves_the_rest() {
              \x20   println(p.name)\n\
              }}\n"
         ),
-        "`p.name` was handed to `push`",
+        "`p.name` again, but it was passed to `push`, which keeps it",
     );
     one_refusal(
         &format!(
@@ -404,7 +404,7 @@ fn a_part_handed_over_leaves_the_rest() {
              \x20   let q = p\n\
              }}\n"
         ),
-        "`p` is used here, and `p.name` was handed",
+        "You're using `p`, but `p.name` was passed to `push`",
     );
     // And a part assigned again is there again.
     runs(
@@ -492,12 +492,14 @@ fn a_part_handed_to_std_is_named_once() {
     let part: Vec<_> = found.iter().filter(|f| f.code == "NK2106").collect();
     assert_eq!(part.len(), 1, "{found:#?}");
     assert!(
-        part[0].message.starts_with("`self.path` is handed"),
+        part[0]
+            .message
+            .starts_with("`self.path` is passed to `fs::write`, which keeps it"),
         "{found:#?}"
     );
     assert_eq!(
         part[0].help.as_deref(),
-        Some("hand over a copy: `self.path.clone()`")
+        Some("Hand over a copy: `self.path.clone()`.")
     );
 }
 
@@ -570,7 +572,7 @@ fn insert_writes_and_hands_back_what_it_replaced() {
          \x20   m.insert(k, 1)\n\
          \x20   println(k)\n\
          }\n",
-        "handed to `insert`",
+        "`k` again, but it was passed to `insert`, which keeps it",
     );
 }
 
@@ -818,6 +820,6 @@ fn owned_text_into_a_literal_binding_names_the_annotation() {
     assert_eq!(found[0].code, "NK1105");
     assert_eq!(
         found[0].help.as_deref(),
-        Some("say that `s` holds text of its own: `let mut s: String = \"a\"`")
+        Some("Declare it as text of its own: `let mut s: String = \"a\"`.")
     );
 }

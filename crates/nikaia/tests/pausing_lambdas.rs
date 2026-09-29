@@ -225,7 +225,7 @@ fn a_pause_inside_a_door_is_refused_by_the_language() {
     ] {
         let finding = refused(&program(door), "NK2202");
         assert!(
-            finding.message.contains("with a lock held"),
+            finding.message.contains("holding a lock"),
             "{door}: {finding:#?}"
         );
     }

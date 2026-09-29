@@ -17,6 +17,23 @@ mod common;
 
 use nikaia::parser::parse_to_ast;
 
+/// Everything a parse refusal says: its headline, and the notes and help the
+/// finding it carries adds under it.
+fn everything_said(refused: &anyhow::Error) -> String {
+    let mut said = refused.to_string();
+    if let Some(finding) = nikaia::diagnostics::refused_finding(refused) {
+        for note in &finding.notes {
+            said.push_str("\nnote: ");
+            said.push_str(note);
+        }
+        if let Some(help) = &finding.help {
+            said.push_str("\nhelp: ");
+            said.push_str(help);
+        }
+    }
+    said
+}
+
 /// The program the suspicion needed and did not have.
 ///
 /// Kept as the record of *why* this is refused rather than re-precedenced: the
@@ -34,9 +51,9 @@ fn main() {
 #[test]
 fn the_shape_that_read_both_ways_is_refused() {
     let refused = parse_to_ast(AMBIGUOUS).expect_err("a bare binary fallback is refused");
-    let said = refused.to_string();
+    let said = everything_said(&refused);
     assert!(
-        said.contains("the fallback of a `??` is one value"),
+        said.contains("The fallback after `??` is a single value unless you use brackets"),
         "and the refusal says why, in this language's words:\n{said}"
     );
     assert!(
@@ -127,11 +144,12 @@ fn a_chain_of_fallbacks_still_parses() {
 /// parse error that is not this shape.
 #[test]
 fn an_ordinary_parse_error_gets_no_note() {
-    let said = parse_to_ast("fn main() {\n    let x = = 1\n}\n")
-        .expect_err("a doubled `=` is a parse error")
-        .to_string();
+    let said = everything_said(
+        &parse_to_ast("fn main() {\n    let x = = 1\n}\n")
+            .expect_err("a doubled `=` is a parse error"),
+    );
     assert!(
-        !said.contains("the fallback of a `??`"),
+        !said.contains("The fallback after `??`"),
         "no `??` on the line, so no note about one:\n{said}"
     );
 }

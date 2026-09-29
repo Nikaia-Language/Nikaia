@@ -132,21 +132,18 @@ fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
         severity: Severity::Error,
         span: *span,
         code: "NK2505",
-        message: format!("`{crate_name}` has moved since its description was reviewed"),
+        message: format!("`{crate_name}` has changed since its description was reviewed."),
         notes: vec![
             format!(
-                "`contracts/{crate_name}.contracts` records what its sources hashed to, \
-                 and {which} hashes differently now - so the entries answer for a crate \
-                 that is not the one this build links against (ADR-104 D5)"
+                "`contracts/{crate_name}.contracts` describes an older version: {which} \
+                 changed since."
             ),
-            "a ledger whose hashes do not hold is derived again; a description is \
-             **reviewed** again instead, because what it says is a person's judgement \
-             and not this compiler's - a signature that lies is caught there or by \
-             nobody (ADR-100 D3)"
+            "A description is written by a person, so it has to be reviewed again, not \
+             just regenerated."
                 .to_string(),
         ],
         help: Some(format!(
-            "run `nikaia describe {crate_name}` and read the diff before you believe it"
+            "Run `nikaia describe {crate_name}` and review the diff before committing it."
         )),
         labels: Vec::new(),
     }
@@ -158,18 +155,16 @@ fn undescribed(crate_name: &str, span: &Span) -> Finding {
         severity: Severity::Error,
         span: *span,
         code: "NK2504",
-        message: format!("`{crate_name}` is not described"),
+        message: format!("`{crate_name}` has no description yet."),
         notes: vec![
-            "every analysis reads a contract at the boundary - what may cross a thread, \
-             what the call may reach, whether it pauses, whether it can fail - and an \
-             undescribed crate is an absence rather than an answer (ADR-104 D1)"
+            "Nikaia needs to know what a Rust crate's functions do: whether they pause, \
+             can fail, reach locks, or move values between threads."
                 .to_string(),
-            "the draft is written from the crate's own `pub` signatures, committed as \
-             `contracts/<crate>.contracts`, and reviewed like code: what a signature \
-             cannot say is written fail-closed (Part III, 15.2)"
+            "`nikaia describe` drafts a description from the crate's `pub` signatures into \
+             `contracts/<crate>.contracts`, for you to review and commit like code."
                 .to_string(),
         ],
-        help: Some(format!("run `nikaia describe {crate_name}`")),
+        help: Some(format!("Run `nikaia describe {crate_name}`.")),
         labels: Vec::new(),
     }
 }

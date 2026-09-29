@@ -43,9 +43,13 @@ fn a_range_is_an_expression() {
     let refused =
         parse_to_ast("fn main() { for i in 0..=5 { } }").expect_err("`..=` does not parse");
     assert!(
-        refused.to_string().contains("`..` includes its end"),
+        refused.to_string().contains("Nikaia has no `..=`"),
         "{refused}"
     );
+    let help = nikaia::diagnostics::refused_finding(&refused)
+        .and_then(|f| f.help.clone())
+        .unwrap_or_default();
+    assert!(help.contains("`0..n` already includes `n`"), "{help}");
 }
 
 /// A range binds looser than the arithmetic in it, which is the reading a loop
@@ -234,17 +238,21 @@ fn a_block_lambda_does_not_swallow_the_chain() {
 /// `fn: …` is gone, and says so.
 ///
 /// The form was in the specification and in three examples, so a parse error
-/// at the colon would be true and useless. What it did wrong is in the message,
+/// at the colon would be true and useless. What it did wrong is in the help,
 /// because that is the part a reader cannot see from the code in front of them.
 #[test]
 fn the_expression_lambda_says_it_was_removed() {
-    let message = format!(
-        "{:#}",
-        parse_to_ast("fn main() { let ids = users.map fn: a.id }").expect_err("refused")
+    let refused = parse_to_ast("fn main() { let ids = users.map fn: a.id }").expect_err("refused");
+    let message = format!("{refused:#}");
+    assert!(
+        message.contains("`fn: …` is no longer supported"),
+        "{message}"
     );
-    assert!(message.contains("ADR-022"), "{message}");
-    assert!(message.contains("`fn { … }`"), "{message}");
-    assert!(message.contains("inside* the lambda"), "{message}");
+    let help = nikaia::diagnostics::refused_finding(&refused)
+        .and_then(|f| f.help.clone())
+        .unwrap_or_default();
+    assert!(help.contains("`fn { … }`"), "{help}");
+    assert!(help.contains("became part of its body"), "{help}");
 }
 
 /// ADR-025 D1: a loop whose step can fail propagates the failure, and this is

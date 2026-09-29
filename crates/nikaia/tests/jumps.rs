@@ -236,7 +236,10 @@ fn the_lowering_is_the_same_word() {
 fn a_break_outside_a_loop_is_refused() {
     let (code, message) = one("fn f() {\n    break\n}\n");
     assert_eq!(code, "NK1132");
-    assert!(message.contains("not in a loop"), "{message}");
+    assert!(
+        message.contains("but this isn't inside a loop"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -340,7 +343,10 @@ fn a_value_written_after_a_break_is_refused() {
          \x20   return 0\n\
          }\n");
     assert_eq!(code, "NK1133");
-    assert!(message.contains("is reached"), "{message}");
+    assert!(
+        message.contains("Nothing after `break` in the same block can run"),
+        "{message}"
+    );
 }
 
 /// The help, on its own, because the message above is the *claim* and this is
@@ -366,7 +372,7 @@ fn the_help_names_a_let_before_the_loop_and_a_return() {
         .find(|f| f.code == "NK1133")
         .expect("the refusal");
     let help = found.help.as_deref().expect("a way out");
-    assert!(help.contains("`let` before the loop"), "{help}");
+    assert!(help.contains("a `let` declared before it"), "{help}");
     assert!(help.contains("`return`"), "{help}");
 }
 
@@ -429,7 +435,9 @@ fn a_jump_the_checker_walk_misses_is_still_not_emitted() {
     let refused =
         emit_program(&parsed, Build::default()).expect_err("a jump with no loop is not emitted");
     assert!(
-        refused.to_string().contains("no loop to act on"),
+        refused
+            .to_string()
+            .contains("only works inside a loop, and there's none here"),
         "{refused}"
     );
 }
@@ -701,11 +709,12 @@ fn a_bare_binary_fallback_is_refused_in_a_head_too() {
     ] {
         let refused = nikaia::parser::parse_to_ast(shape)
             .expect_err("a bare binary fallback is refused wherever it stands");
+        let finding = nikaia::diagnostics::refused_finding(&refused)
+            .expect("a parse error carries its finding");
+        let said = nikaia::diagnostics::render_finding(finding, "f.nika", shape);
         assert!(
-            refused
-                .to_string()
-                .contains("the fallback of a `??` is one value"),
-            "and says the same thing in every position:\n{refused}"
+            said.contains("The fallback after `??` is a single value unless you use brackets"),
+            "and says the same thing in every position:\n{said}"
         );
     }
 }

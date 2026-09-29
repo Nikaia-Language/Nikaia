@@ -427,11 +427,19 @@ fn throws_with_a_type_is_refused_with_the_reason() {
         .expect_err("`throws IoError` must not parse");
     let message = format!("{refused:#}");
     assert!(
-        message.contains("`throws` names no error type"),
+        message.contains("`throws` doesn't take an error type"),
         "{message}"
     );
-    assert!(message.contains("ADR-023 D1"), "{message}");
-    assert!(message.contains("nikaia.contracts"), "{message}");
+    // The reason is the help: the set is worked out, so a written one would
+    // only go out of date.
+    let help = nikaia::diagnostics::refused_finding(&refused)
+        .and_then(|f| f.help.clone())
+        .unwrap_or_default();
+    assert!(help.contains("Write `throws` on its own"), "{help}");
+    assert!(
+        help.contains("works out which errors a function can fail with"),
+        "{help}"
+    );
 
     // And every legal placement still parses. **`sync` before `throws`**, in
     // both positions, since [ADR-140](../../../docs/specification/adr/adr-140.md)
@@ -457,7 +465,7 @@ fn throws_with_a_type_is_refused_with_the_reason() {
             "{:#}",
             parse_to_ast(backwards).expect_err("`throws sync` must not parse")
         );
-        assert!(said.contains("`sync` stands before `throws`"), "{said}");
+        assert!(said.contains("`sync` comes before `throws`"), "{said}");
     }
 }
 

@@ -120,13 +120,15 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
         severity: Severity::Error,
         span: *span,
         code: "NK1135",
-        message: format!("nothing declares the trait `{name}`"),
+        message: format!("There's no trait called `{name}`."),
         notes: vec![
-            "a bound names a trait - what a caller's type has to implement (Part I, 4.7) - and this name is not one this program declares with `trait`, nor one a ledger records (ADR-106)"
+            "A bound names a trait the caller's type has to implement, and no trait by this \
+             name is declared."
                 .to_string(),
         ],
         help: Some(format!(
-            "declare `{name}` with `trait`, or leave the bound off - a parameter without one may be moved and passed and nothing else (ADR-074 D5)"
+            "Declare `{name}` with `trait`, or remove the bound. (Without a bound, the value \
+             can only be moved and passed on.)"
         )),
         labels: Vec::new(),
     }
@@ -185,23 +187,22 @@ fn declares(parsed: &Parsed, item: &Item) -> Option<(String, &'static str)> {
 /// way: finding out which of two declarations a line means.
 fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding {
     let kinds = match first == second {
-        true => format!("both as a `{first}`"),
-        false => format!("as a `{first}` and as a `{second}`"),
+        true => format!("both times as a `{first}`"),
+        false => format!("once as a `{first}` and once as a `{second}`"),
     };
     Finding {
         severity: Severity::Error,
         span: *span,
         code: "NK1148",
-        message: format!("`{name}` is declared twice in this file: {kinds}"),
+        message: format!("`{name}` is declared twice in this file, {kinds}."),
         notes: vec![
-            "a name denotes one thing (ADR-144 D1), so a line that writes it has one \
-             meaning and no rule is needed about which declaration wins - the files of a \
-             package share one namespace for the same reason (Part I, 9.1)"
+            "A name means one thing, so there's never a question of which declaration \
+             wins. All files of a package share their names for the same reason."
                 .to_string(),
         ],
         help: Some(format!(
-            "rename one of the two - a `struct` and its anonymous constructor are already \
-             one name, so `{name}` cannot also be a function of its own"
+            "Rename one of the two. (A `struct`'s name is already its constructor, so \
+             `{name}` can't also be a function.)"
         )),
         labels: Vec::new(),
     }
@@ -629,18 +630,14 @@ fn a_length_nothing_here_can_give(parsed: &Parsed, ty: &Type, span: &Span) -> Fi
         severity: Severity::Error,
         span: *span,
         code: "NK1182",
-        message: format!("`Array[{element}]` here has no length to take"),
+        message: format!("`Array[{element}]` needs a length here."),
         notes: vec![format!(
-            "`Array[{element}]` is an array of any length, and every use of it has one: in a \
-             **parameter** the call says which, and the function is generic over it (Part I, \
-             2.2). A field and a result have no call to ask, and the two readings left are \
-             something else - a struct generic over its length makes two of different lengths \
-             two types, and a result's length would be bound by nothing"
+            "`Array[{element}]` without a length only works for a parameter, where each call \
+             supplies the length. A field or a result has no call to take it from."
         )],
         help: Some(format!(
-            "write `Vec[{element}]` to own elements and be able to grow, `ref Array[{element}]` \
-             to look at elements somebody else keeps, or `Array[{element}, N]` to write the \
-             length down and have them laid out inline"
+            "Use `Vec[{element}]` for a list that can grow, `ref Array[{element}]` to look at \
+             elements something else keeps, or `Array[{element}, N]` to write the length down."
         )),
         labels: Vec::new(),
     }
@@ -649,16 +646,15 @@ fn a_length_nothing_here_can_give(parsed: &Parsed, ty: &Type, span: &Span) -> Fi
 fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
     let (what, message, help) = match slice {
         true => (
-            "a run of elements",
-            "`[T]` is a type only at the C boundary",
-            "write `Vec[T]`, or `Array[T, N]` where the length is known while \
-             the program is built - both carry their length, which `[T]` does not",
+            "`[T]`",
+            "`[T]` can only be used when talking to C.",
+            "Use `Vec[T]`, or `Array[T, N]` if the length is known when the program is \
+             built. Both know their length; `[T]` doesn't.",
         ),
         false => (
-            "a view that may be written through",
-            "`&mut` is a type only at the C boundary",
-            "write the `mut` in front of the **name** instead - `fn fill(mut out: Vec[i64])` \
-             is where in-place change is written (Part I, 2.1)",
+            "`&mut`",
+            "`&mut` can only be used when talking to C.",
+            "Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.",
         ),
     };
     Finding {
@@ -667,9 +663,8 @@ fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
         code: "NK1158",
         message: message.to_string(),
         notes: vec![format!(
-            "{what} is what an `extern \"C\"` declaration lends C, and it lives for \
-             the call (ADR-147 D1); away from that boundary this language has its own \
-             words for both"
+            "{what} is only for `extern \"C\"` declarations. Everywhere else, Nikaia has \
+             its own way to say it."
         )],
         help: Some(help.to_string()),
         labels: Vec::new(),
@@ -717,28 +712,23 @@ fn nothing_declares(name: &str, known: &BTreeSet<String>, span: &Span) -> Findin
         span: *span,
         code: "NK1135",
         message: match &in_a_module {
-            Some(_) => format!("`{name}` is written without its module"),
-            None => format!("nothing declares the type `{name}`"),
+            Some(_) => format!("`{name}` needs its module in front of it."),
+            None => format!("There's no type called `{name}`."),
         },
         notes: vec![match &in_a_module {
             Some(module) => format!(
-                "`{module}::{name}` is what it is called, and a type that lives in a module is \
-                 reached through it - what needs no prefix is the list on Part I's first page \
-                 (Part I, 1.3)"
+                "Its full name is `{module}::{name}`: a type from a module is written with \
+                 the module's name."
             ),
-            None => "a type is one Part I 2.2 offers, one this program declares with `struct` or \
-                     `enum`, one `std` publishes, or a parameter the declaration around it names \
-                     (Part I, 2.2)"
+            None => "A type is either built in, declared in your program with `struct` or \
+                     `enum`, provided by `std`, or a type parameter."
                 .to_string(),
         }],
         help: Some(match &in_a_module {
             Some(module) => format!(
-                "write `use std::{module}` at the top of the file, and `{module}::{name}` here"
+                "Write `use std::{module}` at the top of the file, and `{module}::{name}` here."
             ),
-            None => format!(
-                "declare `{name}` with `struct` or `enum`, or write a type that exists - a \
-                 misspelling is the usual cause"
-            ),
+            None => format!("Check the spelling, or declare `{name}` with `struct` or `enum`."),
         }),
         labels: Vec::new(),
     }

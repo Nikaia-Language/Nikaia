@@ -169,16 +169,17 @@ fn receivers(
             span: method.span,
             code: "NK1196",
             message: format!(
-                "`{trait_name}`'s `{name}` takes {}, and this takes {}",
+                "`{trait_name}`'s `{name}` takes {}, but this one takes {}.",
                 written(wanted.as_ref()),
                 written(receiver.as_ref())
             ),
             notes: vec![
-                "an implementation takes its value the way the trait declares it, because a caller through the trait hands it over that way (Part I, 4.7)"
+                "Callers go through the trait, so they pass the value the way the trait \
+                 declares."
                     .to_string(),
             ],
             help: Some(format!(
-                "take it as {}, as `{trait_name}` declares",
+                "Take it as {}, like `{trait_name}` declares.",
                 written(wanted.as_ref())
             )),
             labels: Vec::new(),
@@ -227,17 +228,17 @@ fn pausing(
             span: *span,
             code: "NK1129",
             message: format!(
-                "`{target}::{method}` pauses, and `{trait_name}` declares `{method}` as `sync`"
+                "`{target}::{method}` can pause, but `{trait_name}` declares `{method}` as \
+                 `sync`."
             ),
             notes: vec![
-                "a declaration's `sync` is a promise its implementations keep, the way a \
-                 function's own is (ADR-109 D2) - and the other direction fits: a body \
-                 that never pauses under a declaration that may is correct"
+                "`sync` in a trait promises that every implementation never pauses. (The \
+                 opposite is fine: a body that never pauses can implement a method that may.)"
                     .to_string(),
             ],
             help: Some(format!(
-                "take `sync` off `{trait_name}`'s `{method}`, or give the body nothing that \
-                 pauses - a file read, a sleep, a `.join()`"
+                "Remove `sync` from `{trait_name}`'s `{method}`, or take out what pauses \
+                 in the body, such as a file read, a sleep or a `.join()`."
             )),
             labels: Vec::new(),
         });
@@ -248,18 +249,18 @@ fn pausing(
             span: *span,
             code: "NK1140",
             message: format!(
-                "`{target}::{method}` can fail, and `{trait_name}` declares `{method}` without \
-                 `throws`"
+                "`{target}::{method}` can fail, but `{trait_name}` declares `{method}` \
+                 without `throws`."
             ),
             notes: vec![
-                "a declaration without `throws` is the claim that it cannot fail, and an \
-                 implementation keeps it (ADR-109 D2) - the other direction fits, since a \
-                 body that cannot fail under `throws` is correct"
+                "A trait method without `throws` promises that no implementation fails. \
+                 (The opposite is fine: a body that can't fail can implement one with \
+                 `throws`.)"
                     .to_string(),
             ],
             help: Some(format!(
-                "write `throws` on `{trait_name}`'s `{method}`, or handle the failure in the \
-                 body with `catch`"
+                "Add `throws` to `{trait_name}`'s `{method}`, or handle the failure in the \
+                 body with `catch`."
             )),
             labels: Vec::new(),
         });
@@ -282,15 +283,14 @@ fn not_in_the_trait(trait_name: &str, target: &str, method: &str, span: &Span) -
         severity: Severity::Error,
         span: *span,
         code: "NK1130",
-        message: format!("`{trait_name}` declares no method `{method}`"),
+        message: format!("`{trait_name}` has no method called `{method}`."),
         notes: vec![format!(
-            "an `impl {trait_name} for {target}` gives the type that trait's behaviour, and \
-             only that (Part I, 4.7) - a method of the type's own belongs in a plain \
-             `impl {target}` beside it"
+            "`impl {trait_name} for {target}` can only hold `{trait_name}`'s methods. The \
+             type's own methods go in a separate `impl {target}`."
         )],
         help: Some(format!(
-            "move it into `impl {target}`, or declare `{method}` in `{trait_name}` if every \
-             type that implements it should have one"
+            "Move it to `impl {target}`, or add `{method}` to `{trait_name}` if every type \
+             that implements it should have one."
         )),
         labels: Vec::new(),
     }
@@ -303,16 +303,16 @@ fn incomplete(trait_name: &str, target: &str, missing: &BTreeSet<&String>, span:
         span: *span,
         code: "NK1130",
         message: format!(
-            "`{target}` does not implement {} of `{trait_name}`",
+            "`{target}` is missing {} from `{trait_name}`.",
             names.join(", ")
         ),
         notes: vec![
-            "a trait is a promise that every one of its methods is there, which is what \
-             lets a bound call them (Part I, 4.7)"
+            "A trait promises that all its methods are there, which is what lets code \
+             call them through a bound."
                 .to_string(),
         ],
         help: Some(format!(
-            "write {} in this `impl`, or take {} out of `{trait_name}`",
+            "Add {} to this `impl`, or remove {} from `{trait_name}`.",
             names.join(", "),
             match names.len() {
                 1 => "it".to_string(),

@@ -149,7 +149,9 @@ fn a_prelude_name_with_a_module_in_front_is_refused() {
         .find(|f| f.code == "NK1163")
         .unwrap_or_else(|| panic!("{found:#?}"));
     assert!(
-        refusal.message.contains("`println` needs no module"),
+        refusal
+            .message
+            .contains("`println` isn't in `io`: it's always available on its own"),
         "{refusal:#?}"
     );
     assert!(

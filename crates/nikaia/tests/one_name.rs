@@ -38,7 +38,9 @@ fn a_type_and_a_function_of_one_name_are_refused() {
     let found = refusals("struct Foo { n: i64 }\nfn Foo(n: i64) -> i64 { return n }\n");
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(
-        found[0].message.contains("as a `struct` and as a `fn`"),
+        found[0]
+            .message
+            .contains("once as a `struct` and once as a `fn`"),
         "the message names both kinds: {}",
         found[0].message
     );
@@ -54,7 +56,7 @@ fn two_of_one_kind_say_so_once() {
     let found = refusals("struct Foo { n: i64 }\nstruct Foo { m: i64 }\n");
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(
-        found[0].message.contains("both as a `struct`"),
+        found[0].message.contains("both times as a `struct`"),
         "{}",
         found[0].message
     );
@@ -69,7 +71,7 @@ fn a_trait_and_a_grammar_declare_a_name_too() {
     assert!(
         with_trait[0]
             .message
-            .contains("as a `trait` and as a `struct`"),
+            .contains("once as a `trait` and once as a `struct`"),
         "{}",
         with_trait[0].message
     );
@@ -82,7 +84,7 @@ fn a_trait_and_a_grammar_declare_a_name_too() {
     assert!(
         with_grammar[0]
             .message
-            .contains("as a `struct` and as a `grammar`"),
+            .contains("once as a `struct` and once as a `grammar`"),
         "{}",
         with_grammar[0].message
     );

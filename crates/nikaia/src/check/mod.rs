@@ -58,9 +58,8 @@ const OFFERED_NUMBERS: [&str; 6] = ["i32", "i64", "u8", "u32", "u64", "f64"];
 /// `user_parallelism`, or a library written at one setting would turn out
 /// un-compilable at the other - which is the failure the check was decided to
 /// prevent rather than a property of it.
-const SAME_AT_BOTH: &str = "a value may cross a thread only if it may cross any thread, \
-     so the answer is the same at both settings of `user_parallelism` and a library built at \
-     one stays usable at the other (Part III, C.3)";
+const SAME_AT_BOTH: &str = "This is checked even when the program runs on one thread, so \
+     code stays correct when `user-parallelism` is turned on.";
 
 /// Whether a finding stops the build.
 ///
@@ -3853,12 +3852,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1156",
-            message: format!("`use {}` brings no name in", segments.join("::")),
-            notes: vec![format!(
-                "a `use` names a module and brings no name in (Part I, 9.1), for `std` \
-                 as for a package - and `{last}` is a type, so this line does nothing \
-                 at all"
-            )],
+            message: format!(
+                "`use {}` does nothing: `{last}` is a type, and `use` brings in modules.",
+                segments.join("::")
+            ),
+            notes: vec![
+                "A `use` line names a module, never a single type or function inside one."
+                    .to_string(),
+            ],
             // **Where the type lives in a module, the way out is the module**
             // ([ADR-154](../../docs/specification/adr/adr-154.md)): `use
             // std::fs::Mapped` is refused, and *drop the line* would be wrong
@@ -3872,12 +3873,11 @@ impl<'a> Checker<'a> {
                         .map(|module| module.to_string())
                 }) {
                     Some(module) => format!(
-                        "write `use std::{module}`, and `{module}::{last}` wherever it is needed"
+                        "Write `use std::{module}`, and then `{module}::{last}` where you need it."
                     ),
-                    None => format!(
-                        "drop the line: `{last}` is a name that needs no `use` (Part I, 1.3), and \
-                     it is written `{last}` wherever it is needed"
-                    ),
+                    None => {
+                        format!("Remove the line: `{last}` is always available, no `use` needed.")
+                    }
                 },
             ),
             labels: Vec::new(),
@@ -3928,18 +3928,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1186",
-            message: format!("`use {written}` names a module `std` does not have"),
-            notes: vec![why.unwrap_or_else(|| {
-                format!(
-                    "what may stand after `use std::` is what `std`'s ledger declares, and \
-                 `{module}` is not one of them (Part I, 1.3 and 9.1) - a module a record \
-                 names and this compiler has not built yet is accepted, because the day it \
-                 lands the line is unchanged"
-                )
-            })],
+            message: format!("`std` has no module called `{written}`."),
+            notes: vec![
+                why.unwrap_or_else(|| {
+                    format!("`{module}` is not one of the modules `std` offers.")
+                }),
+            ],
             help: Some(match near {
-                Some(near) => format!("did you mean `use std::{near}`?"),
-                None => format!("`std` offers: {}", offered.join(", ")),
+                Some(near) => format!("Did you mean `use std::{near}`?"),
+                None => format!("`std` offers: {}.", offered.join(", ")),
             }),
             labels: Vec::new(),
         });
@@ -3971,8 +3968,8 @@ impl<'a> Checker<'a> {
             (
                 "digit1",
                 "`digit+`",
-                "a run of a character class is the class and a `+`, and it yields \
-                 the text it matched",
+                "one or more characters of a class are written as the class and a `+`, \
+                 which gives the text it matched",
             ),
         ];
         match &pattern.node {
@@ -3989,12 +3986,9 @@ impl<'a> Checker<'a> {
                         severity: Severity::Error,
                         span: pattern.span,
                         code: "NK1187",
-                        message: format!("`{written}` is not a name a grammar writes"),
-                        notes: vec![format!(
-                            "Part II 10.8 is every element a grammar may write, and it does \
-                             not name this one (ADR-120 D1, D3) - {why}"
-                        )],
-                        help: Some(format!("write {instead}")),
+                        message: format!("`{written}` is not something a grammar can use."),
+                        notes: vec![sentence(why)],
+                        help: Some(format!("Write {instead} instead.")),
                         labels: Vec::new(),
                     });
                 }
@@ -4071,7 +4065,7 @@ impl<'a> Checker<'a> {
                 self.inside_an_action = outer_action;
                 if let (Some(expected), Some(span)) = (&expected, tail_span) {
                     self.expect(&tail, expected, span, "returns", |found, want| {
-                        format!("this action builds `{found}`, and its rule declares `{want}`")
+                        format!("This action builds `{found}`, but its rule returns `{want}`.")
                     });
                 }
                 self.expected = outer;
@@ -4218,17 +4212,18 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *at,
             code: "NK2210",
-            message: format!("`sync({named})` names what is not code `{key}` runs"),
+            message: format!(
+                "`sync({named})` names `{named}`, but `{key}` doesn't run it as code."
+            ),
             notes: vec![
                 why,
-                "`sync(f)` promises the function pauses only where the lambda handed to \
-                 `f` does, and that is a promise about a lambda the call itself runs \
-                 (ADR-244 D4)"
+                "`sync(f)` promises the function pauses only where the lambda passed as \
+                 `f` does, so `f` has to be a lambda the function itself calls."
                     .to_string(),
             ],
             help: Some(format!(
-                "name a parameter of `{key}` that takes a function and runs it, or write \
-                 plain `sync` where nothing it is handed can pause"
+                "Name a parameter of `{key}` that takes a function and calls it, or write \
+                 plain `sync` if nothing it's given can pause."
             )),
             labels: Vec::new(),
         });
@@ -4527,11 +4522,13 @@ impl<'a> Checker<'a> {
                 &tail,
                 expected,
                 value,
-                "the function hands it to its caller, who keeps it after this call has ended",
+                "the function returns it, and the caller keeps it after the call ends",
                 span,
                 "returns",
                 |found, want| {
-                    format!("this function hands back `{found}`, and it declares `{want}`")
+                    format!(
+                        "This function returns `{found}`, but it's declared to return `{want}`."
+                    )
                 },
             );
         }
@@ -4674,10 +4671,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("nothing declares `{name}`"),
+            message: format!("`{name}` isn't declared anywhere."),
             notes: vec![
-                "this language has no word it does not know: one it has no rule for is \
-                 read as a name, and a name has to be declared somewhere (Part I, 9.1)"
+                "A word the language doesn't know is read as a name, and a name has to \
+                 be declared before it's used."
                     .to_string(),
             ],
             help: Some(match a_word_that_was_reserved(&name) {
@@ -4689,8 +4686,8 @@ impl<'a> Checker<'a> {
                 // about a name.
                 Some(instead) => instead.to_string(),
                 None => format!(
-                    "if `{name}` is meant to be a value, declare it with `let`; if it is \
-                     meant to be a keyword, this language has no such keyword"
+                    "If `{name}` is meant to be a value, declare it with `let`. If you meant \
+                     a keyword, Nikaia doesn't have one called `{name}`."
                 ),
             }),
             labels: Vec::new(),
@@ -4742,20 +4739,20 @@ impl<'a> Checker<'a> {
             .collect();
         known.push("panic");
         let help = match nearest(name, &known) {
-            Some(near) => format!("did you mean `{near}`?"),
+            Some(near) => format!("Did you mean `{near}`?"),
             None => format!(
-                "declare it with `fn {name}(…)`, or call it through the package that has it"
+                "Declare it with `fn {name}(…)`, or call it through the package that has it."
             ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("nothing declares a function `{name}`"),
+            message: format!("There's no function called `{name}`."),
             notes: vec![
-                "a function called by its bare name is this program's, a value in scope or \
-                 one the prelude offers; a `use` brings no name in, so one from a package \
-                 is written with the package's name in front (Part I, 9.1)"
+                "A function called by its name alone is one of yours or one that's always \
+                 available. A function from a package is called with the package's name in \
+                 front: `package::name(…)`."
                     .to_string(),
             ],
             help: Some(help),
@@ -4851,11 +4848,11 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1190",
-            message: format!("`{name}` declares no constructor, so it cannot be called"),
+            message: format!("You can't call `{name}(…)`: it has no constructor."),
             notes: vec![format!(
-                "a type is called through its anonymous constructor, `impl {name} {{ pub fn(…) … }}` (ADR-140 D2), and `{name}` has none"
+                "A type is called through a constructor, `impl {name} {{ pub fn(…) … }}`, and `{name}` doesn't declare one."
             )],
-            help: Some(format!("build it with a literal: `{name} {{ {fields} }}`")),
+            help: Some(format!("Build it with a literal: `{name} {{ {fields} }}`.")),
             labels: Vec::new(),
         });
     }
@@ -4871,12 +4868,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1190",
-            message: format!("`{name}` is a type, and nothing describes a constructor for it"),
+            message: format!("You can't call `{name}(…)`: it has no constructor."),
             notes: vec![format!(
-                "a type is built by its anonymous constructor, `{name}()`, and what that \
-                 does is the entry `{name}::new` in the ledger that describes the type \
-                 (ADR-140 D2) - `{name}` has no such entry, so there is nothing this call \
-                 could be lowered to"
+                "Calling `{name}()` runs `{name}::new` from the type's description, and \
+                 that description has no `{name}::new`."
             )],
             help: None,
             labels: Vec::new(),
@@ -4914,15 +4909,16 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1105",
             message: format!(
-                "this is `String`, and `{name}` is a `ref String`, because it began as a literal"
+                "You're giving `{name}` text of its own, but it started as a literal, so it \
+                 can only hold a view of text."
             ),
             notes: vec![
-                "a literal is a view of text built into the program, and a name bound to one \
-                 is a view too - so what it is given later has to be one as well (ADR-216 D4)"
+                "A literal is text built into the program. A name bound to one is a view of \
+                 that text, so everything it's given later has to be a view too."
                     .to_string(),
             ],
             help: Some(format!(
-                "say that `{name}` holds text of its own: `let mut {name}: String = \"{literal}\"`"
+                "Declare it as text of its own: `let mut {name}: String = \"{literal}\"`."
             )),
             labels: Vec::new(),
         });
@@ -4952,20 +4948,22 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1191",
             message: match is_a_list(side) {
-                true => format!("`{symbol}` is not defined on a list"),
-                false => format!("`{symbol}` is not defined on `{side}`"),
+                true => format!("You can't use `{symbol}` on a list."),
+                false => format!("You can't use `{symbol}` on `{side}`."),
             },
             notes: vec![match joining {
-                true => "a list has no operators (Part I, 4.5): whether `+` should join two \
-                         lists is not decided, and it is on `open-decisions.md`"
+                true => "Lists have no operators, and whether `+` should join two lists hasn't \
+                         been decided yet."
                     .to_string(),
-                false => format!(
-                    "a list, a map or a set has no arithmetic (Part I, 4.5), and the other \
-                     side is `{other}`"
-                ),
+                false => match other.is_unknown() {
+                    true => "Lists, maps and sets have no arithmetic.".to_string(),
+                    false => format!(
+                        "Lists, maps and sets have no arithmetic. The other side is `{other}`."
+                    ),
+                },
             }],
             help: joining.then(|| {
-                "to add one list's elements to the end of another: `a.extend(b)`".to_string()
+                "To add one list's elements to the end of another, write `a.extend(b)`.".to_string()
             }),
             labels: Vec::new(),
         });
@@ -5128,17 +5126,16 @@ impl<'a> Checker<'a> {
                             span: *span,
                             code: "NK1193",
                             message: format!(
-                                "the part of `{owner}` at position {at} holds its own type, and \
-                                 a pattern cannot look inside it yet"
+                                "This pattern looks inside part {at} of `{owner}`, which holds \
+                                 its own type, and patterns can't look inside such a part yet."
                             ),
                             notes: vec![
-                                "a part that holds its own type is kept in a box the compiler \
-                                 writes (ADR-246 D1), and a pattern cannot be matched through \
-                                 one below: a name binds the part, and the arm reads it"
+                                "A part that holds its own type is stored behind a pointer, and a \
+                                 pattern can only bind it to a name."
                                     .to_string(),
                             ],
                             help: Some(
-                                "bind the part to a name here and `match` on the name in the arm"
+                                "Bind the part to a name here, and `match` on that name inside the arm."
                                     .to_string(),
                             ),
                             labels: Vec::new(),
@@ -5193,12 +5190,12 @@ impl<'a> Checker<'a> {
         self.stored_frames.push(StoredCode::default());
         let found = self.expr(condition, span);
         let frame = self.stored_frames.pop().unwrap_or_default();
-        self.expect_bool(&found, span, "an `assert` claims a `bool`");
+        self.expect_bool(&found, span, "An `assert` checks a `bool`.");
         // A number's type is settled below, so the check above cannot see
         // `assert(5)`; the literal is its own answer.
         if is_a_literal_other_than(condition, "bool") {
             self.an_assert_of_another_shape(
-                "an `assert` claims a `bool`, and this is a literal of another type".to_string(),
+                "An `assert` checks a `bool`, but this is a literal of another type.".to_string(),
                 span,
             );
         }
@@ -5208,7 +5205,9 @@ impl<'a> Checker<'a> {
             let found = self.expr(&option.value, span);
             if name != "message" {
                 self.an_assert_of_another_shape(
-                    format!("`assert` has no option `{name}`; its one option is `message:`"),
+                    format!(
+                        "`assert` has no option called `{name}`. Its only option is `message:`."
+                    ),
                     span,
                 );
                 continue;
@@ -5220,10 +5219,12 @@ impl<'a> Checker<'a> {
             if not_text {
                 self.an_assert_of_another_shape(
                     match found.is_unknown() {
-                        true => "an `assert`'s `message:` is text, and this is a literal of \
-                                 another type"
+                        true => "An `assert`'s `message:` has to be text, but this is a \
+                                 literal of another type."
                             .to_string(),
-                        false => format!("an `assert`'s `message:` is text, and this is `{found}`"),
+                        false => format!(
+                            "An `assert`'s `message:` has to be text, but this is `{found}`."
+                        ),
                     },
                     span,
                 );
@@ -5234,7 +5235,8 @@ impl<'a> Checker<'a> {
         let mut not_pure: Vec<String> = Vec::new();
         if frame.unresolved {
             not_pure.push(
-                "it calls a method nothing describes, so nothing says it changes nothing"
+                "It calls a method the compiler knows nothing about, so it might change \
+                 something."
                     .to_string(),
             );
         }
@@ -5251,17 +5253,17 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1194",
-                message: "the condition of an `assert` has to change nothing".to_string(),
+                message: "An `assert` condition can't change anything.".to_string(),
                 notes: not_pure
                     .into_iter()
                     .chain(std::iter::once(
-                        "an `assert` is a claim the compiler may later prove, so its condition \
-                         may not pause, fail, touch anything or change a value (ADR-245 D3)"
+                        "An `assert` states something that's true. Its condition may not pause, \
+                         fail, touch the outside world or change a value."
                             .to_string(),
                     ))
                     .collect(),
                 help: Some(
-                    "compute the value first, with `let`, and claim something about the name"
+                    "Compute the value first with `let`, then `assert` something about it."
                         .to_string(),
                 ),
                 labels: Vec::new(),
@@ -5309,7 +5311,7 @@ impl<'a> Checker<'a> {
             code: "NK1195",
             message,
             notes: vec![
-                "`assert(cond)` or `assert(cond; message: \"…\")` (ADR-245 D2)".to_string(),
+                "Write it as `assert(cond)` or `assert(cond; message: \"…\")`.".to_string(),
             ],
             help: None,
             labels: Vec::new(),
@@ -5350,7 +5352,7 @@ impl<'a> Checker<'a> {
                 Expr::Try(_) | Expr::Throw(_) | Expr::TryCatch { .. } => Some("can fail"),
                 Expr::Return(_) | Expr::Break | Expr::Continue => Some("jumps"),
                 Expr::Block(_) | Expr::If { .. } | Expr::Match { .. } | Expr::Closure { .. } => {
-                    Some("holds a block, which may change something")
+                    Some("contains a block, which might change something")
                 }
                 _ => None,
             };
@@ -5370,7 +5372,8 @@ impl<'a> Checker<'a> {
                         .join("::"),
                 ),
                 _ => {
-                    found.push("the condition calls something that is not a name".to_string());
+                    found
+                        .push("The condition calls something that isn't a plain name.".to_string());
                     return;
                 }
             };
@@ -5392,7 +5395,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 None => found.push(format!(
-                    "nothing describes `{name}`, so nothing says it changes nothing"
+                    "The compiler knows nothing about `{name}`, so it might change something."
                 )),
             }
         });
@@ -5502,26 +5505,25 @@ impl<'a> Checker<'a> {
             // `struct` is a `Struct` by being one, so there is no trait to
             // implement and no `impl` that could say it.
             true => format!(
-                "`{written}` is answered by what a type is declared as, not by an `impl`: a \
-                 `struct` is a `Struct` and an `enum` is an `Enum` already (ADR-088 D2)"
+                "A type is a `{written}` by how it's declared, not by an `impl`: every \
+                 `struct` is already a `Struct` and every `enum` an `Enum`."
             ),
             false => format!(
-                "an `impl` names a trait the program declares with `trait {written} {{ … }}`, \
-                 one a package it depends on declares, or `Error`, `Drop` or `Cleanup`, \
-                 which the language names itself (Part I, 4.7)"
+                "An `impl` can name a trait declared with `trait {written} {{ … }}` in \
+                 this program or a package it uses, or one of `Error`, `Drop` and `Cleanup`."
             ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("nothing declares a trait called `{written}`"),
+            message: format!("There's no trait called `{written}`."),
             notes: vec![because],
             help: Some(match shape {
-                true => "leave the `impl` out: the bound is already answered".to_string(),
+                true => "Leave the `impl` out: that's already covered.".to_string(),
                 false => format!(
-                    "declare `trait {written}`, or write the path of the package that does: \
-                     `package::{written}`"
+                    "Declare `trait {written}`, or name the package that declares it: \
+                     `package::{written}`."
                 ),
             }),
             labels: Vec::new(),
@@ -5593,18 +5595,20 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1181",
-            message: format!("nothing declares `{head}`, which `{written}` is written under"),
+            message: format!(
+                "`{written}` is written under `{head}`, but `{head}` isn't declared anywhere."
+            ),
             notes: vec![
-                "a name in front of a `::` is a type, a module of this package, a package the \
-                 manifest declares, a crate a description covers, or a `std` module - and this \
-                 compiler has read all five, so one that answers to none of them is a name \
-                 nobody has written down (Part I, 9.1)"
+                "A name in front of `::` has to be a type, a module of this package, a \
+                 package in `nikaia.toml`, a described Rust crate or a `std` module, and \
+                 `{head}` is none of them."
+                    .replace("{head}", head)
                     .to_string(),
             ],
             help: Some(format!(
-                "declare `{head}`: a `.nika` file beside this one gives the package a module of \
-                 that name, a `[dependencies]` line gives it a package, and \
-                 `nikaia describe {head}` gives it a foreign crate"
+                "To declare `{head}`, add a `{head}.nika` file beside this one, a \
+                 `[dependencies]` line in `nikaia.toml`, or run `nikaia describe {head}` \
+                 for a Rust crate."
             )),
             labels: Vec::new(),
         });
@@ -5636,13 +5640,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1121",
-            message: format!("`?.` reaches through a `{on}`, which cannot be absent"),
+            message: format!("You don't need `?.` here: a `{on}` is never absent."),
             notes: vec![format!(
-                "`?.` exists for a nullable type - it reaches the {what} only where there \
-                 is something to reach it on, and answers `null` otherwise (Part I, 3.5). \
-                 A type that is not `T?` always has a value"
+                "`?.` is for a value that may be missing: it reaches the {what} when \
+                 there's something there and gives `null` otherwise. A type without `?` \
+                 always has a value."
             )],
-            help: Some(format!("write `{plain}`")),
+            help: Some(format!("Write `{plain}`.")),
             labels: Vec::new(),
         });
     }
@@ -5682,19 +5686,18 @@ impl<'a> Checker<'a> {
             // is that the value may be absent, so that is what is said.
             message: match on {
                 Ty::Nullable(inner) if inner.is_unknown() => {
-                    format!("this value may be absent, so it has no {what} to reach")
+                    format!("This value may be missing, so you can't reach its {what} directly.")
                 }
-                _ => format!("`{on}` may be absent, so it has no {what} to reach"),
+                _ => format!("A `{on}` may be missing, so you can't reach its {what} directly."),
             },
             notes: vec![
-                "a `T?` is a type of its own and not a `T` that might be missing \
-                 (Part I, 2.3), so a member of `T` is not a member of it - which is \
-                 why there is no null reference to fail on here"
+                "A `T?` is its own type, not a `T` that might be missing, so it doesn't \
+                 have `T`'s members. That's why a missing value can never crash here."
                     .to_string(),
             ],
             help: Some(format!(
-                "write `{safe}`, which answers `null` where there is nothing to reach \
-                 on - or end the chain with `??` and reach into the value it gives"
+                "Write `{safe}`, which gives `null` when the value is missing, or give a \
+                 fallback with `??` first and reach into that."
             )),
             labels: Vec::new(),
         });
@@ -5767,19 +5770,17 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1126",
             message: format!(
-                "`{parameter}` stands for a type the caller picks, and nothing says it has a \
-                 {what} `{name}`"
+                "`{parameter}` can be any type the caller picks, so you can't use a {what} \
+                 `{name}` on it."
             ),
             notes: vec![
-                "a type parameter with no bound can be moved and passed and nothing \
-                 else, because every type the caller may pick has to answer for what \
-                 the body does (Part I, 4.6)"
+                "A type parameter with no bound can only be moved and passed on, because \
+                 the body has to work for every type the caller might pick."
                     .to_string(),
             ],
             help: Some(format!(
-                "write the type the value actually has, or take `{parameter}` out and \
-                 declare the parameter as that type - a bound that says which types \
-                 `{parameter}` may be is not built yet"
+                "Use the concrete type the value has instead of `{parameter}`. Bounds that \
+                 limit which types `{parameter}` can be aren't available yet."
             )),
             labels: Vec::new(),
         });
@@ -5863,15 +5864,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1147",
-            message: format!("a rule of grammar `{grammar}` is reached with `::`, not with a dot"),
+            message: format!("Reach a rule of `{grammar}` with `::`, not with a dot."),
             notes: vec![
-                "a grammar's name is a name, and a rule of it is a qualified name like \
-                 every other (ADR-140 D3). The dot is for a **value's** members, and a \
-                 namespace behind one was the single place this language asked a reader \
-                 to tell two things apart by what the left side happens to be"
+                "A grammar is a name like a module, and its rules are reached the same way. \
+                 The dot is only for a value's fields and methods."
                     .to_string(),
             ],
-            help: Some(format!("write `{grammar}::{rule}(…)`")),
+            help: Some(format!("Write `{grammar}::{rule}(…)`.")),
             labels: Vec::new(),
         });
     }
@@ -6074,13 +6073,13 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1137",
-                message: "the `&` here is the compiler's to write".to_string(),
+                message: "You don't need the `&` here: the compiler adds it where it's needed."
+                    .to_string(),
                 notes: vec![format!(
-                    "`{written}` reads this argument rather than keeping it, so the \
-                     reference is what the call already means (ADR-094 D1) - and which \
-                     of the two it is comes from the callee's body, not from this line"
+                    "`{written}` only reads this argument, so it's lent already. Whether an \
+                     argument is lent or handed over is decided by the function, not the call."
                 )],
-                help: Some("take the `&` off".to_string()),
+                help: Some("Remove the `&`.".to_string()),
                 labels: Vec::new(),
             });
             return true;
@@ -6156,26 +6155,34 @@ impl<'a> Checker<'a> {
         if !self.inside_a_door || !holds.holds() {
             return;
         }
+        // A method by the name the program wrote, not by its ledger key:
+        // `access`, not `SharedMut::access`.
+        let method = called.rsplit("::").next().unwrap_or(called);
+        let written = match called.chars().next().is_some_and(char::is_uppercase) {
+            true => method,
+            false => called,
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK2203",
-            message: format!("`{called}` takes a lock, and this runs with one already held"),
+            message: format!("`{written}` takes a lock, but you're already holding one here."),
             notes: vec![
-                "a door's block runs with the lock open, so a second one taken inside it \
-                 is a lock inside a lock - which is a deadlock rather than a risk \
-                 (ADR-039 D2)"
-                    .to_string(),
-                "what a function reaches is its own column in the ledger (13.5), so this \
-                 is answered through a chain of calls as well as for one written here"
+                "This block runs while a lock is held, so taking a second lock inside it \
+                 can deadlock."
                     .to_string(),
             ],
             help: Some(
-                "ask for both at once - `access_all(a, b) fn(x, y) { … }` - or compute \
-                 outside the block and hand the value in"
+                "Take both locks at once with `access_all(a, b) fn(x, y) { … }`, or \
+                 compute the value before the block and pass it in."
                     .to_string(),
             ),
-            labels: Vec::new(),
+            labels: vec![Label {
+                span: *span,
+                word: method.to_string(),
+                text: "takes a second lock".to_string(),
+                main: true,
+            }],
         });
     }
 
@@ -6227,21 +6234,21 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2201",
-            message: format!("{what} reads a file, and this runs with a lock held"),
+            message: format!(
+                "{} reads a file, but you're holding a lock here.",
+                sentence(what)
+            ),
             notes: vec![
                 format!(
-                    "`{name}` is a file held as memory, so reading it is a page fault - \
-                     a disk read, which is what a door's block may not wait for \
-                     (Part II, 12.2)"
+                    "`{name}` is a file mapped into memory, so reading it can wait on the \
+                     disk, and a block that holds a lock must never wait."
                 ),
-                "it is neither a pause nor a second lock, which is why `NK2202` and \
-                 `NK2203` say nothing about it (ADR-067 D1)"
+                "This wait doesn't show up as a pause or a second lock, which is why it \
+                 gets its own message."
                     .to_string(),
             ],
             help: Some(
-                "read what you need before the door and hand the value in, so the block \
-                 works on memory that is already there"
-                    .to_string(),
+                "Read what you need before taking the lock, and pass the value in.".to_string(),
             ),
             labels: Vec::new(),
         });
@@ -6282,14 +6289,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1141",
-            message: "an `update` changes its value; there is nothing to return".to_string(),
+            message: "An `update` changes the value in place, so it has nothing to return."
+                .to_string(),
             notes: vec![
-                "the block is handed the value where it lies and changes it in place \
-                 (ADR-110 D1), so what it comes to is not put anywhere"
+                "The block gets the value itself and changes it where it is, so a value \
+                 it returns would go nowhere."
                     .to_string(),
             ],
             help: Some(
-                "change it instead: `fn(mut v) { v += 1 }` rather than `fn(v) { v + 1 }`"
+                "Change it instead: write `fn(mut v) { v += 1 }`, not `fn(v) { v + 1 }`."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -6456,20 +6464,19 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2605",
-                message: format!("this function can fail because the cleanup of `{name}` can fail"),
+                message: format!("This function can fail, because cleaning up `{name}` can fail."),
                 notes: vec![format!(
-                    "`{name}` {is} a `{owner}`, whose cleanup runs where it dies - at the \
-                     end of this block - and can fail, so the function that owns it can \
-                     fail with it (Part I 6.4, ADR-239 D3)"
+                    "`{name}` {is} a `{owner}`. Its cleanup runs at the end of this block \
+                     and can fail, so the function can fail with it."
                 )],
                 help: Some(match is {
                     "is" => format!(
-                        "declare it with `throws`, or close it where the failure should be \
-                         handled: `{name}.close() catch {{ … }}`"
+                        "Declare the function with `throws`, or close it yourself where you \
+                         want to handle the failure: `{name}.close() catch {{ … }}`."
                     ),
                     _ => format!(
-                        "declare it with `throws`, or close the `{owner}` it holds where the \
-                         failure should be handled, with `close() catch {{ … }}`"
+                        "Declare the function with `throws`, or close the `{owner}` it holds \
+                         yourself, with `close() catch {{ … }}`."
                     ),
                 }),
                 labels: Vec::new(),
@@ -6517,24 +6524,23 @@ impl<'a> Checker<'a> {
                     }
                     (
                         format!(
-                            "`cleanup` of `{target}` takes `ref mut self` and nothing else, and \
-                             hands nothing back"
+                            "`cleanup` of `{target}` has to take `ref mut self`, nothing else, and \
+                             return nothing."
                         ),
-                        "write it `fn cleanup(ref mut self)`, with `throws` where it can fail"
+                        "Write it as `fn cleanup(ref mut self)`, with `throws` if it can fail."
                             .to_string(),
                     )
                 }
                 "drop" => (
-                    format!("`drop` does not belong in `impl Cleanup for {target}`"),
+                    format!("`drop` doesn't belong in `impl Cleanup for {target}`."),
                     format!(
-                        "the synchronous fallback is its own `impl Drop for {target} {{ fn \
-                         drop(ref mut self) {{ … }} }}`, which runs after `cleanup`, or alone \
-                         where `cleanup` cannot run"
+                        "Put it in its own `impl Drop for {target} {{ fn drop(ref mut self) \
+                         {{ … }} }}`, which runs after `cleanup`, or alone where `cleanup` can't run."
                     ),
                 ),
                 other => (
-                    format!("`{other}` does not belong in `impl Cleanup for {target}`"),
-                    format!("write it in `impl {target}`, where the type's own methods stand"),
+                    format!("`{other}` doesn't belong in `impl Cleanup for {target}`."),
+                    format!("Move it to `impl {target}`, with the type's other methods."),
                 ),
             };
             self.checked.findings.push(Finding {
@@ -6543,8 +6549,8 @@ impl<'a> Checker<'a> {
                 code: "NK2601",
                 message,
                 notes: vec![
-                    "`impl Cleanup` has one method, `fn cleanup(ref mut self)`, which may \
-                     pause and may fail (Part I 6.4)"
+                    "`impl Cleanup` has exactly one method, `fn cleanup(ref mut self)`, and \
+                     it may pause and may fail."
                         .to_string(),
                 ],
                 help: Some(help),
@@ -6556,13 +6562,13 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2601",
-                message: format!("`impl Cleanup for {target}` does not write `cleanup`"),
+                message: format!("`impl Cleanup for {target}` is missing its `cleanup` method."),
                 notes: vec![
-                    "`impl Cleanup` has one method, `fn cleanup(ref mut self)`, which may \
-                     pause and may fail (Part I 6.4)"
+                    "`impl Cleanup` has exactly one method, `fn cleanup(ref mut self)`, and \
+                     it may pause and may fail."
                         .to_string(),
                 ],
-                help: Some("write `fn cleanup(ref mut self) { … }`".to_string()),
+                help: Some("Add `fn cleanup(ref mut self) { … }`.".to_string()),
                 labels: Vec::new(),
             });
         }
@@ -6595,19 +6601,18 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK2107",
             message: format!(
-                "this lambda runs on several cores at once, and it changes `{name}`, which \
-                 all of them share"
+                "You're changing `{name}` in a lambda that runs on several cores at once, \
+                 and they all share `{name}`."
             ),
             notes: vec![
-                "a `par_iter()` walk splits the elements across every core and runs the \
-                 lambda on each share at the same time, so every core would write `{name}` \
-                 together (Part II, 12.6)"
+                "`par_iter()` splits the elements across all cores and runs the lambda \
+                 on each part at the same time, so every core would write `{name}` at once."
                     .replace("{name}", name),
             ],
             help: Some(format!(
-                "hand each element's value out of the lambda and combine them after the \
-                 walk - `map` and then `collect` or `count` - or keep `{name}` in a \
-                 `SharedMut` and change it through `update`"
+                "Return a value from the lambda and combine the results afterwards, with \
+                 `map` and then `collect` or `count`, or keep `{name}` in a `SharedMut` \
+                 and change it through `update`."
             )),
             labels: Vec::new(),
         });
@@ -6733,11 +6738,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1137",
-            message: "the `&` here is the compiler's to write".to_string(),
-            notes: vec![format!(
-                "{because}, so the reference is already what this line means (ADR-094 D4) - written twice it is a reference to a reference, which the language below reports about a file nobody wrote"
-            )],
-            help: Some("take the `&` off".to_string()),
+            message: "You don't need the `&` here: the compiler adds it where it's needed."
+                .to_string(),
+            notes: vec![format!("{}, so it's lent already.", sentence(because))],
+            help: Some("Remove the `&`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -6799,17 +6803,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1188",
-            message: format!("`{ty}` is not a type two values of which can be compared"),
+            message: format!("You can't compare two `{ty}` values with `==`."),
             notes: vec![
-                "a `struct` or an `enum` compares when every part of it does, and a type \
-                 whose parts are the library's compares when the library says so - a \
-                 lock, a mapping, a socket and a task's handle are the ones that do not \
-                 (ADR-204 D1)"
+                "A `struct` or an `enum` can be compared when all of its parts can. Locks, \
+                 mapped files, sockets and task handles can't be compared."
                     .to_string(),
             ],
             help: Some(
-                "compare the parts that carry the answer, or give the type a method that \
-                 says what equality means for it"
+                "Compare the parts that matter, or give the type a method that says what \
+                 being equal means for it."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -6838,11 +6840,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1131",
-            message: format!("`self` is borrowed here, so `{field}` cannot be {what} by value"),
+            message: format!(
+                "You can't give away `self.{field}` here: this method only borrows `self`."
+            ),
             notes: vec![format!(
-                "`&self` is a loan of the subject, and `{field}` is a `{}` - giving it \
-                 away would take a piece out of something this method does not own \
-                 (Part I, 6.5)",
+                "`ref self` borrows the value, and `{field}` is a `{}`. Giving it away \
+                 would take a piece out of something this method doesn't own.",
                 ty.text()
             )],
             // **[ADR-083](../../docs/specification/adr/adr-083.md) D2's two ways
@@ -6865,15 +6868,14 @@ impl<'a> Checker<'a> {
             // declared to point — the two ways out are the whole answer there.
             help: Some(match what {
                 "handed back" => format!(
-                    "declare the result `ref {}` and the view is what this line means - the \
-                     `&` is the compiler's to write (ADR-094 D1). Or `self.{field}.clone()` \
-                     for a copy, where it happens, or `fn …(self)` where the method is meant \
-                     to consume its subject",
+                    "Declare the result `ref {}` to return a view of it, write \
+                     `self.{field}.clone()` for a copy, or take `self` instead of \
+                     `ref self` if the method is meant to use up its value.",
                     ty.text()
                 ),
                 _ => format!(
-                    "write `self.{field}.clone()` for a copy, where it happens, or \
-                     `fn …(self)` where the method is meant to consume its subject"
+                    "Write `self.{field}.clone()` for a copy, or take `self` instead of \
+                     `ref self` if the method is meant to use up its value."
                 ),
             }),
             labels: Vec::new(),
@@ -7314,18 +7316,18 @@ impl<'a> Checker<'a> {
                 ty::ENDS => (
                     "walks a sequence from the back",
                     "this one can only be walked from the front",
-                    "collect it into a list first, and walk the list from the back: \
-                     `….collect()` and then `list.iter().rev()`",
+                    "Collect it into a list first, and walk the list from the back: \
+                     `….collect()` and then `list.iter().rev()`.",
                 ),
                 ty::SIZED => (
                     "needs to know how long the sequence is",
-                    "this one does not know until it has been walked",
-                    "collect it into a list first: `….collect()`, whose length is known",
+                    "this one doesn't know until it has been walked",
+                    "Collect it into a list first with `….collect()`: a list knows its length.",
                 ),
                 _ => (
                     "walks the sequence more than once",
                     "this one is used up by the first walk",
-                    "collect it into a list first",
+                    "Collect it into a list first.",
                 ),
             };
             let item = match &**item {
@@ -7336,12 +7338,11 @@ impl<'a> Checker<'a> {
                 code: "NK2703",
                 severity: Severity::Error,
                 span: *span,
-                message: format!("`{written}` {needs}, and {lacks}"),
+                message: format!("`{written}` {needs}, but {lacks}."),
                 notes: vec![format!(
-                    "this is {item}, and what produces it says what it can do: a \
-                         range, a list's `iter()`, `chars()` and `drain()` can be walked \
-                         from either end; a map's `keys()` and `io::lines()` only from \
-                         the front, and a `filter` does not know its length (ADR-212 D1)"
+                    "This is {item}. Ranges, a list's `iter()`, `chars()` and `drain()` \
+                         can be walked from either end; a map's `keys()` and `io::lines()` \
+                         only from the front, and a `filter` doesn't know its length."
                 )],
                 help: Some(way.to_string()),
                 labels: Vec::new(),
@@ -7438,52 +7439,47 @@ impl<'a> Checker<'a> {
                 let (message, note, way_out) = match (shape, of_the_caller) {
                     (true, of_the_caller) => (
                         format!(
-                            "`{key}` asks for {} `{trait_name}` here, and `{actual}` is not one",
+                            "`{key}` needs {} `{trait_name}` here, but `{actual}` isn't one.",
                             match trait_name.as_str() {
                                 "Enum" => "an",
                                 _ => "a",
                             }
                         ),
                         format!(
-                            "`[{parameter}: {trait_name}]` asks what a type **is** rather than \
-                             what it does, so what answers it is a declaration and not an `impl` \
-                             (Part II, 10.3) - and `{actual}` is {}",
+                            "`[{parameter}: {trait_name}]` asks what a type is, not what it \
+                             does, so it's answered by the declaration, not an `impl`. `{actual}` \
+                             is {}.",
                             self.what_shape_it_is(&actual)
                         ),
                         match of_the_caller {
-                            true => format!("add it to the bound: `[{actual}: … + {trait_name}]`"),
+                            true => format!("Add it to the bound: `[{actual}: … + {trait_name}]`."),
                             false => format!(
-                                "pass a value of a type this program declares with `{}`, or leave \
-                                 the bound off",
+                                "Pass a value of a type declared with `{}`, or remove the bound.",
                                 trait_name.to_lowercase()
                             ),
                         },
                     ),
                     (false, true) => (
                         format!(
-                            "`{key}` asks for a `{trait_name}` here, and `{actual}` is not \
-                             declared to be one"
+                            "`{key}` needs a `{trait_name}` here, but `{actual}` isn't declared \
+                             to be one."
                         ),
                         format!(
-                            "`{actual}` stands for a type *this* function's caller picks, so \
-                             what it can be asked to do is what its own bounds say - and \
-                             `{trait_name}` is not among them (Part I, 4.7)"
+                            "`{actual}` is a type this function's caller picks, so it can only \
+                             do what its bounds say, and `{trait_name}` isn't one of them."
                         ),
-                        format!("add it to the bound: `[{actual}: … + {trait_name}]`"),
+                        format!("Add it to the bound: `[{actual}: … + {trait_name}]`."),
                     ),
                     (false, false) => (
+                        format!("`{key}` needs a `{trait_name}` here, but `{actual}` isn't one."),
                         format!(
-                            "`{key}` asks for a `{trait_name}` here, and `{actual}` is not one"
+                            "`{key}` declares `[{parameter}: {trait_name}]`, so the type \
+                             passed has to have `{trait_name}`'s methods, and `{actual}` doesn't \
+                             implement it."
                         ),
                         format!(
-                            "`{key}`'s `{parameter}` is declared `[{parameter}: \
-                             {trait_name}]`, so the type a caller picks has to answer for \
-                             `{trait_name}`'s methods - and nothing in this program says \
-                             `{actual}` does (Part I, 4.7)"
-                        ),
-                        format!(
-                            "write `impl {trait_name} for {actual} {{ … }}`, or pass a type \
-                             that already has one"
+                            "Write `impl {trait_name} for {actual} {{ … }}`, or pass a type \
+                             that already has one."
                         ),
                     ),
                 };
@@ -7503,12 +7499,12 @@ impl<'a> Checker<'a> {
     /// What this compiler can say `{ty}` is, for a shape bound's note.
     fn what_shape_it_is(&self, ty: &str) -> String {
         if self.structs.contains_key(ty) {
-            return format!("a `struct` - `[{ty}: Struct]` is the bound it answers");
+            return format!("a `struct`, so the bound it matches is `[{ty}: Struct]`");
         }
         if self.enums.contains_key(ty) {
-            return format!("an `enum` - `[{ty}: Enum]` is the bound it answers");
+            return format!("an `enum`, so the bound it matches is `[{ty}: Enum]`");
         }
-        "one of the types Part I 2.2 offers, which no declaration makes either shape".to_string()
+        "a built-in type, which is neither".to_string()
     }
 
     /// Whether `ty` may stand where `trait_name` is asked for.
@@ -7585,23 +7581,18 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1122",
-            message: format!("`{into}` is not a type this language offers, and `as` names one"),
+            message: format!("You can't convert to `{into}` with `as`: Nikaia has no such type."),
             notes: vec![
-                "The types are `i32`, `i64`, `u8`, `f64`, `bool`, `char`, `String` and \
-                 `&str` (Part I, 2.2). A conversion into anything else went to \
-                 the language below unread, so a value could have a type this \
-                 page has no word for"
-                    .to_string(),
+                "The number types are `i32`, `i64`, `u8`, `u32`, `u64` and `f64`.".to_string(),
             ],
             help: Some(match into {
                 "usize" | "isize" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i128" => {
-                    "a length and an index are `i64` and the compiler writes the \
-                     machine's conversion itself (ADR-048 D1), so the cast is \
-                     not needed - remove it. Where a narrower type is meant, \
-                     `truncating_i32` says so by name"
+                    "Lengths and indexes are `i64`, and the compiler converts them for \
+                     the machine itself, so just remove the cast. To cut a number down to \
+                     a narrower type, use `truncating_i32`."
                         .to_string()
                 }
-                _ => "write one of the types above, or none".to_string(),
+                _ => "Convert to one of the types above, or leave the cast out.".to_string(),
             }),
             labels: Vec::new(),
         });
@@ -7759,9 +7750,9 @@ impl<'a> Checker<'a> {
         // to, because the expression is on the line the caret is under and the
         // number is the part the reader cannot see.
         let message = match bare {
-            true => format!("`{value}` does not fit in {} `{ty}`", an_or_a(ty)),
+            true => format!("`{value}` doesn't fit in {} `{ty}`.", an_or_a(ty)),
             false => format!(
-                "this comes to {value}, which does not fit in {} `{ty}`",
+                "This comes to {value}, which doesn't fit in {} `{ty}`.",
                 an_or_a(ty)
             ),
         };
@@ -7774,28 +7765,24 @@ impl<'a> Checker<'a> {
             // name is *said*: a reader says "you-eight" and "eye-thirty-two",
             // and `an u8` is the kind of sentence that makes a message look
             // generated.
-            notes: std::iter::once(format!(
-                "{} `{ty}` holds {low} to {high} (Part I, 2.2)",
-                an_or_a(ty)
-            ))
-            .chain(why)
-            .collect(),
+            notes: std::iter::once(format!("{} `{ty}` holds {low} to {high}.", an_or_a(ty)))
+                .chain(why)
+                .collect(),
             help: Some(match ty {
-                "i32" => "write `i64` where the number needs it".to_string(),
-                "u8" => "a `u8` is one byte, so write `i32` or `i64` where the number \
-                         is a count rather than a byte"
+                "i32" => "Use `i64` where the number needs more room.".to_string(),
+                "u8" => "A `u8` is one byte. Use `i32` or `i64` where the number is \
+                         a count rather than a byte."
                     .to_string(),
-                "u32" => "write `u64` where the number needs it".to_string(),
-                "u64" => "a `u64` is the widest number this language has, so this \
-                          computation has to be arranged to stay inside it"
+                "u32" => "Use `u64` where the number needs more room.".to_string(),
+                "u64" => "A `u64` is the widest number Nikaia has, so the computation \
+                          has to stay inside it."
                     .to_string(),
                 _ if value > 0 && u64::try_from(value).is_ok() => {
-                    "a number above an `i64` and not negative is a `u64`'s: write the \
-                     type beside it, `let x: u64 = …`"
+                    "A number this big only fits a `u64`. Write the type: `let x: u64 = …`."
                         .to_string()
                 }
-                _ => "an `i64` is the widest signed number this language has, so this \
-                      computation has to be arranged to stay inside it"
+                _ => "An `i64` is the widest signed number Nikaia has, so the computation \
+                      has to stay inside it."
                     .to_string(),
             }),
             labels: Vec::new(),
@@ -8029,7 +8016,7 @@ impl<'a> Checker<'a> {
             });
             let why = decided.as_ref().map(|ty| {
                 format!(
-                    "`{}` is {} `{ty}` because of how it is used (Part I, 2.4)",
+                    "`{}` is {} `{ty}` because of how it is used",
                     head.name,
                     an_or_a(ty)
                 )
@@ -8086,18 +8073,18 @@ impl<'a> Checker<'a> {
             span: *at,
             code: "NK1200",
             message: format!(
-                "`{name}` is used as {} `{first}` and here as {} `{second}`",
+                "You're using `{name}` as {} `{first}` and here as {} `{second}`.",
                 an_or_a(first),
                 an_or_a(second)
             ),
             notes: vec![
-                "a number takes the type its uses ask for, and these ask for two \
-                 (Part I, 2.4)"
+                "A number takes its type from how it's used, and these uses want two \
+                 different types."
                     .to_string(),
             ],
             help: Some(format!(
-                "write the one it is, `let {name}: {first} = …`, and convert with `as` \
-                 where the other is wanted"
+                "Declare its type, `let {name}: {first} = …`, and convert with `as` where \
+                 the other one is needed."
             )),
             labels: Vec::new(),
         });
@@ -8171,20 +8158,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1128",
-            message: format!(
-                "`{name}` is a name the language below reserves and cannot escape, \
-                 so {what} may not be called that"
-            ),
+            message: format!("You can't call {what} `{name}`: that name is reserved."),
             notes: vec![
-                "every other such name is written escaped and stays a name here - \
-                 a field called `type` is fine. `crate`, `super` and `Self` are the \
-                 three the language below refuses even escaped, which is why they are \
-                 the three refused here (ADR-076 D3)"
+                "Most reserved words are fine as names - a field called `type` works. \
+                 `crate`, `super` and `Self` are the three that can't be used."
                     .to_string(),
             ],
             help: Some(format!(
-                "pick another name - `{}` is free, and so is anything else that is not \
-                 one of those three",
+                "Pick another name, such as `{}`.",
                 match name {
                     "crate" => "package",
                     "super" => "parent",
@@ -8203,15 +8184,9 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1119",
-            message: format!("`self` is a reserved word, so {what} may not be called that"),
-            notes: vec![
-                "`self` already names one thing - the value a method was called on - and it \
-                 is the only reserved word that is a name at all, which is why the rest of \
-                 the list is refused by the grammar and this one is refused here \
-                 (Part I, 2.1)"
-                    .to_string(),
-            ],
-            help: Some("pick another name; `it`, `this` and `me` are all free".to_string()),
+            message: format!("You can't call {what} `self`: that name is reserved."),
+            notes: vec!["`self` always means the value a method was called on.".to_string()],
+            help: Some("Pick another name, such as `it`, `this` or `me`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -8304,18 +8279,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1118",
-            message: format!("this {what} by zero"),
+            message: format!("This {what} by zero."),
             notes: vec![
-                "a division by zero is unrecoverable (Part III, A.2) - and this one is \
-                 decidable where it is written, so it is said here rather than left to \
-                 abort"
+                "Dividing by zero would stop the program, and here it's certain to happen."
                     .to_string(),
             ],
-            help: Some(
-                "if the divisor is meant to be able to be zero, it cannot be a constant: \
-                 test it before dividing"
-                    .to_string(),
-            ),
+            help: Some("If the divisor can really be zero, check it before dividing.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -8444,10 +8413,12 @@ impl<'a> Checker<'a> {
                             &found,
                             &want,
                             Some(value),
-                            "the `let` says `String`, which is text this binding owns",
+                            "the `let` declares a `String`, which is text of its own",
                             *span,
                             "let",
-                            |found, want| format!("this is `{found}`, and the `let` says `{want}`"),
+                            |found, want| {
+                                format!("This value is `{found}`, but the `let` declares `{want}`.")
+                            },
                         );
                         self.a_number_read_through_a_lent_binding(&want, value, span);
                         want
@@ -8633,10 +8604,17 @@ impl<'a> Checker<'a> {
                 }
                 // **D3**: an assignment into a parameter, or into a place
                 // rooted at one, changes the caller's value and says `mut`.
-                if let Some(root) = self.rooted_at(target) {
+                // A name that holds shared mutable state is not asked for
+                // `mut`: writing it directly is `NK2204`'s, one message for one
+                // mistake, and `mut` would not be the way out.
+                let shared = matches!(target, Expr::Variable(_))
+                    && self.rooted_at(target).and_then(|root| self.binding(&root)).is_some_and(
+                        |local| matches!(&local.ty, Ty::Named { name, .. } if name == SHARED_MUT),
+                    );
+                if let Some(root) = self.rooted_at(target).filter(|_| !shared) {
                     let how = match target {
                         Expr::Variable(_) => "changed here",
-                        _ => "changed here, through one of its parts",
+                        _ => "one of its parts is changed here",
                     };
                     self.a_changed_binding_says_mut(&root, how, *span);
                     self.a_shared_name_changed_in_parallel(&root, span);
@@ -8727,7 +8705,7 @@ impl<'a> Checker<'a> {
                         return Ty::Tuple(Vec::new());
                     }
                     self.expect(&found, &into, *span, "assign", |found, want| {
-                        format!("this is `{found}`, and what it is assigned to is `{want}`")
+                        format!("You're assigning `{found}` to something that holds `{want}`.")
                     });
                 }
                 Ty::Tuple(Vec::new())
@@ -8735,7 +8713,11 @@ impl<'a> Checker<'a> {
 
             Stmt::While { cond, body } => {
                 let cond_ty = self.expr(cond, span);
-                self.expect_bool(&cond_ty, span, "a `while` repeats while a `bool` holds");
+                self.expect_bool(
+                    &cond_ty,
+                    span,
+                    "A `while` loop repeats while a `bool` is `true`.",
+                );
                 self.repeats
                     .push(Repeats::a_loop(self.parsed, self.scope.len(), body));
                 self.scope.push(Vec::new());
@@ -9106,7 +9088,7 @@ impl<'a> Checker<'a> {
                 else_branch,
             } => {
                 let cond_ty = self.expr(cond, span);
-                self.expect_bool(&cond_ty, span, "an `if` decides on a `bool`");
+                self.expect_bool(&cond_ty, span, "An `if` decides on a `bool`.");
                 // **A decision taken on what a lock said is stale too**
                 // ([ADR-111](../../docs/specification/adr/adr-111.md) D4's
                 // second shape). It reaches inward and **accumulates**: a
@@ -9236,7 +9218,7 @@ impl<'a> Checker<'a> {
                     // `bool` here exactly as anywhere else.
                     if let Some(guard) = &arm.guard {
                         let found = self.expr(guard, span);
-                        self.expect_bool(&found, span, "a `match` arm's guard is a condition");
+                        self.expect_bool(&found, span, "A `match` guard is a condition.");
                     }
                     let ty = self.expr(&arm.body, span);
                     self.a_part_lent_where_it_is_not_kept(
@@ -10197,7 +10179,7 @@ impl<'a> Checker<'a> {
                             // **A field holds what it is given** (ADR-213 D3),
                             // unless it is declared a view.
                             if !want.is_a_view() {
-                                let to = format!("put into `{name}`'s `{field}`");
+                                let to = format!("stored in `{name}.{field}`");
                                 match &init.value {
                                     Some(value) => self.hands_over(value, &found, &to, span),
                                     None => self.hands_over_name(&field, &to, span),
@@ -10285,7 +10267,7 @@ impl<'a> Checker<'a> {
                                         *span,
                                         "field",
                                         move |found, want| {
-                                            format!("`{o}.{f}` is `{want}`, and this is `{found}`")
+                                            format!("`{o}.{f}` holds `{want}`, but you're giving it `{found}`.")
                                         },
                                     );
                                 }
@@ -10300,7 +10282,7 @@ impl<'a> Checker<'a> {
                                 *span,
                                 "field",
                                 move |found, want| {
-                                    format!("`{owner}.{field}` is `{want}`, and this is `{found}`")
+                                    format!("`{owner}.{field}` holds `{want}`, but you're giving it `{found}`.")
                                 },
                             );
                         }
@@ -10405,7 +10387,7 @@ impl<'a> Checker<'a> {
                             let owner = name.clone();
                             let field = field.clone();
                             self.expect(&given, &want, *span, "field", move |given, want| {
-                                format!("`{owner}.{field}` is `{want}`, and this is `{given}`")
+                                format!("`{owner}.{field}` holds `{want}`, but you're giving it `{given}`.")
                             });
                         }
                         None => self.no_such_field(&name, &field, &declared, span),
@@ -10556,8 +10538,8 @@ impl<'a> Checker<'a> {
                         }
                     }
                     BinaryOp::And | BinaryOp::Or => {
-                        self.expect_bool(&left, span, "`&&` and `||` join two `bool`s");
-                        self.expect_bool(&right, span, "`&&` and `||` join two `bool`s");
+                        self.expect_bool(&left, span, "`&&` and `||` join two `bool`s.");
+                        self.expect_bool(&right, span, "`&&` and `||` join two `bool`s.");
                         Ty::named("bool")
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
@@ -11052,14 +11034,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("nothing declares `{name}`"),
+            message: format!("`{name}` isn't available without its module."),
             notes: vec![
-                format!("`std` has `{key}`, and a name that lives in a module is reached through it (Part I, 1.3)"),
-                "what needs no `use` is the list on Part I's first page, and it is small on purpose: every name in it is one some program writes without importing, and removing one breaks that program (ADR-154 D1, D4)"
-                    .to_string(),
+                format!("`std` has `{key}`, and it's reached through its module."),
+                "Only a few names are always available; the rest live in a module.".to_string(),
             ],
             help: Some(format!(
-                "write `use std::{module}` at the top of the file, and `{key}(…)` here"
+                "Write `use std::{module}` at the top of the file, and `{key}(…)` here."
             )),
             labels: Vec::new(),
         });
@@ -11092,12 +11073,11 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("`{module}` is used here and introduced nowhere"),
+            message: format!("You're using `{module}` without a `use` line for it."),
             notes: vec![
-                "a file lists what it depends on at the top, and `std` is reached the way a package is (Part I, 9.1, ADR-140 D5)"
-                    .to_string(),
+                "A file lists the modules it uses at the top, `std`'s included.".to_string(),
             ],
-            help: Some(format!("write `use std::{module}` at the top of the file")),
+            help: Some(format!("Write `use std::{module}` at the top of the file.")),
             labels: Vec::new(),
         });
     }
@@ -11137,17 +11117,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1163",
-            message: format!("`{module}` has no `{last}`, and `{last}` needs no module"),
+            message: format!("`{last}` isn't in `{module}`: it's always available on its own."),
             notes: vec![
-                format!(
-                    "`{last}` is on the list of names that need no `use` (Part I, 1.3), so it is \
-                     written on its own wherever it is needed"
-                ),
-                "every other `std` name is reached through its module, which is what makes \
-                 this worth saying rather than guessing at (ADR-154 D1)"
-                    .to_string(),
+                format!("`{last}` needs no `use` and no module in front of it."),
+                "Every other `std` name is reached through its module.".to_string(),
             ],
-            help: Some(format!("write `{last}(…)` without the `{module}::`")),
+            help: Some(format!("Write `{last}(…)` without the `{module}::`.")),
             labels: Vec::new(),
         });
     }
@@ -11182,15 +11157,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1117",
-            message: format!("nothing declares `{name}`"),
+            message: format!("`{name}` isn't declared anywhere."),
             notes: vec![
-                "`a`, `b` and `c` used to be a lambda's arguments without being written \
-                 down, and that form is withdrawn (Part I, 5.3)"
+                "A lambda's arguments have to be named: `a`, `b` and `c` are no longer \
+                 there automatically."
                     .to_string(),
             ],
             help: Some(format!(
-                "name the argument: `fn ({name}) {{ … }}`, or give it a name that says what \
-                 it is - `fn (user) {{ user.id }}`"
+                "Name the argument: `fn ({name}) {{ … }}`, or better, a name that says \
+                 what it is: `fn (user) {{ user.id }}`."
             )),
             labels: Vec::new(),
         });
@@ -11253,14 +11228,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *at,
             code: "NK1197",
-            message: "a bit operator beside a comparison is written in parentheses".to_string(),
+            message: "Put parentheses around a bit operation next to a comparison.".to_string(),
             notes: vec![
-                "this language binds `&`, `|`, `^` and the shifts tighter than a comparison, \
-                 and C binds them looser - so the same line reads two ways, and the \
-                 parenthesis says which (Part I, 2.2)"
+                "Nikaia binds `&`, `|`, `^` and the shifts tighter than a comparison, and \
+                 C binds them looser, so without parentheses the line can be read two ways."
                     .to_string(),
             ],
-            help: Some(format!("write `{} {compared} {}`", side(lhs), side(rhs))),
+            help: Some(format!("Write `{} {compared} {}`.", side(lhs), side(rhs))),
             labels: Vec::new(),
         });
     }
@@ -11290,9 +11264,9 @@ impl<'a> Checker<'a> {
                     "`||` joins two `bool`s".to_string()
                 }
                 (Ty::Named { name, .. }, BinaryOp::BitXor) if name == "bool" => {
-                    "two `bool`s that differ are `a != b`".to_string()
+                    "to ask whether two `bool`s differ, write `a != b`".to_string()
                 }
-                _ => "a bit operator works on the bits of an integer: `i32`, `i64`, `u8`, \
+                _ => "bit operators work on the bits of an integer: `i32`, `i64`, `u8`, \
                       `u32` or `u64`"
                     .to_string(),
             };
@@ -11300,10 +11274,8 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *at,
                 code: "NK1198",
-                message: format!("`{written}` takes integers, and this is a `{side}`"),
-                notes: vec![
-                    "the bit operators work on the bits of an integer (Part I, 2.2)".to_string(),
-                ],
+                message: format!("`{written}` works on integers, but this is a `{side}`."),
+                notes: vec!["Bit operators work on the bits of an integer.".to_string()],
                 help: Some(help),
                 labels: Vec::new(),
             });
@@ -11354,19 +11326,19 @@ impl<'a> Checker<'a> {
                     false => "a",
                 };
                 format!(
-                    "this puts {} `{l}` and {} `{r}` in one operation",
+                    "You're mixing {} `{l}` and {} `{r}` in one operation.",
                     a(&l),
                     a(&r)
                 )
             },
             notes: vec![
-                "no two number types mix on their own: a conversion is written, so that \
-                 where a value may not fit is on the page (Part I, 2.2)"
+                "Different number types never mix on their own, so that every place a \
+                 value might not fit is visible in the code."
                     .to_string(),
             ],
             help: Some(format!(
-                "convert one side with `as`: `… as {l}` or `… as {r}`, whichever the \
-                 result should be"
+                "Convert one side with `as`: `… as {l}` or `… as {r}`, whichever the \
+                 result should be."
             )),
             labels: Vec::new(),
         });
@@ -11429,21 +11401,21 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1185",
             message: format!(
-                "this reach is a `{viewed}`, and the fallback beside it is a `{fallback}`"
+                "The two sides of `??` don't match: the left is a `{viewed}`, the fallback a \
+                 `{fallback}`."
             ),
             notes: vec![
-                "a view and a value it points into are two types (Part I, 6.6), and `??` hands \
-                 back one of them"
+                "A view and the value it points into are different types, and `??` has to \
+                 give back one type."
                     .to_string(),
-                "a copy is written by the program and never inserted by the compiler \
-                 ([ADR-008](docs/specification/adr/adr-008.md) D5), so there is nothing here \
-                 that could make the two agree"
+                "Nikaia never makes a copy behind your back, so it can't make the two agree \
+                 on its own."
                     .to_string(),
             ],
             help: Some(format!(
-                "give the fallback as a view too - a text literal already is one, so \
-                 `?? \"…\"` reads the same and costs nothing - or take the receiver's member \
-                 by a name of its own first, where a `{fallback}` is what is wanted"
+                "Make the fallback a view too - a text literal already is one, so \
+                 `?? \"…\"` works and costs nothing - or, if you need a `{fallback}`, \
+                 put the value in a name of its own first."
             )),
             labels: Vec::new(),
         });
@@ -11480,19 +11452,18 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1185",
             message: format!(
-                "this reads the `{held}` the map holds, and the fallback beside it is one of its own"
+                "The two sides of `??` don't match: the left is a view of the `{held}` in the \
+                 map, the fallback a value of its own."
             ),
             notes: vec![
-                "the map keeps its values, so a read is a view of one, and `??` hands back \
-                 either the view or the fallback - which are two types"
+                "The map keeps its values, so reading one gives a view of it, and `??` has \
+                 to give back one type."
                     .to_string(),
-                "a copy is written by the program and never inserted by the compiler \
-                 ([ADR-008](docs/specification/adr/adr-008.md) D5)"
-                    .to_string(),
+                "Nikaia never makes a copy behind your back.".to_string(),
             ],
             help: Some(format!(
-                "copy what the map holds where a `{held}` of your own is wanted: \
-                 `{written}?.clone() ?? …`"
+                "Copy the map's value when you need a `{held}` of your own: \
+                 `{written}?.clone() ?? …`."
             )),
             labels: Vec::new(),
         });
@@ -11523,10 +11494,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1184",
-            message: format!("`{}` is not an escape this language has", refused.written),
+            message: format!("`{}` isn't an escape Nikaia knows.", refused.written),
             notes: vec![
-                format!("{} (Part I, 2.5)", refused.why),
-                format!("the set is: {}", crate::build_time::ESCAPES),
+                format!("{}.", sentence(refused.why)),
+                format!("The escapes are: {}.", crate::build_time::ESCAPES),
             ],
             // **Two ways out, and which one is offered is read off the
             // escape** ([Part III C.2](../../docs/specification/30-nikaia-tooling.md):
@@ -11536,13 +11507,13 @@ impl<'a> Checker<'a> {
             // was meant literally, and the way out is to double it.
             help: Some(match refused.written.chars().nth(1) {
                 Some('x') | Some('u') => {
-                    "a character above `\\x7F` is written `\\u{…}`, with up to \
-                     six hexadecimal digits: `\\u{80}`, `\\u{1F600}`"
+                    "Write a character above `\\x7F` as `\\u{…}`, with up to six \
+                     hexadecimal digits: `\\u{80}`, `\\u{1F600}`."
                         .to_string()
                 }
                 _ => format!(
-                    "write the backslash as `\\\\` where it is meant literally - `\"{}\"` - \
-                     or use one of the escapes above",
+                    "If you meant a backslash, write it twice: `\"{}\"`. Otherwise use one \
+                     of the escapes above.",
                     text.replace('\\', "\\\\")
                 ),
             }),
@@ -11571,9 +11542,9 @@ impl<'a> Checker<'a> {
         if text.contains("{{") || text.contains("}}") {
             self.warn_migration(
                 span,
-                "a doubled brace in a plain string is now two braces".to_string(),
+                "`{{{{` in a plain string is now two braces.".to_string(),
                 format!(
-                    "`{{{{` escaped a brace while every string was a template. A plain string needs no escape: write `\"{}\"`",
+                    "Braces in a plain string don't need escaping any more: write `\"{}\"`.",
                     text.replace("{{", "{").replace("}}", "}")
                 ),
             );
@@ -11589,8 +11560,8 @@ impl<'a> Checker<'a> {
             }
             self.warn_migration(
                 span,
-                format!("`{{{hole}}}` here is text, and used to be a hole"),
-                format!("write `f\"{text}\"` if the value was meant to appear (Part I, 2.5)"),
+                format!("`{{{hole}}}` here is plain text now; it used to insert a value."),
+                format!("Write `f\"{text}\"` if you want the value to appear."),
             );
             return;
         }
@@ -11603,7 +11574,8 @@ impl<'a> Checker<'a> {
             code: "NK1111",
             message,
             notes: vec![
-                "every string interpolated before ADR-035; now only `f\"…\"` does".to_string(),
+                "Only `f\"…\"` strings fill in `{…}`; a plain string keeps the braces as they are."
+                    .to_string(),
             ],
             help: Some(help),
             labels: Vec::new(),
@@ -11704,7 +11676,7 @@ impl<'a> Checker<'a> {
     /// plain value through would be a door about nothing.
     fn locks(&mut self, door: MultiLock, args: &[Expr], span: &Span) -> Ty {
         let Some((last, locks)) = args.split_last() else {
-            self.no_door(door, "it takes the locks and then the block", span);
+            self.no_door(door, "It takes the locks and then the block.", span);
             return Ty::Unknown;
         };
         let Expr::Closure {
@@ -11713,11 +11685,11 @@ impl<'a> Checker<'a> {
             body,
         } = last
         else {
-            self.no_door(door, "the block comes last: `fn(a, b) { … }`", span);
+            self.no_door(door, "The block comes last: `fn(a, b) { … }`.", span);
             return Ty::Unknown;
         };
         if locks.len() < 2 {
-            self.no_door(door, "it is for **several** locks: name at least two", span);
+            self.no_door(door, "It's for several locks, so pass at least two.", span);
             return Ty::Unknown;
         }
 
@@ -11747,18 +11719,17 @@ impl<'a> Checker<'a> {
                         span: *span,
                         code: "NK1124",
                         message: format!(
-                            "`{}` takes locks, and this is a `{}`",
+                            "`{}` takes locks, but this is a `{}`.",
                             door.written(),
                             found.text()
                         ),
                         notes: vec![
-                            "a door over several locks is what keeps them in one order, and \
-                             there is nothing to order about a value that is not one \
-                             (Part II, 12.3)"
+                            "Taking several locks together keeps them in one order, and only a \
+                             lock can be taken."
                                 .to_string(),
                         ],
                         help: Some(format!(
-                            "name `{SHARED_MUT}[T]` values, or `{LOCKED}[T]` fields"
+                            "Pass `{SHARED_MUT}[T]` values or `{LOCKED}[T]` fields."
                         )),
                         labels: Vec::new(),
                     });
@@ -11769,7 +11740,7 @@ impl<'a> Checker<'a> {
         if !params.is_empty() && params.len() != locks.len() {
             self.no_door(
                 door,
-                "the block names one value per lock, in the order they are written",
+                "The block takes one value per lock, in the order the locks are written.",
                 span,
             );
         }
@@ -11839,7 +11810,7 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1124",
-            message: format!("`{}` is written `{}`", door.written(), door.shape()),
+            message: format!("Write `{}` like this: `{}`.", door.written(), door.shape()),
             notes: vec![wanted.to_string()],
             help: None,
             labels: Vec::new(),
@@ -11889,14 +11860,14 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK1123",
                 message: format!(
-                    "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
+                    "Write `{SHARED_MUT}[{inside}]` instead of a `{SHARED}` around a lock."
                 ),
                 notes: vec![
-                    "the common case has the short name, and it is the only way \
-                                     to write it - one type, one spelling (Part I, 6.2)"
+                    "The common case has a short name, and it's the only way to write \
+                                     it: one type, one spelling."
                         .to_string(),
                 ],
-                help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
+                help: Some(format!("Write `{SHARED_MUT}[{inside}]`.")),
                 labels: Vec::new(),
             });
         }
@@ -11912,11 +11883,11 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK1101",
                 message: format!(
-                    "`{name}` takes the value to put in it, and {} were passed",
+                    "`{name}(…)` takes one value, the one to put in it, but you passed {}.",
                     args.len()
                 ),
                 notes: vec![format!(
-                    "`{name}[T]` is made from a `T`: `{name}(value)` (Part I, 6.2)"
+                    "A `{name}[T]` is made from a `T`: `{name}(value)`."
                 )],
                 help: None,
                 labels: Vec::new(),
@@ -11934,13 +11905,14 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1123",
-                message: format!("this is already a `{inner}`, so `{name}` has nothing to add"),
+                message: format!(
+                    "This is already a `{inner}`, so wrapping it in `{name}` adds nothing."
+                ),
                 notes: vec![
-                    "a handle is duplicated by being handed on, never by being wrapped \
-                         again (Part I, 6.2)"
+                    "A shared handle is copied by passing it on, never by wrapping it again."
                         .to_string(),
                 ],
-                help: Some(format!("hand the `{inner}` on as it is")),
+                help: Some(format!("Pass the `{inner}` on as it is.")),
                 labels: Vec::new(),
             });
             return held;
@@ -12051,7 +12023,7 @@ impl<'a> Checker<'a> {
             let found = self.arguments_given(args, &parts, false, None, span);
             for ((arg, want), ty) in args.iter().zip(&parts).zip(&found) {
                 if self.text_literal(want, arg, true).is_none() {
-                    self.hands_over(arg, ty, "put into a variant, which keeps it", span);
+                    self.hands_over(arg, ty, "put into a variant", span);
                 }
             }
             let owner = name
@@ -12210,9 +12182,8 @@ impl<'a> Checker<'a> {
                 },
                 span,
                 &format!(
-                    "nothing written down describes `{name}`, so this compiler cannot see the \
-                     end of it - and starting a thread of its own is among the things it may do \
-                     (Part III, 15.2)"
+                    "The compiler knows nothing about `{name}`, so it has to assume it \
+                     might start a thread of its own."
                 ),
             );
             // And a call this compiler cannot see the end of says nothing about
@@ -12242,7 +12213,7 @@ impl<'a> Checker<'a> {
                 span,
                 &format!(
                     "`{name}` is described as starting a thread of its own (`threads = true`), \
-                     so what it is given may be looked at from one (Part III, 15.2)"
+                     so what it is given may be looked at from one"
                 ),
             );
         }
@@ -12323,20 +12294,20 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK1101",
                 message: format!(
-                    "`{key}` takes {}, and this call passes {}",
+                    "`{key}` takes {}, but you passed {}.",
                     plural(wanted.len(), "argument"),
                     found.len()
                 ),
-                notes: vec![format!("`{key}{}`", signature.text())],
+                notes: vec![format!("It's declared as `{key}{}`.", signature.text())],
                 help: Some(match wanted.len() {
-                    0 => format!("call it as `{key}()`"),
+                    0 => format!("Call it without arguments: `{key}()`."),
                     _ => {
                         let takes = wanted
                             .iter()
                             .map(|(n, t)| format!("`{n}: {}`", t.text()))
                             .collect::<Vec<_>>()
                             .join(", ");
-                        format!("it takes {takes}{}", a_root_is_one_of_two(wanted))
+                        format!("It takes {takes}{}.", a_root_is_one_of_two(wanted))
                     }
                 }),
                 labels: Vec::new(),
@@ -12363,7 +12334,7 @@ impl<'a> Checker<'a> {
                     let name = name.clone();
                     let key = key.to_string();
                     self.expect(found, &want, *span, "field", move |found, _| {
-                        format!("`{key}` takes `{name}: {ty}`, and this passes `{found}`")
+                        format!("The option `{name}` of `{key}` takes `{ty}`, but you're passing `{found}`.")
                     });
                 }
                 None => self.no_such_option(key, name, &signature, span),
@@ -12419,7 +12390,7 @@ impl<'a> Checker<'a> {
                 self.hands_over(
                     given,
                     found,
-                    &format!("handed to `{written}`, which keeps it"),
+                    &format!("passed to `{written}`, which keeps it"),
                     span,
                 );
             }
@@ -12555,19 +12526,19 @@ impl<'a> Checker<'a> {
                     code: "NK1115",
                     message: match &value {
                         Some(value) => {
-                            format!("`{key}` takes a shared value, and `{value}` is not one")
+                            format!("`{key}` takes a shared value, but `{value}` isn't one.")
                         }
-                        None => format!("`{key}` takes a shared value, and this is not one"),
+                        None => format!("`{key}` takes a shared value, but this isn't one."),
                     },
-                    notes: vec![format!("`{key}{}`", signature.text())],
+                    notes: vec![format!("It's declared as `{key}{}`.", signature.text())],
                     help: Some(match (&value, want) {
                         (Some(value), Ty::Named { name, .. }) => {
-                            format!("write `{name}({value})` - a hull you can see is one you write")
+                            format!("Wrap it: `{name}({value})`.")
                         }
                         (None, Ty::Named { name, .. }) => {
-                            format!("write `{name}(…)` around it (Part I, 6.2)")
+                            format!("Wrap it: `{name}(…)`.")
                         }
-                        _ => format!("make it a `{}`", want.text()),
+                        _ => format!("Make it {} `{}`.", an_or_a(&want.text()), want.text()),
                     }),
                     labels: Vec::new(),
                 });
@@ -12587,11 +12558,11 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK1102",
                 message: format!(
-                    "`{key}` takes `{name}: {}`, and this call passes `{}`",
+                    "`{key}` expects `{name}` to be `{}`, but you're passing `{}`.",
                     want.text(),
                     found.text()
                 ),
-                notes: std::iter::once(format!("`{key}{}`", signature.text()))
+                notes: std::iter::once(format!("It's declared as `{key}{}`.", signature.text()))
                     .chain(why)
                     .collect(),
                 help: Some(help),
@@ -12762,7 +12733,7 @@ impl<'a> Checker<'a> {
                 *span,
                 "argument",
                 move |found, want| {
-                    format!("`{key}` takes `{name}: {want}` here, and this call passes `{found}`")
+                    format!("`{key}` expects `{name}` to be `{want}` here, but you're passing `{found}`.")
                 },
             );
         }
@@ -12851,10 +12822,10 @@ impl<'a> Checker<'a> {
         if *found != Ty::view("str") || *want != Ty::named("String") {
             return None;
         }
-        let cost = "Nikaia copies text only where the program says so: a copy costs as much \
-                    as the text is long, and one made on its own would run every time this \
-                    line does, with nothing in the source to show it (ADR-005 §3)"
+        let cost = "Nikaia never copies text behind your back: a copy costs as much as the \
+                    text is long, so it's written where it happens."
             .to_string();
+        let keeper = sentence(keeper);
         let named = match value {
             Some(Expr::Variable(name)) => Some(self.parsed.text(*name).to_string()),
             _ => None,
@@ -12864,19 +12835,18 @@ impl<'a> Checker<'a> {
             return Some((
                 vec![
                     format!(
-                        "`{name}` is bound to the literal \"{literal}\", and a name bound to a \
-                         literal is a view of it"
+                        "`{name}` was bound to the literal \"{literal}\", so it's a view of that \
+                         text."
                     ),
                     format!(
-                        "{keeper}, so it needs text of its own. Written here, the literal would \
-                         be built into one on this line (ADR-207); through a name it is not, \
-                         yet - that would change the type `{name}` was declared with, on a line \
-                         above this one"
+                        "{keeper}, so it needs text of its own. Written directly here, the \
+                         literal would become text of its own; through the name it can't, \
+                         because that would change how `{name}` was declared above."
                     ),
                 ],
                 format!(
-                    "write \"{literal}\" here, or declare `let {name}: String = \"{literal}\"` \
-                     - either builds the text once, as the literal would"
+                    "Write \"{literal}\" here directly, or declare \
+                     `let {name}: String = \"{literal}\"`."
                 ),
             ));
         }
@@ -12889,27 +12859,25 @@ impl<'a> Checker<'a> {
             return Some((
                 vec![
                     format!(
-                        "`{name}` is declared `ref String`: the text belongs to the caller, \
-                         who still has it"
+                        "`{name}` is declared `ref String`, so the text belongs to the caller, \
+                         who still has it."
                     ),
-                    format!("{keeper}, so it needs text of its own"),
+                    format!("{keeper}, so it needs text of its own."),
                     cost,
                 ],
                 format!(
-                    "declare `{name}: String`, and the caller hands its text over instead of \
-                     lending it - or write `{name}.clone()` to copy it here"
+                    "Declare `{name}: String` so the caller hands its text over, or write \
+                     `{name}.clone()` to copy it here."
                 ),
             ));
         }
         Some((
             vec![
-                "this is a view: it points into text something else owns, and that text \
-                 stays where it is"
-                    .to_string(),
-                format!("{keeper}, so it needs text of its own"),
+                "This is a view: it points into text that something else owns.".to_string(),
+                format!("{keeper}, so it needs text of its own."),
                 cost,
             ],
-            "write `.clone()` to copy it here".to_string(),
+            "Write `.clone()` to copy it here.".to_string(),
         ))
     }
 
@@ -12964,10 +12932,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1108",
-            message: format!("this is `{}`, and a condition is a `bool`", found.text()),
+            message: format!(
+                "A condition has to be `true` or `false`, but this is `{}`.",
+                found.text()
+            ),
             notes: vec![why.to_string()],
             help: Some(
-                "compare it: `x != 0`, `text != \"\"`, `xs.len() > 0` (Part I, 3.2)".to_string(),
+                "Compare it to get a `bool`: `x != 0`, `text != \"\"`, `xs.len() > 0`.".to_string(),
             ),
             labels: Vec::new(),
         });
@@ -13052,20 +13023,23 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2605",
-            message: format!("this function can fail because `{key}` can fail"),
+            message: format!("This function can fail, because `{key}` can fail."),
             notes: vec![
                 format!(
-                    "`{key}` carries `throws = {}` in the contracts this program is built \
-                     against (Part III, 13.5)",
-                    crate::contracts::throws_text(&contract.throws)
+                    "`{key}` can fail with {}.",
+                    contract
+                        .throws
+                        .iter()
+                        .map(|error| format!("`{error}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
-                "nothing marks a failing call, so a failure leaves at a call exactly as it \
-                 leaves at a block's closing brace or a loop's step (ADR-023 D8, ADR-025 D1)"
+                "A call that can fail looks like any other call, so its failure passes \
+                 straight through this function unless you handle it."
                     .to_string(),
             ],
             help: Some(format!(
-                "declare the error: add `throws` to `{function}` - or handle it at the \
-                 call, `… catch {{ … }}` (Part I, 7.1)"
+                "Add `throws` to `{function}`, or handle it at the call: `… catch {{ … }}`."
             )),
             labels: Vec::new(),
         });
@@ -13104,21 +13078,21 @@ impl<'a> Checker<'a> {
             severity: Severity::Warning,
             span: *span,
             code: "NK2402",
-            message: format!("this `catch` receives {named} from `{key}` now"),
+            message: format!("This `catch` now also receives {named} from `{key}`."),
             notes: vec![
                 format!(
-                    "`{key}` did not carry {named} when the handler around this call was \
-                     written, and a `catch` takes everything that reaches it - so it \
-                     handles the new one as it handles everything (Part I, 7.1)"
+                    "`{key}` couldn't throw {named} when this handler was written. A `catch` \
+                     takes everything that reaches it, so it handles the new error the same \
+                     way as the others."
                 ),
-                "nothing is wrong and nothing is refused: this is the note ADR-101 D1 asks \
-                 for, and committing the ledger diff is what acknowledges it - after that \
-                 the new set is the baseline and the note is not given again"
+                "Nothing is wrong: this is just to let you know. Once the updated \
+                 `nikaia.contracts` is committed, you won't see this note again."
                     .to_string(),
             ],
             help: Some(
-                "read it where it landed. A new arm in the handler and leaving it where it \
-                 is are both answers; `nikaia build` without `--locked` records the new set"
+                "Check that the handler does the right thing for it. Adding an arm and \
+                 leaving it as it is are both fine; `nikaia build` without `--locked` \
+                 records the change."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -13166,24 +13140,24 @@ impl<'a> Checker<'a> {
         let (message, before, help) = match moved.now {
             true => (
                 format!(
-                    "`{key}` keeps `{param}` now, so `{value}`'s cleanup runs when `{key}` is \
-                     done with it rather than at the end of this block"
+                    "`{key}` now keeps `{param}`, so `{value}` is cleaned up when `{key}` is \
+                     done with it, not at the end of this block."
                 ),
                 format!("`{key}` only read its `{param}` when this call was written"),
                 format!(
-                    "if the cleanup belongs here, hand `{key}` a copy - `{value}.clone()` - or \
-                     have `{key}` read what it is given again"
+                    "If the cleanup belongs here, pass `{key}` a copy, `{value}.clone()`, or \
+                     change `{key}` back to only reading it."
                 ),
             ),
             false => (
                 format!(
-                    "`{key}` only reads `{param}` now, so `{value}`'s cleanup runs at the end \
-                     of this block rather than when `{key}` is done with it"
+                    "`{key}` now only reads `{param}`, so `{value}` is cleaned up at the end \
+                     of this block, not when `{key}` is done with it."
                 ),
                 format!("`{key}` kept its `{param}` when this call was written"),
                 format!(
-                    "if the cleanup belongs inside `{key}`, have it keep what it is given \
-                     again; otherwise nothing is to be done here"
+                    "If the cleanup belongs inside `{key}`, change it back to keeping what \
+                     it's given. Otherwise there's nothing to do."
                 ),
             ),
         };
@@ -13193,10 +13167,13 @@ impl<'a> Checker<'a> {
             code: "NK2403",
             message,
             notes: vec![
-                format!("{before}, and a `{ty}` does something when it is torn down ({how})"),
-                "nothing is wrong and nothing is refused: this is the narration ADR-094 D5 \
-                 owes for a cleanup point the call does not show, and committing the ledger \
-                 diff acknowledges it - after that the note is not given again"
+                format!(
+                    "{}, and a `{ty}` does something when it's cleaned up ({how}).",
+                    sentence(&before)
+                ),
+                "Nothing is wrong: this is just to let you know, since the call itself \
+                 doesn't show it. Once the updated `nikaia.contracts` is committed, you \
+                 won't see this note again."
                     .to_string(),
             ],
             help: Some(help),
@@ -13240,7 +13217,7 @@ impl<'a> Checker<'a> {
             .collect();
         fields.iter().find_map(|field| {
             self.tears_down(field, seen)
-                .map(|how| format!("through its field of type `{}`, {how}", field.text()))
+                .map(|how| format!("through its `{}` field, {how}", field.text()))
         })
     }
 
@@ -13277,21 +13254,19 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2206",
-                message: "this lambda can pause, and the parameter it is given to says `sync`"
+                message: "This lambda can pause, but the parameter it's passed to is `sync`."
                     .to_string(),
                 notes: vec![
-                    "a function type says what the code it names may do, and `sync` is the \
-                     same assertion a declaration makes - made about somebody else's code \
-                     (ADR-102 D2, ADR-027)"
+                    "A function type says what the code passed in may do, and `sync` means \
+                     it must never pause."
                         .to_string(),
-                    "a lambda that does less fits a type that allows more, never the other \
-                     way round"
+                    "A lambda that does less fits a type that allows more, never the other \
+                     way round."
                         .to_string(),
                 ],
                 help: Some(
-                    "keep what pauses outside the lambda and hand its answer in - or take \
-                     the `sync` off the parameter's type, which tells this function's own \
-                     callers what changed"
+                    "Do the pausing work outside the lambda and pass the result in, or \
+                     remove `sync` from the parameter's type."
                         .to_string(),
                 ),
                 labels: Vec::new(),
@@ -13302,19 +13277,17 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2606",
-                message: "this lambda can fail, and the parameter it is given to does not say \
-                          `throws`"
+                message: "This lambda can fail, but the parameter it's passed to doesn't say \
+                          `throws`."
                     .to_string(),
                 notes: vec![
-                    "nothing marks a failing call, so a failure leaves at a call exactly as \
-                     it leaves at a block's closing brace (ADR-023 D8) - and here there is \
-                     nowhere for it to go, because the type it was handed to declares none \
-                     (ADR-102 D2)"
+                    "A failure passes straight through a call, and here it has nowhere to go: \
+                     the parameter's type says the lambda never fails."
                         .to_string(),
                 ],
                 help: Some(
-                    "handle it here, `… catch { … }` - or write `throws` on the parameter's \
-                     type, which is what says the callee has to answer for it"
+                    "Handle it inside the lambda with `… catch { … }`, or add `throws` to the \
+                     parameter's type."
                         .to_string(),
                 ),
                 labels: Vec::new(),
@@ -13342,12 +13315,12 @@ impl<'a> Checker<'a> {
         let pause = Pause {
             what: format!("`{callee}`"),
             before_walk: format!(
-                "call `{callee}` before the walk and hand the values in, or walk with \
-                 `iter()`, whose lambda may pause"
+                "Call `{callee}` before the walk and pass the values in, or walk with \
+                 `iter()`, whose lambda may pause."
             ),
             before_door: format!(
-                "call `{callee}` before the door and hand its value in, or after it \
-                 with what the block handed out"
+                "Call `{callee}` before taking the lock and pass its value in, or after \
+                 it with what the block returned."
             ),
         };
         self.a_pause(pause, span);
@@ -13360,12 +13333,12 @@ impl<'a> Checker<'a> {
         let pause = Pause {
             what: format!("the cleanup of `{name}`"),
             before_walk: format!(
-                "bind `{name}` outside the walk and hand it in, or walk with `iter()`, \
-                 whose lambda may pause"
+                "Create `{name}` outside the walk and pass it in, or walk with `iter()`, \
+                 whose lambda may pause."
             ),
             before_door: format!(
-                "bind `{name}` outside the door, where it dies after the lock is released, \
-                 or close it there"
+                "Create `{name}` before taking the lock, so it's cleaned up after the \
+                 lock is released, or close it there yourself."
             ),
         };
         self.a_pause(pause, span);
@@ -13388,11 +13361,13 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2209",
-                message: format!("{what} can pause, and this runs on several cores at once"),
+                message: format!(
+                    "{} can pause, but this runs on several cores at once.",
+                    sentence(&what)
+                ),
                 notes: vec![
-                    "a lambda handed to a `par_iter()` walk is split across every core, \
-                     and a core that waits holds its share of the work with it - so the \
-                     lambda may not pause (Part II, 12.6)"
+                    "A `par_iter()` lambda runs on every core at once, and a core that waits \
+                     holds up its share of the work, so the lambda must never pause."
                         .to_string(),
                 ],
                 help: Some(before_walk),
@@ -13406,11 +13381,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2202",
-            message: format!("{what} can pause, and this runs with a lock held"),
+            message: format!(
+                "{} can pause, but you're holding a lock here.",
+                sentence(&what)
+            ),
             notes: vec![
-                "a door's block runs with the lock open, and a pause there keeps it \
-                 open for as long as the wait takes - every task that wants the \
-                 value waits with it (Part II, 12.2)"
+                "While the lock is held, every other task that needs the value waits, so \
+                 a pause here makes all of them wait too."
                     .to_string(),
             ],
             help: Some(before_door),
@@ -13447,18 +13424,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2209",
-            message: format!("`{rule}`'s action calls `{callee}`, which can pause"),
+            message: format!("The action of `{rule}` calls `{callee}`, which can pause."),
             notes: vec![
-                "a grammar's action may not pause (ADR-142 D1): a parser is computation \
-                 over bytes that are already there, which is what makes `@frame`'s parallel \
-                 parse sound (ADR-009) - and the generated parser is an ordinary function, \
-                 so an `.await` inside it is not Rust either"
+                "A grammar's actions may never pause: a parser works on text that's \
+                 already there, which is what lets `@frame` parse in parallel."
                     .to_string(),
             ],
             help: Some(
-                "read what the parse needs before the parse and hand it in, or take the \
-                 result apart afterwards - an action that waits on the world is a second \
-                 pass wearing a grammar"
+                "Read what the parser needs before parsing and pass it in, or process the \
+                 result after the parse."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -13497,14 +13471,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2202",
-            message: format!("`{caller}` is `sync`, and `{callee}` can pause"),
+            message: format!("`{caller}` is `sync`, but it calls `{callee}`, which can pause."),
             notes: vec![
-                "a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)"
-                    .to_string(),
-                format!("`{callee}` carries no `sync` in the contracts this program is built against (Part III, 13.5)"),
+                "A `sync` function promises never to pause or do I/O.".to_string(),
+                format!("`{callee}` isn't `sync`."),
             ],
             help: Some(format!(
-                "drop `sync` from `{caller}`, or move the call out of it"
+                "Remove `sync` from `{caller}`, or move the call out of it."
             )),
             labels: Vec::new(),
         });
@@ -13632,20 +13605,19 @@ impl<'a> Checker<'a> {
                 code: "NK2101",
                 severity: Severity::Error,
                 span: Span::new(used, used),
-                message: format!("this background task takes ownership of `{name}`"),
+                message: format!("You're using `{name}` after a background task took it."),
                 notes: vec![
                     format!(
-                        "a task started with `spawn` may outlive this function, so it cannot \
-                         merely borrow your variables - it takes them with it (Part I, 8.3). \
-                         `{name}` is a `{ty}`, which a move takes away"
+                        "A task started with `spawn` may outlive this function, so it takes the \
+                         variables it uses with it. `{name}` is a `{ty}`, so it went to the task."
                     ),
-                    "a number, a `bool`, a view or a handle on a `Shared[T]` would not be: \
-                     the first three are copied and the last is duplicated (Part I, 6.2)"
+                    "Numbers, `bool`s, views and `Shared[T]` handles aren't taken: they're \
+                     copied."
                         .to_string(),
                 ],
                 help: Some(format!(
-                    "clone before the task is built, and give the task the copy: \
-                     `let copy = {name}.clone()`, then use `copy` inside the task"
+                    "Make a copy before starting the task and give the task the copy: \
+                     `let copy = {name}.clone()`, then use `copy` inside the task."
                 )),
                 labels: Vec::new(),
             });
@@ -13733,10 +13705,10 @@ impl<'a> Checker<'a> {
                         *span,
                         "assign",
                         |found, want| {
-                            format!("this key is `{found}`, and the map's keys are `{want}`")
+                            format!("This key is `{found}`, but the map's keys are `{want}`.")
                         },
                     );
-                    self.hands_over(index, found, "written into the map as a key", span);
+                    self.hands_over(index, found, "used as a map key", span);
                 }
                 KeyForm::Handed
             }
@@ -13788,14 +13760,11 @@ impl<'a> Checker<'a> {
             code: "NK1189",
             severity: Severity::Error,
             span: *span,
-            message: format!("a copy is written `.clone()`, not `.{written}()`"),
+            message: format!("To copy a value, write `.clone()`, not `.{written}()`."),
             notes: vec![
-                "Nikaia has one word for a copy, for text and for everything else: a copy \
-                 of text is text of its own, whatever it was copied from, and the compiler \
-                 writes what the language below needs for it (ADR-216)"
-                    .to_string(),
+                "Nikaia has one word for a copy, for text and for everything else.".to_string(),
             ],
-            help: Some(format!("write `{shown}.clone()`")),
+            help: Some(format!("Write `{shown}.clone()`.")),
             labels: Vec::new(),
         });
     }
@@ -13880,25 +13849,22 @@ impl<'a> Checker<'a> {
             return;
         };
         let again = match around.what {
-            "loop" => "the next turn of the loop hands it over again, and it is gone",
-            _ => "a lambda may be run more than once, and the second run finds it gone",
+            "loop" => {
+                "the next time round the loop it would be handed over again, but it's already gone"
+            }
+            _ => "a lambda may run more than once, and the second run would find it gone",
         };
         let what = around.what;
         self.checked.findings.push(Finding {
             code: "NK2105",
             severity: Severity::Error,
             span: *span,
-            message: format!("`{path}` is {to}, inside a {what} it was declared outside of"),
+            message: format!("`{path}` is {to} inside a {what}, but it was declared outside it."),
             notes: vec![
-                format!(
-                    "`{path}` is a `{ty}`, and what keeps a value is given it rather than a \
-                     copy - {again}"
-                ),
-                "a number, a `bool`, a `char` and a view would not be: they are copied".to_string(),
+                format!("`{path}` is a `{ty}`, so it's handed over itself, not a copy - {again}."),
+                "Numbers, `bool`s, `char`s and views would be fine: they're copied.".to_string(),
             ],
-            help: Some(format!(
-                "hand over a copy each time: `{path}.clone()` where it is handed over"
-            )),
+            help: Some(format!("Hand over a copy each time: `{path}.clone()`.")),
             labels: Vec::new(),
         });
     }
@@ -13931,18 +13897,15 @@ impl<'a> Checker<'a> {
             code: "NK2106",
             severity: Severity::Error,
             span: *span,
-            message: format!("`{path}` is {to}, and `{root}` is only lent here"),
+            message: format!("`{path}` is {to}, but `{root}` is only borrowed here."),
             notes: vec![
                 format!(
-                    "`{root}` belongs to whoever lent it - a `ref` parameter, a `for` over a \
-                     list, a `let` over a place - so a part of it cannot be given away: the \
-                     owner still has it"
+                    "`{root}` belongs to whoever lent it (a `ref` parameter, a `for` over a \
+                     list, a `let` over a place), so you can't give a part of it away."
                 ),
-                "what keeps a value is given it rather than a copy, and a copy is the \
-                 program's to write (ADR-005 §3, ADR-094 D2)"
-                    .to_string(),
+                "Nikaia never makes a copy behind your back.".to_string(),
             ],
-            help: Some(format!("hand over a copy: `{path}.clone()`")),
+            help: Some(format!("Hand over a copy: `{path}.clone()`.")),
             labels: Vec::new(),
         });
     }
@@ -14087,8 +14050,8 @@ impl<'a> Checker<'a> {
             // The part read where the whole was taken, or the whole where a
             // part was: the sentence says which (ADR-214 D2).
             let message = match read == name {
-                true => format!("`{name}` was {to}, and is used here again"),
-                false => format!("`{read}` is used here, and `{name}` was {to}"),
+                true => format!("You're using `{name}` again, but it was {to}."),
+                false => format!("You're using `{read}`, but `{name}` was {to}."),
             };
             if !said.insert(used) {
                 continue;
@@ -14100,17 +14063,15 @@ impl<'a> Checker<'a> {
                 message,
                 notes: vec![
                     format!(
-                        "`{name}` is a `{ty}`, and what keeps a value is given it rather than \
-                         a copy: a copy costs as much as the value is large, and one made on \
-                         its own would run every time with nothing in the source to show it \
-                         (ADR-005 §3, ADR-094 D2)"
+                        "`{name}` is a `{ty}`, so it's handed over itself, not a copy. Nikaia \
+                         never copies behind your back, because a copy costs as much as the \
+                         value is large."
                     ),
-                    "a number, a `bool`, a `char` and a view would not be: they are copied"
+                    "Numbers, `bool`s, `char`s and views would be fine: they're copied."
                         .to_string(),
                 ],
                 help: Some(format!(
-                    "if both need it, hand over a copy: `{name}.clone()` where it is \
-                     handed over"
+                    "If both need it, hand over a copy: `{name}.clone()`."
                 )),
                 labels: Vec::new(),
             });
@@ -14163,18 +14124,18 @@ impl<'a> Checker<'a> {
         };
         let (again, help) = match around.what {
             "loop" => (
-                "the next turn of the loop takes it again, and it is gone",
+                "the next time round the loop would use it again, but it's already used up",
                 format!(
-                    "collect it before the loop and walk the collection: \
-                     `let {name} = {name}.collect()`"
+                    "Collect it into a list before the loop and walk the list: \
+                     `let {name} = {name}.collect()`."
                 ),
             ),
             _ => (
-                "a lambda may be run more than once by what it is handed to, \
-                 and the second run finds it gone",
+                "a lambda may run more than once, and the second run would find it \
+                 used up",
                 format!(
-                    "collect it before the lambda and walk the collection inside: \
-                     `let {name} = {name}.collect()`"
+                    "Collect it into a list before the lambda and walk the list inside: \
+                     `let {name} = {name}.collect()`."
                 ),
             ),
         };
@@ -14183,16 +14144,17 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             message: format!(
-                "`{name}` is a sequence, taken inside a {} it was declared outside of",
+                "`{name}` is a sequence, and you're using it up inside a {} it was \
+                 declared outside of.",
                 around.what
             ),
             notes: vec![
                 format!(
-                    "a sequence of `{item}` produces its elements as they are asked \
-                     for, so walking it consumes it - and {again}"
+                    "A sequence of `{item}` makes its elements as they're asked for, so \
+                     walking it uses it up - and {again}."
                 ),
-                "a `Vec` is not this: a container has its elements already and is \
-                 walked by view, as often as you like"
+                "A `Vec` is different: it already holds its elements and can be walked \
+                 as often as you like."
                     .to_string(),
             ],
             help: Some(help),
@@ -14235,20 +14197,20 @@ impl<'a> Checker<'a> {
                 code: "NK2702",
                 severity: Severity::Error,
                 span: Span::new(used, used),
-                message: format!("`{name}` is a sequence that was already walked"),
+                message: format!("`{name}` is a sequence, and it was already used up."),
                 notes: vec![
                     format!(
-                        "a sequence of `{item}` produces its elements as they are asked \
-                         for, so walking it consumes it - a `for`, a `collect()`, a \
-                         `count()` and every other walk takes it by value (ADR-094 D2)"
+                        "A sequence of `{item}` makes its elements as they're asked for, so \
+                         walking it uses it up: a `for`, a `collect()`, a `count()` or any \
+                         other walk."
                     ),
-                    "a `Vec` is not this: a container has its elements already and is \
-                     walked by view, as often as you like"
+                    "A `Vec` is different: it already holds its elements and can be walked \
+                     as often as you like."
                         .to_string(),
                 ],
                 help: Some(format!(
-                    "collect it first and walk the collection: \
-                     `let {name} = {name}.collect()`"
+                    "Collect it first and walk the collection: \
+                     `let {name} = {name}.collect()`."
                 )),
                 labels: Vec::new(),
             });
@@ -14289,15 +14251,15 @@ impl<'a> Checker<'a> {
                     code: "NK2104",
                     severity: Severity::Error,
                     span: stmt.span,
-                    message: format!("a branch of an `overlap` binds `{name}`"),
+                    message: format!("A branch of an `overlap` can't declare `{name}`."),
                     notes: vec![
-                        "each statement in the block is a branch, and the block's value is \
-                         the tuple of their results in written order (Part I, 8.1.2)"
+                        "Each statement in the block runs as its own branch, and the block's \
+                         value is their results in the order they're written."
                             .to_string(),
                     ],
                     help: Some(format!(
-                        "take the value from the block instead: \
-                         `let ({name}, …) = overlap {{ … }}`"
+                        "Take the value from the block instead: \
+                         `let ({name}, …) = overlap {{ … }}`."
                     )),
                     labels: Vec::new(),
                 });
@@ -14323,15 +14285,15 @@ impl<'a> Checker<'a> {
                     code: "NK2104",
                     severity: Severity::Error,
                     span: block.stmts[j].span,
-                    message: "these two branches cannot run together".to_string(),
+                    message: "These two branches can't run at the same time.".to_string(),
                     notes: vec![
-                        format!("{} (Part I, 8.1.2)", verdict.why()),
-                        "`overlap` says the branches have no order between them, and two \
-                         that meet on something do"
+                        format!("{}.", sentence(&verdict.why())),
+                        "`overlap` runs its branches at once, so they can't depend on each other."
                             .to_string(),
                     ],
                     help: Some(
-                        "if you meant them in order, write them as ordinary statements".to_string(),
+                        "If they should run in order, write them as ordinary statements."
+                            .to_string(),
                     ),
                     labels: Vec::new(),
                 });
@@ -14365,16 +14327,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             message: format!(
-                "this task's lambda names {named}, and a task is handed nothing (Part I, 8.2)"
+                "This task's lambda takes {named}, but a task isn't given any arguments."
             ),
             notes: vec![
-                "`spawn` starts a body, it does not call it with arguments - what the body \
-                 needs, it takes from around it, and `spawn` moves those in (Part I, 8.3)"
+                "`spawn` starts a body without arguments; the body takes what it needs \
+                 from the code around it."
                     .to_string(),
             ],
             help: Some(format!(
-                "drop the argument list: `spawn fn {{ … }}`. Where `{}` was meant to be a \
-                 value from here, name it before the task and use it inside",
+                "Remove the argument list: `spawn fn {{ … }}`. If `{}` is a value from \
+                 here, declare it before the task and use it inside.",
                 self.parsed.text(*first)
             )),
             labels: Vec::new(),
@@ -14434,12 +14396,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2701",
-            message: format!("this function can fail because a step of what `{name}` walks can fail"),
+            message: format!("This function can fail, because a step of what `{name}` walks can fail."),
             notes: vec![format!(
-                "`{name}` asks the sequence for every element, and a step of this one reads as it goes - so the failure leaves this function exactly as a `for` over the same sequence would (ADR-025 D1)"
+                "`{name}` asks the sequence for every element, and this sequence reads as it goes, so a read can fail."
             )],
             help: Some(format!(
-                "declare the error: add `throws` to `{function}` - or handle it at the call, `… catch {{ … }}` (Part I, 7.1)"
+                "Add `throws` to `{function}`, or handle it at the call: `… catch {{ … }}`."
             )),
             labels: Vec::new(),
         });
@@ -14504,11 +14466,11 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2701",
-                message: format!("a `for` over {name} binds one name, and this binds {bindings}"),
+                message: format!("A `for` over {name} gives one value at a time, but you're binding {bindings}."),
                 notes: vec![format!(
-                    "each turn of {name} can fail, and the failure is what the one binding unwraps"
+                    "Each turn of {name} can fail, and the loop variable is what's left once that's checked."
                 )],
-                help: Some("bind one name and take the pair apart inside the loop".to_string()),
+                help: Some("Bind one name and take the pair apart inside the loop.".to_string()),
                 labels: Vec::new(),
             });
             return;
@@ -14523,12 +14485,15 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2701",
-            message: "this function can fail because a turn of this loop can fail".to_string(),
+            message: "This function can fail, because a turn of this loop can fail.".to_string(),
             notes: vec![format!(
-                "{name} reads as it goes, and a read can fail - so the failure leaves this \
-                 function, exactly as a failing call would"
+                "{} reads as it goes, and a read can fail, so the failure passes through \
+                 this function like a failing call's would.",
+                sentence(name)
             )],
-            help: Some("declare the error: add `throws` to this function".to_string()),
+            help: Some(
+                "Add `throws` to this function, or handle the failure inside the loop.".to_string(),
+            ),
             labels: Vec::new(),
         });
     }
@@ -14563,15 +14528,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1110",
-            message: format!("`{ty}.{name}` is private to `{package}`"),
+            message: format!(
+                "You can't reach `{ty}.{name}` from here: it's private to `{package}`."
+            ),
             notes: vec![
-                "a field is private to the package that declares its type unless it says \
-                 `pub` (Part I, 9.2)"
-                    .to_string(),
+                "A field is private to its package unless it's declared `pub`.".to_string(),
             ],
             help: Some(format!(
-                "write `pub {name}` in `{package}`, or reach it through something that is \
-                 public - a type may keep its fields private and offer methods (Part I, 9.3)"
+                "Write `pub {name}` in `{package}`, or use a public method the type offers."
             )),
             labels: Vec::new(),
         });
@@ -14605,10 +14569,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1110",
-            message: format!("`{item}` is private to `{module}`"),
-            notes: vec!["an item is private to the package that declares it unless it says `pub` (Part I, 9.2)".to_string()],
+            message: format!("You can't use `{item}` from here: it's private to `{module}`."),
+            notes: vec![
+                "Everything is private to its package unless it's declared `pub`.".to_string(),
+            ],
             help: Some(format!(
-                "write `pub fn {item}` in `{module}`, or reach it through something that is public"
+                "Write `pub fn {item}` in `{module}`, or use something it makes public."
             )),
             labels: Vec::new(),
         });
@@ -14661,8 +14627,8 @@ impl<'a> Checker<'a> {
             }
             let notes = [
                 Some(
-                    "a task runs on a thread of its own, so everything it uses has to be able \
-                     to cross one (Part II, 11.2)"
+                    "A task runs on its own thread, so everything it uses has to be able \
+                     to move between threads."
                         .to_string(),
                 ),
                 crossing.note(),
@@ -14672,7 +14638,7 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2501",
-                message: format!("`{name}` may not cross into a task, and this task uses it"),
+                message: format!("This task uses `{name}`, which can't be passed to a task."),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
                 labels: Vec::new(),
@@ -14737,9 +14703,8 @@ impl<'a> Checker<'a> {
             }
             let notes = [
                 Some(
-                    "a task's body is one function below, so a value it binds and still \
-                     uses after a pause is held inside it - and the task runs on a thread \
-                     of its own (Part II, 11.2)"
+                    "A value a task still needs after a pause is kept inside the task, and \
+                     the task can move to another thread."
                         .to_string(),
                 ),
                 crossing.note(),
@@ -14750,7 +14715,8 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK2501",
                 message: format!(
-                    "`{name}` may not cross into a task, and this task holds it across a pause"
+                    "This task keeps `{name}` while it pauses, and `{name}` can't be passed to a \
+                     task."
                 ),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
@@ -14883,7 +14849,10 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK2502",
-                message: format!("{what} may not cross a thread, and `{callee}` may put it on one"),
+                message: format!(
+                    "{} can't move to another thread, and `{callee}` might move it.",
+                    sentence(&what)
+                ),
                 notes: notes.into_iter().flatten().collect(),
                 help: crossing.way_out(),
                 labels: Vec::new(),
@@ -14926,17 +14895,17 @@ impl<'a> Checker<'a> {
         });
         let notes = [
             Some(format!(
-                "nothing written down describes `{callee}`, so this compiler cannot see what it \
-                 does with what it is handed (Part III, 15.2)"
+                "The compiler knows nothing about `{callee}`, so it can't see what it does \
+                 with what you pass it."
             )),
             Some(match &reached {
                 Some(reached) => format!(
-                    "`{reached}` is a `{part}`, and a lock is what the call must not be able to \
-                     reach"
+                    "`{reached}` is a `{part}`, and code that might keep a lock could \
+                     deadlock."
                 ),
                 None => format!(
-                    "what this passes is a `{part}`, and a lock is what the call must not be \
-                     able to reach"
+                    "What you pass is a `{part}`, and code that might keep a lock could \
+                     deadlock."
                 ),
             }),
             Some(SAME_AT_BOTH.to_string()),
@@ -14945,18 +14914,18 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2503",
-            message: format!("`{callee}` can reach a lock through {what}"),
+            message: format!("`{callee}` could reach a lock through {what}."),
             notes: notes.into_iter().flatten().collect(),
             // 15.2's way out is keeping the lock out of the call's reach, and
             // C.6 writes it as a line the program can be edited into.
             help: Some(match &reached {
                 Some(reached) => format!(
-                    "hand it a copy of what it needs instead of the container:\n\
+                    "Pass it a copy of what it needs instead of the container:\n\
                      {:11}{callee}({reached}.get())",
                     ""
                 ),
-                None => "open the lock where you are and hand over the value inside it - the \
-                         called code then sees an ordinary value and no lock"
+                None => "Open the lock here and pass the value inside it, so the called code \
+                         gets an ordinary value and no lock."
                     .to_string(),
             }),
             labels: Vec::new(),
@@ -14975,7 +14944,7 @@ impl<'a> Checker<'a> {
         let prose = match expr {
             Expr::Variable(name) => format!("`{}`", self.parsed.text(*name)),
             Expr::Field { name, .. } => format!("the `{}` this passes", self.parsed.text(*name)),
-            _ => format!("what this passes as argument {}", at + 1),
+            _ => format!("argument {}", at + 1),
         };
         (prose, self.dotted_path(expr))
     }
@@ -15014,17 +14983,17 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1109",
-            message: format!("`{key}` has no option `{name}`"),
+            message: format!("`{key}` has no option called `{name}`."),
             notes: vec![match names.is_empty() {
-                true => format!("`{key}` takes no options at all - it has no `;`"),
-                false => format!("`{key}` takes {}", list(&names)),
+                true => format!("`{key}` takes no options: its declaration has no `;`."),
+                false => format!("Its options are {}.", list(&names)),
             }],
             help: Some(match near {
-                Some(near) => format!("did you mean `{near}`?"),
+                Some(near) => format!("Did you mean `{near}`?"),
                 None if names.is_empty() => {
-                    "everything before the `;` is positional (Part I, 5.1)".to_string()
+                    "Pass it as a plain argument, without a name.".to_string()
                 }
-                None => "name one of the options it has".to_string(),
+                None => "Use one of the options it has.".to_string(),
             }),
             labels: Vec::new(),
         });
@@ -15069,22 +15038,19 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1135",
-            message: format!("nothing declares a struct called `{name}`"),
+            message: format!("There's no struct called `{name}`."),
             notes: vec![match is_a_function {
                 true => format!(
-                    "a struct literal names a type, and `{name}` is a **function**. A \
-                     call whose arguments are all options is written \
-                     `{name}(option: value)` since ADR-133 D1 - with parentheses and no \
-                     `;`, which is what the braces here would have been"
+                    "`{name}` is a function, not a type. A call that passes only options is \
+                     written with parentheses: `{name}(option: value)`."
                 ),
-                false => "a struct literal names a type, and this name is not one Part I \
-                          2.2 offers, nor one a ledger declares, nor one this file \
-                          declares (ADR-096)"
+                false => "Braces after a name build a struct, and no struct of that name \
+                          is declared here or in a package you use."
                     .to_string(),
             }],
             help: Some(match is_a_function {
-                true => format!("write `{name}(option: value)`"),
-                false => "declare the `struct`, or correct the name".to_string(),
+                true => format!("Write `{name}(option: value)`."),
+                false => "Declare the `struct`, or fix the name.".to_string(),
             }),
             labels: Vec::new(),
         });
@@ -15117,15 +15083,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1146",
-            message: format!("a struct literal is written with braces, and `{name}` is a type"),
+            message: format!("Build a `{name}` with braces, not parentheses."),
             notes: vec![
-                "`Name(field: value)` was a second spelling of `Name { field: value }` \
-                 and is gone (ADR-140 D1): the parentheses are a call now, so \
-                 `Name(a, b)` reaches the anonymous constructor and nothing goes round \
-                 it by carrying a colon"
+                "Parentheses after a type call its constructor; a struct literal with \
+                 field names uses braces."
                     .to_string(),
             ],
-            help: Some(format!("write `{name} {{ {fields}: … }}`")),
+            help: Some(format!("Write `{name} {{ {fields}: … }}`.")),
             labels: Vec::new(),
         });
     }
@@ -15196,19 +15160,18 @@ impl<'a> Checker<'a> {
                             span: *span,
                             code: "NK1155",
                             message: format!(
-                                "the alternatives of this pattern bind different names: \
-                                 `{}`",
+                                "The alternatives of this pattern don't all bind the same names: \
+                                 `{}`.",
                                 missing.join("`, `")
                             ),
                             notes: vec![
-                                "every alternative of an `|` pattern binds the same set of \
-                                 names, because the arm's body reads them and does not know \
-                                 which alternative matched (Part I, 3.4)"
+                                "Every alternative of an `|` pattern has to bind the same names, \
+                                 because the arm's body doesn't know which one matched."
                                     .to_string(),
                             ],
                             help: Some(
-                                "bind the same names in each alternative, or write one arm \
-                                 per shape"
+                                "Bind the same names in each alternative, or write a separate arm \
+                                 for each."
                                     .to_string(),
                             ),
                             labels: Vec::new(),
@@ -15255,16 +15218,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1162",
-            message: format!("`{slot}` reads the slot as well as writing it, and reading a map through the brackets is a `T?`"),
+            message: format!(
+                "`{slot}` reads the map before writing it, and the key might not be there yet."
+            ),
             notes: vec![
-                "a key that is not there is data about the world rather than a bug \
-                 (Part I, 4.5), so what an absent key counts as is something this line \
-                 has to say (ADR-114 D2)"
+                "A missing key is normal, not a bug, so this line has to say what a \
+                 missing key counts as."
                     .to_string(),
             ],
             help: Some(format!(
-                "write it out, with the fallback saying what an absent key counts as: \
-                 `{slot} = ({slot} ?? 0) + 1`"
+                "Write it out with a fallback for a missing key: `{slot} = ({slot} ?? 0) + 1`."
             )),
             labels: Vec::new(),
         });
@@ -15449,18 +15412,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1151",
-            message: format!("this `match` does not cover `{missing}`"),
+            message: format!("This `match` doesn't handle `{missing}`."),
             notes: vec![
-                "a `match` handles every possible case (Part I, 3.4), so that a type gaining \
-                 a variant is a refusal here rather than a branch nobody took \
-                 (ADR-146 D1)"
+                "A `match` has to handle every case, so that adding a variant to a type \
+                 shows you every place that needs to know."
                     .to_string(),
             ],
-            help: Some(
-                "add the arm, or write `else => …` for the rest - a bare name catches too, \
-                 and binds what it caught"
-                    .to_string(),
-            ),
+            help: Some("Add an arm for it, or `else => …` for everything else.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -15689,14 +15647,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1169",
-            message: format!("`{bound}` writes the key `{key}` twice"),
+            message: format!("`{bound}` has the key `{key}` twice."),
             notes: vec![format!(
-                "pair {} and pair {} name it, and a table has one value per key - there \
-                 is no meaning a compiler may pick between (ADR-176 D4)",
+                "Pairs {} and {} both use it, and a table holds one value per key.",
                 first + 1,
                 again + 1
             )],
-            help: Some("take one of them out, or make the key tell them apart".to_string()),
+            help: Some("Remove one of them, or give them different keys.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -15707,16 +15664,17 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1170",
-            message: format!("`{bound}` is keyed by `{key}`, and a table is keyed by text"),
+            message: format!(
+                "`{bound}` uses `{key}` as its keys, but a fixed table's keys are text."
+            ),
             notes: vec![
-                "a `Fixed[&str, V]` hashes and compares text; a number or a `bool` \
-                 wants a different table - a dense array, most likely - which is a \
-                 different decision with a measurement of its own (ADR-176 D5)"
+                "A fixed table looks up text keys. Numbers or `bool`s as keys need a \
+                 different kind of table, which isn't available yet."
                     .to_string(),
             ],
             help: Some(
-                "write the keys as text, or keep it a `collections::HashMap` built \
-                 while the program runs"
+                "Write the keys as text, or use a `collections::HashMap` built while the \
+                 program runs."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -15751,15 +15709,15 @@ impl<'a> Checker<'a> {
             code: "NK1168",
             // **The constant on this line**, which is the one the reader
             // declared; the ring below says where it goes.
-            message: format!("`{bound}` is worked out from itself"),
+            message: format!("`{bound}` depends on itself."),
             notes: vec![format!(
-                "the ring is {} - a `comptime` must fold (ADR-073 D3), and nothing in \
-                 this one reaches a value that does not need the next",
+                "The chain is {}, and a `comptime` has to be computable while the \
+                 program is built.",
                 named.join(" → ")
             )],
             help: Some(
-                "give one of them a value that stands on its own, or make the \
-                 dependent one a `let`, where it is computed while the program runs"
+                "Give one of them a value that doesn't depend on the others, or make it \
+                 a `let` so it's computed while the program runs."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -15794,20 +15752,20 @@ impl<'a> Checker<'a> {
             // **The binding's name and not the callee's**, which is the same
             // sentence the generic `NK1127` writes: one code, one headline, and
             // the reader's own name in it. What it met is the note's.
-            message: format!("this compiler cannot evaluate `{bound}` while it builds"),
+            message: format!("`{bound}` can't be computed while the program is built."),
             // **One note, written per wall.** The sentence about `sync` belongs
             // to the three walls that are about a **body** and not to the one
             // about text, so it lives in each `why` rather than under all of
             // them — a note that does not apply is one the reader has to rule
             // out.
-            notes: vec![format!("`{what}`: {why} (Part II, 10.2)")],
+            notes: vec![format!("`{what}`: {why}.")],
             // **The wall's way out, and then the one every `comptime` has.**
             // The second half is the generic refusal's own sentence, with the
             // reader's name in it: a value meant to be computed while the
             // program runs was never a constant (ADR-073 D3).
             help: Some(format!(
-                "{way_out}. Or write `let {bound} = …`, where the value is meant to be \
-                 computed while the program runs"
+                "{}. Or write `let {bound} = …` to compute it while the program runs.",
+                sentence(way_out)
             )),
             labels: Vec::new(),
         });
@@ -15826,16 +15784,18 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1165",
-            message: format!("this reads element {at} of {}", plural(len, "element")),
+            message: format!(
+                "This reads element {at}, but there are only {}.",
+                plural(len, "element")
+            ),
             notes: vec![
-                "the whole of it is computed while the program is built (Part II, 10.2), \
-                 so this is the read happening - there is no run left for it to abort in \
-                 (ADR-048 D1)"
+                "This is computed while the program is built, so the read would fail \
+                 right here."
                     .to_string(),
             ],
             help: Some(match len {
-                0 => "the array is empty, so no index is in it".to_string(),
-                _ => format!("the indices are 0 to {}", len - 1),
+                0 => "The array is empty, so there's nothing to read.".to_string(),
+                _ => format!("The indexes go from 0 to {}.", len - 1),
             }),
             labels: Vec::new(),
         });
@@ -15969,17 +15929,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1161",
-            message: format!("this throws {what}, and what is thrown is an error"),
+            message: format!("You can only throw an error, and this throws {what}."),
             notes: vec![
-                "an error is a type with an `impl Error` on it, which is where its \
-                 `message` is written - the type carries no marker and the `impl` line \
-                 is what says so (Part I, 7.1)"
+                "An error is a type with an `impl Error` for it, which says what its \
+                 message is."
                     .to_string(),
             ],
             help: Some(
-                "declare one: `enum Refused { NotFound }` with an \
-                 `impl Error for Refused { fn message(&self) -> String { … } }`, and \
-                 throw a value of it - an error carries what belongs to it"
+                "Declare one, such as `enum Refused { NotFound }` with \
+                 `impl Error for Refused { fn message(ref self) -> String { … } }`, and \
+                 throw a value of it."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -16033,17 +15992,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1160",
-            message: format!("`{handle}` is a handle, and {what} reaches inside it"),
+            message: format!(
+                "You can't look inside `{handle}`: it's a handle, and {what} reaches into it."
+            ),
             notes: vec![format!(
-                "`{handle}` is declared `opaque` - an address this language never \
-                 dereferences, so what it points at belongs to the library that made it \
-                 and has no shape here (ADR-147 D3)"
+                "`{handle}` is declared `opaque`: what it points at belongs to the C \
+                 library that made it."
             )],
-            help: Some(format!(
-                "hand the handle to a function the `extern \"C\"` block declares - that \
-                 is what a library's own surface is for, and `{handle}` is released by \
-                 the function the block names"
-            )),
+            help: Some(
+                "Pass the handle to a function declared in the `extern \"C\"` block.".to_string(),
+            ),
             labels: Vec::new(),
         });
     }
@@ -16067,15 +16025,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1160",
-            message: format!("`{handle}` is a handle, and nothing here makes one"),
+            message: format!(
+                "You can't make a `{handle}` yourself: it's a handle a C library gives you."
+            ),
             notes: vec![format!(
-                "`{handle}` is declared `opaque` - an address a C function hands back - so \
-                 a constructor would have to invent one, and an address somebody chose is \
-                 the one thing a handle may never be (ADR-147 D3)"
+                "`{handle}` is declared `opaque`: only a C function can hand one out."
             )],
             help: Some(format!(
-                "call the function in the `extern \"C\"` block that hands a `{handle}` \
-                 back, and let its `cleanup` end it"
+                "Call the function in the `extern \"C\"` block that returns a `{handle}`."
             )),
             labels: Vec::new(),
         });
@@ -16185,18 +16142,17 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1159",
             message: format!(
-                "`{written}` reads this as the length of `{buffer}`, and it cannot be \
-                 shown to fit"
+                "`{written}` takes this as the length of `{buffer}`, but it might be longer \
+                 than the buffer."
             ),
             notes: vec![
-                "a pointer and a count are one fact in C - the first says where and the \
-                 second says how far - and a count that is longer than the buffer is the \
-                 overrun this boundary exists to stop (ADR-147 D2)"
+                "C trusts the count completely, so a count longer than the buffer would \
+                 read or write past its end."
                     .to_string(),
             ],
             help: Some(format!(
-                "write `{buffer}.len()`, or a constant the buffer's own length covers - an \
-                 `Array[T, N]` carries its length and a `Vec[T]` does not"
+                "Pass `{buffer}.len()`, or a constant no bigger than the buffer. An \
+                 `Array[T, N]` knows its length; a `Vec[T]` doesn't until the program runs."
             )),
             labels: Vec::new(),
         });
@@ -17136,32 +17092,29 @@ impl<'a> Checker<'a> {
         // the two declarations do not look alike.
         let carries = field.contains("::");
         let message = match carries {
-            true => format!("`{field}` carries a `{held}`, and a `const` cannot hold one"),
+            true => format!("`{field}` carries a `{held}`, which a `comptime` can't hold."),
             false => {
-                format!("`{bound}`'s `{field}` is declared `{held}`, and a `const` cannot hold one")
+                format!("`{bound}.{field}` is a `{held}`, which a `comptime` can't hold.")
             }
         };
         let note = match carries {
-            true => "an `enum` crosses into the program as a `const` only where the \
-                     variant the value *is* can - what owns memory has no `const` form, \
-                     which is why a build-time value crosses in its view form (ADR-079 \
-                     D1). Another variant of the same `enum` may cross perfectly well"
+            true => "A value computed at build time can't own memory. Another variant \
+                     of the same `enum` may be fine."
                 .to_string(),
-            false => "a `struct` crosses into the program as a `const` only where every \
-                      field can - what owns memory has no `const` form, which is why a \
-                      build-time value crosses in its view form (ADR-079 D1)"
+            false => "A value computed at build time can't own memory, so every field \
+                      has to be one that doesn't."
                 .to_string(),
         };
         let help = match carries {
             true => format!(
-                "declare what `{field}` carries as the fixed form of it - `Array[T, N]` \
-                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
-                 and build it while the program runs"
+                "Declare what `{field}` carries with a fixed-size type (`Array[T, N]` \
+                 instead of a `Vec`, `&str` instead of a `String`), or build it while the \
+                 program runs instead of in a `comptime`."
             ),
             false => format!(
-                "declare `{field}` as the fixed form of what it holds - `Array[T, N]` \
-                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
-                 and build it while the program runs"
+                "Declare `{field}` with a fixed-size type (`Array[T, N]` instead of a \
+                 `Vec`, `&str` instead of a `String`), or build it while the program runs \
+                 instead of in a `comptime`."
             ),
         };
         self.checked.findings.push(Finding {
@@ -17207,8 +17160,7 @@ impl<'a> Checker<'a> {
                     "a `Vec`",
                     "`[T; N]`",
                     format!(
-                        "declare it `Array[{element}, {}]` - the build computed {}, \
-                         so that is the length",
+                        "Declare it as `Array[{element}, {}]`: the build computed {}.",
                         items.len(),
                         plural(items.len(), "element")
                     ),
@@ -17219,8 +17171,8 @@ impl<'a> Checker<'a> {
             _ => (
                 "a `String`",
                 "`&str`",
-                "declare it `&str` - the text is the build's, so what the program \
-                 holds is a view of it"
+                "Declare it as `&str`: the text is built into the program, and the \
+                 program holds a view of it."
                     .to_string(),
             ),
         };
@@ -17229,13 +17181,13 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1167",
             message: format!(
-                "`{bound}` is a `{}`, and a `const` cannot hold one",
+                "`{bound}` is a `{}`, which a `comptime` can't hold.",
                 held.text()
             ),
             notes: vec![format!(
-                "{owns} owns memory and allocates, and the language below has no \
-                 `const` that holds one - what it does have is {fixed}, which is why a \
-                 build-time value crosses in its view form (ADR-079 D1)"
+                "{} allocates memory, and a value computed at build time can't. It can \
+                 hold {fixed} instead.",
+                sentence(owns)
             )],
             help: Some(way_out),
             labels: Vec::new(),
@@ -17263,30 +17215,30 @@ impl<'a> Checker<'a> {
             code: "NK1157",
             message: match how {
                 Counted::Written => format!(
-                    "this writes {}, and the array holds {wanted}",
+                    "This has {}, but the array holds {wanted}.",
                     plural(written, "element")
                 ),
                 Counted::Computed => format!(
-                    "this computed {}, and the array holds {wanted}",
+                    "This computes {}, but the array holds {wanted}.",
                     plural(written, "element")
                 ),
             },
             notes: vec![
-                "the length is part of the type, so an `Array[T, N]` takes exactly `N` \
-                 elements (ADR-152 D4)"
+                "The length is part of the type, so an `Array[T, N]` holds exactly `N` \
+                 elements."
                     .to_string(),
             ],
             help: Some(match how {
                 Counted::Written => {
-                    format!("write {had}, or declare the array the length this literal is")
+                    format!("Write {had}, or change the array's declared length to match.")
                 }
                 // **Not *write five elements***, which is what the other half
                 // says and is advice nobody can take here: the number came out
                 // of a body, so the two things a reader can change are the body
                 // and the declaration.
                 Counted::Computed => format!(
-                    "declare the array the length this computes, or have the body \
-                     produce {had}"
+                    "Change the array's declared length to match, or make the body produce \
+                     {had}."
                 ),
             }),
             labels: Vec::new(),
@@ -17320,13 +17272,11 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1154",
-            message: format!("this list holds {first} and {other}, and a list holds one type"),
+            message: format!("This list mixes {first} and {other}, but a list holds one type."),
             notes: vec![
-                "the element type is what the elements agree on, and the first one that \
-                 has a type is what the rest answer to (Part I, 2.2)"
-                    .to_string(),
+                "The first element with a known type sets the type for the rest.".to_string(),
             ],
-            help: Some("convert the one that does not fit, or write two lists".to_string()),
+            help: Some("Convert the element that doesn't fit, or use two lists.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -17350,14 +17300,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1153",
-            message: format!("`{name}` is an empty list with no element type"),
+            message: format!("`{name}` is an empty list, and nothing says what it holds."),
             notes: vec![
-                "an empty list carries no element type, so it takes one from the first use \
-                 that needs one - and nothing here uses it (Part I, 2.2)"
+                "An empty list gets its element type from how it's used, and it isn't \
+                 used here."
                     .to_string(),
             ],
             help: Some(format!(
-                "write the type - `let {name}: Vec[i64] = []` - or give it a first element"
+                "Write the type, `let {name}: Vec[i64] = []`, or give it a first element."
             )),
             labels: Vec::new(),
         });
@@ -17376,19 +17326,17 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1152",
-            message: format!("`{callee}` may not be called while the program is built"),
+            message: format!("You can't call `{callee}` while the program is built."),
             notes: vec![
                 because.to_string(),
-                "the rule is two ledger columns and not a list of allowed functions, so \
-                 what a build-time body may do is what the compiler already derives about \
-                 every function it sees"
+                "At build time only functions that never pause and touch nothing outside \
+                 the program can run."
                     .to_string(),
             ],
-            help: Some(
-                "call it while the program runs - a `let` rather than a `comptime` - or \
-                 make the callee `sync` and reach nothing outside the build"
-                    .to_string(),
-            ),
+            help: Some(format!(
+                "Call it while the program runs, with `let` instead of `comptime`, or \
+                 make `{callee}` `sync` so it touches nothing outside the program."
+            )),
             labels: Vec::new(),
         });
     }
@@ -17405,16 +17353,16 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1152",
-            message: format!("`{callee}` calls itself too deeply to evaluate while building"),
+            message: format!(
+                "`{callee}` calls itself too deeply to be computed while the program is built."
+            ),
             notes: vec![
-                "there is no step budget on a build-time body (ADR-075 D4) and a loop that \
-                 does not end hangs the build; what this bounds is the **call depth**, so \
-                 that a recursion without a base case says so rather than taking this \
-                 compiler's stack with it"
+                "The build limits how deep calls may go, so that a recursion without an \
+                 end is reported instead of crashing the compiler."
                     .to_string(),
             ],
             help: Some(
-                "give the recursion a base case, or compute it while the program runs".to_string(),
+                "Give the recursion a base case, or compute it while the program runs.".to_string(),
             ),
             labels: Vec::new(),
         });
@@ -17447,16 +17395,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1149",
-            message: format!("`{ty}` is constructed by its anonymous constructor, not by `new`"),
+            message: format!("Make a `{ty}` with `{ty}(…)`, not `{ty}::new`."),
             notes: vec![
-                "a type is constructed the way a `.nika` file declares one - `pub fn(first: \
-                 i32)`, Part I 4.2 - and `new` is the neighbouring language's convention \
-                 reaching through a hand-written ledger (ADR-140 D2). One convention, and \
-                 it is this language's own"
+                "In Nikaia a type's constructor has no name: it's called as the type \
+                 itself."
                     .to_string(),
             ],
             help: Some(format!(
-                "write `{ty}(…)`, or `{ty}` where the constructor is the value"
+                "Write `{ty}(…)`, or just `{ty}` where you pass the constructor itself."
             )),
             labels: Vec::new(),
         });
@@ -17511,22 +17457,18 @@ impl<'a> Checker<'a> {
                 .collect::<Vec<_>>()
                 .join(", ");
             let help = match nearest(member, &known) {
-                Some(near) => format!("did you mean `{ty}::{near}`?"),
+                Some(near) => format!("Did you mean `{ty}::{near}`?"),
                 None if known.is_empty() => {
-                    format!("`{ty}` declares no variants, so there is no name to write here")
+                    format!("`{ty}` has no variants, so there's nothing to write here.")
                 }
-                None => format!("write one of {listed}"),
+                None => format!("Write one of {listed}."),
             };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1171",
-                message: format!("`{ty}` has no variant `{member}`"),
-                notes: vec![format!(
-                    "this compiler read the declaration, so a name beside it is a misspelling \
-                     rather than something nobody has told it about - `{ty}` is {listed} and \
-                     nothing else (Part I, 4.3)"
-                )],
+                message: format!("`{ty}` has no variant called `{member}`."),
+                notes: vec![format!("`{ty}` is {listed}.")],
                 help: Some(help),
                 labels: Vec::new(),
             });
@@ -17556,14 +17498,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1171",
-            message: format!("`{ty}` is a struct, and nothing it declares is called `{member}`"),
+            message: format!("`{ty}` has nothing called `{member}` to reach with `::`."),
             notes: vec![format!(
-                "`::` reaches an **item** a type declares - a method of an `impl`, a variant of an \
-                 `enum` - and a field is not one: it is read from a value. `{ty}` holds {listed}"
+                "`::` reaches a type's methods and variants. Fields are read from a value \
+                 with a dot. `{ty}` holds {listed}."
             )],
             help: Some(match nearest(member, &named) {
-                Some(near) => format!("read it from a value: `value.{near}`"),
-                None => format!("write `impl {ty} {{ … }}` if `{member}` is meant to be a method"),
+                Some(near) => format!("Read it from a value: `value.{near}`."),
+                None => format!("If `{member}` should be a method, add it in `impl {ty} {{ … }}`."),
             }),
             labels: Vec::new(),
         });
@@ -17582,23 +17524,26 @@ impl<'a> Checker<'a> {
         };
         let note = match self.type_parameters.get(ty) {
             Some(_) => format!(
-                "a type's shape is reached through a **bound**: `{ty}::{member}` needs \
-                 `[{ty}: {bound}]` (Part II 10.3)"
+                "A type's fields and variants are reached through a bound: \
+                 `{ty}::{member}` needs `[{ty}: {bound}]`."
             ),
             None => format!(
-                "a type's shape is reached through a **bound** rather than by name - \
-                 `fn describe[T: {bound}](value: T)`, and then `T::{member}` inside it \
-                 (Part II 10.3)"
+                "A type's fields and variants are reached through a bound, not by the \
+                 type's name: `fn describe[T: {bound}](value: T)`, and then `T::{member}` \
+                 inside it."
             ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1171",
-            message: format!("`{ty}::{member}` is reached under a `{bound}` bound"),
+            message: format!(
+                "You can't reach `{ty}::{member}` directly: it's reached through a type \
+                 parameter bound by `{bound}`."
+            ),
             notes: vec![note],
             help: Some(format!(
-                "write `fn describe[T: {bound}](value: T)` and `for x in T::{member}` inside it"
+                "Write `fn describe[T: {bound}](value: T)`, and use `T::{member}` inside it."
             )),
             labels: Vec::new(),
         });
@@ -17662,20 +17607,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1144",
-            message: "`_` ignores a value inside a pattern, and this `let` has nothing else \
-                      to bind"
-                .to_string(),
+            message: "`let _ = …` binds nothing, so there's no reason for the `let`.".to_string(),
             notes: vec![
-                "a call made for its effect is written as the call, `f()`; a resource torn \
-                 down at a moment of the program's choosing is closed by name or lives in a \
-                 scope it can end with (Part I, 6.4)"
-                    .to_string(),
-                "and what this lowers to is Rust's `let _ =`, which **discards** the value \
-                 rather than binding it - so the cleanup runs here and not at the end of the \
-                 block, which is the one thing a reader cannot see in the line"
+                "A call made for its effect is written as the call on its own, `f()`.".to_string(),
+                "`_` would also throw the value away on the spot, so its cleanup would \
+                 run right here instead of at the end of the block."
                     .to_string(),
             ],
-            help: Some("write the expression as a statement, or bind it to a name".to_string()),
+            help: Some("Write the expression on its own, or give it a name.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -17693,14 +17632,12 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1172",
-            message: format!("`{field}` is named twice here, and `{ty}` has one of it"),
+            message: format!("You're setting `{ty}.{field}` twice."),
             notes: vec![
-                "a field list gives each field its value once - there is no meaning a \
-                 compiler may pick between, and the later one silently winning is the \
-                 reading this language does not offer (Part I, 4.2)"
+                "Each field gets its value once; Nikaia won't silently pick one of the two."
                     .to_string(),
             ],
-            help: Some(format!("take one of the two `{field}` out")),
+            help: Some(format!("Remove one of the two `{field}`.")),
             labels: Vec::new(),
         });
     }
@@ -17722,51 +17659,40 @@ impl<'a> Checker<'a> {
     fn a_file_this_build_may_not_read(&mut self, path: &str, why: &Denied, span: &Span) {
         let (note, way_out) = match why {
             Denied::NoList => (
-                "a build given no allowlist reads nothing while it builds (ADR-072 D1), and \
-                 that is the default rather than a mode: *this build reads nothing* is what \
-                 happens when nothing is passed, not a claim somebody keeps true"
+                "A build reads no files unless it's given a list of the files it may read."
                     .to_string(),
-                "pass `--allow-read-from-list=<file>`, and name this path in that file".to_string(),
+                "Pass `--allow-read-from-list=<file>`, and put this path in that file.".to_string(),
             ),
             Denied::NotListed { list } => (
                 format!(
-                    "a file is named in three places and a read missing any of them is \
-                     refused (ADR-072 D3): the flag says a list is in effect, the list says \
-                     which files, and the literal says which one this line reads. `{list}` \
-                     does not name `{path}`"
+                    "`{list}` is the list of files this build may read, and `{path}` isn't \
+                     in it."
                 ),
-                format!("write `{path}` on a line of `{list}`"),
+                format!("Add `{path}` as a line in `{list}`."),
             ),
             Denied::OutsideTheRoot => (
-                "a build reads under the project root and nowhere else, and this path \
-                 leaves it - it is absolute, or it climbs with `..`. The check is on the \
-                 literal rather than on where a symlink points, because what a reader can \
-                 decide by looking at the line is the property the three namings buy \
-                 (ADR-072 D4)"
+                "A build only reads files inside the project, and this path is absolute \
+                 or climbs out with `..`."
                     .to_string(),
-                "write the path relative to the project root".to_string(),
+                "Write the path relative to the project root.".to_string(),
             ),
             Denied::Unreadable { because } => (
-                format!(
-                    "the allowlist names `{path}` and this build could not read it: \
-                     {because}"
-                ),
-                "add the file, or take the line out of the allowlist".to_string(),
+                format!("`{path}` is in the list, but it couldn't be read: {because}"),
+                "Add the file, or remove its line from the list.".to_string(),
             ),
             Denied::NotText => (
                 format!(
-                    "`{path}` was read and is not text. What crosses from build time to \
-                     run time is a `&str` (ADR-079 D1), so the bytes have to be UTF-8"
+                    "`{path}` isn't text. A file read at build time becomes a `&str`, so \
+                     it has to be UTF-8."
                 ),
-                "read a text file here; bytes that are not text have no crossed form yet"
-                    .to_string(),
+                "Read a text file here. Other files can't be read at build time yet.".to_string(),
             ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1175",
-            message: format!("this build may not read `{path}`"),
+            message: format!("This build isn't allowed to read `{path}`."),
             notes: vec![note],
             help: Some(way_out),
             labels: Vec::new(),
@@ -17891,7 +17817,7 @@ impl<'a> Checker<'a> {
                         false => (FIELDS, "field"),
                     };
                     found.notes.push(format!(
-                        "unrolling `{}::{member}` for `{on}`, at {one} `{}`",
+                        "This happened while going through `{}::{member}` for `{on}`, at the {one} `{}`.",
                         self.walks_fields
                             .get(&name)
                             .map(String::as_str)
@@ -18094,17 +18020,17 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1183",
             message: format!(
-                "`{name}` is a view of a `{want}`, and this `let` declares a `{want}`"
+                "`{name}` is a view of a `{want}`, but this `let` declares a `{want}` of its \
+                 own."
             ),
             notes: vec![format!(
-                "a `for` lends what it walks (Part I, 6.5), so `{name}` points at an element the \
-                 collection still owns - and a `{want}` here would be a **copy**, which this \
-                 language writes and never inserts (ADR-008 D5)"
+                "A `for` lends each element, so `{name}` points at an element the \
+                 collection still owns. A `{want}` of its own would be a copy, and Nikaia \
+                 never copies behind your back."
             )],
             help: Some(format!(
-                "take the annotation off: `let … = {name}` binds the view, and reading through \
-                 one is the same reading. Where a copy is what was meant, write it - \
-                 `{name}.clone()` for a type that offers one"
+                "Remove the type: `let … = {name}` keeps the view, which reads the same. \
+                 If you want a copy, write `{name}.clone()`."
             )),
             labels: Vec::new(),
         });
@@ -18123,14 +18049,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1180",
-            message: format!("a variant of `T::variants` has no `{member}`"),
+            message: format!("A variant from `T::variants` has no `{member}`."),
             notes: vec![
-                "what a reflected variant answers is `.name`, the variant's own name as text, \
-                 and `.is(value)`, whether a value is that variant (Part II 10.3)"
+                "A variant from `T::variants` has `.name`, its name as text, and \
+                 `.is(value)`, whether a value is that variant."
                     .to_string(),
             ],
             help: Some(
-                "write `.name` or `.is(value)`; what a variant carries is read with a `match`"
+                "Use `.name` or `.is(value)`. To read what a variant carries, use a `match`."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -18142,15 +18068,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1180",
-            message: format!("a field of `T::fields` has no `{member}`"),
+            message: format!("A field from `T::fields` has no `{member}`."),
             notes: vec![
-                "what a reflected field answers is `.name`, the field's own name as text, \
-                 and `.of(value)`, what that field holds on this value (Part II 10.3, \
-                 ADR-088 D2) - and nothing else, because a field descriptor is a shape \
-                 this compiler makes rather than a type a program declares"
+                "A field from `T::fields` has `.name`, its name as text, and \
+                 `.of(value)`, what that field holds in a value."
                     .to_string(),
             ],
-            help: Some("write `.name` or `.of(value)`".to_string()),
+            help: Some("Use `.name` or `.of(value)`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -18191,29 +18115,26 @@ impl<'a> Checker<'a> {
         };
         let way_out = match known {
             true => format!(
-                "declare `{field}` as `{held}` where the program builds it while it runs, \
-                 or fill it from a `comptime` - a build-time value crosses into a `&[T]` \
-                 and the run it views is the program's own text"
+                "Declare `{field}` as `{held}` if the program builds it while it runs, \
+                 or fill it from a `comptime`, whose values are built into the program."
             ),
             false => format!(
-                "declare `{field}` as `Vec[T]`, which is what a parse builds - and where \
-                 the program wants the view, cross it: a rule handing back a `Vec[T]` \
-                 reaches a `comptime` declared `&[T]`"
+                "Declare `{field}` as `Vec[T]`, which is what parsing builds. If you \
+                 need a view, run the grammar in a `comptime` declared `&[T]`."
             ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK1179",
-            message: format!("`{owner}.{field}` is a view of a run, and this is {owned}"),
+            message: format!(
+                "`{owner}.{field}` only views a list something else keeps, but this is {owned}."
+            ),
             notes: vec![
-                "a `&[T]` is what a **build** hands the program (ADR-079 D1) or what \
-                 another view is read from - it points at a run somebody else keeps, and \
-                 a value built here is gone when the expression ends (ADR-107 D3)"
+                "A view points at values something else keeps, and a value built on \
+                 this line is gone when the line ends."
                     .to_string(),
-                "a **parameter** is where the `&` is the compiler's to write (ADR-094 \
-                 D1), which is why `total(xs)` for a `Vec[i64]` needs no word and this \
-                 line does"
+                "Passing a list to a parameter lends it automatically; a field doesn't."
                     .to_string(),
             ],
             help: Some(way_out),
@@ -18244,61 +18165,47 @@ impl<'a> Checker<'a> {
             // bytes that were parsed, which is what Part II 10.2 A means by
             // *invalid input fails the build*.
             Wall::Refused { detail } => (
-                format!("`{entry}` refused the bytes this build gave it"),
-                format!(
-                    "the parser's own words, against the input:\n{}",
-                    indented(detail)
-                ),
-                "fix the input, or widen the grammar to accept it".to_string(),
+                format!("`{entry}` couldn't parse the input it was given."),
+                format!("What the parser said:\n{}", indented(detail)),
+                "Fix the input, or change the grammar to accept it.".to_string(),
             ),
             Wall::NoCrossedForm { ty, because } => (
-                format!("`{entry}` hands back a `{ty}`, which has no build-time form"),
+                format!("`{entry}` returns a `{ty}`, which can't be computed at build time."),
                 format!(
-                    "a grammar runs here and its result has to **cross** into the program \
-                     (ADR-079 D1): {because}"
+                    "The grammar runs while the program is built, and its result has to be \
+                     built into the program: {because}"
                 ),
-                "write a rule whose result is a whole number, a `bool`, text, a list of \
-                 those or a `struct` whose fields are those"
+                "Use a rule whose result is a whole number, a `bool`, text, a list of \
+                 those, or a `struct` made of those."
                     .to_string(),
             ),
             Wall::InsideAnother { grammar: outer } => (
-                format!("`{entry}` would run while `{outer}` is running"),
-                "running a grammar compiles a parser, so one inside another would have \
-                 this compiler start a second compiler inside the first - which is a \
-                 build that does not end rather than one that is slow"
+                format!("`{entry}` would run inside `{outer}`, which is still running."),
+                "Running a grammar at build time compiles its parser, so one inside \
+                 another would start the compiler inside itself."
                     .to_string(),
-                "run the inner grammar in a `comptime` of its own, and read its value here"
+                "Run the inner grammar in a `comptime` of its own, and use its value here."
                     .to_string(),
             ),
             Wall::NowhereToBuild => (
-                format!("`{entry}` has nowhere to compile its parser"),
-                "a grammar is run by compiling the parser it generates, which needs a \
-                 directory to build in - and this build has none"
+                format!("`{entry}` has nowhere to compile its parser."),
+                "Running a grammar at build time compiles its parser, which needs a \
+                 directory, and this build has none."
                     .to_string(),
-                "run this through `nikaia build` or `nikaia --input`, which both have one"
-                    .to_string(),
+                "Build with `nikaia build` or `nikaia --input`, which both have one.".to_string(),
             ),
             Wall::DidNotBuild { detail } => (
-                format!("the parser `{entry}` generates did not compile"),
+                format!("The parser generated for `{entry}` didn't compile."),
                 format!(
-                    "that is this compiler's fault and not this program's: the parser built \
-                     here is the parser the program links, so a program that runs cannot \
-                     have a parser that does not.\n{}",
+                    "This is a bug in the compiler, not in your program.\n{}",
                     indented(detail)
                 ),
-                "please report it - a `.nika` file and this message are the whole of what \
-                 is needed"
-                    .to_string(),
+                "Please report it with your `.nika` file and this message.".to_string(),
             ),
             Wall::Unreadable { detail } => (
-                format!("`{entry}` ran and printed something this compiler could not read"),
-                format!(
-                    "the encoder is generated and the decoder is written by hand, which is \
-                     two halves of one format: {detail}"
-                ),
-                "please report it - this is a defect in the compiler rather than in the \
-                 program"
-                    .to_string(),
+                format!("`{entry}` ran, but the compiler couldn't read its result."),
+                format!("This is a bug in the compiler: {detail}"),
+                "Please report it with your `.nika` file and this message.".to_string(),
             ),
         };
         self.checked.findings.push(Finding {
@@ -18325,19 +18232,17 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1177",
-            message: "`asset` reads a file while the program is **built**, and this is not a \
-                      `comptime`"
+            message: "`asset` reads a file while the program is built, so it only works in a \
+                      `comptime`."
                 .to_string(),
             notes: vec![
-                "three words each decide one thing (ADR-116 D2): `comptime` says **when**, \
-                 `asset(\"…\")` says **where the bytes come from**, and the call around it \
-                 says what is done with them. Without the first there is no build-time \
-                 evaluation for the other two to happen in"
+                "`comptime` says when, `asset(\"…\")` says where the bytes come from, \
+                 and the call around it says what to do with them."
                     .to_string(),
             ],
             help: Some(
-                "write `comptime NAME = …` if the bytes belong in the program, or \
-                 `fs::read(…, root)` to read the file while the program runs"
+                "Write `comptime NAME = …` to build the bytes into the program, or \
+                 `fs::read(…, root)` to read the file while it runs."
                     .to_string(),
             ),
             labels: Vec::new(),
@@ -18357,18 +18262,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1176",
-            message: "`asset` takes a written path, and this one is worked out".to_string(),
+            message: "`asset` needs the path written out, not computed.".to_string(),
             notes: vec![
-                "the allowlist is checked against the **literal** (ADR-072 D4), so a path \
-                 the build computes - even one that folds to text this evaluator can read - \
-                 would make *named in the code* something a reader cannot decide by looking \
-                 at the line"
+                "The list of files a build may read is checked against the path as \
+                 written, so a reader can see from the line which file is read."
                     .to_string(),
             ],
             help: Some(
-                "write the path out: two files wanted is two `asset(\"…\")` and two lines \
-                 in the list"
-                    .to_string(),
+                "Write the path out. For two files, write two `asset(\"…\")` calls.".to_string(),
             ),
             labels: Vec::new(),
         });
@@ -18387,14 +18288,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1174",
-            message: format!("this `with` names no field, so it is the `{ty}` it copies"),
+            message: format!("This `with` changes no field, so it's just a copy of the `{ty}`."),
             notes: vec![
-                "`with` is read as *this value, with these fields different* (ADR-118 D1) \
-                 - and one that names none says nothing a reader can act on, which is a \
-                 line they would stop at looking for what it does"
+                "`with` means \"this value, with these fields different\", so one without \
+                 fields makes a reader look for a change that isn't there."
                     .to_string(),
             ],
-            help: Some("name the fields that change, or drop the `with`".to_string()),
+            help: Some("Name the fields that change, or remove the `with`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -18411,40 +18311,34 @@ impl<'a> Checker<'a> {
     fn a_with_over_something_else(&mut self, ty: &str, why: Copyable, span: &Span) {
         let (note, way_out) = match why {
             Copyable::AnEnum => (
-                format!(
-                    "`{ty}` is an `enum`, and which fields a copy would carry depends on the \
-                     variant - which the type does not say (ADR-118 §4)"
-                ),
-                "match on it first, and build the variant's value in the arm where it is \
-                 known"
+                format!("`{ty}` is an `enum`, and which fields it has depends on the variant."),
+                "`match` on it first, and build the new value in the arm for its variant."
                     .to_string(),
             ),
             Copyable::AView => (
                 format!(
-                    "`with` takes the fields it does not name from the value **by move** \
-                     (ADR-118 D3), and `&{ty}` is a view - there is nothing here to move \
-                     out of, and a copy this compiler inserted would be one the program \
-                     did not write (ADR-107 D3)"
+                    "`with` moves the fields it doesn't change out of the value, but a \
+                     `ref {ty}` only looks at a value something else keeps, and Nikaia never \
+                     copies behind your back."
                 ),
                 format!(
-                    "take the value rather than a view of it, or write a `{ty} {{ … }}` \
-                     naming every field"
+                    "Use the value itself instead of a view, or write `{ty} {{ … }}` with \
+                     every field."
                 ),
             ),
             Copyable::NotAStruct => (
                 format!(
-                    "`with` copies a **struct**, field by field, and `{ty}` is not one this \
-                     program declares with fields (Part I, 4.1)"
+                    "`with` copies a struct field by field, and `{ty}` isn't a struct with \
+                     fields."
                 ),
-                "write the value the type's own constructor takes".to_string(),
+                "Make the value with the type's constructor instead.".to_string(),
             ),
             Copyable::Unnamed => (
-                "`with` lowers to a copy that **writes the type's name** - `Point { x: 1, \
-                 ..p }` - so a value whose type this compiler has not worked out has \
-                 nothing to write"
+                "`with` needs to know the value's type, and the type of this value \
+                 couldn't be worked out."
                     .to_string(),
-                "write the type on the binding this reads, or name every field in a \
-                 literal"
+                "Write the type on the `let` this reads, or write the value out with \
+                 every field."
                     .to_string(),
             ),
         };
@@ -18457,11 +18351,14 @@ impl<'a> Checker<'a> {
                 // is a headline about nothing. What the reader needs to know is
                 // that it is the *type* that is missing, not the value.
                 Copyable::Unnamed => {
-                    "`with` copies a struct, and this compiler could not work out what type \
-                     this is"
+                    "`with` copies a struct, but the type of this value couldn't be worked out."
                         .to_string()
                 }
-                _ => format!("`with` copies a struct, and this is `{ty}`"),
+                Copyable::AView => {
+                    format!("`with` needs the value itself, but this is only a view of a `{ty}`.")
+                }
+                Copyable::AnEnum => format!("`with` copies a struct, but `{ty}` is an `enum`."),
+                Copyable::NotAStruct => format!("`with` copies a struct, but this is a `{ty}`."),
             },
             notes: vec![note],
             help: Some(way_out),
@@ -18476,11 +18373,11 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1107",
-            message: format!("`{ty}` has no field `{field}`"),
-            notes: vec![format!("`{ty}` has {}", list(&names))],
+            message: format!("`{ty}` has no field called `{field}`."),
+            notes: vec![format!("Its fields are {}.", list(&names))],
             help: Some(match near {
-                Some(near) => format!("did you mean `{near}`?"),
-                None => format!("add `{field}` to `{ty}`, or use one of the fields it has"),
+                Some(near) => format!("Did you mean `{near}`?"),
+                None => format!("Add `{field}` to `{ty}`, or use one of the fields it has."),
             }),
             labels: Vec::new(),
         });
@@ -18869,21 +18766,13 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1134",
-            message: "nothing in this expression can fail, so the `catch` has nothing to handle"
-                .to_string(),
+            message: "Nothing here can fail, so the `catch` has nothing to handle.".to_string(),
             notes: vec![
-                "a failure comes from a call whose contract carries a `throws` (Part I, 7.1)"
-                    .to_string(),
-                "every call here is one this compiler could look up, and none of them \
-                 declares one"
-                    .to_string(),
-                "a call no contract describes would leave this unsaid rather than \
-                 refused (Part III, C.4)"
-                    .to_string(),
+                "Only a call to a function declared with `throws` can fail.".to_string(),
+                "None of the calls here is declared with `throws`.".to_string(),
+                "(A call the compiler knows nothing about would not be reported here.)".to_string(),
             ],
-            help: Some(
-                "delete the `catch` and its handler: the expression is the value".to_string(),
-            ),
+            help: Some("Remove the `catch` and its handler.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -18981,18 +18870,17 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK2207",
                 message: format!(
-                    "this `update` block replaces `{name}` without reading it, which is a `set`"
+                    "This `update` block replaces `{name}` without reading it, which is what `set` \
+                     is for."
                 ),
                 notes: vec![
-                    "the door exists to decide **inside** the lock; a block that only stores \
-                     takes the lock for nothing the `set` door does not already do \
-                     (ADR-111 D4)"
+                    "`update` is for changes that depend on the current value. Just storing a \
+                     new value is what `set` does."
                         .to_string(),
                 ],
                 help: Some(
-                    "use `set` if the value is computed outside - or read the old value \
-                     here, which is what the block is for: `v += n`, `v.push(e)`, \
-                     `if v > 100 { v = 0 }`"
+                    "Use `set` if the value is computed outside, or use the old value here: \
+                     `v += n`, `v.push(e)`, `if v > 100 { v = 0 }`."
                         .to_string(),
                 ),
                 labels: Vec::new(),
@@ -19026,13 +18914,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1137",
-            message: "the `&` here is the compiler's to write".to_string(),
-            notes: vec![
-                "`after:` is a witness the door only reads, so the reference is what the \
-                 call already means (ADR-094 D1, ADR-111 D5)"
-                    .to_string(),
-            ],
-            help: Some("take the `&` off".to_string()),
+            message: "You don't need the `&` here: the compiler adds it where it's needed."
+                .to_string(),
+            notes: vec!["`after:` is only read, so it's lent already.".to_string()],
+            help: Some("Remove the `&`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -19063,17 +18948,14 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1143",
             message: format!(
-                "`{name}` is declared `extern` and this call is not in an `unsafe` block"
+                "`{name}` is a C function, so calling it has to happen inside an `unsafe` block."
             ),
             notes: vec![
-                "C is not memory-safe, so the boundary is written where it is crossed \
-                 rather than once beside the declaration (Part III, 15.1; ADR-124 D3)"
+                "C isn't memory-safe, so every call into it is marked where it happens."
                     .to_string(),
-                "the block makes no other rule: what is inside it is checked exactly as \
-                 anything else is"
-                    .to_string(),
+                "Everything inside the block is still checked as usual.".to_string(),
             ],
-            help: Some(format!("write `unsafe {{ {name}(…) }}`")),
+            help: Some(format!("Write `unsafe {{ {name}(…) }}`.")),
             labels: Vec::new(),
         });
     }
@@ -19112,20 +18994,14 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK2208",
-            message: format!(
-                "`{container}` has no `set_after`; it is how `set(…; after: …)` is written below"
-            ),
+            message: format!("`{container}` has no `set_after`. Write `set(…; after: …)` instead."),
             notes: vec![
-                "the compare and the store happen while the lock is open once, and the door \
-                 that asks for that is `set` with a witness (ADR-111 D5)"
-                    .to_string(),
-                "written this way the failure would be dropped rather than propagated, \
-                 because nothing in the contracts describes this name"
-                    .to_string(),
+                "`set` with `after:` compares and stores while holding the lock once.".to_string(),
+                "Written like this, a failure would be silently dropped.".to_string(),
             ],
             help: Some(format!(
-                "write `{container}.set(neu; after: seen)`, where `seen` is what the lock \
-                 handed out"
+                "Write `{container}.set(neu; after: seen)`, where `seen` is the value you \
+                 read from the lock."
             )),
             labels: Vec::new(),
         });
@@ -19186,21 +19062,20 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK2205",
                 message: format!(
-                    "this `set` stores a value that was read from a lock, so `{container}` is \
-                     taken twice"
+                    "This `set` stores a value that was read from `{container}` earlier, so the \
+                     lock is taken twice."
                 ),
                 notes: vec![
-                    "`set` is for a value computed outside the lock; a value a lock handed \
-                     out is stale the moment the lock is let go, and anything may happen \
-                     between the read and the store (ADR-111 D4)"
+                    "A value read from a lock is out of date as soon as the lock is released: \
+                     anything can change between the read and the store."
                         .to_string(),
-                    "the stamp travels with the value, so this is the same answer whether it \
-                     was read on the line above, in another function, or in another request"
+                    "This is found wherever the value was read: on the line above, in another \
+                     function, or in another request."
                         .to_string(),
                 ],
                 help: Some(format!(
-                    "write `{container}.update fn(mut v) {{ … }}`, which decides inside the \
-                     lock (ADR-110 D1)"
+                    "Write `{container}.update fn(mut v) {{ … }}`, which reads and changes the \
+                     value while holding the lock."
                 )),
                 labels: Vec::new(),
             });
@@ -19216,17 +19091,15 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK2205",
                 message: format!(
-                    "this `set` stands under a condition read from a lock, so `{container}` is \
-                     taken twice"
+                    "This `set` depends on a condition read from `{container}` earlier, so the \
+                     lock is taken twice."
                 ),
                 notes: vec![
-                    "the value stored is plain and the **decision** is not: what the lock \
-                     said may have changed before this line runs (ADR-111 D4)"
-                        .to_string(),
+                    "What the lock held may have changed before this line runs.".to_string(),
                 ],
                 help: Some(format!(
-                    "write `{container}.update fn(mut v) {{ … }}` and take the decision inside \
-                     the lock (ADR-110 D1)"
+                    "Write `{container}.update fn(mut v) {{ … }}` and make the decision inside \
+                     the lock."
                 )),
                 labels: Vec::new(),
             });
@@ -19265,14 +19138,12 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK2204",
             message: format!(
-                "`{bound}` holds shared mutable state, and this assigns to it directly"
+                "You can't assign to `{bound}` directly: it holds shared mutable state."
             ),
             notes: vec![
-                "a write goes through a door, because the lock has to be taken for it \
-                 (Part II, 12.2)"
-                    .to_string(),
+                "Changing shared state goes through a method that takes the lock.".to_string(),
             ],
-            help: Some(format!("write `{bound}.set({})`", self.written(value))),
+            help: Some(format!("Write `{bound}.set({})`.", self.written(value))),
             labels: Vec::new(),
         });
     }
@@ -19335,14 +19206,14 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1136",
-                message: "a `let` that binds several names takes no type".to_string(),
+                message: "A `let` that binds several names can't have a type.".to_string(),
                 notes: vec![
-                    "the names are taken apart by position, and one written type cannot say \
-                     which of them it is about (Part I, 2.1)"
+                    "The names are taken apart by position, and one type can't say which \
+                     name it belongs to."
                         .to_string(),
                 ],
                 help: Some(
-                    "take the type off, or bind one name and read the parts from it".to_string(),
+                    "Remove the type, or bind one name and read the parts from it.".to_string(),
                 ),
                 labels: Vec::new(),
             });
@@ -19507,7 +19378,9 @@ impl<'a> Checker<'a> {
                         }
                         _ => {
                             self.expect(&narrowed, want, *span, "const", |found, want| {
-                                format!("this is `{found}`, and the `const` says `{want}`")
+                                format!(
+                                    "This value is `{found}`, but the `comptime` declares `{want}`."
+                                )
                             });
                         }
                     }
@@ -19652,28 +19525,17 @@ impl<'a> Checker<'a> {
                 code: "NK1127",
                 severity: Severity::Error,
                 span: *span,
-                message: format!("this compiler cannot evaluate `{bound}` while it builds"),
+                message: format!("`{bound}` can't be computed while the program is built."),
                 notes: vec![
-                    "a `comptime` is a `let` that *must* fold, so one that cannot is \
-                         refused rather than computed while the program runs (Part II, 10.2)"
+                    "A `comptime` has to be computed while the program is built.".to_string(),
+                    "At build time the compiler can compute numbers, `bool`s, text, lists, \
+                         structs and enum variants: literals, `f\"…\"`, arithmetic and \
+                         comparisons, `if`, `for` over a range, `while`, and calls to your own \
+                         functions and methods made of those."
                         .to_string(),
-                    "what it evaluates today is an integer, a **float**, a `bool`, \
-                         **text**, a **list**, a `struct` and an `enum` variant - a \
-                         literal, `f\"… {n} …\"`, arithmetic and \
-                         comparisons over literals and over other constants, `+`, `==` and \
-                         `.len()` over text, an `if`, a **call** to a function or a **method** \
-                         this **program** declares, whose body is made of those, a `for` over a range or a `while` \
-                         inside such a body, and `xs[i]`, `xs[i] = …`, `xs.push(…)` and \
-                         `xs.len()` over a list it holds (ADR-073 D5's second stage). \
-                         What a build-time value owns, the program gets a view of: a \
-                         list crosses as an `Array[T, N]` and text as a `&str`, because \
-                         a `const` below holds neither a `Vec` nor a `String` (ADR-079 \
-                         D1)"
-                    .to_string(),
                 ],
                 help: Some(format!(
-                    "write `let {bound} = …` if it is meant to be computed while the \
-                         program runs"
+                    "Write `let {bound} = …` to compute it while the program runs instead."
                 )),
                 labels: Vec::new(),
             }),
@@ -19732,10 +19594,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1133",
-            message: format!("nothing after a `{word}` in the same block is reached"),
+            message: format!("Nothing after `{word}` in the same block can run."),
             notes: vec![format!(
-                "`{word}` takes no value: a loop is a statement here and hands back nothing, \
-                 so `{word} x` is two statements rather than one (Part I, 3.3)"
+                "`{word}` takes no value, so `{word} x` is two statements, and the second \
+                 never runs."
             )],
             // **The two shapes that carry a value out of a loop**
             // ([ADR-151](../../docs/specification/adr/adr-151.md) D2), and the
@@ -19743,9 +19605,9 @@ impl<'a> Checker<'a> {
             // usually written as. It said *bind it before the `break`* alone,
             // which is one of the two and not the one a reader wants.
             help: Some(format!(
-                "delete it - or, where a value was meant: a `let` before the loop that \
-                 the loop assigns, or a `return`, where the function has nothing left to \
-                 do after the `{word}`"
+                "Delete it. To get a value out of the loop, assign to a `let` declared \
+                 before it, or `return` the value if the function is done after the \
+                 `{word}`."
             )),
             labels: Vec::new(),
         });
@@ -19797,10 +19659,14 @@ impl<'a> Checker<'a> {
             &found,
             &expected,
             value,
-            "the function hands it to its caller, who keeps it after this call has ended",
+            "the function returns it, and the caller keeps it after the call ends",
             *span,
             "returns",
-            |found, want| format!("this returns `{found}`, and the function declares `{want}`"),
+            |found, want| {
+                format!(
+                    "You're returning `{found}`, but the function is declared to return `{want}`."
+                )
+            },
         );
     }
 
@@ -19818,24 +19684,23 @@ impl<'a> Checker<'a> {
         };
         let (message, note, help) = match self.barrier {
             Some(what) => (
-                format!("`{word}` {does}, and the nearest loop is outside this {what}"),
+                format!("`{word}` {does}, but the nearest loop is outside this {what}."),
                 format!(
-                    "{} is a function of its own in the language below, and a jump does \
-                     not leave a function",
+                    "{} runs as a function of its own, and `{word}` can't jump out of a \
+                     function.",
                     an(what)
                 ),
                 format!(
-                    "decide inside the {what} and act on the answer outside it - a `bool` it \
-                     hands back, tested by the loop"
+                    "Decide inside the {what} and act on the answer outside it: return a \
+                     `bool` and test it in the loop."
                 ),
             ),
             None => (
-                format!("`{word}` {does}, and this is not in a loop"),
-                "a `while` or a `for` is what it acts on, and there is none here (Part I, 3.3)"
-                    .to_string(),
+                format!("`{word}` {does}, but this isn't inside a loop."),
+                "It only works inside a `while` or a `for`.".to_string(),
                 match word {
-                    "break" => "to leave the function rather than a loop, write `return`",
-                    _ => "to leave the function rather than start a turn, write `return`",
+                    "break" => "To leave the function instead, write `return`.",
+                    _ => "To leave the function instead, write `return`.",
                 }
                 .to_string(),
             ),
@@ -20303,19 +20168,17 @@ fn walks_by_value(contract: &FnContract) -> bool {
 fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
     match name {
         "loop" => Some(
-            "there is no unconditional loop keyword: write `while true { … }` (Part I, 3.3). \
-             `loop` is an ordinary name otherwise, so `let loop = 3` is a program",
+            "Nikaia has no `loop` keyword. Write `while true { … }`. (`loop` is an \
+             ordinary name, so `let loop = 3` is fine.)",
         ),
         "const" => Some(
-            "a value the compiler must work out while it builds is `comptime X = …` \
-             (Part II, 10.2) - the word says *time* rather than *mutability*, which is what \
-             `const` means in the languages it comes from. `const` is an ordinary name \
-             otherwise",
+            "A value computed while the program is built is written `comptime X = …`. \
+             (`const` is an ordinary name in Nikaia.)",
         ),
         "macro" | "quote" => Some(
-            "Nikaia has no macros: generating code from a type's shape is `comptime` and a \
-             bound (Part II, 10.3), and a grammar is how text becomes a program \
-             (Part II, 10.1). Both words are ordinary names otherwise",
+            "Nikaia has no macros. To generate code from a type's shape, use `comptime` \
+             and a bound; to turn text into a program, use a grammar. (Both words are \
+             ordinary names.)",
         ),
         _ => None,
     }
@@ -20699,7 +20562,7 @@ fn convert(found: &Ty, want: &Ty) -> String {
     if becomes_shared(found, want)
         && let Ty::Named { name, .. } = want
     {
-        return format!("write `{name}(…)` around it - a hull you can see is one you write");
+        return format!("Wrap it: `{name}(…)`.");
     }
     // **A slice where a list is declared** (ADR-215 D3): the parameter is
     // what changes, to the type that takes a run of any list - a slice and a
@@ -20725,8 +20588,8 @@ fn convert(found: &Ty, want: &Ty) -> String {
             .map(Ty::text)
             .unwrap_or_else(|| "?".to_string());
         return format!(
-            "this is a slice of a list; declare the parameter `ref Array[{element}]`, \
-                 which takes a slice and a whole list alike"
+            "This is part of a list. Declare the parameter `ref Array[{element}]` to take \
+             a part or a whole list alike."
         );
     }
     let (found, want) = (found.text(), want.text());
@@ -20739,15 +20602,16 @@ fn convert(found: &Ty, want: &Ty) -> String {
         // the program **has**, and a copy of that is written, never inserted
         // (ADR-107 D3).
         ("ref String", "String") => {
-            "write `.clone()` to make text of its own from this view - a copy is \
-             written where it happens, never inserted (ADR-107 D3)"
-                .to_string()
+            "Write `.clone()` to turn this view into text of its own.".to_string()
         }
-        ("String", "ref String") => "write `ref` in front of it to take a view of it".to_string(),
+        ("String", "ref String") => "Write `ref` in front of it to pass a view of it.".to_string(),
         _ if is_number(&found) && is_number(&want) => {
-            format!("write `as {want}` - Nikaia converts where you say so, never quietly")
+            format!("Convert it with `as {want}`. Nikaia never converts numbers on its own.")
         }
-        _ => format!("make it a `{want}`, or change what is declared to `{found}`"),
+        _ => format!(
+            "Make it {} `{want}`, or change the declaration to `{found}`.",
+            an_or_a(&want)
+        ),
     }
 }
 
@@ -20775,8 +20639,9 @@ fn literals_in(expr: &Expr, out: &mut Vec<i128>) {
 }
 
 /// **`an i32` and `a u64`**: the article as the name is said (`NK1116`'s rule).
-fn an_or_a(ty: &str) -> &'static str {
-    match ty.starts_with('i') {
+/// A `u` is said *you*, so it takes `a`; the other vowels take `an`.
+pub fn an_or_a(ty: &str) -> &'static str {
+    match ty.starts_with(['i', 'a', 'e', 'o', 'I', 'A', 'E', 'O']) {
         true => "an",
         false => "a",
     }
@@ -21317,7 +21182,7 @@ const NOT_A_MODULE: &[&str] = &["f64", "i32", "i64", "list", "str"];
 const NOT_STD: &[(&str, &str)] = &[(
     "tools",
     "`tools` is the toolchain's own, not `std`'s: it holds the compiler's \
-     Rust-signature grammar (ADR-196 D2), which `nikaia describe` calls and a \
+     Rust-signature grammar, which `nikaia describe` calls and a \
      program cannot reach",
 )];
 
@@ -21369,10 +21234,19 @@ fn a_root_is_one_of_two(wanted: &[(String, Ty)]) -> String {
         .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "Root");
     match is_a_root {
         false => String::new(),
-        true => ". The root is `fs::Root::Dir(store)`, under which the name is resolved and \
-                 may not leave, or `fs::Root::Anywhere`, which performs no check and says so \
-                 in the word a review looks for"
+        true => ". The root is either `fs::Root::Dir(store)`, which keeps the path inside \
+                 `store`, or `fs::Root::Anywhere`, which checks nothing and says so where a \
+                 reviewer will look"
             .to_string(),
+    }
+}
+
+/// A clause as the start of a sentence: its first letter upper case.
+fn sentence(clause: &str) -> String {
+    let mut chars = clause.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 

@@ -207,7 +207,7 @@ fn a_written_sync_over_a_joining_block_is_refused() {
     let rendered = nikaia::diagnostics::render_sync_violation(&found[0], "both.nika", source);
     assert!(rendered.contains("error[NK2202]"), "{rendered}");
     assert!(
-        rendered.contains("hands its branches to the executor"),
+        rendered.contains("waits for its branches to finish, which is a pause"),
         "{rendered}"
     );
     assert!(

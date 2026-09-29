@@ -153,7 +153,7 @@ fn a_field_the_type_does_not_have_is_refused() {
          }}"
     ));
     assert_eq!(found.code, "NK1107");
-    assert_eq!(found.message, "`Point` has no field `w`");
+    assert_eq!(found.message, "`Point` has no field called `w`.");
 }
 
 /// **A field named twice is `NK1172`** (D1) — **and so is one in a plain
@@ -184,10 +184,7 @@ fn a_field_named_twice_is_refused_in_both_places() {
     ] {
         let found = one(&source);
         assert_eq!(found.code, "NK1172");
-        assert_eq!(
-            found.message,
-            "`x` is named twice here, and `Point` has one of it"
-        );
+        assert_eq!(found.message, "You're setting `Point.x` twice.");
     }
 }
 
@@ -206,7 +203,7 @@ fn a_with_that_names_no_field_is_refused() {
     ));
     assert_eq!(found.code, "NK1174");
     assert!(
-        found.help.as_deref() == Some("name the fields that change, or drop the `with`"),
+        found.help.as_deref() == Some("Name the fields that change, or remove the `with`."),
         "{:?}",
         found.help
     );
@@ -229,7 +226,10 @@ fn an_enum_operand_is_refused_and_the_way_out_names_match() {
          \x20   println(\"unreachable\")\n\
          }");
     assert_eq!(found.code, "NK1173");
-    assert_eq!(found.message, "`with` copies a struct, and this is `Op`");
+    assert_eq!(
+        found.message,
+        "`with` copies a struct, but `Op` is an `enum`."
+    );
     assert!(
         found.help.as_deref().is_some_and(|h| h.contains("match")),
         "{:?}",
@@ -259,7 +259,8 @@ fn a_view_is_not_something_to_copy_from() {
     ));
     assert_eq!(found.code, "NK1173");
     assert!(
-        found.notes[0].contains("by move") && found.notes[0].contains("ADR-107 D3"),
+        found.notes[0].contains("moves the fields it doesn't change out of the value")
+            && found.notes[0].contains("never copies behind your back"),
         "{:#?}",
         found.notes
     );

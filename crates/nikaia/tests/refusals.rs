@@ -84,8 +84,11 @@ fn a_program_that_does_not_parse_says_where_and_no_more() {
     assert!(!ran.status.success(), "this program must be refused");
     let said = String::from_utf8_lossy(&ran.stderr);
 
-    assert!(said.contains("Parse error"), "{said}");
-    assert!(said.contains("main.nika"), "it names the file: {said}");
+    assert!(
+        said.starts_with("error: Expected expression here, but found `}`."),
+        "{said}"
+    );
+    assert!(said.contains("main.nika:3:1"), "it names the file: {said}");
     says_nothing_of_the_compiler(&said);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -135,7 +138,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
         "--backend",
         "bogus",
     ]);
-    assert_refusal(&said, "unknown backend");
+    assert_refusal(&said, "There's no backend called `bogus`.");
 
     // The emitter: a `dsl` naming a grammar this compiler does not have.
     std::fs::write(
@@ -151,7 +154,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
         "--output",
         dir.join("out.rs").to_str().expect("utf-8 path"),
     ]);
-    assert_refusal(&said, "is not a grammar this compiler has");
+    assert_refusal(&said, "`postgres` isn't a language the compiler knows");
 
     // The project driver: no entry point.
     let project = common::scratch_dir("refusal-no-entry");
@@ -168,7 +171,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
     )
     .expect("a manifest");
     let said = run(&["build", "--project", project.to_str().expect("utf-8 path")]);
-    assert_refusal(&said, "unknown key `nonsense`");
+    assert_refusal(&said, "has no key called `nonsense`");
 
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(project);

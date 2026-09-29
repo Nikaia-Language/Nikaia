@@ -188,9 +188,15 @@ fn every_reserved_word_is_refused_as_a_name() {
         let err = parsed.err().unwrap_or_else(|| {
             panic!("`let {word} = 3` must not parse: a reserved word is not a name")
         });
-        let said = err.to_string();
+        // The reason is a note under the headline, which is what the reader
+        // sees rendered.
+        let finding = nikaia::diagnostics::refused_finding(&err)
+            .unwrap_or_else(|| panic!("a parse error carries its finding: {err:#}"));
+        let said = nikaia::diagnostics::render_finding(finding, "app.nika", &source);
         assert!(
-            said.contains(&format!("`{word}` is a reserved word")),
+            said.contains(&format!(
+                "= note: `{word}` is a reserved word, so it can't be used as a name here."
+            )),
             "the parse error has to say why, not just that it failed: {said}"
         );
     }

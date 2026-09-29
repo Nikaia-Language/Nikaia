@@ -41,10 +41,19 @@ fn the_catch_all_arm_is_else_and_lowers_to_underscore() {
 /// (D1). From the parser, because that is where the two spellings meet.
 #[test]
 fn an_underscore_arm_is_refused() {
-    let said = lowered("fn f(n: i64) -> i64 { return match n { 1 => 1, _ => 2 } }")
-        .expect_err("`_` is not the arm any more");
+    let source = "fn f(n: i64) -> i64 { return match n { 1 => 1, _ => 2 } }";
+    let said = lowered(source).expect_err("`_` is not the arm any more");
     assert!(said.contains("is written `else`"), "{said}");
-    assert!(said.contains("ignore pattern"), "{said}");
+    // The help says what `_` is for instead: ignoring a part of a value.
+    let error = parse_to_ast(source).expect_err("refused by the parser");
+    let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
+    assert!(
+        finding
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("`_` ignores a part of a value")),
+        "{finding:#?}"
+    );
 }
 
 /// **`_` keeps its other positions** (D2), which is the half that matters: what

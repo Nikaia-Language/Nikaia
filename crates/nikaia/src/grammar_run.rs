@@ -354,7 +354,7 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
     if depth > DEEPEST {
         return Err(Wall::NoCrossedForm {
             ty: ty.text(),
-            because: "it nests into itself, so there is no depth at which it stops".to_string(),
+            because: "it contains itself, with no end to how deep it goes".to_string(),
         });
     }
     let pad = "    ".repeat(depth);
@@ -434,10 +434,8 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
                     return Err(Wall::NoCrossedForm {
                         ty: ty.text(),
                         because: format!(
-                            "`{name}::{variant}` carries **named** fields, and a value this \
-                             compiler holds while it builds carries a variant's payload by \
-                             position - which is a shape nobody has decided yet rather than \
-                             one the language below lacks"
+                            "`{name}::{variant}` has named fields, and variants with named \
+                             fields can't be computed at build time yet"
                         ),
                     });
                 }
@@ -469,8 +467,8 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
                 return Err(Wall::NoCrossedForm {
                     ty: ty.text(),
                     because: format!(
-                        "nothing this compiler can read declares `{name}` with fields, and \
-                         what crosses to the program is written field by field"
+                        "`{name}` isn't declared in this program with fields, and the value \
+                         is built into the program field by field"
                     ),
                 });
             };
@@ -493,7 +491,7 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
         _ => Err(Wall::NoCrossedForm {
             ty: ty.text(),
             because: "a `const` holds an integer, a `bool`, text, a list of those and a \
-                      `struct` whose fields are those (ADR-079 D1)"
+                      `struct` whose fields are those"
                 .to_string(),
         }),
     }
@@ -738,6 +736,6 @@ fn quoted(at: &mut Cursor<'_>) -> Result<String, Wall> {
         }
     }
     crate::build_time::decoded(&written).ok_or(Wall::Unreadable {
-        detail: format!("`{written}` holds an escape this compiler does not read"),
+        detail: format!("`{written}` contains an escape the compiler can't read"),
     })
 }

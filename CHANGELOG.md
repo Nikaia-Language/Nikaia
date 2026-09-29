@@ -4,6 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.266] — 2026-09-29
+
+**Every message in plain words, in one layout** (Part III C.2, rule 5). Good
+messages are a claim this language makes, so the rest of the codes follow the
+two 0.0.265 began with.
+
+- **Every checker finding is reworded**: what you wrote, why it can't work,
+  what to write, as a colleague would say it. *`count` is changed, and a `let`
+  that is changed says `mut`* became *You're changing `count`, but it wasn't
+  declared as mutable.* No message cites the specification or a decision
+  record any more; those stay in the documentation. The same for the
+  refusals of the lowering, the manifest, the module loader, `nikaia
+  describe`, and the notes about threads, locks and build-time values.
+- **One layout for every message**, whoever says it: a parse error, a checker
+  finding, a refusal of the lowering, a relayed `rustc` message, `NK2202`. The
+  headline is a sentence; `-->` names the place; the source line is shown
+  with the place underlined, the named word where the message knows one and
+  the statement's first line where it does not; `= note:` and `= help:`
+  follow. The renderer capitalises and closes each sentence, once.
+- **Parse errors say what was expected and what was there** - *Expected `}`
+  here, but found `temp`.* - and no longer list the rules the parser was
+  inside (*in coalesce_tail, in expr, …*). A message the grammar writes itself
+  is split into a headline and a help.
+- Found on the way, and fixed: the tally line counted every code it had no
+  line for as *a place that can fail without saying so*, a lock taken twice
+  included - it now says *mistakes with a lock* for those and *other errors*
+  for the rest; `NK1152`'s help printed `{callee}` unfilled; an assignment to
+  a `SharedMut` was reported twice, as `NK2204` and as a missing `mut`;
+  `NK2605` quoted the ledger's list syntax (`["io::IoError"]`).
+- `open-work.md` §2.50 is closed.
+
 ## [0.0.265] — 2026-09-29
 
 **A message says what you wrote, why it cannot work and what to write, at the

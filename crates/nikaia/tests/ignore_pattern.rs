@@ -110,7 +110,7 @@ fn a_let_that_binds_nothing_is_refused() {
     let notes = found[0].notes.join(" ");
     assert!(notes.contains("written as the call"), "{notes}");
     assert!(
-        notes.contains("discards"),
+        notes.contains("throw the value away on the spot"),
         "and why the lowering is not the same thing: {notes}"
     );
     assert!(
@@ -118,7 +118,7 @@ fn a_let_that_binds_nothing_is_refused() {
             .help
             .as_deref()
             .expect("a way out")
-            .contains("bind it to a name"),
+            .contains("give it a name"),
         "{:?}",
         found[0].help
     );
@@ -144,7 +144,10 @@ fn a_let_that_binds_nothing_is_refused() {
 fn the_ignore_pattern_is_not_an_expression() {
     let said = lowered("fn main() { let n = 1 let m = n + _ println(f\"{m}\") }")
         .expect_err("`_` is not a value");
-    assert!(said.contains("Parse error"), "{said}");
+    assert!(
+        said.contains("Expected expression here, but found `_`."),
+        "{said}"
+    );
 }
 
 /// **A name that begins with `_` is still a name**, which is what the two

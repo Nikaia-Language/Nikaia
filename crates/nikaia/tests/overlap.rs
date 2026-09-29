@@ -160,7 +160,12 @@ fn two_branches_that_meet_on_a_resource_are_refused() {
         .iter()
         .find(|f| f.code == "NK2104")
         .unwrap_or_else(|| panic!("{found:?}"));
-    assert!(first.message.contains("cannot run together"), "{first:?}");
+    assert!(
+        first
+            .message
+            .contains("These two branches can't run at the same time"),
+        "{first:?}"
+    );
     assert!(
         first.notes.iter().any(|n| n.contains("stdout")),
         "the message does not name the resource: {first:?}"
@@ -219,7 +224,7 @@ fn a_branch_that_binds_a_name_is_refused() {
     assert!(
         found
             .iter()
-            .any(|f| f.code == "NK2104" && f.message.contains("binds `x`")),
+            .any(|f| f.code == "NK2104" && f.message.contains("can't declare `x`")),
         "{found:?}"
     );
 }
@@ -309,7 +314,10 @@ fn a_block_too_small_or_too_large_is_refused_with_its_reason() {
     .expect("the source parses");
     let refused = emit::emit_program(&parsed, Default::default()).expect_err("refused");
     let said = format!("{refused:#}");
-    assert!(said.contains("more than this compiler builds"), "{said}");
+    assert!(
+        said.contains("has 9 branches, but at most 8 are supported"),
+        "{said}"
+    );
 }
 
 /// Nothing about the runtime reaches a `.nika` file, which is the claim Part I
@@ -347,7 +355,7 @@ fn the_overlap_report_reads_the_verdicts_rather_than_asserting_them() {
     let meets =
         report("fn main() { let r = overlap {\n    println(\"a\")\n    println(\"b\")\n} }");
     assert!(
-        meets.contains("may not run together") && meets.contains("both reach stdout"),
+        meets.contains("may not run together") && meets.contains("both touch stdout"),
         "a block the checker refuses is described as refused:\n{meets}"
     );
     assert!(

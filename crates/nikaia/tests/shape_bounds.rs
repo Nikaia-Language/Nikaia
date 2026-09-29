@@ -129,10 +129,11 @@ fn an_enum_does_not_answer_for_a_struct_bound() {
     assert_eq!(found.code, "NK1164");
     assert_eq!(
         found.message,
-        "`describe` asks for a `Struct` here, and `Op` is not one"
+        "`describe` needs a `Struct` here, but `Op` isn't one."
     );
     assert!(
-        found.notes[0].contains("what a type **is**") && found.notes[0].contains("an `enum`"),
+        found.notes[0].contains("asks what a type is, not what it does")
+            && found.notes[0].contains("`Op` is an `enum`"),
         "{:#?}",
         found.notes
     );
@@ -162,7 +163,7 @@ fn a_type_part_one_offers_does_not_answer_for_a_shape_bound() {
     assert_eq!(found.code, "NK1164");
     assert_eq!(
         found.message,
-        "`describe` asks for a `Struct` here, and `i64` is not one"
+        "`describe` needs a `Struct` here, but `i64` isn't one."
     );
 }
 
@@ -179,7 +180,7 @@ fn a_struct_does_not_answer_for_an_enum_bound() {
     assert_eq!(found.code, "NK1164");
     assert_eq!(
         found.message,
-        "`name_it` asks for an `Enum` here, and `Point` is not one"
+        "`name_it` needs an `Enum` here, but `Point` isn't one."
     );
 }
 
@@ -287,7 +288,7 @@ fn the_other_shape_is_refused_by_name() {
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`T::variants` is reached under a `Enum` bound"
+        "You can't reach `T::variants` directly: it's reached through a type parameter bound by `Enum`."
     );
 }
 

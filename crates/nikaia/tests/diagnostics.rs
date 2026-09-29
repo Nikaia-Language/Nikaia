@@ -123,10 +123,8 @@ fn the_rendered_message_shows_the_nika_line() {
     let errors = errors_for(BROKEN);
     let rendered = diagnostics::render(&errors[0], "broken_frame.nika", BROKEN, "lowered.rs");
 
-    assert!(
-        rendered.starts_with("error: broken_frame.nika:15:"),
-        "{rendered}"
-    );
+    assert!(rendered.starts_with("error: "), "{rendered}");
+    assert!(rendered.contains("--> broken_frame.nika:15:"), "{rendered}");
     assert!(rendered.contains("s:until(\";\")"), "{rendered}");
     assert!(rendered.contains("^^^^^"), "{rendered}");
 }
@@ -221,7 +219,8 @@ fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
     assert_eq!(placed.unit, 0);
 
     let rendered = diagnostics::render(&translated[0], "digits.nika", GOOD, "digits.rs");
-    assert!(rendered.starts_with("error: digits.nika:"), "{rendered}");
+    assert!(rendered.starts_with("error: "), "{rendered}");
+    assert!(rendered.contains("--> digits.nika:"), "{rendered}");
     assert!(
         !rendered.contains("digits.rs"),
         "and not against the generated Rust: {rendered}"
@@ -395,11 +394,12 @@ fn a_translation_that_collapses_a_distinction_is_an_internal_error() {
 
     let rendered = diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs");
     assert!(
-        rendered.starts_with("internal error: p.nika:"),
+        rendered.starts_with("internal error: This is a bug in Nikaia")
+            && rendered.contains("--> p.nika:"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("this is a Nikaia bug"),
+        rendered.contains("This is a bug in Nikaia, not in your program."),
         "the reader is told whose mistake it is: {rendered}"
     );
     assert!(
@@ -432,9 +432,10 @@ fn a_message_the_backend_wrote_that_way_is_not_an_internal_error() {
         translated[0].internal, None,
         "nothing here was collapsed by this compiler"
     );
+    let rendered = diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs");
     assert!(
-        diagnostics::render(&translated[0], "p.nika", GOOD, "p.rs").starts_with("error: p.nika:"),
-        "so it stays a message about the program"
+        rendered.starts_with("error: ") && rendered.contains("--> p.nika:"),
+        "so it stays a message about the program: {rendered}"
     );
 }
 

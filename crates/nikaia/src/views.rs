@@ -249,36 +249,35 @@ fn finding(stored: &Stored) -> Finding {
             format!("`{owner}.{field}`")
         }
         Destination::Subject { owner } => format!("`{owner}`, through a call on it"),
-        Destination::Result { .. } => "the value this function hands back".to_string(),
+        Destination::Result { .. } => "the value this function returns".to_string(),
         Destination::Task => "a task, which goes on running after the call".to_string(),
     };
 
     let why = match into {
         Destination::ParamField { owner, field, .. } => format!(
-            "`{owner}.{field}` belongs to a struct handed in, and this function stores into \
-             more than one such struct - so `{param}` cannot be a view of one of their buffers"
+            "`{owner}.{field}` belongs to a struct that was passed in, and this function \
+             stores into more than one such struct, so it's unclear whose data `{param}` \
+             points into."
         ),
         Destination::Field {
             owner,
             field,
             ty: field_ty,
         } => format!(
-            "`{owner}.{field}` is `{field_ty}`, so what it keeps points into a buffer - and \
-             `{param}: {ty}` does not say which buffer it views"
+            "`{owner}.{field}` is a `{field_ty}`, so it points into some data, but \
+             `{param}: {ty}` doesn't say whose."
         ),
         Destination::Subject { owner } => format!(
-            "a call on `{owner}` may keep what it is given, and nothing written down here says it \
-             does not - so `{param}` is treated as kept"
+            "A call on `{owner}` might keep what it's given, and nothing says it doesn't, so \
+             `{param}` counts as kept."
         ),
         Destination::Result { ty: result } => format!(
-            "the result is `{result}`, which holds a view, and this function names another buffer \
-             besides `{param}`'s - so the result does not point into `{param}`'s"
+            "The result is a `{result}`, which holds a view, and this function takes views of \
+             other data besides `{param}`, so it's unclear which one the result points into."
         ),
-        Destination::Task => {
-            "a task goes on running after the call that spawned it (Part I, 8.3), \
-             so anything it views has to outlive the call"
-                .to_string()
-        }
+        Destination::Task => "A task keeps running after the call that started it, so \
+             anything it looks at has to live longer than the call."
+            .to_string(),
     };
 
     let of = match subject {
@@ -291,18 +290,17 @@ fn finding(stored: &Stored) -> Finding {
         span: stored.span,
         code: "NK2302",
         message: format!(
-            "{of} keeps `{param}` past this call, and `{param}: {ty}` does not say which buffer it \
-             views"
+            "{of} keeps `{param}` after this call, but `{param}: {ty}` doesn't say whose data \
+             it points into."
         ),
-        notes: vec![format!("it goes into {where_it_goes}"), why],
+        notes: vec![format!("It's stored in {where_it_goes}."), why],
         help: Some(format!(
-            "put the view in a struct and take the struct: the struct's declaration says which \
-             buffer, the way `Reading` does in `examples/1brc.nika`:\n\
+            "Put the view in a struct and pass the struct, so its declaration says whose data \
+             it is (like `Reading` in `examples/1brc.nika`):\n\
              \x20          struct Held {{ {param}: {ty} }}\n\
              \x20          …\n\
              \x20          fn {function}(…, held: Held) {{ … held.{param} … }}\n\
-             \x20      or take a copy of the text with `.clone()`, which costs one allocation \
-             and says so (Part I, 6.6)"
+             \x20      Or keep a copy of the text with `.clone()`, which costs one allocation."
         )),
         labels: Vec::new(),
     }

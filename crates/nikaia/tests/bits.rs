@@ -116,7 +116,7 @@ fn what_is_refused_is_refused_with_the_line_to_write() {
     assert!(
         beside
             .iter()
-            .any(|f| f.code == "NK1197" && f.help.as_deref() == Some("write `(a & 1) == 0`")),
+            .any(|f| f.code == "NK1197" && f.help.as_deref() == Some("Write `(a & 1) == 0`.")),
         "{beside:#?}"
     );
     assert_eq!(
@@ -142,7 +142,7 @@ fn what_is_refused_is_refused_with_the_line_to_write() {
     );
     assert!(
         mixed.iter().any(|f| f.code == "NK1199"
-            && f.message == "this puts a `u64` and an `i64` in one operation"),
+            && f.message == "You're mixing a `u64` and an `i64` in one operation."),
         "{mixed:#?}"
     );
 }
@@ -198,7 +198,7 @@ fn a_large_constant_is_an_i64_and_mixes_with_nothing_else() {
     );
     assert!(
         pinned.iter().any(|f| f.code == "NK1116"
-            && f.message == "`3000000000` does not fit in an `i32`"
+            && f.message == "`3000000000` doesn't fit in an `i32`."
             && f.notes
                 .iter()
                 .any(|n| n.contains("`b` is an `i32` because of how it is used"))),

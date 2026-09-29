@@ -426,8 +426,8 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
         .map(std::path::Path::to_path_buf)
         .with_context(|| {
             format!(
-                "no `nikaia.toml` at or above {} - a crate is described for a project, \
-                 because the project is what declares it (ADR-104 D1)",
+                "There's no `nikaia.toml` in {} or any folder above it. Run `nikaia \
+                 describe` inside the project that depends on the crate.",
                 start.display()
             )
         })?;
@@ -449,8 +449,8 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
     );
     if !written.unanswered.is_empty() {
         println!(
-            "\n{} name{} the program writes that no `pub` signature answered - each is a \n\
-             `?` for a reviewer to fill, or a name a macro wrote (ADR-104 D4, D5):",
+            "\n{} name{} the program uses that no `pub` signature covers. Each is a `?` \n\
+             for you to fill in, or a name a macro wrote:",
             written.unanswered.len(),
             match written.unanswered.len() {
                 1 => "",
@@ -468,18 +468,16 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
     // not open the file at all.
     if !written.notes.about_the_crate.is_empty() {
         println!(
-            "\nThis crate makes a promise the toolchain cannot check, and the file says \n\
-             where (ADR-193 D5). A tool can see that the promise was made; whether it is \n\
-             true is the line between a rule enforced and a rule inherited."
+            "\nThis crate makes a promise the compiler can't check, and the file says \n\
+             where. Check yourself whether the promise is true."
         );
     }
     let proposed = written.notes.about_a_function.len();
     if proposed > 0 {
         println!(
-            "\n{proposed} entr{} {} something the signature does not say - a `Send` bound, \n\
-             or a thread sink the calls reach - and the file asks beside {}: does this \n\
-             put what it is given on a thread? The describer proposes and never claims \n\
-             (ADR-193 D3, D4).",
+            "\n{proposed} entr{} {} something the signature doesn't say (a `Send` bound, \n\
+             or a call that reaches another thread), and the file asks beside {}: does \n\
+             this put what it's given on a thread? Answer it in the file.",
             match proposed {
                 1 => "y",
                 _ => "ies",
@@ -495,8 +493,8 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
         );
     }
     println!(
-        "\nRead it before you believe it: what a signature cannot say is written \n\
-         fail-closed, and what it says wrongly is caught here or by nobody (ADR-104 D5)."
+        "\nReview it before you commit it: what a signature can't say is written as \n\
+         the safe answer, and a mistake in it is only caught by you."
     );
     Ok(0)
 }
@@ -679,15 +677,10 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
         // quietly doing something else is worse than either implementing or
         // refusing it (ADR-021 D9).
         backend @ ("cranelift" | "llvm") => refuse!(
-            "backend `{backend}` is not implemented: no build of this compiler has it, \
-             and there is nothing to install that would add it (ADR-002 names it; \
-             ADR-021 D9 records it as an open item).\n\
-             Available here: {AVAILABLE}."
+            "The `{backend}` backend doesn't exist yet.\n\
+             Available: {AVAILABLE}."
         ),
-        other => refuse!(
-            "unknown backend `{other}` (expected interpreter or rust; \
-             available here: {AVAILABLE})"
-        ),
+        other => refuse!("There's no backend called `{other}`. Available: {AVAILABLE}."),
     }
 }
 
@@ -734,8 +727,8 @@ fn run() -> Result<()> {
 
     let Some(input) = args.input.clone() else {
         refuse!(
-            "nothing to build: give `--input <file.nika>` for a single file, or \
-             `nikaia build` inside a project (Part III 13.2)"
+            "Nothing to build. Pass `--input <file.nika>` for a single file, or run \
+             `nikaia build` inside a project."
         );
     };
     single_file(&args, &input)

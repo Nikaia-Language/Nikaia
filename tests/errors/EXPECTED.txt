@@ -1,476 +1,77 @@
 === A1
-Parse error:
-expected `}`; found unexpected token `temp` at line 3, column 5
-   3 |     temp: i32
-           ^^^^
-note: also possible here: `,`, `//`, `::`, `?`, block comment
-in struct_item
-in item
-in item 1
-in program
+Expected `}` here, but found `temp`. (line 3, column 5)
 
 === A2
-Parse error:
-expected `)`; found unexpected token `b` at line 1, column 13
-   1 | fn f(a: i32 b: i32) {
-                   ^
-note: also possible here: `,`, `//`, `::`, `;`, `=`, `?`, block comment
-in fn_params
-in fn_item
-in item
-in item 1
-in program
+Expected `)` here, but found `b`. (line 1, column 13)
 
 === A3
-Parse error:
-unexpected end of input, expected `}` at line 3, column 1
-   3 | 
-       ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `[`, `^`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `|`, `||`, block comment, digits, identifier, statement
-in block
-in fn_item
-in item
-in item 1
-in program
+Expected `}`, but the file ended. (line 3, column 1)
 
 === A4
-Parse error:
-expected `]`; found unexpected token `}` at line 3, column 1
-   3 | }
-       ^
-note: also possible here: `!=`, `%`, `&&`, `&`, `*`, `+`, `,`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `^`, `as`, `catch`, `with`, `|`, `||`, block comment
-in list_lit
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in let_stmt
-in stmt
-in item 1
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected `]` here, but found `}`. (line 3, column 1)
 
 === A5
-Parse error:
-expected `}`; found unexpected token `,` at line 2, column 12
-   2 |     a: i32,,
-                  ^
-note: also possible here: `//`, `pub`, block comment, identifier
-in struct_item
-in item
-in item 1
-in program
+Expected `}` here, but found `,`. (line 2, column 12)
 
 === B1
-Parse error:
-expected expression; found unexpected token `}` at line 4, column 1
-   4 | }
-       ^
-note: also possible here: `"`, `'`, `(`, `//`, `[`, `break`, `continue`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `ref`, `select`, `unsafe`, `{`, block comment, digits, identifier
-in expr
-in let_stmt
-in stmt
-in item 2
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected expression here, but found `}`. (line 4, column 1)
 
 === B2
-Parse error:
-expected expression; found unexpected token `}` at line 3, column 1
-   3 | }
-       ^
-note: also possible here: `"`, `'`, `(`, `//`, `[`, `break`, `continue`, `f"`, `if`, `match`, `null`, `overlap`, `ref`, `select`, `unsafe`, `{`, block comment, digits, identifier
-in COMMENT
-in item 1
-in WS
-in jump_expr
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_tail
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in let_stmt
-in stmt
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected expression here, but found `}`. (line 3, column 1)
 
 === B3
-Parse error:
-expected one of: `!`, `-`, `false`, `true`; found unexpected token `{` at line 2, column 8
-   2 |     if { }
-              ^
-note: also possible here: `"`, `'`, `(`, `//`, `[`, `dsl`, `f"`, `null`, `ref`, block comment, digits, identifier
-in KW_FALSE
-in bool_lit
-in head_primary
-in head_postfix
-in head_unary
-in head_cast
-in head_mul
-in head_add
-in head_cmp
-in head_and
-in head_or
-in head_range
-in head_expr
-in if_expr
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in expr_stmt
-in stmt
-in item 1
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected `!`, `-`, `false` or `true` here, but found `{`. (line 2, column 8)
 
 === B4
-Parse error:
-expected expression; found unexpected token `)` at line 2, column 18
-   2 |     let z = f(1, )
-                        ^
-note: also possible here: `"`, `'`, `(`, `//`, `[`, `break`, `continue`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `ref`, `select`, `unsafe`, `{`, block comment, digits, identifier
-in expr
-in call_args_tail
-in item 1
-in tuple_expr
-in parenthesised_expr
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in expr_stmt
-in stmt
-in item 2
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected expression here, but found `)`. (line 2, column 18)
 
 === B5
-Parse error:
-expected type; found unexpected token `=` at line 2, column 12
-   2 |     let x: = 1
-                  ^
-note: also possible here: `(`, `//`, `fn`, `ref`, block comment
-in COMMENT
-in item 1
-in WS
-in type_name
-in type_ref
-in type_annotation
-in let_stmt
-in stmt
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected type here, but found `=`. (line 2, column 12)
 
 === C1
-Parse error:
-expected `:`; found unexpected token `ref` at line 2, column 10
-   2 |     name ref String,
-                ^^^
-note: also possible here: `//`, block comment
-in COMMENT
-in item 2
-in WS
-in field_def
-in field_defs
-in struct_item
-in item
-in program
-note: `ref` is a reserved word, so it is not a name (Part I, 2.1). Either pick another name, or - if the construct was meant - it does not belong in this position.
+Expected `:` here, but found `ref`. (line 2, column 10)
 
 === C2
-Parse error:
-an action is the block after the pattern, with no arrow in front of it (ADR-120 D2, Part II 10.8): write `pattern { action }`. The one `->` a rule writes is its result type, as a function's is. at line 2, column 33
-   2 |     rule A -> i32 = n:digit+ -> { n }
-                                       ^
-note: also possible here: `//`, block comment
-in g_alt
-in g_alts
-in grammar_rule
-in item 1
-in grammar_item
-in item
-in program
+An action doesn't take an arrow. (line 2, column 33)
 
 === C3
-Parse error:
-expected `)`; found unexpected token `{` at line 1, column 10
-   1 | fn main( {
-                ^
-note: also possible here: `//`, `;`, `_`, `mut`, `ref`, `self`, block comment, identifier
-in fn_params
-in fn_item
-in item
-in item 1
-in program
+Expected `)` here, but found `{`. (line 1, column 10)
 
 === C4
-Parse error:
-expected `mut`; found unexpected token `5` at line 2, column 9
-   2 |     let 5 = x
-               ^
-note: also possible here: `//`, block comment
-in COMMENT
-in item 1
-in WS
-in let_name
-in let_names
-in let_stmt
-in stmt
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected `mut` here, but found `5`. (line 2, column 9)
 
 === C5
-Parse error:
-expected `}`; found unexpected token `struct` at line 2, column 5
-   2 |     struct T { }
-           ^^^^^^
-note: also possible here: `//`, `fn`, `pub`, block comment
-in impl_item
-in item
-in item 1
-in program
-note: `struct` is a reserved word, so it is not a name (Part I, 2.1). Either pick another name, or - if the construct was meant - it does not belong in this position.
+Expected `}` here, but found `struct`. (line 2, column 5)
 
 === D1
-Parse error:
-expected end of input; found unexpected token `/` at line 3, column 1
-   3 | / ein kaputter Kommentar
-       ^
-note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `test`, `trait`, `use`, block comment, item
-in COMMENT
-in item 2
-in WS
+Didn't expect `/` here. (line 3, column 1)
 
 === D2
-Parse error:
-expected `{`; found unexpected token `=` at line 2, column 10
-   2 |     if a = b { }
-                ^
-note: also possible here: `!=`, `%`, `&&`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `::`, `<=`, `<`, `==`, `>=`, `>`, `?.`, `??`, `[`, `as`, `fn`, `with`, `||`, block comment
-in block
-in if_expr
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in expr_stmt
-in stmt
-in item 1
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected `{` here, but found `=`. (line 2, column 10)
 
 === D3
-Parse error:
-an action is the block after the pattern, with no arrow in front of it (ADR-120 D2, Part II 10.8): write `pattern { action }`. The one `->` a rule writes is its result type, as a function's is. at line 2, column 28
-   2 |     rule A -> i32 = a:B -> C { 1 }
-                                  ^
-note: also possible here: `//`, block comment
-in g_alt
-in g_alts
-in grammar_rule
-in item 1
-in grammar_item
-in item
-in program
+An action doesn't take an arrow. (line 2, column 28)
 
 === E1
-Parse error:
-expected `}`; found unexpected token `{` at line 2, column 32
-   2 |     rule A -> i32 = d:digit{1, { 1 }
-                                      ^
-note: also possible here: `//`, block comment, digits
-in g_bounds
-in g_repeat
-in g_postfix
-in g_bind
-in g_elem
-in g_seq
-in g_alt
-in g_alts
-in grammar_rule
-in grammar_item
-in item
-in program
+Expected `}` here, but found `{`. (line 2, column 32)
 
 === E2
 (parses)
 
 === E3
-Parse error:
-expected one of: `->`, `{`; found unexpected token `}` at line 3, column 1
-   3 | }
-       ^
-note: also possible here: `"`, `(`, `*`, `+`, `//`, `=>`, `?`, `fold`, `par_fold`, block comment, identifier
-in block
-in g_alt
-in g_alts
-in grammar_rule
-in item 1
-in grammar_item
-in item
-in program
+Expected `->` or `{` here, but found `}`. (line 3, column 1)
 
 === F1
-Parse error:
-unexpected end of input, expected `"` at line 4, column 1
-   4 | 
-       ^
-note: also possible here: `\`, any character
-in STRING
-in str_lit
-in primary_expr
-in postfix_expr
-in unary_expr
-in cast_expr
-in mul_expr
-in add_expr
-in shift_expr
-in bit_and_expr
-in bit_xor_expr
-in bit_or_expr
-in cmp_expr
-in and_expr
-in or_expr
-in range_expr
-in coalesce_expr
-in catch_expr
-in expr
-in let_stmt
-in stmt
-in item 1
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected `"`, but the file ended. (line 4, column 1)
 
 === F2
-Parse error:
-expected end of input; found unexpected token `}` at line 3, column 1
-   3 | }
-       ^
-note: also possible here: `//`, `comptime`, `enum`, `extern`, `fn`, `impl`, `pub`, `test`, `trait`, `use`, block comment, item
-in COMMENT
-in item 2
-in WS
+Didn't expect `}` here. (line 3, column 1)
 
 === F3
-Parse error:
-unexpected end of input, expected `}` at line 4, column 1
-   4 | 
-       ^
-note: also possible here: `!=`, `"`, `%`, `&&`, `&`, `'`, `(`, `*`, `+`, `-`, `..<`, `..=`, `..`, `.`, `//`, `/`, `;`, `<<`, `<=`, `<`, `==`, `>=`, `>>`, `>`, `?.`, `??`, `[`, `^`, `as`, `break`, `catch`, `continue`, `f"`, `fn`, `for`, `if`, `match`, `null`, `overlap`, `ref`, `return`, `select`, `throw`, `unsafe`, `while`, `with`, `{`, `|`, `||`, block comment, digits, identifier, statement
-in block
-in fn_item
-in item
-in item 1
-in program
+Expected `}`, but the file ended. (line 4, column 1)
 
 === G1
-Parse error:
-expected expression; found unexpected token `“` at line 2, column 13
-   2 |     let x = “hi”
-                   ^
-note: also possible here: `"`, `'`, `(`, `//`, `[`, `break`, `continue`, `f"`, `fn`, `if`, `match`, `null`, `overlap`, `ref`, `select`, `unsafe`, `{`, block comment, digits, identifier
-in expr
-in let_stmt
-in stmt
-in item 1
-in stmt_list
-in block
-in fn_item
-in item
-in program
+Expected expression here, but found `“`. (line 2, column 13)
 
 === G2
 (parses)

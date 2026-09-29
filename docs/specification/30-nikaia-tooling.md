@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.265 (Draft)
+**Version:** 0.0.266 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -1286,7 +1286,7 @@ The driver registers its own diagnostic emitter and intercepts every backend dia
 2. **Always say what to do next.** Every error names at least one concrete way out (clone, use `Shared`, use `retain`, mark a function `sync`, move the I/O out of the lock, …), as paste-ready code where possible.
 3. **Narrate cause chains.** An error caused by a change (through the ledger, 13.5) shows both sides: the edit that changed the contract and the caller that broke.
 4. **Positive guarantees over prohibitions.** Where the language removes a danger structurally (tethered slices, scope waiting), the documentation and the messages state the guarantee, such as *the buffer cannot die while a token lives*, not the forbidden thing.
-5. **Spoken to the reader, in plain sentences, at the places it is about.** A message says what *you* wrote, why it cannot work, and what to write instead, in the words a colleague would use: *You're changing `count`, but it wasn't declared as mutable.* Not *`count` is changed, and a `let` that is changed says `mut`*, which is correct and reads like a rule being recited. The source is shown at every place the explanation needs, each underlined whole and named: `^` under the place the error is, `-` under a place that explains it (*declared here without `mut`*). References to the specification and the decision records stay in the documentation, not in the message. The messages are being brought to this rule a family at a time; `NK1138` and `NK1139` are the first (0.0.265):
+5. **Spoken to the reader, in plain sentences, at the places it is about.** A message says what *you* wrote, why it cannot work, and what to write instead, in the words a colleague would use: *You're changing `count`, but it wasn't declared as mutable.* Not *`count` is changed, and a `let` that is changed says `mut`*, which is correct and reads like a rule being recited. The source is shown at every place the explanation needs, each underlined whole and named: `^` under the place the error is, `-` under a place that explains it (*declared here without `mut`*). References to the specification and the decision records stay in the documentation, not in the message. **Every message has one layout**, whichever part of the compiler says it — a parse error, a checker finding, a refusal of the lowering, a relayed `rustc` message: the headline as a sentence, `-->` and the place, the source line with the place underlined, then `= note:` and `= help:`. A message with no code of its own (a parse error) is headed `error:` alone. A message that names no word of its own underlines its statement's first line:
 
    ```text
    error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
@@ -1325,23 +1325,27 @@ A code specified ahead of its check has no reproduction test.
 Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a view of text it was handed in a published `String` field that text of its own also flows into:
 
 ```text
-error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
-  --> app.nika:11:5
-  11 |     let text = io::read_to_string("input.txt")
-           ^
-     = `io::read_to_string() -> String`
-     help: call it as `io::read_to_string()`
-error[NK1106]: `Reading.name` is `String`, and this is `ref String`
-  --> app.nika:12:5
-  12 |     let r = Reading { name: city, temp: 12 }
-           ^
-     = `city` is declared `ref String`: the text belongs to the caller, who still has it
-     = `Reading` keeps its `name` after this line, so it needs text of its own
-     = Nikaia copies text only where the program says so: a copy costs as much as the text is long, and one made on its own would run every time this line does, with nothing in the source to show it
-     help: declare `city: String`, and the caller hands its text over instead of lending it - or write `city.clone()` to copy it here
+error[NK1106]: `Reading.name` holds `String`, but you're giving it `ref String`.
+  --> app.nika:8:5
+   |
+ 8 |     return Reading { name: city, temp: 12 }
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `city` is declared `ref String`, so the text belongs to the caller, who still has it.
+   = note: `Reading` keeps its `name` after this line, so it needs text of its own.
+   = note: Nikaia never copies text behind your back: a copy costs as much as the text is long, so it's written where it happens.
+   = help: Declare `city: String` so the caller hands its text over, or write `city.clone()` to copy it here.
+error[NK1101]: `io::read_to_string` takes 0 arguments, but you passed 1.
+   --> app.nika:12:5
+    |
+ 12 |     let text = io::read_to_string("input.txt")
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: It's declared as `io::read_to_string() -> String`.
+    = help: Call it without arguments: `io::read_to_string()`.
 ```
 
-**The note is the contract**, quoted from the ledger: the compiler shows the caller what the callee promised. **The caret is on the statement**, not the expression: this checker and `NK2202` report at statement granularity. **Where the compiler could have written the fix and did not, it says why**: the text refusal names whose text it is, what keeps it, and what a copy made on its own would cost, and leads with the answer that copies nothing. **The help is paste-ready**, as C.2 requires: `.clone()` for text, `as i64` between numbers, and the nearest existing field when a name is close to one that exists.
+**The note is the contract**, quoted from the ledger: the compiler shows the caller what the callee promised. **The underline is on the statement**, not the expression: this checker and `NK2202` report at statement granularity, and a message that knows the word it is about underlines that word. **Where the compiler could have written the fix and did not, it says why**: the text refusal names whose text it is, what keeps it, and what a copy made on its own would cost, and leads with the answer that copies nothing. **The help is paste-ready**, as C.2 requires: `.clone()` for text, `as i64` between numbers, and the nearest existing field when a name is close to one that exists.
 
 A message appears only where **both** sides are written down. Where a type is not known, such as a method on a receiver `std` has no signature for, or what a `?` unwraps, the compiler says nothing, which is not the same as approving. The checker never rejects a program that is correct.
 
@@ -1361,14 +1365,16 @@ The codes do not share one verdict. Into a task of the program's own a lock may 
 A task runs somewhere else, so everything it uses goes with it:
 
 ```text
-error[NK2501]: `counts` may not cross into a task, and this task uses it
+error[NK2501]: This task uses `counts`, which can't be passed to a task.
   --> app.nika:7:5
-   7 |     spawn fn { total(counts) }
-           ^
-     = a task runs on a thread of its own, so everything it uses has to be able to cross one (Part II, 11.2)
-     = `Held[i64]` is one the records say may not be on a thread other than the one that built it, at either setting of `user_parallelism` (Part III, C.5)
-     = a value may cross a thread only if it may cross any thread, so the answer is the same at both settings of `user_parallelism` and a library built at one stays usable at the other (Part III, C.3)
-     help: keep the value on the thread that built it
+   |
+ 7 |     spawn fn { total(counts) }
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: A task runs on its own thread, so everything it uses has to be able to move between threads.
+   = note: `Held[i64]` is described as a value that can't move to another thread.
+   = note: This is checked even when the program runs on one thread, so code stays correct when `user-parallelism` is turned on.
+   = help: Keep it here, and pass the call only what it needs from it.
 ```
 
 A lock goes into a task of the program's own, and everything else a program can write goes with it. The shape above is what a type that answers *may not* gets.
@@ -1376,14 +1382,16 @@ A lock goes into a task of the program's own, and everything else a program can 
 A call whose body the compiler cannot see may start a thread of its own (15.2):
 
 ```text
-error[NK2502]: `counter` may not cross a thread, and `hyper_shim::across_a_thread` may put it on one
-  --> app.nika:14:5
-  14 |     let crossed = hyper_shim::across_a_thread(counter)
-           ^
-     = nothing written down describes `hyper_shim::across_a_thread`, so this compiler cannot see the end of it - and starting a thread of its own is among the things it may do (Part III, 15.2)
-     = `Shared[i64]` is shared, and which way a shared value is counted is chosen for each value rather than once for the type - so there is no one shape of it for code outside this language to be written against, at either setting of `user_parallelism` and deliberately so (Part III, C.5)
-     = a value may cross a thread only if it may cross any thread, so the answer is the same at both settings of `user_parallelism` and a library built at one stays usable at the other (Part III, C.3)
-     help: hand over what the shared value holds - a view of it or a copy - rather than the shared value itself
+error[NK2502]: `counter` can't move to another thread, and `hyper_shim::across_a_thread` might move it.
+   --> app.nika:14:5
+    |
+ 14 |     let crossed = hyper_shim::across_a_thread(counter)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: The compiler knows nothing about `hyper_shim::across_a_thread`, so it has to assume it might start a thread of its own.
+    = note: `Shared[i64]` is shared, and how a shared value is counted is decided per value, so code outside Nikaia can't be written to handle it.
+    = note: This is checked even when the program runs on one thread, so code stays correct when `user-parallelism` is turned on.
+    = help: Pass what the shared value holds, a view or a copy, instead of the shared value itself.
 ```
 
 **The way out is one line.** The caller passes what is inside — a view of it or a copy — so the foreign function sees an ordinary value (Part I 6.2). The same shape is the way out of `NK2503` (C.6). The message states that the refusal is deliberate.
@@ -1408,13 +1416,14 @@ way out is one line of code. The shapes below are what the codes print (C.3).
 A lock taken inside a lock, which is what `access_all` exists for (Part II, 12.3):
 
 ```text
-error[NK2203]: `account_b` takes a lock, and a lock is already held here
-  --> main.nika:9:5
-   9 |     account_b.access fn(to) { to.balance += 100 }
-           ^
-     = the block this sits in holds `account_a` (main.nika:8), and one lock taken inside another is the inconsistent order two tasks deadlock on (Part II, 12.3)
-     help: ask for both at once, which locks them in one order for everybody:
-           access_all(account_a, account_b) fn(a, b) { … }
+error[NK2203]: `access` takes a lock, but you're already holding one here.
+  --> main.nika:9:19
+   |
+ 9 |         account_b.access fn(to) { to.balance += 100 }
+   |                   ^^^^^^ takes a second lock
+   |
+   = note: This block runs while a lock is held, so taking a second lock inside it can deadlock.
+   = help: Take both locks at once with `access_all(a, b) fn(x, y) { … }`, or compute the value before the block and pass it in.
 ```
 
 A chain reads the same, with one note more: it names the call, and the function
@@ -1425,22 +1434,26 @@ waits for the block that is waiting for it.
 The two that come with the doors:
 
 ```text
-error[NK2204]: `kasse` holds shared mutable state, and this assigns to it directly
+error[NK2204]: You can't assign to `kasse` directly: it holds shared mutable state.
   --> main.nika:4:5
-   4 |     kasse = 42
-           ^
-     = a write goes through a door, because the lock has to be taken for it (Part II, 12.2)
-     help: write `kasse.set(42)`
+   |
+ 4 |     kasse = 42
+   |     ^^^^^^^^^^
+   |
+   = note: Changing shared state goes through a method that takes the lock.
+   = help: Write `kasse.set(42)`.
 ```
 
 ```text
-error[NK2205]: this `set` reads `kasse` while computing what to store in it
+error[NK2205]: This `set` stores a value that was read from `kasse` earlier, so the lock is taken twice.
   --> main.nika:6:5
-   6 |     kasse.set(kasse.get() + 100)
-           ^
-     = `set` is for a value computed outside the lock, so this takes the lock twice: once to read and once to store
-     = making a new value out of the old one is what the third door is for, and it takes the lock once
-     help: write `kasse.update fn(mut v) { v += 100 }`
+   |
+ 6 |     kasse.set(kasse.get() + 100)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: A value read from a lock is out of date as soon as the lock is released: anything can change between the read and the store.
+   = note: This is found wherever the value was read: on the line above, in another function, or in another request.
+   = help: Write `kasse.update fn(mut v) { … }`, which reads and changes the value while holding the lock.
 ```
 
 The second one reads the stamp a value carries out of a lock: the inline `get`
@@ -1453,25 +1466,30 @@ drop the failure nobody declared, and leave the backend to report against a
 generated file (C.1):
 
 ```text
-error[NK2208]: `kasse` has no `set_after`; it is how `set(…; after: …)` is written below
+error[NK2208]: `kasse` has no `set_after`. Write `set(…; after: …)` instead.
   --> main.nika:5:5
-   5 |     kasse.set_after(stand + 1, stand)
-           ^
-     = the compare and the store happen while the lock is open once, and the door that asks for that is `set` with a witness (Part II, 12.2)
-     = written this way the failure would be dropped rather than propagated, because nothing in the contracts describes this name
-     help: write `kasse.set(neu; after: seen)`, where `seen` is what the lock handed out
+   |
+ 5 |     kasse.set_after(stand + 1, stand)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `set` with `after:` compares and stores while holding the lock once.
+   = note: Written like this, a failure would be silently dropped.
+   = help: Write `kasse.set(neu; after: seen)`, where `seen` is the value you read from the lock.
 ```
 
 The foreign call, judged by what its arguments can reach (15.2):
 
 ```text
-error[NK2503]: `hyper_shim::render` can reach a lock through `state`
-  --> main.nika:12:5
-  12 |     hyper_shim::render(state)
-           ^
-     = nothing written down describes `hyper_shim::render`, so this compiler cannot see what it does with what it is handed (Part III, 15.2)
-     = `state.counts` is a `SharedMut[i64]`, and a lock is what the call must not be able to reach
-     help: hand it a copy of what it needs instead of the container:
+error[NK2503]: `hyper_shim::render` could reach a lock through `state`.
+   --> main.nika:12:5
+    |
+ 12 |     hyper_shim::render(state)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: The compiler knows nothing about `hyper_shim::render`, so it can't see what it does with what you pass it.
+    = note: `state.counts` is a `SharedMut[i64]`, and code that might keep a lock could deadlock.
+    = note: This is checked even when the program runs on one thread, so code stays correct when `user-parallelism` is turned on.
+    = help: Pass it a copy of what it needs instead of the container:
            hyper_shim::render(state.counts.get())
 ```
 

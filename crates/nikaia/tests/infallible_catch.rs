@@ -62,14 +62,15 @@ fn the_reproduction_is_refused() {
     assert_eq!(found.len(), 1, "one refusal, at the `catch`: {found:#?}");
     let said = &found[0];
     assert!(
-        said.message.contains("nothing in this expression can fail"),
+        said.message
+            .contains("Nothing here can fail, so the `catch` has nothing to handle"),
         "said in this language's words: {said:#?}"
     );
     assert!(
         said.help
             .as_deref()
-            .is_some_and(|h| h.contains("delete the `catch`")),
-        "and the way out is to delete it, because the expression is the value: {said:#?}"
+            .is_some_and(|h| h.contains("Remove the `catch` and its handler")),
+        "and the way out is to remove it, because the expression is the value: {said:#?}"
     );
 }
 

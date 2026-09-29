@@ -132,7 +132,8 @@ fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
     assert_eq!(refused.len(), 1, "{found:#?}");
     let said = &refused[0];
     assert!(
-        said.message.contains("cannot evaluate `GREET`"),
+        said.message
+            .contains("`GREET` can't be computed while the program is built"),
         "{said:#?}"
     );
     assert!(
@@ -206,27 +207,28 @@ fn a_comptime_says_which_wall_it_met() {
     let method = findings("comptime X = \"a\".to_uppercase()\nfn main() { println(X) }");
     let said = method.iter().find(|f| f.code == "NK1127").expect("NK1127");
     assert!(
-        said.message.contains("cannot evaluate `X`"),
+        said.message
+            .contains("`X` can't be computed while the program is built"),
         "the headline is the binding's, as the generic one is: {}",
         said.message
     );
     assert!(
-        said.notes[0].contains("`.to_uppercase()`")
-            && said.notes[0].contains("no value to call it on"),
+        said.notes[0].contains("`.to_uppercase()`") && said.notes[0].contains("which it can't run"),
         "the note names what it met and which wall: {:#?}",
         said.notes
     );
     assert!(
         said.help.as_deref().is_some_and(
-            |h| h.contains("call to a function of this file") && h.contains("`let X = …`")
+            |h| h.contains("calls to functions in this file") && h.contains("`let X = …`")
         ),
         "the wall's way out, and the one every `comptime` has: {:?}",
         said.help
     );
-    // **`sync` is the permission and not the ability**, which is the confusion
-    // this sentence exists to end.
+    // **`sync` is the permission and not the ability**: the note says what the
+    // compiler *can* call at build time, which ends the confusion without
+    // naming `sync` at all.
     assert!(
-        said.notes[0].contains("`sync` says a body *may* run"),
+        said.notes[0].contains("can only call methods your program declares"),
         "{:#?}",
         said.notes
     );

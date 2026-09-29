@@ -129,11 +129,11 @@ fn a_tuple_let_takes_no_type() {
 /// which is this compiler's rule for a form nobody decided.
 #[test]
 fn a_nested_tuple_is_refused_and_says_why() {
-    let refused = parse_to_ast("fn main() {\n    let ((a, b), c) = ((1, 2), 3)\n}\n")
-        .expect_err("a nested tuple is not this form");
-    let said = refused.to_string();
+    let source = "fn main() {\n    let ((a, b), c) = ((1, 2), 3)\n}\n";
+    let refused = parse_to_ast(source).expect_err("a nested tuple is not this form");
+    let said = rendered(&refused, source);
     assert!(
-        said.contains("It is not a pattern"),
+        said.contains("A tuple inside a tuple can't be taken apart here"),
         "the shape is named, not the token:\n{said}"
     );
     assert!(
@@ -146,12 +146,21 @@ fn a_nested_tuple_is_refused_and_says_why() {
 /// what keeps the note from becoming noise on every unbalanced paren.
 #[test]
 fn an_unrelated_bracket_is_left_alone() {
-    let refused = parse_to_ast("fn main() {\n    let x = (1 +\n    println(\"x\")\n}\n")
-        .expect_err("this does not parse either");
+    let source = "fn main() {\n    let x = (1 +\n    println(\"x\")\n}\n";
+    let refused = parse_to_ast(source).expect_err("this does not parse either");
+    let said = rendered(&refused, source);
     assert!(
-        !refused.to_string().contains("It is not a pattern"),
-        "{refused}"
+        !said.contains("A tuple inside a tuple can't be taken apart here"),
+        "{said}"
     );
+}
+
+/// The whole refusal as a reader sees it: the headline, and the note and help
+/// the finding it carries holds.
+fn rendered(refused: &anyhow::Error, source: &str) -> String {
+    let finding = nikaia::diagnostics::refused_finding(refused)
+        .unwrap_or_else(|| panic!("a parse error carries its finding: {refused:#}"));
+    nikaia::diagnostics::render_finding(finding, "main.nika", source)
 }
 
 /// **One name still binds one name**, which is every `let` in the tree.

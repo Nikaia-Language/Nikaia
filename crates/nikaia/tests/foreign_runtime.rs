@@ -134,7 +134,7 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
                 "a pair with a foreign call in it overlapped:\n{report}"
             );
             assert!(
-                line.contains("reaches everything"),
+                line.contains("touches, so it might touch anything"),
                 "and the reason has to be the absent `touches`, not something \
                  that happens to coincide with it:\n{report}"
             );

@@ -102,11 +102,14 @@ fn the_paths_two_names_parse_as_the_page_writes_them() {
 /// alternatives at that position exactly as it did before.
 #[test]
 fn the_removed_dsl_form_still_says_what_happened() {
-    let refused = parse_to_ast("fn main() { let x = dsl Json from \"a.json\" }")
-        .expect_err("the removed form does not parse");
-    let said = format!("{refused:#}");
+    let source = "fn main() { let x = dsl Json from \"a.json\" }";
+    let refused = parse_to_ast(source).expect_err("the removed form does not parse");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let said = nikaia::diagnostics::render_finding(finding, "app.nika", source);
     assert!(
-        said.contains("`dsl X from e` was removed (ADR-082)") && said.contains("X.rule(e)"),
+        said.contains("`dsl X from e` is no longer supported.")
+            && said.contains("help: Write `X.rule(e)`"),
         "{said}"
     );
 }

@@ -116,7 +116,7 @@ fn a_pausing_callee_is_refused() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(
-        found[0].notes.join(" ").contains("it can pause"),
+        found[0].notes.join(" ").contains("It can pause"),
         "{found:#?}"
     );
 }
@@ -139,7 +139,10 @@ fn a_callee_that_touches_the_world_is_refused() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(
-        found[0].notes.join(" ").contains("reaches the world"),
+        found[0]
+            .notes
+            .join(" ")
+            .contains("touches the world outside the program"),
         "{found:#?}"
     );
 }
@@ -398,7 +401,7 @@ fn a_build_time_index_the_array_does_not_have_is_named() {
         .find(|f| f.code == "NK1165")
         .unwrap_or_else(|| panic!("NK1165: {found:#?}"));
     assert!(
-        refusal.help.as_deref() == Some("the indices are 0 to 2"),
+        refusal.help.as_deref() == Some("The indexes go from 0 to 2."),
         "the way out names the range that exists: {:?}",
         refusal.help
     );
@@ -521,7 +524,7 @@ fn a_computed_table_of_the_wrong_length_says_both_numbers() {
         .find(|f| f.code == "NK1157")
         .unwrap_or_else(|| panic!("NK1157: {found:#?}"));
     assert!(
-        refusal.message.contains("computed 5 elements") && refusal.message.contains("holds 3"),
+        refusal.message.contains("computes 5 elements") && refusal.message.contains("holds 3"),
         "both numbers: {}",
         refusal.message
     );
@@ -529,7 +532,7 @@ fn a_computed_table_of_the_wrong_length_says_both_numbers() {
         refusal
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("declare the array the length this computes")),
+            .is_some_and(|h| h.contains("Change the array's declared length to match")),
         "a way out that can be taken: {:?}",
         refusal.help
     );
@@ -689,7 +692,7 @@ fn a_constant_declared_a_string_is_sent_to_the_view() {
         refusal
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("declare it `&str`")),
+            .is_some_and(|h| h.contains("Declare it as `&str`")),
         "the view-shaped equivalent, not `.to_string()`: {:?}",
         refusal.help
     );
@@ -830,7 +833,7 @@ fn a_field_a_const_cannot_hold_is_named_and_the_way_out_works() {
         .find(|f| f.code == "NK1167")
         .unwrap_or_else(|| panic!("NK1167: {found:#?}"));
     assert!(
-        refusal.message.contains("`items` is declared `Vec[i64]`"),
+        refusal.message.contains("`B.items` is a `Vec[i64]`"),
         "it names the field and what it is: {}",
         refusal.message
     );
@@ -889,7 +892,7 @@ fn a_ring_of_constants_is_refused_once_and_named() {
     // report the same loop from a different corner.
     assert_eq!(rings.len(), 1, "{found:#?}");
     assert!(
-        rings[0].message.contains("`A` is worked out from itself"),
+        rings[0].message.contains("`A` depends on itself"),
         "the constant on this line: {}",
         rings[0].message
     );
@@ -1034,7 +1037,7 @@ fn a_variant_that_owns_memory_is_refused_by_name() {
         found[0].message
     );
     assert!(
-        found[0].notes[0].contains("Another variant of the same `enum` may cross"),
+        found[0].notes[0].contains("Another variant of the same `enum` may be fine"),
         "{:#?}",
         found[0].notes
     );
@@ -1084,7 +1087,9 @@ fn a_variant_field_of_the_wrong_type_is_refused() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].code, "NK1106");
     assert!(
-        found[0].message.contains("`Shape::Spot.x` is `i64`"),
+        found[0]
+            .message
+            .contains("`Shape::Spot.x` holds `i64`, but you're giving it `ref String`"),
         "{}",
         found[0].message
     );

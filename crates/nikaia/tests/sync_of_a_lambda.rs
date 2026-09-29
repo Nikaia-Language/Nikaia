@@ -134,7 +134,9 @@ fn a_sync_caller_may_not_hand_it_a_lambda_that_pauses() {
     );
     assert!(!ok);
     assert!(
-        stderr.contains("error[NK2202]: `twice` is `sync`, and `time::sleep` can pause"),
+        stderr.contains(
+            "error[NK2202]: `twice` is `sync`, but it calls `time::sleep`, which can pause."
+        ),
         "{stderr}"
     );
 }
@@ -157,11 +159,13 @@ fn a_body_that_pauses_elsewhere_breaks_the_promise() {
     );
     assert!(!ok);
     assert!(
-        stderr.contains("error[NK2202]: `apply` is `sync(f)`, and `time::sleep` can pause"),
+        stderr.contains(
+            "error[NK2202]: `apply` is `sync(f)`, but it calls `time::sleep`, which can pause."
+        ),
         "{stderr}"
     );
     assert!(
-        stderr.contains("help: drop `sync(f)` from `apply`"),
+        stderr.contains("help: Remove `sync(f)` from `apply`"),
         "{stderr}"
     );
 }

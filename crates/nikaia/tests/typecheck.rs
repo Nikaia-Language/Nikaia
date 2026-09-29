@@ -105,7 +105,7 @@ fn a_call_with_too_few_arguments_is_reported() {
     let (code, message) = one("fn add(a: i32, b: i32) -> i32 { return a + b }\n\
          fn main() { let n = add(1) }");
     assert_eq!(code, "NK1101");
-    assert_eq!(message, "`add` takes 2 arguments, and this call passes 1");
+    assert_eq!(message, "`add` takes 2 arguments, but you passed 1.");
 }
 
 /// …and one answered from `std`'s shipped ledger, which is what makes the
@@ -117,13 +117,13 @@ fn a_call_into_std_is_checked_against_the_shipped_ledger() {
     assert_eq!(code, "NK1101");
     assert_eq!(
         message,
-        "`io::read_to_string` takes 0 arguments, and this call passes 1"
+        "`io::read_to_string` takes 0 arguments, but you passed 1."
     );
     assert_eq!(
         findings("use std::io\n\nfn main() throws { let text = io::read_to_string(\"x\") }")[0]
             .help
             .as_deref(),
-        Some("call it as `io::read_to_string()`")
+        Some("Call it without arguments: `io::read_to_string()`.")
     );
 }
 
@@ -140,7 +140,7 @@ fn an_argument_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1102");
     assert_eq!(
         message,
-        "`greet` takes `who: String`, and this call passes `ref String`"
+        "`greet` expects `who` to be `String`, but you're passing `ref String`."
     );
 }
 
@@ -149,7 +149,10 @@ fn an_argument_of_the_wrong_type_is_reported() {
 fn a_let_annotation_that_disagrees_is_reported() {
     let (code, message) = one("fn main() { let n: i32 = 'x' }");
     assert_eq!(code, "NK1103");
-    assert_eq!(message, "this is `char`, and the `let` says `i32`");
+    assert_eq!(
+        message,
+        "This value is `char`, but the `let` declares `i32`."
+    );
 }
 
 /// A `return` that does not hand back what the function declared.
@@ -159,7 +162,7 @@ fn a_return_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this returns `ref String`, and the function declares `i32`"
+        "You're returning `ref String`, but the function is declared to return `i32`."
     );
 }
 
@@ -183,7 +186,7 @@ fn an_assignment_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1105");
     assert_eq!(
         message,
-        "this is `char`, and what it is assigned to is `i32`"
+        "You're assigning `char` to something that holds `i32`."
     );
 }
 
@@ -198,7 +201,7 @@ fn a_struct_field_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1106");
     assert_eq!(
         message,
-        "`Reading.name` is `String`, and this is `ref String`"
+        "`Reading.name` holds `String`, but you're giving it `ref String`."
     );
 }
 
@@ -208,7 +211,7 @@ fn a_field_that_does_not_exist_is_reported() {
     let (code, message) = one("struct Reading { name: ref String, temp: i32 }\n\
          fn label(r: ref Reading) -> ref String { return r.nmae }");
     assert_eq!(code, "NK1107");
-    assert_eq!(message, "`Reading` has no field `nmae`");
+    assert_eq!(message, "`Reading` has no field called `nmae`.");
     assert_eq!(
         findings(
             "struct Reading { name: ref String, temp: i32 }\n\
@@ -216,7 +219,7 @@ fn a_field_that_does_not_exist_is_reported() {
         )[0]
         .help
         .as_deref(),
-        Some("did you mean `name`?")
+        Some("Did you mean `name`?")
     );
 }
 
@@ -226,7 +229,7 @@ fn a_field_that_does_not_exist_in_a_literal_is_reported() {
     let (code, message) = one("struct Reading { name: ref String }\n\
          fn main() { let r = Reading { nmae: \"Hamburg\" } }");
     assert_eq!(code, "NK1107");
-    assert_eq!(message, "`Reading` has no field `nmae`");
+    assert_eq!(message, "`Reading` has no field called `nmae`.");
 }
 
 /// A `while` decides on a `bool` too, and says which loop it is about.
@@ -237,7 +240,10 @@ fn a_while_condition_that_is_not_a_bool_is_reported() {
          \x20   while name { }\n\
          }");
     assert_eq!(code, "NK1108");
-    assert_eq!(message, "this is `ref String`, and a condition is a `bool`");
+    assert_eq!(
+        message,
+        "A condition has to be `true` or `false`, but this is `ref String`."
+    );
     assert_eq!(
         findings(
             "fn main() {\n\
@@ -246,7 +252,7 @@ fn a_while_condition_that_is_not_a_bool_is_reported() {
              }"
         )[0]
         .notes[0],
-        "a `while` repeats while a `bool` holds"
+        "A `while` loop repeats while a `bool` is `true`."
     );
 }
 
@@ -258,7 +264,10 @@ fn a_condition_that_is_not_a_bool_is_reported() {
          \x20   if name { }\n\
          }");
     assert_eq!(code, "NK1108");
-    assert_eq!(message, "this is `ref String`, and a condition is a `bool`");
+    assert_eq!(
+        message,
+        "A condition has to be `true` or `false`, but this is `ref String`."
+    );
 }
 
 /// A grammar's action builds the rule's value, so it answers to the rule's
@@ -271,7 +280,7 @@ fn a_grammar_action_is_checked_against_its_rule() {
          \x20       { Reading { nmae: name, temp: temp } }\n\
          }");
     assert_eq!(code, "NK1107");
-    assert_eq!(message, "`Reading` has no field `nmae`");
+    assert_eq!(message, "`Reading` has no field called `nmae`.");
 }
 
 /// …and an action that builds something else entirely.
@@ -283,7 +292,7 @@ fn a_grammar_action_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this action builds `ref String`, and its rule declares `i32`"
+        "This action builds `ref String`, but its rule returns `i32`."
     );
 }
 
@@ -295,7 +304,7 @@ fn a_loop_binds_the_element_type_of_a_list() {
          \x20   for row in rows { let n: i32 = row.idd }\n\
          }");
     assert_eq!(code, "NK1107");
-    assert_eq!(message, "`Row` has no field `idd`");
+    assert_eq!(message, "`Row` has no field called `idd`.");
 }
 
 // --- the subject ; config protocol (Kap 5.1) ---------------------------------
@@ -306,7 +315,7 @@ fn an_option_that_does_not_exist_is_reported() {
     let (code, message) = one("fn request(url: ref String; timeout: i32 = 30) { }\n\
          fn main() { request(\"x\"; timout: 5) }");
     assert_eq!(code, "NK1109");
-    assert_eq!(message, "`request` has no option `timout`");
+    assert_eq!(message, "`request` has no option called `timout`.");
     assert_eq!(
         findings(
             "fn request(url: ref String; timeout: i32 = 30) { }\n\
@@ -314,7 +323,7 @@ fn an_option_that_does_not_exist_is_reported() {
         )[0]
         .help
         .as_deref(),
-        Some("did you mean `timeout`?")
+        Some("Did you mean `timeout`?")
     );
 }
 
@@ -334,7 +343,7 @@ fn an_option_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1106");
     assert_eq!(
         message,
-        "`request` takes `timeout: i32`, and this passes `ref String`"
+        "The option `timeout` of `request` takes `i32`, but you're passing `ref String`."
     );
 }
 
@@ -367,7 +376,7 @@ fn an_option_of_a_library_function_is_checked_from_its_ledger() {
         "use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; apend: true) }",
     );
     assert_eq!(code, "NK1109");
-    assert_eq!(message, "`fs::write` has no option `apend`");
+    assert_eq!(message, "`fs::write` has no option called `apend`.");
 }
 
 /// An interpolated string is a `format!` in the emitted Rust, and a `format!`
@@ -381,7 +390,7 @@ fn an_interpolated_string_is_a_string_and_a_plain_one_is_a_view() {
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this returns `String`, and the function declares `ref String`"
+        "You're returning `String`, but the function is declared to return `ref String`."
     );
 }
 
@@ -441,7 +450,7 @@ fn a_loop_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
     assert_eq!(code, "NK2701");
     assert_eq!(
         message,
-        "this function can fail because a turn of this loop can fail"
+        "This function can fail, because a turn of this loop can fail."
     );
 }
 
@@ -490,7 +499,7 @@ fn a_fallible_loop_binds_one_name() {
     // `io::lines()` handed back a named type.
     assert_eq!(
         message,
-        "a `for` over a sequence of `String` binds one name, and this binds 2"
+        "A `for` over a sequence of `String` gives one value at a time, but you're binding 2."
     );
 }
 
@@ -684,7 +693,7 @@ fn a_string_that_used_to_interpolate_is_warned_about() {
     // Paste-ready, as Part III C.2 requires of every diagnostic.
     assert_eq!(
         found[0].help.as_deref(),
-        Some("write `f\"hallo {name}\"` if the value was meant to appear (Part I, 2.5)")
+        Some("Write `f\"hallo {name}\"` if you want the value to appear.")
     );
 }
 
@@ -749,7 +758,7 @@ fn a_written_call_that_can_fail_in_a_function_that_does_not_say_so_is_reported()
          fn ruft() -> String { return liest() }",
     );
     assert_eq!(code, "NK2605");
-    assert_eq!(message, "this function can fail because `liest` can fail");
+    assert_eq!(message, "This function can fail, because `liest` can fail.");
 }
 
 /// The note is the contract, quoted from the ledger (Part III, C.4), and the
@@ -766,12 +775,12 @@ fn the_note_quotes_the_callees_contract_and_the_help_is_a_way_out() {
         found[0]
             .notes
             .iter()
-            .any(|n| n.contains(r#"`liest` carries `throws = ["ConfigError"]`"#)),
+            .any(|n| n.contains("`liest` can fail with `ConfigError`")),
         "{:#?}",
         found[0].notes
     );
     let help = found[0].help.as_deref().unwrap_or_default();
-    assert!(help.contains("add `throws` to `ruft`"), "{help}");
+    assert!(help.contains("Add `throws` to `ruft`"), "{help}");
     assert!(help.contains("catch"), "{help}");
 }
 
@@ -818,7 +827,7 @@ fn a_method_that_can_fail_is_the_same_rule() {
     assert_eq!(code, "NK2605");
     assert_eq!(
         message,
-        "this function can fail because `Stats::add` can fail"
+        "This function can fail, because `Stats::add` can fail."
     );
 }
 
@@ -952,7 +961,7 @@ fn a_lambda_that_reaches_for_a_withdrawn_name_is_refused() {
             "{source}: refused, not warned about"
         );
         let notes = found[0].notes.join(" ");
-        assert!(notes.contains("withdrawn"), "{notes}");
+        assert!(notes.contains("no longer there automatically"), "{notes}");
         let help = found[0].help.as_deref().unwrap_or_default();
         assert!(help.contains("fn ("), "{help}");
     }
@@ -1104,7 +1113,7 @@ fn a_call_that_wants_a_shared_value_and_is_given_a_plain_one_is_refused() {
          fn connect() -> Conn { return Conn { host: \"h\" } }\n\
          fn main() { let db = connect()\n keep(db) }");
     assert_eq!(code, "NK1115");
-    assert_eq!(message, "`keep` takes a shared value, and `db` is not one");
+    assert_eq!(message, "`keep` takes a shared value, but `db` isn't one.");
     let help = findings(
         "struct Conn { host: String }\n\
          fn keep(db: Shared[Conn]) { }\n\
@@ -1191,7 +1200,7 @@ fn a_literal_too_large_for_its_type_is_refused_by_this_compiler() {
             .iter()
             .find(|f| f.code == "NK1116")
             .unwrap_or_else(|| panic!("no NK1116 for {source}: {found:#?}"));
-        assert!(it.message.contains("does not fit in an `i32`"), "{it:#?}");
+        assert!(it.message.contains("doesn't fit in an `i32`"), "{it:#?}");
         assert!(
             it.notes.iter().any(|n| n.contains("-2147483648")),
             "the range belongs in the note: {it:#?}"
@@ -1241,7 +1250,7 @@ fn a_constant_reached_through_a_name_is_arithmetic_in_that_name_s_type() {
         .find(|f| f.code == "NK1116")
         .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
     assert!(it.message.contains("comes to 4000000000"), "{it:#?}");
-    assert!(it.message.contains("does not fit in an `i32`"), "{it:#?}");
+    assert!(it.message.contains("doesn't fit in an `i32`"), "{it:#?}");
 
     // And the way out compiles, because the declaration pins the wider type.
     assert!(
@@ -1263,7 +1272,7 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
         .iter()
         .find(|f| f.code == "NK1116")
         .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
-    assert!(it.message.contains("does not fit in an `i64`"), "{it:#?}");
+    assert!(it.message.contains("doesn't fit in an `i64`"), "{it:#?}");
     // A value an `i64` does not hold and a `u64` does is pointed at the
     // `u64` (ADR-248 D2); one past both is told the widest there is.
     assert!(
@@ -1325,7 +1334,8 @@ fn main() { f(gone) }",
             .find(|f| f.code == "NK1117")
             .unwrap_or_else(|| panic!("no NK1117 for {source}: {found:#?}"));
         assert!(
-            it.message.contains(&format!("nothing declares `{name}`")),
+            it.message
+                .contains(&format!("`{name}` isn't declared anywhere")),
             "{it:#?}"
         );
         assert_eq!(
@@ -1615,7 +1625,10 @@ fn declaring_a_name_called_self_is_refused() {
             .iter()
             .find(|f| f.code == "NK1119")
             .unwrap_or_else(|| panic!("no NK1119 for {source}: {found:#?}"));
-        assert!(it.message.contains("`self` is a reserved word"), "{it:#?}");
+        assert!(
+            it.message.contains("`self`: that name is reserved"),
+            "{it:#?}"
+        );
         assert!(
             it.help.is_some(),
             "every error names a way out (Part III C.2): {it:#?}"
@@ -1630,12 +1643,17 @@ fn declaring_a_name_called_self_is_refused() {
 /// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
 #[test]
 fn a_parameter_called_self_is_refused_by_the_grammar() {
-    let message = format!(
-        "{:#}",
-        parse_to_ast("fn f(self: i64) -> i64 { return 1 }").expect_err("refused")
+    let error = parse_to_ast("fn f(self: i64) -> i64 { return 1 }").expect_err("refused");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("A parameter can't be called `self`"),
+        "{message}"
     );
-    assert!(message.contains("`self` is a reserved word"), "{message}");
-    assert!(message.contains("`ref mut self`"), "{message}");
+    // The way out is the help, which the finding the refusal carries holds.
+    let help = nikaia::diagnostics::refused_finding(&error)
+        .and_then(|f| f.help.clone())
+        .unwrap_or_default();
+    assert!(help.contains("`ref mut self`"), "{message}: {help}");
 }
 
 /// And *referring* to `self` is untouched, which is the half that had to keep

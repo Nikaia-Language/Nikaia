@@ -139,7 +139,7 @@ impl ReentrancyCheck {
             // the default for a word it did not know would ship the guarantee
             // the manifest declined.
             other => Err(refused!(
-                "unknown reentrancy-check `{other}` (expected yes or no)"
+                "`reentrancy-check` is `yes` or `no`, not `{other}`."
             )),
         }
     }
@@ -236,8 +236,8 @@ impl Target {
         match Target::ALL.into_iter().find(|target| target.name() == name) {
             Some(target) => Ok(target),
             None => Err(refused!(
-                "unknown target `{name}` (expected x86_64-linux, aarch64-linux or \
-                 wasm32-unknown)"
+                "There's no target called `{name}`. Use x86_64-linux, aarch64-linux or \
+                 wasm32-unknown."
             )),
         }
     }
@@ -320,11 +320,11 @@ impl UserParallelism {
             // A number is the plausible mistake, and it has a reason rather
             // than a typo behind it. Say which.
             other if other.parse::<u32>().is_ok() => Err(refused!(
-                "`user-parallelism` is yes or no, not a count: how many threads \
-                 serve a `yes` is the runtime's to decide, not the program's"
+                "`user-parallelism` is `yes` or `no`, not a number: the runtime decides \
+                 how many threads to use."
             )),
             other => Err(refused!(
-                "unknown user-parallelism `{other}` (expected yes or no)"
+                "`user-parallelism` is `yes` or `no`, not `{other}`."
             )),
         }
     }
@@ -3266,8 +3266,8 @@ impl<'p> Emitter<'p> {
                 let Some((below, written)) = self.comptime_values.get(&span.at()).cloned() else {
                     return Err(refused_at!(
                         span.at(),
-                        "`{bound}` has nothing to write, which `NK1127` reports - \
-                         so this item should not have reached the emitter"
+                        "`{bound}` has no value computed at build time. This is a compiler \
+                         bug: the check should have reported it first."
                     ));
                 };
                 let vis = match public {
@@ -3295,8 +3295,7 @@ impl<'p> Emitter<'p> {
                 if abi != "C" {
                     return Err(refused_at!(
                         span.at(),
-                        "`extern \"{abi}\"` names an ABI this compiler does not write. \
-                         The one it writes is `extern \"C\"` (Part III 15.1)"
+                        "Nikaia doesn't support `extern \"{abi}\"`. Use `extern \"C\"`."
                     ));
                 }
                 // **A handle is a type of its own, outside the block**
@@ -3318,7 +3317,10 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            other => Err(refused_at!(span.at(), "cannot emit item yet: {other:?}")),
+            other => Err(refused_at!(
+                span.at(),
+                "The compiler can't translate this item yet: {other:?}"
+            )),
         }
     }
 
@@ -4137,12 +4139,12 @@ impl<'p> Emitter<'p> {
                     return Err(match body.stmts.first() {
                         Some(first) => refused_at!(
                             first.span.at(),
-                            "`Self::dsl` names the parameters of a \
-                             `...args: Self::dsl`, and this function declares none"
+                            "`Self::dsl` stands for the function's `...args: Self::dsl` \
+                             parameters, but this function has none."
                         ),
                         None => refused!(
-                            "`Self::dsl` names the parameters of a \
-                             `...args: Self::dsl`, and this function declares none"
+                            "`Self::dsl` stands for the function's `...args: Self::dsl` \
+                             parameters, but this function has none."
                         ),
                     });
                 }
@@ -4911,8 +4913,8 @@ impl<'p> Emitter<'p> {
             if let Some(context) = context {
                 return Err(refused_at!(
                     flow.statement,
-                    "`dsl {name} {{ … }}` with deferred parameters takes no context, \
-                     and `{}` was given one",
+                    "`dsl {name} {{ … }}` with `:name` holes can't take a context, but \
+                     `{}` was given.",
                     self.text(*context)
                 ));
             }
@@ -4923,17 +4925,15 @@ impl<'p> Emitter<'p> {
         if name != "html" {
             return Err(refused_at!(
                 flow.statement,
-                "`dsl {name} {{ … }}` has no hole, so nothing here says what it \
-                 means. A statement with `:name` holes is a deferred-parameter DSL \
-                 and lowers (ADR-007 D5); one without them is the target grammar's \
-                 to give a meaning, and `{name}` is not a grammar this compiler has \
-                 - the one it is itself the grammar for is `html` (ADR-017)."
+                "`dsl {name} {{ … }}` has no `:name` holes, and `{name}` isn't a \
+                 language the compiler knows. Add `:name` holes for the parameters, or \
+                 use `dsl html`."
             ));
         }
         if let Some(context) = context {
             return Err(refused_at!(
                 flow.statement,
-                "`dsl html` takes no context, and `{}` was given one",
+                "`dsl html` can't take a context, but `{}` was given.",
                 self.text(*context)
             ));
         }
@@ -5000,7 +5000,10 @@ impl<'p> Emitter<'p> {
                     // Parsed as Nikaia and emitted as Nikaia: a hole holds an
                     // expression of this language, not a foreign one.
                     let parsed = parse_expression(&self.parsed.interner, expr).map_err(|e| {
-                        refused_at!(flow.statement, "in the template hole `{{{expr}}}`: {e}")
+                        refused_at!(
+                            flow.statement,
+                            "The template hole `{{{expr}}}` can't be read. {e}"
+                        )
                     })?;
                     out.push(&format!(
                         "{pad}__html.push_str(&::nikaia_std::html::Render::render(&"
@@ -5861,9 +5864,9 @@ impl<'p> Emitter<'p> {
             if !safe || !holdable {
                 return Err(refused_at!(
                     span.at(),
-                    "this `?.` hands back a view of a value that ends at this line, and \
-                     holding that value first would change what this line runs - bind it \
-                     with a `let` on the line before, and reach through the name"
+                    "This `?.` returns a view of a value that's gone at the end of this \
+                     line. Put the value in a `let` on the line before, and use `?.` on \
+                     that name."
                 ));
             }
             let name = format!("__nikaia_held_{}", self.held.borrow().len());
@@ -6051,9 +6054,8 @@ impl<'p> Emitter<'p> {
                     let Some(held) = self.tethered_type(ty.as_ref(), value) else {
                         return Err(refused_at!(
                             span.at(),
-                            "`{bound}` goes to a task and keeps a buffer alive, and its type is \
-                             not written: write it, `let {bound}: … = …`, so the handle it \
-                             travels in can be declared (ADR-209 D3)"
+                            "`{bound}` is passed to a task and keeps data alive, so it needs \
+                             its type written out: `let {bound}: … = …`."
                         ));
                     };
                     let wrapper = self.tether_wrapper(&held);
@@ -6142,8 +6144,8 @@ impl<'p> Emitter<'p> {
                 let Some((below, written)) = self.comptime_values.get(&span.at()).cloned() else {
                     return Err(refused_at!(
                         span.at(),
-                        "`{bound}` has nothing to write, which `NK1127` reports - \
-                         so this statement should not have reached the emitter"
+                        "`{bound}` has no value computed at build time. This is a compiler \
+                         bug: the check should have reported it first."
                     ));
                 };
                 out.push(&format!("const {bound}: {below} = {written};"));
@@ -6525,8 +6527,7 @@ impl<'p> Emitter<'p> {
                 if !flow.in_loop {
                     return Err(refused_at!(
                         flow.statement,
-                        "`{word}` has no loop to act on here, and the language below \
-                         would refuse the file this writes (Part I, 3.3)"
+                        "`{word}` only works inside a loop, and there's none here."
                     ));
                 }
                 out.push(&format!("{word};"));
@@ -7601,8 +7602,8 @@ impl<'p> Emitter<'p> {
                 let Some(owner) = self.with_types.get(&(*at as usize)).cloned() else {
                     return Err(refused_at!(
                         *at as usize,
-                        "this `with` has no type to copy, which `NK1173` reports - \
-                         so it should not have reached the emitter"
+                        "The type of this `with` is unknown. This is a compiler bug: the \
+                         check should have reported it first."
                     ));
                 };
                 out.push(&format!("{owner} {{ "));
@@ -8060,8 +8061,7 @@ impl<'p> Emitter<'p> {
                 if !flow.in_loop {
                     return Err(refused_at!(
                         flow.statement,
-                        "`{word}` has no loop to act on here, and the language below \
-                         would refuse the file this writes (Part I, 3.3)"
+                        "`{word}` only works inside a loop, and there's none here."
                     ));
                 }
                 out.push(word);
@@ -8168,7 +8168,7 @@ impl<'p> Emitter<'p> {
                 let Expr::Closure { body, .. } = body.as_ref() else {
                     return Err(refused_at!(
                         flow.statement,
-                        "`spawn` takes a lambda: write `spawn fn {{ … }}`"
+                        "`spawn` takes a lambda. Write `spawn fn {{ … }}`."
                     ));
                 };
                 // **And which of the two starters**, which is the one place
@@ -8219,7 +8219,7 @@ impl<'p> Emitter<'p> {
             other => {
                 return Err(refused_at!(
                     flow.statement,
-                    "cannot emit expression yet: {other:?}"
+                    "The compiler can't translate this expression yet: {other:?}"
                 ));
             }
         }
@@ -8906,15 +8906,14 @@ impl<'p> Emitter<'p> {
         if block.stmts.len() < 2 {
             return Err(refused_at!(
                 flow.statement,
-                "an `overlap` block needs at least two branches; one statement has \
-                 nothing to overlap with (Part I, 8.1.2)"
+                "An `overlap` block needs at least two branches to run at the same time."
             ));
         }
         if block.stmts.len() > MOST_BRANCHES {
             return Err(refused_at!(
                 flow.statement,
-                "an `overlap` block of {} branches is more than this compiler builds \
-                 ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-050 D2)",
+                "This `overlap` block has {} branches, but at most {MOST_BRANCHES} are \
+                 supported.",
                 block.stmts.len()
             ));
         }
@@ -9054,7 +9053,7 @@ impl<'p> Emitter<'p> {
                 _ => {
                     return Err(refused_at!(
                         flow.statement,
-                        "a branch of an `overlap` is an expression (Part I, 8.1.2)"
+                        "Each branch of an `overlap` has to be an expression."
                     ));
                 }
             }
@@ -9137,15 +9136,13 @@ impl<'p> Emitter<'p> {
         if arms.len() < 2 {
             return Err(refused_at!(
                 flow.statement,
-                "a `select` needs at least two arms; one arm has nothing to race \
-                 against (Part II, 12.4)"
+                "A `select` needs at least two arms to choose between."
             ));
         }
         if arms.len() > MOST_BRANCHES {
             return Err(refused_at!(
                 flow.statement,
-                "a `select` of {} arms is more than this compiler builds \
-                 ({MOST_BRANCHES}); `std` has one vehicle per arity (ADR-148 D1)",
+                "This `select` has {} arms, but at most {MOST_BRANCHES} are supported.",
                 arms.len()
             ));
         }
@@ -9642,7 +9639,10 @@ impl<'p> Emitter<'p> {
         // the catch-all runs, which is exactly what the source meant by not
         // naming it.
         let Some(members) = self.sum_members(sum) else {
-            return Err(refused_at!(flow.statement, "no error set is named `{sum}`"));
+            return Err(refused_at!(
+                flow.statement,
+                "There's no error set called `{sum}`."
+            ));
         };
         let mut catch_all: Vec<&crate::ast::MatchArm> = Vec::new();
         let mut by_member: Vec<(&str, Vec<&crate::ast::MatchArm>)> =
@@ -9669,10 +9669,9 @@ impl<'p> Emitter<'p> {
         if catch_all.is_empty() {
             return Err(refused_at!(
                 flow.statement,
-                "this `match error` names variants of {} error types and has no `else`, \
-                 and the set of types arriving at a `catch` is open (Part I, 7.1) - \
-                 so add `else => throw error` to pass the rest on, or `else => …` to \
-                 handle them",
+                "This `match error` needs an `else` arm: it covers {} error types, but \
+                 other errors can arrive at a `catch` too. Add `else => throw error` to \
+                 pass them on, or `else => …` to handle them.",
                 by_member.len().max(1)
             ));
         }
@@ -10244,7 +10243,7 @@ impl<'p> Emitter<'p> {
 
         for hole in holes {
             let mut expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
-                refused_at!(flow.statement, "in the interpolated `{{{hole}}}`: {e}")
+                refused_at!(flow.statement, "The hole `{{{hole}}}` can't be read. {e}")
             })?;
             // What the tier pass hands over inside it (ADR-229 D1), as every
             // other reader of a hole sees it (`literal_expressions`).
@@ -10550,9 +10549,7 @@ impl<'p> Emitter<'p> {
             // a name that is not a value.
             return Err(refused_at!(
                 flow.statement,
-                "a rule of grammar `{}` is reached with `::`, not with a dot \
-                     (ADR-140 D3): write `{}::{}(…)`",
-                self.text(*name),
+                "A grammar's rules are reached with `::`, not a dot. Write `{}::{}(…)`.",
                 self.text(*name),
                 self.text(method)
             ));
@@ -10837,9 +10834,8 @@ impl<'p> Emitter<'p> {
             let name = self.text(method);
             return Err(refused_at!(
                 flow.statement,
-                "`{name}` walks a sequence whose step pauses, and there is no pausing form \
-                 of `{name}` to write (ADR-234). Write the loop - `for x in … {{ … }}` - and do \
-                 inside it what this was going to do afterwards"
+                "`{name}` can't be used on a sequence whose steps pause. Write a \
+                 `for x in … {{ … }}` loop instead, and do the work inside it."
             ));
         }
         if self.method_pauses(flow, method) {
@@ -11557,10 +11553,12 @@ impl<'p> Emitter<'p> {
             true => "",
         };
         let name = self.text(grammar);
-        let def = self
-            .grammars
-            .get(&grammar)
-            .ok_or_else(|| refused_at!(flow.statement, "no grammar named `{name}` in this file"))?;
+        let def = self.grammars.get(&grammar).ok_or_else(|| {
+            refused_at!(
+                flow.statement,
+                "There's no grammar called `{name}` in this file."
+            )
+        })?;
 
         // **The rule is named at the call** ([ADR-082](../../docs/specification/adr/adr-082.md)
         // D1, D2). It used to be picked here — the first `pub` rule, a
@@ -11579,13 +11577,12 @@ impl<'p> Emitter<'p> {
                     // lines up is the message a reader cannot act on.
                     true => refused_at!(
                         flow.statement,
-                        "`{rule}` is a rule of grammar `{name}` and is not `pub`, \
-                         so it is not an entry (ADR-082 D2) - write `pub rule {rule}` \
-                         to make it one"
+                        "`{rule}` in grammar `{name}` isn't `pub`, so it can't be called \
+                         from outside. Write `pub rule {rule}`."
                     ),
                     false => refused_at!(
                         flow.statement,
-                        "grammar `{name}` has no `pub` rule called `{rule}`"
+                        "Grammar `{name}` has no `pub` rule called `{rule}`."
                     ),
                 }
             })?;
@@ -11956,9 +11953,9 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 fn pausing_in_a_lambda(at: usize, callee: &str) -> anyhow::Error {
     refused_at!(
         at,
-        "this lambda calls `{callee}`, which can pause - and nothing describes what the \
-         lambda is handed to, so there is no pausing form of it to write (ADR-233). \
-         Call `{callee}` outside the lambda and hand it the value, or give it a `sync` body"
+        "This lambda calls `{callee}`, which can pause, but the compiler knows nothing \
+         about what the lambda is passed to, so it can't let it pause. Call `{callee}` \
+         outside the lambda and pass in the value."
     )
 }
 
@@ -12573,7 +12570,9 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             '\\' => {
                 format.push('\\');
                 let Some(escape) = chars.next() else {
-                    return Err(refused!("string ends in a `\\`: \"{literal}\""));
+                    return Err(refused!(
+                        "This string ends in a `\\`, which escapes nothing: \"{literal}\""
+                    ));
                 };
                 format.push(escape);
                 if escape == 'u' && chars.peek() == Some(&'{') {
@@ -12664,7 +12663,9 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
                     }
                 }
                 if depth != 0 {
-                    return Err(refused!("unclosed `{{` in \"{literal}\""));
+                    return Err(refused!(
+                        "A `{{` in this string is never closed: \"{literal}\""
+                    ));
                 }
 
                 holes.push(hole);
@@ -12675,7 +12676,8 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             }
             '}' => {
                 return Err(refused!(
-                    "stray `}}` in \"{literal}\"; write `}}}}` for a brace"
+                    "This string has a `}}` with no `{{` before it: \"{literal}\". Write \
+                     `}}}}` for a literal brace."
                 ));
             }
             _ => format.push(c),

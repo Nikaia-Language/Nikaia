@@ -149,7 +149,7 @@ fn a_parallel_lambda_that_changes_a_shared_name_is_refused() {
         );
         let finding = refused(&source, "NK2107");
         assert!(
-            finding.message.contains("all of them share"),
+            finding.message.contains("and they all share `"),
             "{finding:#?}"
         );
     }

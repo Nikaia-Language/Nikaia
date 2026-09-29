@@ -395,9 +395,9 @@ fn a_second_for_over_a_sequence_is_refused() {
     );
     assert_eq!(found.len(), 1, "one refusal: {found:#?}");
     let notes = found[0].notes.join(" ");
-    assert!(notes.contains("walking it consumes it"), "{notes}");
+    assert!(notes.contains("walking it uses it up"), "{notes}");
     assert!(
-        notes.contains("a `Vec` is not this"),
+        notes.contains("A `Vec` is different"),
         "and the pair that says what a container does: {notes}"
     );
     assert!(
@@ -405,7 +405,7 @@ fn a_second_for_over_a_sequence_is_refused() {
             .help
             .as_deref()
             .expect("a way out")
-            .contains("collect it first"),
+            .contains("Collect it first"),
         "{:?}",
         found[0].help
     );

@@ -261,8 +261,7 @@ impl Fallback {
                  build does not read can take the value out of it"
             }
             Fallback::UnseenCall | Fallback::UnseenMethod | Fallback::UncoveredArgument => {
-                "write the callee down in a ledger, which is how every other derived fact in \
-                 this project gets sharper (ADR-033 D4)"
+                "describe the callee in a ledger, so the compiler can see what it does"
             }
             Fallback::UnseenOrigin => {
                 "write down the call the value came out of, so this analysis can follow it to \
@@ -572,7 +571,7 @@ pub fn report(
                 out.push_str(&format!("             crosses: {why}\n"));
                 out.push_str(
                     "             a word, and no door over several locks takes it, so its \
-                     `update` is a compare-and-swap and there is no lock (ADR-110 D2)\n",
+                     `update` is a compare-and-swap and there is no lock\n",
                 );
             }
             (Some(why), None) => out.push_str(&format!("             crosses: {why}\n")),
@@ -592,8 +591,7 @@ pub fn report(
         // the source does not say so - one step of the count is paid there. So the
         // places are named beside the count, which is the output D5 asks for.
         match decision.duplications.as_slice() {
-            [] => out
-                .push_str("             one handle, so the count is never stepped (ADR-040 D1)\n"),
+            [] => out.push_str("             one handle, so the count is never stepped\n"),
             sites => {
                 for site in sites {
                     out.push_str(&format!("             duplicated: {site}\n"));
@@ -621,8 +619,8 @@ pub fn report(
         sharing.decisions.iter().filter(|d| d.undecided()).count(),
     ));
     out.push_str(
-        "atomic is the floor and not a verdict (ADR-037 D6). A plain count is an optimisation, \
-         and where it is not taken the reason is one of these:\n",
+        "An atomic count is the safe default. A plain count is an optimisation, and where \
+         it isn't taken the reason is one of these:\n",
     );
     for fallback in Fallback::ALL {
         out.push_str(&format!(
@@ -635,10 +633,7 @@ pub fn report(
             fallback.remedy(),
         ));
     }
-    out.push_str(
-        "The five that want a contract are what ADR-037 D8 answers with `std.contracts` \
-         growing rather than with a keyword.\n",
-    );
+    out.push_str("The ones that need a contract get sharper as `std`'s contracts grow.\n");
     out
 }
 
@@ -1346,8 +1341,7 @@ impl<'a> Analysis<'a> {
                         self.duplicates(
                             function,
                             &name,
-                            "used by a `spawn` body, which takes a handle of its own \
-                             (Part II 11.2)"
+                            "used by a `spawn` body, which takes a handle of its own"
                                 .to_string(),
                         );
                     }
@@ -1355,8 +1349,7 @@ impl<'a> Analysis<'a> {
                         function,
                         &name,
                         &scope.clone(),
-                        "a `spawn` body uses it, and a task runs on a thread of its own \
-                         (Part II 11.2)",
+                        "a `spawn` body uses it, and a task runs on a thread of its own",
                         None,
                     );
                 }
@@ -1897,8 +1890,7 @@ fn handed_to(key: &str, param: &str) -> String {
 /// The sentence a call nothing describes gets.
 fn unseen(callee: Option<&str>) -> String {
     format!(
-        "nothing written down describes `{}`, so this compiler cannot see the end of it - and \
-         starting a thread of its own is among the things it may do (ADR-038 D7)",
+        "the compiler knows nothing about `{}`, so it has to assume it might start a thread",
         callee.unwrap_or("the callee")
     )
 }

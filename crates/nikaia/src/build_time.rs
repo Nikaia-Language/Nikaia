@@ -851,17 +851,13 @@ impl<'a> BuildTime<'a> {
     fn no_method_here(&self, method: winnow_grammar::Symbol) -> Refusal {
         Refusal::NotHere {
             what: format!(".{}()", self.parsed.text(method)),
-            why: "this evaluator has no value to call it on. What it reads is a call to \
-                  a function or a method this **program** declares, and `len` and \
-                  `push` over a list it holds - everything else is `std`'s or a \
-                  package's, whose body is Rust. A `comptime` runs what \
-                  this compiler can read the body of, and `sync` says a body *may* run \
-                  while the program is built (ADR-075 D1) rather than that this \
-                  compiler can run it",
+            why: "at build time the compiler can only call methods your program \
+                  declares, and `len` and `push` on a list. Methods from `std` or a \
+                  package are compiled Rust, which it can't run",
             // **Not *move it into a function***, which is the trap: the method
             // would be just as unreadable one function further in.
-            way_out: "write what it does with arithmetic, an `if`, a `for` and a call \
-                      to a function of this file",
+            way_out: "write what it does with arithmetic, `if`, `for` and calls to \
+                      functions in this file",
         }
     }
     /// **A grammar, run while the program is built**
@@ -996,30 +992,27 @@ impl<'a> BuildTime<'a> {
             // is a promise that becomes a hope.
             return Err(Refusal::NotHere {
                 what: name.to_string(),
-                why: "its body is not this language's to run - `std` is half Rust \
-                      (ADR-014) and a package's body is compiled beside this build \
-                      rather than read by it. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
+                why: "it comes from `std` or a package, which is compiled Rust, and at \
+                      build time the compiler can only run code written in your program",
                 way_out: "write the work in Nikaia, in this file, and call that",
             });
         };
         if !contract.sync.is_sync() {
             return Err(Refusal::NotAllowed {
                 callee: name.to_string(),
-                because: "it can pause, and a build-time body may not (ADR-075 D1)",
+                because: "It can pause, and nothing run at build time may pause.",
             });
         }
         if !contract.touches_known {
             return Err(Refusal::NotAllowed {
                 callee: name.to_string(),
-                because: "nothing says what it touches, and a build-time body's touch set \
-                          has to be an answer (ADR-075 D2)",
+                because: "Nothing says what it touches outside the program.",
             });
         }
         if !contract.touches.iter().all(is_the_builds_own) {
             return Err(Refusal::NotAllowed {
                 callee: name.to_string(),
-                because: "it reaches the world, and a build-time body touches nothing but \
-                          the build's own parameters (ADR-075 D2)",
+                because: "It touches the world outside the program.",
             });
         }
         let Some((args, body, owner)) = self.body_of(name) else {
@@ -1028,11 +1021,9 @@ impl<'a> BuildTime<'a> {
             // body was compiled beside this build rather than parsed into it.
             return Err(Refusal::NotHere {
                 what: name.to_string(),
-                why: "no file of this program declares it, so there is no body here to \
-                      run - a package's is compiled beside this build rather than read \
-                      by it. A `comptime` runs what this compiler can read the body of, \
-                      and `sync` says a body *may* run while the program is built \
-                      (ADR-075 D1) rather than that this compiler can run it",
+                why: "it isn't declared in your program: it comes from a package, which \
+                      is compiled Rust, and at build time the compiler can only run code \
+                      written in your program",
                 way_out: "write the work in Nikaia, in this program, and call that",
             });
         };
@@ -1515,7 +1506,7 @@ fn one_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<ch
         }
         _ => Err(Refused {
             written,
-            why: "no escape of this language begins with that character",
+            why: "no escape starts with that character",
         }),
     }
 }

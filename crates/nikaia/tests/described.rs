@@ -47,7 +47,7 @@ fn a_call_into_an_undescribed_crate_is_refused() {
     assert!(found[0].message.contains("hyper_shim"), "{:?}", found[0]);
     assert_eq!(
         found[0].help.as_deref(),
-        Some("run `nikaia describe hyper_shim`"),
+        Some("Run `nikaia describe hyper_shim`."),
         "the way out is one command, and it is in the message (Part III C.2)"
     );
 }

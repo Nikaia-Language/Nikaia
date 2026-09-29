@@ -32,21 +32,21 @@ pub enum Switch {
 pub fn known() -> Vec<String> { vec![String::from("target"), String::from("user-parallelism"), String::from("reentrancy-check"), String::from("cleanup-deadline")] }
 
 fn withdrawn(key: &str) -> String {
-    if key == "ordering" { return String::from("statements run in the order they are written, so there is nothing left for it to turn off (ADR-050 D1 and D7). A program that wants two things to run together writes `overlap { … }`, and `--overlaps` says which branches did"); }
+    if key == "ordering" { return String::from("statements run in the order they are written, so there's nothing left for it to turn off. To run two things together, write `overlap { … }`; `--overlaps` shows which branches did"); }
     String::from("")
 }
 
 fn moved(key: &str) -> String {
-    if key == "cleanup-deadline" { return String::from("the runtime configuration file `nikaia-runtime.toml`, read when the program starts by the person running it (ADR-038 D5). How long a program waits at exit is an operating property, and the compiler no longer reads this key"); }
+    if key == "cleanup-deadline" { return String::from("the runtime configuration file `nikaia-runtime.toml`, which is read when the program starts. How long a program waits at exit is set by whoever runs it, and the compiler no longer reads this key"); }
     String::from("")
 }
 
 pub fn build_key(key: &str) -> Result<Switch, nikaia_std::error::Thrown<Refused>> {
     let gone = withdrawn(key);
-    if (gone.len() as i64) > 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("`{}` in `[build]` is withdrawn: {}", key, gone)), &"build_key")); }
+    if (gone.len() as i64) > 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("`{}` in `[build]` is no longer supported: {}", key, gone)), &"build_key")); }
     if !contains(&known(), key) {
         let expected = joined(&known());
-        return Err(nikaia_std::error::throwing(Refused::Because(format!("unknown key `{}` in `[build]` (expected one of: {})", key, expected)), &"build_key"));
+        return Err(nikaia_std::error::throwing(Refused::Because(format!("`[build]` has no key called `{}`. The keys are: {}.", key, expected)), &"build_key"));
     }
     let went = moved(key);
     if (went.len() as i64) > 0 { return Ok(Switch::Moved(format!("`{}` in `[build]` has moved to {}", key, went))); }
@@ -60,7 +60,7 @@ pub fn codegen_keys() -> Vec<String> { vec![String::from("opt-level"), String::f
 pub fn codegen_table(target: &str) -> Result<(), nikaia_std::error::Thrown<Refused>> {
     if !contains(&targets(), target) {
         let expected = joined(&targets());
-        return Err(nikaia_std::error::throwing(Refused::Because(format!("`[build.{}]` names no machine (expected one of: {})", target, expected)), &"codegen_table"));
+        return Err(nikaia_std::error::throwing(Refused::Because(format!("`[build.{}]` isn't a machine Nikaia builds for. The machines are: {}.", target, expected)), &"codegen_table"));
     }
     Ok(())
 }
@@ -68,7 +68,7 @@ pub fn codegen_table(target: &str) -> Result<(), nikaia_std::error::Thrown<Refus
 pub fn codegen_key(target: &str, key: &str) -> Result<(), nikaia_std::error::Thrown<Refused>> {
     if !contains(&codegen_keys(), key) {
         let expected = joined(&codegen_keys());
-        return Err(nikaia_std::error::throwing(Refused::Because(format!("unknown key `{}` in `[build.{}]` (expected one of: {})", key, target, expected)), &"codegen_key"));
+        return Err(nikaia_std::error::throwing(Refused::Because(format!("`[build.{}]` has no key called `{}`. The keys are: {}.", target, key, expected)), &"codegen_key"));
     }
     Ok(())
 }
@@ -83,7 +83,7 @@ pub enum Shape {
 pub fn dependency(name: &str, typed: bool, kind: &str, has_path: bool) -> Result<Shape, nikaia_std::error::Thrown<Refused>> {
     if typed {
         if kind == "rust" { return Ok(Shape::Rust); }
-        return Err(nikaia_std::error::throwing(Refused::Because(format!("dependency `{}` has `type = \"{}\"`, which names no ecosystem (the only one spelled out is `rust`, for a crate from crates.io)", name, kind)), &"dependency"));
+        return Err(nikaia_std::error::throwing(Refused::Because(format!("Dependency `{}` has `type = \"{}\"`, which isn't a kind of dependency Nikaia knows. The only one is `rust`, for a crate from crates.io.", name, kind)), &"dependency"));
     }
     if has_path { return Ok(Shape::Path); }
     Ok(Shape::Nikaia)

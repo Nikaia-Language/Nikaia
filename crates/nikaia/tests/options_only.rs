@@ -73,12 +73,13 @@ fn a_mixed_signature_keeps_its_semicolon() {
 /// form** (D2).
 #[test]
 fn a_leading_semicolon_in_a_signature_is_refused() {
-    let said = lowered("fn execute(; target_age: i64 = 0) -> i64 { return target_age }")
-        .expect_err("the leading form is a parse error");
-    assert!(
-        said.contains("writes its options without the `;`"),
-        "{said}"
-    );
+    let source = "fn execute(; target_age: i64 = 0) -> i64 { return target_age }";
+    let refused = parse_to_ast(source).expect_err("the leading form is a parse error");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let said = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+    assert!(said.contains("This `;` has nothing before it."), "{said}");
+    assert!(said.contains("with only options, leave it out"), "{said}");
     assert!(
         said.contains("fn execute(target_age: i64 = 0)"),
         "the message names the one spelling: {said}"
@@ -135,10 +136,7 @@ fn a_leading_semicolon_at_a_call_is_refused() {
          fn main() { println(f\"{execute(; target_age: 30)}\") }",
     )
     .expect_err("the leading form is a parse error");
-    assert!(
-        said.contains("writes its options without the `;`"),
-        "{said}"
-    );
+    assert!(said.contains("`;` has nothing before it."), "{said}");
     assert!(
         said.contains("execute(target_age: 30)"),
         "the message names the one spelling: {said}"
@@ -273,7 +271,7 @@ fn a_call_naming_nothing_is_silent_and_the_brace_form_is_not() {
         braces[0]
             .notes
             .join(" ")
-            .contains("a struct literal names a type"),
+            .contains("Braces after a name build a struct"),
         "{:#?}",
         braces[0].notes
     );

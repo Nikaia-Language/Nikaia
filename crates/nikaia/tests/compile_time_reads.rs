@@ -84,8 +84,15 @@ const READS_IT: &str = "comptime CONFIG: ref String = asset(\"config.txt\")\n\
 fn a_build_given_no_list_reads_nothing() {
     let found = one(READS_IT, &Reads::none());
     assert_eq!(found.code, "NK1175");
-    assert_eq!(found.message, "this build may not read `config.txt`");
-    assert!(found.notes[0].contains("ADR-072 D1"), "{:#?}", found.notes);
+    assert_eq!(
+        found.message,
+        "This build isn't allowed to read `config.txt`."
+    );
+    assert!(
+        found.notes[0].contains("reads no files unless it's given a list"),
+        "{:#?}",
+        found.notes
+    );
     assert!(
         found
             .help
@@ -169,7 +176,8 @@ fn a_path_the_list_does_not_name_is_refused() {
     let found = one(READS_IT, &reads(&dir));
     assert_eq!(found.code, "NK1175");
     assert!(
-        found.notes[0].contains("ADR-072 D3") && found.notes[0].contains("does not name"),
+        found.notes[0].contains("is the list of files this build may read")
+            && found.notes[0].contains("`config.txt` isn't in it"),
         "{:#?}",
         found.notes
     );
@@ -177,7 +185,7 @@ fn a_path_the_list_does_not_name_is_refused() {
         found
             .help
             .as_deref()
-            .is_some_and(|help| help.contains("on a line of")),
+            .is_some_and(|help| help.contains("Add `config.txt` as a line in")),
         "{:?}",
         found.help
     );
@@ -202,7 +210,7 @@ fn a_path_that_leaves_the_root_is_refused() {
         let found = one(&source, &reads(&dir));
         assert_eq!(found.code, "NK1175");
         assert!(
-            found.notes[0].contains("under the project root"),
+            found.notes[0].contains("only reads files inside the project"),
             "{:#?}",
             found.notes
         );
@@ -228,7 +236,7 @@ fn a_path_the_build_works_out_is_refused_even_when_it_would_have_been_allowed() 
     assert_eq!(found.code, "NK1176");
     assert_eq!(
         found.message,
-        "`asset` takes a written path, and this one is worked out"
+        "`asset` needs the path written out, not computed."
     );
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -47,7 +47,7 @@ fn a_variant_the_enum_does_not_have_is_refused() {
          }}"
     ));
     assert_eq!(found.code, "NK1171");
-    assert_eq!(found.message, "`Op` has no variant `Mul`");
+    assert_eq!(found.message, "`Op` has no variant called `Mul`.");
     assert!(
         found.notes[0].contains("`Op::Add`, `Op::Sub`"),
         "the note lists what there is: {:#?}",
@@ -75,7 +75,7 @@ fn a_variant_the_enum_does_not_have_is_refused_in_a_pattern() {
          }}"
     ));
     assert_eq!(found.code, "NK1171");
-    assert_eq!(found.message, "`Op` has no variant `Mul`");
+    assert_eq!(found.message, "`Op` has no variant called `Mul`.");
 }
 
 /// **A pattern nests, and so does this** —
@@ -98,7 +98,7 @@ fn a_variant_inside_a_nested_pattern_is_refused() {
          }}"
     ));
     assert_eq!(found.code, "NK1171");
-    assert_eq!(found.message, "`Op` has no variant `Mul`");
+    assert_eq!(found.message, "`Op` has no variant called `Mul`.");
 }
 
 /// **A near miss says which name was meant**, which is the difference between
@@ -116,7 +116,7 @@ fn a_near_miss_names_the_variant_that_was_meant() {
          \x20   println(f\"{{chosen}}\")\n\
          }}"
     ));
-    assert_eq!(found.help.as_deref(), Some("did you mean `Op::Sub`?"));
+    assert_eq!(found.help.as_deref(), Some("Did you mean `Op::Sub`?"));
 }
 
 /// **A struct has no items under `::`**, and the way out is the one that works:
@@ -131,11 +131,11 @@ fn a_struct_has_no_members_under_the_separator() {
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`Point` is a struct, and nothing it declares is called `x`"
+        "`Point` has nothing called `x` to reach with `::`."
     );
     assert_eq!(
         found.help.as_deref(),
-        Some("read it from a value: `value.x`")
+        Some("Read it from a value: `value.x`.")
     );
 }
 
@@ -162,10 +162,11 @@ fn the_shape_of_a_type_is_reached_through_a_bound() {
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`Point::fields` is reached under a `Struct` bound"
+        "You can't reach `Point::fields` directly: it's reached through a type parameter bound by `Struct`."
     );
     assert!(
-        found.notes[0].contains("Part II 10.3"),
+        found.notes[0].contains("reached through a bound")
+            && found.notes[0].contains("`fn describe[T: Struct](value: T)`, and then `T::fields`"),
         "{:#?}",
         found.notes
     );
@@ -241,7 +242,8 @@ fn a_head_nothing_declares_is_its_own_refusal() {
         .find(|f| f.code == "NK1181")
         .unwrap_or_else(|| panic!("{found:#?}"));
     assert!(
-        head.message.contains("nothing declares `nowhere`"),
+        head.message
+            .contains("is written under `nowhere`, but `nowhere` isn't declared anywhere"),
         "{head:#?}"
     );
     // **A way out that can be taken** (Part III C.2): each of the three names

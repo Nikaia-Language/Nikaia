@@ -193,7 +193,10 @@ fn a_naked_view_handed_back_from_a_method_is_refused() {
         finding.message
     );
     assert!(
-        finding.notes.iter().any(|n| n.contains("hands back")),
+        finding
+            .notes
+            .iter()
+            .any(|n| n.contains("stored in the value this function returns")),
         "{:#?}",
         finding.notes
     );

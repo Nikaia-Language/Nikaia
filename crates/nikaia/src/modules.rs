@@ -132,8 +132,8 @@ pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Uni
         let src = dependency.root.join(SRC);
         if !src.is_dir() {
             return Err(crate::diagnostics::refuse(format!(
-                "`{}` is depended on by path, and {} is not there.\n\
-                 A package is a directory with a `{SRC}/` in it (Part III, 13.1).",
+                "`{}` is a dependency by path, but {} doesn't exist.\n\
+                 A package is a directory with a `{SRC}/` folder in it.",
                 dependency.name,
                 src.display()
             )));
@@ -215,7 +215,23 @@ fn read_unit(
     // `with_context` and not `anyhow!("{e}")`: formatting the error into a string
     // loses its type, and the type is what says this is a refusal of the program
     // rather than a failure of this compiler (`diagnostics::Refused`).
-    let parsed = parser::parse_to_ast(&source).with_context(|| format!("{}", path.display()))?;
+    // A parse error is a finding, rendered here where the path is known; any
+    // other failure keeps the path as its context.
+    let parsed =
+        parser::parse_to_ast(&source).map_err(
+            |error| match crate::diagnostics::refused_finding(&error) {
+                Some(finding) => crate::diagnostics::refuse(
+                    crate::diagnostics::render_finding(
+                        finding,
+                        &path.display().to_string(),
+                        &source,
+                    )
+                    .trim_end()
+                    .to_string(),
+                ),
+                None => error.context(path.display().to_string()),
+            },
+        )?;
     check_imports(&parsed, path, reachable)?;
     Ok(Unit {
         package: package.map(str::to_string),
@@ -249,10 +265,8 @@ fn one_namespace(units: &[Unit]) -> Result<()> {
                 }
                 return Err(crate::diagnostics::refuse(format!(
                     "`{name}` is declared twice in this package: in {} and in {}.\n\
-                     The files of a package share one namespace (Part I, 9.1), so a name \
-                     belongs to the package rather than to the file it is written in - \
-                     rename one of the two, or keep the declaration in one place and let the \
-                     other file use it.",
+                     All files of a package share their names. Rename one of the two, or \
+                     keep one declaration and use it from the other file.",
                     first.display(),
                     unit.path.display()
                 )));
@@ -329,8 +343,8 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
         }
         if segments.len() > 1 {
             return Err(crate::diagnostics::refuse(format!(
-                "`use {}` in {here}: `use` names one package and brings no name in \
-                 (Part I, 9.1). Write `use {}`, and `{}` where you need it.",
+                "`use {}` in {here}: `use` takes a package name only, not a path into it. \
+                 Write `use {}`, and `{}` where you need it.",
                 segments.join("::"),
                 segments[0],
                 segments.join("::")
@@ -351,9 +365,8 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
     for (_, here_name) in &named {
         if !once.insert(here_name) {
             return Err(crate::diagnostics::refuse(format!(
-                "`{here_name}` in {here}: twice. One name per file (Part I, 9.1) - two \
-                 packages under one name is an error rather than a rule about which of them \
-                 a line means. `use … as …` is how one of them gets another name."
+                "`{here_name}` is used twice in {here}. Two packages can't have the same \
+                 name in one file. Write `use … as …` to give one of them another name."
             )));
         }
     }
@@ -368,14 +381,12 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
             .is_some_and(|path| path.is_file());
         return Err(crate::diagnostics::refuse(match beside {
             true => format!(
-                "`use {package}` in {here}: the files of a package already see one another \
-                 (Part I, 9.1), so there is nothing to bring in - remove the line and write \
-                 the name directly."
+                "`use {package}` in {here}: the files of a package already see each other, \
+                 so there's nothing to bring in. Remove the line and use the name directly."
             ),
             false => format!(
-                "`use {package}` in {here}: no dependency is called `{package}`.\n\
-                 A package reached by name has to be declared, under that name, in this \
-                 project's `[dependencies]` (Part III, 13.3):\n\
+                "`use {package}` in {here}: there's no dependency called `{package}`.\n\
+                 Add it to the project's `[dependencies]` under that name:\n\
                  \x20   [dependencies]\n\
                  \x20   {package} = {{ path = \"../{package}\" }}"
             ),

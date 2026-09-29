@@ -144,7 +144,7 @@ impl Source {
     pub fn named(&self) -> String {
         match self {
             Source::Buffer { name, ty, .. } => format!("`{name}` (a `{ty}` this body reads)"),
-            Source::Call { callee, .. } => format!("what `{callee}` hands back"),
+            Source::Call { callee, .. } => format!("what `{callee}` returns"),
         }
     }
 }
@@ -1437,11 +1437,11 @@ fn decide(
         let keep = if task && leaves {
             plan.refusals.push(refusal(
                 source,
-                "is handed both to a task and out of this function",
-                "a task may outlive the caller that would keep the buffer, and the caller \
-                 may outlive the task - there is no one owner for it",
-                "hand the task a copy with `.clone()`, or give the task only what it \
-                 needs and hand the rest back",
+                "is passed to a task and also returned from this function.",
+                "The task may outlive the caller, or the caller the task, so neither can be \
+                 the one that keeps the data alive.",
+                "Give the task a copy with `.clone()`, or pass the task only what it needs \
+                 and return the rest.",
             ));
             continue;
         } else if task {
@@ -1569,26 +1569,28 @@ fn walk_refusals(
             .struct_puts
             .get(keeper)
             .and_then(|name| context.struct_not_held(parsed, name, &mut Vec::new()));
-        for why in written.into_iter().chain(put) {
+        let sequence = walk_local_type(walk, keeper)
+            .is_none_or(|ty| matches!(parsed.text(ty.name), "Vec" | "List" | "VecDeque" | "Deque"));
+        // **One message for one container**: where it is not a list, that is
+        // the thing to change, and what it holds is said by the one way out.
+        let not_a_list = plan.struct_keepers.contains(keeper) && !sequence;
+        for why in written.into_iter().chain(put).filter(|_| !not_a_list) {
             {
                 out.push(element_refusal(
                     keeper,
-                    &format!("it holds {why}, which is not held one handle per buffer"),
-                    "keep text or structs of text views in it, or copy what it keeps with \
-                     `.clone()`",
+                    &format!("it holds {why}, which isn't supported there yet"),
+                    "Keep text, or structs of text views, in it, or store copies made with \
+                     `.clone()`.",
                     plan,
                     walk,
                 ));
             }
         }
-        let sequence = walk_local_type(walk, keeper)
-            .is_none_or(|ty| matches!(parsed.text(ty.name), "Vec" | "List" | "VecDeque" | "Deque"));
-        if plan.struct_keepers.contains(keeper) && !sequence {
+        if not_a_list {
             out.push(element_refusal(
                 keeper,
-                "it holds structs of views and is not a list, and only a list's elements \
-                 are read through their handle yet",
-                "keep the structs in a list, or copy what it keeps with `.clone()`",
+                "it isn't a list, and only a list can hold structs of views here yet",
+                "Keep the structs in a list, or store copies made with `.clone()`.",
                 plan,
                 walk,
             ));
@@ -1657,13 +1659,12 @@ fn element_refusal(
         span,
         code: "NK2304",
         message: format!(
-            "`{keeper}` keeps views of buffers read inside a loop and drops entries as it \
-             goes, and {why}"
+            "`{keeper}` keeps views of data read inside a loop and removes entries as it \
+             goes, but {why}."
         ),
         notes: vec![
-            "one keep for the whole loop would keep every buffer the loop ever read, including \
-             the ones whose entries are gone - so each view carries its own handle on its \
-             buffer instead (ADR-209 D4)"
+            "Each view keeps its own data alive here, so that data read for entries that \
+             were removed can be freed during the loop."
                 .to_string(),
         ],
         help: Some(help.to_string()),

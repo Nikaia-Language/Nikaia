@@ -321,7 +321,7 @@ fn a_pausing_field_called_inside_a_lambda_is_refused_by_name() {
     assert!(
         refused
             .to_string()
-            .contains("this lambda calls `button.on_click`, which can pause"),
+            .contains("This lambda calls `button.on_click`, which can pause"),
         "{refused}"
     );
 }

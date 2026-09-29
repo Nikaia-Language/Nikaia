@@ -521,7 +521,10 @@ fn a_nikaia_package_is_refused_and_says_why() {
     // A **version** is what is not decided: no registry, no version grammar, no
     // distribution format (ADR-002 D1 §5). A path is decided and built
     // (ADR-047 D2), so the message names both ways that work.
-    assert!(text.contains("a version is not how one is found"), "{text}");
+    assert!(
+        text.contains("given by version, but there's no package registry yet"),
+        "{text}"
+    );
     assert!(text.contains("path = \"../http-server\""), "{text}");
     assert!(
         text.contains("type = \"rust\""),
@@ -990,9 +993,12 @@ fn a_name_a_package_does_not_publish_is_refused() {
     assert!(!ran.status.success(), "{}", said(&ran));
     let out = said(&ran);
     assert!(out.contains("NK1110"), "{out}");
-    assert!(out.contains("`secret` is private to `http`"), "{out}");
     assert!(
-        out.contains("private to the package that declares it"),
+        out.contains("You can't use `secret` from here: it's private to `http`."),
+        "{out}"
+    );
+    assert!(
+        out.contains("Everything is private to its package unless it's declared `pub`."),
         "{out}"
     );
 
@@ -1298,7 +1304,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
     let out = said(&ran);
     assert!(out.contains("NK1110"), "{out}");
     assert!(
-        out.contains("`http::Request.method` is private to `http`"),
+        out.contains("You can't reach `http::Request.method` from here: it's private to `http`."),
         "{out}"
     );
 
@@ -1314,7 +1320,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
     let ran = nikaia(&["build"], &app);
     assert!(!ran.status.success(), "{}", said(&ran));
     assert!(
-        said(&ran).contains("`http::Request.method` is private"),
+        said(&ran).contains("`http::Request.method` from here: it's private"),
         "{}",
         said(&ran)
     );
@@ -1528,7 +1534,7 @@ fn a_package_may_be_given_another_name() {
     let ran = nikaia(&["build"], &app);
     assert!(!ran.status.success(), "{}", said(&ran));
     assert!(
-        said(&ran).contains("this is `http::Request`, and the `let` says `i64`"),
+        said(&ran).contains("This value is `http::Request`, but the `let` declares `i64`."),
         "{}",
         said(&ran)
     );
@@ -1546,7 +1552,7 @@ fn a_package_may_be_given_another_name() {
     let out = said(&ran);
     assert!(out.contains("`h`") && out.contains("twice"), "{out}");
     assert!(
-        out.contains("`use … as …` is how one of them gets another name"),
+        out.contains("Write `use … as …` to give one of them another name."),
         "{out}"
     );
 
@@ -2205,7 +2211,7 @@ fn a_head_the_next_file_declares_is_not_refused() {
     assert!(!refused.status.success(), "{}", said(&refused));
     let told = said(&refused);
     assert!(
-        told.contains("NK1181") && told.contains("nothing declares `nowhere`"),
+        told.contains("NK1181") && told.contains("but `nowhere` isn't declared anywhere"),
         "{told}"
     );
     assert!(
@@ -2557,7 +2563,7 @@ fn a_type_that_implements_nothing_is_refused_at_a_path_bound() {
     let said = said(&built);
     assert!(said.contains("NK1164"), "{said}");
     assert!(
-        said.contains("`handler::Static`") || said.contains("`Bare` is not one"),
+        said.contains("`handler::Static`") || said.contains("`Bare` isn't one"),
         "the message names the type the caller picked: {said}"
     );
 }
@@ -2703,7 +2709,7 @@ fn a_moved_cleanup_point_is_narrated_once() {
     let second = nikaia(&["run"], &dir);
     assert!(second.status.success(), "{}", said(&second));
     assert!(
-        said(&second).contains("warning[NK2403]: `look` keeps `h` now"),
+        said(&second).contains("warning[NK2403]: `look` now keeps `h`"),
         "{}",
         said(&second)
     );
@@ -2782,12 +2788,12 @@ fn a_boundary_mismatch_names_the_description_to_redo() {
     assert!(!built.status.success(), "{}", said(&built));
     let complaint = said(&built);
     assert!(
-        complaint.contains("the description of `fremd` does not match the crate"),
+        complaint.contains("The description of `fremd` doesn't match the crate."),
         "{complaint}"
     );
     assert!(complaint.contains("nikaia describe fremd"), "{complaint}");
     assert!(
-        complaint.contains("the language below said:"),
+        complaint.contains("= note: The Rust compiler said:"),
         "{complaint}"
     );
     std::fs::remove_dir_all(&dir).ok();

@@ -75,7 +75,7 @@ fn a_handler_is_told_what_newly_reaches_it() {
     assert_eq!(note.severity, check::Severity::Warning);
     assert_eq!(
         note.message,
-        "this `catch` receives `io::IoError` from `reads` now"
+        "This `catch` now also receives `io::IoError` from `reads`."
     );
     // Part III C.2: the reason, and a way out that is not "don't do that".
     assert!(
@@ -88,7 +88,7 @@ fn a_handler_is_told_what_newly_reaches_it() {
     assert!(
         note.help
             .as_deref()
-            .is_some_and(|h| h.contains("both answers")),
+            .is_some_and(|h| h.contains("are both fine")),
         "{:?}",
         note.help
     );

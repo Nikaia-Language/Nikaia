@@ -264,7 +264,9 @@ fn a_description_is_believed_while_its_hashes_hold() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].code, "NK2505");
     assert!(
-        found[0].message.contains("`fremd` has moved"),
+        found[0]
+            .message
+            .contains("`fremd` has changed since its description was reviewed"),
         "{:?}",
         found[0]
     );
@@ -275,7 +277,7 @@ fn a_description_is_believed_while_its_hashes_hold() {
     // Part III C.2: the way out is one concrete thing to do.
     assert_eq!(
         found[0].help.as_deref(),
-        Some("run `nikaia describe fremd` and read the diff before you believe it")
+        Some("Run `nikaia describe fremd` and review the diff before committing it.")
     );
 }
 

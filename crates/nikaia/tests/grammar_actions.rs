@@ -45,7 +45,10 @@ fn a_pausing_call_in_an_action_is_refused() {
     assert_eq!(found.len(), 1, "one refusal: {found:#?}");
     // **The message names the rule**, because a grammar is a page of rules and
     // a caret on a call inside one of them is not enough to find it.
-    assert!(found[0].message.contains("`number`'s action"), "{found:#?}");
+    assert!(
+        found[0].message.contains("The action of `number`"),
+        "{found:#?}"
+    );
     assert!(
         found[0].message.contains("io::read_to_string"),
         "and what it calls: {found:#?}"
@@ -68,7 +71,10 @@ fn a_pausing_call_in_a_folds_step_is_refused() {
     .filter(|f| f.code == "NK2209")
     .collect();
     assert_eq!(found.len(), 1, "one refusal: {found:#?}");
-    assert!(found[0].message.contains("`file`'s action"), "{found:#?}");
+    assert!(
+        found[0].message.contains("The action of `file`"),
+        "{found:#?}"
+    );
 }
 
 /// **A pause reached through a method on the accumulator** (0.0.230, `open-work.md`

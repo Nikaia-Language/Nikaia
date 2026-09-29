@@ -253,10 +253,7 @@ where
         // beside the prefix, not doubled, not last.
         if c == '_' {
             if value.is_empty() || after_separator {
-                wrong = Some(
-                    "an underscore in a number stands between digits: `1_000_000`, \
-                     never `1__0` and never beside the radix prefix (Part I, 2.2)",
-                );
+                wrong = Some("an underscore in a number goes between two digits, like `1_000_000`");
                 break;
             }
             after_separator = true;
@@ -273,21 +270,18 @@ where
             if prefix == 0 {
                 return Err(ParseError::from_stream(i).add_expected("digits"));
             }
-            wrong = Some("a radix prefix takes at least one digit (Part I, 2.2)");
+            wrong = Some("a number needs at least one digit after its prefix");
         } else if after_separator {
-            wrong = Some(
-                "an underscore in a number stands between digits, so a number does not \
-                 end in one (Part I, 2.2)",
-            );
+            wrong = Some("a number can't end in an underscore");
         } else if prefix > 0 && at < bytes.len() && (bytes[at] as char).is_ascii_alphanumeric() {
             // **A digit the radix does not have** — `0b1210`, `0o19` — is the
             // misparse this record is about, one prefix along: without this the
             // number ends at the bad digit and what follows is a second number
             // nobody wrote.
             wrong = Some(match radix {
-                2 => "`0b` takes the digits `0` and `1` (Part I, 2.2)",
-                8 => "`0o` takes the digits `0` to `7` (Part I, 2.2)",
-                _ => "`0x` takes the digits `0` to `9` and `a` to `f` (Part I, 2.2)",
+                2 => "a `0b` number only has the digits `0` and `1`",
+                8 => "a `0o` number only has the digits `0` to `7`",
+                _ => "a `0x` number only has the digits `0` to `9` and `a` to `f`",
             });
         }
     }
@@ -314,10 +308,8 @@ where
         None => match i128::from_str_radix(&value, radix) {
             Ok(number) if number <= u64::MAX as i128 && number >= i64::MIN as i128 => number,
             _ => {
-                wrong = Some(
-                    "this number does not fit the widest integers this language has, \
-                     which are `u64` and `i64` (Part I, 2.2)",
-                );
+                wrong =
+                    Some("this number is too big: the largest integer types are `u64` and `i64`");
                 0
             }
         },
@@ -545,11 +537,21 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 
     let expr = CompilerGrammar::parse_expr()
         .parse_next(&mut stream)
-        .map_err(|e| crate::diagnostics::refuse(e.render(input)))?;
+        // A hole has no line of its own to show, so its way out is said beside
+        // the headline, where the lowering's message about the hole carries it.
+        .map_err(|e| {
+            let finding = a_parse_error(&e, input);
+            let said = std::iter::once(&finding.message)
+                .chain(&finding.help)
+                .map(|part| crate::diagnostics::said(part))
+                .collect::<Vec<_>>()
+                .join(" ");
+            crate::diagnostics::refuse(said)
+        })?;
 
     if !stream.input.is_empty() {
         return Err(crate::diagnostics::refuse(format!(
-            "trailing input after expression: `{}`",
+            "`{}` isn't part of the expression.",
             &input[input.len() - stream.input.len()..]
         )));
     }
@@ -566,8 +568,7 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 pub fn fits(length: usize) -> Result<()> {
     if length > ast::LONGEST_SOURCE {
         return Err(crate::diagnostics::refuse(format!(
-            "this source is {length} bytes, and a source is at most {} bytes (4 GiB): \
-             where a node stands is a `u32` byte offset (ADR-252 D2)",
+            "This file is {length} bytes, but a source file can be at most {} bytes (4 GiB).",
             ast::LONGEST_SOURCE
         )));
     }
@@ -633,37 +634,19 @@ fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
 ///
 /// **Only for a bare `&`.** `&&` is a program's *and* and is untouched, which
 /// is the one place the character is still the language's.
-fn the_spelling_ref_replaced_note(rendered: &str) -> String {
-    const MARK: &str = "found unexpected token `";
-    let Some(after) = rendered.split(MARK).nth(1) else {
-        return String::new();
-    };
-    if after.split('`').next() != Some("&") {
-        return String::new();
-    }
-    "\nnote: a view is written `ref T` (Part I, 6.5): `ref String` for text, \
-     `ref Array[T]` for a run of elements, `ref value` for the borrow an \
-     expression writes. `&` was the spelling until 0.0.134 and is not one now - \
-     `&&` is still this language's *and*."
-        .to_string()
+fn the_spelling_ref_replaced_note(found: Option<&str>) -> Option<String> {
+    (found == Some("&")).then(|| {
+        "A view is written `ref T`: `ref String` for text, `ref Array[T]` for elements \
+         something else keeps, and `ref value` to borrow a value. (`&&` still means *and*.)"
+            .to_string()
+    })
 }
 
-fn reserved_word_note(rendered: &str) -> String {
-    const MARK: &str = "found unexpected token `";
-    let Some(after) = rendered.split(MARK).nth(1) else {
-        return String::new();
-    };
-    let Some(token) = after.split('`').next() else {
-        return String::new();
-    };
-    if !RESERVED_WORDS.contains(&token) {
-        return String::new();
-    }
-    format!(
-        "\nnote: `{token}` is a reserved word, so it is not a name (Part I, 2.1). \
-         Either pick another name, or - if the construct was meant - it does not \
-         belong in this position."
-    )
+fn reserved_word_note(found: Option<&str>) -> Option<String> {
+    let token = found?;
+    RESERVED_WORDS
+        .contains(&token)
+        .then(|| format!("`{token}` is a reserved word, so it can't be used as a name here."))
 }
 
 /// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
@@ -686,17 +669,20 @@ fn reserved_word_note(rendered: &str) -> String {
 /// or a `grammar { … }` block, where it is text - from turning a good message into
 /// a wrong one. The condition is the grammar's own: it was inside a
 /// `BLOCK_COMMENT` and wanted its close.
-fn unclosed_block_comment(rendered: &str, source: &str) -> Option<String> {
-    if !rendered.contains("expected `*/`") {
+fn unclosed_block_comment(error: &ParseError, source: &str) -> Option<crate::check::Finding> {
+    if !error.expected.iter().any(|e| e == "`*/`") {
         return None;
     }
     let at = opening_of_an_unclosed_comment(source)?;
-    let (line, column) = winnow_grammar::span::line_column(source, at);
-    Some(format!(
-        "Parse error:\nunclosed block comment, opened at line {line}, column {column}\n{}\n\
-         note: `/*` opens a comment that `*/` closes, and they nest - so a `/*` inside \
-         this one needs its own `*/` before this one's (Part I, 2; ADR-134 D2)",
-        winnow_grammar::span::caret(source, at, 2)
+    Some(a_parse_finding(
+        at,
+        "/*",
+        "This block comment is never closed.".to_string(),
+        Vec::new(),
+        Some(
+            "Close it with `*/`. Comments nest, so every `/*` inside it needs its own `*/` too."
+                .to_string(),
+        ),
     ))
 }
 
@@ -768,8 +754,7 @@ fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
 /// sees, and a note that disappears is the safe way for this to be wrong, since
 /// it adds a sentence and corrects nothing
 /// ([ADR-089](../../../docs/specification/adr/adr-089.md) D2).
-fn coalesce_fallback_note(rendered: &str) -> String {
-    const MARK: &str = "found unexpected token `";
+fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
     // **`=` is in the list and that is not a mistake.** The backend names the
     // *first* character it could not use, so a `==` is reported as `=`. A line
     // that has a `??` to the left of the caret and a stray `=` at it is this
@@ -778,38 +763,20 @@ fn coalesce_fallback_note(rendered: &str) -> String {
     const OPERATORS: &[&str] = &[
         "==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%", "as",
     ];
-    let Some(after) = rendered.split(MARK).nth(1) else {
-        return String::new();
-    };
-    let Some(token) = after.split('`').next() else {
-        return String::new();
-    };
-    // The message shows the offending line with a caret under it. A `??` on
-    // that line, to the left of the caret, is what makes this the shape rather
-    // than an ordinary typo — and where the rendering is not that shape, the
-    // note is simply absent.
-    let mut lines = rendered.lines();
-    let source = lines.find(|l| l.contains(" | "));
-    let caret = rendered.lines().find(|l| l.trim_start().starts_with('^'));
-    let (Some(source), Some(caret)) = (source, caret) else {
-        return String::new();
-    };
-    let at = caret.find('^').unwrap_or(0);
-    let before = &source[..source.len().min(at)];
-    if !before.contains("??") || !OPERATORS.contains(&token) {
-        return String::new();
+    if !before.contains("??") || !OPERATORS.contains(&found?) {
+        return None;
     }
     // **The token is not written into the message**, and that is deliberate: the
     // backend reports the first character it could not use, so a `==` arrives
     // here as `=` and a help that quoted it back would read `(a ?? 0) = …`.
     // The shape is the same whichever operator it was, so the message shows the
     // shape.
-    let _ = token;
-    "\nnote: the fallback of a `??` is one value, or an expression in brackets \
-     (Part I, 3.5). Without them it reaches rightwards across the operator, so \
-     `a ?? 0 > 3` is `a ?? (0 > 3)` and not what the line looks like.\n\
-     help: put brackets around the side you mean - `(a ?? 0) > 3`, or `a ?? (0 > 3)`."
-        .to_string()
+    Some((
+        "The fallback after `??` is a single value unless you use brackets, so \
+         `a ?? 0 > 3` would mean `a ?? (0 > 3)`."
+            .to_string(),
+        "Put brackets around the part you mean: `(a ?? 0) > 3`, or `a ?? (0 > 3)`.".to_string(),
+    ))
 }
 
 /// **A `let` taking apart something a flat tuple of names cannot**
@@ -831,35 +798,17 @@ fn coalesce_fallback_note(rendered: &str) -> String {
 /// [`coalesce_fallback_note`] has: the failure happens after `(` has already
 /// matched, so the backend's message is about the token it stopped at and the
 /// note is what supplies the sentence.
-fn let_names_note(rendered: &str) -> String {
-    const MARK: &str = "found unexpected token `";
-    let Some(after) = rendered.split(MARK).nth(1) else {
-        return String::new();
-    };
-    let Some(token) = after.split('`').next() else {
-        return String::new();
-    };
-    if token != "(" {
-        return String::new();
+fn let_names_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
+    if found != Some("(") || !(before.contains("let (") || before.contains("let mut (")) {
+        return None;
     }
-    // The offending line, with a `let (` to the left of the caret, is what
-    // makes this the shape rather than an ordinary typo.
-    let source = rendered.lines().find(|l| l.contains(" | "));
-    let caret = rendered.lines().find(|l| l.trim_start().starts_with('^'));
-    let (Some(source), Some(caret)) = (source, caret) else {
-        return String::new();
-    };
-    let at = caret.find('^').unwrap_or(0);
-    let before = &source[..source.len().min(at)];
-    if !before.contains("let (") && !before.contains("let mut (") {
-        return String::new();
-    }
-    "\nnote: a `let` binds one name, or a flat tuple of them - `let (tx, rx) = …` \
-     (Part I, 2.1). It is not a pattern, so a tuple inside a tuple has no \
-     spelling here.\n\
-     help: bind the outer parts with one name each, and read the inner ones from \
-     the name that holds them."
-        .to_string()
+    Some((
+        "A `let` binds one name, or a flat list of names like `let (tx, rx) = …`. A tuple \
+         inside a tuple can't be taken apart here."
+            .to_string(),
+        "Bind the outer parts to one name each, and read the inner parts from those names."
+            .to_string(),
+    ))
 }
 
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
@@ -883,31 +832,27 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         // A refusal and not a failure of this compiler: the program is what is
         // wrong, so it leaves without a backtrace (`diagnostics::Refused`).
         .map_err(|e| {
-            let rendered = e.render(input);
             // **An unclosed `/* … */` is reported at its opening** and not at
             // the end of the file, which is the one place a parse error's
             // position is the reader's to be told rather than the parser's
             // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
-            if let Some(rendered) = unclosed_block_comment(&rendered, input) {
-                return crate::diagnostics::refuse(rendered);
-            }
-            let note = format!(
-                "{}{}{}{}",
-                reserved_word_note(&rendered),
-                the_spelling_ref_replaced_note(&rendered),
-                coalesce_fallback_note(&rendered),
-                let_names_note(&rendered)
-            );
-            crate::diagnostics::refuse(format!("Parse error:\n{rendered}{note}"))
+            let finding =
+                unclosed_block_comment(&e, input).unwrap_or_else(|| a_parse_error(&e, input));
+            refuse_parsing(finding, input)
         })?;
 
     // The generated entry point already refuses leftover input; this is a
     // backstop so a partial parse can never be reported as a success.
     if !stream.input.is_empty() {
-        return Err(crate::diagnostics::refuse(format!(
-            "Parse error: unexpected trailing input at byte {}",
-            input.len() - stream.input.len()
-        )));
+        let at = input.len() - stream.input.len();
+        let finding = a_parse_finding(
+            at,
+            "",
+            "The parser stopped here, before the end of the file.".to_string(),
+            Vec::new(),
+            None,
+        );
+        return Err(refuse_parsing(finding, input));
     }
 
     let aliases = Parsed::aliases_of(&program, &interner);
@@ -923,6 +868,138 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // into it, and written into its type so every later reader agrees.
     crate::text_tiers::refine(&mut parsed);
     Ok(parsed)
+}
+
+/// **A parse error in the words every other message uses** (Part III C.2,
+/// rule 5): what was expected, what was there, and what to write - and not the
+/// rules the parser was inside when it stopped, which are this compiler's
+/// business and not the reader's.
+///
+/// A `fail("…")` in the grammar is a message written for the reader: its first
+/// sentence is the headline and the rest is the help. Everywhere else the
+/// headline is made from what the parser expected and what it found.
+fn a_parse_error(error: &ParseError, source: &str) -> crate::check::Finding {
+    let at = error.offset.min(source.len());
+    let found = error.found.as_deref();
+    let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
+    let before = &source[line_start..at];
+    let (message, mut help) = match &error.message {
+        Some(written) => {
+            let (headline, rest) = first_sentence(written);
+            (headline, rest)
+        }
+        None => (what_was_expected(error), None),
+    };
+    let mut notes: Vec<String> = [
+        reserved_word_note(found),
+        the_spelling_ref_replaced_note(found),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for (note, way_out) in [
+        coalesce_fallback_note(found, before),
+        let_names_note(found, before),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        notes.push(note);
+        help = Some(way_out);
+    }
+    let word = found.filter(|f| source[at..].starts_with(f)).unwrap_or("");
+    a_parse_finding(at, word, message, notes, help)
+}
+
+fn a_parse_finding(
+    at: usize,
+    word: &str,
+    message: String,
+    notes: Vec<String>,
+    help: Option<String>,
+) -> crate::check::Finding {
+    crate::check::Finding {
+        severity: crate::check::Severity::Error,
+        span: ast::Span::new(at, at),
+        code: "",
+        message,
+        notes,
+        help,
+        labels: vec![crate::check::Label {
+            span: ast::Span::new(at, at),
+            word: word.to_string(),
+            text: String::new(),
+            main: true,
+        }],
+    }
+}
+
+/// The refusal a parse error travels as: the finding for whoever has the path
+/// to render it at, and a line with its position for whoever does not.
+fn refuse_parsing(finding: crate::check::Finding, source: &str) -> anyhow::Error {
+    let (line, column) = winnow_grammar::span::line_column(source, finding.span.at());
+    let message = format!(
+        "{} (line {line}, column {column})",
+        crate::diagnostics::said(&finding.message)
+    );
+    crate::diagnostics::refuse_finding(finding, message)
+}
+
+/// `Expected `}` here, but found `temp`.` - from what the parser wanted at the
+/// place it stopped. A list too long to read is left out: the caret and what
+/// was found say more than twenty alternatives do.
+fn what_was_expected(error: &ParseError) -> String {
+    const NOT_WORTH_SAYING: &[&str] = &["whitespace", "block comment", "`//`"];
+    let mut expected: Vec<&str> = match error.expected.is_empty() {
+        true => error.also.iter().map(String::as_str).collect(),
+        false => error.expected.iter().map(String::as_str).collect(),
+    };
+    expected.retain(|e| !NOT_WORTH_SAYING.contains(e));
+    // *Expected end of input* where something stands is a sentence about the
+    // parser: what the reader needs is that this does not belong here.
+    if error.found.is_some() {
+        expected.retain(|e| *e != "end of input");
+    }
+    expected.sort_unstable();
+    expected.dedup();
+    let wanted = match expected.as_slice() {
+        [] => None,
+        [one] => Some(one.to_string()),
+        [rest @ .., last] if expected.len() <= 4 => Some(format!("{} or {last}", rest.join(", "))),
+        _ => None,
+    };
+    let found = match error.found.as_deref() {
+        None => None,
+        Some("newline") => Some("the end of the line".to_string()),
+        Some(found) => Some(format!("`{found}`")),
+    };
+    match (wanted, found) {
+        (Some(wanted), Some(found)) => format!("Expected {wanted} here, but found {found}."),
+        (Some(wanted), None) => format!("Expected {wanted}, but the file ended."),
+        (None, Some(found)) => format!("Didn't expect {found} here."),
+        (None, None) => "The file ended too early.".to_string(),
+    }
+}
+
+/// The first sentence of a written message and what follows it: the headline
+/// and the help. A sentence ends at `. ` outside backticks.
+fn first_sentence(text: &str) -> (String, Option<String>) {
+    let mut quoted = false;
+    let bytes = text.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        match b {
+            b'`' => quoted = !quoted,
+            b'.' if !quoted && bytes.get(i + 1) == Some(&b' ') => {
+                let rest = text[i + 1..].trim();
+                return (
+                    text[..=i].to_string(),
+                    (!rest.is_empty()).then(|| rest.to_string()),
+                );
+            }
+            _ => {}
+        }
+    }
+    (text.to_string(), None)
 }
 
 // --- Action-block helpers ---
@@ -1367,11 +1444,7 @@ grammar! {
         // was legal a version ago.
         rule promise_after_the_type -> (bool, Vec<Symbol>, bool) =
             kw_throws kw_sync fail(
-                "`sync` stands before `throws` (ADR-140 D4, ADR-102 D1): write \
-                 `sync throws`. It is the order a function *type* has had since \
-                 ADR-102, and `throws sync` used to parse here only because the \
-                 two words sat in different slots - one before the result type \
-                 and one after it - which D4 leaves as one."
+                "`sync` comes before `throws`. Write `sync throws`."
             ) -> { (true, Vec::new(), true) }
           | s:sync_promise? t:kw_throws? -> {
                 match s {
@@ -1397,20 +1470,12 @@ grammar! {
 
         rule promise_before_the_arrow -> () =
             kw_sync kw_throws? "->" => fail(
-                "`sync` and `throws` stand after the result type (ADR-140 D4): \
-                 write `fn f() -> String sync`. That is the order ADR-102 D1 \
-                 already fixes for a function *type*, where the trailing words \
-                 are greedy, so a declaration and a type read the same way \
-                 round. A declaration with no result type writes the word in \
-                 the same place it always did."
+                "`sync` comes after the result type. Write `fn f() -> String sync`, \
+                 the same order a function type has."
             ) -> { () }
           | kw_throws kw_sync? "->" => fail(
-                "`throws` and `sync` stand after the result type (ADR-140 D4): \
-                 write `fn f() -> String throws`. That is the order ADR-102 D1 \
-                 already fixes for a function *type*, where the trailing words \
-                 are greedy, so a declaration and a type read the same way \
-                 round. A declaration with no result type writes the word in \
-                 the same place it always did."
+                "`throws` comes after the result type. Write `fn f() -> String throws`, \
+                 the same order a function type has."
             ) -> { () }
 
         // ADR-023 D1: `throws` carries no type list. The specification itself
@@ -1424,14 +1489,9 @@ grammar! {
         // ordinary identifier to `type_ref`.
         rule kw_throws -> () =
             KW_THROWS not(kw_sync) type_refs fail(
-                "`throws` names no error type (ADR-023 D1): write `throws` on its own. \
-                 *Which* errors can leave a function follows from its body and from \
-                 everything the body reaches, so it is derived rather than written: \
-                 the set is inferred whole-program and recorded in `nikaia.contracts`, \
-                 beside the build (Part III, 13.5). Written by hand it would go stale \
-                 the first time a callee gained a failure - and a failure that comes \
-                 from a resource's cleanup would make you name a type you never \
-                 mentioned (ADR-006 D4)."
+                "`throws` doesn't take an error type. Write `throws` on its own: the \
+                 compiler works out which errors a function can fail with from what \
+                 it calls, so the list never goes out of date."
             ) -> { () }
           | KW_THROWS -> { () }
 
@@ -1471,11 +1531,9 @@ grammar! {
           // a *mixed* signature needs - would parse the old form and the sentence
           // would never be read.
           | ";" => fail(
-                "a parameter list with no subjects writes its options without the `;` \
-                 (ADR-133 D1): `fn execute(target_age: i64 = 0)`. The `;` stands between \
-                 the two zones of Kap 5.1 - subjects before it, options after - and where \
-                 one zone is empty it separates nothing. A *mixed* list keeps it, and \
-                 keeps it required."
+                "This `;` has nothing before it. The `;` separates the main parameters \
+                 from the options, so with only options, leave it out: \
+                 `fn execute(target_age: i64 = 0)`."
             ) -> {
                 params_of(None, Vec::new(), None)
             }
@@ -1491,9 +1549,8 @@ grammar! {
         rule config_zone -> ConfigZone =
             ";" "..." name:NAME ":" "Self::dsl" -> { ConfigZone::Spread(name) }
           | ";" "..." name:NAME ":" fail(
-                "a typed spread is written `...name: Self::dsl` (ADR-007 D5): \
-                 `Self::dsl` is the parameter type the DSL string generates, and \
-                 it is the only type this parameter can have."
+                "A spread parameter is written `...name: Self::dsl`. `Self::dsl` is \
+                 the only type it can have."
             ) -> { ConfigZone::Spread(name) }
           | ";" head:config_param tail:config_param_tail* -> {
                 let mut params = vec![head];
@@ -1537,10 +1594,9 @@ grammar! {
                 ConfigParam { name, ty, default }
             }
           | name:NAME ":" ty:type_ref fail(
-                "a configuration parameter needs a default (Kap 5.1): write \
-                 `name: T = value`. Without one it has to be passed at every \
-                 call, and a parameter that has to be passed belongs before the \
-                 `;`."
+                "An option after the `;` needs a default value. Write \
+                 `name: T = value`, or move the parameter before the `;` if it always \
+                 has to be passed."
             ) -> {
                 ConfigParam { name, ty, default: Expr::LitBool(false) }
             }
@@ -1579,10 +1635,8 @@ grammar! {
           // lands on the type rather than on the word, one token past where a
           // reader would put it. The sentence is what carries the answer.
           | KW_SELF ":" fail(
-                "`self` is a reserved word, so a parameter may not be called \
-                 that (Part I, 2.1). It already names one thing - the value a \
-                 method was called on - and that is written `self`, `ref self` or \
-                 `ref mut self`, with no type beside it"
+                "A parameter can't be called `self`. `self` is the value a method is \
+                 called on, written `self`, `ref self` or `ref mut self`, without a type."
             ) -> { Receiver { is_ref: false, is_mut: false } }
           | KW_SELF -> { Receiver { is_ref: false, is_mut: false } }
 
@@ -1594,17 +1648,13 @@ grammar! {
             // will write one. First, because the arm below matches `use http` and
             // leaves the rest to fail as the next item - at the same place, with
             // nothing to say.
-            KW_USE NAME "::" peek("{") fail("names are not brought in; a package is reached \
-                                      through its name. Write `use http`, and \
-                                      `http::Request` where you need it - and \
-                                      `use http as h` if the prefix is long \
-                                      (Part I, 9.1)") -> {
+            KW_USE NAME "::" peek("{") fail("`use` can't bring in single names. Write `use http`, and \
+                                      `http::Request` where you need it, or \
+                                      `use http as h` for a shorter prefix.") -> {
                 Item::Import { path: Vec::new(), alias: None }
             }
-          | KW_USE NAME "::" peek("*") fail("a package is reached through its name, and \
-                                      nothing brings every name in. Write `use http`, \
-                                      and `http::Request` where you need it \
-                                      (Part I, 9.1)") -> {
+          | KW_USE NAME "::" peek("*") fail("`use` can't bring in every name at once. Write `use http`, \
+                                      and `http::Request` where you need it.") -> {
                 Item::Import { path: Vec::new(), alias: None }
             }
           | KW_USE head:NAME tail:path_segment* alias:use_alias? -> {
@@ -2039,9 +2089,8 @@ grammar! {
         // after the block, so the caret is on the character to delete.
         rule g_alt -> GrammarAlt =
             p:g_seq "->" fail(
-                "an action is the block after the pattern, with no arrow in front \
-                 of it (ADR-120 D2, Part II 10.8): write `pattern { action }`. The \
-                 one `->` a rule writes is its result type, as a function's is."
+                "An action doesn't take an arrow. Write `pattern { action }`: the only \
+                 `->` in a rule is its result type."
             ) -> {
                 // Never reached: `fail` has already ended the alternative. The
                 // binding is here because the action has to be well-typed.
@@ -2500,15 +2549,9 @@ grammar! {
           // purpose. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
           // asks for the reason and one concrete way out, and there are three.
           | "??" fail(
-                "there is no postfix `??` (ADR-165 D1): `??` is null coalescing and \
-                 takes a fallback on its right - `a ?? b` (Part I, 3.5). The same two \
-                 characters with nothing after them would mean something else \
-                 entirely, and what it would mean is an abort written as punctuation. \
-                 The three things a postfix unwrap is reached for each have a \
-                 spelling: a fallback value is `a ?? b`; a jump is \
-                 `a ?? throw NotFound` or `a ?? return r`, since the four jumps are \
-                 expressions (ADR-138 D1); and saying the value is known to be there \
-                 is `a ?? panic(\"...\")`, which ends the program with your own words"
+                "`??` needs a fallback after it. Write `a ?? b` for a default value, \
+                 `a ?? throw NotFound` or `a ?? return r` to leave, or \
+                 `a ?? panic(\"...\")` if the value must be there."
             ) e:coalesce_fallback -> { e }
 
         // **A fallback is one value, or it is bracketed**
@@ -2615,10 +2658,8 @@ grammar! {
         rule range_tail -> (bool, Expr) =
             "..<" e:or_expr -> { (false, e) }
           | "..=" fail(
-                "`..` includes its end, so the inclusive range is written `0..n` \
-                 (ADR-137 D3). `..=` was this language's inclusive range and is \
-                 withdrawn, because one meaning per spelling is what that record \
-                 is for; the range that stops before its end is `0..<n`."
+                "Nikaia has no `..=`. `0..n` already includes `n`; write `0..<n` for a \
+                 range that stops before it."
             ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
           | ".." e:or_expr -> { (true, e) }
 
@@ -2860,9 +2901,8 @@ grammar! {
             // specification deserves a sentence rather than a parse error at
             // the colon. `fail` beats the alternatives at this position, so
             // this is what a reader gets.
-          | KW_FN ":" fail("the `fn: …` form was removed (ADR-022): write `fn { … }`. \
-                           Its body ran to the end of the expression, so a `.method()` \
-                           after it landed *inside* the lambda - silently") -> {
+          | KW_FN ":" fail("`fn: …` is no longer supported. Write `fn { … }`: with `fn:`, a \
+                           `.method()` after the lambda silently became part of its body.") -> {
                 Expr::Closure {
                     params: Vec::new(),
                     mutable: Vec::new(),
@@ -2899,11 +2939,9 @@ grammar! {
           // the message: without it the alternative fails, the rule backtracks,
           // and `config_args`' own `;` would parse the old form silently.
           | "(" ";" => fail(
-                "an argument list with no subjects writes its options without the `;` \
-                 (ADR-133 D1): `execute(target_age: 30)`. The `;` stands between the \
-                 two zones of Kap 5.1 - subjects before it, options after - and where \
-                 one zone is empty it separates nothing. A *mixed* call keeps it, and \
-                 keeps it required."
+                "This `;` has nothing before it. The `;` separates the main arguments \
+                 from the options, so with only options, leave it out: \
+                 `execute(target_age: 30)`."
             ) -> { (Vec::new(), Vec::new()) }
           | "(" args:call_args? config:config_args? ")" -> {
                 (args.unwrap_or_default(), config.unwrap_or_default())
@@ -3071,15 +3109,9 @@ grammar! {
           // The head's half, for the reason the fallback's narrowing has one:
           // `a_head_parses_what_a_body_parses` would catch the difference.
           | "??" fail(
-                "there is no postfix `??` (ADR-165 D1): `??` is null coalescing and \
-                 takes a fallback on its right - `a ?? b` (Part I, 3.5). The same two \
-                 characters with nothing after them would mean something else \
-                 entirely, and what it would mean is an abort written as punctuation. \
-                 The three things a postfix unwrap is reached for each have a \
-                 spelling: a fallback value is `a ?? b`; a jump is \
-                 `a ?? throw NotFound` or `a ?? return r`, since the four jumps are \
-                 expressions (ADR-138 D1); and saying the value is known to be there \
-                 is `a ?? panic(\"...\")`, which ends the program with your own words"
+                "`??` needs a fallback after it. Write `a ?? b` for a default value, \
+                 `a ?? throw NotFound` or `a ?? return r` to leave, or \
+                 `a ?? panic(\"...\")` if the value must be there."
             ) e:head_coalesce_fallback -> { e }
 
         rule head_coalesce_fallback -> Expr # "one value, or an expression in brackets" =
@@ -3111,10 +3143,8 @@ grammar! {
         rule head_range_tail -> (bool, Expr) =
             "..<" e:head_or -> { (false, e) }
           | "..=" fail(
-                "`..` includes its end, so the inclusive range is written `0..n` \
-                 (ADR-137 D3). `..=` was this language's inclusive range and is \
-                 withdrawn, because one meaning per spelling is what that record \
-                 is for; the range that stops before its end is `0..<n`."
+                "Nikaia has no `..=`. `0..n` already includes `n`; write `0..<n` for a \
+                 range that stops before it."
             ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
           | ".." e:head_or -> { (true, e) }
 
@@ -3269,9 +3299,7 @@ grammar! {
             KW_SPAWN body:trailing_lambda -> {
                 Expr::Spawn { body: Box::new(body), is_move: false }
             }
-          | KW_SPAWN "(" fail("`spawn` takes a lambda: write `spawn fn { … }` \
-                              (Part I, 8.2). The parenthesised form was a bug in \
-                              this parser and not a second form") -> {
+          | KW_SPAWN "(" fail("`spawn` takes a lambda. Write `spawn fn { … }`.") -> {
                 Expr::Spawn {
                     body: Box::new(Expr::Closure {
                         params: Vec::new(),
@@ -3303,11 +3331,9 @@ grammar! {
         // gave `fn:`: a form the specification taught deserves a sentence
         // rather than a parse error at whatever token happens to be next.
         rule dsl_from_expr -> Expr =
-            KW_DSL name:NAME KW_FROM fail("`dsl X from e` was removed (ADR-082): \
-                                           a grammar is entered by a call, so write \
-                                           `X.rule(e)` naming the rule you mean. \
-                                           Every `pub` rule is an entry, and the old \
-                                           form picked one of them by source order") -> {
+            KW_DSL name:NAME KW_FROM fail("`dsl X from e` is no longer supported. Write \
+                                           `X.rule(e)`, naming the rule you want to \
+                                           start from.") -> {
                 Expr::Variable(name)
             }
 
@@ -3370,13 +3396,9 @@ grammar! {
         rule match_alternative -> MatchPattern =
             KW_ELSE -> { MatchPattern::Otherwise }
           | UNDERSCORE fail(
-                "a `match`'s catch-all arm is written `else` (ADR-145 D1): \
-                 `else => \"other\"`. `_` is the ignore pattern and says something \
-                 different - it ignores a value that *arrived*, in a tuple \
-                 position or a parameter (ADR-126 D1) - and nothing arrives at \
-                 the arm taken when none of the others matched. `else` is what \
-                 that is called one construct over, and this language already \
-                 has it."
+                "The catch-all arm of a `match` is written `else`. Write \
+                 `else => \"other\"`: `_` ignores a part of a value, like a tuple \
+                 element, and isn't used for the whole arm."
             ) -> { MatchPattern::Otherwise }
           // **A range before a bare literal**, or the literal takes the start
           // and leaves the `..` stranded. Inclusive at both ends (D3), and
@@ -3386,9 +3408,8 @@ grammar! {
                 MatchPattern::Range { start, end }
             }
           | pattern_lit "..<" fail(
-                "`..<` is not written in a pattern (ADR-137 D4). A pattern's \
-                 range includes both ends, and one that stops earlier is \
-                 written by moving the end: `200..298`."
+                "A pattern can't use `..<`. Pattern ranges include both ends, so \
+                 move the end instead: `200..299`."
             ) -> { MatchPattern::Literal(Expr::LitInt { value: 0, negative: false }) }
           | l:pattern_lit -> { MatchPattern::Literal(l) }
           // **A bare tuple**, which names no type: `(0, 0)`.

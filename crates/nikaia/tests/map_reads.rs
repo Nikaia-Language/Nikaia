@@ -303,7 +303,7 @@ fn a_map_read_off_a_caught_value_is_refused() {
 
 /// **A `?` whose inside has no type is not written `??`** (§1.18's second
 /// fault): that is the operator, and the message said the operator may be
-/// absent. It says the value may be.
+/// absent. It says the value may be missing.
 #[test]
 fn a_read_of_a_map_whose_values_are_unknown_names_no_operator() {
     let found: Vec<_> = findings(
@@ -321,7 +321,10 @@ fn a_read_of_a_map_whose_values_are_unknown_names_no_operator() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(!found[0].message.contains("`??`"), "{found:#?}");
-    assert!(found[0].message.contains("may be absent"), "{found:#?}");
+    assert!(
+        found[0].message.contains("This value may be missing"),
+        "{found:#?}"
+    );
 }
 
 /// **A map keyed by numbers can be read** (0.0.235, `open-work.md` §1.21).

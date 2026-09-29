@@ -374,7 +374,7 @@ fn main() {
         .unwrap_or_else(|| panic!("no NK1121: {findings:#?}"));
     assert!(it.message.contains("`User`"), "{it:#?}");
     assert!(
-        it.help.as_deref() == Some("write `.name`"),
+        it.help.as_deref() == Some("Write `.name`."),
         "every error names a way out (Part III C.2): {it:#?}"
     );
 }
@@ -1253,7 +1253,7 @@ fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
     assert!(
         refused
             .to_string()
-            .contains("bind it with a `let` on the line before"),
+            .contains("Put the value in a `let` on the line before"),
         "{refused}"
     );
 }

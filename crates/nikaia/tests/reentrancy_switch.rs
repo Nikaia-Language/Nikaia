@@ -51,7 +51,7 @@ fn a_third_spelling_is_refused() {
     let manifest = Manifest::parse("[build]\nreentrancy-check = \"on\"\n").expect("parses");
     let refused = Settings::resolve(&manifest, None, None).expect_err("`on` is not a value");
     assert!(
-        refused.to_string().contains("expected yes or no"),
+        refused.to_string().contains("is `yes` or `no`, not `on`"),
         "{refused}"
     );
 }

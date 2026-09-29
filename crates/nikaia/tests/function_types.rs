@@ -539,13 +539,14 @@ fn a_trailing_sync_belongs_to_the_type_it_follows() {
 /// ([ADR-140](../../../docs/specification/adr/adr-140.md) D4).
 #[test]
 fn a_promise_before_the_arrow_is_refused() {
-    let said = format!(
-        "{:#}",
-        parse_to_ast("fn load() throws -> String { return \"a\" }")
-            .expect_err("the pre-arrow form is a parse error")
-    );
-    assert!(said.contains("stand after the result type"), "{said}");
-    assert!(said.contains("fn f() -> String throws"), "{said}");
+    let refused = parse_to_ast("fn load() throws -> String { return \"a\" }")
+        .expect_err("the pre-arrow form is a parse error");
+    let said = format!("{refused:#}");
+    assert!(said.contains("comes after the result type"), "{said}");
+    let help = nikaia::diagnostics::refused_finding(&refused)
+        .and_then(|f| f.help.clone())
+        .unwrap_or_default();
+    assert!(help.contains("fn f() -> String throws"), "{said}: {help}");
 }
 
 /// **A declaration with no result type writes the word where it always did**,

@@ -57,14 +57,14 @@ fn two_lists_added_together_are_refused_with_the_way_that_exists() {
     let found = findings(source);
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].code, "NK1191");
-    assert_eq!(found[0].message, "`+` is not defined on a list");
+    assert_eq!(found[0].message, "You can't use `+` on a list.");
     assert!(
-        found[0].notes[0].contains("open-decisions.md"),
+        found[0].notes[0].contains("whether `+` should join two lists hasn't been decided yet"),
         "{found:#?}"
     );
     assert_eq!(
         found[0].help.as_deref(),
-        Some("to add one list's elements to the end of another: `a.extend(b)`")
+        Some("To add one list's elements to the end of another, write `a.extend(b)`.")
     );
 }
 
@@ -84,7 +84,7 @@ fn arithmetic_on_a_map_is_refused_too() {
         .collect();
     assert_eq!(found.len(), 1, "{:#?}", findings(source));
     assert!(
-        found[0].message.starts_with("`*` is not defined on `"),
+        found[0].message.starts_with("You can't use `*` on `"),
         "{found:#?}"
     );
     assert_eq!(found[0].help, None);

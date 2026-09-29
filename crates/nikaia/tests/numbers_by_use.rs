@@ -139,7 +139,7 @@ fn what_a_number_is_given_decides_where_no_use_does() {
     );
     assert!(
         unasked.iter().any(|f| f.code == "NK1116"
-            && f.message == "this comes to 4000000000, which does not fit in an `i32`"),
+            && f.message == "This comes to 4000000000, which doesn't fit in an `i32`."),
         "{unasked:#?}"
     );
 }
@@ -164,11 +164,11 @@ fn two_uses_that_disagree_are_refused_in_this_languages_words() {
     );
     assert!(
         found.iter().any(|f| f.code == "NK1200"
-            && f.message == "`k` is used as an `i32` and here as an `i64`"
+            && f.message == "You're using `k` as an `i32` and here as an `i64`."
             && f.help.as_deref()
                 == Some(
-                    "write the one it is, `let k: i32 = …`, and convert with `as` where the \
-                 other is wanted"
+                    "Declare its type, `let k: i32 = …`, and convert with `as` where the \
+                 other one is needed."
                 )),
         "{found:#?}"
     );
@@ -194,7 +194,7 @@ fn an_overflow_is_refused_wherever_the_operation_stands() {
         assert_eq!(found.len(), 1, "{place}: {found:#?}");
         assert!(
             found[0].code == "NK1116"
-                && found[0].message == "this comes to 4000000000, which does not fit in an `i32`",
+                && found[0].message == "This comes to 4000000000, which doesn't fit in an `i32`.",
             "{place}: {found:#?}"
         );
     }

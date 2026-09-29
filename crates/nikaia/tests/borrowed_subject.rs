@@ -114,8 +114,10 @@ fn every_by_value_position_is_refused() {
             .find(|f| f.code == "NK1131")
             .unwrap_or_else(|| panic!("a field {what} by value is refused: {found:#?}"));
         assert!(
-            refusal.message.contains("name") && refusal.message.contains(what),
-            "it names the field and what was done with it: {}",
+            // The message no longer spells out the position (`{what}`); every
+            // position reads as giving the field away.
+            refusal.message.contains("`self.name`") && refusal.message.contains("give away"),
+            "it names the field and that it is being given away ({what}): {}",
             refusal.message
         );
         // **The two ways out this record names**
@@ -126,7 +128,8 @@ fn every_by_value_position_is_refused() {
             refusal
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("self.name.clone()") && h.contains("(self)")),
+                .is_some_and(|h| h.contains("self.name.clone()")
+                    && h.contains("take `self` instead of `ref self`")),
             "and names both ways out: {:?}",
             refusal.help
         );
@@ -338,8 +341,8 @@ fn main() {
             .help
             .as_deref()
             .is_some_and(|h| h.contains("self.tags.clone()")
-                && h.contains("(self)")
-                && h.contains("declare the result `ref Vec[i64]`")
+                && h.contains("take `self` instead of `ref self`")
+                && h.contains("Declare the result `ref Vec[i64]`")
                 && !h.contains("&self.tags")),
         "the ways out, and no `&` for the author to write: {:?}",
         refusal.help
@@ -489,7 +492,7 @@ fn the_third_way_out_is_named_only_where_the_result_is() {
             .unwrap_or_else(|| panic!("a field by value is refused: {found:#?}"));
         let help = refusal.help.as_deref().expect("every refusal has one");
         assert_eq!(
-            help.contains("declare the result `ref String`"),
+            help.contains("Declare the result `ref String`"),
             offered,
             "{body}\n{help}"
         );

@@ -431,7 +431,7 @@ mod tests {
             .expect_err("a type that is no word is refused");
         let said = format!("{error:#}");
         assert!(said.contains("`x`"), "{said}");
-        assert!(said.contains("names no ecosystem"), "{said}");
+        assert!(said.contains("isn't a kind of dependency"), "{said}");
     }
 
     /// A Nikaia package by path, and the name Cargo gives a crate key.
@@ -460,7 +460,7 @@ mod tests {
             .expect("a moved key leaves a note rather than failing the build");
         assert!(note.contains("cleanup-deadline"), "{note}");
         assert!(note.contains("nikaia-runtime.toml"), "{note}");
-        assert!(note.contains("ADR-038 D5"), "{note}");
+        assert!(note.contains("no longer reads this key"), "{note}");
 
         // …and nothing reads it from here any more, so a later reader cannot
         // resolve it out of the wrong file.
@@ -496,8 +496,11 @@ mod tests {
             .expect_err("a withdrawn key fails the build");
         let said = format!("{error:#}");
         assert!(said.contains("`ordering`"), "{said}");
-        assert!(said.contains("withdrawn"), "{said}");
-        assert!(said.contains("ADR-050"), "{said}");
+        assert!(said.contains("no longer supported"), "{said}");
+        assert!(
+            said.contains("in the order they are written"),
+            "why: {said}"
+        );
         assert!(said.contains("overlap"), "the way out is named: {said}");
         assert!(
             !said.contains("expected one of"),

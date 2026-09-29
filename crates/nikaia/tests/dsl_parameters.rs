@@ -194,12 +194,15 @@ fn a_missing_parameter_is_an_error_against_the_nika_source() {
         "{rendered}"
     );
     assert!(
-        rendered.contains("     = the statement's parameters are"),
+        rendered.contains("    = note: The statement's parameters are"),
         "{rendered}"
     );
-    assert!(rendered.contains("     help: "), "{rendered}");
+    assert!(rendered.contains("    = help: "), "{rendered}");
     assert!(
-        rendered.lines().any(|l| l.trim_start().starts_with('^')),
+        rendered.lines().any(|l| l
+            .trim_start()
+            .strip_prefix('|')
+            .is_some_and(|rest| rest.trim_start().starts_with('^'))),
         "{rendered}"
     );
 }
@@ -218,11 +221,11 @@ fn an_unknown_parameter_is_an_error_and_names_the_near_miss() {
     assert!(
         unknown
             .message
-            .contains("`query` has no parameter `:activ`"),
+            .contains("`query` has no parameter called `:activ`"),
         "{}",
         unknown.message
     );
-    assert_eq!(unknown.help.as_deref(), Some("did you mean `active`?"));
+    assert_eq!(unknown.help.as_deref(), Some("Did you mean `active`?"));
 
     // And the one it did not pass is reported too: two mistakes, two messages,
     // rather than one build per mistake.
@@ -306,6 +309,12 @@ fn a_spread_must_be_written_self_dsl() {
     )
     .expect_err("a spread of any other type is refused");
     let message = format!("{error:#}");
-    assert!(message.contains("...name: Self::dsl"), "{message}");
-    assert!(message.contains("ADR-007 D5"), "{message}");
+    assert!(
+        message.contains("A spread parameter is written `...name: Self::dsl`."),
+        "{message}"
+    );
+    // The rule is stated in the reader's words, on the line it is about, and
+    // no longer by the number of the decision that made it.
+    assert!(message.contains("line 3"), "{message}");
+    assert!(!message.contains("ADR-"), "{message}");
 }

@@ -221,12 +221,12 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1112",
-                message: format!("`{name}` needs `:{parameter}`, and this call does not pass it"),
+                message: format!("`{name}` needs `:{parameter}`, but this call doesn't pass it."),
                 notes: vec![format!(
-                    "the statement's parameters are {}",
+                    "The statement's parameters are {}.",
                     list(declared.iter().map(String::as_str))
                 )],
-                help: Some(format!("pass it after the `;`: `{parameter}: …`")),
+                help: Some(format!("Pass it after the `;`: `{parameter}: …`.")),
                 labels: Vec::new(),
             });
         }
@@ -241,17 +241,17 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
             severity: Severity::Error,
             span: *span,
             code: "NK1113",
-            message: format!("`{name}` has no parameter `:{name_passed}`"),
+            message: format!("`{name}` has no parameter called `:{name_passed}`."),
             notes: vec![match declared.is_empty() {
-                true => format!("`{name}` is a statement with no parameters at all"),
+                true => format!("`{name}` has no parameters at all."),
                 false => format!(
-                    "the statement's parameters are {}",
+                    "The statement's parameters are {}.",
                     list(declared.iter().map(String::as_str))
                 ),
             }],
             help: Some(match near {
-                Some(near) => format!("did you mean `{near}`?"),
-                None => format!("write `:{name_passed}` in the statement, or drop it here"),
+                Some(near) => format!("Did you mean `{near}`?"),
+                None => format!("Add `:{name_passed}` to the statement, or remove it here."),
             }),
             labels: Vec::new(),
         });

@@ -42,7 +42,14 @@ fn trailing_input_is_rejected() {
     // truncated parse.
     let err = parse_to_ast("fn main() {}\n@@@").expect_err("should reject trailing garbage");
     let msg = err.to_string();
-    assert!(msg.contains("Parse error"), "unexpected error: {msg}");
+    assert!(
+        msg.contains("Didn't expect `@` here."),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        msg.contains("(line 2, column 1)"),
+        "unexpected error: {msg}"
+    );
 }
 
 #[test]

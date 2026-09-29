@@ -168,7 +168,7 @@ fn invalid_input_fails_the_build_in_the_parsers_own_words() {
     assert!(
         found
             .message
-            .contains("refused the bytes this build gave it"),
+            .contains("`Cfg::file` couldn't parse the input it was given"),
         "{}",
         found.message
     );
@@ -303,12 +303,16 @@ fn a_variant_with_named_fields_is_refused_by_name() {
     let found = one(source, &reads);
     assert_eq!(found.code, "NK1178");
     assert!(
-        found.message.contains("has no build-time form"),
+        found
+            .message
+            .contains("`Pick::one` returns a `Shape`, which can't be computed at build time"),
         "{}",
         found.message
     );
     assert!(
-        found.notes[0].contains("named") && found.notes[0].contains("by position"),
+        found.notes[0].contains("`Shape::Spot` has named fields")
+            && found.notes[0]
+                .contains("variants with named fields can't be computed at build time"),
         "{:#?}",
         found.notes
     );

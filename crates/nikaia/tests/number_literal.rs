@@ -85,12 +85,19 @@ fn a_float_takes_the_separator() {
 /// **An underscore stands between digits and nowhere else** (D1).
 #[test]
 fn an_underscore_out_of_place_is_refused() {
-    for body in ["    let n = 1_", "    let n = 1__0", "    let n = 0x_FF"] {
+    for (body, said) in [
+        ("    let n = 1_", "A number can't end in an underscore."),
+        (
+            "    let n = 1__0",
+            "An underscore in a number goes between two digits, like `1_000_000`.",
+        ),
+        (
+            "    let n = 0x_FF",
+            "An underscore in a number goes between two digits, like `1_000_000`.",
+        ),
+    ] {
         let message = refused(body);
-        assert!(
-            message.contains("an underscore in a number stands between digits"),
-            "{body}: {message}"
-        );
+        assert!(message.contains(said), "{body}: {message}");
     }
 }
 
@@ -98,9 +105,13 @@ fn an_underscore_out_of_place_is_refused() {
 /// without this, `0b1210` is `0b1` beside the number `210`.
 #[test]
 fn a_digit_the_radix_does_not_have_is_refused() {
-    assert!(refused("    let n = 0b1210").contains("`0b` takes the digits `0` and `1`"));
-    assert!(refused("    let n = 0o19").contains("`0o` takes the digits `0` to `7`"));
-    assert!(refused("    let n = 0x").contains("a radix prefix takes at least one digit"));
+    assert!(
+        refused("    let n = 0b1210").contains("A `0b` number only has the digits `0` and `1`.")
+    );
+    assert!(refused("    let n = 0o19").contains("A `0o` number only has the digits `0` to `7`."));
+    assert!(
+        refused("    let n = 0x").contains("A number needs at least one digit after its prefix.")
+    );
 }
 
 /// **A number that does not fit is refused**, where it used to take this
@@ -109,7 +120,7 @@ fn a_digit_the_radix_does_not_have_is_refused() {
 fn a_number_too_wide_for_an_i64_is_refused_and_does_not_panic() {
     let message = refused("    let n = 99999999999999999999");
     assert!(
-        message.contains("does not fit the widest integer"),
+        message.contains("This number is too big: the largest integer types are `u64` and `i64`."),
         "{message}"
     );
 }
@@ -184,12 +195,13 @@ fn the_same_digits_without_the_sign_are_still_refused() {
     );
     assert!(
         found.iter().any(|f| f.code == "NK1116"
-            && f.message.contains("does not fit in an `i64`")
+            && f.message.contains("doesn't fit in an `i64`")
             && f.help.as_deref().is_some_and(|h| h.contains("`u64`"))),
         "{found:#?}"
     );
     assert!(
-        refused("    let n = 18446744073709551616").contains("does not fit the widest integers")
+        refused("    let n = 18446744073709551616")
+            .contains("This number is too big: the largest integer types are `u64` and `i64`.")
     );
 }
 

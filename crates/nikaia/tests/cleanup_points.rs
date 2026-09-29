@@ -364,7 +364,7 @@ fn the_refusals_name_the_value_and_the_method() {
     assert_eq!(failing.len(), 1, "{found:#?}");
     assert_eq!(
         failing[0].message,
-        "this function can fail because the cleanup of `f` can fail"
+        "This function can fail, because cleaning up `f` can fail."
     );
     assert!(
         failing[0]
@@ -422,7 +422,7 @@ fn a_cleanup_where_nothing_may_pause_is_refused_as_a_pause() {
             f.code == code && (f.message.contains(name) || f.notes.iter().any(|n| n.contains(name)))
         })
     };
-    assert!(named("NK2202", "the cleanup of `held`"), "{found:#?}");
+    assert!(named("NK2202", "The cleanup of `held`"), "{found:#?}");
     assert!(found.iter().any(|f| f.code == "NK2206"), "{found:#?}");
 }
 

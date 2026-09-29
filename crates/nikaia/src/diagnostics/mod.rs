@@ -65,6 +65,10 @@ pub struct Refused {
     /// `None` where the refusal is about no statement in particular — a
     /// manifest key, a switch, a whole file.
     pub at: Option<usize>,
+    /// The whole message, where the refusal is one: a parse error is said the
+    /// way a checker finding is, and rendered by whoever holds the file's path
+    /// ([`refused_finding`]).
+    pub finding: Option<Box<crate::check::Finding>>,
 }
 
 impl std::fmt::Display for Refused {
@@ -126,7 +130,27 @@ pub fn refuse(message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(Refused {
         message: message.into(),
         at: None,
+        finding: None,
     })
+}
+
+/// A refusal that is a whole finding: a parse error, which the parser can say
+/// but not place, since it has the source and not the path. `message` is what
+/// a caller that has no path prints.
+pub fn refuse_finding(finding: crate::check::Finding, message: String) -> anyhow::Error {
+    anyhow::Error::new(Refused {
+        message,
+        at: Some(finding.span.at()),
+        finding: Some(Box::new(finding)),
+    })
+}
+
+/// The finding a refusal carries, for the caller that can render it.
+pub fn refused_finding(error: &anyhow::Error) -> Option<&crate::check::Finding> {
+    error
+        .chain()
+        .find_map(|link| link.downcast_ref::<Refused>())
+        .and_then(|refused| refused.finding.as_deref())
 }
 
 /// The same, about a **statement** the program wrote
@@ -140,6 +164,7 @@ pub fn refuse_at(at: usize, message: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(Refused {
         message: message.into(),
         at: Some(at),
+        finding: None,
     })
 }
 
@@ -160,12 +185,16 @@ pub fn refusal_at(error: &anyhow::Error) -> Option<(usize, String)> {
 /// refusals the catalogue does not name, and inventing numbers for them is
 /// [ADR-171](../../../docs/specification/adr/adr-171.md) §4's own open question.
 pub fn render_refusal(message: &str, at: usize, path: &str, source: &str) -> String {
-    let (line, column) = winnow_grammar::span::line_column(source, at);
-    let mut out = format!("error: {message}\n");
-    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
-    out.push_str(&winnow_grammar::span::caret(source, at, 1));
-    out.push('\n');
-    out
+    let finding = crate::check::Finding {
+        severity: crate::check::Severity::Error,
+        span: crate::ast::Span::new(at, at),
+        code: "",
+        message: message.to_string(),
+        notes: Vec::new(),
+        help: None,
+        labels: Vec::new(),
+    };
+    render_finding(&finding, path, source)
 }
 
 /// Whether a backend diagnostic is about something somebody wrote.
@@ -422,27 +451,26 @@ pub fn a_stale_boundary(
         Some(label) if !label.is_empty() => format!("{} - {label}", diagnostic.message),
         _ => diagnostic.message.clone(),
     };
-    let mut notes = vec![format!("the language below said: {below}")];
+    let mut notes = vec![format!("The Rust compiler said: {below}")];
     if !boundary.moved.is_empty() {
         notes.push(format!(
-            "`{word}`'s {} changed since it was described",
+            "`{word}`'s {} changed since it was described.",
             boundary.moved.join(", ")
         ));
     }
     match boundary.described {
         true => {
-            diagnostic.message = format!("the description of `{word}` does not match the crate");
+            diagnostic.message = format!("The description of `{word}` doesn't match the crate.");
             notes.push(format!(
-                "help: run `nikaia describe {word}` again, and review what changed in \
-                 `contracts/{word}.contracts` - a description is read, never checked \
-                 against the crate (ADR-104 D5)"
+                "help: Run `nikaia describe {word}` again, and review what changed in \
+                 `contracts/{word}.contracts`."
             ));
         }
         false => {
-            diagnostic.message = format!("the ledger of `{word}` does not match its sources");
+            diagnostic.message = format!("The ledger of `{word}` doesn't match its sources.");
             notes.push(format!(
-                "help: build `{word}` again - `nikaia build` without `--locked` derives its \
-                 ledger from its sources (ADR-100 D6)"
+                "help: Build `{word}` again: `nikaia build` without `--locked` rebuilds its \
+                 ledger from its sources."
             ));
         }
     }
@@ -680,12 +708,12 @@ fn in_this_language(message: &str) -> String {
         .replace(
             "`Option::<T>::map` takes ownership of the receiver `self`",
             "`?.` over a member that is not copied takes the value it reaches through \
-             (Part I, 3.5)",
+",
         )
         .replace(
             "`Option::<T>::and_then` takes ownership of the receiver `self`",
             "`?.` over a member that is not copied takes the value it reaches through \
-             (Part I, 3.5)",
+",
         )
 }
 
@@ -740,63 +768,73 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
         // one - saying `.nika` for a line nothing maps to would be a guess, and
         // in a message that already says something went wrong here that is the
         // worst place to make one.
-        let at = match &diagnostic.location {
-            Some(location) => format!("{path}:{}:{}", location.line, location.column),
-            None => match diagnostic.generated_line {
-                Some(line) => format!("{generated_path}:{line}"),
-                None => generated_path.to_string(),
-            },
+        // Where the map knew, the same layout as every other message, with
+        // the heading saying whose mistake it is.
+        if let Some(location) = &diagnostic.location {
+            let finding = crate::check::Finding {
+                severity: crate::check::Severity::Error,
+                span: location.span,
+                code: "",
+                message: "This is a bug in Nikaia, not in your program. Please report it."
+                    .to_string(),
+                notes: vec![
+                    "The compiler generated two different types for one of yours.".to_string(),
+                    format!("What the Rust compiler said: {original}"),
+                ],
+                help: None,
+                labels: Vec::new(),
+            };
+            return render_finding(&finding, path, source).replacen("error:", "internal error:", 1);
+        }
+        let at = match diagnostic.generated_line {
+            Some(line) => format!("{generated_path}:{line}"),
+            None => generated_path.to_string(),
         };
         out.push_str(&format!(
-            "internal error: {at}: this is a Nikaia bug, please report it.\n\
-             \x20    = translating the backend's message left it saying the same thing \
-             on both sides, which means this compiler emitted two different types \
-             for one of yours\n\
-             \x20    = your program may well be fine; nothing here is about a mistake \
-             you made\n\
-             \x20    = what the backend said: {original}\n"
+            "internal error: {at}: This is a bug in Nikaia, not in your program. Please \
+             report it.\n\
+             \x20  = note: The compiler generated two different types for one of yours.\n\
+             \x20  = note: What the Rust compiler said: {original}\n"
         ));
-        if let Some(text) = diagnostic
-            .location
-            .as_ref()
-            .and_then(|l| source.lines().nth(l.line - 1))
-        {
-            out.push_str(&format!(
-                "{:>4} | {text}\n",
-                diagnostic.location.as_ref().map_or(0, |l| l.line)
-            ));
-        }
         return out;
     }
 
     match &diagnostic.location {
+        // **A relayed message in the layout of the compiler's own**: the
+        // backend's sentence, the `.nika` line with the span underlined, and
+        // its notes - one shape for every message a reader gets.
         Some(location) => {
-            out.push_str(&format!(
-                "{}: {}:{}:{}: {}\n",
-                diagnostic.level, path, location.line, location.column, diagnostic.message
-            ));
-
-            if let Some(text) = source.lines().nth(location.line - 1) {
-                let gutter = format!("{:>4} | ", location.line);
-                out.push_str(&gutter);
-                out.push_str(text);
-                out.push('\n');
-
-                // The caret sits under the span, counting characters so that a
-                // station name in the source does not shift it.
-                let width = source[diagnostic
-                    .location
-                    .as_ref()
-                    .map(|l| l.span.bytes())
-                    .unwrap_or(0..0)]
-                .chars()
-                .take_while(|c| *c != '\n')
-                .count()
-                .max(1);
-                out.push_str(&" ".repeat(gutter.len() + location.column - 1));
-                out.push_str(&"^".repeat(width));
-                out.push('\n');
-            }
+            let word: String = source
+                .get(location.span.bytes())
+                .unwrap_or_default()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            let (helps, notes): (Vec<&String>, Vec<&String>) = diagnostic
+                .notes
+                .iter()
+                .partition(|note| note.starts_with("help: "));
+            let finding = crate::check::Finding {
+                severity: match diagnostic.level.as_str() {
+                    "warning" => crate::check::Severity::Warning,
+                    _ => crate::check::Severity::Error,
+                },
+                span: location.span,
+                code: "",
+                message: diagnostic.message.clone(),
+                notes: notes.into_iter().cloned().collect(),
+                help: helps
+                    .last()
+                    .map(|help| help.trim_start_matches("help: ").to_string()),
+                labels: vec![crate::check::Label {
+                    span: location.span,
+                    word,
+                    text: String::new(),
+                    main: true,
+                }],
+            };
+            return render_finding(&finding, path, source);
         }
         None => {
             // Nothing in the map covers it: the emitted line is all there is,
@@ -813,7 +851,7 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
     }
 
     for note in &diagnostic.notes {
-        out.push_str(&format!("     = {note}\n"));
+        out.push_str(&format!("   = note: {}\n", said(note)));
     }
 
     out
@@ -830,46 +868,56 @@ pub fn render_sync_violation(
     path: &str,
     source: &str,
 ) -> String {
-    let (line, column) = winnow_grammar::span::line_column(source, violation.span.at());
     let ledger = if violation.from_library {
-        "`std`'s ledger"
+        "`std`"
     } else {
-        "this program's contracts"
+        "this program"
     };
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "error[NK2202]: `{}` is `{}`, and `{}` can pause\n",
-        violation.caller, violation.promise, violation.callee
-    ));
-    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
-    out.push_str(&winnow_grammar::span::caret(source, violation.span.at(), 1));
-    out.push('\n');
-    out.push_str(
-        "     = a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)\n",
-    );
+    let mut notes =
+        vec!["A `sync` function promises that it never pauses and does no I/O.".to_string()];
     // **A construct has no ledger entry to name**
     // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1): an `overlap`
     // and a `select` hand their branches to the executor and park until they
     // answer, which is the pause. Saying *carries no `sync`* about one would
     // send a reader looking for an entry that does not exist.
-    if violation.construct {
-        out.push_str(&format!(
-            "     = a `{}` block hands its branches to the executor and waits \
-             there, which is a pause (ADR-055)\n",
+    notes.push(match violation.construct {
+        true => format!(
+            "{} `{}` block waits for its branches to finish, which is a pause.",
+            said(crate::check::an_or_a(&violation.callee)),
             violation.callee
-        ));
-    } else {
-        out.push_str(&format!(
-            "     = `{}` carries no `sync` in {ledger}\n",
-            violation.callee
-        ));
-    }
-    out.push_str(&format!(
-        "     help: drop `{}` from `{}`, or move the call out of it\n",
-        violation.promise, violation.caller
-    ));
-    out
+        ),
+        false => format!("`{}` isn't declared `sync` in {ledger}.", violation.callee),
+    });
+    let finding = crate::check::Finding {
+        severity: crate::check::Severity::Error,
+        span: violation.span,
+        code: "NK2202",
+        message: match violation.construct {
+            true => format!(
+                "`{}` is `{}`, but it contains {} `{}` block, which can pause.",
+                violation.caller,
+                violation.promise,
+                crate::check::an_or_a(&violation.callee),
+                violation.callee
+            ),
+            false => format!(
+                "`{}` is `{}`, but it calls `{}`, which can pause.",
+                violation.caller, violation.promise, violation.callee
+            ),
+        },
+        notes,
+        help: Some(format!(
+            "Remove `{}` from `{}`, or move the call out of it.",
+            violation.promise, violation.caller
+        )),
+        labels: vec![crate::check::Label {
+            span: violation.span,
+            word: violation.callee.clone(),
+            text: "this can pause".to_string(),
+            main: true,
+        }],
+    };
+    render_finding(&finding, path, source)
 }
 
 /// One of the type checker's findings, on the `.nika` line it is about.
@@ -882,22 +930,40 @@ pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str)
     if !finding.labels.is_empty() {
         return render_labelled(finding, path, source);
     }
-    let (line, column) = winnow_grammar::span::line_column(source, finding.span.at());
+    // One layout for every message: a finding that names no place of its own
+    // is marked where it stands.
+    let mut placed = finding.clone();
+    placed.labels.push(crate::check::Label {
+        span: finding.span,
+        word: String::new(),
+        text: String::new(),
+        main: true,
+    });
+    render_labelled(&placed, path, source)
+}
 
-    let level = match finding.severity {
-        crate::check::Severity::Error => "error",
-        crate::check::Severity::Warning => "warning",
+/// **A line of a message as a sentence** (Part III C.2, rule 5): it starts
+/// with a capital and ends with a full stop, a question mark or a colon. Said
+/// here, once, so that a message built from pieces reads like one written
+/// whole, whichever piece came first.
+pub fn said(text: &str) -> String {
+    let text = text.trim_end();
+    let mut chars = text.chars();
+    let mut out: String = match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => return String::new(),
     };
-    let mut out = String::new();
-    out.push_str(&format!("{level}[{}]: {}\n", finding.code, finding.message));
-    out.push_str(&format!("  --> {path}:{line}:{column}\n"));
-    out.push_str(&winnow_grammar::span::caret(source, finding.span.at(), 1));
-    out.push('\n');
-    for note in &finding.notes {
-        out.push_str(&format!("     = {note}\n"));
-    }
-    if let Some(help) = &finding.help {
-        out.push_str(&format!("     help: {help}\n"));
+    // A sentence closed inside brackets is closed, and a message that ends in
+    // an indented line of code ends in code, which a full stop would change.
+    let closed = out.ends_with(['.', '?', '!', ':'])
+        || out.ends_with(".)")
+        || out.ends_with("?)")
+        || out
+            .rsplit('\n')
+            .next()
+            .is_some_and(|last| last.starts_with(' ') && out.contains('\n'));
+    if !closed {
+        out.push('.');
     }
     out
 }
@@ -932,7 +998,10 @@ fn render_labelled(finding: &crate::check::Finding, path: &str, source: &str) ->
         .map(|label| {
             let (line, column) = winnow_grammar::span::line_column(source, label.span.at());
             let text = lines.get(line - 1).copied().unwrap_or("");
-            let (column, width) = word_in(text, column, &label.word);
+            let (column, width) = match label.word.is_empty() {
+                true => (column, spanned_width(source, label.span)),
+                false => word_in(text, column, &label.word),
+            };
             (line, column, width, label)
         })
         .collect();
@@ -949,7 +1018,11 @@ fn render_labelled(finding: &crate::check::Finding, path: &str, source: &str) ->
         .max()
         .unwrap_or(1);
     let bar = format!("{} |", " ".repeat(gutter + 1));
-    let mut out = format!("{level}[{}]: {}\n", finding.code, finding.message);
+    let mut out = format!(
+        "{}: {}\n",
+        headed(level, finding.code),
+        said(&finding.message)
+    );
     out.push_str(&format!(
         "{}--> {path}:{line}:{column}\n",
         " ".repeat(gutter + 1)
@@ -967,23 +1040,50 @@ fn render_labelled(finding: &crate::check::Finding, path: &str, source: &str) ->
             shown = Some(*line);
         }
         let mark = if label.main { "^" } else { "-" };
-        out.push_str(&format!(
-            "{bar} {}{} {}\n",
+        let marked = format!(
+            "{bar} {}{} {}",
             " ".repeat(column - 1),
             mark.repeat(*width),
             label.text
-        ));
+        );
+        out.push_str(marked.trim_end());
+        out.push('\n');
     }
     out.push_str(&bar);
     out.push('\n');
     let indent = " ".repeat(gutter + 2);
     for note in &finding.notes {
-        out.push_str(&format!("{indent}= note: {note}\n"));
+        out.push_str(&format!("{indent}= note: {}\n", said(note)));
     }
     if let Some(help) = &finding.help {
-        out.push_str(&format!("{indent}= help: {help}\n"));
+        out.push_str(&format!("{indent}= help: {}\n", said(help)));
     }
     out
+}
+
+/// How many characters of its first line a span covers, without the trailing
+/// space: what a label with no word of its own underlines. One at least, so a
+/// place is always marked.
+fn spanned_width(source: &str, span: crate::ast::Span) -> usize {
+    source
+        .get(span.bytes())
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end()
+        .chars()
+        .count()
+        .max(1)
+}
+
+/// `error[NK1139]`, or `error` alone for a message that has no code: a parse
+/// error, which is about the text and not about anything the checker decided.
+fn headed(level: &str, code: &str) -> String {
+    match code.is_empty() {
+        true => level.to_string(),
+        false => format!("{level}[{code}]"),
+    }
 }
 
 /// Where `word` stands in `line` at or after 1-based `column`, as a whole
@@ -1084,7 +1184,7 @@ mod stale_boundaries {
         assert!(a_stale_boundary(&mut on_util, source, &boundaries));
         assert_eq!(
             on_util.message,
-            "the ledger of `util` does not match its sources"
+            "The ledger of `util` doesn't match its sources."
         );
         assert!(on_util.notes[0].contains("is not a future"), "{on_util:#?}");
 
@@ -1095,7 +1195,7 @@ mod stale_boundaries {
         assert!(a_stale_boundary(&mut on_fremd, source, &boundaries));
         assert_eq!(
             on_fremd.message,
-            "the description of `fremd` does not match the crate"
+            "The description of `fremd` doesn't match the crate."
         );
     }
 

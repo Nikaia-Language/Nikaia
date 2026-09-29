@@ -21,6 +21,15 @@ mod common;
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
+/// The refusal, rendered as a reader with the file open sees it: its notes
+/// and help included.
+fn rendered(source: &str) -> String {
+    let refused = parse_to_ast(source).expect_err("refused");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    nikaia::diagnostics::render_finding(finding, "app.nika", source)
+}
+
 fn lowered(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, Build::default())
@@ -222,11 +231,11 @@ fn reaching_for_a_withdrawn_automatic_name_is_refused() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].code, "NK1117");
     assert!(
-        found[0].message.contains("nothing declares `a`"),
+        found[0].message.contains("`a` isn't declared anywhere"),
         "{found:#?}"
     );
     assert!(
-        found[0].notes[0].contains("withdrawn"),
+        found[0].notes[0].contains("are no longer there automatically"),
         "the message says what happened to the form: {found:#?}"
     );
     assert!(
@@ -258,9 +267,15 @@ fn the_expression_lambda_still_says_it_was_removed() {
         "fn main() { let ids = users.map fn: a.id }",
         "fn main() { task::scope fn: a.id }",
     ] {
-        let message = format!("{:#}", parse_to_ast(source).expect_err("refused"));
-        assert!(message.contains("ADR-022"), "{source}: {message}");
-        assert!(message.contains("`fn { … }`"), "{source}: {message}");
+        let message = rendered(source);
+        assert!(
+            message.contains("`fn: …` is no longer supported."),
+            "{source}: {message}"
+        );
+        assert!(
+            message.contains("help: Write `fn { … }`"),
+            "{source}: {message}"
+        );
     }
 }
 
@@ -283,7 +298,7 @@ fn the_expression_lambda_still_says_it_was_removed() {
 #[test]
 fn an_effect_annotation_on_a_lambda_is_refused_where_the_annotation_is() {
     let source = "fn main() { panic::on_panic fn(info) sync { info } }";
-    let message = format!("{:#}", parse_to_ast(source).expect_err("refused"));
+    let message = rendered(source);
     assert!(message.contains("`sync`"), "{message}");
     assert!(
         message.contains("is a reserved word"),

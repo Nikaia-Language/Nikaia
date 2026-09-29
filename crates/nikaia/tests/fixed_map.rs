@@ -344,7 +344,7 @@ fn a_row_that_owns_memory_is_refused_by_name() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].code, "NK1167");
     assert!(
-        found[0].message.contains("`items` is declared `Vec[i64]`"),
+        found[0].message.contains("`T.items` is a `Vec[i64]`"),
         "{}",
         found[0].message
     );

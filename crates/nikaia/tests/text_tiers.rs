@@ -282,7 +282,7 @@ fn main() {
     assert!(
         found
             .iter()
-            .any(|f| f.code == "NK1106" && f.message.contains("`Person.name` is `String`")),
+            .any(|f| f.code == "NK1106" && f.message.contains("`Person.name` holds `String`")),
         "{found:#?}"
     );
     // The same for one that may be absent (ADR-224 D1).
@@ -596,7 +596,8 @@ fn main() throws {
     );
     assert!(
         found.iter().any(|f| f.code == "NK1102"
-            && f.message.contains("`Vec::push` takes `value: String`")
+            && f.message
+                .contains("`Vec::push` expects `value` to be `String` here")
             && f.help.iter().any(|h| h.contains(".clone()"))),
         "{found:#?}"
     );

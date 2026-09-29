@@ -589,7 +589,7 @@ fn main() throws {
     assert!(
         found
             .iter()
-            .any(|f| f.code == "NK2304" && f.message.contains("is not a list")),
+            .any(|f| f.code == "NK2304" && f.message.contains("isn't a list")),
         "{found:#?}"
     );
 }

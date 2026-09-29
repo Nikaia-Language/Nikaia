@@ -755,8 +755,11 @@ fn reach() { let s = Two::N(data) }
         panic!("a private rule was entered");
     };
     let message = format!("{error:#}");
-    assert!(message.contains("is not `pub`"), "{message}");
-    assert!(message.contains("write `pub rule N`"), "{message}");
+    assert!(
+        message.contains("`N` in grammar `Two` isn't `pub`"),
+        "{message}"
+    );
+    assert!(message.contains("Write `pub rule N`."), "{message}");
 }
 
 /// **The old spelling is refused, and the message names the new one**
@@ -775,6 +778,18 @@ fn the_old_from_form_is_refused_with_the_call_in_the_message() {
         panic!("`dsl X from e` was removed and still parses");
     };
     let message = format!("{error:#}");
-    assert!(message.contains("was removed (ADR-082)"), "{message}");
-    assert!(message.contains("X.rule(e)"), "{message}");
+    assert!(
+        message.contains("`dsl X from e` is no longer supported."),
+        "{message}"
+    );
+    // The headline says what was removed; the help it carries names the call
+    // that replaced it.
+    let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
+    assert!(
+        finding
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("X.rule(e)")),
+        "{finding:#?}"
+    );
 }

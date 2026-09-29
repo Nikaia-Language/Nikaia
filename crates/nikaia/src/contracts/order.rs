@@ -182,34 +182,34 @@ impl Accounted {
             Accounted::NotAnOperation => "one of them performs no operation at all".to_string(),
             Accounted::Opaque(what) => format!("one of them holds {what}"),
             Accounted::DivertingHandler => {
-                "its `catch` can leave the function, so the next statement might never have run \
-                 - write the handler so it hands back a value instead, and check afterwards"
+                "its `catch` can leave the function, so the next statement might never run. \
+                 Make the handler return a value instead, and check it afterwards"
                     .to_string()
             }
             Accounted::UncaughtFailure(name) => {
                 format!(
-                    "`{name}` can fail and nothing catches it, so the failure leaves the function \
-                     and the next statement might never have run - `catch` it into a value, and \
-                     check afterwards"
+                    "`{name}` can fail and nothing catches it, so the next statement might never \
+                     run. `catch` it into a value, and check it afterwards"
                 )
             }
             Accounted::NoTouches(name) => {
-                format!("nothing says what `{name}` reaches, so it reaches everything")
+                format!("nothing says what `{name}` touches, so it might touch anything")
             }
             Accounted::UnknownResource { callee, kind } => {
                 format!(
-                    "`{callee}` says it reaches a `{kind}`, which this compiler does not know \
-                     about - so it reaches everything, and a newer toolchain is what reads it"
+                    "`{callee}` says it touches {} `{kind}`, which this version of Nikaia \
+                     doesn't know, so it might touch anything",
+                    crate::check::an_or_a(kind)
                 )
             }
             Accounted::MayNotCross { callee, crossing } => {
                 format!(
-                    "what `{callee}` hands back would have to cross a thread, and {}",
-                    crossing.note().unwrap_or_else(|| "it may not".to_string())
+                    "what `{callee}` returns would have to move to another thread. {}",
+                    crossing.note().unwrap_or_else(|| "It can't.".to_string())
                 )
             }
             Accounted::NonLiteralArgument(name) => {
-                format!("`{name}` is not a literal, and only literals are sent to another thread")
+                format!("`{name}` isn't a literal, and only literals can be sent to another thread")
             }
         }
     }
@@ -771,20 +771,18 @@ impl Verdict {
                 unnameable: true,
                 ..
             } => {
-                format!("both reach a {kind} this compiler cannot name, and one writes it")
+                format!("both touch a {kind} the compiler can't name, and one writes to it")
             }
             Verdict::SameResource { kind, .. } => {
-                format!("both reach {kind}, and one writes it")
+                format!("both touch {kind}, and one writes to it")
             }
             Verdict::SameDestination { one, other } => {
                 format!(
-                    "one reaches {one} and the other {other}, and those may be the same \
-                     destination - `seq` is how a program says so"
+                    "one touches {one} and the other {other}, which might be the same \
+                     place. Use `seq` to run them in order"
                 )
             }
-            Verdict::NotAccountedFor => {
-                "one of them is not something this compiler can account for".to_string()
-            }
+            Verdict::NotAccountedFor => "the compiler can't tell what one of them does".to_string(),
         }
     }
 }

@@ -372,7 +372,7 @@ fn a_let_that_declares_a_type_over_a_for_binding_is_refused() {
     // named beside it, because which was meant is not this compiler's to know.
     let help = refused.help.as_deref().unwrap_or("");
     assert!(
-        help.contains("take the annotation off") && help.contains(".clone()"),
+        help.contains("Remove the type") && help.contains(".clone()"),
         "{refused:#?}"
     );
 }

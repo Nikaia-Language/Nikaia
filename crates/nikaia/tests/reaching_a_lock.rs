@@ -57,15 +57,21 @@ fn a_lock_handed_straight_in_names_the_call() {
     assert_eq!(finding.code, "NK2503");
     assert_eq!(
         finding.message,
-        "`fremd::irgendwas` can reach a lock through `counter`"
+        "`fremd::irgendwas` could reach a lock through `counter`."
     );
     let notes = finding.notes.join("\n");
-    assert!(notes.contains("nothing written down describes"), "{notes}");
+    assert!(
+        notes.contains("The compiler knows nothing about `fremd::irgendwas`"),
+        "{notes}"
+    );
     assert!(
         notes.contains("`counter` is a `SharedMut[i32]`"),
         "the note names the type the source wrote (ADR-064 D1): {notes}"
     );
-    assert!(notes.contains("must not be able to reach"), "{notes}");
+    assert!(
+        notes.contains("code that might keep a lock could deadlock"),
+        "{notes}"
+    );
     // Part III C.2: no Rust vocabulary in a diagnostic, ever.
     for word in ["Rc", "Arc", "Send", "Mutex", "E0277", "borrow"] {
         assert!(!notes.contains(word), "`{word}` in: {notes}");
@@ -91,7 +97,7 @@ fn a_lock_through_a_field_names_the_field() {
     assert_eq!(finding.code, "NK2503");
     assert_eq!(
         finding.message,
-        "`hyper_shim::render` can reach a lock through `state`"
+        "`hyper_shim::render` could reach a lock through `state`."
     );
     assert!(
         finding
@@ -178,7 +184,7 @@ fn a_lock_at_an_option_names_the_option_and_the_value() {
     assert_eq!(finding.code, "NK2503");
     assert_eq!(
         finding.message,
-        "`fremd::irgendwas` can reach a lock through `wert`"
+        "`fremd::irgendwas` could reach a lock through `wert`."
     );
     let help = finding.help.expect("a refusal has a way out");
     assert!(help.contains("fremd::irgendwas(counter.get())"), "{help}");

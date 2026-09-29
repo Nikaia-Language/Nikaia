@@ -40,7 +40,12 @@ fn a_source_over_four_gib_is_refused_with_the_reason() {
     let refused = fits(LONGEST_SOURCE + 1).expect_err("one byte over is refused");
     let said = format!("{refused:#}");
     assert!(said.contains("4 GiB"), "{said}");
-    assert!(said.contains("ADR-252"), "{said}");
+    // The reason: how long the file is, and how long one may be.
+    assert!(said.contains("This file is 4294967296 bytes"), "{said}");
+    assert!(
+        said.contains("a source file can be at most 4294967295 bytes"),
+        "{said}"
+    );
 }
 
 /// An integer literal is its magnitude and its sign (ADR-252 D4.2), and the

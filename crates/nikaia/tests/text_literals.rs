@@ -228,8 +228,12 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     );
     assert!(why.contains("the text belongs to the caller"), "{why}");
     assert!(why.contains("`Person` keeps its `name`"), "{why}");
-    assert!(why.contains("ADR-005"), "{why}");
-    assert!(help.contains("declare `n: String`"), "{help}");
+    // And what a copy made on the compiler's own would cost.
+    assert!(
+        why.contains("a copy costs as much as the text is long"),
+        "{why}"
+    );
+    assert!(help.contains("Declare `n: String`"), "{help}");
     assert!(help.contains("n.clone()"), "{help}");
 
     // (A name bound to a literal is no longer a case of its own: wherever it
@@ -243,7 +247,7 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
          pub fn built() -> Person { return Person { name: f\"x\" } }\n",
     );
     assert!(
-        why.contains("points into text something else owns"),
+        why.contains("it points into text that something else owns"),
         "{why}"
     );
     assert!(help.contains(".clone()"), "{help}");

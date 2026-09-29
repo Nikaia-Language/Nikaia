@@ -616,8 +616,20 @@ fn a_version_dependency_says_what_is_missing() {
         "{:#}",
         draft(&root, "regex").expect_err("no sources to read")
     );
-    assert!(said.contains("registry cache"), "{said}");
-    assert!(said.contains("ADR-104 D5"), "{said}");
+    assert!(
+        said.contains("`regex` is a dependency by version"),
+        "{said}"
+    );
+    assert!(
+        said.contains("can only read crates given by `path`"),
+        "{said}"
+    );
+    // And the way out, in the reader's words rather than the specification's.
+    assert!(
+        said.contains("write `contracts/regex.contracts` by hand"),
+        "{said}"
+    );
+    assert!(!said.contains("ADR-"), "{said}");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -635,7 +647,7 @@ fn a_crate_nothing_declares_is_not_described() {
         draft(&root, "regex").expect_err("nothing declares it")
     );
     assert!(
-        said.contains("nothing in this project's `nikaia.toml`"),
+        said.contains("`regex` isn't in this project's `[dependencies]`"),
         "{said}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -764,7 +776,9 @@ fn a_crate_a_description_and_a_refusal() {
         .find(|f| f.code == "NK2501")
         .unwrap_or_else(|| panic!("{found:#?}"));
     assert!(
-        refusal.message.contains("`h` may not cross"),
+        refusal
+            .message
+            .contains("uses `h`, which can't be passed to a task"),
         "{refusal:#?}"
     );
     assert!(

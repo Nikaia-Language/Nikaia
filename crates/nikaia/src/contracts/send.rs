@@ -327,24 +327,23 @@ impl Crossing {
     pub fn way_out(&self) -> Option<String> {
         Some(match self.why()? {
             Refusal::Lock => {
-                "open the lock where you are and hand over the value inside it - the called \
-                 code then sees an ordinary value and no lock"
+                "Open the lock here and pass the value inside it, so the called code gets an \
+                 ordinary value and no lock."
                     .to_string()
             }
             // ADR-061 D1's own words: *the way out is to pass what is inside*,
             // a view or a copy. A library that means to keep what it is given
             // puts it in a hull of its own anyway.
             Refusal::Count => {
-                "hand over what the shared value holds - a view of it or a copy - rather than \
-                 the shared value itself"
+                "Pass what the shared value holds, a view or a copy, instead of the shared \
+                 value itself."
                     .to_string()
             }
             // Nothing is known about *why* the ledger said no, so the way out
             // may not pretend to be a repair: what a reader can always do is
             // keep the value here and hand over what the call actually needs.
             Refusal::Said => {
-                "keep it where it was made and hand the call what it needs from it instead"
-                    .to_string()
+                "Keep it here, and pass the call only what it needs from it.".to_string()
             }
         })
     }
@@ -369,10 +368,8 @@ impl Crossing {
                 at,
                 why: Refusal::Lock,
             } => Some(format!(
-                "`{part}`{} holds a lock, and a lock may not go into code nothing written down \
-                 describes - at either setting of `user_parallelism`, and deliberately so: where \
-                 the setting makes it safe the answer is kept anyway, so that a library written \
-                 at one setting stays usable at the other (Part III, C.5)",
+                "`{part}`{} holds a lock, and a lock can't be passed to code the compiler knows \
+                 nothing about.",
                 held(at)
             )),
             // ADR-061 D1. The sentence is the lock's reason without the lock:
@@ -383,10 +380,8 @@ impl Crossing {
                 at,
                 why: Refusal::Count,
             } => Some(format!(
-                "`{part}`{} is shared, and which way a shared value is counted is chosen for \
-                 each value rather than once for the type - so there is no one shape of it for \
-                 code outside this language to be written against, at either setting of \
-                 `user_parallelism` and deliberately so (Part III, C.5)",
+                "`{part}`{} is shared, and how a shared value is counted is decided per value, \
+                 so code outside Nikaia can't be written to handle it.",
                 held(at)
             )),
             // ADR-123 D1: a line in a ledger, repeated rather than interpreted.
@@ -395,14 +390,12 @@ impl Crossing {
                 at,
                 why: Refusal::Said,
             } => Some(format!(
-                "`{part}`{} is written down as a value that may not go to another thread, so \
-                 this compiler does not send it to one - at either setting of \
-                 `user_parallelism` (Part III, C.5)",
+                "`{part}`{} is described as a value that can't move to another thread.",
                 held(at)
             )),
             Crossing::Undecided { part } => Some(format!(
-                "nothing written down says whether `{part}` may cross a thread, so this \
-                 compiler does not assume it may"
+                "Nothing says whether `{part}` can move to another thread, so the compiler \
+                 assumes it can't."
             )),
         }
     }
@@ -926,7 +919,7 @@ mod tests {
             .note()
             .expect("a refusal has a note");
         assert!(note.contains("`Shared[String]`"), "{note}");
-        assert!(note.contains("each value"), "{note}");
+        assert!(note.contains("per value"), "{note}");
         for word in ["lock", "Rc", "Arc", "Send"] {
             assert!(!note.contains(word), "`{word}` in: {note}");
         }
@@ -934,7 +927,7 @@ mod tests {
         let way_out = foreign("Shared[String]")
             .way_out()
             .expect("a refusal has a way out");
-        assert!(way_out.contains("a view of it or a copy"), "{way_out}");
+        assert!(way_out.contains("a view or a copy"), "{way_out}");
     }
 
     /// **Nothing written down answers `MayNot` but a lock and a shared count**,
@@ -983,9 +976,12 @@ mod tests {
         let note = refused.note().expect("a refusal has a note");
         assert!(note.contains("`Locked[i32]`"), "{note}");
         assert!(note.contains("field `hits`"), "{note}");
-        assert!(note.contains("either setting"), "{note}");
-        // ADR-045 D3: the message has to show that the answer was chosen.
-        assert!(note.contains("deliberately"), "{note}");
+        assert!(
+            note.contains("can't be passed to code the compiler knows nothing about"),
+            "{note}"
+        );
+        // ADR-045 D3's *the answer was chosen* is the finding's own note beside
+        // this one (`SAME_AT_BOTH`), said once for every crossing.
         // Part III C.2: no Rust vocabulary in a diagnostic, ever.
         for word in ["Rc", "Arc", "Send", "E0277", "lifetime", "borrow"] {
             assert!(!note.contains(word), "`{word}` in: {note}");
@@ -993,7 +989,7 @@ mod tests {
         // The way out is D3's: open the lock, hand the inner value over. Not
         // "don't do that".
         let way_out = refused.way_out().expect("a refusal has a way out");
-        assert!(way_out.contains("open the lock"), "{way_out}");
+        assert!(way_out.contains("Open the lock"), "{way_out}");
         assert!(way_out.contains("inside it"), "{way_out}");
     }
 

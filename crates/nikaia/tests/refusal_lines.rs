@@ -135,7 +135,10 @@ fn a_malformed_literal_is_refused_on_its_line() {
          }\n",
         "unclosed-hole",
     );
-    assert!(said.contains("unclosed `{`"), "{said}");
+    assert!(
+        said.contains("A `{` in this string is never closed"),
+        "{said}"
+    );
     assert!(said.contains(":3:"), "the line it is about:\n{said}");
     assert!(said.contains('^'), "{said}");
 }
@@ -151,7 +154,10 @@ fn a_refusal_about_no_statement_has_no_line() {
         .expect("the compiler runs");
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{said}");
-    assert!(said.contains("expected yes or no"), "{said}");
+    assert!(
+        said.contains("`user-parallelism` is `yes` or `no`, not `vielleicht`."),
+        "{said}"
+    );
     assert!(
         !said.contains("-->"),
         "no place is invented for it:\n{said}"
@@ -173,7 +179,7 @@ fn an_items_refusal_names_the_item() {
         "unknown-abi",
     );
     assert!(
-        said.contains("names an ABI this compiler does not write"),
+        said.contains("Nikaia doesn't support `extern \"stdcall\"`."),
         "{said}"
     );
     assert!(
@@ -203,7 +209,7 @@ fn a_grammar_entry_that_is_not_there_names_its_line() {
     let private = nikaia(&source.replace("{RULE}", "NUM"), "rule-not-pub");
     assert!(said_about(
         &private,
-        "is not `pub`, so it is not an entry",
+        "`NUM` in grammar `Tiny` isn't `pub`, so it can't be called from outside.",
         7
     ));
 }
@@ -222,7 +228,11 @@ fn a_template_refusal_names_its_statement() {
          }\n",
         "no-such-dsl",
     );
-    assert!(said_about(&said, "is not a grammar this compiler has", 2));
+    assert!(said_about(
+        &said,
+        "`markdown` isn't a language the compiler knows",
+        2
+    ));
 }
 
 fn said_about(said: &str, message: &str, line: usize) -> bool {

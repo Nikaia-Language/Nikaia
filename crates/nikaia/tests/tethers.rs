@@ -292,24 +292,24 @@ fn nothing_in_the_corpus_needs_a_tether() {
 /// reads a program written before today.
 #[test]
 fn no_attribute_stands_above_a_struct() {
-    let said = format!(
-        "{:#}",
-        parse_to_ast("@borrowed\nstruct Reading { name: ref String }\n")
-            .expect_err("the word is not in the grammar")
-    );
+    let refused = parse_to_ast("@borrowed\nstruct Reading { name: ref String }\n")
+        .expect_err("the word is not in the grammar");
+    let said = format!("{refused:#}");
     assert!(
-        said.contains("unexpected token `@`"),
+        said.contains("Didn't expect `@` here"),
         "the parser stops at the `@`: {said}"
     );
-    // **And the error lists what is possible there**, which is the whole of what
-    // a reader is owed for a word that left. The list no longer names it — asked
-    // of that line and not of the message, because the message quotes the source
-    // and the source is the thing that wrote the word.
-    let possible = said
-        .lines()
-        .find(|l| l.starts_with("note: also possible here:"))
-        .expect("the parser says what is possible there");
-    assert!(!possible.contains("@borrowed"), "{possible}");
+    // **And nothing the error says offers the word that left.** The parse error
+    // no longer lists every alternative; what it does say - its headline, notes
+    // and help - is asked of here rather than of the rendered file, because a
+    // rendering quotes the source and the source is the thing that wrote the word.
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let mut everything = vec![finding.message.clone()];
+    everything.extend(finding.notes.iter().cloned());
+    everything.extend(finding.help.iter().cloned());
+    let everything = everything.join("\n");
+    assert!(!everything.contains("borrowed"), "{everything}");
 }
 
 /// **No word is needed for a tether**

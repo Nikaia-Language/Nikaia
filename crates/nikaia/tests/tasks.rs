@@ -199,7 +199,9 @@ fn data_a_task_took_and_the_program_used_again_is_refused() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, "NK2101");
     assert!(
-        found[0].message.contains("takes ownership of `message`"),
+        found[0]
+            .message
+            .contains("You're using `message` after a background task took it"),
         "{:?}",
         found[0]
     );
@@ -262,7 +264,7 @@ fn a_task_that_names_an_argument_is_refused() {
         .find(|f| f.code == "NK2103")
         .expect("checked above");
     assert!(
-        first.message.contains("a task is handed nothing"),
+        first.message.contains("a task isn't given any arguments"),
         "{first:?}"
     );
 }
@@ -295,10 +297,11 @@ fn a_shared_handle_into_a_task_is_not_refused() {
 /// than as an alternative.
 #[test]
 fn the_parenthesised_form_says_what_happened_to_it() {
-    let message = format!(
-        "{:#}",
-        parse_to_ast("fn main() { spawn(1) }").expect_err("refused")
-    );
+    let source = "fn main() { spawn(1) }";
+    let refused = parse_to_ast(source).expect_err("refused");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let message = nikaia::diagnostics::render_finding(finding, "app.nika", source);
     assert!(message.contains("`spawn` takes a lambda"), "{message}");
     assert!(message.contains("spawn fn"), "{message}");
 }

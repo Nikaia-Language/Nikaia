@@ -298,16 +298,15 @@ fn rust_dependency(
         }
         let crate::manifest::Dependency::Rust(value) = declared else {
             bail!(
-                "`{key}` is declared in this project, and not as a Rust crate - `nikaia \
-                 describe` is for `[dependencies]` entries with `type = \"rust\"` (ADR-104 D1)"
+                "`{key}` is a Nikaia package, not a Rust crate. `nikaia describe` is for \
+                 `[dependencies]` entries with `type = \"rust\"`."
             );
         };
         return Ok((key.clone(), value.clone()));
     }
     bail!(
-        "nothing in this project's `nikaia.toml` declares `{crate_word}` - a crate is \
-         described because the build links against it, and `[dependencies]` is where it says \
-         so (ADR-104 D1)"
+        "`{crate_word}` isn't in this project's `[dependencies]`. Add it to `nikaia.toml` \
+         first: only crates the project depends on can be described."
     )
 }
 
@@ -338,10 +337,9 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
         .to_string();
     let Some(declared) = value.get("path").and_then(toml::Value::as_str) else {
         bail!(
-            "`{key}` is declared by version and its sources are in Cargo's registry cache, \
-             which this compiler does not resolve (ADR-002 D1). Describe a `path` dependency, \
-             or write `contracts/{crate_word}.contracts` by hand the way ADR-104 D5 expects a \
-             reviewer to read it"
+            "`{key}` is a dependency by version, and `nikaia describe` can only read \
+             crates given by `path`. Use a `path` dependency, or write \
+             `contracts/{crate_word}.contracts` by hand."
         );
     };
     // **Resolved lexically and not by the filesystem**: a crate may perfectly
@@ -352,8 +350,8 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
     let crate_root = without_dots(&root.join(declared));
     if !crate_root.is_dir() {
         bail!(
-            "the sources of `{key}` are not at {} - `path` in `nikaia.toml` is relative to \
-             `nikaia.toml` (ADR-197 D1)",
+            "The sources of `{key}` aren't at {}. (A `path` in `nikaia.toml` is relative \
+             to `nikaia.toml`.)",
             crate_root.display()
         );
     }
@@ -367,8 +365,8 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
     collect_rust(&src, &src, &mut files)?;
     if files.is_empty() {
         bail!(
-            "no `.rs` file under {} - `nikaia describe` reads the crate's own sources (ADR-104 \
-             D4)",
+            "There's no `.rs` file under {}, and `nikaia describe` reads the crate's \
+             sources.",
             src.display()
         );
     }
