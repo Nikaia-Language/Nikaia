@@ -425,7 +425,7 @@ struct User { name: String, age: i32 }
 
 // Nikaia automatically creates random 'User' structs here
 test "User Validation" (u: User) {
-    assert u.age >= 0 // Might fail if fuzzer generates -1
+    assert(u.age >= 0) // Might fail if fuzzer generates -1
 }
 ```
 
@@ -444,10 +444,10 @@ impl Generator for User {
 
     // 2. Defining "Edge Cases" (Values likely to break things)
     // The fuzzer will ALWAYS try these values first.
-    fn edge_cases() -> [User] {
+    fn edge_cases() -> Vec[User] {
         [
             User { name: "", age: 0 },         // Empty/Zero
-            User { name: "A" * 1000, age: -1 } // Overflow/Negative
+            User { name: "A".repeat(1000), age: -1 } // Overflow/Negative
         ]
     }
 }
@@ -659,13 +659,15 @@ the argument. No crate metadata is read.
   type.
 * Every other type is C.5's third answer, undecided.
 
-```nika
-// Usage of a Rust crate
+```toml
+# nikaia.toml: a Rust crate
 [dependencies]
 image = { type = "rust", version = "0.24" }
+```
 
+```nika
 // In code
-use crate::image
+use image
 
 fn process() {
     // This is safe because the 'image' crate implements proper locking
@@ -845,7 +847,7 @@ fn main() {
     // Starts a server on Port 8080.
     // The code looks the same, but the runtime behavior follows `user_parallelism`.
     // The handler is a trailing lambda, outside the parentheses.
-    http::Server::new()
+    http::Server()
         .route("/") fn { "Hello World" }
         .listen(":8080")
 }
@@ -857,7 +859,7 @@ names nothing.
 
 ```nika
 .route("/")         fn { "Hello World" }                    // names none, takes none
-.route("/hello")    fn(request) { f"Hello, {request.query("name") ?? "world"}" }
+.route("/hello")    fn(request) { "Hello, " + (request.query("name") ?? "world") }
 .route("/fortunes") fn(request) { render(request) }
 ```
 
@@ -881,11 +883,12 @@ moving it:
 
 ```nika
 use std::fs
+use http
 
 fn main() throws {
     let page = fs::map("index.html", fs::Root::Dir("site"))
 
-    http::Server::new()
+    http::Server()
         .route("/") fn { page }
         .listen(":8080")
 }

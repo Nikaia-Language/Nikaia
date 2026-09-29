@@ -45,7 +45,7 @@
 10-nikaia-light.md #45 fragment (as written)  fn init {
 10-nikaia-light.md #46 refused (a body) [NK1117]  let complex = users.map fn(user) {
 10-nikaia-light.md #47 refused (a body) [NK1117]  let ids = users.map fn(user) { user.id }
-10-nikaia-light.md #48 refused (a body) [NK1117]  Server::new()
+10-nikaia-light.md #48 refused (a body) [NK1117]  Server()
 10-nikaia-light.md #49 refused (a body) [NK1117]  // The count comes from the list, so a local may be cal…
 10-nikaia-light.md #50 lowered (a body)  let prefix = "User: "
 10-nikaia-light.md #51 lowered (a body) [about-a-refusal]  let prefix = "Log: "
@@ -58,7 +58,7 @@
 10-nikaia-light.md #58 lowered (as written) [sketch]  struct FileHandle {
 10-nikaia-light.md #59 lowered (as written)  use std::fs
 10-nikaia-light.md #60 lowered (as written)  use std::fs
-10-nikaia-light.md #61 refused (as written) [sketch NK1135,NK2605]  use std::fs
+10-nikaia-light.md #61 refused (as written) [sketch NK1135]  use std::fs
 10-nikaia-light.md #62 fragment (as written) [sketch]  struct Token {
 10-nikaia-light.md #63 lowered (as written)  struct Reading { name: ref String, temp: i32 }
 10-nikaia-light.md #64 fragment (as written) [sketch]  struct Reading { name: ref String, temp: i32 }
@@ -85,7 +85,7 @@
 20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[ref String, i64] = [("get", 1), …
 20-nikaia-advance.md #5 lowered (as written)  fn describe[T: Struct](value: T) {
-20-nikaia-advance.md #6 fragment (as written)  use nikaia_sql::{Database, mysql}
+20-nikaia-advance.md #6 lowered (as written)  use nikaia_sql
 20-nikaia-advance.md #7 refused (as written) [sketch NK1135]  impl SqlParser {
 20-nikaia-advance.md #8 fragment (as written)  rule expr -> Expr # "expression" =
 20-nikaia-advance.md #9 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
@@ -110,13 +110,13 @@
 30-nikaia-tooling.md #2 refused (as written) [NK1117]  test "a blank line is counted" {
 30-nikaia-tooling.md #3 lowered (as written)  fn divide(a: i64, b: i64) -> i64 sync {
 30-nikaia-tooling.md #4 fragment (as written)  struct User { name: String, age: i32 }
-30-nikaia-tooling.md #5 fragment (as written)  impl Generator for User {
+30-nikaia-tooling.md #5 refused (as written) [NK1117,NK1135]  impl Generator for User {
 30-nikaia-tooling.md #6 refused (a body) [NK1117]  bench "Sorting" {
 30-nikaia-tooling.md #7 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #8 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #9 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #10 lowered (as written)  use std::foreign
-30-nikaia-tooling.md #11 fragment (as written)  // Usage of a Rust crate
+30-nikaia-tooling.md #11 lowered (as written)  // In code
 30-nikaia-tooling.md #12 lowered (as written)  // main.nika
 30-nikaia-tooling.md #13 refused (as written)  use std::backend::x86
 30-nikaia-tooling.md #14 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…

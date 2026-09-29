@@ -1005,17 +1005,17 @@ Another package reaches `User` through its constructor.
 
 ```nika
 // file: main.nika
-use users::User
+use users
 
 fn main() {
     // ERROR: Private Fields
     // Direct struct initialization is forbidden because fields are private.
-    // let u = User { username: "A", email: "a@b.com", is_active: true }
+    // let u = users::User { username: "A", email: "a@b.com", is_active: true }
 
     // OK: Public Factory Constructor
     // Calls the 'pub fn' defined in 'impl User'.
     // Note: Uses positional arguments as per Function Syntax.
-    let u = User("Alice", "alice@example.com")
+    let u = users::User("Alice", "alice@example.com")
 }
 ```
 
@@ -1086,7 +1086,7 @@ The standard library provides types for groups of values.
     Two passes therefore express a compound order without a comparator:
     ```nika
     names.sort()                                  // by name
-    names.sort_by_key fn (name) { -report[name].hits }   // then by hits, descending
+    names.sort_by_key fn (name) { -(report[name]?.hits ?? 0) }   // then by hits, descending
     ```
     A map has no order, so a program that prints one says which.
 * **Tuple:** a fixed number of values of *different* types, with no name for
@@ -1365,7 +1365,7 @@ let sum = numbers.reduce(0) fn(acc, n) { acc + n }
 A block ends at its `}`, so a chain continues after it and means what it reads as:
 
 ```nika
-Server::new()
+Server()
     .route("/x") fn { handler(db) }
     .listen(":8080")
 ```
@@ -1535,7 +1535,7 @@ ordinary view and never mentions sharing:
 fn serve(db: ref Connection) { … }
 
 let db = Shared(postgres::connect("…"))
-serve(ref db)          // a view; no handle is made, and the count is untouched
+serve(db)              // a view; no handle is made, and the count is untouched
 ```
 
 A signature names the shared type only where the function **keeps** the value
@@ -1815,7 +1815,7 @@ Two things are guaranteed:
     ```nika
 use std::fs
 
-    fn report(config: ref Config) {
+    fn report(config: ref Config) throws {
         let name = ref config.name       // borrow
         let data = fs::read("log", fs::Root::Anywhere)    // pauses here (I/O)...
         println(f"{name}: {data}")     // ...and the borrow is still valid.
@@ -2506,11 +2506,13 @@ The prefix falls where a name is **written**, not where a value is used:
 time:
 
 ```text
-error: names are not brought in; a package is reached through its name
-   1 | use http::{Request, Response}
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     = write `use http`, and `http::Request` where you need it
-     = if the prefix is long, `use http as h` shortens it once, in one place
+error: `use` can't bring in single names.
+  --> main.nika:1:11
+   |
+ 1 | use http::{Request, Response}
+   |           ^
+   |
+   = help: Write `use http`, and `http::Request` where you need it, or `use http as h` for a shorter prefix.
 ```
 
 `use x as y` shortens a long prefix once, in one place.
