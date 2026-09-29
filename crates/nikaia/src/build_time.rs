@@ -332,7 +332,9 @@ impl<'a> BuildTime<'a> {
 
     fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {
         match expr {
-            Expr::LitInt(value) => Ok(Value::Int(*value)),
+            Expr::LitInt { value, negative } => {
+                Ok(Value::Int(crate::ast::int_value(*value, *negative)))
+            }
             Expr::LitFloat(written) => written
                 .parse()
                 .map(Value::Float)

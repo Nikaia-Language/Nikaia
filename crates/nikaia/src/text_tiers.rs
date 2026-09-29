@@ -969,7 +969,9 @@ impl Walk<'_, '_> {
         match expr {
             Expr::LitStr { .. } => one(Kind::Static),
             // `null`, a number, a truth value and a character are no text.
-            Expr::LitNull | Expr::LitInt(_) | Expr::LitFloat(_) | Expr::LitBool(_) => Kinds::new(),
+            Expr::LitNull | Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitBool(_) => {
+                Kinds::new()
+            }
             // **A hole is code** (ADR-032): what it passes to a function of
             // this program is a flow like any other.
             //

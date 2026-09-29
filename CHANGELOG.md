@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.263] — 2026-09-29
+
+**An integer literal is its magnitude and its sign, and the tree derives no
+`Default`** ([ADR-252](docs/specification/adr/adr-252.md) D5 step 2), still in
+Rust: two things Nikaia has no word for, taken out of the tree before it moves.
+
+- `Expr::LitInt { value: u64, negative: bool }` where it was an `i128`, which
+  no Nikaia number holds. It is what the source writes and exactly ADR-248
+  D2's range; `ast::int_value` gives the number to the eight readers that
+  compute with it.
+- `FnParams::none()` and `FrameAttr::bare()` are named where a derived
+  `Default` stood.
+
 ## [0.0.262] — 2026-09-29
 
 **A `Span` is two `u32`** ([ADR-252](docs/specification/adr/adr-252.md) D5

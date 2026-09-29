@@ -515,7 +515,7 @@ fn walk_block<'a>(parsed: &Parsed, block: &'a crate::ast::Block, out: &mut Walke
 fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
     match expr {
         // A value with no name in it and nothing to evaluate.
-        Expr::LitInt(_)
+        Expr::LitInt { .. }
         | Expr::LitFloat(_)
         | Expr::LitBool(_)
         | Expr::LitNull
@@ -1171,7 +1171,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             words_in(code, out);
         }
         // A value with no name in it, and the only arms that may say nothing.
-        Expr::LitInt(_)
+        Expr::LitInt { .. }
         | Expr::LitFloat(_)
         | Expr::LitBool(_)
         | Expr::LitNull

@@ -2880,7 +2880,7 @@ fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
         // A default of `null` is a default of `None`, and the ledger records
         // what the emitter prints (ADR-011 D2).
         Expr::LitNull => "None".to_string(),
-        Expr::LitInt(n) => n.to_string(),
+        Expr::LitInt { value, negative } => crate::ast::int_value(*value, *negative).to_string(),
         Expr::LitFloat(f) => f.clone(),
         Expr::LitChar(c) => format!("'{c}'"),
         Expr::LitStr { text: s, .. } => format!("\"{s}\""),

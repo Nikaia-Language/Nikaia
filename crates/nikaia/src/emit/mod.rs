@@ -6782,7 +6782,7 @@ impl<'p> Emitter<'p> {
             index,
             Expr::Variable(_)
                 | Expr::Field { .. }
-                | Expr::LitInt(_)
+                | Expr::LitInt { .. }
                 | Expr::LitChar(_)
                 | Expr::LitBool(_)
         );
@@ -6821,10 +6821,13 @@ impl<'p> Emitter<'p> {
         match expr {
             // **A literal in an unsigned place carries that type's suffix**
             // (ADR-248 D1), ahead of the widening a bare one gets.
-            Expr::LitInt(v) => match self.unsigned_literals.get(&(flow.statement, *v)) {
-                Some(ty) => out.push(&format!("{v}{ty}")),
-                None => out.push(&integer_literal(*v, flow.widen)),
-            },
+            Expr::LitInt { value, negative } => {
+                let v = crate::ast::int_value(*value, *negative);
+                match self.unsigned_literals.get(&(flow.statement, v)) {
+                    Some(ty) => out.push(&format!("{v}{ty}")),
+                    None => out.push(&integer_literal(v, flow.widen)),
+                }
+            }
             Expr::LitFloat(v) => out.push(v),
             Expr::LitStr { .. } | Expr::LitInterpolated(_) => {
                 self.string(out, expr, depth, flow)?
@@ -7745,7 +7748,8 @@ impl<'p> Emitter<'p> {
                 // question is about the value, so a negation is folded here
                 // rather than left for `integer_literal` to answer about a number
                 // that is one too large.
-                if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr)
+                if let (UnaryOp::Neg, Expr::LitInt { value, negative }) = (op, &**expr)
+                    && let v = &crate::ast::int_value(*value, *negative)
                     && i32::try_from(-*v).is_ok()
                 {
                     // The suffix still applies: a small negative number
@@ -11733,7 +11737,7 @@ fn integer_literal(value: i128, widen: bool) -> String {
 /// all.
 fn a_number(expr: &Expr) -> bool {
     match expr {
-        Expr::LitInt(_) | Expr::LitFloat(_) => true,
+        Expr::LitInt { .. } | Expr::LitFloat(_) => true,
         Expr::Unary {
             op: UnaryOp::Neg,
             expr,
@@ -11835,7 +11839,7 @@ fn a_negation_inside(index: &Expr) -> bool {
 
 fn only_literals(index: &Expr) -> bool {
     match index {
-        Expr::LitInt(_) => true,
+        Expr::LitInt { .. } => true,
         Expr::Unary { expr, .. } => only_literals(expr),
         Expr::Binary { lhs, rhs, .. } => only_literals(lhs) && only_literals(rhs),
         Expr::Range { start, end, .. } => only_literals(start) && only_literals(end),

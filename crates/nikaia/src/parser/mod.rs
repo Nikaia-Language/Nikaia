@@ -1439,7 +1439,7 @@ grammar! {
         // is one.
         rule fn_params -> FnParams =
             "(" body:fn_params_body? ")" -> {
-                body.unwrap_or_default()
+                body.unwrap_or_else(FnParams::none)
             }
 
         rule fn_params_body -> FnParams =
@@ -1989,7 +1989,7 @@ grammar! {
         // room without changing what the existing ones mean.
         rule frame_attr -> FrameAttr =
             "@frame" args:frame_args? -> {
-                args.unwrap_or_default()
+                args.unwrap_or_else(FrameAttr::bare)
             }
 
         rule frame_args -> FrameAttr =
@@ -2619,7 +2619,7 @@ grammar! {
                  (ADR-137 D3). `..=` was this language's inclusive range and is \
                  withdrawn, because one meaning per spelling is what that record \
                  is for; the range that stops before its end is `0..<n`."
-            ) -> { (true, Expr::LitInt(0)) }
+            ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
           | ".." e:or_expr -> { (true, e) }
 
         rule or_expr -> Expr =
@@ -2723,7 +2723,7 @@ grammar! {
             // positive literal its digits do not fit the type it belongs to.
             // Every other number in the range parsed either way, which is why
             // this was one number missing rather than a hole.
-            n:negative_number_lit -> { Expr::LitInt(n) }
+            n:negative_number_lit -> { crate::ast::int_literal(n) }
           | op:unary_op e:unary_expr -> {
                 Expr::Unary { op, expr: Box::new(e) }
             }
@@ -3115,7 +3115,7 @@ grammar! {
                  (ADR-137 D3). `..=` was this language's inclusive range and is \
                  withdrawn, because one meaning per spelling is what that record \
                  is for; the range that stops before its end is `0..<n`."
-            ) -> { (true, Expr::LitInt(0)) }
+            ) -> { (true, Expr::LitInt { value: 0, negative: false }) }
           | ".." e:head_or -> { (true, e) }
 
         // **Neither connective can begin a block**, which is the whole of why
@@ -3389,7 +3389,7 @@ grammar! {
                 "`..<` is not written in a pattern (ADR-137 D4). A pattern's \
                  range includes both ends, and one that stops earlier is \
                  written by moving the end: `200..298`."
-            ) -> { MatchPattern::Literal(Expr::LitInt(0)) }
+            ) -> { MatchPattern::Literal(Expr::LitInt { value: 0, negative: false }) }
           | l:pattern_lit -> { MatchPattern::Literal(l) }
           // **A bare tuple**, which names no type: `(0, 0)`.
           | "(" parts:match_part_list ")" -> {
@@ -3913,7 +3913,7 @@ grammar! {
         // ([ADR-136](../../../../docs/specification/adr/adr-136.md)): see
         // `number_lit` above for why.
         rule int_lit -> Expr =
-            n:number_lit -> { Expr::LitInt(n) }
+            n:number_lit -> { crate::ast::int_literal(n) }
 
         // **A tuple's part is a plain run of digits** and takes neither form:
         // `t.0` is a *field name* that happens to be a number

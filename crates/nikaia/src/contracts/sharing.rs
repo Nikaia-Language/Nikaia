@@ -1167,7 +1167,7 @@ impl<'a> Analysis<'a> {
     /// is a handle whose allocation is elsewhere. Everything else is no.
     fn allocates_here(&self, value: &Expr) -> bool {
         match value {
-            Expr::LitInt(_)
+            Expr::LitInt { .. }
             | Expr::LitFloat(_)
             | Expr::LitStr { .. }
             | Expr::LitInterpolated(_)
@@ -1850,7 +1850,7 @@ fn held_that_does_not_copy(ty: &Ty) -> Option<String> {
 fn literal_type(expr: &Expr) -> Option<&'static str> {
     match expr {
         Expr::LitStr { .. } | Expr::LitInterpolated(_) => Some("String"),
-        Expr::LitInt(_) => Some("i64"),
+        Expr::LitInt { .. } => Some("i64"),
         Expr::LitFloat(_) => Some("f64"),
         Expr::LitBool(_) => Some("bool"),
         Expr::LitChar(_) => Some("char"),

@@ -1465,7 +1465,7 @@ fn catches_everything(pattern: &MatchPattern) -> bool {
 /// the literals rather than of the program.
 fn element_kind(expr: &Expr, ty: &Ty) -> Option<&'static str> {
     match expr {
-        Expr::LitInt(_) | Expr::LitFloat(_) => return Some("a number"),
+        Expr::LitInt { .. } | Expr::LitFloat(_) => return Some("a number"),
         Expr::LitStr { .. } | Expr::LitInterpolated(_) => return Some("text"),
         Expr::LitChar(_) => return Some("a character"),
         Expr::LitBool(_) => return Some("a `bool`"),
@@ -1493,7 +1493,7 @@ fn plainly_a_value(expr: &Expr) -> bool {
     matches!(
         expr,
         Expr::Variable(_)
-            | Expr::LitInt(_)
+            | Expr::LitInt { .. }
             | Expr::LitFloat(_)
             | Expr::LitStr { .. }
             | Expr::LitBool(_)
@@ -4669,7 +4669,7 @@ impl<'a> Checker<'a> {
         // `AsKey` the language below had no type to give it but its default -
         // `s.contains(4)` on a `HashSet[i64]` asked for an `i32`'s key. A plain
         // `&` lets the collection's own key type say what the number is.
-        let a_number = matches!(given, Expr::LitInt(_) | Expr::LitFloat(_))
+        let a_number = matches!(given, Expr::LitInt { .. } | Expr::LitFloat(_))
             || matches!(given, Expr::Variable(name)
                 if self.binding(self.parsed.text(*name)).is_some_and(|l| l.constant.is_some()));
         // **A key of no known type** - `let k = 1` has none until something
@@ -5161,14 +5161,14 @@ impl<'a> Checker<'a> {
     fn shown_operand(&self, operand: &Expr) -> Option<String> {
         let literal = matches!(
             operand,
-            Expr::LitInt(_)
+            Expr::LitInt { .. }
                 | Expr::LitFloat(_)
                 | Expr::LitStr { .. }
                 | Expr::LitChar(_)
                 | Expr::LitBool(_)
                 | Expr::LitNull
         ) || matches!(operand, Expr::Unary { op: UnaryOp::Neg, expr }
-            if matches!(**expr, Expr::LitInt(_) | Expr::LitFloat(_)));
+            if matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)));
         (!literal).then(|| written(self.parsed, operand))
     }
 
@@ -7511,7 +7511,7 @@ impl<'a> Checker<'a> {
             None if i64::try_from(folded.value).is_err() => "i64".to_string(),
             None => return,
         };
-        let bare = matches!(value, Expr::LitInt(_));
+        let bare = matches!(value, Expr::LitInt { .. });
         self.a_number_that_does_not_fit(folded.value, bare, &ty, span, None);
     }
 
@@ -7686,7 +7686,7 @@ impl<'a> Checker<'a> {
     /// is an open number itself (D1).
     fn number_shaped(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::LitInt(_) => true,
+            Expr::LitInt { .. } => true,
             Expr::Variable(name) => self
                 .binding(self.parsed.text(*name))
                 .is_some_and(|local| local.open_number.is_some()),
@@ -7752,7 +7752,7 @@ impl<'a> Checker<'a> {
         if let Some(folded) = &pure {
             entry
                 .given
-                .push((folded.value, *span, matches!(value, Expr::LitInt(_))));
+                .push((folded.value, *span, matches!(value, Expr::LitInt { .. })));
         }
         if let Some(folded) = derived {
             entry.derived.push((folded.value, *span));
@@ -8663,7 +8663,7 @@ impl<'a> Checker<'a> {
             // A bare number fits every numeric type, exactly as it does in the
             // language below. Committing it to one here would make `add(3)`
             // wrong wherever the parameter is not that one.
-            Expr::LitInt(_) | Expr::LitFloat(_) => Ty::Unknown,
+            Expr::LitInt { .. } | Expr::LitFloat(_) => Ty::Unknown,
             // Part I 2.4 calls a string literal a `String`; Stage 0 emits a
             // Rust string literal, which is a view of static text. The checker
             // says what is emitted - see ADR-024 D5.
@@ -10985,10 +10985,11 @@ impl<'a> Checker<'a> {
     /// being of an unsigned type ([`Checked::unsigned_literals`]).
     fn literals_are(&mut self, value: &Expr, ty: &str, span: &Span) {
         match value {
-            Expr::LitInt(v) => {
-                self.checked
-                    .unsigned_literals
-                    .insert((span.at(), *v), ty.to_string());
+            Expr::LitInt { value, negative } => {
+                self.checked.unsigned_literals.insert(
+                    (span.at(), crate::ast::int_value(*value, *negative)),
+                    ty.to_string(),
+                );
             }
             Expr::Binary { lhs, rhs, op, .. } => {
                 self.literals_are(lhs, ty, span);
@@ -11600,7 +11601,7 @@ impl<'a> Checker<'a> {
     /// absence of a type is not the absence of knowledge here.
     fn is_a_number(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::LitInt(_) | Expr::LitFloat(_) => true,
+            Expr::LitInt { .. } | Expr::LitFloat(_) => true,
             Expr::Variable(name) => self
                 .local(self.parsed.text(*name))
                 .is_some_and(|(_, constant)| constant.is_some()),
@@ -18978,7 +18979,9 @@ impl<'a> Checker<'a> {
     /// specification's own example writes (`kasse = 42`) is a literal.
     fn written(&self, value: &Expr) -> String {
         match value {
-            Expr::LitInt(n) => n.to_string(),
+            Expr::LitInt { value, negative } => {
+                crate::ast::int_value(*value, *negative).to_string()
+            }
             Expr::LitBool(yes) => yes.to_string(),
             Expr::LitStr { text, .. } => format!("{text:?}"),
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
@@ -20449,7 +20452,7 @@ fn an_operation_of_one_type(op: BinaryOp) -> bool {
 /// Every integer literal in a value, for the suffix the emitter may owe it.
 fn literals_in(expr: &Expr, out: &mut Vec<i128>) {
     match expr {
-        Expr::LitInt(value) => out.push(*value),
+        Expr::LitInt { value, negative } => out.push(crate::ast::int_value(*value, *negative)),
         Expr::Binary { lhs, rhs, .. } => {
             literals_in(lhs, out);
             literals_in(rhs, out);
@@ -20515,7 +20518,7 @@ fn ends_in_text(expr: &Expr) -> bool {
 fn is_literal(expr: &Expr) -> bool {
     matches!(
         expr,
-        Expr::LitInt(_)
+        Expr::LitInt { .. }
             | Expr::LitFloat(_)
             | Expr::LitStr { .. }
             | Expr::LitInterpolated(_)
@@ -20730,7 +20733,7 @@ fn is_a_literal_other_than(expr: &Expr, kind: &str) -> bool {
     match expr {
         Expr::LitBool(_) => kind != "bool",
         Expr::LitStr { .. } | Expr::LitInterpolated(_) => kind != "text",
-        Expr::LitInt(_) | Expr::LitFloat(_) | Expr::LitChar(_) | Expr::LitNull => true,
+        Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitChar(_) | Expr::LitNull => true,
         _ => false,
     }
 }
@@ -20793,7 +20796,7 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
         _ => w(e),
     };
     match expr {
-        Expr::LitInt(v) => v.to_string(),
+        Expr::LitInt { value, negative } => crate::ast::int_value(*value, *negative).to_string(),
         Expr::LitFloat(v) => v.clone(),
         Expr::LitBool(b) => b.to_string(),
         Expr::LitChar(c) => format!("'{c}'"),

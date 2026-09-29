@@ -63,8 +63,8 @@ pub fn nothing_is_known(_: Symbol) -> Option<Constant> {
 /// claimed about it.
 pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
     match expr {
-        Expr::LitInt(value) => Some(Constant {
-            value: *value,
+        Expr::LitInt { value, negative } => Some(Constant {
+            value: crate::ast::int_value(*value, *negative),
             pinned: None,
         }),
         Expr::Variable(name) => name_is(*name),

@@ -42,3 +42,36 @@ fn a_source_over_four_gib_is_refused_with_the_reason() {
     assert!(said.contains("4 GiB"), "{said}");
     assert!(said.contains("ADR-252"), "{said}");
 }
+
+/// An integer literal is its magnitude and its sign (ADR-252 D4.2), and the
+/// two ends of ADR-248 D2's range survive the trip.
+#[test]
+fn an_integer_literal_is_a_magnitude_and_a_sign() {
+    use nikaia::ast::{Expr, Stmt, int_literal, int_value};
+
+    for n in [0i128, 7, -7, i64::MIN as i128, u64::MAX as i128] {
+        let Expr::LitInt { value, negative } = int_literal(n) else {
+            panic!("an integer literal")
+        };
+        assert_eq!(int_value(value, negative), n);
+    }
+
+    let parsed = parse_to_ast("fn main() {\n    let low = -9223372036854775808\n}\n")
+        .expect("i64::MIN is written directly");
+    let Item::Fn { body, .. } = &parsed.program.items[0].node else {
+        panic!("a function")
+    };
+    let Stmt::Let { value, .. } = &body.stmts[0].node else {
+        panic!("a let")
+    };
+    assert!(
+        matches!(
+            value,
+            Expr::LitInt {
+                value: 9223372036854775808,
+                negative: true
+            }
+        ),
+        "{value:?}"
+    );
+}
