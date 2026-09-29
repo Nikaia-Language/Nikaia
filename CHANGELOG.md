@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.267] — 2026-09-29
+
+**A list has no `+`** ([ADR-253](docs/specification/adr/adr-253.md)). The
+owner answered `open-decisions.md`'s question: no operator on a list, and
+`NK1191` stays.
+
+- `NK1191`'s note no longer calls the question open: *Lists have no
+  operators: `+` doesn't join two lists.* Its help still names `a.extend(b)`.
+- Part I 4.5 says a list has no operators and names `extend`; the entry
+  leaves `open-decisions.md`.
+
 ## [0.0.266] — 2026-09-29
 
 **Every message in plain words, in one layout** (Part III C.2, rule 5). Good

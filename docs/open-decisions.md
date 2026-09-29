@@ -19,24 +19,6 @@ blocked by a question, the question comes here in that shape.
 
 ## Open
 
-### Whether `+` joins two lists
-
-**What is blocked.** Nothing hard: `a + b` on two lists is refused
-(`NK1191`, 0.0.234) and `a.extend(b)` is the way that works. Before that it
-reached `rustc`.
-
-**Why it is the owner's.** It is an operator on a type Part I 4.5 gives none.
-
-**The options.** (1) `+` on two lists of one element type makes a new list,
-as `+` on text makes new text (ADR-081); (2) no operator on a list, and the
-refusal stays.
-
-**What this file recommends: (2) for now.** `+` on text is there because text
-is built up by hand constantly; a list is built with `push` and `extend`, and
-`+` would allocate a third list where a program usually wants to grow one.
-**Costs:** (1) wrong is a quietly quadratic loop `xs = xs + [x]`; (2) wrong is
-a refusal lifted later, which breaks nothing.
-
 ### Where the connection goes when a checked statement runs
 
 **What is blocked.** [ADR-143](specification/adr/adr-143.md), all of it

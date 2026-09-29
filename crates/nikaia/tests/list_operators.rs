@@ -3,9 +3,9 @@
 //! wrote.
 //!
 //! `[1] + [2]` passed the check and lowered as it was written, and the language
-//! below said *cannot add `Vec<i64>` to `Vec<i64>`*. Whether `+` should join
-//! two lists is the owner's question (`open-decisions.md`); until it is
-//! answered the refusal names the way that exists, `a.extend(b)`.
+//! below said *cannot add `Vec<i64>` to `Vec<i64>`*. `+` does not join two
+//! lists ([ADR-253](../../../docs/specification/adr/adr-253.md)), and the
+//! refusal names the way that does, `a.extend(b)`.
 
 mod common;
 
@@ -59,7 +59,7 @@ fn two_lists_added_together_are_refused_with_the_way_that_exists() {
     assert_eq!(found[0].code, "NK1191");
     assert_eq!(found[0].message, "You can't use `+` on a list.");
     assert!(
-        found[0].notes[0].contains("whether `+` should join two lists hasn't been decided yet"),
+        found[0].notes[0] == "Lists have no operators: `+` doesn't join two lists.",
         "{found:#?}"
     );
     assert_eq!(
