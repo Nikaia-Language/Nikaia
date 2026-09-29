@@ -4948,12 +4948,34 @@ impl<'a> Checker<'a> {
         true
     }
 
-    /// **`NK1191`: an arithmetic operator on a collection** (0.0.234).
+    /// **`NK1191`: an arithmetic operator on something that has none**
+    /// (0.0.234; a declared `struct` or `enum` too, under the same code).
     ///
-    /// Only where a side is **known** to be a list, a map or a set: a value
-    /// whose type this checker could not work out is not refused on a guess
+    /// Only where a side is **known** to be a list, a map or a set, or a
+    /// `struct` or an `enum` this program declares: a value whose type this
+    /// checker could not work out is not refused on a guess
     /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
-    fn arithmetic_on_a_collection(&mut self, op: BinaryOp, left: &Ty, right: &Ty, span: &Span) {
+    ///
+    /// **A declared type has no operators because the language gives it no
+    /// way to have one**: there is no overloading
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) §1,
+    /// [ADR-144](../../docs/specification/adr/adr-144.md) §4) and no trait an
+    /// `impl` could name to give a type `+` (Part I 4.7). `a -= 30` on an
+    /// `Account` lowered as it was written and `rustc` said *binary assignment
+    /// operation `-=` cannot be applied* (E0368, E0369) about a file nobody
+    /// wrote (C.1). A type another file of this program, a package or a
+    /// described crate declares is not asked: only this unit's own
+    /// declarations are known to be Nikaia's.
+    ///
+    /// `sides` is each operand with what it was written as, and `compound` is
+    /// whether the operator was written `-=`, which is what the help writes back.
+    fn arithmetic_on_something_that_has_none(
+        &mut self,
+        op: BinaryOp,
+        sides: [(&Expr, &Ty); 2],
+        compound: bool,
+        span: &Span,
+    ) {
         let symbol = match op {
             BinaryOp::Add => "+",
             BinaryOp::Sub => "-",
@@ -4961,11 +4983,30 @@ impl<'a> Checker<'a> {
             BinaryOp::Div => "/",
             _ => "%",
         };
+        let [(_, left), (_, right)] = sides;
+        if !is_a_collection(left) && !is_a_collection(right) {
+            let declared = sides
+                .iter()
+                .position(|(_, ty)| self.declared_with_no_arithmetic(ty).is_some());
+            if let Some(at) = declared {
+                self.arithmetic_on_a_declared_type(symbol, sides, at, compound, span);
+            }
+            return;
+        }
         let (side, other) = match is_a_collection(left) {
             true => (left, right),
             false => (right, left),
         };
         let joining = matches!(op, BinaryOp::Add) && is_a_list(left) && is_a_list(right);
+        // `xs += [3]` is the one shape whose way out can be written whole.
+        let extend = match sides {
+            [(Expr::Variable(bound), _), (value, _)] if compound => format!(
+                "{}.extend({})",
+                self.parsed.text(*bound),
+                written(self.parsed, value)
+            ),
+            _ => "a.extend(b)".to_string(),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
@@ -4984,10 +5025,112 @@ impl<'a> Checker<'a> {
                 },
             }],
             help: joining.then(|| {
-                "To add one list's elements to the end of another, write `a.extend(b)`.".to_string()
+                format!("To add one list's elements to the end of another, write `{extend}`.")
             }),
             labels: Vec::new(),
         });
+    }
+
+    /// `NK1191` for a `struct` or an `enum`, the side at `at` being one.
+    ///
+    /// **The help names a field only where there is exactly one it could
+    /// mean**: the struct has one numeric field, the side is a plain name and
+    /// the other side is not a declared type too. Anything else would be a
+    /// guess, and the help says what is always true instead.
+    fn arithmetic_on_a_declared_type(
+        &mut self,
+        symbol: &str,
+        sides: [(&Expr, &Ty); 2],
+        at: usize,
+        compound: bool,
+        span: &Span,
+    ) {
+        let (side, ty) = sides[at];
+        let (other_side, other) = sides[1 - at];
+        let Some(kind) = self.declared_with_no_arithmetic(ty) else {
+            return;
+        };
+        let name = match ty.unseen() {
+            Ty::Named { name, .. } => name.clone(),
+            _ => return,
+        };
+        let numeric: Vec<String> = match kind {
+            "struct" => self
+                .structs
+                .get(&name)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .filter(|f| {
+                            matches!(&f.ty, Ty::Named { name, args, .. }
+                                if args.is_empty() && is_number(name))
+                        })
+                        .map(|f| f.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let field = match (numeric.as_slice(), side) {
+            ([field], Expr::Variable(bound))
+                if self.declared_with_no_arithmetic(other).is_none() =>
+            {
+                Some(format!("{}.{field}", self.parsed.text(*bound)))
+            }
+            _ => None,
+        };
+        let help = match field {
+            Some(field) => {
+                let other = written(self.parsed, other_side);
+                let line = match (compound, at) {
+                    (true, _) => format!("{field} {symbol}= {other}"),
+                    (false, 0) => format!("{field} {symbol} {other}"),
+                    (false, _) => format!("{other} {symbol} {field}"),
+                };
+                format!("Did you mean a field, like `{line}`?")
+            }
+            None if kind == "struct" => format!(
+                "Do the arithmetic on one of its fields, or write a method that says what \
+                 `{symbol}` means for it."
+            ),
+            None => format!("Write a method that says what `{symbol}` means for it."),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1191",
+            message: format!("You can't use `{symbol}` on {} `{name}`.", an_or_a(&name)),
+            notes: vec![format!(
+                "`{name}` is {} `{kind}`, and {} `{kind}` has no arithmetic: operators \
+                 belong to numbers, and `+` to text as well.",
+                an_or_a(kind),
+                an_or_a(kind)
+            )],
+            help: Some(help),
+            labels: Vec::new(),
+        });
+    }
+
+    /// A list, a map, a set, or a `struct` or an `enum` this unit declares.
+    fn has_no_arithmetic(&self, ty: &Ty) -> bool {
+        is_a_collection(ty) || self.declared_with_no_arithmetic(ty).is_some()
+    }
+
+    /// `"struct"` or `"enum"` where a type is known to be one **this unit**
+    /// declares, the types Part I gives no operator and no way to have one.
+    fn declared_with_no_arithmetic(&self, ty: &Ty) -> Option<&'static str> {
+        let Ty::Named { name, .. } = ty.unseen() else {
+            return None;
+        };
+        self.parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Struct { name: own, .. } if self.parsed.text(*own) == name => Some("struct"),
+                Item::Enum { name: own, .. } if self.parsed.text(*own) == name => Some("enum"),
+                _ => None,
+            })
     }
 
     /// **A type that holds itself holds itself through a box the compiler
@@ -8793,6 +8936,27 @@ impl<'a> Checker<'a> {
                 if op.is_some() {
                     self.a_compound_write_to_a_map_slot(target, span);
                 }
+                // **`NK1191` for `-=` as for `-`**: `a -= 30` on an
+                // `Account` reached `rustc` as E0368, and `xs += [3]` on a list
+                // as the same. `+=` onto text is a concatenation and is left
+                // alone, as `+` is.
+                if let Some(
+                    arithmetic @ (BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Rem),
+                ) = op
+                    && !(matches!(arithmetic, BinaryOp::Add) && is_text(&into))
+                    && (self.has_no_arithmetic(&into) || self.has_no_arithmetic(&found))
+                {
+                    self.arithmetic_on_something_that_has_none(
+                        *arithmetic,
+                        [(target, &into), (value, &found)],
+                        true,
+                        span,
+                    );
+                }
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
@@ -10664,19 +10828,25 @@ impl<'a> Checker<'a> {
                         self.checked.concatenations.insert(at.at());
                         Ty::named("String")
                     }
-                    // **`NK1191`: arithmetic on a collection** (0.0.234).
-                    // `[1] + [2]` lowered as it was written and the language
-                    // below said *cannot add `Vec<i64>` to `Vec<i64>`* about a
-                    // file nobody wrote. Part I gives a list no operator, and
-                    // ADR-253 keeps it that way for `+` on two lists.
+                    // **`NK1191`: arithmetic on something that has none**
+                    // (0.0.234). `[1] + [2]` lowered as it was written and the
+                    // language below said *cannot add `Vec<i64>` to `Vec<i64>`*
+                    // about a file nobody wrote. Part I gives a list no
+                    // operator, and ADR-253 keeps it that way for `+` on two
+                    // lists; a declared `struct` or `enum` has none either.
                     BinaryOp::Add
                     | BinaryOp::Sub
                     | BinaryOp::Mul
                     | BinaryOp::Div
                     | BinaryOp::Rem
-                        if is_a_collection(&left) || is_a_collection(&right) =>
+                        if self.has_no_arithmetic(&left) || self.has_no_arithmetic(&right) =>
                     {
-                        self.arithmetic_on_a_collection(*op, &left, &right, span);
+                        self.arithmetic_on_something_that_has_none(
+                            *op,
+                            [(lhs, &left), (rhs, &right)],
+                            false,
+                            span,
+                        );
                         Ty::Unknown
                     }
                     // Arithmetic on two of the same thing is that thing, and
