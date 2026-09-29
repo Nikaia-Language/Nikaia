@@ -5731,7 +5731,40 @@ impl<'a> Checker<'a> {
     fn a_head_nothing_declares(&mut self, head: &str, written: &str, span: &Span) {
         let head = self.parsed.unaliased(head).to_string();
         let head = head.as_str();
-        let declared = self.a_head_something_declares(head);
+        let prefix = format!("{head}::");
+        fn under<V>(table: &BTreeMap<String, V>, prefix: &str) -> bool {
+            table
+                .range(prefix.to_string()..)
+                .next()
+                .is_some_and(|(key, _)| key.starts_with(prefix))
+        }
+        let declared = self.structs.contains_key(head)
+            || self.enums.contains_key(head)
+            // **And a type the package's other files declare.** The files of a
+            // package share one namespace (Part I 9.1), so `Shade::Even` in
+            // `main.nika` names an `enum` that may stand in `shapes.nika` —
+            // and the three tables above are this **unit's**. Without this the
+            // refusal is a correct program refused across a file boundary,
+            // which is [Part III C.4](../../docs/specification/30-nikaia-tooling.md)
+            // and the shape [ADR-182](../../docs/specification/adr/adr-182.md)'s
+            // package had one construct over.
+            || self.beside.iter().any(|other| declares_a_type(other, head))
+            || self.grammars.contains_key(head)
+            || self.variant_owner.contains_key(head)
+            || self.type_parameters.contains_key(head)
+            || self.opaque_handles.contains(head)
+            || self.foreign_names.contains(head)
+            || self.own.types.contains_key(head)
+            || self.library.types.contains_key(head)
+            || self.modules.contains(head)
+            || self.std_modules.contains(head)
+            // A ledger that records anything under this head knows the head:
+            // a described crate is a list of its **items**, and no table
+            // carries the crate's own word on a line of its own.
+            || under(&self.own.functions, &prefix)
+            || under(&self.own.types, &prefix)
+            || under(&self.library.functions, &prefix)
+            || under(&self.library.types, &prefix);
         if declared {
             return;
         }
@@ -5753,114 +5786,6 @@ impl<'a> Checker<'a> {
                 "To declare `{head}`, add a `{head}.nika` file beside this one, a \
                  `[dependencies]` line in `nikaia.toml`, or run `nikaia describe {head}` \
                  for a Rust crate."
-            )),
-            labels: Vec::new(),
-        });
-    }
-
-    /// **What [`Checker::a_head_nothing_declares`] asks, as a question on its
-    /// own**, so that a call through a path can ask it too.
-    ///
-    /// Every answer is a **permission**
-    /// ([ADR-183](../../docs/specification/adr/adr-183.md) D4): the head is
-    /// left alone as soon as one of them says yes, and `false` means only that
-    /// every one of them was asked and none did. `head` is already unaliased.
-    fn a_head_something_declares(&self, head: &str) -> bool {
-        let prefix = format!("{head}::");
-        fn under<V>(table: &BTreeMap<String, V>, prefix: &str) -> bool {
-            table
-                .range(prefix.to_string()..)
-                .next()
-                .is_some_and(|(key, _)| key.starts_with(prefix))
-        }
-        // **A name a `use` writes**, as its path or its alias: whether the
-        // `use` itself names something is the module loader's question and
-        // not this one's, and a module nothing describes *yet*
-        // ([ADR-140](../../docs/specification/adr/adr-140.md) D5) is left
-        // alone here as it is there.
-        let used = |parsed: &Parsed| {
-            parsed.program.items.iter().any(|item| {
-                matches!(&item.node, Item::Import { path, alias }
-                    if path.iter().any(|segment| parsed.text(*segment) == head)
-                        || alias.is_some_and(|alias| parsed.text(alias) == head))
-            })
-        };
-        let a_trait = |traits: &BTreeMap<String, BTreeSet<String>>| {
-            traits.contains_key(head) || under(traits, &prefix)
-        };
-        // `Self` inside an `impl`, and `std` written out in front of its own
-        // module: neither is a key any table holds.
-        matches!(head, "Self" | "std")
-            || self.structs.contains_key(head)
-            || self.enums.contains_key(head)
-            // **And a type the package's other files declare.** The files of a
-            // package share one namespace (Part I 9.1), so `Shade::Even` in
-            // `main.nika` names an `enum` that may stand in `shapes.nika` —
-            // and the tables above are this **unit's**. Without this the
-            // refusal is a correct program refused across a file boundary,
-            // which is [Part III C.4](../../docs/specification/30-nikaia-tooling.md)
-            // and the shape [ADR-182](../../docs/specification/adr/adr-182.md)'s
-            // package had one construct over.
-            || declares_a_type(self.parsed, head)
-            || self.beside.iter().any(|other| declares_a_type(other, head))
-            || self.grammars.contains_key(head)
-            || self.variant_owner.contains_key(head)
-            || self.type_parameters.contains_key(head)
-            || self.struct_parameters.values().flatten().any(|p| p == head)
-            || self.opaque_handles.contains(head)
-            || self.foreign_names.contains(head)
-            || self.own.types.contains_key(head)
-            || self.library.types.contains_key(head)
-            || a_trait(&self.own.traits)
-            || a_trait(&self.library.traits)
-            || self.modules.contains(head)
-            || self.std_modules.contains(head)
-            || used(self.parsed)
-            // A ledger that records anything under this head knows the head:
-            // a described crate is a list of its **items**, and no table
-            // carries the crate's own word on a line of its own.
-            || under(&self.own.functions, &prefix)
-            || under(&self.own.types, &prefix)
-            || under(&self.library.functions, &prefix)
-            || under(&self.library.types, &prefix)
-    }
-
-    /// **`NK1181` for a call through a head nothing declares**.
-    ///
-    /// `nowhere::wobble(1)` lowered as written, and `rustc` answered *use of
-    /// unresolved module or unlinked crate* about a file nobody wrote
-    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)): the
-    /// case [ADR-183](../../docs/specification/adr/adr-183.md) names, reached
-    /// through a call where that record's check was asked only of a value.
-    ///
-    /// [`Checker::a_function_nothing_declares`] leaves a path alone because
-    /// what stands **after** a known head is a package's or a crate's to
-    /// answer, and that is still so: `http::wobble()` is not this. What this
-    /// asks is the head alone, with the same fail-open list the value path
-    /// asks, so a head any one thing declares is left alone (C.4) and only a
-    /// word nothing in scope has written is refused. Part I 9.1 says as much:
-    /// a prefix is introduced before it is used.
-    fn a_call_through_a_head_nothing_declares(&mut self, name: &str, span: &Span) {
-        let Some((head, _)) = name.split_once("::") else {
-            return;
-        };
-        if self.a_head_something_declares(head) {
-            return;
-        }
-        self.checked.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1181",
-            message: format!("Nothing called `{head}` is declared or used here."),
-            notes: vec![format!(
-                "`{name}(…)` calls through `{head}`, and a name in front of `::` has to be a \
-                 type, a module of this package, a package this file uses, a described Rust \
-                 crate or a `std` module."
-            )],
-            help: Some(format!(
-                "If `{head}` is a package, add it to `[dependencies]` in `nikaia.toml` and \
-                 write `use {head}` at the top of the file. For a Rust crate, run `nikaia \
-                 describe {head}`."
             )),
             labels: Vec::new(),
         });
@@ -12538,9 +12463,8 @@ impl<'a> Checker<'a> {
         }
 
         let Some((key, contract)) = resolved else {
-            match func {
-                Expr::Variable(_) => self.a_function_nothing_declares(&name, span),
-                _ => self.a_call_through_a_head_nothing_declares(&name, span),
+            if matches!(func, Expr::Variable(_)) {
+                self.a_function_nothing_declares(&name, span);
             }
             // A call nothing describes is a call this compiler cannot see the
             // end of, and a thread of its own is among the things it may do
