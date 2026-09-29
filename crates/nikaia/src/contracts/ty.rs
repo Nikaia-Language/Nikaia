@@ -1117,7 +1117,7 @@ impl Ty {
                     .as_ref()
                     .map(|r| Box::new(Ty::from_ast(parsed, r))),
                 is_sync: code.is_sync,
-                throws: code.throws,
+                throws: code.can_throw,
             };
         }
         // The `?` wraps whatever the rest of the declaration says, so it is

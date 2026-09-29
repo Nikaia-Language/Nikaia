@@ -100,7 +100,7 @@ fn the_scan_tracks_where_it_is() {
     let positions: Vec<Position> = with_holes
         .iter()
         .filter_map(|s| match s {
-            Segment::Hole { at, .. } => Some(at.clone()),
+            Segment::Hole { at, .. } => Some(*at),
             _ => None,
         })
         .collect();
@@ -125,7 +125,7 @@ fn a_url_attribute_is_not_a_quoted_attribute() {
         let found = segments
             .iter()
             .find_map(|s| match s {
-                Segment::Hole { at, .. } => Some(at.clone()),
+                Segment::Hole { at, .. } => Some(*at),
                 _ => None,
             })
             .expect("a hole");
@@ -264,7 +264,7 @@ fn text_outside_ascii_is_scanned_by_character() {
     let positions: Vec<Position> = segments
         .iter()
         .filter_map(|segment| match segment {
-            Segment::Hole { at, .. } => Some(at.clone()),
+            Segment::Hole { at, .. } => Some(*at),
             _ => None,
         })
         .collect();

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.264] — 2026-09-29
+
+**A declared type whose every part is a copy derives `Copy`**
+([ADR-252](docs/specification/adr/adr-252.md) D4.1, first half): a unit-only
+`enum`, a struct of two `u32`, and anything made only of numbers, `bool`,
+`char` and such types. It is what the syntax tree's Rust readers need of
+`BinaryOp` and `Span` once Nikaia declares them.
+
+- The least answer that holds: a type holding itself never joins, since it
+  holds itself through a box. `tests/copies.rs` has `rustc` accept every
+  derive written.
+- **The derive and not yet the reading**: the language still reads such a
+  value as it reads every declared type. Reading it as a copy changes
+  signatures across units, and waits for the first Nikaia module that needs it.
+- `nikaia_std::tools` allows `clippy::clone_on_copy` until then, with the
+  reason: `template.nika` writes `at.clone()`, as the language requires.
+
 ## [0.0.263] — 2026-09-29
 
 **An integer literal is its magnitude and its sign, and the tree derives no

@@ -178,7 +178,10 @@ fn contrib_of(
     resolved: &BTreeMap<String, MethodCalls>,
 ) -> Option<(String, Contrib)> {
     let Item::Fn {
-        name, body, throws, ..
+        name,
+        body,
+        can_throw: throws,
+        ..
     } = item
     else {
         return None;

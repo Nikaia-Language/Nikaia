@@ -1795,7 +1795,7 @@ impl Ledger {
             is_sync,
             sync_by,
             is_public,
-            throws,
+            can_throw: throws,
             ..
         } = item
         else {
@@ -2805,7 +2805,7 @@ fn trait_method(
                 true => Sync::Asserted,
                 false => Sync::No,
             },
-            throws: if method.throws {
+            throws: if method.can_throw {
                 vec![UNNAMED_ERROR.to_string()]
             } else {
                 Vec::new()

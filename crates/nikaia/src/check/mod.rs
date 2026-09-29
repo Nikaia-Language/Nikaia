@@ -876,6 +876,17 @@ pub struct Checked {
     /// not an equivalence, and a derive that asked for both would refuse the
     /// declaration.
     pub compares_totally: BTreeSet<String>,
+    /// **Which declared types derive `Copy`**
+    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1): those whose
+    /// every part is a number, a `bool`, a `char` or another such type - a
+    /// unit-only `enum`, a struct of two `u32`.
+    ///
+    /// **The derive, and not yet the reading.** Nothing here treats a value
+    /// of such a type as copied rather than moved: the Rust below may copy
+    /// it, and this language still reads it as it reads every declared type.
+    /// That second half changes signatures across units (a lent parameter
+    /// becomes a value), and is taken when a Nikaia module asks for it.
+    pub copies: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1691,6 +1702,8 @@ pub struct Propagation {
     pub compares: BTreeSet<String>,
     /// [`Checked::compares_totally`].
     pub compares_totally: BTreeSet<String>,
+    /// [`Checked::copies`].
+    pub copies: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1913,6 +1926,7 @@ pub fn propagation_against(
         lent_returns: checked.lent_returns,
         compares: checked.compares,
         compares_totally: checked.compares_totally,
+        copies: checked.copies,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         owned_texts: checked.owned_texts,
@@ -3349,6 +3363,57 @@ impl<'a> Checker<'a> {
         }
         self.collect_field_walks();
         self.collect_comparisons();
+        self.collect_copies();
+    }
+
+    /// **Which declared types derive `Copy`**
+    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1,
+    /// [`Checked::copies`]).
+    ///
+    /// The least answer that holds: a type joins once every part of it is a
+    /// copy, asked again until nothing more joins. So a type that holds itself
+    /// never does - it holds itself through a box the compiler wrote
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md)), and a box is not
+    /// a copy - where [`Comparable`]'s walk, which answers *yes* on a cycle,
+    /// would have said it was.
+    fn collect_copies(&mut self) {
+        let declared: Vec<String> = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                    Some(self.parsed.text(*name).to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let mut copies = BTreeSet::new();
+        loop {
+            let joining: Vec<String> = declared
+                .iter()
+                .filter(|name| !copies.contains(*name))
+                .filter(|name| {
+                    let parts: Vec<Ty> = match self.enum_payloads.get(*name) {
+                        Some(held) => held.clone(),
+                        None => match self.structs.get(*name) {
+                            Some(fields) => fields.iter().map(|f| f.ty.clone()).collect(),
+                            // Neither a struct nor an enum this unit knows
+                            // the parts of: nothing is claimed.
+                            None => return false,
+                        },
+                    };
+                    parts.iter().all(|ty| a_copied_part(ty, &copies))
+                })
+                .cloned()
+                .collect();
+            if joining.is_empty() {
+                break;
+            }
+            copies.extend(joining);
+        }
+        self.checked.copies = copies;
     }
 
     /// **Which declared types compare**
@@ -3363,6 +3428,7 @@ impl<'a> Checker<'a> {
             structs: &self.structs,
             enums: &self.enums,
             payloads: &self.enum_payloads,
+            parameters: &self.struct_parameters,
             own: self.own,
             library: self.library,
         };
@@ -4167,7 +4233,7 @@ impl<'a> Checker<'a> {
             config,
             ret_type,
             body,
-            throws,
+            can_throw: throws,
             is_sync,
             sync_by,
             ..
@@ -4862,6 +4928,35 @@ impl<'a> Checker<'a> {
         let files: Vec<&Parsed> = std::iter::once(parsed)
             .chain(self.beside.iter().copied())
             .collect();
+        // **A declared generic type is seen through** (ADR-252 §5): a member
+        // typed `Spanned[Pattern]` holds a `Pattern` inline where `Spanned[T]`
+        // holds its `T` inline, which was read as an indirection like `Vec`'s
+        // and left `Pattern` with no size.
+        let mut generics: Generics<'_> = BTreeMap::new();
+        for file in &files {
+            for item in &file.program.items {
+                if let Item::Struct {
+                    name,
+                    generics: params,
+                    fields,
+                    ..
+                } = &item.node
+                    && !params.is_empty()
+                {
+                    generics.insert(
+                        file.text(*name).to_string(),
+                        Generic {
+                            file,
+                            params: params
+                                .iter()
+                                .map(|p| file.text(p.name).to_string())
+                                .collect(),
+                            members: fields.iter().map(|f| &f.ty).collect(),
+                        },
+                    );
+                }
+            }
+        }
         // Every declared type's members, with the types each holds inline.
         let mut members: BTreeMap<String, Vec<(String, BTreeSet<String>)>> = BTreeMap::new();
         for file in &files {
@@ -4905,7 +5000,7 @@ impl<'a> Checker<'a> {
                 let entry = members.entry(name).or_default();
                 for (member, ty) in held {
                     let mut inline = BTreeSet::new();
-                    held_inline(file, ty, &mut inline);
+                    held_inline(file, ty, &generics, &mut inline);
                     entry.push((member, inline));
                 }
             }
@@ -6587,6 +6682,7 @@ impl<'a> Checker<'a> {
             structs: &self.structs,
             enums: &self.enums,
             payloads: &self.enum_payloads,
+            parameters: &self.struct_parameters,
             own: self.own,
             library: self.library,
         };
@@ -21194,6 +21290,10 @@ struct Comparable<'a> {
     enums: &'a BTreeMap<String, BTreeSet<String>>,
     /// What a declared `enum`'s variants hold ([`Checker::enum_payloads`]).
     payloads: &'a BTreeMap<String, Vec<Ty>>,
+    /// A generic struct's parameters in declaration order
+    /// ([`Checker::struct_parameters`]), so `Spanned[Stmt]` is asked about the
+    /// `Stmt` its `node` holds rather than about a `T` that says nothing.
+    parameters: &'a BTreeMap<String, Vec<String>>,
     own: &'a Ledger,
     library: &'a Ledger,
 }
@@ -21276,13 +21376,35 @@ impl Comparable<'_> {
             | "BTreeSet"
             | "Shared" => holds(seen),
             _ => {
-                if !seen.insert(name.to_string()) {
+                // Keyed by the whole type: `Spanned[Stmt]` and `Spanned[Item]`
+                // are two questions (ADR-252 §5).
+                let key = match args.is_empty() {
+                    true => name.to_string(),
+                    false => format!("{name}{args:?}"),
+                };
+                if !seen.insert(key) {
                     // Already being asked about, one level up: a type is not
                     // *un*comparable for holding itself.
                     return true;
                 }
                 if let Some(fields) = self.structs.get(name) {
-                    return fields.iter().all(|f| self.asking(&f.ty, how, seen));
+                    // **A generic struct is asked about what it was given**: its
+                    // fields name its parameters, which answer *yes* as a type
+                    // variable does, so `Block { stmts: Vec[Spanned[Stmt]] }`
+                    // derived `PartialEq` while `Stmt` did not, and `rustc`
+                    // refused the derive (ADR-252 §5).
+                    let bound: BTreeMap<String, Ty> = self
+                        .parameters
+                        .get(name)
+                        .map(|params| params.iter().cloned().zip(args.iter().cloned()).collect())
+                        .unwrap_or_default();
+                    return fields.iter().all(|f| {
+                        let ty = match bound.is_empty() {
+                            true => f.ty.clone(),
+                            false => ty::substitute(&f.ty, &bound),
+                        };
+                        self.asking(&ty, how, seen)
+                    });
                 }
                 if self.enums.contains_key(name) {
                     return self
@@ -21327,6 +21449,33 @@ impl Comparable<'_> {
     }
 }
 
+/// **A part that lets the type holding it derive `Copy`**
+/// ([`Checker::collect_copies`]): a number, a truth value, a character, a
+/// declared type already found to be one, and a tuple, a nullable or an array
+/// of those. Never a view, a type variable, an unknown or a Rust crate's type:
+/// each is a claim nothing here can back.
+fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } if name == ty::ARRAY => args
+            .iter()
+            .all(|arg| matches!(arg, Ty::Count(_)) || a_copied_part(arg, copies)),
+        Ty::Named {
+            name,
+            args,
+            view: false,
+        } => {
+            args.is_empty()
+                && (matches!(
+                    name.as_str(),
+                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char"
+                ) || copies.contains(name))
+        }
+        Ty::Nullable(inner) => a_copied_part(inner, copies),
+        Ty::Tuple(parts) => parts.iter().all(|part| a_copied_part(part, copies)),
+        _ => false,
+    }
+}
+
 /// is one this says nothing about only when it is also unknown.
 fn copies(ty: &Ty) -> bool {
     match ty {
@@ -21346,25 +21495,86 @@ fn copies(ty: &Ty) -> bool {
 /// The declared types `ty` holds **inline** - itself, nullable or not, a
 /// tuple's parts and an array's element - and nothing it holds through a view,
 /// a function, a list or anything else ([`Checker::types_that_contain_themselves`]).
-fn held_inline(parsed: &Parsed, ty: &ast::Type, out: &mut BTreeSet<String>) {
+fn held_inline(
+    parsed: &Parsed,
+    ty: &ast::Type,
+    generics: &Generics<'_>,
+    out: &mut BTreeSet<String>,
+) {
     if ty.is_view || ty.code.is_some() {
         return;
     }
     if ty.is_tuple {
         for part in &ty.generics {
-            held_inline(parsed, part, out);
+            held_inline(parsed, part, generics, out);
         }
         return;
     }
     let name = parsed.text(ty.name);
     if name == "Array" {
         if let Some(element) = ty.generics.first() {
-            held_inline(parsed, element, out);
+            held_inline(parsed, element, generics, out);
         }
         return;
     }
     if ty.generics.is_empty() {
         out.insert(name.to_string());
+        return;
+    }
+    // A declared generic type holds what its members hold, with each of its
+    // parameters read as the argument written here. A container of the
+    // language (`Vec`, a map) is not in `generics` and stays an indirection.
+    if let Some(generic) = generics.get(name)
+        && generic.params.len() == ty.generics.len()
+    {
+        out.insert(name.to_string());
+        for member in &generic.members {
+            held_through(generic, member, parsed, &ty.generics, generics, out);
+        }
+    }
+}
+
+/// A declared generic type's parameters and the types its members hold
+/// ([`held_inline`]).
+struct Generic<'p> {
+    file: &'p Parsed,
+    params: Vec<String>,
+    members: Vec<&'p ast::Type>,
+}
+
+type Generics<'p> = BTreeMap<String, Generic<'p>>;
+
+/// What a member of `generic` holds inline once its parameters are the
+/// `arguments` written in `at`: a member that *is* a parameter holds the
+/// argument, and a tuple or an array of one holds it too.
+fn held_through(
+    generic: &Generic<'_>,
+    member: &ast::Type,
+    at: &Parsed,
+    arguments: &[ast::Type],
+    generics: &Generics<'_>,
+    out: &mut BTreeSet<String>,
+) {
+    if member.is_view || member.code.is_some() {
+        return;
+    }
+    if member.is_tuple {
+        for part in &member.generics {
+            held_through(generic, part, at, arguments, generics, out);
+        }
+        return;
+    }
+    let name = generic.file.text(member.name);
+    if name == "Array" {
+        if let Some(element) = member.generics.first() {
+            held_through(generic, element, at, arguments, generics, out);
+        }
+        return;
+    }
+    if member.generics.is_empty()
+        && let Some(position) = generic.params.iter().position(|p| p == name)
+    {
+        held_inline(at, &arguments[position], generics, out);
     }
 }
 

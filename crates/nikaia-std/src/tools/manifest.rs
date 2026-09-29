@@ -73,7 +73,7 @@ pub fn codegen_key(target: &str, key: &str) -> Result<(), nikaia_std::error::Thr
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
     Rust,
     Path,

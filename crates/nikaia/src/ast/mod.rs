@@ -153,7 +153,9 @@ pub enum Item {
         /// for a plain `sync` and for none.
         sync_by: Vec<Ident>,
         is_public: bool, // Kap 9.2
-        throws: bool,    // Kap 7.1
+        /// Kap 7.1: `throws`. Named `can_throw` because `throws` is a word the
+        /// language keeps, and the tree is declared in it (ADR-252).
+        can_throw: bool,
     },
 
     // Kap 4.4: enum Message { Quit, Move { x: i32 }, Write(String) }
@@ -857,7 +859,7 @@ pub struct Code {
     /// `-> R`, absent where the code hands nothing back.
     pub result: Option<Type>,
     pub is_sync: bool,
-    pub throws: bool,
+    pub can_throw: bool,
 }
 
 /// One variant of an enum (Kap 4.4).
@@ -1010,7 +1012,7 @@ pub struct TraitMethod {
     pub config: Vec<ConfigParam>,
     pub ret_type: Option<Type>,
     pub is_sync: bool,
-    pub throws: bool,
+    pub can_throw: bool,
 }
 
 #[derive(Debug, Clone)]
