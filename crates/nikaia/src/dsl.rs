@@ -126,21 +126,29 @@ pub fn drivers(parsed: &Parsed) -> Vec<String> {
 /// statement they are in, like every other finding of this compiler (ADR-012).
 pub fn check(parsed: &Parsed) -> Vec<Finding> {
     let mut findings = Vec::new();
+    let drivers = drivers(parsed);
     for item in &parsed.program.items {
         for body in bodies(&item.node) {
-            check_block(parsed, body, &mut Bindings::default(), &mut findings);
+            let mut bound = Bindings {
+                of: BTreeMap::new(),
+                drivers: &drivers,
+            };
+            check_block(parsed, body, &mut bound, &mut findings);
         }
     }
     findings
 }
 
 /// What a name in this function is bound to, where it is a DSL statement.
-#[derive(Debug, Default)]
-struct Bindings {
+#[derive(Debug)]
+struct Bindings<'a> {
     of: BTreeMap<String, Vec<String>>,
+    /// The functions that declare `...args: Self::dsl` ([`drivers`]): the only
+    /// place a statement's parameters can arrive.
+    drivers: &'a [String],
 }
 
-fn check_block(parsed: &Parsed, block: &Block, bound: &mut Bindings, out: &mut Vec<Finding>) {
+fn check_block(parsed: &Parsed, block: &Block, bound: &mut Bindings<'_>, out: &mut Vec<Finding>) {
     for stmt in &block.stmts {
         // **One name only**: a deferred `dsl` block is one value, so a tuple
         // destructure cannot be bound to one
@@ -172,27 +180,36 @@ fn check_block(parsed: &Parsed, block: &Block, bound: &mut Bindings, out: &mut V
 }
 
 /// One call, checked where it names a statement this function bound.
-fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut Vec<Finding>) {
-    let (config, subjects): (&[crate::ast::ConfigArg], Vec<&Expr>) = match expr {
+fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings<'_>, span: &Span, out: &mut Vec<Finding>) {
+    type Parts<'e> = (Option<&'e str>, &'e [crate::ast::ConfigArg], Vec<&'e Expr>);
+    let (callee, config, subjects): Parts<'_> = match expr {
         Expr::MethodCall {
             receiver,
+            method,
             args,
             config,
-            ..
         }
         // Kap 5.1's zone reaches a `?.m()` for the same reason it reaches a
         // `.m()`: a `?.` decides whether the call happens, never what a call is
         // ([ADR-066](../../docs/specification/adr/adr-066.md)).
         | Expr::SafeMethod {
             receiver,
+            method,
             args,
             config,
-            ..
         } => (
+            Some(parsed.text(*method)),
             config,
             std::iter::once(&**receiver).chain(args.iter()).collect(),
         ),
-        Expr::Call { args, config, .. } => (config, args.iter().collect()),
+        Expr::Call { func, args, config } => (
+            match &**func {
+                Expr::Variable(name) => Some(parsed.text(*name)),
+                _ => None,
+            },
+            config,
+            args.iter().collect(),
+        ),
         _ => return,
     };
     if config.is_empty() {
@@ -214,6 +231,37 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
     };
 
     let passed: Vec<&str> = config.iter().map(|a| parsed.text(a.name)).collect();
+
+    // **The parameters arrive at a driver, or nowhere.** What stands after the
+    // `;` becomes the shadow value only where the callee declared
+    // `...args: Self::dsl`; anywhere else it was dropped on the way down, and
+    // `script.exec(msg: m)` on a `dsl js` statement reached `rustc` as
+    // `script.exec()` on a `&str`. A statement is text until a driver takes it
+    // (ADR-007 D5, ADR-082 §1): nothing here knows a `js`, and the call has
+    // to name something that does.
+    if !callee.is_some_and(|callee| bound.drivers.iter().any(|d| d == callee)) {
+        let callee = callee.unwrap_or("this call");
+        let first = passed.first().copied().unwrap_or_default();
+        out.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1109",
+            message: format!("`{callee}` has no option called `{first}`."),
+            notes: vec![format!(
+                "`{name}` is a `dsl` statement, and its parameters go to a driver: a \
+                 function declared with `...args: Self::dsl`. Nothing in this file declares \
+                 `{callee}` that way, so {} would reach nothing.",
+                list(passed.iter().copied())
+            )],
+            help: Some(format!(
+                "Hand `{name}` to a driver, a method declared \
+                 `run(ref self, statement: ref String; ...args: Self::dsl)`, and pass the \
+                 parameters there: `driver.run({name}; {first}: …)`."
+            )),
+            labels: Vec::new(),
+        });
+        return;
+    }
 
     for parameter in declared {
         if !passed.contains(&parameter.as_str()) {

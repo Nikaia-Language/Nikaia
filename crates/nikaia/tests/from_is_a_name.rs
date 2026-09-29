@@ -109,7 +109,7 @@ fn the_removed_dsl_form_still_says_what_happened() {
     let said = nikaia::diagnostics::render_finding(finding, "app.nika", source);
     assert!(
         said.contains("`dsl X from e` is no longer supported.")
-            && said.contains("help: Write `X.rule(e)`"),
+            && said.contains("help: Write `X::rule(e)`"),
         "{said}"
     );
 }

@@ -327,3 +327,91 @@ fn a_spread_must_be_written_self_dsl() {
     assert!(message.contains("line 3"), "{message}");
     assert!(!message.contains("ADR-"), "{message}");
 }
+
+/// **A statement's parameters handed to something that is not a driver are
+/// refused**, before anything is lowered. Part III 15.3's `dsl js` program
+/// passed the check - `msg` is the statement's one hole, so `NK1112` and
+/// `NK1113` had nothing to say - and reached `rustc` as `script.exec()` on a
+/// `&str`: the parameter dropped on the way down, because only a callee that
+/// declares `...args: Self::dsl` has a place for it to arrive.
+#[test]
+fn parameters_handed_to_a_callee_that_is_no_driver_are_refused() {
+    let source = "fn main() {\n\
+                  \x20   let message = \"hi\"\n\
+                  \x20   let script = dsl js { console.log(:msg) } eod\n\
+                  \x20   script.exec(msg: message)\n\
+                  }\n";
+    let found = findings(source);
+    let refused = found
+        .iter()
+        .find(|f| f.code == "NK1109")
+        .unwrap_or_else(|| panic!("no NK1109 in {found:#?}"));
+    assert_eq!(refused.severity, Severity::Error);
+    assert_eq!(refused.message, "`exec` has no option called `msg`.");
+    assert!(
+        refused
+            .notes
+            .iter()
+            .any(|n| n.contains("...args: Self::dsl")),
+        "{refused:#?}"
+    );
+    assert!(
+        refused
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("driver.run(script; msg: …)")),
+        "{refused:#?}"
+    );
+    // On the line that drops them.
+    let line = source[..refused.span.at()].lines().count();
+    assert_eq!(line, 4, "{refused:#?}");
+    // One refusal, and not a second one about the same call.
+    assert!(
+        found.iter().all(|f| !matches!(f.code, "NK1112" | "NK1113")),
+        "{found:#?}"
+    );
+
+    // The same statement given to a driver is what the help hands over, and
+    // it lowers, compiles and runs.
+    let source = "pub struct Page { name: String }\n\
+                  \n\
+                  impl Page {\n\
+                  \x20   pub fn run(ref self, statement: ref String; ...args: Self::dsl) -> Self::dsl {\n\
+                  \x20       println(f\"{self.name}: {statement}\")\n\
+                  \x20       return args\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let driver = Page { name: \"index\" }\n\
+                  \x20   let message = \"hi\"\n\
+                  \x20   let script = dsl js { console.log(:msg) } eod\n\
+                  \x20   let bound = driver.run(script; msg: message)\n\
+                  \x20   println(f\"{bound.msg}\")\n\
+                  }\n";
+    let found: Vec<_> = findings(source)
+        .into_iter()
+        .filter(|f| f.severity == Severity::Error)
+        .collect();
+    assert!(found.is_empty(), "{found:#?}");
+    let rust = emit(source);
+    let dir = common::scratch_dir("dsl-free-driver");
+    let path = dir.join("driver.rs");
+    std::fs::write(&path, &rust).expect("write the emitted Rust");
+    let binary = dir.join("driver");
+    let compiled = common::compile(
+        &path,
+        &["--crate-type", "bin", "-o", binary.to_str().expect("utf-8")],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr),
+    );
+    let run = Command::new(&binary).output().expect("run it");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "index: console.log(:msg)\nhi\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

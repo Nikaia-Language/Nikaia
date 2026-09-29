@@ -117,7 +117,7 @@
 30-nikaia-tooling.md #9 lowered (as written)  extern "C" {
 30-nikaia-tooling.md #10 lowered (as written)  use std::foreign
 30-nikaia-tooling.md #11 fragment (as written)  // Usage of a Rust crate
-30-nikaia-tooling.md #12 lowered (as written)  // main.nika
+30-nikaia-tooling.md #12 refused (as written) [NK1109]  // main.nika
 30-nikaia-tooling.md #13 refused (as written)  use std::backend::x86
 30-nikaia-tooling.md #14 fragment (as written)  pub fn read_to_string() -> String throws   // all of it…
 30-nikaia-tooling.md #15 lowered (as written) [about-a-refusal]  use std::io

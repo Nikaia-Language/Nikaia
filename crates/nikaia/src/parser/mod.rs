@@ -3389,17 +3389,18 @@ grammar! {
             }
 
         // **The form that is gone** ([ADR-082](../../../docs/specification/adr/adr-082.md)
-        // D1). A grammar is entered by an ordinary call — `Json.value(input)` —
-        // and every `pub` rule is an entry (D2), which is what took the silent
-        // choice away: the emitter used to pick the *first* `pub` rule, a
-        // `par_fold` one beating an earlier one.
+        // D1). A grammar is entered by an ordinary call — `Json::value(input)`,
+        // through a path since ADR-140 D3, the dot being `NK1147` — and every
+        // `pub` rule is an entry (D2), which is what took the silent choice
+        // away: the emitter used to pick the *first* `pub` rule, a `par_fold`
+        // one beating an earlier one.
         //
         // `fail` beats the alternatives at this position, the shape ADR-022
         // gave `fn:`: a form the specification taught deserves a sentence
         // rather than a parse error at whatever token happens to be next.
         rule dsl_from_expr -> Expr =
             KW_DSL name:NAME KW_FROM fail("`dsl X from e` is no longer supported. Write \
-                                           `X.rule(e)`, naming the rule you want to \
+                                           `X::rule(e)`, naming the rule you want to \
                                            start from.") -> {
                 Expr::Variable(name)
             }

@@ -783,13 +783,14 @@ fn the_old_from_form_is_refused_with_the_call_in_the_message() {
         "{message}"
     );
     // The headline says what was removed; the help it carries names the call
-    // that replaced it.
+    // that replaced it - as a path, because the dot it named until 0.0.267 is
+    // `NK1147` (Part II 10.2, ADR-140 D3), a help that led to a refusal.
     let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
     assert!(
         finding
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("X.rule(e)")),
+            .is_some_and(|h| h.contains("X::rule(e)") && !h.contains("X.rule")),
         "{finding:#?}"
     );
 }

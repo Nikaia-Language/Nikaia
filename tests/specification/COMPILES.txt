@@ -56,7 +56,6 @@
 30-nikaia-tooling.md #8 compiles
 30-nikaia-tooling.md #9 compiles
 30-nikaia-tooling.md #10 compiles
-30-nikaia-tooling.md #12 refused
 30-nikaia-tooling.md #15 compiles
 30-nikaia-tooling.md #17 refused
 30-nikaia-tooling.md #19 refused
