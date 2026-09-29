@@ -363,6 +363,7 @@ fn uses_of(
 ) -> Option<(String, Uses)> {
     let Item::Fn {
         name,
+        receiver,
         args,
         body,
         ret_type,
@@ -392,6 +393,19 @@ fn uses_of(
     }
     if parameters.is_empty() {
         return Some((key, Uses::default()));
+    }
+    // **The parameters the author lent**: `ref self`, `ref mut self`, and an
+    // argument whose type is written `ref`. Each is a reference in the Rust
+    // whatever this walk decides, so a `match` over one already matches
+    // through a reference - the over-approximation in [`classify`]'s `match`
+    // arm is not for them (`open-work.md` §1.29, found at 0.0.254).
+    let mut lent: BTreeSet<String> = args
+        .iter()
+        .filter(|a| a.ty.is_view)
+        .map(|a| parsed.text(a.name).to_string())
+        .collect();
+    if target.is_some() && receiver.as_ref().is_some_and(|r| r.is_ref) {
+        lent.insert("self".to_string());
     }
 
     // **A result that is a view keeps nothing by returning.** `-> &str` hands
@@ -432,6 +446,7 @@ fn uses_of(
     let mut walk = Walk {
         parsed,
         parameters: &parameters,
+        lent: &lent,
         fields: &fields,
         returns_a_view,
         unresolved,
@@ -452,12 +467,25 @@ fn uses_of(
     {
         walk.hand_over(value);
     }
+    // **A receiver the author wrote `ref` is not kept** (`open-work.md`
+    // §1.29, found at 0.0.254 in the ledger `template.nika` lowers to). It is
+    // a reference by the author's word, which no walk here widens - a use that
+    // would need it whole is `NK1131`'s, and names `fn …(self)` as the way
+    // out. An argument written `ref` is not in this rule: a parse keeps the
+    // text its result views
+    // ([ADR-186](../../../docs/specification/adr/adr-186.md) D1), and that is
+    // how a caller learns it.
+    let unkept = |name: &String| name == "self" && lent.contains(name);
+    uses.kept.retain(|name| !unkept(name));
+    uses.passed.retain(|(name, _, _)| !unkept(name));
     Some((key, uses))
 }
 
 struct Walk<'a> {
     parsed: &'a Parsed,
     parameters: &'a BTreeSet<String>,
+    /// The parameters the author wrote `ref`, which a `match` does not keep.
+    lent: &'a BTreeSet<String>,
     /// **What each parameter's fields are**, for the one shape a bare name does
     /// not cover: `return answer.text` takes a piece out of `answer`.
     ///
@@ -519,12 +547,12 @@ impl Walk<'_> {
         // holes in an `f"…"` included.
         let (parsed, parameters, ledger, library) =
             (self.parsed, self.parameters, self.ledger, self.library);
-        let unresolved = self.unresolved;
+        let (unresolved, lent) = (self.unresolved, self.lent);
         let fields = self.fields;
         let uses = &mut *self.uses;
         super::sync::visit_stmt(parsed, stmt, &mut |expr| {
             classify(
-                parsed, parameters, fields, ledger, library, unresolved, uses, expr,
+                parsed, parameters, lent, fields, ledger, library, unresolved, uses, expr,
             );
         });
 
@@ -640,6 +668,7 @@ impl Walk<'_> {
 fn classify(
     parsed: &Parsed,
     parameters: &BTreeSet<String>,
+    lent: &BTreeSet<String>,
     fields: &BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
     ledger: &Ledger,
     library: &Ledger,
@@ -704,8 +733,15 @@ fn classify(
         // `examples/json/src/main.nika`'s `show` is where that was met. It is a limit of
         // the emitter and is written down as one; when a deref can be written,
         // this arm goes and nothing else changes.
+        //
+        // **A parameter the author lent is not this arm's**: it is a reference
+        // in the Rust whatever this column says, so keeping it bought nothing
+        // and told a caller the receiver of `Position::escapable(ref self)`
+        // was taken (`open-work.md` §1.29).
         Expr::Match { value, .. } => {
-            if let Some(name) = parameter_named(parsed, parameters, value) {
+            if let Some(name) = parameter_named(parsed, parameters, value)
+                && !lent.contains(&name)
+            {
                 uses.kept.insert(name);
             }
         }
@@ -807,12 +843,22 @@ fn classify(
                         // claim is its own column: without it `out.push(1)` on
                         // a lent parameter reached `rustc` as *cannot borrow as
                         // mutable*, about a file nobody wrote.
+                        //
+                        // **A receiver taken by value that copies is not moved
+                        // out of**: `c.to_ascii_lowercase()` on a `char` leaves
+                        // `c` where it was, as `n.abs()` leaves an `i64`
+                        // (`open-work.md` §1.29).
                         contract.mutates
                             || !contract
                                 .signature
                                 .as_ref()
                                 .and_then(|s| s.params.first())
-                                .is_some_and(|(name, ty)| name == "self" && ty.is_a_view())
+                                .is_some_and(|(name, ty)| {
+                                    name == "self"
+                                        && (ty.is_a_view()
+                                            || (matches!(ty, super::ty::Ty::Named { .. })
+                                                && !moves(ty)))
+                                })
                     });
                 if consumed {
                     uses.kept.insert(name);

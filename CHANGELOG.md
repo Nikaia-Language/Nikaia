@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.257] — 2026-09-29
+
+**`keeps` no longer names a receiver the author lent** (`open-work.md` §1.29,
+found at 0.0.254 in the ledger `tools/template.nika` lowers to; ADR-251 §5).
+`Position::escapable(ref self)`, whose body is one `match self`, was recorded
+`keeps = ["self"]`; so was `Splitter::until(ref mut self, …)`, for calling
+itself; and `Scan::feed(ref mut self, c: char)` kept its `char`.
+
+- **A receiver written `ref self` or `ref mut self` is not kept.** It is a
+  reference by the author's word; a use that would need it whole is `NK1131`'s.
+  An argument written `ref` keeps as before - a parse keeps the text its result
+  views (ADR-186 D1), and filtering it out broke that at 0.0.254.
+- **A `match` over an argument written `ref` does not keep it.** The
+  over-approximation that arm makes is for a parameter the lowering could
+  still lend, and a `ref` one is lent already.
+- **A receiver a method takes by value that copies is not moved out of**:
+  `c.to_ascii_lowercase()` leaves the caller its `char`.
+- Left as it is, on purpose: `State::Quoted(c)` keeps the `char` it is given.
+  The column says what a body does (`tests/keeps.rs` holds that).
+- `template.nika`'s ledger names no kept parameter; no committed ledger and no
+  lowered `std` file changes.
+
 ## [0.0.256] — 2026-09-29
 
 **CI is green again on Rust 1.98.** Stable moved under the repository

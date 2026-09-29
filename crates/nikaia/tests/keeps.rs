@@ -450,3 +450,61 @@ fn a_parameter_bound_again_and_only_read_is_not_kept() {
         .is_empty()
     );
 }
+
+/// **A receiver the author lent is not kept** (`open-work.md` §1.29, found in
+/// the ledger `tools/template.nika` lowers to). A `match` on it, a method that
+/// changes it and a call of itself are what a `ref mut self` is written for;
+/// each was recorded `keeps = ["self"]`, and a reader of the contract saw the
+/// subject of a borrowing method taken.
+#[test]
+fn a_receiver_written_ref_is_not_kept() {
+    let source = "enum Position { Text, Url }\n\
+                  struct Scan { tail: Vec[char], at: i64 }\n\
+                  impl Position {\n\
+                  \x20   fn escapable(ref self) -> bool {\n\
+                  \x20       return match self { Position::Text => true\n Position::Url => false }\n\
+                  \x20   }\n\
+                  }\n\
+                  impl Scan {\n\
+                  \x20   fn step(ref mut self) { self.at += 1 }\n\
+                  \x20   fn walk(ref mut self, n: i64) {\n\
+                  \x20       if n > 0 {\n self.step()\n self.walk(n - 1)\n }\n\
+                  \x20   }\n\
+                  }";
+    for name in ["Position::escapable", "Scan::step", "Scan::walk"] {
+        assert!(
+            keeps(source, name).is_empty(),
+            "{name}: {:?}",
+            keeps(source, name)
+        );
+    }
+}
+
+/// **An argument the author lent is not kept by a `match` over it**: it is a
+/// reference in the Rust whatever the column says, so the over-approximation
+/// the `match` arm makes for an owned parameter buys nothing here.
+#[test]
+fn a_lent_argument_a_match_takes_apart_is_not_kept() {
+    let source = "enum Position { Text, Url }\n\
+                  fn escapable(p: ref Position) -> bool {\n\
+                  \x20   return match p { Position::Text => true\n Position::Url => false }\n\
+                  }";
+    assert!(
+        keeps(source, "escapable").is_empty(),
+        "{:?}",
+        keeps(source, "escapable")
+    );
+}
+
+/// **A receiver taken by value that copies is not moved out of**:
+/// `c.to_ascii_lowercase()` leaves the caller its `char`. Recorded as kept, it
+/// said `Scan::feed(ref mut self, c: char)` took the character.
+#[test]
+fn a_copied_receiver_a_method_takes_by_value_is_not_kept() {
+    let source = "fn lower(c: char) -> bool { return c.to_ascii_lowercase() == 'a' }";
+    assert!(
+        keeps(source, "lower").is_empty(),
+        "{:?}",
+        keeps(source, "lower")
+    );
+}
