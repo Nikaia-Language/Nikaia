@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.268 (Draft)
+**Version:** 0.0.269 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -648,6 +648,29 @@ if (match n { 1 => 10, else => 20 }) > 15 {
 
 That is the whole of the difference between the head of an `if`, a `while` or a
 `for` and any other position. Every expression is reachable.
+
+**A jump may carry its condition after it** ([ADR-255](adr/adr-255.md)).
+`return`, `throw`, `break` and `continue` take an `if` on their own line, and
+the line means `if cond { jump }`:
+
+```nika
+fn limit(speed: i64) -> i64 {
+    return 250 if speed > 250
+    return speed
+}
+
+fn first_even(numbers: Vec[i64]) -> i64 {
+    for n in numbers {
+        continue if n % 2 != 0
+        return n
+    }
+    return 0 - 1
+}
+```
+
+`throw TooFast(speed) if speed > 250` reads the same way. Nothing but a jump is
+guarded like this, and an `if` that begins a line is a statement of its own.
+`return if c { a } else { b }` is still a `return` of an `if` expression.
 
 ### 3.3. Loops
 A loop repeats code.

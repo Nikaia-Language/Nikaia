@@ -169,6 +169,18 @@ where
     }
 }
 
+/// `jump if cond` as the tree has always written it: `if cond { jump }`
+/// ([ADR-255](../../../docs/specification/adr/adr-255.md) D1).
+fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
+    ast::Stmt::Expr(ast::Expr::If {
+        cond: Box::new(cond),
+        then_branch: ast::Block {
+            stmts: vec![ast::Spanned::new(jump, span)],
+        },
+        else_branch: None,
+    })
+}
+
 /// Part I 2.2's number, in the four spellings
 /// ([ADR-136](../../../docs/specification/adr/adr-136.md) D1): `255`,
 /// `1_000_000`, `0xFF`, `0b1010` and `0o17`.
@@ -2275,10 +2287,30 @@ grammar! {
           | b:break_stmt -> { Spanned::new(b, Span::from(_span)) }
           | c:continue_stmt -> { Spanned::new(c, Span::from(_span)) }
 
-        rule return_stmt -> Stmt =
-            KW_RETURN value:expr? ";"? -> {
-                Stmt::Return(value)
+        // **A jump may carry its condition after it**, on its own line
+        // ([ADR-255](../../../docs/specification/adr/adr-255.md)):
+        // `return 250 if speed > 250`, `throw TooFast(speed) if speed > 250`,
+        // `break if done`. It is `if cond { jump }` and nothing else - the
+        // tree is that `if`, so every rule of `if` holds.
+        //
+        // The bare `return if done` is tried first, and only where no block
+        // follows the condition: `return if c { a } else { b }` is a `return`
+        // of an `if` expression, as it always was (D2).
+        rule return_stmt -> Stmt @=
+            KW_RETURN cond:exit_guard ";"? -> {
+                guarded(Stmt::Return(None), cond, Span::from(_span))
             }
+          | KW_RETURN value:expr? cond:exit_guard? ";"? -> {
+                match cond {
+                    Some(cond) => guarded(Stmt::Return(value), cond, Span::from(_span)),
+                    None => Stmt::Return(value),
+                }
+            }
+
+        // The condition of a jump, **on the jump's line**: an `if` that begins
+        // a line is a statement of its own (D3).
+        rule exit_guard -> Expr =
+            same_line KW_IF cond:head_expr not("{") -> { cond }
 
         // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
         // **No value and no label**, which is why each of these is one keyword
@@ -2310,9 +2342,13 @@ grammar! {
         // Kap 7.1: `throw` is the only way an error originates. Without it a
         // program could propagate what `std` produced and never produce one of
         // its own (ADR-023 D2).
-        rule throw_stmt -> Stmt =
-            KW_THROW value:expr ";"? -> {
-                Stmt::Expr(Expr::Throw(Box::new(value)))
+        rule throw_stmt -> Stmt @=
+            KW_THROW value:expr cond:exit_guard? ";"? -> {
+                let jump = Stmt::Expr(Expr::Throw(Box::new(value)));
+                match cond {
+                    Some(cond) => guarded(jump, cond, Span::from(_span)),
+                    None => jump,
+                }
             }
 
         rule kw_mut -> () = KW_MUT -> { () }
@@ -2487,8 +2523,19 @@ grammar! {
         // of the compiler the tree it had. The alternative was two failed
         // keyword matches in front of every expression statement, which is the
         // cost that ordering was chosen to avoid.
-        rule expr_stmt -> Stmt =
-            e:expr ";"? -> {
+        // `break if done` and `continue if skip` are tried here and not in
+        // `break_stmt`: `break` is also an expression, so `e:expr` below takes
+        // the word and leaves the `if` for a statement of its own
+        // ([ADR-255](../../../docs/specification/adr/adr-255.md) D1). Each arm
+        // costs a keyword compare, and only on a statement no earlier arm took.
+        rule expr_stmt -> Stmt @=
+            KW_BREAK cond:exit_guard ";"? -> {
+                guarded(Stmt::Break, cond, Span::from(_span))
+            }
+          | KW_CONTINUE cond:exit_guard ";"? -> {
+                guarded(Stmt::Continue, cond, Span::from(_span))
+            }
+          | e:expr ";"? -> {
                 match e {
                     Expr::Break => Stmt::Break,
                     Expr::Continue => Stmt::Continue,

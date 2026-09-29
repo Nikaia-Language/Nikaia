@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.269] — 2026-09-29
+
+**A jump may carry its condition after it** ([ADR-255](docs/specification/adr/adr-255.md)).
+`return 250 if speed > 250`, `throw TooFast(speed) if speed > 250`,
+`continue if n % 2 != 0`, `break if done`: each is `if cond { jump }`, and the
+parser builds exactly that `if`, so nothing after it changed.
+
+- Only after `return`, `throw`, `break` and `continue`, and only on the jump's
+  own line; `return if c { a } else { b }` is still a `return` of an `if`.
+- Part I 3.2 shows the form. `tests/jump_guards.rs` runs all four.
+
 ## [0.0.268] — 2026-09-29
 
 **A checked statement runs on a connection it names as its subject, and the
