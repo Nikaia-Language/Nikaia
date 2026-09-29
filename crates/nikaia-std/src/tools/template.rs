@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 pub use nikaia_std::error::Full;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Position {
     Text,
     QuotedAttribute,
@@ -219,7 +219,7 @@ struct Scan {
     attribute: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Text,
     Tag,

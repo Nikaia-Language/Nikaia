@@ -1228,6 +1228,8 @@ struct Emitter<'p> {
     /// keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
     compares: std::collections::BTreeSet<String>,
     compares_totally: std::collections::BTreeSet<String>,
+    /// Which declared types derive `Copy` ([`check::Checked::copies`]).
+    copies: std::collections::BTreeSet<String>,
     /// Where a number is read through a `for` binding and therefore through a
     /// **view** ([`check::Checked::viewed_numbers`]), by the statement's byte
     /// and the name. Handed over exactly as `lent_lets` is, and for the same
@@ -2389,6 +2391,7 @@ impl<'p> Emitter<'p> {
             lent_returns: propagation.lent_returns,
             compares: propagation.compares,
             compares_totally: propagation.compares_totally,
+            copies: propagation.copies,
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             owned_texts: propagation.owned_texts,
@@ -2929,6 +2932,13 @@ impl<'p> Emitter<'p> {
     fn derives(&self, name: winnow_grammar::Symbol) -> String {
         let name = self.text(name);
         let mut parts = vec!["Debug", "Clone"];
+        // **`Copy` where every part is one**
+        // ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.1): the
+        // Rust below may copy it, which a Rust reader of a type Nikaia declares
+        // needs, and nothing this language says about the value changes.
+        if self.copies.contains(name) {
+            parts.push("Copy");
+        }
         if self.compares.contains(name) {
             parts.push("PartialEq");
             if self.compares_totally.contains(name) {

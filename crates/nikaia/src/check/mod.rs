@@ -876,6 +876,17 @@ pub struct Checked {
     /// not an equivalence, and a derive that asked for both would refuse the
     /// declaration.
     pub compares_totally: BTreeSet<String>,
+    /// **Which declared types derive `Copy`**
+    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1): those whose
+    /// every part is a number, a `bool`, a `char` or another such type - a
+    /// unit-only `enum`, a struct of two `u32`.
+    ///
+    /// **The derive, and not yet the reading.** Nothing here treats a value
+    /// of such a type as copied rather than moved: the Rust below may copy
+    /// it, and this language still reads it as it reads every declared type.
+    /// That second half changes signatures across units (a lent parameter
+    /// becomes a value), and is taken when a Nikaia module asks for it.
+    pub copies: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1691,6 +1702,8 @@ pub struct Propagation {
     pub compares: BTreeSet<String>,
     /// [`Checked::compares_totally`].
     pub compares_totally: BTreeSet<String>,
+    /// [`Checked::copies`].
+    pub copies: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1913,6 +1926,7 @@ pub fn propagation_against(
         lent_returns: checked.lent_returns,
         compares: checked.compares,
         compares_totally: checked.compares_totally,
+        copies: checked.copies,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         owned_texts: checked.owned_texts,
@@ -3349,6 +3363,57 @@ impl<'a> Checker<'a> {
         }
         self.collect_field_walks();
         self.collect_comparisons();
+        self.collect_copies();
+    }
+
+    /// **Which declared types derive `Copy`**
+    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1,
+    /// [`Checked::copies`]).
+    ///
+    /// The least answer that holds: a type joins once every part of it is a
+    /// copy, asked again until nothing more joins. So a type that holds itself
+    /// never does - it holds itself through a box the compiler wrote
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md)), and a box is not
+    /// a copy - where [`Comparable`]'s walk, which answers *yes* on a cycle,
+    /// would have said it was.
+    fn collect_copies(&mut self) {
+        let declared: Vec<String> = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                    Some(self.parsed.text(*name).to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let mut copies = BTreeSet::new();
+        loop {
+            let joining: Vec<String> = declared
+                .iter()
+                .filter(|name| !copies.contains(*name))
+                .filter(|name| {
+                    let parts: Vec<Ty> = match self.enum_payloads.get(*name) {
+                        Some(held) => held.clone(),
+                        None => match self.structs.get(*name) {
+                            Some(fields) => fields.iter().map(|f| f.ty.clone()).collect(),
+                            // Neither a struct nor an enum this unit knows
+                            // the parts of: nothing is claimed.
+                            None => return false,
+                        },
+                    };
+                    parts.iter().all(|ty| a_copied_part(ty, &copies))
+                })
+                .cloned()
+                .collect();
+            if joining.is_empty() {
+                break;
+            }
+            copies.extend(joining);
+        }
+        self.checked.copies = copies;
     }
 
     /// **Which declared types compare**
@@ -21324,6 +21389,33 @@ impl Comparable<'_> {
                     .flat_map(|variant| variant.holds.iter().map(|f| f.ty.clone()))
             })
             .collect()
+    }
+}
+
+/// **A part that lets the type holding it derive `Copy`**
+/// ([`Checker::collect_copies`]): a number, a truth value, a character, a
+/// declared type already found to be one, and a tuple, a nullable or an array
+/// of those. Never a view, a type variable, an unknown or a Rust crate's type:
+/// each is a claim nothing here can back.
+fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } if name == ty::ARRAY => args
+            .iter()
+            .all(|arg| matches!(arg, Ty::Count(_)) || a_copied_part(arg, copies)),
+        Ty::Named {
+            name,
+            args,
+            view: false,
+        } => {
+            args.is_empty()
+                && (matches!(
+                    name.as_str(),
+                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char"
+                ) || copies.contains(name))
+        }
+        Ty::Nullable(inner) => a_copied_part(inner, copies),
+        Ty::Tuple(parts) => parts.iter().all(|part| a_copied_part(part, copies)),
+        _ => false,
     }
 }
 

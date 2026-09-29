@@ -104,7 +104,14 @@ pub mod text {
 /// (`template.nika`'s `here`). Every other lint still holds the lowered code,
 /// and has moved a `.nika` to a better line before (`ref Array` for a list only
 /// read, 0.0.252).
-#[allow(clippy::explicit_counter_loop)]
+///
+/// **And `clone_on_copy`, for as long as ADR-252 D4.1 is half built.** A type
+/// whose every part is a copy derives `Copy` (0.0.264), and the language does
+/// not yet read its values as copies: a `.nika` that keeps one past a move
+/// writes `.clone()` (`template.nika`'s `at.clone()`), as it must, and the Rust
+/// below calls that a clone of a copy. When the checker reads the copy, the
+/// `.clone()` is not written and this goes.
+#[allow(clippy::explicit_counter_loop, clippy::clone_on_copy)]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
     /// mean*: `src/tools/spelling.nika`, lowered to `src/tools/spelling.rs`
