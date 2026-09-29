@@ -102,6 +102,11 @@ pub fn describe(root: &Path, crate_word: &str) -> Result<Described> {
         ledger.render_description(crate_word, &written.version, &written.notes),
     )
     .with_context(|| format!("{}", path.display()))?;
+    // **And what it was written from, beside it** (ADR-251 D1): the crate's
+    // sources by hash, which `sources_that_moved` compares a later build with.
+    let derived = crate::contracts::derived_path(&path);
+    std::fs::write(&derived, ledger.render_derived())
+        .with_context(|| format!("{}", derived.display()))?;
     written.path = path;
     Ok(written)
 }

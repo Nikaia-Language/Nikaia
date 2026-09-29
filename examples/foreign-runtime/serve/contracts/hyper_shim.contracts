@@ -25,20 +25,9 @@
 # D1 gives it a third value and D2 says who writes it: a describer that reads
 # fields, which `nikaia describe` will and which is ADR-104's step 2. Until it
 # exists this line is hand-written like the rest of the file, and the `inference`
-# below says which part of the crate was read for it.
+# in `hyper_shim.derived` beside it says which part of the crate was read for it.
 
-version = 2
-# `+fields` is the one claim here that no signature could give: `crosses = false`
-# is read from `LocalHandle`'s `Rc<String>` ([ADR-123](../../../../docs/specification/adr/adr-123.md)
-# D2), which is a field and not a signature. Named so that a reviewer knows which
-# part of the crate to check it against.
-inference = "described-from-signatures+fields"
-
-# The crate's source, so the description is believed while it holds and demanded
-# again when it moves (D5, on ADR-100 D3's rule). **Nothing compares it yet**:
-# the hash rule is the record's step 3.
-[sources]
-"src/lib.rs" = "7f0544e448f4f31e822dacff6abd32b3075826998b995b5d524a62fc336d046a"
+version = 3
 
 [fn."hyper_shim::serve_once"]
 pub = true

@@ -215,6 +215,9 @@ impl Settings {
 pub struct Lowered {
     pub rust: String,
     pub ledger: String,
+    /// What the ledger was derived from, for `nikaia.derived` beside it
+    /// ([ADR-251](../../docs/specification/adr/adr-251.md) D1).
+    pub derived: String,
     /// Every `.nika` file that took part, entry first. The wrapper puts these
     /// back into Cargo's dependency info, or a changed module would not
     /// rebuild.
@@ -710,13 +713,14 @@ pub fn lower_reading(
     let cached = cache
         .as_ref()
         .and_then(|cache| cache.lookup(&unit, &key_source, &choices, &layout.root))
-        .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS]));
+        .filter(|artifacts| artifacts.has_all(&[RUST, CONTRACTS, DERIVED]));
     let reused = cached.is_some();
 
-    let (rust, ledger) = match &cached {
+    let (rust, ledger, derived) = match &cached {
         Some(artifacts) => (
             artifacts.get(RUST).expect("checked above").to_string(),
             artifacts.get(CONTRACTS).expect("checked above").to_string(),
+            artifacts.get(DERIVED).expect("checked above").to_string(),
         ),
         None => {
             // Every unit is checked against the *program's* contracts, not its
@@ -785,6 +789,7 @@ pub fn lower_reading(
             };
             let (lowered, program) = lowered;
             let ledger = program.contracts.render();
+            let derived = program.contracts.render_derived();
 
             // **An entry nothing read** ([ADR-072](../../docs/specification/adr/adr-072.md)
             // D8): a list that may hold names nothing uses decays into
@@ -804,7 +809,8 @@ pub fn lower_reading(
                 // nothing can be read at all.
                 let artifacts = Artifacts::new()
                     .with(RUST, &lowered.rust)
-                    .with(CONTRACTS, &ledger);
+                    .with(CONTRACTS, &ledger)
+                    .with(DERIVED, &derived);
                 let stored = cache
                     .record(&unit, &key_source, reads.taken(), &choices, &artifacts)
                     .and_then(|()| cache.save());
@@ -813,13 +819,14 @@ pub fn lower_reading(
                     eprintln!("warning: the build cache could not be updated: {error:#}");
                 }
             }
-            (lowered.rust, ledger)
+            (lowered.rust, ledger, derived)
         }
     };
 
     Ok(Lowered {
         rust,
         ledger,
+        derived,
         sources,
         reused,
     })
@@ -828,6 +835,9 @@ pub fn lower_reading(
 /// The names a lowering stores its outputs under.
 pub const RUST: &str = "rust";
 pub const CONTRACTS: &str = "contracts";
+/// What the contract was derived from, `nikaia.derived`
+/// ([ADR-251](../../docs/specification/adr/adr-251.md) D1).
+pub const DERIVED: &str = "derived";
 
 /// Everything the compiler decides for itself, before it emits a line of Rust.
 ///
@@ -1007,10 +1017,7 @@ fn sources_that_moved(root: &Path, name: &str, ledger: &Ledger) -> Vec<String> {
 /// a file that does not parse is not an answer, and treating it as one would
 /// let a boundary be described by something nobody can read.
 fn description_at(root: &Path, name: &str) -> Option<Ledger> {
-    let path = root.join("contracts").join(format!("{name}.contracts"));
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| Ledger::parse(&text).ok())
+    Ledger::read_beside(&root.join("contracts").join(format!("{name}.contracts")))
 }
 
 /// `user_parallelism` reaches this and reaches **nothing inside the analyses**.
@@ -2005,6 +2012,11 @@ impl Project {
             write_ledger(
                 &member.root.join("nikaia.contracts"),
                 &lowered.ledger,
+                locked,
+            )?;
+            write_ledger(
+                &member.root.join("nikaia.derived"),
+                &lowered.derived,
                 locked,
             )?;
             rust[at] = Some(lowered.rust);

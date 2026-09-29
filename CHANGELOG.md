@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.253] — 2026-09-29
+
+**The ledger is the contract, and what it was derived from is beside it**
+([ADR-251](docs/specification/adr/adr-251.md) D1-D3). Asked before the ledger's
+reader moves to Nikaia: the format was two files in one, carried prose the
+compiler never read, and Part III 13.5 described a file no longer written.
+
+- **`nikaia.derived`** holds `toolchain`, `inference` and `[sources]`, beside
+  `nikaia.contracts`; a description has `contracts/<crate>.derived` beside it.
+  Both are generated, committed and compared under `--locked`; a contract is
+  believed while its sources hash as its record says (ADR-100 D3, unchanged),
+  and one with no record beside it is not. A compiler upgrade or an edited
+  comment no longer changes a published contract. The build cache keeps the
+  record as a third artifact. Format version 3.
+- **No `doc` in the contract** (supersedes ADR-139 D2): a ledger with one is
+  refused. `std.contracts` keeps its 249 sentences as comments above their
+  entries.
+- `sync` keeps its three states (D3). The contract's spelling moves to Nikaia's
+  next (D4, D5), and `sync(f)` into the language after that (ADR-244 D4, decided
+  and not yet built).
+- **Part III 13.5 describes the file that is written**: the example, the record,
+  and the keys the table had not named - `keeps`, `mutates`, `variants`,
+  `compares`, `iterates`, `ends_by_length`, `threads`, `provenance`, and
+  `locks = "?"`.
+- `crates/nikaia-std/src/tools/nikaia.contracts`, a hand lowering's leftover
+  committed at 0.0.169 and read by nothing, is removed and ignored.
+- ADR-250 §3 corrected: a leaf that uses a crate moves without it; the crate
+  stays behind the adapter.
+
 ## [0.0.252] — 2026-09-28
 
 **The road to Stage 1, and the fifth module on it**

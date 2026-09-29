@@ -136,16 +136,20 @@ fn the_experiments_description_parses_as_a_ledger() {
             .join("contracts/hyper_shim.contracts");
         let text =
             std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let ledger = nikaia::contracts::Ledger::parse(&text)
+        nikaia::contracts::Ledger::parse(&text)
             .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+        // Read as a build reads it: the description and the record of what it
+        // was written from beside it (ADR-251 D1).
+        let ledger = nikaia::contracts::Ledger::read_beside(&path)
+            .unwrap_or_else(|| panic!("{} reads", path.display()));
         assert!(
             ledger.functions.contains_key("hyper_shim::serve_once"),
             "{}",
             path.display()
         );
-        // **The source hash is recorded although nothing compares it yet** (D5,
-        // on ADR-100 D3's rule): the file says which crate source it was read
-        // from, and the day the hash rule lands it has something to compare.
+        // **The source hash is recorded** (D5, on ADR-100 D3's rule), in the
+        // record beside the description since ADR-251: the file says which
+        // crate source it was read from, and a later build compares it.
         assert!(
             ledger.sources.contains_key("src/lib.rs"),
             "the description names the source it came from: {}",

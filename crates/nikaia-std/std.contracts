@@ -115,9 +115,7 @@
 # is. Every source `std` has today is the operator's own: a file they named, a
 # pipe they connected, the arguments they typed. The untrusted ones - `http`,
 # `net`, `db` - arrive with the modules that have them.
-version = 2
-toolchain = "nikaia 0.1.0"
-inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
+version = 3
 
 # --- Written by hand: the modules that are still Rust ------------------------
 
@@ -126,6 +124,10 @@ inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 # and neither has to wait for the other. It is the most-refused callee in
 # `examples/` - ten adjacent pairs named it - and it was refused for no better
 # reason than that nobody had written this line.
+# The arguments the program was started with.
+#
+# The program's own name is at 0, so the first one a user typed is at 1. Two
+# calls meet on nothing and neither waits for the other.
 [fn."cli::args"]
 pub = true
 # `sync` because there is nothing here to pause on: the arguments are a vector
@@ -139,7 +141,6 @@ sync = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "() -> Args"
-doc = "The arguments the program was started with.\n\nThe program's own name is at 0, so the first one a user typed is at 1. Two\ncalls meet on nothing and neither waits for the other."
 
 # The argument at a position, and **there may not be one** - which is the half
 # the corpus writes every time: `cli::args().nth(1) ?? "default"` opens six of
@@ -149,6 +150,10 @@ doc = "The arguments the program was started with.\n\nThe program's own name is 
 #
 # `sync` and `touches` are `cli::args`' own, for its reason: reading the vector
 # the process was started with is memory.
+# The argument at a position, or nothing where there is none.
+#
+# There may not be one, which is why this hands back a `String?`: the shape the
+# examples write is `cli::args().nth(1) ?? some_default`.
 [fn."Args::nth"]
 pub = true
 sync = true
@@ -156,65 +161,69 @@ mutates = true
 touches = ["args read"]
 provenance = "trusted"
 signature = "(ref Args, at: i64) -> String?"
-doc = "The argument at a position, or nothing where there is none.\n\nThere may not be one, which is why this hands back a `String?`: the shape the\nexamples write is `cli::args().nth(1) ?? some_default`."
 
+# Write text to standard error, with no line break after it.
 [fn."eprint"]
 pub = true
 sync = true
 touches = ["stderr write"]
 locks = true
 signature = "(text: ?)"
-doc = "Write text to standard error, with no line break after it."
 
+# Write text to standard error, and end the line.
 [fn."eprintln"]
 pub = true
 sync = true
 touches = ["stderr write"]
 locks = true
 signature = "(text: ?)"
-doc = "Write text to standard error, and end the line."
 
 # **A file written through a buffer** ([ADR-239](../../docs/specification/adr/adr-239.md)
 # D5): the first type here whose cleanup needs I/O. `write` holds, `flush`
 # writes, and a writer nobody flushed is flushed by its cleanup where it dies -
 # which can fail, so the function that owns one can fail with it.
+# A file to write, empty: made where it is not there, emptied where it is.
+#
+# What is written to it is held until it is flushed, closed, or done with; being
+# done with it flushes it, and that can fail, so a function that owns one can
+# fail with it.
 [fn."fs::create"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
 signature = "(path: ?, root: ref Root) -> Writer"
-doc = "A file to write, empty: made where it is not there, emptied where it is.\n\nWhat is written to it is held until it is flushed, closed, or done with; being\ndone with it flushes it, and that can fail, so a function that owns one can\nfail with it."
 
+# A file being written, through a buffer.
 [type."fs::Writer"]
 pub = true
 crosses = true
-doc = "A file being written, through a buffer."
 
 [impl."Cleanup for fs::Writer"]
 
+# Add text to what the file will hold. No I/O: it is written when the writer
+# is flushed, closed or done with.
 [fn."fs::Writer::write"]
 pub = true
 sync = true
 touches = []
 mutates = true
 signature = "(ref Writer, text: ?)"
-doc = "Add text to what the file will hold. No I/O: it is written when the writer\nis flushed, closed or done with."
 
+# Write what is held to the file now.
 [fn."fs::Writer::flush"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
 mutates = true
 signature = "(ref Writer)"
-doc = "Write what is held to the file now."
 
+# What being done with a writer does: it is flushed.
 [fn."fs::Writer::cleanup"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
 mutates = true
 signature = "(ref Writer)"
-doc = "What being done with a writer does: it is flushed."
 
 # **Where a value with a cleanup dies** ([ADR-239](../../docs/specification/adr/adr-239.md)
 # D2). The compiler records one of these as a call wherever such a value may
@@ -234,21 +243,31 @@ signature = "()"
 
 # **`close()`**, on any value with a cleanup (ADR-239 D3): the cleanup now, its
 # failure this call's, and nothing owed afterwards.
+# Run the value's cleanup now, and hand back its failure as this call's.
+#
+# Nothing is owed afterwards: the value is gone.
 [fn."cleanup::close"]
 pub = true
 touches = []
 throws = ["cleanup::Failure"]
 signature = "(?)"
-doc = "Run the value's cleanup now, and hand back its failure as this call's.\n\nNothing is owed afterwards: the value is gone."
 
+# A file as memory, without reading it into any of its own.
+#
+# What comes back reads as text and the pages arrive as they are touched, which
+# is what makes a file larger than memory workable. It fails where the file
+# cannot be opened.
 [fn."fs::map"]
 pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?, root: ref Root) -> Mapped"
-doc = "A file as memory, without reading it into any of its own.\n\nWhat comes back reads as text and the pages arrive as they are touched, which\nis what makes a file larger than memory workable. It fails where the file\ncannot be opened."
 
+# The mapped file, as text.
+#
+# It is a **view** of the mapping and not a copy, so it lives as long as the
+# mapping does and costs nothing to take.
 [fn."fs::Mapped::deref"]
 pub = true
 sync = true
@@ -259,26 +278,39 @@ sync = true
 touches = ["file read"]
 returns = "borrows(self)"
 signature = "(ref Mapped) -> ref String"
-doc = "The mapped file, as text.\n\nIt is a **view** of the mapping and not a copy, so it lives as long as the\nmapping does and costs nothing to take."
 
+# The whole of a file, as bytes.
+#
+# It hands back one shared buffer and not a copy, so passing the file on costs a
+# reference count. It fails where the file cannot be read. The bytes came from
+# the program's own machine, so what it hands back is **trusted**.
 [fn."fs::read"]
 pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?, root: ref Root) -> Bytes"
-doc = "The whole of a file, as bytes.\n\nIt hands back one shared buffer and not a copy, so passing the file on costs a\nreference count. It fails where the file cannot be read. The bytes came from\nthe program's own machine, so what it hands back is **trusted**."
 
+# The whole of a file, as text.
+#
+# It fails where the file cannot be read or is not UTF-8. The bytes came from
+# the program's own machine, so what it hands back is **trusted**: a map keyed
+# on it is hashed with the fast function.
 [fn."fs::read_to_string"]
 pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?, root: ref Root) -> String"
-doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read or is not UTF-8. The bytes came from\nthe program's own machine, so what it hands back is **trusted**: a map keyed\non it is hashed with the fast function."
 
 # **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
 # directory is one system call, the same size of blocking as `cli::args`'s read.
+# A fresh, empty directory, as an `fs::Root::Dir`.
+#
+# What a test hands a function that writes, so that what it writes stays inside a
+# place of the test's own. Under `nikaia test` it is inside the test's own
+# directory, removed when the test ends; elsewhere it is a new directory under the
+# system's temporary directory. Every call is a new one.
 [fn."fs::scratch"]
 pub = true
 sync = true
@@ -286,59 +318,76 @@ throws = ["io::IoError"]
 touches = ["file write"]
 provenance = "trusted"
 signature = "() -> Root"
-doc = "A fresh, empty directory, as an `fs::Root::Dir`.\n\nWhat a test hands a function that writes, so that what it writes stays inside a\nplace of the test's own. Under `nikaia test` it is inside the test's own\ndirectory, removed when the test ends; elsewhere it is a new directory under the\nsystem's temporary directory. Every call is a new one."
 
+# Write data to a file.
+#
+# `create` makes the file where there is none and `append` adds to the end
+# rather than replacing what is there. It fails where the path cannot be
+# written.
 [fn."fs::write"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
 signature = "(path: ?, root: ref Root, data: ?; append: bool = false, create: bool = true)"
-doc = "Write data to a file.\n\n`create` makes the file where there is none and `append` adds to the end\nrather than replacing what is there. It fails where the path cannot be\nwritten."
 
+# Claim that `cond` holds whenever this line is reached.
+#
+# A false claim stops the program, as `panic` does, and says the claim as it
+# was written and the value of each operand of its comparison. The condition
+# may not pause, fail, touch anything or change a value, so that the compiler
+# can later prove it and leave the check out (ADR-245).
 [fn."assert"]
 pub = true
 sync = true
 touches = []
 signature = "(cond: bool; message: ref String = \"\")"
-doc = "Claim that `cond` holds whenever this line is reached.\n\nA false claim stops the program, as `panic` does, and says the claim as it\nwas written and the value of each operand of its comparison. The condition\nmay not pause, fail, touch anything or change a value, so that the compiler\ncan later prove it and leave the check out (ADR-245)."
 
+# Write text to standard output, with no line break after it.
 [fn."print"]
 pub = true
 sync = true
 touches = ["stdout write"]
 locks = true
 signature = "(text: ?)"
-doc = "Write text to standard output, with no line break after it."
 
+# Write text to standard output, and end the line.
 [fn."println"]
 pub = true
 sync = true
 touches = ["stdout write"]
 locks = true
 signature = "(text: ?)"
-doc = "Write text to standard output, and end the line."
 
+# The same text, with the five characters HTML reads as markup written as
+# entities.
+#
+# What comes back **borrows** its argument where nothing had to change, so text
+# with no markup in it costs no allocation.
 [fn."html::escape"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(text)"
 signature = "(text: ref String) -> ?"
-doc = "The same text, with the five characters HTML reads as markup written as\nentities.\n\nWhat comes back **borrows** its argument where nothing had to change, so text\nwith no markup in it costs no allocation."
 
+# Promise that `markup` is already HTML: the one constructor of `html::Raw`,
+# and the one line to review, because everything downstream of it trusts this
+# call.
 [fn."html::Raw::new"]
 pub = true
 sync = true
 touches = []
 signature = "(markup: ?) -> ?"
-doc = "Promise that `markup` is already HTML: the one constructor of `html::Raw`,\nand the one line to review, because everything downstream of it trusts this\ncall."
 
+# The whole of standard input, as bytes.
+#
+# It may pause rather than holding the thread it is called on, and it fails
+# where the input cannot be read.
 [fn."io::read"]
 pub = true
 throws = ["io::IoError"]
 provenance = "trusted"
 signature = "() -> Vec[u8]"
-doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holding the thread it is called on, and it fails\nwhere the input cannot be read."
 
 # **A produced sequence, and its step can fail**
 # ([ADR-105](../../docs/specification/adr/adr-105.md) D1). It said `-> Lines`,
@@ -354,26 +403,35 @@ doc = "The whole of standard input, as bytes.\n\nIt may pause rather than holdin
 # suspends*, which is what makes a `for` over this give its thread up instead of
 # holding it. It is a **positive** claim and not the absence of `sync`: the
 # absence is *nobody said*, and a `map`'s step is exactly that.
+# Standard input, one line at a time.
+#
+# The lines are produced as they are asked for rather than read up front, so a
+# stream larger than memory is a `for` over this. A **step** can fail, because
+# a step of it reads the pipe.
 [fn."io::lines"]
 pub = true
 provenance = "trusted"
 signature = "() -> Seq[String] pauses throws"
-doc = "Standard input, one line at a time.\n\nThe lines are produced as they are asked for rather than read up front, so a\nstream larger than memory is a `for` over this. A **step** can fail, because\na step of it reads the pipe."
 
+# The whole of standard input, as text.
+#
+# It pauses rather than holding the thread it is called on. It fails where the
+# input is not UTF-8.
 [fn."io::read_to_string"]
 pub = true
 throws = ["io::IoError"]
 provenance = "trusted"
 signature = "() -> String"
-doc = "The whole of standard input, as text.\n\nIt pauses rather than holding the thread it is called on. It fails where the\ninput is not UTF-8."
 
+# Each element through a function, as a new list.
+#
+# Whether this pauses is the lambda's answer and not its own.
 [fn."list::ListExt::map"]
 pub = true
 sync = "from(f)"
 # The list goes in by value and a new one comes out, which is what the language
 # below's trait does; `$U` is what the lambda comes to (ADR-212 D5).
 signature = "(Vec[$T], f: fn($T) -> $U) -> Vec[$U]"
-doc = "Each element through a function, as a new list.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # --- Written by hand: the collections and text the language below provides ---
 #
@@ -416,19 +474,20 @@ doc = "Each element through a function, as a new list.\n\nWhether this pauses is
 # same walk - and `touches` must not be read this way at all, for the reason the
 # header's note on `touches = []` gives.
 
+# The number without its sign.
 [fn."f64::abs"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> f64"
-doc = "The number without its sign."
 
+# The square root. A negative number gives not-a-number, which is what the
+# hardware hands back rather than a failure.
 [fn."f64::sqrt"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> f64"
-doc = "The square root. A negative number gives not-a-number, which is what the\nhardware hands back rather than a failure."
 
 # ## Arithmetic that does not abort (ADR-043 D2, D3)
 #
@@ -451,201 +510,229 @@ doc = "The square root. A negative number gives not-a-number, which is what the\
 # result, so two of them in a row may be reordered, which is what the header's
 # note above asks the claim to mean.
 
+# Addition that **wraps** at the ends of an `i32` instead of aborting.
 [fn."i32::wrapping_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Addition that **wraps** at the ends of an `i32` instead of aborting."
 
+# Subtraction that **wraps** at the ends of an `i32` instead of aborting.
 [fn."i32::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Subtraction that **wraps** at the ends of an `i32` instead of aborting."
 
+# Multiplication that **wraps** at the ends of an `i32` instead of aborting.
 [fn."i32::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Multiplication that **wraps** at the ends of an `i32` instead of aborting."
 
+# Division that **wraps** instead of aborting.
+#
+# The one case it changes is the most negative `i32` divided by `-1`, whose
+# answer does not fit; a divisor of zero still aborts, because no result would
+# be the right one.
 [fn."i32::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Division that **wraps** instead of aborting.\n\nThe one case it changes is the most negative `i32` divided by `-1`, whose\nanswer does not fit; a divisor of zero still aborts, because no result would\nbe the right one."
 
+# Negation that **wraps** instead of aborting: the most negative `i32`
+# negates to itself.
 [fn."i32::wrapping_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
-doc = "Negation that **wraps** instead of aborting: the most negative `i32`\nnegates to itself."
 
+# The number without its sign, **wrapping** instead of aborting: the most
+# negative `i32` comes back unchanged.
 [fn."i32::wrapping_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
-doc = "The number without its sign, **wrapping** instead of aborting: the most\nnegative `i32` comes back unchanged."
 
+# Shift left, with the number of places taken around the width of an `i32`
+# rather than aborting. Bits shifted off the top are lost, as a shift always
+# loses them.
 [fn."i32::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, places: ?) -> i32"
-doc = "Shift left, with the number of places taken around the width of an `i32`\nrather than aborting. Bits shifted off the top are lost, as a shift always\nloses them."
 
+# Shift right, with the number of places taken around the width of an `i32`
+# rather than aborting. The sign bit is carried in, because an `i32` is signed.
 [fn."i32::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, places: ?) -> i32"
-doc = "Shift right, with the number of places taken around the width of an `i32`\nrather than aborting. The sign bit is carried in, because an `i32` is signed."
 
+# Addition that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Addition that **stops** at the ends of an `i32` instead of aborting."
 
+# Subtraction that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Subtraction that **stops** at the ends of an `i32` instead of aborting."
 
+# Multiplication that **stops** at the ends of an `i32` instead of aborting.
 [fn."i32::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Multiplication that **stops** at the ends of an `i32` instead of aborting."
 
+# Division that **stops** at the ends of an `i32` instead of aborting.
+#
+# The one case it changes is the most negative `i32` divided by `-1`; a divisor
+# of zero still aborts.
 [fn."i32::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i32, i32) -> i32"
-doc = "Division that **stops** at the ends of an `i32` instead of aborting.\n\nThe one case it changes is the most negative `i32` divided by `-1`; a divisor\nof zero still aborts."
 
+# Negation that **stops** at the ends of an `i32` instead of aborting: the
+# most negative `i32` negates to the most positive one.
 [fn."i32::saturating_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
-doc = "Negation that **stops** at the ends of an `i32` instead of aborting: the\nmost negative `i32` negates to the most positive one."
 
+# The number without its sign, **stopping** at the ends of an `i32` instead of
+# aborting: the most negative `i32` comes back as the most positive one.
 [fn."i32::saturating_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> i32"
-doc = "The number without its sign, **stopping** at the ends of an `i32` instead of\naborting: the most negative `i32` comes back as the most positive one."
 
+# Addition that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Addition that **wraps** at the ends of an `i64` instead of aborting."
 
+# Subtraction that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Subtraction that **wraps** at the ends of an `i64` instead of aborting."
 
+# Multiplication that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Multiplication that **wraps** at the ends of an `i64` instead of aborting."
 
+# Division that **wraps** instead of aborting.
+#
+# The one case it changes is the most negative `i64` divided by `-1`, whose
+# answer does not fit; a divisor of zero still aborts, because no result would
+# be the right one.
 [fn."i64::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Division that **wraps** instead of aborting.\n\nThe one case it changes is the most negative `i64` divided by `-1`, whose\nanswer does not fit; a divisor of zero still aborts, because no result would\nbe the right one."
 
+# Negation that **wraps** instead of aborting: the most negative `i64`
+# negates to itself.
 [fn."i64::wrapping_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
-doc = "Negation that **wraps** instead of aborting: the most negative `i64`\nnegates to itself."
 
+# The number without its sign, **wrapping** instead of aborting: the most
+# negative `i64` comes back unchanged.
 [fn."i64::wrapping_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
-doc = "The number without its sign, **wrapping** instead of aborting: the most\nnegative `i64` comes back unchanged."
 
+# Shift left, with the number of places taken around the width of an `i64`
+# rather than aborting. Bits shifted off the top are lost, as a shift always
+# loses them.
 [fn."i64::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, places: ?) -> i64"
-doc = "Shift left, with the number of places taken around the width of an `i64`\nrather than aborting. Bits shifted off the top are lost, as a shift always\nloses them."
 
+# Shift right, with the number of places taken around the width of an `i64`
+# rather than aborting. The sign bit is carried in, because an `i64` is signed.
 [fn."i64::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, places: ?) -> i64"
-doc = "Shift right, with the number of places taken around the width of an `i64`\nrather than aborting. The sign bit is carried in, because an `i64` is signed."
 
+# Addition that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Addition that **stops** at the ends of an `i64` instead of aborting."
 
+# Subtraction that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Subtraction that **stops** at the ends of an `i64` instead of aborting."
 
+# Multiplication that **stops** at the ends of an `i64` instead of aborting.
 [fn."i64::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Multiplication that **stops** at the ends of an `i64` instead of aborting."
 
+# Division that **stops** at the ends of an `i64` instead of aborting.
+#
+# The one case it changes is the most negative `i64` divided by `-1`; a divisor
+# of zero still aborts.
 [fn."i64::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(i64, i64) -> i64"
-doc = "Division that **stops** at the ends of an `i64` instead of aborting.\n\nThe one case it changes is the most negative `i64` divided by `-1`; a divisor\nof zero still aborts."
 
+# Negation that **stops** at the ends of an `i64` instead of aborting: the
+# most negative `i64` negates to the most positive one.
 [fn."i64::saturating_neg"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
-doc = "Negation that **stops** at the ends of an `i64` instead of aborting: the\nmost negative `i64` negates to the most positive one."
 
+# The number without its sign, **stopping** at the ends of an `i64` instead of
+# aborting: the most negative `i64` comes back as the most positive one.
 [fn."i64::saturating_abs"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i64"
-doc = "The number without its sign, **stopping** at the ends of an `i64` instead of\naborting: the most negative `i64` comes back as the most positive one."
 
 # **Truncation has a name**, and the name carries the destination
 # ([ADR-043](../../docs/specification/adr/adr-043.md) D7). Since D4 a conversion
@@ -666,203 +753,222 @@ doc = "The number without its sign, **stopping** at the ends of an `i64` instead
 # `touches = []` and `sync = true` for the reason the arithmetic entries give: a
 # pure computation that reaches no resource.
 
+# The low 32 bits of an `i64`, as an `i32`.
+#
+# A conversion that may not fit aborts, so this is how a program says it means
+# to keep the low digits - said rather than assumed.
 [fn."i64::truncating_i32"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> i32"
-doc = "The low 32 bits of an `i64`, as an `i32`.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits - said rather than assumed."
 
+# The whole part of an `f64`, as an `i32`, with the digits that do not fit
+# dropped.
+#
+# A conversion that may not fit aborts, so this is how a program says it means
+# to keep the low digits.
 [fn."f64::truncating_i32"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> i32"
-doc = "The whole part of an `f64`, as an `i32`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
+# The whole part of an `f64`, as an `i64`, with the digits that do not fit
+# dropped.
+#
+# A conversion that may not fit aborts, so this is how a program says it means
+# to keep the low digits.
 [fn."f64::truncating_i64"]
 pub = true
 sync = true
 touches = []
 signature = "(f64) -> i64"
-doc = "The whole part of an `f64`, as an `i64`, with the digits that do not fit\ndropped.\n\nA conversion that may not fit aborts, so this is how a program says it means\nto keep the low digits."
 
 # **`u64` and `u32` have the arithmetic names every integer has**
 # ([ADR-248](../../docs/specification/adr/adr-248.md) D1): wrapping and stopping
 # at the limit, for the two unsigned types a program asked for. No `_neg` and no
 # `_abs`, which an unsigned number has nothing to say with.
 
+# Addition that **wraps** at the ends of a `u32` instead of aborting.
 [fn."u32::wrapping_add"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Addition that **wraps** at the ends of a `u32` instead of aborting."
 
+# Subtraction that **wraps** at the ends of a `u32` instead of aborting.
 [fn."u32::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Subtraction that **wraps** at the ends of a `u32` instead of aborting."
 
+# Multiplication that **wraps** at the ends of a `u32` instead of aborting:
+# what a hash is made of.
 [fn."u32::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Multiplication that **wraps** at the ends of a `u32` instead of aborting:\nwhat a hash is made of."
 
+# Division, which for a `u32` cannot overflow and is the plain division.
 [fn."u32::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Division, which for a `u32` cannot overflow and is the plain division."
 
+# A shift left that takes the count modulo the width instead of aborting.
 [fn."u32::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, i64) -> u32"
-doc = "A shift left that takes the count modulo the width instead of aborting."
 
+# A shift right that takes the count modulo the width instead of aborting.
 [fn."u32::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, i64) -> u32"
-doc = "A shift right that takes the count modulo the width instead of aborting."
 
+# Addition that **stops** at the ends of a `u32` instead of aborting.
 [fn."u32::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Addition that **stops** at the ends of a `u32` instead of aborting."
 
+# Subtraction that **stops** at zero instead of aborting.
 [fn."u32::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Subtraction that **stops** at zero instead of aborting."
 
+# Multiplication that **stops** at the largest `u32` instead of aborting.
 [fn."u32::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Multiplication that **stops** at the largest `u32` instead of aborting."
 
+# Division, which for a `u32` cannot overflow and is the plain division.
 [fn."u32::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(u32, u32) -> u32"
-doc = "Division, which for a `u32` cannot overflow and is the plain division."
 
+# Addition that **wraps** at the ends of a `u64` instead of aborting.
 [fn."u64::wrapping_add"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Addition that **wraps** at the ends of a `u64` instead of aborting."
 
+# Subtraction that **wraps** at the ends of a `u64` instead of aborting.
 [fn."u64::wrapping_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Subtraction that **wraps** at the ends of a `u64` instead of aborting."
 
+# Multiplication that **wraps** at the ends of a `u64` instead of aborting:
+# what a hash is made of.
 [fn."u64::wrapping_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Multiplication that **wraps** at the ends of a `u64` instead of aborting:\nwhat a hash is made of."
 
+# Division, which for a `u64` cannot overflow and is the plain division.
 [fn."u64::wrapping_div"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Division, which for a `u64` cannot overflow and is the plain division."
 
+# A shift left that takes the count modulo the width instead of aborting.
 [fn."u64::wrapping_shl"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, i64) -> u64"
-doc = "A shift left that takes the count modulo the width instead of aborting."
 
+# A shift right that takes the count modulo the width instead of aborting.
 [fn."u64::wrapping_shr"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, i64) -> u64"
-doc = "A shift right that takes the count modulo the width instead of aborting."
 
+# Addition that **stops** at the ends of a `u64` instead of aborting.
 [fn."u64::saturating_add"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Addition that **stops** at the ends of a `u64` instead of aborting."
 
+# Subtraction that **stops** at zero instead of aborting.
 [fn."u64::saturating_sub"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Subtraction that **stops** at zero instead of aborting."
 
+# Multiplication that **stops** at the largest `u64` instead of aborting.
 [fn."u64::saturating_mul"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Multiplication that **stops** at the largest `u64` instead of aborting."
 
+# Division, which for a `u64` cannot overflow and is the plain division.
 [fn."u64::saturating_div"]
 pub = true
 sync = true
 touches = []
 signature = "(u64, u64) -> u64"
-doc = "Division, which for a `u64` cannot overflow and is the plain division."
 
 # **Keeping the low digits into an unsigned type** (ADR-043 D7, ADR-248 D1):
 # `hash.truncating_u32()` is the low half of a `u64`, said rather than assumed.
 
+# The low 32 bits of a `u64`, as a `u32`.
 [fn."u64::truncating_u32"]
 pub = true
 sync = true
 touches = []
 signature = "(u64) -> u32"
-doc = "The low 32 bits of a `u64`, as a `u32`."
 
+# The low 32 bits of an `i64`, as a `u32`.
 [fn."i64::truncating_u32"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> u32"
-doc = "The low 32 bits of an `i64`, as a `u32`."
 
+# The 64 bits of a `u64`, read as an `i64`: a number above the largest `i64`
+# comes out negative.
 [fn."u64::truncating_i64"]
 pub = true
 sync = true
 touches = []
 signature = "(u64) -> i64"
-doc = "The 64 bits of a `u64`, read as an `i64`: a number above the largest `i64`\ncomes out negative."
 
+# The 64 bits of an `i64`, read as a `u64`: a negative number comes out above
+# the largest `i64`.
 [fn."i64::truncating_u64"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> u64"
-doc = "The 64 bits of an `i64`, read as a `u64`: a negative number comes out above\nthe largest `i64`."
 
+# The place in the map this key names, whether or not anything is there yet.
+#
+# One lookup rather than two: `or_insert` puts a value in where there is none,
+# and `and_modify` changes the one that is. The map **keeps** the key.
 [fn."collections::HashMap::entry"]
 pub = true
 sync = true
@@ -870,7 +976,6 @@ mutates = true
 touches = []
 keeps = ["key"]
 signature = "(ref collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
-doc = "The place in the map this key names, whether or not anything is there yet.\n\nOne lookup rather than two: `or_insert` puts a value in where there is none,\nand `and_modify` changes the one that is. The map **keeps** the key."
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
 # borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `$K`
@@ -885,17 +990,24 @@ doc = "The place in the map this key names, whether or not anything is there yet
 # `Option` surface through a hole. So the ledger refused the correct program and
 # accepted the one this language has its own words for, which is Part III C.4's
 # rule standing on its head.
+# What this key names, or nothing where the key is not there.
+#
+# A key is data and may be absent, which is why this hands back a `$V?`: the
+# shape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`.
 [fn."collections::HashMap::get"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashMap[$K, $V], key: ?) -> $V?"
-doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?`: the\nshape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`."
 
 # **Written into, by name** ([ADR-215](../../docs/specification/adr/adr-215.md)
 # D1): `m[k] = v` is this language's form, and this is the same write under the
 # name the language below gives it, for a program that wants the value it
 # replaced. The map keeps both, so both are handed over (ADR-213 D3).
+# Put a value in the map under this key, and hand back the one it replaced, or
+# nothing where the key was not there.
+#
+# The map keeps both the key and the value.
 [fn."collections::HashMap::insert"]
 pub = true
 sync = true
@@ -903,39 +1015,41 @@ mutates = true
 touches = []
 keeps = ["key", "value"]
 signature = "(ref collections::HashMap[$K, $V], key: $K, value: $V) -> $V?"
-doc = "Put a value in the map under this key, and hand back the one it replaced, or\nnothing where the key was not there.\n\nThe map keeps both the key and the value."
 
+# The keys, one at a time.
+#
+# A map has no order of its own, so a program that prints one says which order
+# it means.
 [fn."collections::HashMap::keys"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $K] sync sized"
-doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
+# How many pairs the map holds.
 [fn."collections::HashMap::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashMap[?, ?]) -> i64"
-doc = "How many pairs the map holds."
 
+# A map with nothing in it. It is written `HashMap()`.
 [fn."collections::HashMap::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> collections::HashMap[?, ?]"
-doc = "A map with nothing in it. It is written `HashMap()`."
 
 # **Whether a key is there**, without the value. Observed being asked for: a
 # checker's scope is a map of names, and *is this name declared* is the question
 # it asks most (0.0.232, the miniature compiler written to measure how far
 # self-hosting is).
+# Whether the map holds this key.
 [fn."collections::HashMap::contains_key"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashMap[$K, $V], key: ?) -> bool"
-doc = "Whether the map holds this key."
 
 # --- The other three collections, constructed (0.0.232) ----------------------
 #
@@ -951,13 +1065,16 @@ doc = "Whether the map holds this key."
 # (`contracts::keeps::lends`), so the checker lends a lookup's key itself, for
 # exactly these entries (`check::is_a_lookup`, 0.0.235): the `&` where the key's
 # type is known, and `index::AsKey` where it is not.
+# A set with nothing in it. It is written `collections::HashSet()`.
 [fn."collections::HashSet::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> collections::HashSet[?]"
-doc = "A set with nothing in it. It is written `collections::HashSet()`."
 
+# Put a value in the set, and say whether it was new.
+#
+# The set keeps the value.
 [fn."collections::HashSet::insert"]
 pub = true
 sync = true
@@ -965,37 +1082,39 @@ mutates = true
 touches = []
 keeps = ["value"]
 signature = "(ref collections::HashSet[$T], value: $T) -> bool"
-doc = "Put a value in the set, and say whether it was new.\n\nThe set keeps the value."
 
+# Whether the set holds this value.
 [fn."collections::HashSet::contains"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashSet[$T], value: ?) -> bool"
-doc = "Whether the set holds this value."
 
+# Take a value out of the set, and say whether it was there.
 [fn."collections::HashSet::remove"]
 pub = true
 sync = true
 mutates = true
 touches = []
 signature = "(ref collections::HashSet[$T], value: ?) -> bool"
-doc = "Take a value out of the set, and say whether it was there."
 
+# How many values the set holds.
 [fn."collections::HashSet::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashSet[?]) -> i64"
-doc = "How many values the set holds."
 
+# A set with nothing in it, kept in order. It is written `collections::BTreeSet()`.
 [fn."collections::BTreeSet::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> collections::BTreeSet[?]"
-doc = "A set with nothing in it, kept in order. It is written `collections::BTreeSet()`."
 
+# Put a value in the set, and say whether it was new.
+#
+# The set keeps the value.
 [fn."collections::BTreeSet::insert"]
 pub = true
 sync = true
@@ -1003,29 +1122,33 @@ mutates = true
 touches = []
 keeps = ["value"]
 signature = "(ref collections::BTreeSet[$T], value: $T) -> bool"
-doc = "Put a value in the set, and say whether it was new.\n\nThe set keeps the value."
 
+# Whether the set holds this value.
 [fn."collections::BTreeSet::contains"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::BTreeSet[$T], value: ?) -> bool"
-doc = "Whether the set holds this value."
 
+# How many values the set holds.
 [fn."collections::BTreeSet::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::BTreeSet[?]) -> i64"
-doc = "How many values the set holds."
 
+# A map with nothing in it, kept in the keys' order. It is written
+# `collections::BTreeMap()`.
 [fn."collections::BTreeMap::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> collections::BTreeMap[?, ?]"
-doc = "A map with nothing in it, kept in the keys' order. It is written\n`collections::BTreeMap()`."
 
+# Put a value in the map under this key, and hand back the one it replaced, or
+# nothing where the key was not there.
+#
+# The map keeps both the key and the value.
 [fn."collections::BTreeMap::insert"]
 pub = true
 sync = true
@@ -1033,60 +1156,65 @@ mutates = true
 touches = []
 keeps = ["key", "value"]
 signature = "(ref collections::BTreeMap[$K, $V], key: $K, value: $V) -> $V?"
-doc = "Put a value in the map under this key, and hand back the one it replaced, or\nnothing where the key was not there.\n\nThe map keeps both the key and the value."
 
+# What this key names, or nothing where the key is not there.
 [fn."collections::BTreeMap::get"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> $V?"
-doc = "What this key names, or nothing where the key is not there."
 
+# Whether the map holds this key.
 [fn."collections::BTreeMap::contains_key"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::BTreeMap[$K, $V], key: ?) -> bool"
-doc = "Whether the map holds this key."
 
+# How many pairs the map holds.
 [fn."collections::BTreeMap::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::BTreeMap[?, ?]) -> i64"
-doc = "How many pairs the map holds."
 
+# The values, one at a time, in the order the keys come out in.
 [fn."collections::HashMap::values"]
 pub = true
 sync = true
 touches = []
 signature = "(ref collections::HashMap[$K, $V]) -> Seq[ref $V] sync sized"
-doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
 # is what `from(f)` says (ADR-029). Sound because the lambda runs *during* the
 # call: its body belongs to the function that writes it, and its calls are
 # counted there. A method that **stored** its lambda could not say this.
+# Change the value that is already there, and leave an empty place alone.
+#
+# Whether this pauses is the lambda's answer and not its own.
 [fn."Entry::and_modify"]
 pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn(ref $V)) -> Entry[$V]"
-doc = "Change the value that is already there, and leave an empty place alone.\n\nWhether this pauses is the lambda's answer and not its own."
 
+# The value that is there, putting this one in first where there is none.
+#
+# The map **keeps** the value, so it is given away rather than lent.
 [fn."Entry::or_insert"]
 pub = true
 sync = true
 touches = []
 keeps = ["value"]
 signature = "(Entry[$V], value: ?) -> ref $V"
-doc = "The value that is there, putting this one in first where there is none.\n\nThe map **keeps** the value, so it is given away rather than lent."
 
 # Also runs its lambda, before it returns.
+# The same as `or_insert`, with the value built only where one is needed.
+#
+# Whether this pauses is the lambda's answer and not its own.
 [fn."Entry::or_insert_with"]
 pub = true
 sync = "from(f)"
 signature = "(Entry[$V], f: fn()) -> ref $V"
-doc = "The same as `or_insert`, with the value built only where one is needed.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
 # It is here rather than inferred for the reason the whole of this section is
@@ -1109,49 +1237,62 @@ doc = "The same as `or_insert`, with the value built only where one is needed.\n
 # it has a `deref` entry, with no further decision". This is that entry. `$T` is
 # bound by the receiver (ADR-031), which is why one line answers for every
 # `Shared` a program writes rather than for one instantiation.
+# What the handle holds.
+#
+# It is what makes a `ref Shared[Connection]` reach a parameter declared
+# `ref Connection`: a caller is not meant to notice the handle.
 [fn."Shared::deref"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Shared[$T]) -> ref $T"
-doc = "What the handle holds.\n\nIt is what makes a `ref Shared[Connection]` reach a parameter declared\n`ref Connection`: a caller is not meant to notice the handle."
 
 # `String()` reaches nothing and hands back an empty one. Four adjacent pairs in
 # `examples/` named it as the callee nobody had described, which is what asked
 # for the entry. **The key stays `String::new`** and the spelling is `String()`
 # (ADR-140 D2): the key is what the lowering writes, and the lowering is name
 # for name (ADR-011 D2).
+# Text with nothing in it. It is written `String()`.
 [fn."String::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> String"
-doc = "Text with nothing in it. It is written `String()`."
 
+# The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).
+#
+# They are **bytes** and not characters: a character outside ASCII is more than
+# one of them. A hash is over these.
 [fn."String::bytes"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[u8] sync ends"
-doc = "The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).\n\nThey are **bytes** and not characters: a character outside ASCII is more than\none of them. A hash is over these."
 
+# The characters, one at a time.
+#
+# They are **characters** and not bytes: a character outside ASCII is more than
+# one byte, and this walks one of it rather than several.
 [fn."String::chars"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[char] sync ends"
-doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
+# How many **bytes** the text is.
+#
+# Not how many characters: text is UTF-8, so a character outside ASCII is more
+# than one byte. `chars().count()` is the other question.
 [fn."String::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> i64"
-doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
+# Add one character to the end of the text.
 [fn."String::push"]
 pub = true
 sync = true
@@ -1159,29 +1300,28 @@ mutates = true
 touches = []
 keeps = ["c"]
 signature = "(ref String, c: char)"
-doc = "Add one character to the end of the text."
 
+# Add text to the end of this text.
 [fn."String::push_str"]
 pub = true
 sync = true
 mutates = true
 touches = []
 signature = "(ref String, text: ?)"
-doc = "Add text to the end of this text."
 
+# Whether the list holds nothing.
 [fn."Vec::is_empty"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Vec[?]) -> bool"
-doc = "Whether the list holds nothing."
 
+# How many elements the list holds.
 [fn."Vec::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Vec[?]) -> i64"
-doc = "How many elements the list holds."
 
 # **An array knows its own length, and nothing said so.** `Array[T, N]` carries
 # its length in its type (ADR-152), and below it is `[T; N]`, which has `.len()`
@@ -1199,85 +1339,100 @@ doc = "How many elements the list holds."
 # `Fixed` is keyed **with no module in front**, which is `Overtaken`'s and
 # `ParseError`'s shape: a program writes it in a declaration and never reaches
 # for a path to it.
+# A map whose keys were known while the program was built.
+#
+# Written as a list of pairs — `comptime ROUTES: Fixed[ref String, i64] = [("get", 1)]` —
+# and crossed as static tables. There is nothing to build one from at run time:
+# what makes it fixed is that the key set closed at the build.
 [type."Fixed"]
 pub = true
 crosses = true
-doc = "A map whose keys were known while the program was built.\n\nWritten as a list of pairs — `comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1)]` —\nand crossed as static tables. There is nothing to build one from at run time:\nwhat makes it fixed is that the key set closed at the build."
 
+# What this key names, or nothing where the key is not there.
+#
+# A key is data and may be absent, which is why this hands back a `$V?` - the
+# same shape `collections::HashMap::get` has, and the same `?? 0` after it.
 [fn."Fixed::get"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Fixed[$K, $V], key: ?) -> $V?"
-doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?` - the\nsame shape `collections::HashMap::get` has, and the same `?? 0` after it."
 
+# Whether this key is one of the table's.
 [fn."Fixed::has"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Fixed[$K, $V], key: ?) -> bool"
-doc = "Whether this key is one of the table's."
 
+# How many pairs the table holds.
 [fn."Fixed::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Fixed[$K, $V]) -> i64"
-doc = "How many pairs the table holds."
 
+# Whether the table holds nothing.
 [fn."Fixed::is_empty"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Fixed[$K, $V]) -> bool"
-doc = "Whether the table holds nothing."
 
+# How many elements the array holds. It is the length in its type.
 [fn."Array::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Array[?, ?]) -> i64"
-doc = "How many elements the array holds. It is the length in its type."
 
+# Whether the array holds nothing.
 [fn."Array::is_empty"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Array[?, ?]) -> bool"
-doc = "Whether the array holds nothing."
 
+# A list with nothing in it. It is written `Vec()`.
 [fn."Vec::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> Vec[?]"
-doc = "A list with nothing in it. It is written `Vec()`."
 
 # **`drain` takes the elements away** (ADR-094 D4). A `for` lends, so the body
 # that hands an element to something which keeps it says so here - and below it
 # is `into_iter`, because what D4 writes is *removing a name from scope*.
 # A copy of the list ([ADR-215](../../docs/specification/adr/adr-215.md) D4):
 # written `to_owned` below, which copies a view of a list as well as a list.
+# A copy of the list, owned by whoever asked for it.
 [fn."Vec::clone"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Vec[$T]) -> Vec[$T]"
-doc = "A copy of the list, owned by whoever asked for it."
 
+# The elements, one at a time, **taken out** of the list.
+#
+# What a `for` over this binds is owned rather than lent, so an element may be
+# handed to something that keeps it - and the list goes with them, because
+# that is what taking them out means.
 [fn."Vec::drain"]
 pub = true
 sync = true
 touches = []
 signature = "(Vec[$T]) -> Seq[$T] sync ends sized"
-doc = "The elements, one at a time, **taken out** of the list.\n\nWhat a `for` over this binds is owned rather than lent, so an element may be\nhanded to something that keeps it - and the list goes with them, because\nthat is what taking them out means."
 
+# The pairs, one at a time, **taken out** of the map.
+#
+# What a `for` over this binds is owned rather than lent, so a key or a value
+# may be handed to something that keeps it - and the map goes with them,
+# because that is what taking them out means.
 [fn."collections::HashMap::drain"]
 pub = true
 sync = true
 touches = []
 signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync sized"
-doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over this binds is owned rather than lent, so a key or a value\nmay be handed to something that keeps it - and the map goes with them,\nbecause that is what taking them out means."
 
 # --- What is produced step by step, and what walks it ------------------------
 #
@@ -1309,14 +1464,20 @@ doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over 
 # walked from the back only where the length of what went in is known, which is
 # what the language below asks of a `take`, a `zip`, a `skip` and a `step_by`.
 
+# Everything the sequence produces, as a list.
+#
+# The walk is what consumes it, so the sequence is not there afterwards.
 [fn."Seq::collect"]
 pub = true
 sync = true
 touches = []
 # The walk is what consumes it (D2): the sequence goes in by value.
 signature = "(Seq[$T]) -> Vec[$T]"
-doc = "Everything the sequence produces, as a list.\n\nThe walk is what consumes it, so the sequence is not there afterwards."
 
+# How many elements the sequence produces.
+#
+# It has to walk the whole of it to answer, which is what separates this from a
+# list's `len()`.
 [fn."Seq::count"]
 pub = true
 sync = true
@@ -1324,22 +1485,24 @@ touches = []
 # `i64`, which is what `Vec::len` says for the same reason: this language's
 # integer is not Rust's `usize`, and the emitter writes the cast.
 signature = "(Seq[$T]) -> i64"
-doc = "How many elements the sequence produces.\n\nIt has to walk the whole of it to answer, which is what separates this from a\nlist's `len()`."
 
+# The element at a position, or nothing where the sequence is shorter than that.
+#
+# It walks up to that position to answer.
 [fn."Seq::nth"]
 pub = true
 sync = true
 touches = []
 # **There may not be one**, which is `Args::nth`'s shape one type over.
 signature = "(Seq[$T], at: i64) -> $T?"
-doc = "The element at a position, or nothing where the sequence is shorter than that.\n\nIt walks up to that position to answer."
 
+# Everything the sequence produces, written one after another with this text
+# between them.
 [fn."Seq::join"]
 pub = true
 sync = true
 touches = []
 signature = "(Seq[$T], sep: ref String) -> String"
-doc = "Everything the sequence produces, written one after another with this text\nbetween them."
 
 # `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
 # lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
@@ -1347,13 +1510,20 @@ doc = "Everything the sequence produces, written one after another with this tex
 # down: a step of this may pause exactly when the lambda may, and the type
 # language has no way to say *whatever the lambda says*. What its elements
 # **are** it does say since ADR-212 D5: `$U` is what the lambda comes to.
+# Each element through a function.
+#
+# The elements are produced as they are asked for, so nothing is walked until
+# something walks the result. Whether a step pauses is the lambda's answer.
 [fn."Seq::map"]
 pub = true
 sync = "from(f)"
 touches = []
 signature = "(Seq[$T], f: fn($T) -> $U) -> Seq[$U] ends sized"
-doc = "Each element through a function.\n\nThe elements are produced as they are asked for, so nothing is walked until\nsomething walks the result. Whether a step pauses is the lambda's answer."
 
+# Only the elements the function says yes to.
+#
+# The element type survives, so what comes out holds what went in. Whether a
+# step pauses is the lambda's answer.
 [fn."Seq::filter"]
 pub = true
 sync = "from(f)"
@@ -1361,7 +1531,6 @@ touches = []
 # The element type survives a filter, which is the one place a `Seq` entry says
 # more than `?`.
 signature = "(Seq[$T], f: fn($T)) -> Seq[$T] ends"
-doc = "Only the elements the function says yes to.\n\nThe element type survives, so what comes out holds what went in. Whether a\nstep pauses is the lambda's answer."
 
 # --- The rest of a pipeline ([ADR-212](../../docs/specification/adr/adr-212.md) D5)
 #
@@ -1373,89 +1542,112 @@ doc = "Only the elements the function says yes to.\n\nThe element type survives,
 # **Each element handed to a lambda, and nothing handed back**
 # ([ADR-235](../../docs/specification/adr/adr-235.md) D1): the walk that exists
 # for what the lambda does. `from(f)` for `map`'s reason.
+# Each element through a function, for what the function does.
+#
+# It walks the whole sequence, one element at a time.
 [fn."Seq::for_each"]
 pub = true
 sync = "from(f)"
 touches = []
 signature = "(Seq[$T], f: fn($T))"
-doc = "Each element through a function, for what the function does.\n\nIt walks the whole sequence, one element at a time."
 
+# The same elements, from the last to the first.
+#
+# Nothing is collected on the way: the sequence is walked from its back end,
+# which is why it has to have one - a range, a list's `iter()`, `chars()`.
 [fn."Seq::rev"]
 pub = true
 sync = true
 touches = []
 # `ends` on the receiver is the demand: `io::lines().rev()` is `NK2703`.
 signature = "(Seq[$T] ends) -> Seq[$T] ends sized"
-doc = "The same elements, from the last to the first.\n\nNothing is collected on the way: the sequence is walked from its back end,\nwhich is why it has to have one - a range, a list's `iter()`, `chars()`."
 
+# Pairs, one element of each, until the shorter of the two ends.
 [fn."Seq::zip"]
 pub = true
 sync = true
 touches = []
 ends_by_length = true
 signature = "(Seq[$T], other: Seq[$U]) -> Seq[($T, $U)] ends sized"
-doc = "Pairs, one element of each, until the shorter of the two ends."
 
+# The first `n` elements, or all of them where there are fewer.
 [fn."Seq::take"]
 pub = true
 sync = true
 touches = []
 ends_by_length = true
 signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
-doc = "The first `n` elements, or all of them where there are fewer."
 
+# Everything after the first `n` elements.
 [fn."Seq::skip"]
 pub = true
 sync = true
 touches = []
 ends_by_length = true
 signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
-doc = "Everything after the first `n` elements."
 
+# The first element, and then every `step`-th after it.
+#
+# A step of `0` aborts, since it would never move.
 [fn."Seq::step_by"]
 pub = true
 sync = true
 touches = []
 ends_by_length = true
 signature = "(Seq[$T], step: i64) -> Seq[$T] ends sized"
-doc = "The first element, and then every `step`-th after it.\n\nA step of `0` aborts, since it would never move."
 
 # **The list's elements on every core at once** (Part II 12.6,
 # [ADR-235](../../docs/specification/adr/adr-235.md) D1). A `Par` has `Seq`'s
 # surface; a lambda handed to it may not pause (`NK2209`) and may not change a
 # name outside it (`NK2107`). At `user_parallelism = no` it is the list's `iter`.
+# The list's elements, walked on every core at once.
+#
+# What `map`, `filter` and `for_each` are handed runs in parallel, so it may not
+# pause and may not change a name outside it. The order of a `collect` is the
+# list's.
 [fn."Vec::par_iter"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Vec[$T]) -> Par[ref $T] sync ends sized"
-doc = "The list's elements, walked on every core at once.\n\nWhat `map`, `filter` and `for_each` are handed runs in parallel, so it may not\npause and may not change a name outside it. The order of a `collect` is the\nlist's."
 
+# The elements, one at a time, **lent**: the list stays where it is.
+#
+# This is where a pipeline over a list starts - `xs.iter().map(…)` - and it
+# can be walked from either end.
 [fn."Vec::iter"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Vec[$T]) -> Seq[ref $T] sync ends sized"
-doc = "The elements, one at a time, **lent**: the list stays where it is.\n\nThis is where a pipeline over a list starts - `xs.iter().map(…)` - and it\ncan be walked from either end."
 
+# The list in runs of `n` elements, the last one shorter where it does not
+# divide evenly.
+#
+# Each run is a view of the list, not a copy.
 [fn."Vec::chunks"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
-doc = "The list in runs of `n` elements, the last one shorter where it does not\ndivide evenly.\n\nEach run is a view of the list, not a copy."
 
+# Every run of `n` elements in a row, each one starting one further on.
+#
+# Each run is a view of the list, not a copy.
 [fn."Vec::windows"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
-doc = "Every run of `n` elements in a row, each one starting one further on.\n\nEach run is a view of the list, not a copy."
 
+# Add a value to the end of the list.
+#
+# The list **keeps** the value, so what is handed over is given away rather
+# than lent.
 [fn."Vec::push"]
 pub = true
 sync = true
@@ -1463,33 +1655,36 @@ mutates = true
 touches = []
 keeps = ["value"]
 signature = "(ref Vec[$T], value: $T)"
-doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
 # **Whether a list holds a value** (0.0.246): a lookup, lent as a set's is.
 # Nothing described it, so `seen.contains(n)` lowered with the value handed
 # over and `rustc` asked for a reference.
+# Whether the list holds this value anywhere.
 [fn."Vec::contains"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Vec[$T], value: ?) -> bool"
-doc = "Whether the list holds this value anywhere."
 
 # **Taking the last element off** (0.0.245). Nothing described it, so `xs.pop()`
 # was a call no ledger knew: every function that popped was taken to pause and
 # lowered `async`, and inside a generic type's own `pop` the call was read as
 # that method calling itself.
+# Take the last element off the list and hand it back, or `null` where the
+# list is empty.
 [fn."Vec::pop"]
 pub = true
 sync = true
 mutates = true
 touches = []
 signature = "(ref Vec[$T]) -> $T?"
-doc = "Take the last element off the list and hand it back, or `null` where the\nlist is empty."
 
 # **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
 # program wrote `a + b`. It was reached before only because a method nothing
 # describes fails open.
+# Add every element of another list to the end of this one, in order.
+#
+# The list **keeps** them, so the other list is given away rather than lent.
 [fn."Vec::extend"]
 pub = true
 sync = true
@@ -1497,15 +1692,17 @@ mutates = true
 touches = []
 keeps = ["items"]
 signature = "(ref Vec[$T], items: Vec[$T])"
-doc = "Add every element of another list to the end of this one, in order.\n\nThe list **keeps** them, so the other list is given away rather than lent."
 
+# Put the elements in their natural order, in place.
+#
+# It is **stable**: elements the order does not separate keep the order they
+# had, which is what lets two passes express a compound order.
 [fn."Vec::sort"]
 pub = true
 sync = true
 mutates = true
 touches = []
 signature = "(ref Vec[?])"
-doc = "Put the elements in their natural order, in place.\n\nIt is **stable**: elements the order does not separate keep the order they\nhad, which is what lets two passes express a compound order."
 
 # Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
 # Written down so the checker can resolve them: without an entry a call is "a
@@ -1522,14 +1719,21 @@ doc = "Put the elements in their natural order, in place.\n\nIt is **stable**: e
 # `get` and `set` carry no `sync` line and need none, for a stronger reason than
 # the other two have: while the lock is open in either, no code of the user's
 # runs at all (ADR-039 D10).
+# A copy of what the lock holds.
+#
+# What comes back is **stamped**: it carries where it came from, so a `set`
+# that means *only if nothing changed since* can say which reading it means.
 [fn."Locked::get"]
 pub = true
 touches = ["lock read"]
 sync = true
 locks = true
 signature = "(ref Locked[$T]) -> Seen[$T]"
-doc = "A copy of what the lock holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
+# Put a value in, whatever is there now.
+#
+# The lock **keeps** the value. Where the new value is worked out from the old
+# one, `update` is the door that does not lose a change made in between.
 [fn."Locked::set"]
 pub = true
 touches = ["lock write"]
@@ -1537,7 +1741,6 @@ sync = true
 keeps = ["value"]
 locks = true
 signature = "(ref Locked[$T], value: $T)"
-doc = "Put a value in, whatever is there now.\n\nThe lock **keeps** the value. Where the new value is worked out from the old\none, `update` is the door that does not lose a change made in between."
 
 
 # **The one door for a stamped value** (ADR-111 D5). `kasse.set(neu; after:
@@ -1556,6 +1759,11 @@ doc = "Put a value in, whatever is there now.\n\nThe lock **keeps** the value. W
 # out of the caller, and reading what was seen after asking whether it still
 # holds is an ordinary thing to write. `keeps = ["value"]` says the same thing
 # from the other side.
+# Put a value in **only if** what the lock holds is still what was seen.
+#
+# It is written `lock.set(value; after: seen)`, and it fails with `Overtaken`
+# where something changed in between - which is the answer a read-modify-write
+# through two doors needs.
 [fn."Locked::set(after)"]
 pub = true
 touches = ["lock write"]
@@ -1564,22 +1772,29 @@ throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
 signature = "(ref Locked[$T], value: $T, seen: ref $T)"
-doc = "Put a value in **only if** what the lock holds is still what was seen.\n\nIt is written `lock.set(value; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between - which is the answer a read-modify-write\nthrough two doors needs."
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
 # door that answers a question about a large value without copying it.
+# Read what the lock holds, in place, without copying it.
+#
+# The block may not change it. Whether the call pauses is the block's answer
+# and not the door's; waiting to open the lock is not pausing.
 [fn."Locked::access"]
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
 locks = true
 signature = "(ref Locked[$T], f: fn(ref $T)) -> ?"
-doc = "Read what the lock holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's; waiting to open the lock is not pausing."
 
 # **Where locked data changes** (D2). The old value goes in by value and the new
 # one comes back, so no handle into the inside ever exists - and `old` is an
 # ordinary immutable parameter, which is why no lambda in this language is handed
 # something it may change.
+# Change what the lock holds: the old value goes in and the new one comes back.
+#
+# No handle into the inside ever exists, which is what makes this the door for
+# a change that depends on what is there. Whether the call pauses is the
+# block's answer.
 [fn."Locked::update"]
 pub = true
 touches = ["lock write"]
@@ -1589,7 +1804,6 @@ sync = "from(f)"
 # for here is the arity and the `sync` column.
 locks = true
 signature = "(ref Locked[$T], f: fn($T))"
-doc = "Change what the lock holds: the old value goes in and the new one comes back.\n\nNo handle into the inside ever exists, which is what makes this the door for\na change that depends on what is there. Whether the call pauses is the\nblock's answer."
 
 # `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
 # several parts own at once and any of them may change. **It is one name here and
@@ -1606,14 +1820,21 @@ doc = "Change what the lock holds: the old value goes in and the new one comes b
 # and a constructor has none - the type argument would have to come from what is
 # handed in. So `SharedMut(0)` is the compiler's to type, the way `T?`'s `Some(…)`
 # is (ADR-064 D2).
+# A copy of what this value holds.
+#
+# What comes back is **stamped**: it carries where it came from, so a `set`
+# that means *only if nothing changed since* can say which reading it means.
 [fn."SharedMut::get"]
 pub = true
 touches = ["lock read"]
 sync = true
 locks = true
 signature = "(ref SharedMut[$T]) -> Seen[$T]"
-doc = "A copy of what this value holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
+# Put a value in, whatever is there now.
+#
+# It **keeps** the value. Where the new value is worked out from the old one,
+# `update` is the door that does not lose a change made in between.
 [fn."SharedMut::set"]
 pub = true
 touches = ["lock write"]
@@ -1621,8 +1842,11 @@ sync = true
 keeps = ["value"]
 locks = true
 signature = "(ref SharedMut[$T], value: $T)"
-doc = "Put a value in, whatever is there now.\n\nIt **keeps** the value. Where the new value is worked out from the old one,\n`update` is the door that does not lose a change made in between."
 
+# Put a value in **only if** what is held is still what was seen.
+#
+# It is written `value.set(next; after: seen)`, and it fails with `Overtaken`
+# where something changed in between.
 [fn."SharedMut::set(after)"]
 pub = true
 touches = ["lock write"]
@@ -1631,22 +1855,26 @@ throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
 signature = "(ref SharedMut[$T], value: $T, seen: ref $T)"
-doc = "Put a value in **only if** what is held is still what was seen.\n\nIt is written `value.set(next; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between."
 
+# Read what this value holds, in place, without copying it.
+#
+# The block may not change it. Whether the call pauses is the block's answer
+# and not the door's.
 [fn."SharedMut::access"]
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
 locks = true
 signature = "(ref SharedMut[$T], f: fn(ref $T)) -> ?"
-doc = "Read what this value holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's."
 
+# Change what this value holds: the old one goes in and the new one comes back.
+#
+# Whether the call pauses is the block's answer.
 [fn."SharedMut::update"]
 pub = true
 touches = ["lock write"]
 sync = "from(f)"
 signature = "(ref SharedMut[$T], f: fn($T))"
-doc = "Change what this value holds: the old one goes in and the new one comes back.\n\nWhether the call pauses is the block's answer."
 
 # **The two doors over several locks** (Part II 12.3, ADR-065). They take the
 # locks and then the block, and the acquisition order is by address so that two
@@ -1659,106 +1887,131 @@ doc = "Change what this value holds: the old one goes in and the new one comes b
 # What the ledger *can* say is the `sync` column, and that is the half a caller
 # needs: an acquisition adds no pausing of its own, so the block decides - the
 # same shape `access` has, for the same reason (ADR-029 D3).
+# Read several locked values at once, in place.
+#
+# The locks are taken in one order however they are written, so two tasks
+# naming the same two the other way round still take them alike and neither
+# waits forever. The block may not change what it is shown.
 [fn."access_all"]
 pub = true
 touches = ["lock read"]
 sync = "from(f)"
-doc = "Read several locked values at once, in place.\n\nThe locks are taken in one order however they are written, so two tasks\nnaming the same two the other way round still take them alike and neither\nwaits forever. The block may not change what it is shown."
 
+# Change several locked values at once.
+#
+# The locks are taken in one order however they are written, so two tasks
+# naming the same two the other way round still take them alike and neither
+# waits forever.
 [fn."update_all"]
 pub = true
 touches = ["lock write"]
 sync = "from(f)"
-doc = "Change several locked values at once.\n\nThe locks are taken in one order however they are written, so two tasks\nnaming the same two the other way round still take them alike and neither\nwaits forever."
 
+# Put the elements in the order of what the function returns, in place.
+#
+# It is **stable**, so a sort by one key after a sort by another leaves the
+# first as the tie-breaker.
 [fn."Vec::sort_by_key"]
 pub = true
 sync = "from(f)"
 mutates = true
 signature = "(ref Vec[$T], f: fn(ref $T)) -> ?"
-doc = "Put the elements in the order of what the function returns, in place.\n\nIt is **stable**, so a sort by one key after a sort by another leaves the\nfirst as the tie-breaker."
 
+# The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).
+#
+# They are **bytes** and not characters: a character outside ASCII is more than
+# one of them. A hash is over these.
 [fn."str::bytes"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[u8] sync ends"
-doc = "The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).\n\nThey are **bytes** and not characters: a character outside ASCII is more than\none of them. A hash is over these."
 
+# The characters, one at a time.
+#
+# They are **characters** and not bytes: a character outside ASCII is more than
+# one byte, and this walks one of it rather than several.
 [fn."str::chars"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[char] sync ends"
-doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
+# How many **bytes** the text is.
+#
+# Not how many characters: text is UTF-8, so a character outside ASCII is more
+# than one byte. `chars().count()` is the other question.
 [fn."str::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> i64"
-doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
 # (ADR-054 D2). The conversion is emitted at the call and a negative count
 # aborts saying so - the parameter direction of ADR-048 D1, which that record
 # left open and named this entry as the one site it had.
+# The text written `n` times, one after another.
+#
+# `n` is an ordinary `i64`, and a negative one aborts with *a count cannot be
+# negative* rather than with anything about the language below.
 [fn."str::repeat"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String, n: i64) -> String"
-doc = "The text written `n` times, one after another.\n\n`n` is an ordinary `i64`, and a negative one aborts with *a count cannot be\nnegative* rather than with anything about the language below."
 
 # **Asked for by `tools/template.nika`** (0.0.252), the HTML scan the
 # compiler's template DSL runs: a blank ends an unquoted attribute, and an
 # attribute's name is compared without its case.
+# Whether the character is a blank: a space, a tab, a line end, or any other
+# character Unicode counts as white space.
 [fn."char::is_whitespace"]
 pub = true
 sync = true
 touches = []
 signature = "(char) -> bool"
-doc = "Whether the character is a blank: a space, a tab, a line end, or any other\ncharacter Unicode counts as white space."
 
+# The character in lower case where it is an ASCII letter, and itself
+# otherwise.
 [fn."char::to_ascii_lowercase"]
 pub = true
 sync = true
 touches = []
 signature = "(char) -> char"
-doc = "The character in lower case where it is an ASCII letter, and itself\notherwise."
 
+# Whether the text begins with this.
 [fn."str::starts_with"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String, prefix: ?) -> bool"
-doc = "Whether the text begins with this."
 
+# Whether the text ends with this.
 [fn."str::ends_with"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String, suffix: ?) -> bool"
-doc = "Whether the text ends with this."
 
 # **Found by the first test to claim something about a page** (ADR-247): an
 # `assert` may only call what the ledger says changes nothing, and without this
 # entry `page.contains("…")` was a method nothing describes.
+# Whether this appears anywhere in the text.
 [fn."str::contains"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String, part: ?) -> bool"
-doc = "Whether this appears anywhere in the text."
 
+# The same text, owned rather than borrowed.
 [fn."str::to_string"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "The same text, owned rather than borrowed."
 
 # Written down because the corpus asks for it - `line.to_uppercase()` in
 # `examples/k-nucleotide/src/main.nika` - and because it is sayable: a case fold hands
@@ -1767,33 +2020,42 @@ doc = "The same text, owned rather than borrowed."
 # still with: every real `std` name is a candidate for being written, so a test
 # resting on one being absent breaks the day somebody writes it. That test rests
 # on ADR-024 D4's erasure now, which is an absence the language **decides**.
+# The same text with every character in upper case, as owned text.
+#
+# It follows Unicode rather than ASCII, so a character whose upper case is more
+# than one character becomes all of them.
 [fn."str::to_uppercase"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "The same text with every character in upper case, as owned text.\n\nIt follows Unicode rather than ASCII, so a character whose upper case is more\nthan one character becomes all of them."
 
+# The same text with every character in lower case, as owned text.
+#
+# It follows Unicode rather than ASCII.
 [fn."str::to_lowercase"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "The same text with every character in lower case, as owned text.\n\nIt follows Unicode rather than ASCII."
 
+# The same text with every character in upper case, as new text.
+#
+# It follows Unicode rather than ASCII.
 [fn."String::to_uppercase"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "The same text with every character in upper case, as new text.\n\nIt follows Unicode rather than ASCII."
 
+# The same text with every character in lower case, as new text.
+#
+# It follows Unicode rather than ASCII.
 [fn."String::to_lowercase"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "The same text with every character in lower case, as new text.\n\nIt follows Unicode rather than ASCII."
 
 # **The way out `NK1131` names, so it has to be described here**
 # ([ADR-083](../../docs/specification/adr/adr-083.md)). A field of a borrowed
@@ -1804,72 +2066,83 @@ doc = "The same text with every character in lower case, as new text.\n\nIt foll
 #
 # Measured the hard way: the trait tests' own fixture was the first program to
 # take the advice.
+# A copy of the text, owned by whoever asked for it.
+#
+# It is the way out of handing a field of a borrowed subject away by value: the
+# copy is the caller's and the field stays where it is.
 [fn."String::clone"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "A copy of the text, owned by whoever asked for it.\n\nIt is the way out of handing a field of a borrowed subject away by value: the\ncopy is the caller's and the field stays where it is."
 
 # The same for a view, which is what a `ref String` field or a literal is cloned from.
+# A copy of the text, owned by whoever asked for it.
+#
+# The same way out one type over: a view is copied into text of its own.
 [fn."str::clone"]
 pub = true
 sync = true
 touches = []
 signature = "(ref String) -> String"
-doc = "A copy of the text, owned by whoever asked for it.\n\nThe same way out one type over: a view is copied into text of its own."
 
+# The same text with the white space at both ends left off.
+#
+# What comes back is a **view** into the text it was given, so it costs no
+# allocation and lives as long as that text does.
 [fn."str::trim"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> ref String"
-doc = "The same text with the white space at both ends left off.\n\nWhat comes back is a **view** into the text it was given, so it costs no\nallocation and lives as long as that text does."
 
 # **What cuts text into views says so** ([ADR-225](../../docs/specification/adr/adr-225.md)
 # D1). Each hands back views into the text it is called on, which is what lets
 # the checker ask whether one is kept where text of its own is wanted. A
 # `String` receiver finds these as well: text of its own lends itself as a view.
+# The same text with the white space at the start left off, as a view into it.
 [fn."str::trim_start"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> ref String"
-doc = "The same text with the white space at the start left off, as a view into it."
 
+# The same text with the white space at the end left off, as a view into it.
 [fn."str::trim_end"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> ref String"
-doc = "The same text with the white space at the end left off, as a view into it."
 
+# The lines of the text, each a view into it, without its line ending.
+#
+# Nothing is copied: a line lives as long as the text does.
 [fn."str::lines"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[ref String] sync ends"
-doc = "The lines of the text, each a view into it, without its line ending.\n\nNothing is copied: a line lives as long as the text does."
 
+# The pieces of the text between each `sep`, each a view into it.
 [fn."str::split"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String, sep: ?) -> Seq[ref String] sync ends"
-doc = "The pieces of the text between each `sep`, each a view into it."
 
+# The words of the text - the pieces between runs of white space - each a view
+# into it.
 [fn."str::split_whitespace"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> Seq[ref String] sync ends"
-doc = "The words of the text - the pieces between runs of white space - each a view\ninto it."
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
@@ -1877,20 +2150,29 @@ doc = "The words of the text - the pieces between runs of white space - each a v
 # against nothing (ADR-033 D4). It is written here because this entry is checked
 # against the `.nika` source that produces it, and `touch::infer` reads that body
 # and answers the same ([ADR-067](adr-067) D2) - the two must agree.
+# The value of a decimal digit: `'7'` is `7`.
+#
+# A character that is not a digit is not a question this answers: it hands
+# back whatever the subtraction comes to.
 [fn."text::digit_value"]
 pub = true
 sync = true
 touches = []
 signature = "(c: char) -> i32"
-doc = "The value of a decimal digit: `'7'` is `7`.\n\nA character that is not a digit is not a question this answers: it hands\nback whatever the subtraction comes to."
 
+# The whole number this text writes, or nothing where it writes none.
+#
+# An optional `-` or `+`, then decimal digits, and nothing else: no space, no
+# `_`, no point. A number too large for an `i64` is nothing too, because the
+# text does not write an `i64`. `text::parse_i64(s) ?? 0` is the usual way to
+# read one; a program that has to say *why* a text is not a number looks at
+# it with a grammar, where `dec[i64](digit+)` reports where it went wrong.
 [fn."text::parse_i64"]
 pub = true
 sync = true
 touches = []
 views = ["text: borrowed"]
 signature = "(text: ref String) -> i64?"
-doc = "The whole number this text writes, or nothing where it writes none.\n\nAn optional `-` or `+`, then decimal digits, and nothing else: no space, no\n`_`, no point. A number too large for an `i64` is nothing too, because the\ntext does not write an `i64`. `text::parse_i64(s) ?? 0` is the usual way to\nread one; a program that has to say *why* a text is not a number looks at\nit with a grammar, where `dec[i64](digit+)` reports where it went wrong."
 
 # What the program was started with, and the one type here that says it **may
 # cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so
@@ -1907,9 +2189,14 @@ doc = "The whole number this text writes, or nothing where it writes none.\n\nAn
 # saying: what the address points at is the library's, and whether that library
 # is happy to have it read from another thread is not a question this file can
 # answer for it.
+# Text a C library owns: an address, and a zero byte somewhere after it.
+#
+# It is what a declaration writes where C hands back a `char *`. Nothing here
+# frees it - the memory is the library's, not the program's - and `to_string`
+# is how a program gets text of its own out of it. Where the library may find
+# nothing, the declaration says `-> CStr?` and the program writes `??`.
 [type."foreign::CStr"]
 pub = true
-doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\nIt is what a declaration writes where C hands back a `char *`. Nothing here\nfrees it - the memory is the library's, not the program's - and `to_string`\nis how a program gets text of its own out of it. Where the library may find\nnothing, the declaration says `-> CStr?` and the program writes `??`."
 
 # The one function D4 asks for, and the reason it exists: the walk to the zero
 # byte is the thing a program must not have to write, so it is written once,
@@ -1920,6 +2207,13 @@ doc = "Text a C library owns: an address, and a zero byte somewhere after it.\n\
 # the second until [ADR-155](../../docs/specification/adr/adr-155.md) D4 made it
 # a **value**: a declaration says `-> CStr?` where the library may find nothing,
 # and `getenv` finding nothing is an ordinary Tuesday rather than an error.
+# A copy of the text, owned by whoever asked for it.
+#
+# It fails in **one** way: the bytes may not be UTF-8, which text in this
+# language is - the same failure `fs::read_to_string` has. *There is no text*
+# is a value rather than a failure, because a declaration says `-> CStr?` where
+# the library may find nothing. The `unsafe` walk to the zero byte is here so
+# that no program has to write one.
 [fn."foreign::CStr::to_string"]
 pub = true
 sync = true
@@ -1928,12 +2222,13 @@ touches = []
 # Since ADR-158 D1 that failure has a name, so this says it in the column too.
 throws = ["io::IoError"]
 signature = "(foreign::CStr) -> String"
-doc = "A copy of the text, owned by whoever asked for it.\n\nIt fails in **one** way: the bytes may not be UTF-8, which text in this\nlanguage is - the same failure `fs::read_to_string` has. *There is no text*\nis a value rather than a failure, because a declaration says `-> CStr?` where\nthe library may find nothing. The `unsafe` walk to the zero byte is here so\nthat no program has to write one."
 
+# The arguments the program was started with.
+#
+# It may cross to another thread, so a task may be handed one.
 [type."cli::Args"]
 pub = true
 crosses = true
-doc = "The arguments the program was started with.\n\nIt may cross to another thread, so a task may be handed one."
 
 # **Where a path may go** ([ADR-108](../../docs/specification/adr/adr-108.md) D2),
 # and the one type in this file whose whole job is to be a **required argument**.
@@ -1944,12 +2239,28 @@ doc = "The arguments the program was started with.\n\nIt may cross to another th
 # **Two variants and no shorthand.** Not a bare `String` where a `Root` is wanted,
 # which would be a conversion rule this language does not have, and not a second
 # spelling beside the variant.
+# Where a path may go.
+#
+# `fs::Root::Dir(store)` resolves the name under that directory and throws
+# `io::IoError::Outside` where it would leave it — resolved and compared
+# component by component, so `/data` is not a prefix of `/data2` and a symlink out
+# is the same answer as a `..` out. `fs::Root::Anywhere` performs no check: it does
+# not say *checked*, it says *I answer for this*, and `nikaia --explain --trust`
+# lists every site that writes it.
+#
+# Every path-taking entry takes one, right after the path, with no default and no
+# exception for a literal — a relative name is resolved against the working
+# directory, and whoever controls that directory has changed what the name means
+# without changing a line of the program.
 [type."fs::Root"]
 pub = true
 crosses = true
 compares = true
-doc = "Where a path may go.\n\n`fs::Root::Dir(store)` resolves the name under that directory and throws\n`io::IoError::Outside` where it would leave it — resolved and compared\ncomponent by component, so `/data` is not a prefix of `/data2` and a symlink out\nis the same answer as a `..` out. `fs::Root::Anywhere` performs no check: it does\nnot say *checked*, it says *I answer for this*, and `nikaia --explain --trust`\nlists every site that writes it.\n\nEvery path-taking entry takes one, right after the path, with no default and no\nexception for a literal — a relative name is resolved against the working\ndirectory, and whoever controls that directory has changed what the name means\nwithout changing a line of the program."
 
+# A file held as memory: the pages arrive as they are touched rather than being
+# read up front, which is what makes a file larger than memory workable.
+#
+# It reads as text through the ordinary `ref String` surface.
 [type."fs::Mapped"]
 pub = true
 # **Reading it is a page fault** (ADR-169 D1): the pages arrive as they are
@@ -1957,11 +2268,19 @@ pub = true
 # `touches` on. It neither suspends nor takes a lock, which is why neither
 # `NK2202` nor `NK2203` has anything to say about it and `NK2201` does.
 touches = ["file read"]
-doc = "A file held as memory: the pages arrive as they are touched rather than being\nread up front, which is what makes a file larger than memory workable.\n\nIt reads as text through the ordinary `ref String` surface."
 
 # A step of this one can **fail**, and that is a fact a caller cannot get from
 # anywhere else: a `for` over it is a place the enclosing function can fail
 # from, and the compiler makes that function say `throws` (ADR-025 D1, `NK2701`).
+# What a `std` call fails with.
+#
+# Part I 7.1's error type, for the library: `NotFound(what)` where the thing is
+# not there, `PermissionDenied(what)` where this program may not have it,
+# `NotText(what)` where the bytes are not UTF-8, `Outside(what)` where a name
+# would leave the `fs::Root` it was given, and `Other(what)` for
+# everything else the operating system said. A `catch` that only passes the
+# failure on names nothing; one that takes it apart writes `use std::io` and
+# `io::IoError::NotFound(p)`.
 [type."io::IoError"]
 pub = true
 crosses = true
@@ -1984,7 +2303,6 @@ compares = true
 # [ADR-158](../../docs/specification/adr/adr-158.md) D1's *the variant is the
 # kind and it carries the thing*.
 variants = ["NotFound(String)", "PermissionDenied(String)", "NotText(String)", "Outside(String)", "Other(String)"]
-doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, `Outside(what)` where a name\nwould leave the `fs::Root` it was given, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
 
 # **What a parse fails with** ([ADR-173](../../docs/specification/adr/adr-173.md)
 # D1), and the end of the last `"?"` in this tree. A `dsl` entry rule's ledger
@@ -1999,15 +2317,25 @@ doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library
 # whole diagnostic - the headline, the line with a caret, what else was possible
 # - and it is what a program already printed. Fields a program could *read* are
 # a second question and nobody has asked it.
+# What a parse fails with.
+#
+# A `dsl` entry rule hands this back where its input is not the shape the
+# grammar says. It prints the whole diagnostic the backend produced: the
+# headline, the line with a caret under what was found, and what else was
+# possible there. A `catch` that only passes it on names nothing; one that tells
+# it apart from an `io::IoError` writes `match error { … }`.
 [type."ParseError"]
 pub = true
 crosses = true
-doc = "What a parse fails with.\n\nA `dsl` entry rule hands this back where its input is not the shape the\ngrammar says. It prints the whole diagnostic the backend produced: the\nheadline, the line with a caret under what was found, and what else was\npossible there. A `catch` that only passes it on names nothing; one that tells\nit apart from an `io::IoError` writes `match error { … }`."
 
+# Standard input, one line at a time.
+#
+# A **step** of it can fail, because a step reads the pipe - so a `for` over it
+# is a place the function around it can fail from, and that function says
+# `throws`.
 [type."io::Lines"]
 pub = true
 iterates = "throws"
-doc = "Standard input, one line at a time.\n\nA **step** of it can fail, because a step reads the pipe - so a `for` over it\nis a place the function around it can fail from, and that function says\n`throws`."
 
 # The type several parts of a program own at once (Part I 6.2), and the one type
 # here whose `deref` entry above a caller is not meant to notice: a function that
@@ -2029,9 +2357,11 @@ doc = "Standard input, one line at a time.\n\nA **step** of it can fail, because
 # (ADR-055 §6 step 1's `yes` half). An undecided crossing is handed on rather
 # than read as permission (ADR-010 D1), which is what this file's own note
 # above says.
+# What a `spawn` hands back: the one end of a task that is still running.
+#
+# `join` is where the two meet again.
 [type."TaskHandle"]
 pub = true
-doc = "What a `spawn` hands back: the one end of a task that is still running.\n\n`join` is where the two meet again."
 
 # `.join()` is where two tasks meet again, and it is a **suspension point**: the
 # task fills a slot and wakes whoever is waiting on it, so joining gives the
@@ -2046,10 +2376,13 @@ doc = "What a `spawn` hands back: the one end of a task that is still running.\n
 # No `throws`: a task's failure is the task's, and what `join` hands back is
 # whatever the body's last statement was. A task whose body can fail hands back
 # a value that says so, which is the same shape any other function has.
+# Wait for the task and take what it produced.
+#
+# It gives the thread up rather than holding it, so other work runs while this
+# waits. A handle can be joined once, because joining takes it.
 [fn."TaskHandle::join"]
 pub = true
 signature = "(TaskHandle[$T]) -> $T"
-doc = "Wait for the task and take what it produced.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits. A handle can be joined once, because joining takes it."
 
 # **One mechanism, said three ways rather than three things**
 # ([ADR-148](../../docs/specification/adr/adr-148.md) D3): a program's own
@@ -2067,15 +2400,23 @@ doc = "Wait for the task and take what it produced.\n\nIt gives the thread up ra
 # It takes the handle, as `join` does, which is what makes §4's open question -
 # *can a cancelled task be observed to have been cancelled?* - one no program
 # can ask.
+# Stop the task.
+#
+# It stops at its current pause point and its values are torn down; a `cleanup`
+# that pauses is finished in the background. This does not wait for any of
+# that. Cancelling takes the handle, so a cancelled task is never joined.
 [fn."TaskHandle::cancel"]
 pub = true
 sync = true
 signature = "(TaskHandle[$T])"
-doc = "Stop the task.\n\nIt stops at its current pause point and its values are torn down; a `cleanup`\nthat pauses is finished in the background. This does not wait for any of\nthat. Cancelling takes the handle, so a cancelled task is never joined."
 
+# A value several parts of a program own at once.
+#
+# A caller is not meant to notice it: a function taking `ref Connection` accepts a
+# `ref Shared[Connection]`. Handing a handle on by value makes a second one rather
+# than taking the first away.
 [type."Shared"]
 pub = true
-doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `ref Connection` accepts a\n`ref Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."
 
 # --- A span of time (ADR-150) ------------------------------------------------
 #
@@ -2088,84 +2429,90 @@ doc = "A value several parts of a program own at once.\n\nA caller is not meant 
 #
 # `crosses = true` is a claim reviewed like code, and it is an easy one: a
 # duration is a number of ticks and nothing else, so it may go anywhere.
+# A span of time: how long something takes, how long to wait, how long is too
+# long.
+#
+# It is written `5.seconds()` rather than `5s` - a literal has no suffix in
+# this language, and a rule with an exception in it is one a reader has to
+# remember. `seconds`, `millis`, `micros`, `minutes` and `hours` are the five
+# names, on either integer type.
 [type."time::Duration"]
 pub = true
 crosses = true
 compares = true
-doc = "A span of time: how long something takes, how long to wait, how long is too\nlong.\n\nIt is written `5.seconds()` rather than `5s` - a literal has no suffix in\nthis language, and a rule with an exception in it is one a reader has to\nremember. `seconds`, `millis`, `micros`, `minutes` and `hours` are the five\nnames, on either integer type."
 
 # `touches = []` and `sync = true` for the arithmetic entries' reason: a pure
 # computation that reaches no resource. A count below zero is no time at all
 # rather than an abort, which is the whole of what the implementation decides.
+# This many hours, as a span of time.
 [fn."i32::hours"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> time::Duration"
-doc = "This many hours, as a span of time."
 
+# This many minutes, as a span of time.
 [fn."i32::minutes"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> time::Duration"
-doc = "This many minutes, as a span of time."
 
+# This many seconds, as a span of time.
 [fn."i32::seconds"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> time::Duration"
-doc = "This many seconds, as a span of time."
 
+# This many thousandths of a second, as a span of time.
 [fn."i32::millis"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> time::Duration"
-doc = "This many thousandths of a second, as a span of time."
 
+# This many millionths of a second, as a span of time.
 [fn."i32::micros"]
 pub = true
 sync = true
 touches = []
 signature = "(i32) -> time::Duration"
-doc = "This many millionths of a second, as a span of time."
 
+# This many hours, as a span of time.
 [fn."i64::hours"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> time::Duration"
-doc = "This many hours, as a span of time."
 
+# This many minutes, as a span of time.
 [fn."i64::minutes"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> time::Duration"
-doc = "This many minutes, as a span of time."
 
+# This many seconds, as a span of time.
 [fn."i64::seconds"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> time::Duration"
-doc = "This many seconds, as a span of time."
 
+# This many thousandths of a second, as a span of time.
 [fn."i64::millis"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> time::Duration"
-doc = "This many thousandths of a second, as a span of time."
 
+# This many millionths of a second, as a span of time.
 [fn."i64::micros"]
 pub = true
 sync = true
 touches = []
 signature = "(i64) -> time::Duration"
-doc = "This many millionths of a second, as a span of time."
 
 # **In `std::time` and not in the prelude**
 # ([ADR-154](../../docs/specification/adr/adr-154.md) D2): the rule the list is
@@ -2181,10 +2528,12 @@ doc = "This many millionths of a second, as a span of time."
 # No `touches`, and its absence is the fail-closed answer rather than an
 # omission: what a wait orders against is everything, because the point of it is
 # that time passes in between.
+# Wait out a span of time.
+#
+# The thread is given up rather than held, so other tasks run while this waits.
 [fn."time::sleep"]
 pub = true
 signature = "(span: time::Duration)"
-doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so other tasks run while this waits."
 
 # --- Message passing (ADR-149) -----------------------------------------------
 #
@@ -2197,20 +2546,29 @@ doc = "Wait out a span of time.\n\nThe thread is given up rather than held, so o
 # so it becomes `?`, which is ADR-031's rule and is enough: what the two methods
 # need from it is the *type name*, so that `tx.send(…)` resolves to the entry
 # below and takes the `.await` its missing `sync` line asks for.
+# A channel of `capacity` values, and its two ends.
+#
+# There is no unbounded channel: a capacity is a promise about memory, and an
+# unbounded one is a `send` that never pauses. A program that wants *unbounded*
+# writes a large number - and has said it.
 [fn."channel::bounded"]
 pub = true
 sync = true
 touches = []
 signature = "(capacity: i64) -> (channel::Sender[$T], channel::Receiver[$T])"
-doc = "A channel of `capacity` values, and its two ends.\n\nThere is no unbounded channel: a capacity is a promise about memory, and an\nunbounded one is a `send` that never pauses. A program that wants *unbounded*\nwrites a large number - and has said it."
 
+# The sending end of a channel.
+#
+# Handing it into a `spawn` is where the crossing check asks whether what the
+# channel carries may go to another thread.
 [type."channel::Sender"]
 pub = true
-doc = "The sending end of a channel.\n\nHanding it into a `spawn` is where the crossing check asks whether what the\nchannel carries may go to another thread."
 
+# The receiving end of a channel.
+#
+# `recv` hands back a `T?`, and `null` means every sender is gone.
 [type."channel::Receiver"]
 pub = true
-doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` means every sender is gone."
 
 # **A suspension point**, which is the missing `sync` line (D2): a `send` waits
 # for room where the channel is full, so a `sync` body cannot send on one and
@@ -2221,18 +2579,24 @@ doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` m
 #
 # No `touches`, which is the fail-closed answer: what a send orders against is
 # whatever the other end does with the value.
+# Put a value in, waiting for room where there is none.
+#
+# It gives the thread up rather than holding it, so other work runs while this
+# waits.
 [fn."channel::Sender::send"]
 pub = true
 signature = "(ref channel::Sender[$T], value: ?)"
-doc = "Put a value in, waiting for room where there is none.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits."
 
 # **`-> $T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
 # stream rather than a failure, so `??` is what reads it (Part I 3.5) and
 # nothing here `throws`.
+# The next value, or `null` where every sender is gone.
+#
+# A closed channel is the ordinary end of a stream and not a failure, so `??`
+# is what reads it. It gives the thread up rather than holding it.
 [fn."channel::Receiver::recv"]
 pub = true
 signature = "(ref channel::Receiver[$T]) -> $T?"
-doc = "The next value, or `null` where every sender is gone.\n\nA closed channel is the ordinary end of a stream and not a failure, so `??`\nis what reads it. It gives the thread up rather than holding it."
 
 # --- The collections outside the prelude (ADR-154 D3) ------------------------
 #
@@ -2244,21 +2608,30 @@ doc = "The next value, or `null` where every sender is gone.\n\nA closed channel
 # They are here rather than in the compiler's built-in names because that is what
 # puts them in a **module**: an entry keyed `collections::HashMap` is one a
 # program reaches through its prefix, which is the whole of the rule.
+# A table from keys to values.
+#
+# It is reached through its module: `use std::collections` and
+# `collections::HashMap` where it is needed (Part I, 1.3).
 [type."collections::HashMap"]
 pub = true
-doc = "A table from keys to values.\n\nIt is reached through its module: `use std::collections` and\n`collections::HashMap` where it is needed (Part I, 1.3)."
 
+# A set of values, in no order.
+#
+# It is reached through its module, as every name outside the prelude is.
 [type."collections::HashSet"]
 pub = true
-doc = "A set of values, in no order.\n\nIt is reached through its module, as every name outside the prelude is."
 
+# A table from keys to values, kept in the keys' order.
+#
+# It is reached through its module, as every name outside the prelude is.
 [type."collections::BTreeMap"]
 pub = true
-doc = "A table from keys to values, kept in the keys' order.\n\nIt is reached through its module, as every name outside the prelude is."
 
+# A set of values, kept in their order.
+#
+# It is reached through its module, as every name outside the prelude is.
 [type."collections::BTreeSet"]
 pub = true
-doc = "A set of values, kept in their order.\n\nIt is reached through its module, as every name outside the prelude is."
 
 # --- `process`: another program, started and waited for (ADR-243) ----------
 #
@@ -2272,24 +2645,35 @@ doc = "A set of values, kept in their order.\n\nIt is reached through its module
 # what somebody else sent it, and a map keyed on its output is hashed with the
 # keyed function (ADR-010 D2).
 
+# What a program that ran to its end left behind.
+#
+# `code` is its exit code, or `-1` where it was ended by a signal and has none;
+# `ok` is whether that code is `0`; `stdout` and `stderr` are everything it wrote
+# to each, as text.
 [type."process::Output"]
 pub = true
 crosses = true
 fields = ["pub code: i64", "pub ok: bool", "pub stdout: String", "pub stderr: String"]
-doc = "What a program that ran to its end left behind.\n\n`code` is its exit code, or `-1` where it was ended by a signal and has none;\n`ok` is whether that code is `0`; `stdout` and `stderr` are everything it wrote\nto each, as text."
 
 # **`args: Vec[String]`, handed over**, and not `?`: an empty list has no
 # element type of its own, and a parameter that names none left `run("pwd", [])`
 # for `rustc` to guess at (ADR-135 D2 - the use answers it). A list of literals
 # is built into text of its own where it is kept (ADR-207 D2), so the ordinary
 # call is written as it reads.
+# Start a program, wait for it to finish, and hand back what it said.
+#
+# `program` is looked for on `PATH` where it has no `/` in it; `dir` is the
+# directory it starts in. A non-zero exit is not a failure - it is `code` and
+# `ok`, and the caller decides what it means. It fails where the program cannot
+# be started, and where what it wrote is not UTF-8.
+#
+# The wait gives the thread up, so other tasks run while the program does.
 [fn."process::run"]
 pub = true
 throws = ["io::IoError"]
 provenance = "untrusted"
 keeps = ["args"]
 signature = "(program: ref String, args: Vec[String]; dir: ref String = \".\") -> process::Output"
-doc = "Start a program, wait for it to finish, and hand back what it said.\n\n`program` is looked for on `PATH` where it has no `/` in it; `dir` is the\ndirectory it starts in. A non-zero exit is not a failure - it is `code` and\n`ok`, and the caller decides what it means. It fails where the program cannot\nbe started, and where what it wrote is not UTF-8.\n\nThe wait gives the thread up, so other tasks run while the program does."
 
 # --- `net`: the socket `std` lends (ADR-194 D1) ------------------------------
 #
@@ -2310,51 +2694,71 @@ doc = "Start a program, wait for it to finish, and hand back what it said.\n\n`p
 # The same park `fs` uses, so one thread serves many connections at
 # `user_parallelism = no` exactly as at `yes`.
 
+# A bound socket, waiting for connections.
+#
+# `net::listen("127.0.0.1:8080")` makes one. Which address a *server* binds when
+# nobody says is the server's own question and not this one's.
 [type."net::Listener"]
 pub = true
 # A listener may be handed to a task: it is a file descriptor and an address,
 # and nothing in it is tied to the thread it was made on.
 crosses = true
-doc = "A bound socket, waiting for connections.\n\n`net::listen(\"127.0.0.1:8080\")` makes one. Which address a *server* binds when\nnobody says is the server's own question and not this one's."
 
+# One connection, open until it is dropped.
+#
+# Reading hands back what the peer sent, and **empty means the peer closed** -
+# which is the one thing a caller has to know to write a loop. `close` is for a
+# program that wants the close at a named moment.
 [type."net::Connection"]
 pub = true
 crosses = true
-doc = "One connection, open until it is dropped.\n\nReading hands back what the peer sent, and **empty means the peer closed** -\nwhich is the one thing a caller has to know to write a loop. `close` is for a\nprogram that wants the close at a named moment."
 
+# Bind an address and start listening.
+#
+# It fails where the address cannot be bound - which is usually somebody else
+# already listening there.
 [fn."net::listen"]
 pub = true
 touches = ["socket write"]
 throws = ["io::IoError"]
 signature = "(address: ref String) -> net::Listener"
-doc = "Bind an address and start listening.\n\nIt fails where the address cannot be bound - which is usually somebody else\nalready listening there."
 
+# Connect to an address.
+#
+# It fails where nothing is listening there.
 [fn."net::connect"]
 pub = true
 touches = ["socket write"]
 throws = ["io::IoError"]
 signature = "(address: ref String) -> net::Connection"
-doc = "Connect to an address.\n\nIt fails where nothing is listening there."
 
+# The next connection, waiting for one where there is none yet.
+#
+# It gives the thread up while it waits, so one thread serves many connections.
 [fn."net::Listener::accept"]
 pub = true
 touches = ["socket read"]
 throws = ["io::IoError"]
 signature = "(ref Listener) -> net::Connection"
-doc = "The next connection, waiting for one where there is none yet.\n\nIt gives the thread up while it waits, so one thread serves many connections."
 
 # The address it is **bound** to, which is what a caller that asked for port `0`
 # needs to know. Memory, so it touches nothing and cannot pause.
+# The address this listener is bound to.
+#
+# A program that asked for port `0` finds out here which port it got.
 [fn."net::Listener::address"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Listener) -> String"
-doc = "The address this listener is bound to.\n\nA program that asked for port `0` finds out here which port it got."
 
 # **The first untrusted source `std` has** (ADR-010 D2), which this file's own
 # header predicted by name: *the untrusted ones - `http`, `net`, `db` - arrive
 # with the modules that have them*. Somebody else chose these bytes.
+# The next bytes the peer sent, waiting for them where there are none yet.
+#
+# **Empty means the peer closed.** What comes back is **untrusted**: somebody
+# else chose these bytes.
 [fn."net::Connection::read"]
 pub = true
 mutates = true
@@ -2362,31 +2766,36 @@ touches = ["socket read"]
 throws = ["io::IoError"]
 provenance = "untrusted"
 signature = "(ref Connection) -> Bytes"
-doc = "The next bytes the peer sent, waiting for them where there are none yet.\n\n**Empty means the peer closed.** What comes back is **untrusted**: somebody\nelse chose these bytes."
 
 # `?` for the bytes, for `fs::write`'s reason: it takes a `Bytes`, a `ref String`\
 # and a buffer, and writing one of them here would refuse a correct program.
+# All of the bytes, waiting for room where there is none yet.
+#
+# All of them, because a partial write is not something a caller can do anything
+# useful with: the loop that would follow one is inside this.
 [fn."net::Connection::write"]
 pub = true
 mutates = true
 touches = ["socket write"]
 throws = ["io::IoError"]
 signature = "(ref Connection, bytes: ?)"
-doc = "All of the bytes, waiting for room where there is none yet.\n\nAll of them, because a partial write is not something a caller can do anything\nuseful with: the loop that would follow one is inside this."
 
+# Who is on the other end.
 [fn."net::Connection::peer"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Connection) -> String"
-doc = "Who is on the other end."
 
+# Close it now rather than when it is dropped.
+#
+# Dropping one closes it, which is the language below's answer; a program that
+# wants the close at a named moment writes this.
 [fn."net::Connection::close"]
 pub = true
 sync = true
 touches = ["socket write"]
 signature = "(Connection)"
-doc = "Close it now rather than when it is dropped.\n\nDropping one closes it, which is the language below's answer; a program that\nwants the close at a named moment writes this."
 
 # --- `http1`: HTTP/1.1's text half (ADR-194 D5) -------------------------------
 #
@@ -2416,155 +2825,197 @@ doc = "Close it now rather than when it is dropped.\n\nDropping one closes it, w
 # ADR-010 D2), and provenance travels with the bytes rather than being re-stated
 # by everything that reads them.
 
+# The bytes of one request as they arrive, and the questions HTTP/1.1 can ask of
+# them.
+#
+# It is written `http1::Buffer()`. A caller reads a chunk from a socket, `take`s
+# it, and asks `head_end` again.
 [type."http1::Buffer"]
 pub = true
 crosses = true
-doc = "The bytes of one request as they arrive, and the questions HTTP/1.1 can ask of\nthem.\n\nIt is written `http1::Buffer()`. A caller reads a chunk from a socket, `take`s\nit, and asks `head_end` again."
 
+# What the head of one HTTP/1.1 request says.
+#
+# The two methods this speaks are `GET` and `POST`; anything else is a refusal
+# and not a guess. A path is **not** decoded — what a `%20` means is the
+# program's question.
 [type."http1::Head"]
 pub = true
 crosses = true
-doc = "What the head of one HTTP/1.1 request says.\n\nThe two methods this speaks are `GET` and `POST`; anything else is a refusal\nand not a guess. A path is **not** decoded — what a `%20` means is the\nprogram's question."
 
+# Nothing read yet. It is written `http1::Buffer()`.
 [fn."http1::Buffer::new"]
 pub = true
 sync = true
 touches = []
 signature = "() -> http1::Buffer"
-doc = "Nothing read yet. It is written `http1::Buffer()`."
 
 # `?` for the bytes, `net::Connection::write`'s reason: what a caller has is a
 # `Bytes`, and a `Bytes` here would refuse the `ref String` a test hands it.
+# Add what the socket just handed over.
 [fn."http1::Buffer::take"]
 pub = true
 sync = true
 mutates = true
 touches = []
 signature = "(ref Buffer, more: ?)"
-doc = "Add what the socket just handed over."
 
+# How many bytes have arrived.
 [fn."http1::Buffer::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Buffer) -> i64"
-doc = "How many bytes have arrived."
 
 # **`0` is *not yet*** rather than a missing value, and the shape was chosen for
 # what it lets a caller write: `while ended == 0` is one condition where a loop
 # over an absence is a condition plus the unwrapping after it. A head cannot end
 # at byte zero - the shortest one there is is `GET / HTTP/1.0\r\n\r\n` - so the
 # two readings cannot collide.
+# Where the head ends, or **`0` for *not yet***: the blank line that ends a head
+# has not arrived, so read more and ask again.
+#
+# A head over `cap` fails rather than growing - the bytes are somebody else's -
+# and it fails as soon as the buffer is over it, because a head that has not
+# ended and is already too long never will.
 [fn."http1::Buffer::head_end"]
 pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
 signature = "(ref Buffer, cap: i64) -> i64"
-doc = "Where the head ends, or **`0` for *not yet***: the blank line that ends a head\nhas not arrived, so read more and ask again.\n\nA head over `cap` fails rather than growing - the bytes are somebody else's -\nand it fails as soon as the buffer is over it, because a head that has not\nended and is already too long never will."
 
+# What the head says, where `head_end` said there is one.
+#
+# Every failure here is what a server sends back: a request line that is not
+# three words, a version this does not speak, a method it does not answer, a
+# `content-length` that is not a count, a `transfer-encoding` at all.
 [fn."http1::Buffer::head"]
 pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
 signature = "(ref Buffer) -> http1::Head"
-doc = "What the head says, where `head_end` said there is one.\n\nEvery failure here is what a server sends back: a request line that is not\nthree words, a version this does not speak, a method it does not answer, a\n`content-length` that is not a count, a `transfer-encoding` at all."
 
+# The bytes from `at` on, as text.
+#
+# **Owned**, and the copy is not an oversight: this is the body, and a body goes
+# into a request a handler is given, which owns it.
 [fn."http1::Buffer::text_from"]
 pub = true
 sync = true
 touches = []
 throws = ["io::IoError"]
 signature = "(ref Buffer, at: i64) -> String"
-doc = "The bytes from `at` on, as text.\n\n**Owned**, and the copy is not an oversight: this is the body, and a body goes\ninto a request a handler is given, which owns it."
 
+# `GET` or `POST`, as it was written.
 [fn."http1::Head::method"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head) -> ref String"
-doc = "`GET` or `POST`, as it was written."
 
+# The path, **without** the query string, and **not decoded** (ADR-018 D4, which
+# writes `path()` and `query()` as two things).
 [fn."http1::Head::path"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head) -> ref String"
-doc = "The path, **without** the query string, and **not decoded** (ADR-018 D4, which\nwrites `path()` and `query()` as two things)."
 
+# The whole request target as it was written, query string and all.
+#
+# What a log wants, and the one place the bytes the client chose are handed over
+# untouched.
 [fn."http1::Head::target"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head) -> ref String"
-doc = "The whole request target as it was written, query string and all.\n\nWhat a log wants, and the one place the bytes the client chose are handed over\nuntouched."
 
 # **`String?` and not an empty string** (ADR-018 D4: *Kap 3.5's nullable*): a name
 # the client did not write and one it wrote empty are two different facts, and a
 # server that read them as one would answer a question nobody asked.
+# What the query string says under this name, or nothing where it says nothing.
+#
+# **Nothing is decoded**: a `%20` stays `%20` and a `+` stays a `+`, because which
+# of the two a `+` means depends on who wrote the form. **A name with no `=` has
+# an empty value**, which is not the same as being absent: `?debug` says the name
+# was written.
 [fn."http1::Head::query"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head, name: ?) -> ref String?"
-doc = "What the query string says under this name, or nothing where it says nothing.\n\n**Nothing is decoded**: a `%20` stays `%20` and a `+` stays a `+`, because which\nof the two a `+` means depends on who wrote the form. **A name with no `=` has\nan empty value**, which is not the same as being absent: `?debug` says the name\nwas written."
 
+# What the client sent under this name, or nothing where it sent none.
+#
+# **Case-insensitive, as the protocol is** (ADR-018 D4). Where a client sent the
+# same name twice this is the **first**: joining them with a comma is what the
+# protocol says a *list-valued* header means, and which headers those are is not
+# something this module knows.
 [fn."http1::Head::header"]
 pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head, name: ?) -> ref String?"
-doc = "What the client sent under this name, or nothing where it sent none.\n\n**Case-insensitive, as the protocol is** (ADR-018 D4). Where a client sent the\nsame name twice this is the **first**: joining them with a comma is what the\nprotocol says a *list-valued* header means, and which headers those are is not\nsomething this module knows."
 
+# How many headers there are, which is what a program counts before it decides a
+# client is being unreasonable.
 [fn."http1::Head::headers"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Head) -> i64"
-doc = "How many headers there are, which is what a program counts before it decides a\nclient is being unreasonable."
 
+# What `Content-Length` said, or `0` where it said nothing.
 [fn."http1::Head::length"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Head) -> i64"
-doc = "What `Content-Length` said, or `0` where it said nothing."
 
+# How many bytes of the buffer the head took, so a caller knows where the body
+# starts.
 [fn."http1::Head::size"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Head) -> i64"
-doc = "How many bytes of the buffer the head took, so a caller knows where the body\nstarts."
 
+# Whether the client asked for the connection to stay open.
+#
+# **Read and not honoured**: `Connection: close` is the MVP's scope, and a server
+# that read the header and ignored it silently would be lying to a client that
+# asked.
 [fn."http1::Head::keep_alive"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Head) -> bool"
-doc = "Whether the client asked for the connection to stay open.\n\n**Read and not honoured**: `Connection: close` is the MVP's scope, and a server\nthat read the header and ignored it silently would be lying to a client that\nasked."
 
 # --- `Bytes`: how many there are ----------------------------------------------
 #
 # The one thing a program has to be able to ask a `Bytes`, because
 # `net::Connection::read` says **empty means the peer closed** and a loop over a
 # socket cannot be written without the question.
+# How many bytes there are.
+#
+# After `net::Connection::read`, **zero means the peer closed**.
 [fn."Bytes::len"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Bytes) -> i64"
-doc = "How many bytes there are.\n\nAfter `net::Connection::read`, **zero means the peer closed**."
 
+# Whether there are none.
 [fn."Bytes::is_empty"]
 pub = true
 sync = true
 touches = []
 signature = "(ref Bytes) -> bool"
-doc = "Whether there are none."

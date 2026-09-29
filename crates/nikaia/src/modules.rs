@@ -475,8 +475,7 @@ fn package_ledger(
 /// build that failed because a *cache* was unreadable would be a worse build
 /// than one that is slower.
 fn shipped_ledger(root: &Path) -> Option<crate::contracts::Ledger> {
-    let text = std::fs::read_to_string(root.join("nikaia.contracts")).ok()?;
-    crate::contracts::Ledger::parse(&text).ok()
+    crate::contracts::Ledger::read_beside(&root.join("nikaia.contracts"))
 }
 
 /// A whole program: one ledger, one Rust file, one source map.

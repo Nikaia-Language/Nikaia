@@ -824,9 +824,6 @@ fn the_copy_fails_in_one_way() {
     // failure `fs::read_to_string` has*, and a set of one that says which is
     // stronger evidence for *one way* than a `"?"` ever was.
     assert_eq!(copy.throws, vec!["io::IoError".to_string()]);
-    let doc = copy.doc.as_deref().unwrap_or_default();
-    assert!(doc.contains("in **one** way"), "{doc}");
-    assert!(doc.contains("CStr?"), "{doc}");
 }
 
 /// **Measured where it matters: the nullable runs, both ways.**

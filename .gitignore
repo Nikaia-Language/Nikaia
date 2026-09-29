@@ -31,6 +31,7 @@ node_modules/
 # lands *beside* the `.nika` it came from, never in a `src/`.
 /examples/*.rs
 /examples/nikaia.contracts
+/examples/nikaia.derived
 # What `nikaia test` or `nikaia run` leaves inside an example package: the build
 # and the lockfile of a run in place (ADR-247 runs its tests in a copy of nothing
 # but the package, and so does `tests/examples.rs`).
@@ -38,8 +39,16 @@ node_modules/
 /examples/*/nikaia.lock
 /benches/*.rs
 /benches/nikaia.contracts
+/benches/nikaia.derived
 /tests/samples/*.rs
 /tests/samples/nikaia.contracts
+/tests/samples/nikaia.derived
+# And in `std`'s own directory of the toolchain's Nikaia, where a module is
+# lowered by hand while it is written; `nikaia lower-std` writes the `.rs` that
+# is committed, and nothing reads a ledger here (0.0.253 removed the one that
+# had been committed by accident at 0.0.169).
+/crates/nikaia-std/src/tools/nikaia.contracts
+/crates/nikaia-std/src/tools/nikaia.derived
 
 # The documentation site, as `scripts/site-build.sh` builds it, and what the
 # build and `wrangler` leave beside it.

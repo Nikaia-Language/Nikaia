@@ -1116,8 +1116,12 @@ fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
     // package's build and committed with it, the way `std` has always worked.
     let shipped = std::fs::read_to_string(dir.join("lib/nikaia.contracts"))
         .expect("a package's build writes its own ledger");
-    assert!(shipped.contains("[sources]"), "{shipped}");
+    assert!(!shipped.contains("[sources]"), "{shipped}");
     assert!(shipped.contains("[fn.\"hello\"]"), "{shipped}");
+    // **And what it was derived from beside it** (ADR-251 D1).
+    let derived = std::fs::read_to_string(dir.join("lib/nikaia.derived"))
+        .expect("and the record of what it was derived from");
+    assert!(derived.contains("[sources]"), "{derived}");
 
     std::fs::remove_dir_all(&dir).ok();
 }

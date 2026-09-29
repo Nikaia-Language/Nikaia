@@ -616,7 +616,11 @@ fn the_ledger_is_deterministic_and_reads_back() {
 
     let read = Ledger::parse(&first).expect("its own output parses");
     assert_eq!(read.render(), first);
-    assert_eq!(read.inference, nikaia::contracts::INFERENCE);
+    // **Which inference wrote it is not in the contract** (ADR-251 D1), and
+    // the record beside it reads back too.
+    assert!(!first.contains("inference"), "{first}");
+    let derived = Ledger::parse(&ledger(source).render_derived()).expect("the record parses");
+    assert_eq!(derived.inference, nikaia::contracts::INFERENCE);
     assert_eq!(read.functions["f"].borrows, ["a"]);
     assert_eq!(read.types["S"].tethered, ["t"]);
 }
@@ -778,76 +782,6 @@ fn a_toolchain_module_is_not_part_of_std() {
     }
 
     assert!(checked > 0, "no toolchain module was checked");
-}
-
-/// **Every entry `std` publishes carries prose**
-/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D2).
-///
-/// The `doc` column exists so that a package's surface arrives at a consumer
-/// with its sentences, and `std` is the surface every program meets first. A
-/// column that is mostly empty is a column a reader stops looking at, so what
-/// holds it full is a test rather than a habit: an entry added here without a
-/// sentence fails this, the way one added without a `signature` fails the two
-/// above.
-///
-/// **Only what is `pub`**, which is D2's own scope: the ledger records what a
-/// consumer may reach, and a private item's prose is the source's.
-#[test]
-fn every_public_entry_of_the_shipped_std_ledger_has_prose() {
-    let shipped = std::fs::read_to_string(repo_root().join("crates/nikaia-std/std.contracts"))
-        .expect("std ships a ledger");
-    let shipped = Ledger::parse(&shipped).expect("std's ledger parses");
-
-    let mut silent: Vec<String> = Vec::new();
-    for (name, contract) in &shipped.functions {
-        if contract.public && contract.doc.is_none() {
-            silent.push(format!("fn {name}"));
-        }
-    }
-    for (name, contract) in &shipped.types {
-        if contract.public && contract.doc.is_none() {
-            silent.push(format!("type {name}"));
-        }
-    }
-    assert!(
-        silent.is_empty(),
-        "these `std` entries are published with no sentence about them \
-         (ADR-139 D2): {silent:#?}"
-    );
-}
-
-/// **And the prose survives the file**, which is what a column with line breaks
-/// in it has to be held to.
-///
-/// A `doc` is the one value in this format that can hold a newline, written
-/// `\n` and read back. Rendering the shipped ledger and parsing it again is the
-/// round trip that says the escape and its reverse agree — over a hundred real
-/// entries rather than one fixture.
-#[test]
-fn the_shipped_std_ledgers_prose_reads_back_as_it_was_written() {
-    let shipped = std::fs::read_to_string(repo_root().join("crates/nikaia-std/std.contracts"))
-        .expect("std ships a ledger");
-    let once = Ledger::parse(&shipped).expect("std's ledger parses");
-    let twice = Ledger::parse(&once.render()).expect("what it renders parses");
-
-    for (name, contract) in &once.functions {
-        assert_eq!(
-            twice.functions.get(name).and_then(|c| c.doc.as_ref()),
-            contract.doc.as_ref(),
-            "`{name}`'s prose did not survive the round trip"
-        );
-    }
-    for (name, contract) in &once.types {
-        assert_eq!(
-            twice.types.get(name).and_then(|c| c.doc.as_ref()),
-            contract.doc.as_ref(),
-            "`{name}`'s prose did not survive the round trip"
-        );
-    }
-    assert!(
-        once.functions.values().filter(|c| c.doc.is_some()).count() > 100,
-        "and there is prose to survive"
-    );
 }
 
 /// Every module `std` exposes has an entry, so a caller never has to guess.

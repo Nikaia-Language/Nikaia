@@ -365,6 +365,11 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
     // fresh one.
     let ledger_path = output_path.with_file_name("nikaia.contracts");
     project::write_ledger(&ledger_path, &lowered.ledger, args.locked)?;
+    project::write_ledger(
+        &nikaia::contracts::derived_path(&ledger_path),
+        &lowered.derived,
+        args.locked,
+    )?;
 
     println!(
         "Lowered {} to {} (target: {}{})",

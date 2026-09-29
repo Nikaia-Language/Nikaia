@@ -379,7 +379,8 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
 
     // The whole point of the default: the build's own outputs are welcome
     // beside the source - the emitted Rust, and the ledger ADR-020 writes
-    // where a build puts what it produced - but nothing belonging to the
+    // where a build puts what it produced, with the record of what it was
+    // derived from beside it (ADR-251 D1) - but nothing belonging to the
     // *cache* may appear there when no project owns a lockfile.
     let mut left: Vec<String> = std::fs::read_dir(&src)
         .expect("read src")
@@ -388,7 +389,12 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
     left.sort();
     assert_eq!(
         left,
-        vec!["hello.nika", "hello.rs", "nikaia.contracts"],
+        vec![
+            "hello.nika",
+            "hello.rs",
+            "nikaia.contracts",
+            "nikaia.derived"
+        ],
         "only the source and what the build produced"
     );
     assert!(

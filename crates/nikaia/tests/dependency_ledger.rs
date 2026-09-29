@@ -101,6 +101,9 @@ fn a_ledger_whose_hashes_match_is_believed() {
         },
     );
     std::fs::write(dir.join("lib/nikaia.contracts"), shipped.render()).expect("ship it");
+    // **The hashes are in the record beside it** (ADR-251 D1).
+    std::fs::write(dir.join("lib/nikaia.derived"), shipped.render_derived())
+        .expect("and what it was derived from");
 
     let program = Program::read_with(
         &dir.join("app/src/main.nika"),
@@ -144,6 +147,8 @@ fn a_ledger_whose_sources_moved_is_derived_again() {
         },
     );
     std::fs::write(dir.join("lib/nikaia.contracts"), shipped.render()).expect("ship it");
+    std::fs::write(dir.join("lib/nikaia.derived"), shipped.render_derived())
+        .expect("and what it was derived from");
     std::fs::write(
         dir.join("lib/src/main.nika"),
         "pub fn hello() -> i64 {\n    return 2\n}\n",
@@ -231,7 +236,8 @@ fn a_ledger_that_does_not_parse_is_derived_again_rather_than_refused() {
 
 /// The `[sources]` table survives the round trip, which `--locked` needs: it
 /// compares bytes, so a table that rendered differently than it parsed would
-/// fail a build that changed nothing.
+/// fail a build that changed nothing. **It is the derivation record's and not
+/// the contract's** (ADR-251 D1): the contract renders no hash.
 #[test]
 fn the_sources_table_renders_and_parses_back() {
     let mut ledger = Ledger::empty();
@@ -239,12 +245,13 @@ fn the_sources_table_renders_and_parses_back() {
         ("helper.nika".to_string(), "a".repeat(64)),
         ("main.nika".to_string(), "b".repeat(64)),
     ]);
-    let rendered = ledger.render();
+    assert!(!ledger.render().contains("[sources]"));
+    let rendered = ledger.render_derived();
     assert!(rendered.contains("[sources]"), "{rendered}");
 
     let read = Ledger::parse(&rendered).expect("its own output parses");
     assert_eq!(read.sources, ledger.sources);
-    assert_eq!(read.render(), rendered);
+    assert_eq!(read.render_derived(), rendered);
 
     // And a ledger that knows no sources renders exactly the file it always
     // rendered - `std`'s among them, whose Rust half has no `.nika` to hash.

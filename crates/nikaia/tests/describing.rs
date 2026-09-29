@@ -687,10 +687,12 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
         for entry in expected {
             assert!(text.contains(entry), "{project}:\n{text}");
         }
-        // The hash the reviewed file records is the hash of the crate's source,
-        // which is what makes the description believable while it holds (D5).
-        let reviewed = std::fs::read_to_string(root.join("contracts/hyper_shim.contracts"))
-            .expect("the reviewed file");
+        // The hash the reviewed record holds is the hash of the crate's source,
+        // which is what makes the description believable while it holds (D5) -
+        // in the record beside the description (ADR-251 D1).
+        let text = ledger.render_derived();
+        let reviewed = std::fs::read_to_string(root.join("contracts/hyper_shim.derived"))
+            .expect("the reviewed record");
         let hash = reviewed
             .lines()
             .find(|line| line.starts_with("\"src/lib.rs\""))

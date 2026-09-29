@@ -73,7 +73,7 @@ pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing
 /// version 1 file still reads - `true` is taken as `["?"]`, which is what it
 /// always meant - and the version is what tells a *reader* that the file it has
 /// may say more than it knows how to use.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// Who supplied the bytes a source hands back (ADR-010 D1).
 ///
@@ -236,22 +236,6 @@ pub struct FnContract {
     /// see the body of - which ADR-020 predicted would be an extension of this
     /// file rather than a new one.
     pub signature: Option<Signature>,
-    /// The prose standing in front of the declaration
-    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2).
-    ///
-    /// **Only for a `pub` item**, because the ledger records what a consumer
-    /// may reach ([ADR-028](../../../../docs/specification/adr/adr-028.md) D5)
-    /// and a private item's prose is the source's — which is the only place
-    /// the two can disagree, and the answer that costs nothing.
-    ///
-    /// **Derived and not written**, like every other column: a hand-edited
-    /// `doc` is overwritten by the package's own build exactly as a
-    /// hand-edited `sync` is
-    /// ([ADR-100](../../../../docs/specification/adr/adr-100.md)).
-    ///
-    /// The compiler does not read it (D3). What it does is travel: it is the
-    /// one thing `nikaia.contracts` ships that is for a person.
-    pub doc: Option<String>,
     /// The parameters the result may point into, in declaration order.
     ///
     /// Empty when the result holds no view. Stage 0 has one input lifetime, so
@@ -939,22 +923,6 @@ fn matching_close(inside: &str) -> Option<usize> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeContract {
     pub public: bool,
-    /// The prose standing in front of the declaration
-    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2).
-    ///
-    /// **Only for a `pub` item**, because the ledger records what a consumer
-    /// may reach ([ADR-028](../../../../docs/specification/adr/adr-028.md) D5)
-    /// and a private item's prose is the source's — which is the only place
-    /// the two can disagree, and the answer that costs nothing.
-    ///
-    /// **Derived and not written**, like every other column: a hand-edited
-    /// `doc` is overwritten by the package's own build exactly as a
-    /// hand-edited `sync` is
-    /// ([ADR-100](../../../../docs/specification/adr/adr-100.md)).
-    ///
-    /// The compiler does not read it (D3). What it does is travel: it is the
-    /// one thing `nikaia.contracts` ships that is for a person.
-    pub doc: Option<String>,
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<FieldContract>,
@@ -1457,13 +1425,8 @@ impl Ledger {
             for item in &parsed.program.items {
                 match &item.node {
                     Item::Fn { .. } => {
-                        let (name, contract) = ledger.function(
-                            parsed,
-                            &item.node,
-                            None,
-                            &BTreeSet::new(),
-                            item.doc.as_ref(),
-                        );
+                        let (name, contract) =
+                            ledger.function(parsed, &item.node, None, &BTreeSet::new());
                         ledger.functions.insert(name, contract);
                     }
                     Item::Impl {
@@ -1490,13 +1453,8 @@ impl Ledger {
                                 .insert(target.clone());
                         }
                         for method in methods {
-                            let (name, contract) = ledger.function(
-                                parsed,
-                                &method.node,
-                                Some(&target),
-                                &outer,
-                                method.doc.as_ref(),
-                            );
+                            let (name, contract) =
+                                ledger.function(parsed, &method.node, Some(&target), &outer);
                             ledger.functions.insert(name, contract);
                         }
                     }
@@ -1528,7 +1486,7 @@ impl Ledger {
                     Item::Extern { declarations, .. } => {
                         for declaration in declarations {
                             let (_, mut contract) =
-                                trait_method(parsed, "", &declaration.node, false, None);
+                                trait_method(parsed, "", &declaration.node, false);
                             contract.sync = Sync::Asserted;
                             contract.throws = Vec::new();
                             ledger
@@ -1543,13 +1501,8 @@ impl Ledger {
                     } => {
                         let own = parsed.text(*name).to_string();
                         for method in methods {
-                            let (key, contract) = trait_method(
-                                parsed,
-                                &own,
-                                &method.node,
-                                *is_public,
-                                method.doc.as_ref(),
-                            );
+                            let (key, contract) =
+                                trait_method(parsed, &own, &method.node, *is_public);
                             ledger.functions.insert(key, contract);
                         }
                         ledger.traits.insert(
@@ -1615,7 +1568,6 @@ impl Ledger {
                             parsed.text(*name).to_string(),
                             TypeContract {
                                 public: *is_public,
-                                doc: item.doc.clone().filter(|_| *is_public),
                                 // A `struct` has fields and an `enum` has cases,
                                 // and neither has the other's.
                                 fields: Vec::new(),
@@ -1663,7 +1615,6 @@ impl Ledger {
                             parsed.text(*name).to_string(),
                             TypeContract {
                                 public: *is_public,
-                                doc: item.doc.clone().filter(|_| *is_public),
                                 fields: field_types,
                                 variants: Vec::new(),
                                 // Never inferred: a `struct` declared here records
@@ -1833,7 +1784,6 @@ impl Ledger {
         item: &Item,
         target: Option<&str>,
         outer: &BTreeSet<String>,
-        doc: Option<&String>,
     ) -> (String, FnContract) {
         let Item::Fn {
             name,
@@ -1921,7 +1871,6 @@ impl Ledger {
                 // records: what it asks is about the signature's shape and
                 // about which buffer a returned view came from.
                 views: Vec::new(),
-                doc: doc.filter(|_| *is_public).cloned(),
                 // What the *declaration* says. `sync::infer` reads the body
                 // afterwards and may raise a `No` to `Inferred`; it never
                 // touches this one, because an assertion is what `NK2202`
@@ -2096,6 +2045,50 @@ impl Ledger {
         out
     }
 
+    /// **What the contract beside it was derived from**
+    /// ([ADR-251](../../../docs/specification/adr/adr-251.md) D1): the
+    /// compiler, the inference, and the SHA-256 of every source it read. It
+    /// decides whether a consumer may believe the contract
+    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3) and never
+    /// what the contract says, which is why it is a file of its own.
+    pub fn render_derived(&self) -> String {
+        let mut out = String::new();
+        out.push_str("# AUTO-GENERATED by `nikaia`, beside the contract it describes.\n");
+        out.push_str("# What that contract was derived from: the compiler, the inference and\n");
+        out.push_str("# the sources. A consumer believes the contract while the sources hash\n");
+        out.push_str("# as recorded here. Part III, 13.5.\n");
+        out.push_str(&format!("version = {}\n", self.version));
+        out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
+        out.push_str(&format!("inference = \"{}\"\n", self.inference));
+        if !self.sources.is_empty() {
+            out.push_str("\n[sources]\n");
+            for (unit, hash) in &self.sources {
+                out.push_str(&format!("\"{unit}\" = \"{hash}\"\n"));
+            }
+        }
+        out
+    }
+
+    /// The contract at `path` with the record beside it read in, where there
+    /// is one: `nikaia.contracts` and `nikaia.derived`,
+    /// `contracts/<crate>.contracts` and `contracts/<crate>.derived`.
+    ///
+    /// **A contract with no record beside it has no sources**, which every
+    /// reader of `sources` already takes for *nothing recorded*, the
+    /// fail-closed answer (ADR-100 D3).
+    pub fn read_beside(path: &std::path::Path) -> Option<Ledger> {
+        let mut ledger = Ledger::parse(&std::fs::read_to_string(path).ok()?).ok()?;
+        if let Some(derived) = std::fs::read_to_string(derived_path(path))
+            .ok()
+            .and_then(|text| Ledger::parse(&text).ok())
+        {
+            ledger.toolchain = derived.toolchain;
+            ledger.inference = derived.inference;
+            ledger.sources = derived.sources;
+        }
+        Some(ledger)
+    }
+
     /// The same file under a **description's** header
     /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
     ///
@@ -2159,20 +2152,13 @@ impl Ledger {
     /// this is a sentence for the person who reviews the file, and the whole
     /// point is that they write the column or do not.
     fn render_from_with(&self, out: &mut String, notes: &Notes) {
+        // **The contract and nothing it was derived from**
+        // ([ADR-251](../../../docs/specification/adr/adr-251.md) D1): which
+        // compiler wrote it, by which inference, from which sources, is
+        // [`Ledger::render_derived`]'s file beside this one. A toolchain
+        // upgrade or an edited comment in a source changes that file and not
+        // this, so a diff here is a contract that moved.
         out.push_str(&format!("version = {}\n", self.version));
-        out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
-        out.push_str(&format!("inference = \"{}\"\n", self.inference));
-
-        // **Before the entries**, because it says what they are an answer
-        // about ([ADR-100](../../../docs/specification/adr/adr-100.md) D3), and
-        // only when there is one: a ledger nothing can hash renders exactly the
-        // file it rendered before.
-        if !self.sources.is_empty() {
-            out.push_str("\n[sources]\n");
-            for (unit, hash) in &self.sources {
-                out.push_str(&format!("\"{unit}\" = \"{hash}\"\n"));
-            }
-        }
 
         for (name, contract) in &self.functions {
             out.push('\n');
@@ -2281,12 +2267,6 @@ impl Ledger {
             }
             if let Some(signature) = &contract.signature {
                 out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
-            }
-            // **Last, because it is the one line that is for a person**
-            // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2):
-            // every key above it is something a compiler reads.
-            if let Some(doc) = &contract.doc {
-                out.push_str(&format!("doc = \"{}\"\n", escape(doc)));
             }
         }
 
@@ -2397,9 +2377,6 @@ impl Ledger {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
-            }
-            if let Some(doc) = &contract.doc {
-                out.push_str(&format!("doc = \"{}\"\n", escape(doc)));
             }
         }
     }
@@ -2569,7 +2546,6 @@ impl Ledger {
                         "signature" => {
                             entry.signature = Some(Signature::parse(&unquote(value, at())?)?)
                         }
-                        "doc" => entry.doc = Some(unquote(value, at())?),
                         "ends_by_length" => entry.ends_by_length = value == "true",
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
@@ -2598,7 +2574,6 @@ impl Ledger {
                         "compares" => entry.compares = value.trim() == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
                         "touches" => entry.touches = string_list(value, at())?,
-                        "doc" => entry.doc = Some(unquote(value, at())?),
                         "iterates" => {
                             let value = unquote(value, at())?;
                             if value != "throws" {
@@ -2748,7 +2723,6 @@ fn trait_method(
     trait_name: &str,
     method: &crate::ast::TraitMethod,
     public: bool,
-    doc: Option<&String>,
 ) -> (String, FnContract) {
     let mut params: Vec<(String, ty::Ty)> = Vec::new();
     if let Some(receiver) = &method.receiver {
@@ -2767,7 +2741,6 @@ fn trait_method(
         format!("{trait_name}::{}", parsed.text(method.name)),
         FnContract {
             public,
-            doc: doc.filter(|_| public).cloned(),
             // ADR-109 D1: the declaration's own word, and its absence is the
             // claim that it may pause.
             sync: match method.is_sync {
@@ -2824,6 +2797,12 @@ fn receiver_type(parsed: &Parsed, receiver: &crate::ast::Receiver, target: Optio
 ///
 /// `sync`, `throws` and the borrow contract are decided here and never by
 /// `rustc`, so the version that matters to a ledger diff is Nikaia's.
+/// Where the derivation record of the contract at `path` is: the same
+/// directory and stem, `.derived` for `.contracts`.
+pub fn derived_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.with_extension("derived")
+}
+
 fn toolchain() -> String {
     format!("nikaia {}", env!("CARGO_PKG_VERSION"))
 }
