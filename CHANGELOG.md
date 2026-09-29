@@ -22,6 +22,10 @@ example message read like `rustc`'s.
 - **The website shows the message whole**, generated from this compiler's
   output, in a section of its own.
 - The other codes follow a family at a time (`open-work.md` §2.50).
+- **0.0.264's `Copy` reached a type with a `Drop`**: Part I's `FileHandle { fd:
+  i32 }` writes `impl Drop`, and `rustc` refuses `Copy` beside one (E0184). A
+  type with a `Drop` or a cleanup (ADR-239 D1) derives no `Copy` now; the
+  specification's corpus test found it.
 - Also in this package, from the road to moving the syntax tree (ADR-252 §5):
   the tree's `throws` field is `can_throw`, a word Nikaia lets a field have;
   and two compiler defects found by lowering a draft of `tools/ast.nika` are

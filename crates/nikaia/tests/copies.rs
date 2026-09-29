@@ -118,3 +118,18 @@ fn a_generic_struct_is_seen_through_for_rings_and_comparison() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// **A type with a cleanup or a `Drop` is never a copy**: a copied value would
+/// run it twice, and `rustc` refuses the pair (E0184). Part I's own
+/// `FileHandle { fd: i32 }` found it, through the specification's corpus.
+#[test]
+fn a_type_that_is_dropped_is_not_a_copy() {
+    let rust = lowered(
+        "struct FileHandle { fd: i32 }\n\
+         impl Drop for FileHandle {\n\
+         \x20   fn drop(ref mut self) { println(\"closing\") }\n\
+         }\n\
+         fn main() { print(\"x\") }\n",
+    );
+    assert!(!derive_of(&rust, "FileHandle").contains("Copy"), "{rust}");
+}

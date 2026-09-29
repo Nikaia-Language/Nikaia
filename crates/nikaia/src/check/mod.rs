@@ -3413,6 +3413,26 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
+        // **A type the program writes a `Drop` for** is not one either, for
+        // the reason a cleanup is not: Part I's `FileHandle { fd: i32 }` is a
+        // struct of one number with `impl Drop`, and `rustc` refuses `Copy`
+        // beside it (E0184).
+        let dropped: BTreeSet<String> = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Impl {
+                    trait_name: Some(name),
+                    target,
+                    ..
+                } if self.parsed.text(*name) == "Drop" => {
+                    Some(self.parsed.text(target.name).to_string())
+                }
+                _ => None,
+            })
+            .collect();
         let mut copies = BTreeSet::new();
         loop {
             let joining: Vec<String> = declared
@@ -3428,7 +3448,18 @@ impl<'a> Checker<'a> {
                             None => return false,
                         },
                     };
-                    parts.iter().all(|ty| a_copied_part(ty, &copies))
+                    // **Never a type with a cleanup** (ADR-239 D1): its
+                    // cleanup is a `Drop` below, and a copied value would run
+                    // it twice - `rustc` refuses the pair (E0184), which is
+                    // how Part I's own `Connection` found this.
+                    let named = Ty::Named {
+                        name: (*name).clone(),
+                        args: Vec::new(),
+                        view: false,
+                    };
+                    !dropped.contains(*name)
+                        && self.cleanup_of(&named).is_none()
+                        && parts.iter().all(|ty| a_copied_part(ty, &copies))
                 })
                 .cloned()
                 .collect();
