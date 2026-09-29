@@ -2979,6 +2979,17 @@ struct Checker<'a> {
 struct Handed {
     pauses: bool,
     fails: bool,
+    /// Whether the walk is inside the guarded half of a `catch` written **in
+    /// this lambda's body**.
+    ///
+    /// Not [`Checker::caught`], which also answers *yes* for a `catch` around
+    /// the call the lambda is handed to, and that `catch` does nothing for the
+    /// lambda: the callee runs it, and a type without `throws` has promised the
+    /// callee it never fails. A `catch` inside the body is the other way round
+    /// — the failure is handled before it leaves the lambda, which is exactly
+    /// what `NK2606`'s own help tells the reader to write, so a call it guards
+    /// is not one the lambda was seen to fail with.
+    caught: bool,
     /// What the type it was handed to allows, kept beside what it was seen to
     /// do so that the one message about a mismatch is the one that is said.
     promised: Promises,
@@ -10856,6 +10867,15 @@ impl<'a> Checker<'a> {
                 // itself is ordinary code again - a failure raised inside one
                 // leaves the function like any other.
                 let outer = std::mem::replace(&mut self.caught, true);
+                // **And the lambda's own record of it** (ADR-102 D2): a
+                // `catch` in a lambda's body keeps a failure from leaving the
+                // lambda, which `self.caught` cannot say because it also holds
+                // for a `catch` around the call the lambda is handed to. Put
+                // back at the same moment, so the handler's own calls count.
+                let lambda_outer = self
+                    .handed_over
+                    .as_mut()
+                    .map(|handed| std::mem::replace(&mut handed.caught, true));
                 // **A guard of its own, and the enclosing one set aside**
                 // ([ADR-091](../../../docs/specification/adr/adr-091.md)). A
                 // `catch` inside another one's guarded expression handles its
@@ -10872,6 +10892,9 @@ impl<'a> Checker<'a> {
                     self.guard_has_no_answer();
                 }
                 self.caught = outer;
+                if let (Some(handed), Some(was)) = (&mut self.handed_over, lambda_outer) {
+                    handed.caught = was;
+                }
                 self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
                 self.scope
                     .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
@@ -12990,7 +13013,14 @@ impl<'a> Checker<'a> {
             // every written call — free or method — has its callee's contract
             // in hand, and a `catch` further out does not change what the
             // *lambda* was seen to do.
-            if let Some(handed) = &mut self.handed_over {
+            //
+            // **A `catch` further in does.** `fs::read(n, …) catch { "" }`
+            // inside the body handles the failure before the lambda returns,
+            // so the lambda cannot fail and there is nothing for `NK2606` to
+            // say — its own help names this `catch` as the way out. The
+            // question is `handed.caught`, not `self.caught`, because only the
+            // first stops at the lambda's edge.
+            if let Some(handed) = self.handed_over.as_mut().filter(|h| !h.caught) {
                 handed.fails = true;
                 // **And `NK2606` is then the whole message.** Where the type
                 // the lambda was handed to declares no failure, the function
@@ -18695,6 +18725,7 @@ impl<'a> Checker<'a> {
             me.handed_over = Some(Handed {
                 pauses: false,
                 fails: false,
+                caught: false,
                 promised,
             });
             let tail = me.block(body);
