@@ -95,6 +95,16 @@ pub mod text {
 /// decision: `use std::tools` in a Nikaia program lowers, and `rustc` is what
 /// complains, about a file nobody wrote. `open-work.md` §1.7 carries it, and it
 /// is older than this module - `use std::<anything>` has always been accepted.
+///
+/// **Clippy reads what the emitter wrote**, and one lint is allowed here
+/// because the Rust it would ask for is not one Nikaia can say:
+/// `explicit_counter_loop` (Rust 1.98) wants a counter kept beside a `for`
+/// written as `(start..).zip(…)`, and a Nikaia `for` walks one sequence while a
+/// `let mut` counts - which the emitter lowers as written, correctly
+/// (`template.nika`'s `here`). Every other lint still holds the lowered code,
+/// and has moved a `.nika` to a better line before (`ref Array` for a list only
+/// read, 0.0.252).
+#[allow(clippy::explicit_counter_loop)]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
     /// mean*: `src/tools/spelling.nika`, lowered to `src/tools/spelling.rs`

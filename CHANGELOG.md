@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.256] — 2026-09-29
+
+**CI is green again on Rust 1.98.** Stable moved under the repository
+(ADR-001 D1 names the channel, not a version), and 1.98's clippy brought
+`explicit_counter_loop`, which failed `main` at 0.0.252 through 0.0.255 on the
+Rust the emitter wrote for `template.nika`'s `here`: a `for` over a word's
+characters beside a `let mut` counting into the scan.
+
+- **The lowering is right and stays**: Nikaia has no `(start..).zip(…)`, and a
+  `for` that walks one sequence while a counter moves is how the language says
+  it. `nikaia_std::tools` allows that one lint, with the reason beside it;
+  every other lint still holds the lowered code.
+- **Learned on the road** (ADR-250): the committed `.rs` of a moved module is
+  read by a newer clippy than the one it was lowered under, so a toolchain
+  release can fail a package that did not change. The local toolchain is now
+  the one CI installs, and a package is checked with it before it goes to
+  `main`.
+
 ## [0.0.255] — 2026-09-29
 
 **`sync(f)` is in the language** ([ADR-244](docs/specification/adr/adr-244.md)
