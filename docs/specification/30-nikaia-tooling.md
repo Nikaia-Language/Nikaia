@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.267 (Draft)
+**Version:** 0.0.268 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -1183,8 +1183,10 @@ use sqlite                                    // a driver package, not `std`
 let app = comptime asset("schema.sql")        // the schema, read while building
 
 fn query_data() {
-    // Transparently starts the required sidecar (thread or worker)
-    let db = sqlite::open("app.db")
+    // Transparently starts the required sidecar (thread or worker). The
+    // connection is typed by the schema it was opened for (ADR-254), so a
+    // statement checked against another schema is refused at `execute`.
+    let db = sqlite::open("app.db"; schema: app)
 
     // The driver's grammar checks the statement against the schema while
     // the program is built, and declares the columns; the row has fields.

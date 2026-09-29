@@ -587,6 +587,9 @@ resolved from `comptime` values, and the driver's grammar reads the schema
 with its own DDL grammar and refuses a missing column at the query. `std::db`
 is the protocol only (traits, statement, row values); `sqlite` and the rest
 are packages. No expression capture, no ORM; `raw(text)` for dynamic SQL.
+The connection is the statement's subject and is typed by its schema
+([ADR-254](specification/adr/adr-254.md)): `by_age.execute(db; min_age: 18)`,
+and a connection of another schema is refused at the call.
 
 *What it needs, in the record's order (§5):* `meta::column` and the row type;
 build-time arguments on a block; `std::db`'s traits; the `sqlite` driver with

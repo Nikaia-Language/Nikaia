@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.267 (Draft)
+**Version:** 0.0.268 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -253,10 +253,10 @@ fn query_users(db: Shared[nikaia_sql::Database], min_age: i32) {
     } eod
 
     // 2. Execute with typed parameters.
-    // Subject: none (method on self), so no `;` - only the option (Part I 5.1)
-    // Omitting 'target_age' is a compile error - the compiler knows the
-    // statement needs it, because it parsed the statement.
-    let users = query.execute(target_age: min_age)
+    // Subject: the connection; after the `;`, the statement's parameters
+    // (Part I 5.1, ADR-254). Omitting 'target_age' is a compile error - the
+    // compiler knows the statement needs it, because it parsed the statement.
+    let users = query.execute(db; target_age: min_age)
 }
 ```
 
@@ -281,16 +281,16 @@ call that passes a name the statement has no hole for is refused with `NK1113`:
 error[NK1112]: `query` needs `:target_age`, but this call doesn't pass it.
    --> users.nika:17:5
     |
- 17 |     let users = query.execute(targt_age: min_age)
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 17 |     let users = query.execute(db; targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: The statement's parameters are `:target_age`.
     = help: Pass it after the `;`: `target_age: …`.
 error[NK1113]: `query` has no parameter called `:targt_age`.
    --> users.nika:17:5
     |
- 17 |     let users = query.execute(targt_age: min_age)
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 17 |     let users = query.execute(db; targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: The statement's parameters are `:target_age`.
     = help: Did you mean `target_age`?

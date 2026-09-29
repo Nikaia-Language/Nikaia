@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.268] — 2026-09-29
+
+**A checked statement runs on a connection it names as its subject, and the
+connection's type carries its schema** ([ADR-254](docs/specification/adr/adr-254.md)).
+The owner answered `open-decisions.md`'s database question with option 1, and
+added the schema: a statement checked against one schema handed a connection
+to another is refused while the program is built.
+
+- `by_age.execute(db; min_age: 18)`; a driver's `open` takes the schema.
+  Part II 10.5's example and its NK1112/NK1113 transcript, Part III 17.1's
+  `sqlite` example, ADR-143's header and `open-work.md` §2.40 say so. Not
+  built.
+- **Fifteen examples in the three parts** are written as the pages' own rules
+  say, each where a rule of the specification and the compiler agree against
+  it. Where only one witness spoke, or two disagreed, the question went to
+  `open-decisions.md` instead: how a schema is bound at file level, what
+  `Path` is, whether `fs::exists` takes a root, which `Shared` Part I 6.2
+  means, how a package's DSL is named, `html::Raw::new` in Part III's
+  listing, and the `image` example's comment on locking.
+
 ## [0.0.267] — 2026-09-29
 
 **A list has no `+`** ([ADR-253](docs/specification/adr/adr-253.md)). The
