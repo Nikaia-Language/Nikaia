@@ -4964,9 +4964,7 @@ impl<'a> Checker<'a> {
                 false => format!("You can't use `{symbol}` on `{side}`."),
             },
             notes: vec![match joining {
-                true => "Lists have no operators, and whether `+` should join two lists hasn't \
-                         been decided yet."
-                    .to_string(),
+                true => "Lists have no operators: `+` doesn't join two lists.".to_string(),
                 false => match other.is_unknown() {
                     true => "Lists, maps and sets have no arithmetic.".to_string(),
                     false => format!(
@@ -10584,7 +10582,7 @@ impl<'a> Checker<'a> {
                     // `[1] + [2]` lowered as it was written and the language
                     // below said *cannot add `Vec<i64>` to `Vec<i64>`* about a
                     // file nobody wrote. Part I gives a list no operator, and
-                    // whether `+` should join two is the owner's question.
+                    // ADR-253 keeps it that way for `+` on two lists.
                     BinaryOp::Add
                     | BinaryOp::Sub
                     | BinaryOp::Mul

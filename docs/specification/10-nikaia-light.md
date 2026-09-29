@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.266 (Draft)
+**Version:** 0.0.267 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -1135,6 +1135,10 @@ refused with `NK1153`, asking for the type. A `[` at the **start of a line**
 begins a literal and never an index of the line above it, so an index is always
 written where its subject is. The list *type* is written `Vec[T]`; there is no
 second spelling `[User]`.
+
+**A list has no operators**, and neither has a map or a set: `a + b` on two
+lists is refused with `NK1191`. One list's elements join another with
+`a.extend(b)`, which grows `a` in place ([ADR-253](adr/adr-253.md)).
 
 A `[]` whose only uses cannot give it an element type (`xs.len()` and nothing
 else) is not refused by the compiler, and the backend reports it
