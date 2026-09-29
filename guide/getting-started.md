@@ -87,12 +87,15 @@ Most mistakes are refused in Nikaia's own words, with a code and a line that say
 write instead:
 
 ```text
-error[NK1139]: `x` is changed, and a `let` that is changed says `mut`
-  --> src/main.nika:2:5
-   2 |     let x = 5
-           ^
-     = this assigns to it - a binding changes only where it says so (Part I, 2.1), and this one does not
-     help: write `let mut x`
+error[NK1139]: You're changing `x`, but it wasn't declared as mutable.
+  --> src/main.nika:3:5
+   |
+ 2 |     let x = 5
+   |         - declared here without `mut`
+ 3 |     x = 6
+   |     ^ changed here
+   |
+   = help: Add `mut` where it's declared: `let mut x`.
 ```
 
 Some errors and warnings still come through from the Rust compiler in Rust's vocabulary.
