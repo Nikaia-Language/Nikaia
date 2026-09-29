@@ -91,7 +91,11 @@ pub enum Item {
         spread: Option<Ident>,
         ret_type: Option<Type>,
         body: Block,
-        is_sync: bool,   // Kap 12.1: sync keyword
+        is_sync: bool, // Kap 12.1: sync keyword
+        /// `sync(f, g)` ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+        /// D4): the parameters whose lambdas alone may make it pause. Empty
+        /// for a plain `sync` and for none.
+        sync_by: Vec<Ident>,
         is_public: bool, // Kap 9.2
         throws: bool,    // Kap 7.1
     },

@@ -51,6 +51,9 @@ pub struct Violation {
     pub span: Span,
     /// The `sync` function making the call.
     pub caller: String,
+    /// What it promised, as the source wrote it: `sync`, or `sync(f)`
+    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D4).
+    pub promise: String,
     /// What it called, as the ledger names it.
     pub callee: String,
     /// Which ledger answered - this program's, or a library's.
@@ -490,12 +493,13 @@ fn walk_fn(
         args,
         body,
         is_sync,
+        sync_by,
         ..
     } = item
     else {
         return;
     };
-    if !*is_sync {
+    if !*is_sync && sync_by.is_empty() {
         return;
     }
     // **A parameter whose type says `sync` cannot pause** (Part I 5.4 C,
@@ -503,11 +507,27 @@ fn walk_fn(
     // handed to one - so a call of it here keeps the promise. Read as a call
     // to something no ledger knows, `apply(f: fn(i64) -> i64 sync, …) sync`
     // was refused for calling `f`.
-    let sync_code: BTreeSet<String> = args
+    //
+    // **And a parameter `sync(f)` names** (ADR-244 D4): its lambda is the
+    // caller's to answer for, so a call of it is the one pause the promise
+    // allows.
+    let mut sync_code: BTreeSet<String> = args
         .iter()
         .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| code.is_sync))
         .map(|arg| parsed.text(arg.name).to_string())
         .collect();
+    sync_code.extend(sync_by.iter().map(|name| parsed.text(*name).to_string()));
+    let promise = match sync_by.is_empty() {
+        true => "sync".to_string(),
+        false => format!(
+            "sync({})",
+            sync_by
+                .iter()
+                .map(|name| parsed.text(*name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
 
     let own_name = match name {
         Some(name) => parsed.text(*name).to_string(),
@@ -518,13 +538,17 @@ fn walk_fn(
         None => own_name,
     };
 
-    walk_block(parsed, body, &caller, &sync_code, own, library, found);
+    walk_block(
+        parsed, body, &caller, &promise, &sync_code, own, library, found,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_block(
     parsed: &Parsed,
     block: &Block,
     caller: &str,
+    promise: &str,
     sync_code: &BTreeSet<String>,
     own: &Ledger,
     library: &Ledger,
@@ -543,6 +567,7 @@ fn walk_block(
                 found.push(Violation {
                     span: span.clone(),
                     caller: caller.to_string(),
+                    promise: promise.to_string(),
                     callee: construct.to_string(),
                     from_library: false,
                     construct: true,
@@ -559,6 +584,7 @@ fn walk_block(
                 found.push(Violation {
                     span: span.clone(),
                     caller: caller.to_string(),
+                    promise: promise.to_string(),
                     callee,
                     from_library,
                     construct: false,
@@ -569,7 +595,9 @@ fn walk_block(
         // A nested block is part of the same function, so its calls are the
         // same promise.
         visit_stmt_blocks(&stmt.node, &mut |inner| {
-            walk_block(parsed, inner, caller, sync_code, own, library, found)
+            walk_block(
+                parsed, inner, caller, promise, sync_code, own, library, found,
+            )
         });
     }
 }

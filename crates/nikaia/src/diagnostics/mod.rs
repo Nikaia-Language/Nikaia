@@ -839,8 +839,8 @@ pub fn render_sync_violation(
 
     let mut out = String::new();
     out.push_str(&format!(
-        "error[NK2202]: `{}` is `sync`, and `{}` can pause\n",
-        violation.caller, violation.callee
+        "error[NK2202]: `{}` is `{}`, and `{}` can pause\n",
+        violation.caller, violation.promise, violation.callee
     ));
     out.push_str(&format!("  --> {path}:{line}:{column}\n"));
     out.push_str(&winnow_grammar::span::caret(
@@ -870,8 +870,8 @@ pub fn render_sync_violation(
         ));
     }
     out.push_str(&format!(
-        "     help: drop `sync` from `{}`, or move the call out of it\n",
-        violation.caller
+        "     help: drop `{}` from `{}`, or move the call out of it\n",
+        violation.promise, violation.caller
     ));
     out
 }

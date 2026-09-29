@@ -4267,7 +4267,11 @@ impl<'p> Emitter<'p> {
                     .get(&key)
                     .is_some_and(|c| !c.sync.is_sync())
             });
-        let pausing = if self.pauses(&key) || declared_pausing {
+        // **A function written `sync(f)` is the `async fn` its body is**
+        // ([ADR-244](../../docs/specification/adr/adr-244.md) D3, D4): `f` may
+        // pause, so the call of it inside is awaited. What the promise changes
+        // is the caller's check, and how a caller that cannot pause drives it.
+        let pausing = if self.pauses(&key) || declared_pausing || self.lambda_decides(&key) {
             "async "
         } else {
             ""
@@ -8357,6 +8361,15 @@ impl<'p> Emitter<'p> {
         // is already behind a pointer.
         let awaits_a_parameter =
             matches!(func, Expr::Variable(name) if flow.awaited.contains(name));
+        // **A call of a `sync(f)` function** (ADR-244 D4): awaited where the
+        // caller can pause, and driven once where it cannot - the checker has
+        // then proved the lambda handed to it does not pause, so neither does
+        // the call.
+        let decided = pausing.is_none() && self.decided_by_its_lambda(func);
+        let settled = decided && (flow.in_lambda || !self.lowered_pausing(flow.function));
+        if settled {
+            out.push("nikaia_std::rt::exec::settled(");
+        }
         let boxed = pausing
             .as_deref()
             .is_some_and(|key| self.closes_a_pausing_cycle(flow.function, key));
@@ -8390,8 +8403,11 @@ impl<'p> Emitter<'p> {
         // **ADR-055 D2: the `.await` goes before the `?`**, and the order is not
         // a choice: the future is what can fail, so it has to be driven before
         // there is a `Result` to propagate. `f().await?` and never `f()?.await`.
-        if pausing.is_some() || awaits_a_parameter {
+        if pausing.is_some() || awaits_a_parameter || (decided && !settled) {
             out.push(".await");
+        }
+        if settled {
+            out.push(")");
         }
 
         // ADR-023 D8: `throws` propagates on its own, so a call to something
@@ -9944,6 +9960,35 @@ impl<'p> Emitter<'p> {
     /// `async fn`. Step 2 asked only this program's own, because a `std` entry
     /// blocked its thread then and awaiting one would have been awaiting a value
     /// rather than a future - which is what let step 2 land on its own.
+    /// Whether the own function under `key` was written `sync(f)`: the only
+    /// way an own entry says `Sync::From`, since the inference never writes it
+    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D4).
+    fn lambda_decides(&self, key: &str) -> bool {
+        self.own_contracts
+            .functions
+            .get(key)
+            .is_some_and(|contract| matches!(contract.sync, crate::contracts::Sync::From(_)))
+    }
+
+    /// Whether the function under `key` is lowered as an `async fn`.
+    fn lowered_pausing(&self, key: &str) -> bool {
+        self.pauses(key) || self.lambda_decides(key)
+    }
+
+    /// Whether a call names an own function written `sync(f)`.
+    fn decided_by_its_lambda(&self, func: &Expr) -> bool {
+        let name = match func {
+            Expr::Variable(name) => self.text(*name).to_string(),
+            Expr::Path(segments) => segments
+                .iter()
+                .map(|s| self.text(*s))
+                .collect::<Vec<_>>()
+                .join("::"),
+            _ => return false,
+        };
+        self.lambda_decides(&self.parsed.unaliased(&name))
+    }
+
     fn pausing_key(&self, func: &Expr) -> Option<String> {
         let name = match func {
             Expr::Variable(name) => self.text(*name).to_string(),

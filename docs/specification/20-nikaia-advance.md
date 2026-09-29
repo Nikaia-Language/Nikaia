@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.254 (Draft)
+**Version:** 0.0.255 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -585,6 +585,30 @@ counter.access fn(n) { xs.map fn(x) { fs::read("log", fs::Root::Anywhere) } } //
 
 User code writes nothing for this.
 
+**A function the program writes says it with `sync(f)`**
+([ADR-244](adr/adr-244.md) D4). The word stands where `sync` stands, after the
+result, and names the parameters whose lambdas decide; several are written
+`sync(f, g)`:
+
+```nika
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f) {
+    return f(x)
+}
+
+fn twice(x: i64) -> i64 sync {
+    return apply(fn(n) { n * 2 }, x)   // the lambda cannot pause, so neither can the call
+}
+```
+
+The body may call `f`, and nothing else in it may pause: a call that can is
+refused with `NK2202`, *`apply` is `sync(f)`, and `fs::write` can pause*. A
+caller is `sync` where the lambda it hands over is, and may pause where the
+lambda may; the lambda's body is the caller's, so a lambda that pauses inside a
+`sync` caller is refused there. `sync(f)` names a parameter that takes a
+function and **runs it during the call**: a name that is no parameter, one that
+is not a function, and one the function keeps or hands to a task are refused
+with `NK2210`. The ledger records it as `sync = "sync(f)"` (Part III 13.5).
+
 **What the keyword is for.** A written `sync` states a property so that losing
 it is an error. A body written `sync` is held to it, and a call inside it that
 can pause is refused with `NK2202`. A body without the word that qualifies is
@@ -598,7 +622,9 @@ see.
 `sync` decides what a function is compiled to. A function that cannot pause is a
 plain `fn`; every other function is an `async fn`. An unresolved call therefore
 makes a function `async`, and an `async fn` that never awaits finishes on its
-first poll.
+first poll. A `sync(f)` function is an `async fn`, because its
+lambda may pause; a caller that cannot pause drives the call once, which the
+checker has proved is enough, and a caller that can awaits it.
 
 ### 12.2. The Dual Nature of the Lock
 To share data that changes, a program uses **`SharedMut[T]`**: several owners, one value, and the lock inside the type (Part I 6.2). A program makes one by calling it: `let counter = SharedMut(0)`. `Shared[Locked[T]]` is refused, and the message names `SharedMut[T]`. `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure. Everything in this section is about the lock and holds for both.

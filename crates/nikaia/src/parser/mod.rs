@@ -1262,7 +1262,9 @@ grammar! {
             ret:return_type_arrow?
             promise:promise_after_the_type
             -> {
-                let (sync, throws) = promise;
+                // A trait method's `sync(f)` is not built: it reads as a method
+                // that may pause, which is the promise's weaker side.
+                let (sync, _, throws) = promise;
                 Spanned::documented(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -1309,7 +1311,7 @@ grammar! {
             promise:promise_after_the_type
             body:block
             -> {
-                let (sync, throws) = promise;
+                let (sync, sync_by, throws) = promise;
                 Item::Fn {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -1320,6 +1322,7 @@ grammar! {
                     ret_type: ret,
                     body,
                     is_sync: sync,
+                    sync_by,
                     is_public: vis.is_some(),
                     throws,
                 }
@@ -1343,15 +1346,35 @@ grammar! {
         // after it, and D4 leaves one slot. The refusal is here because
         // *expected `{`* is what a reader would otherwise get for a form that
         // was legal a version ago.
-        rule promise_after_the_type -> (bool, bool) =
+        rule promise_after_the_type -> (bool, Vec<Symbol>, bool) =
             kw_throws kw_sync fail(
                 "`sync` stands before `throws` (ADR-140 D4, ADR-102 D1): write \
                  `sync throws`. It is the order a function *type* has had since \
                  ADR-102, and `throws sync` used to parse here only because the \
                  two words sat in different slots - one before the result type \
                  and one after it - which D4 leaves as one."
-            ) -> { (true, true) }
-          | s:kw_sync? t:kw_throws? -> { (s.is_some(), t.is_some()) }
+            ) -> { (true, Vec::new(), true) }
+          | s:sync_promise? t:kw_throws? -> {
+                match s {
+                    Some(by) => (by.is_empty(), by, t.is_some()),
+                    None => (false, Vec::new(), t.is_some()),
+                }
+            }
+
+        // **`sync` or `sync(f, g)`** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+        // D4): the second promises that the function pauses only where the
+        // lambdas handed to those parameters do.
+        rule sync_promise -> Vec<Symbol> =
+            kw_sync by:sync_by? -> { by.unwrap_or_default() }
+
+        rule sync_by -> Vec<Symbol> =
+            "(" head:NAME tail:sync_by_tail* ")" -> {
+                let mut names = vec![head];
+                names.extend(tail);
+                names
+            }
+
+        rule sync_by_tail -> Symbol = "," n:NAME -> { n }
 
         rule promise_before_the_arrow -> () =
             kw_sync kw_throws? "->" => fail(

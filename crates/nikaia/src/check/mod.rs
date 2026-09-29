@@ -4055,6 +4055,60 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `NK2210`: `sync(f)` names what is not code the call runs
+    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D4). A name that is
+    /// no parameter, a parameter that is not a function, and one the function
+    /// keeps - hands to a task or stores - so that its lambda runs after the
+    /// call, where nobody the caller counts is waiting on it (ADR-029 D4).
+    fn a_lambda_the_promise_names(
+        &mut self,
+        key: &str,
+        named: &str,
+        args: &[ast::FnArg],
+        at: &Span,
+    ) {
+        let parameter = args.iter().find(|a| self.parsed.text(a.name) == named);
+        let why = match parameter {
+            None => Some(format!("`{key}` has no parameter `{named}`")),
+            Some(parameter) if parameter.ty.code.is_none() => Some(format!(
+                "`{named}` is not a function, so there is no lambda of it to answer for"
+            )),
+            Some(_)
+                if self
+                    .own
+                    .functions
+                    .get(key)
+                    .is_some_and(|c| c.keeps.iter().any(|k| k == named)) =>
+            {
+                Some(format!(
+                    "`{key}` keeps `{named}`, so its lambda runs after the call, where no \
+                     caller is waiting on it"
+                ))
+            }
+            Some(_) => None,
+        };
+        let Some(why) = why else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: at.clone(),
+            code: "NK2210",
+            message: format!("`sync({named})` names what is not code `{key}` runs"),
+            notes: vec![
+                why,
+                "`sync(f)` promises the function pauses only where the lambda handed to \
+                 `f` does, and that is a promise about a lambda the call itself runs \
+                 (ADR-244 D4)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "name a parameter of `{key}` that takes a function and runs it, or write \
+                 plain `sync` where nothing it is handed can pause"
+            )),
+        });
+    }
+
     /// `Summary::merge` or `Summary` in a fold: a function the fold calls, so
     /// a pausing one is refused as a call in an action is. What the function
     /// hands back, where its signature says.
@@ -4115,6 +4169,7 @@ impl<'a> Checker<'a> {
             body,
             throws,
             is_sync,
+            sync_by,
             ..
         } = item
         else {
@@ -4133,6 +4188,23 @@ impl<'a> Checker<'a> {
         // cannot parse and `fn crate` can (ADR-076 D3). The span is the body's
         // first statement where there is one, which is the nearest this walk has
         // - a declaration with a span of its own is `FnArg`'s and not the item's.
+        // **What `sync(f)` names is code the call runs**
+        // ([ADR-244](../../docs/specification/adr/adr-244.md) D4).
+        if !sync_by.is_empty() {
+            let key = match target {
+                Some(target) => format!("{target}::{own_name}"),
+                None => own_name.clone(),
+            };
+            let at = body
+                .stmts
+                .first()
+                .map(|s| s.span.clone())
+                .unwrap_or_default();
+            for named in sync_by {
+                let named = self.parsed.text(*named).to_string();
+                self.a_lambda_the_promise_names(&key, &named, args, &at);
+            }
+        }
         if let Some(span) = body.stmts.first().map(|s| s.span.clone()) {
             self.nameable(&own_name.clone(), &span, "a function");
         }

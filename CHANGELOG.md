@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.255] — 2026-09-29
+
+**`sync(f)` is in the language** ([ADR-244](docs/specification/adr/adr-244.md)
+D4). A function that runs a lambda promises that it pauses only where the lambda
+does: `fn apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f)`. `std` has written
+the promise by hand for `map`, `filter` and the lock doors since ADR-029 D3; a
+program can now write it.
+
+- **The body is held to it**: a call of `f` is the one pause allowed, and any
+  other is `NK2202`, *`apply` is `sync(f)`, and `time::sleep` can pause*.
+- **What it names is checked** (`NK2210`): a parameter that takes a function
+  and runs it during the call - not a name that is no parameter, not a number,
+  not a lambda the function keeps.
+- **A caller is `sync` where its lambda is**: `twice(x) sync` may call
+  `apply(fn(n) { n * 2 }, x)`, where without the word it was `NK2202`. A lambda
+  that pauses inside a `sync` caller is refused there, in the caller's words.
+- **Lowered as the `async fn` its body is** (D3); a caller that cannot pause
+  drives the call once with `nikaia_std::rt::exec::settled`, which the checker
+  has proved is enough, and one that can awaits it.
+- The ledger writes `sync = "sync(f)"` from the declaration (ADR-251 D4).
+- Part II 12.1 says how to write it; Part III names `NK2210`.
+- Not built: a trait method's `sync(f)`, and ADR-244 D1, D2 and D5 (what a
+  consumer reads across a package boundary, and the notes that go with it).
+
 ## [0.0.254] — 2026-09-29
 
 **The ledger speaks Nikaia where Nikaia can say it**

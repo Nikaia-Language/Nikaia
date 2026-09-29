@@ -1793,6 +1793,7 @@ impl Ledger {
             config,
             ret_type,
             is_sync,
+            sync_by,
             is_public,
             throws,
             ..
@@ -1876,7 +1877,21 @@ impl Ledger {
                 // afterwards and may raise a `No` to `Inferred`; it never
                 // touches this one, because an assertion is what `NK2202`
                 // exists to contradict.
-                sync: if *is_sync { Sync::Asserted } else { Sync::No },
+                // `sync(f)` is the source's promise that only `f`'s lambda
+                // may make it pause ([ADR-244](../../../docs/specification/adr/adr-244.md)
+                // D4) - the entry `std` has written by hand as `from(f)` since
+                // ADR-029 D3.
+                sync: match (*is_sync, sync_by.is_empty()) {
+                    (true, _) => Sync::Asserted,
+                    (false, false) => Sync::From(
+                        sync_by
+                            .iter()
+                            .map(|name| parsed.text(*name))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                    (false, true) => Sync::No,
+                },
                 // What the *declaration* says, which is nothing: a `.nika`
                 // file has no syntax for a touch set, and there is no reason to
                 // give it one - what a body reaches is read off the body.

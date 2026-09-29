@@ -934,6 +934,7 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
                 ret_type: None,
                 body: body.clone(),
                 is_sync: false,
+                sync_by: Vec::new(),
                 is_public: false,
                 throws: true,
             };

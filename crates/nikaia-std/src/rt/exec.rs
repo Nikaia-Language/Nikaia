@@ -136,6 +136,29 @@ pub fn start_on_pool(future: impl Future<Output = ()> + Send + 'static) {
     }
 }
 
+/// **A call that cannot pause, driven where no `.await` can be written**
+/// ([ADR-244](../../../../docs/specification/adr/adr-244.md) D4).
+///
+/// A function written `sync(f)` is lowered as the `async fn` its body is: `f`
+/// may pause. A caller that is itself `sync`, and hands it a lambda that does
+/// not pause, has been told by the checker that the call cannot pause - so the
+/// future is ready the first time it is asked, and this asks once, with a waker
+/// nothing will ever use. A future that is not ready is this compiler having
+/// allowed a pause it said could not happen, and that is an abort with the
+/// sentence that says so rather than a hang.
+#[track_caller]
+pub fn settled<T>(future: impl Future<Output = T>) -> T {
+    let mut future = std::pin::pin!(future);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => panic!(
+            "a call the compiler proved cannot pause paused (a `sync(f)` function handed \
+             a lambda that does not pause) - this is a Nikaia compiler bug"
+        ),
+    }
+}
+
 /// Drive `future` to its value, running every started task in between.
 ///
 /// **The one place a Nikaia program's `main` is driven**
