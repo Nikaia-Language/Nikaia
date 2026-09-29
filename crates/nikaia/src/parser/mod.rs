@@ -1365,7 +1365,7 @@ grammar! {
             KW_FN
             name:NAME
             generics:generic_list?
-            params:fn_params
+            params:fn_params?
             promise_before_the_arrow?
             ret:return_type_arrow?
             promise:promise_after_the_type
@@ -1373,6 +1373,8 @@ grammar! {
                 // A trait method's `sync(f)` is not built: it reads as a method
                 // that may pause, which is the promise's weaker side.
                 let (sync, _, throws) = promise;
+                // Part I 5.1's *Optional Parentheses*, as `fn_head` has them.
+                let params = params.unwrap_or_else(FnParams::none);
                 Spanned::documented(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -1411,18 +1413,17 @@ grammar! {
         rule fn_item -> Item =
             vis:kw_pub?
             KW_FN
-            name:NAME?
-            generics:generic_list?
-            params:fn_params
+            head:fn_head
             promise_before_the_arrow?
             ret:return_type_arrow?
             promise:promise_after_the_type
             body:block
             -> {
+                let (name, generics, params) = head;
                 let (sync, sync_by, throws) = promise;
                 Item::Fn {
                     name,
-                    generics: generics.unwrap_or_default(),
+                    generics,
                     receiver: params.receiver,
                     args: params.args,
                     config: params.config,
@@ -1434,6 +1435,25 @@ grammar! {
                     is_public: vis.is_some(),
                     can_throw: throws,
                 }
+            }
+
+        // **A function declared without parameters may omit the parentheses**
+        // (Part I 5.1, *Optional Parentheses*): `fn init { … }` is
+        // `fn init() { … }`, the way `fn { … }` is a lambda of none. Only a
+        // *named* declaration may: the anonymous constructor of Part I 4.2 keeps
+        // its `pub fn(…)`, because a bare `pub fn { … }` would read as a lambda
+        // standing where an item belongs. The call site is untouched - `init()`
+        // is still how the function is called.
+        rule fn_head -> (Option<Symbol>, Vec<GenericParam>, FnParams) =
+            name:NAME generics:generic_list? params:fn_params? -> {
+                (
+                    Some(name),
+                    generics.unwrap_or_default(),
+                    params.unwrap_or_else(FnParams::none),
+                )
+            }
+          | generics:generic_list? params:fn_params -> {
+                (None, generics.unwrap_or_default(), params)
             }
 
         // The refusal, and it needs a rule of its own because the message is
