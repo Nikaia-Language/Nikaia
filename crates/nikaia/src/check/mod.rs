@@ -11918,7 +11918,26 @@ impl<'a> Checker<'a> {
         //
         // Measured: widening `NK1117` to a name in an expression refused
         // `examples/escaping/src/main.nika` for its `{r.shade}` until this frame existed.
-        for (hole, bound) in crate::emit::literal_expressions_bound(self.parsed, literal) {
+        //
+        // What each of an f-string's holes says after its `:`, beside the holes
+        // that parse - the ones the walk below is handed, in the same order.
+        let specs: Vec<Option<String>> = match literal {
+            Expr::LitInterpolated(text) => crate::emit::interpolation_with_specs(text)
+                .map(|(_, holes, specs)| {
+                    holes
+                        .iter()
+                        .zip(specs)
+                        .filter(|(hole, _)| {
+                            crate::parser::parse_expression(&self.parsed.interner, hole).is_ok()
+                        })
+                        .map(|(_, spec)| spec)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let walked = crate::emit::literal_expressions_bound(self.parsed, literal);
+        for (index, (hole, bound)) in walked.into_iter().enumerate() {
             let frame: Vec<Local> = bound
                 .into_iter()
                 // What the element's type is, is a question about the
@@ -11932,10 +11951,72 @@ impl<'a> Checker<'a> {
                 Expr::LitInterpolated(_) => self.hole.replace((span.at(), argument_shape(&hole))),
                 _ => self.hole.clone(),
             };
-            self.expr(&hole, span);
+            let held = self.expr(&hole, span);
             self.hole = outer;
             self.scope.pop();
+            if let Some(spec) = specs.get(index) {
+                self.a_collection_in_a_hole(&hole, &held, spec.as_deref(), span);
+            }
         }
+    }
+
+    /// **`NK1201`: a list, a map or a set in an `f"…"` hole.**
+    ///
+    /// A hole is written as its value's text, which the emitter asks the
+    /// language below for with `{}`, its `Display` - and a `Vec`, a `HashMap`
+    /// and a `HashSet` have none, so `f"Reading: {data}"` over `[1, 2, 3]`
+    /// lowered and `rustc` said *`Vec<i64>` doesn't implement
+    /// `std::fmt::Display`* (E0277) about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **The specification gives a collection no text form.** Part I 2.5 says
+    /// a hole holds an expression and that what follows its `:` says *how* to
+    /// write the value, and names no way a list is written; ADR-035 and
+    /// ADR-032 are about which literals have holes and say nothing about what
+    /// they may hold. So this refuses rather than inventing a form, and the
+    /// help is the way out that exists: the elements joined into text first
+    /// (`Seq::join`).
+    ///
+    /// Only where the hole's type is **known** to be a collection (C.4), and
+    /// only a hole that does not say how to write itself: a `:` written in a
+    /// hole is handed to the language below as it stands, and one with a `?` in
+    /// it asks for a form every collection there has.
+    fn a_collection_in_a_hole(&mut self, hole: &Expr, held: &Ty, spec: Option<&str>, span: &Span) {
+        if !is_a_collection(held) || spec.is_some_and(|spec| spec.contains('?')) {
+            return;
+        }
+        let written = written(self.parsed, hole);
+        let (what, help) = match is_a_list(held) {
+            true => (
+                "a list".to_string(),
+                format!(
+                    "Join its elements into text first: `let text = {}.iter().join(\", \")`, \
+                     then write `{{text}}`.",
+                    match hole {
+                        Expr::Variable(_) | Expr::Field { .. } => written.clone(),
+                        _ => format!("({written})"),
+                    }
+                ),
+            ),
+            false => (
+                format!("`{held}`"),
+                "Write the parts you want in holes of their own, or build the text in a \
+                 loop first."
+                    .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1201",
+            message: format!("You can't put {what} in an `f\"…\"` hole."),
+            notes: vec![format!(
+                "A hole is written as its value's text, and lists, maps and sets have no \
+                 text form. `{written}` is {what}."
+            )],
+            help: Some(help),
+            labels: Vec::new(),
+        });
     }
 
     /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.

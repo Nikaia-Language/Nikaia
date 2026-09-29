@@ -12557,8 +12557,18 @@ fn at_the_statement<T>(flow: Flow<'_>, result: Result<T>) -> Result<T> {
 }
 
 pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
+    interpolation_with_specs(literal).map(|(format, holes, _)| (format, holes))
+}
+
+/// [`interpolation`], and beside each hole what follows its `:`, where one
+/// does: the checker asks whether a hole says *how* to write its value.
+#[allow(clippy::type_complexity)]
+pub(crate) fn interpolation_with_specs(
+    literal: &str,
+) -> Result<(String, Vec<String>, Vec<Option<String>>)> {
     let mut format = String::new();
     let mut holes = Vec::new();
+    let mut specs = Vec::new();
     let mut chars = literal.chars().peekable();
 
     while let Some(c) = chars.next() {
@@ -12669,10 +12679,11 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
                 }
 
                 holes.push(hole);
-                match spec {
+                match &spec {
                     Some(spec) => format.push_str(&format!("{{:{spec}}}")),
                     None => format.push_str("{}"),
                 }
+                specs.push(spec);
             }
             '}' => {
                 return Err(refused!(
@@ -12684,7 +12695,7 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
         }
     }
 
-    Ok((format, holes))
+    Ok((format, holes, specs))
 }
 
 // ---------------------------------------------------------------------------
