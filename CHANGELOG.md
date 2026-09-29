@@ -25,6 +25,11 @@ the job cancelled by the next push hid it.
   thread's read on another and fails without the fix. The hang itself did not
   reproduce here on x86 (16 runs of the binary, one core and four); the test
   holds the invariant the park depends on.
+- **CI says a hang in ninety minutes**: every job but `changes` has
+  `timeout-minutes: 90`. On `main` the runs queue in one group, so a job that
+  hung held every later push's answer for GitHub's six hours, and the run
+  waiting behind it was cancelled by the next push - which is how this one
+  stayed hidden.
 
 ## [0.0.258] — 2026-09-29
 

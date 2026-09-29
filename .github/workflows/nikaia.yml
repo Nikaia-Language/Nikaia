@@ -53,6 +53,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.floor == 'true'
     runs-on: ubuntu-latest
+    # A hang is a failure, in an hour and a half (see `arm64`).
+    timeout-minutes: 90
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -85,6 +87,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.arm64 == 'true'
     runs-on: ubuntu-24.04-arm
+    # **A hang is a failure, and says so in an hour and a half** rather than
+    # at GitHub's six: on `main` the runs queue behind one another, so a job
+    # that hangs held every later push's answer for six hours, and the run
+    # waiting behind it was cancelled by the next - the arm64 hang of 0.0.252
+    # to 0.0.258 was hidden that way (ADR-121 §5).
+    timeout-minutes: 90
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -127,6 +135,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.unsafe == 'true'
     runs-on: ubuntu-latest
+    # A hang is a failure, in an hour and a half (see `arm64`).
+    timeout-minutes: 90
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -148,6 +158,8 @@ jobs:
   # test suite.
   bootstrap_compiler:
     runs-on: ubuntu-latest
+    # A hang is a failure, in an hour and a half (see `arm64`).
+    timeout-minutes: 90
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
