@@ -402,7 +402,7 @@ pub fn a_stale_boundary(
     let on_the_line = diagnostic
         .location
         .as_ref()
-        .and_then(|at| source.get(at.span.clone()))
+        .and_then(|at| source.get(at.span.bytes()))
         .and_then(|text| boundaries.iter().find(|b| text.contains(&called(&b.word))));
     let in_the_file: Vec<&Boundary> = boundaries
         .iter()
@@ -787,7 +787,7 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
                 let width = source[diagnostic
                     .location
                     .as_ref()
-                    .map(|l| l.span.clone())
+                    .map(|l| l.span.bytes())
                     .unwrap_or(0..0)]
                 .chars()
                 .take_while(|c| *c != '\n')
@@ -830,7 +830,7 @@ pub fn render_sync_violation(
     path: &str,
     source: &str,
 ) -> String {
-    let (line, column) = winnow_grammar::span::line_column(source, violation.span.start);
+    let (line, column) = winnow_grammar::span::line_column(source, violation.span.at());
     let ledger = if violation.from_library {
         "`std`'s ledger"
     } else {
@@ -843,11 +843,7 @@ pub fn render_sync_violation(
         violation.caller, violation.promise, violation.callee
     ));
     out.push_str(&format!("  --> {path}:{line}:{column}\n"));
-    out.push_str(&winnow_grammar::span::caret(
-        source,
-        violation.span.start,
-        1,
-    ));
+    out.push_str(&winnow_grammar::span::caret(source, violation.span.at(), 1));
     out.push('\n');
     out.push_str(
         "     = a `sync` function promises it cannot pause and does no I/O (Part II, 12.1)\n",
@@ -883,7 +879,7 @@ pub fn render_sync_violation(
 /// relays (ADR-012). Part III C.2 asks for a headline, the reason, and one
 /// concrete way out; a `Finding` carries all three and this writes them down.
 pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str) -> String {
-    let (line, column) = winnow_grammar::span::line_column(source, finding.span.start);
+    let (line, column) = winnow_grammar::span::line_column(source, finding.span.at());
 
     let level = match finding.severity {
         crate::check::Severity::Error => "error",
@@ -892,7 +888,7 @@ pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str)
     let mut out = String::new();
     out.push_str(&format!("{level}[{}]: {}\n", finding.code, finding.message));
     out.push_str(&format!("  --> {path}:{line}:{column}\n"));
-    out.push_str(&winnow_grammar::span::caret(source, finding.span.start, 1));
+    out.push_str(&winnow_grammar::span::caret(source, finding.span.at(), 1));
     out.push('\n');
     for note in &finding.notes {
         out.push_str(&format!("     = {note}\n"));
@@ -922,14 +918,14 @@ impl LineIndex {
     }
 
     fn locate(&self, span: Span, unit: usize) -> Location {
-        let line = match self.starts.binary_search(&span.start) {
+        let line = match self.starts.binary_search(&span.at()) {
             Ok(i) => i,
             Err(i) => i - 1,
         };
 
         Location {
             line: line + 1,
-            column: span.start - self.starts[line] + 1,
+            column: span.at() - self.starts[line] + 1,
             span,
             unit,
         }
@@ -940,7 +936,8 @@ impl LineIndex {
 mod stale_boundaries {
     use super::*;
 
-    fn an_error(message: &str, span: Span) -> Diagnostic {
+    fn an_error(message: &str, span: std::ops::Range<usize>) -> Diagnostic {
+        let span = Span::from(span);
         Diagnostic {
             level: "error".to_string(),
             message: message.to_string(),

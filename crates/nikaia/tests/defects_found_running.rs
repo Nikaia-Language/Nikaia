@@ -213,7 +213,7 @@ fn a_loop_binding_is_not_the_name_it_shadows() {
     let handed: Vec<usize> = findings(source)
         .iter()
         .filter(|f| f.code == "NK2105")
-        .map(|f| f.span.start)
+        .map(|f| f.span.at())
         .collect();
     assert_eq!(
         handed,

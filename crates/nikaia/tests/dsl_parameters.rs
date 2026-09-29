@@ -173,7 +173,7 @@ fn a_missing_parameter_is_an_error_against_the_nika_source() {
     );
 
     // …on the statement that is wrong, in the file the user wrote.
-    let line = source[..missing.span.start].lines().count();
+    let line = source[..missing.span.at()].lines().count();
     assert!(
         source
             .lines()

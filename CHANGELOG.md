@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.262] — 2026-09-29
+
+**A `Span` is two `u32`** ([ADR-252](docs/specification/adr/adr-252.md) D5
+step 1), still declared in Rust: the largest diff on the road to moving the
+tree, and entirely mechanical, so taken alone.
+
+- `ast::Span` is `Span { start: u32, end: u32 }`, a copy, where it was a
+  `Range<usize>`; `bytes()`, `at()` and `stop()` are what the Rust readers
+  ask it for. The `at` offsets of four expressions are `u32` with it.
+- **A source over 4 GiB is refused** before it is read (`parser::fits`),
+  saying why, rather than wrapping every offset past the end of a `u32`.
+- 192 `.clone()`s of a span are gone, and every spanned node is 8 bytes
+  smaller.
+
 ## [0.0.261] — 2026-09-29
 
 **The syntax tree moves to Nikaia whole, and a `Span` is two `u32`**

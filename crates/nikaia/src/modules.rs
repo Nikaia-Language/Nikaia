@@ -919,7 +919,7 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
             tests.push(TestCase {
                 title: title.clone(),
                 path: unit.path.clone(),
-                line: unit.source[..item.span.start.min(unit.source.len())]
+                line: unit.source[..item.span.at().min(unit.source.len())]
                     .matches('\n')
                     .count()
                     + 1,

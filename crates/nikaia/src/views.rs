@@ -178,7 +178,7 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Stored> {
 
     for item in &parsed.program.items {
         match &item.node {
-            Item::Fn { .. } => scan(unit, None, item.span.start, &item.node, &mut found),
+            Item::Fn { .. } => scan(unit, None, item.span.at(), &item.node, &mut found),
             Item::Impl {
                 target, methods, ..
             } => {
@@ -186,7 +186,7 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Stored> {
                     scan(
                         unit,
                         Some(target),
-                        method.span.start,
+                        method.span.at(),
                         &method.node,
                         &mut found,
                     );
@@ -195,7 +195,7 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Stored> {
             _ => {}
         }
     }
-    found.sort_by_key(|s| s.span.start);
+    found.sort_by_key(|s| s.span.at());
     found
 }
 
@@ -288,7 +288,7 @@ fn finding(stored: &Stored) -> Finding {
 
     Finding {
         severity: Severity::Error,
-        span: stored.span.clone(),
+        span: stored.span,
         code: "NK2302",
         message: format!(
             "{of} keeps `{param}` past this call, and `{param}: {ty}` does not say which buffer it \
@@ -476,7 +476,7 @@ fn scan(unit: Unit<'_>, target: Option<&Type>, method: usize, item: &Item, out: 
         let pick = |found: Vec<(Span, Destination)>| {
             found
                 .into_iter()
-                .min_by_key(|(span, into)| (rank(into), span.start))
+                .min_by_key(|(span, into)| (rank(into), span.at()))
         };
         let (carried, picked) = match unreached.is_empty() {
             true => (true, pick(reached)),
@@ -776,7 +776,7 @@ impl Scanner<'_> {
             return;
         }
         self.found.push((
-            span.clone(),
+            *span,
             Destination::ParamField {
                 param,
                 owner: self.parsed.text(owner).to_string(),
@@ -802,7 +802,7 @@ impl Scanner<'_> {
             return;
         }
         self.found.push((
-            span.clone(),
+            *span,
             Destination::Result {
                 ty: write_type(self.parsed, result),
             },
@@ -993,7 +993,7 @@ impl Scanner<'_> {
                             continue;
                         }
                         self.found.push((
-                            span.clone(),
+                            *span,
                             Destination::Field {
                                 owner: self.parsed.text(*name).to_string(),
                                 field,
@@ -1006,7 +1006,7 @@ impl Scanner<'_> {
             }
             Expr::Spawn { body, .. } => {
                 if self.mentions(body) {
-                    self.found.push((span.clone(), Destination::Task));
+                    self.found.push((*span, Destination::Task));
                 }
                 self.descend(expr, span);
             }
@@ -1017,8 +1017,7 @@ impl Scanner<'_> {
     /// A call on the subject itself, whose end this module does not see.
     fn subject_destination(&mut self, span: &Span) {
         if let Some(owner) = self.subject_text() {
-            self.found
-                .push((span.clone(), Destination::Subject { owner }));
+            self.found.push((*span, Destination::Subject { owner }));
         }
     }
 
@@ -1040,7 +1039,7 @@ impl Scanner<'_> {
             return;
         };
         self.found.push((
-            span.clone(),
+            *span,
             Destination::Field {
                 owner,
                 field: name,

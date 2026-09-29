@@ -74,7 +74,7 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
             found.push(incomplete(&named, &target_name, &missing, &item.span));
         }
     }
-    found.sort_by_key(|f| f.span.start);
+    found.sort_by_key(|f| f.span.at());
     found
 }
 
@@ -166,7 +166,7 @@ fn receivers(
         }
         found.push(Finding {
             severity: Severity::Error,
-            span: method.span.clone(),
+            span: method.span,
             code: "NK1196",
             message: format!(
                 "`{trait_name}`'s `{name}` takes {}, and this takes {}",
@@ -223,7 +223,7 @@ fn pausing(
     if declared.sync.is_sync() && !contract.sync.is_sync() {
         found.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1129",
             message: format!(
                 "`{target}::{method}` pauses, and `{trait_name}` declares `{method}` as `sync`"
@@ -243,7 +243,7 @@ fn pausing(
     if declared.throws.is_empty() && !contract.throws.is_empty() {
         found.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1140",
             message: format!(
                 "`{target}::{method}` can fail, and `{trait_name}` declares `{method}` without \
@@ -277,7 +277,7 @@ fn pausing(
 fn not_in_the_trait(trait_name: &str, target: &str, method: &str, span: &Span) -> Finding {
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1130",
         message: format!("`{trait_name}` declares no method `{method}`"),
         notes: vec![format!(
@@ -296,7 +296,7 @@ fn incomplete(trait_name: &str, target: &str, missing: &BTreeSet<&String>, span:
     let names: Vec<String> = missing.iter().map(|m| format!("`{m}`")).collect();
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1130",
         message: format!(
             "`{target}` does not implement {} of `{trait_name}`",

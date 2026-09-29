@@ -549,14 +549,14 @@ fn plan(
         // what the function hands back and reads the body's locals.
         walk.scopes.push(BTreeMap::new());
         for stmt in &body.stmts {
-            walk.statement = stmt.span.start;
+            walk.statement = stmt.span.at();
             walk.stmt(&stmt.node, &stmt.span);
         }
         if result_carries
             && let Some(last) = body.stmts.last()
             && let Stmt::Expr(value) = &last.node
         {
-            walk.statement = last.span.start;
+            walk.statement = last.span.at();
             let origins = walk.origins(value);
             if !walk.is_the_buffer(value) {
                 walk.escape_all(&origins, Escape::Result);
@@ -573,7 +573,7 @@ impl Walk<'_> {
     fn block(&mut self, block: &Block) {
         self.scopes.push(BTreeMap::new());
         for stmt in &block.stmts {
-            self.statement = stmt.span.start;
+            self.statement = stmt.span.at();
             self.stmt(&stmt.node, &stmt.span);
         }
         self.scopes.pop();
@@ -662,7 +662,7 @@ impl Walk<'_> {
     }
 
     fn stmt(&mut self, stmt: &Stmt, span: &Span) {
-        let at = span.start;
+        let at = span.at();
         match stmt {
             Stmt::Let {
                 names, value, ty, ..
@@ -722,7 +722,7 @@ impl Walk<'_> {
                                 at,
                                 name,
                                 ty: buffer,
-                                span: span.clone(),
+                                span: *span,
                             },
                             self.path.clone(),
                         ));
@@ -763,7 +763,7 @@ impl Walk<'_> {
                     self.bind(name, at, origins.clone(), None, false);
                 }
                 for inner in &body.stmts {
-                    self.statement = inner.span.start;
+                    self.statement = inner.span.at();
                     self.stmt(&inner.node, &inner.span);
                 }
                 self.scopes.pop();
@@ -1201,7 +1201,7 @@ impl Walk<'_> {
         match block.stmts.last() {
             Some(last) => match &last.node {
                 Stmt::Expr(value) => {
-                    let outer = std::mem::replace(&mut self.statement, last.span.start);
+                    let outer = std::mem::replace(&mut self.statement, last.span.at());
                     let origins = self.origins(value);
                     self.statement = outer;
                     origins
@@ -1222,7 +1222,7 @@ impl Walk<'_> {
             Source::Call {
                 at: self.statement,
                 callee: callee.to_string(),
-                span: self.statement..self.statement,
+                span: Span::new(self.statement, self.statement),
             },
             self.path.clone(),
         ));
@@ -1386,7 +1386,7 @@ fn decide(
     };
     let mut plan = Plan {
         key: key.clone(),
-        first: body.stmts.first().map(|s| s.span.start),
+        first: body.stmts.first().map(|s| s.span.at()),
         ..Plan::default()
     };
     let mut by_source: BTreeMap<Id, BTreeSet<Escape>> = BTreeMap::new();
@@ -1650,8 +1650,8 @@ fn element_refusal(
         .holds
         .keys()
         .find(|(_, k)| k == keeper)
-        .map(|(at, _)| *at..*at)
-        .unwrap_or(0..0);
+        .map(|(at, _)| Span::new(*at, *at))
+        .unwrap_or_default();
     crate::check::Finding {
         severity: crate::check::Severity::Error,
         span,
@@ -1673,7 +1673,7 @@ fn element_refusal(
 fn refusal(source: &Source, what: &str, why: &str, help: &str) -> crate::check::Finding {
     crate::check::Finding {
         severity: crate::check::Severity::Error,
-        span: source.span().clone(),
+        span: *source.span(),
         code: "NK2304",
         message: format!("{} {what}", capitalised(&source.named())),
         notes: vec![why.to_string()],

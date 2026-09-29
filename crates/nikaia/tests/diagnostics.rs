@@ -104,7 +104,7 @@ fn a_rejected_frame_is_reported_on_the_nika_line_that_caused_it() {
     // grammar, and above all not a line of generated Rust.
     assert_eq!(location.line, line_of(BROKEN, "s:until(\";\")"));
     assert_eq!(
-        &BROKEN[location.span.clone()],
+        &BROKEN[location.span.bytes()],
         "until(\";\")",
         "the span should cover the offending pattern"
     );
@@ -152,7 +152,7 @@ fn the_map_leads_from_emitted_code_back_to_what_wrote_it() {
         .source_span(attribute)
         .expect("the attribute maps back");
     assert!(
-        BROKEN[span].starts_with("@frame(boundary: \"\\n\")"),
+        BROKEN[span.bytes()].starts_with("@frame(boundary: \"\\n\")"),
         "the attribute should lead back to the rule that carries it"
     );
 }

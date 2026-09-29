@@ -118,7 +118,7 @@ fn bounds_of(
 fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1135",
         message: format!("nothing declares the trait `{name}`"),
         notes: vec![
@@ -189,7 +189,7 @@ fn declared_twice(name: &str, first: &str, second: &str, span: &Span) -> Finding
     };
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1148",
         message: format!("`{name}` is declared twice in this file: {kinds}"),
         notes: vec![
@@ -625,7 +625,7 @@ fn a_length_nothing_here_can_give(parsed: &Parsed, ty: &Type, span: &Span) -> Fi
         .unwrap_or_else(|| "T".to_string());
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1182",
         message: format!("`Array[{element}]` here has no length to take"),
         notes: vec![format!(
@@ -660,7 +660,7 @@ fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
     };
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1158",
         message: message.to_string(),
         notes: vec![format!(
@@ -710,7 +710,7 @@ fn nothing_declares(name: &str, known: &BTreeSet<String>, span: &Span) -> Findin
         .filter(|module| STD_MODULES.contains(&module.as_str()));
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK1135",
         message: match &in_a_module {
             Some(_) => format!("`{name}` is written without its module"),

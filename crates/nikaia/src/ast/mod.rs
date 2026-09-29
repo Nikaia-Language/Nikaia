@@ -15,7 +15,63 @@ use winnow_grammar::Symbol as Ident;
 /// Every diagnostic a user ever sees has to end up pointing at one of these:
 /// the compiler emits Rust, and an error reported against the emitted file
 /// names a line nobody wrote.
-pub type Span = std::ops::Range<usize>;
+///
+/// **Two `u32`** ([ADR-252](../../../docs/specification/adr/adr-252.md) D2):
+/// a byte offset is never negative, Nikaia has no `usize`, and every node
+/// carries one. A source is at most 4 GiB, which `parser::parse` checks before
+/// any span is made, so building one from a `usize` offset cannot wrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Span {
+    /// The span from byte `start` to byte `end`.
+    pub fn new(start: usize, end: usize) -> Span {
+        Span {
+            start: offset(start),
+            end: offset(end),
+        }
+    }
+
+    /// The bytes it covers, to slice the source with.
+    pub fn bytes(self) -> std::ops::Range<usize> {
+        self.start as usize..self.end as usize
+    }
+
+    /// The byte it starts at, which is the key the checker files its answers
+    /// under ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    pub fn at(self) -> usize {
+        self.start as usize
+    }
+
+    /// The byte after its last.
+    pub fn stop(self) -> usize {
+        self.end as usize
+    }
+
+    /// Whether byte `offset` is inside it.
+    pub fn contains(self, offset: usize) -> bool {
+        self.bytes().contains(&offset)
+    }
+}
+
+impl From<std::ops::Range<usize>> for Span {
+    fn from(range: std::ops::Range<usize>) -> Span {
+        Span::new(range.start, range.end)
+    }
+}
+
+/// A byte offset as a `Span` holds it. The 4 GiB refusal in `parser::parse`
+/// is what makes this total.
+pub fn offset(at: usize) -> u32 {
+    u32::try_from(at).expect("a source is at most 4 GiB (ADR-252 D2)")
+}
+
+/// The longest source the compiler reads: a `Span` holds a byte offset in a
+/// `u32` ([ADR-252](../../../docs/specification/adr/adr-252.md) D2).
+pub const LONGEST_SOURCE: usize = u32::MAX as usize;
 
 /// A node and where it came from.
 #[derive(Debug, Clone)]
@@ -54,10 +110,10 @@ impl<T> Spanned<T> {
 
 /// Lets a rule written `-> Spanned<T> @=` wrap its value without an action.
 impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
-    fn with_span(node: T, span: Span) -> Self {
+    fn with_span(node: T, span: std::ops::Range<usize>) -> Self {
         Self {
             node,
-            span,
+            span: Span::from(span),
             doc: None,
         }
     }
@@ -362,7 +418,7 @@ pub enum Expr {
     /// because one statement may hold a list and an array both.
     ListLit {
         items: Vec<Expr>,
-        at: usize,
+        at: u32,
     },
     /// `"…"` - Kap 2.5. **Inert text.** A `{` is a brace and nothing else, so
     /// a program that writes JSON, CSS or a regular expression says what it
@@ -376,7 +432,7 @@ pub enum Expr {
     /// is the emitter's, and one statement may hold both kinds.
     LitStr {
         text: String,
-        at: usize,
+        at: u32,
     },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
     /// says so ([ADR-035](../../../docs/specification/adr/adr-035.md)).
@@ -506,7 +562,7 @@ pub enum Expr {
     With {
         base: Box<Expr>,
         fields: Vec<FieldInit>,
-        at: usize,
+        at: u32,
     },
 
     // Kap 5.2: `fn(acc, m) { … }`. One form, and its arguments are the ones it
@@ -816,7 +872,7 @@ pub struct SelectArm {
     pub body: Block,
     /// Where the arm starts, which is the key the checker's answers are filed
     /// under ([ADR-028](../../../docs/specification/adr/adr-028.md)).
-    pub at: usize,
+    pub at: u32,
 }
 
 /// One arm of a `match` (Kap 3.4).

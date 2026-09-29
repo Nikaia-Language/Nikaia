@@ -219,7 +219,7 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
         if !passed.contains(&parameter.as_str()) {
             out.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1112",
                 message: format!("`{name}` needs `:{parameter}`, and this call does not pass it"),
                 notes: vec![format!(
@@ -238,7 +238,7 @@ fn calls(parsed: &Parsed, expr: &Expr, bound: &Bindings, span: &Span, out: &mut 
         let near = nearest(name_passed, declared);
         out.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1113",
             message: format!("`{name}` has no parameter `:{name_passed}`"),
             notes: vec![match declared.is_empty() {

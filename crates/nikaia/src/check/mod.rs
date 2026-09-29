@@ -1297,7 +1297,7 @@ fn walked<'a>(
         .extend(crate::types::check(parsed, own, library));
     // **What no function body held**, typed the same way (ADR-249).
     checker.numbers_typed_by_their_uses();
-    checker.checked.findings.sort_by_key(|f| f.span.start);
+    checker.checked.findings.sort_by_key(|f| f.span.at());
     // Only the calls that provably fail, and only where the name is not also a
     // call that does not: the emitter writes a `?` for each of these, and a `?`
     // on something that is not a failure is a `rustc` error about a file the
@@ -3730,7 +3730,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1156",
             message: format!("`use {}` brings no name in", segments.join("::")),
             notes: vec![format!(
@@ -3804,7 +3804,7 @@ impl<'a> Checker<'a> {
             .map(|(_, why)| (*why).to_string());
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1186",
             message: format!("`use {written}` names a module `std` does not have"),
             notes: vec![why.unwrap_or_else(|| {
@@ -3864,7 +3864,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked.findings.push(Finding {
                         severity: Severity::Error,
-                        span: pattern.span.clone(),
+                        span: pattern.span,
                         code: "NK1187",
                         message: format!("`{written}` is not a name a grammar writes"),
                         notes: vec![format!(
@@ -3941,7 +3941,7 @@ impl<'a> Checker<'a> {
                 };
                 let outer = std::mem::replace(&mut self.expected, expected.clone());
                 self.scope.push(frame);
-                let tail_span = action.stmts.last().map(|s| s.span.clone());
+                let tail_span = action.stmts.last().map(|s| s.span);
                 let tail = self.block(action);
                 self.scope.pop();
                 self.inside_an_action = outer_action;
@@ -4092,7 +4092,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at.clone(),
+            span: *at,
             code: "NK2210",
             message: format!("`sync({named})` names what is not code `{key}` runs"),
             notes: vec![
@@ -4195,17 +4195,13 @@ impl<'a> Checker<'a> {
                 Some(target) => format!("{target}::{own_name}"),
                 None => own_name.clone(),
             };
-            let at = body
-                .stmts
-                .first()
-                .map(|s| s.span.clone())
-                .unwrap_or_default();
+            let at = body.stmts.first().map(|s| s.span).unwrap_or_default();
             for named in sync_by {
                 let named = self.parsed.text(*named).to_string();
                 self.a_lambda_the_promise_names(&key, &named, args, &at);
             }
         }
-        if let Some(span) = body.stmts.first().map(|s| s.span.clone()) {
+        if let Some(span) = body.stmts.first().map(|s| s.span) {
             self.nameable(&own_name.clone(), &span, "a function");
         }
         let key = match target {
@@ -4281,8 +4277,8 @@ impl<'a> Checker<'a> {
                 // is `NK1138`.
                 empty_list: None,
                 open_number: None,
-                immutable: (!arg.mutable).then(|| Immutable {
-                    at: arg.span.clone(),
+                immutable: (!arg.mutable).then_some(Immutable {
+                    at: arg.span,
                     kind: Kind::Parameter,
                 }),
                 // **D3's third state, on the binding**: this name is a `&mut T`
@@ -4343,7 +4339,7 @@ impl<'a> Checker<'a> {
             .collect();
         let outer_run_code = std::mem::replace(&mut self.run_code, run_code);
         self.scope.push(frame);
-        let tail_span = body.stmts.last().map(|s| s.span.clone());
+        let tail_span = body.stmts.last().map(|s| s.span);
         let outer_lists = std::mem::take(&mut self.empty_lists);
         let outer_numbers = std::mem::take(&mut self.open_numbers);
         let outer_grown = std::mem::replace(&mut self.grown_text, grown_text(self.parsed, body));
@@ -4355,11 +4351,7 @@ impl<'a> Checker<'a> {
         if let (Some(expected), Some(Stmt::Expr(value))) =
             (&expected, body.stmts.last().map(|s| &s.node))
         {
-            let at = body
-                .stmts
-                .last()
-                .map(|s| s.span.clone())
-                .unwrap_or_default();
+            let at = body.stmts.last().map(|s| s.span).unwrap_or_default();
             self.number_asked(value, expected, &at, true);
         }
         self.numbers_typed_by_their_uses();
@@ -4388,7 +4380,7 @@ impl<'a> Checker<'a> {
             let lending = matches!(body.stmts.last().map(|s| &s.node), Some(Stmt::Expr(value))
                 if self.hands_back_a_view_of_the_subject(value));
             if lending {
-                self.checked.lent_returns.insert(span.start);
+                self.checked.lent_returns.insert(span.at());
             }
             let tail = match lending {
                 true => view_of(&tail),
@@ -4482,7 +4474,7 @@ impl<'a> Checker<'a> {
             );
         let checked = NUMERIC.contains(&from) && NUMERIC.contains(&into_name) && !always_fits;
 
-        let at = (span.start, into.clone());
+        let at = (span.at(), into.clone());
         match (from, checked) {
             (_, false) => {
                 self.widening_casts.insert(at);
@@ -4555,7 +4547,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("nothing declares `{name}`"),
             notes: vec![
@@ -4631,7 +4623,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("nothing declares a function `{name}`"),
             notes: vec![
@@ -4686,7 +4678,7 @@ impl<'a> Checker<'a> {
         // second.
         if ty.is_unknown() && !a_number {
             self.checked.lookup_keys.insert((
-                span.start,
+                span.at(),
                 written.to_string(),
                 argument_shape(given),
             ));
@@ -4694,7 +4686,7 @@ impl<'a> Checker<'a> {
         }
         self.checked
             .lent_args
-            .entry((span.start, written.to_string(), 0))
+            .entry((span.at(), written.to_string(), 0))
             .or_default()
             .insert(argument_shape(given));
     }
@@ -4730,7 +4722,7 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1190",
             message: format!("`{name}` declares no constructor, so it cannot be called"),
             notes: vec![format!(
@@ -4749,7 +4741,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1190",
             message: format!("`{name}` is a type, and nothing describes a constructor for it"),
             notes: vec![format!(
@@ -4790,7 +4782,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1105",
             message: format!(
                 "this is `String`, and `{name}` is a `ref String`, because it began as a literal"
@@ -4827,7 +4819,7 @@ impl<'a> Checker<'a> {
         let joining = matches!(op, BinaryOp::Add) && is_a_list(left) && is_a_list(right);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1191",
             message: match is_a_list(side) {
                 true => format!("`{symbol}` is not defined on a list"),
@@ -4973,7 +4965,7 @@ impl<'a> Checker<'a> {
                         let owner = written.join("::");
                         self.checked.findings.push(Finding {
                             severity: Severity::Error,
-                            span: span.clone(),
+                            span: *span,
                             code: "NK1193",
                             message: format!(
                                 "the part of `{owner}` at position {at} holds its own type, and \
@@ -5096,7 +5088,7 @@ impl<'a> Checker<'a> {
         if !not_pure.is_empty() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1194",
                 message: "the condition of an `assert` has to change nothing".to_string(),
                 notes: not_pure
@@ -5137,7 +5129,7 @@ impl<'a> Checker<'a> {
         }
         claimed.push(')');
         self.checked.claims.insert(
-            (span.start, argument_shape(condition)),
+            (span.at(), argument_shape(condition)),
             Claim {
                 written: claimed,
                 left,
@@ -5151,7 +5143,7 @@ impl<'a> Checker<'a> {
     fn an_assert_of_another_shape(&mut self, message: String, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1195",
             message,
             notes: vec![
@@ -5280,12 +5272,12 @@ impl<'a> Checker<'a> {
         if read_left {
             self.checked
                 .compared_views
-                .insert((span.start, argument_shape(lhs)));
+                .insert((span.at(), argument_shape(lhs)));
         }
         if read_right {
             self.checked
                 .compared_views
-                .insert((span.start, argument_shape(rhs)));
+                .insert((span.at(), argument_shape(rhs)));
         }
     }
 
@@ -5358,7 +5350,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("nothing declares a trait called `{written}`"),
             notes: vec![because],
@@ -5435,7 +5427,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1181",
             message: format!("nothing declares `{head}`, which `{written}` is written under"),
             notes: vec![
@@ -5477,7 +5469,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1121",
             message: format!("`?.` reaches through a `{on}`, which cannot be absent"),
             notes: vec![format!(
@@ -5516,7 +5508,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1125",
             // **A `?` whose inside has no type is not written `??`**
             // (0.0.230, `open-work.md` §1.18 before it): that is the operator, and a reader told
@@ -5605,7 +5597,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1126",
             message: format!(
                 "`{parameter}` stands for a type the caller picks, and nothing says it has a \
@@ -5701,7 +5693,7 @@ impl<'a> Checker<'a> {
     fn a_grammar_reached_through_a_dot(&mut self, grammar: &str, rule: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1147",
             message: format!("a rule of grammar `{grammar}` is reached with `::`, not with a dot"),
             notes: vec![
@@ -5820,7 +5812,7 @@ impl<'a> Checker<'a> {
             }
             self.checked
                 .mut_args
-                .entry((span.start, written.to_string(), at))
+                .entry((span.at(), written.to_string(), at))
                 .or_default()
                 .insert(argument_shape(given));
             return true;
@@ -5911,7 +5903,7 @@ impl<'a> Checker<'a> {
             }
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1137",
                 message: "the `&` here is the compiler's to write".to_string(),
                 notes: vec![format!(
@@ -5930,7 +5922,7 @@ impl<'a> Checker<'a> {
         }
         self.checked
             .lent_args
-            .entry((span.start, written.to_string(), at))
+            .entry((span.at(), written.to_string(), at))
             .or_default()
             .insert(argument_shape(given));
         true
@@ -5996,7 +5988,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2203",
             message: format!("`{called}` takes a lock, and this runs with one already held"),
             notes: vec![
@@ -6062,7 +6054,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2201",
             message: format!("{what} reads a file, and this runs with a lock held"),
             notes: vec![
@@ -6116,7 +6108,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1141",
             message: "an `update` changes its value; there is nothing to return".to_string(),
             notes: vec![
@@ -6170,8 +6162,8 @@ impl<'a> Checker<'a> {
             built: None,
             empty_list: None,
             open_number: None,
-            immutable: asked.then(|| Immutable {
-                at: span.clone(),
+            immutable: asked.then_some(Immutable {
+                at: *span,
                 kind: Kind::Parameter,
             }),
         }
@@ -6266,7 +6258,7 @@ impl<'a> Checker<'a> {
     /// is refused, and a cleanup that can fail is the function's to declare.
     fn a_value_with_a_cleanup_bound(&mut self, name: &str, ty: &Ty, span: &Span) {
         if let Some(fails) = self.a_value_with_a_cleanup_dying(name, ty, span) {
-            self.checked.settle_lets.insert(span.start, fails);
+            self.checked.settle_lets.insert(span.at(), fails);
         }
     }
 
@@ -6289,7 +6281,7 @@ impl<'a> Checker<'a> {
         if fails && !self.throwing && !self.caught && self.current.is_some() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2605",
                 message: format!("this function can fail because the cleanup of `{name}` can fail"),
                 notes: vec![format!(
@@ -6373,7 +6365,7 @@ impl<'a> Checker<'a> {
             };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: method.span.clone(),
+                span: method.span,
                 code: "NK2601",
                 message,
                 notes: vec![
@@ -6387,7 +6379,7 @@ impl<'a> Checker<'a> {
         if !wrote_cleanup {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2601",
                 message: format!("`impl Cleanup for {target}` does not write `cleanup`"),
                 notes: vec![
@@ -6424,7 +6416,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2107",
             message: format!(
                 "this lambda runs on several cores at once, and it changes `{name}`, which \
@@ -6468,7 +6460,7 @@ impl<'a> Checker<'a> {
         let Some(at) = self
             .binding(name)
             .and_then(|local| local.immutable.clone())
-            .filter(|at| !self.said_mut.contains(&at.at.start))
+            .filter(|at| !self.said_mut.contains(&at.at.at()))
         else {
             return;
         };
@@ -6496,7 +6488,7 @@ impl<'a> Checker<'a> {
         };
         // Said once per binding: a body that changes one usually does so
         // several times, and three carets on one declaration is noise.
-        self.said_mut.insert(at.at.start);
+        self.said_mut.insert(at.at.at());
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: at.at,
@@ -6540,7 +6532,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1137",
             message: "the `&` here is the compiler's to write".to_string(),
             notes: vec![format!(
@@ -6604,7 +6596,7 @@ impl<'a> Checker<'a> {
         let ty = ty.text();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1188",
             message: format!("`{ty}` is not a type two values of which can be compared"),
             notes: vec![
@@ -6642,7 +6634,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1131",
             message: format!("`self` is borrowed here, so `{field}` cannot be {what} by value"),
             notes: vec![format!(
@@ -6881,7 +6873,7 @@ impl<'a> Checker<'a> {
         if walks_a_pausing_step && hands_back_a_sequence {
             self.checked
                 .pausing_walks
-                .insert((span.start, self.parsed.text(method).to_string()));
+                .insert((span.at(), self.parsed.text(method).to_string()));
         }
         // **A walk of a sequence whose step can fail, can fail**
         // ([ADR-025](../../docs/specification/adr/adr-025.md) D1, one construct
@@ -7052,14 +7044,14 @@ impl<'a> Checker<'a> {
         };
         self.checked
             .pausing_lambdas
-            .insert((span.start, argument_shape(lambda)), entry);
+            .insert((span.at(), argument_shape(lambda)), entry);
         if matches!(key, "Seq::map" | "Seq::filter") {
             return a_pausing_sequence(result, on);
         }
         // The eager ones pause where they are called, and the call is one that
         // may pause for every rule that asks: the function around it, the
         // lambda around it, the door around it.
-        let written = (span.start, self.parsed.text(method).to_string());
+        let written = (span.at(), self.parsed.text(method).to_string());
         self.settled_methods.remove(&written);
         self.pausing_methods.insert(written);
         let callee = key.to_string();
@@ -7140,7 +7132,7 @@ impl<'a> Checker<'a> {
             self.checked.findings.push(Finding {
                 code: "NK2703",
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 message: format!("`{written}` {needs}, and {lacks}"),
                 notes: vec![format!(
                     "this is {item}, and what produces it says what it can do: a \
@@ -7162,7 +7154,7 @@ impl<'a> Checker<'a> {
         for (entry, at) in COUNTS {
             if *entry == key {
                 self.checked.count_args.insert((
-                    span.start,
+                    span.at(),
                     self.parsed.text(method).to_string(),
                     *at,
                 ));
@@ -7293,7 +7285,7 @@ impl<'a> Checker<'a> {
                 };
                 self.checked.findings.push(Finding {
                     severity: Severity::Error,
-                    span: span.clone(),
+                    span: *span,
                     code: "NK1164",
                     message,
                     notes: vec![note],
@@ -7386,7 +7378,7 @@ impl<'a> Checker<'a> {
     fn cast_names_a_foreign_type(&mut self, into: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1122",
             message: format!("`{into}` is not a type this language offers, and `as` names one"),
             notes: vec![
@@ -7446,7 +7438,7 @@ impl<'a> Checker<'a> {
         let Some(how) = wrap_for(found, want, is_literal(value)) else {
             return;
         };
-        self.checked.nullable_sites.insert(span.start, how);
+        self.checked.nullable_sites.insert(span.at(), how);
     }
 
     /// Part I 2.2: a constant that does not fit the type it is given is a
@@ -7494,7 +7486,7 @@ impl<'a> Checker<'a> {
             return;
         }
         // **Said already**, by the operation inside it that overflowed.
-        if self.overflowed.contains(&span.start) {
+        if self.overflowed.contains(&span.at()) {
             return;
         }
         let Some(folded) = self.constant_of(value) else {
@@ -7569,7 +7561,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1116",
             message,
             // **`a u8` and `an i32`**, because the article is read off how the
@@ -7719,7 +7711,7 @@ impl<'a> Checker<'a> {
         self.open_numbers_in(value, &mut open);
         for number in open {
             if let Some(number) = self.open_numbers.get_mut(&number) {
-                number.asks.push((ty.clone(), at.clone(), beside));
+                number.asks.push((ty.clone(), *at, beside));
             }
         }
     }
@@ -7760,13 +7752,13 @@ impl<'a> Checker<'a> {
         if let Some(folded) = &pure {
             entry
                 .given
-                .push((folded.value, span.clone(), matches!(value, Expr::LitInt(_))));
+                .push((folded.value, *span, matches!(value, Expr::LitInt(_))));
         }
         if let Some(folded) = derived {
-            entry.derived.push((folded.value, span.clone()));
+            entry.derived.push((folded.value, *span));
         }
         entry.written.push((
-            span.start,
+            span.at(),
             literals,
             pure.as_ref().is_some_and(crate::fold::wants_widening),
         ));
@@ -7793,7 +7785,7 @@ impl<'a> Checker<'a> {
             let mut indexed = false;
             for (ty, at, stands_beside) in members.iter().flat_map(|m| &m.asks) {
                 match stands_beside {
-                    true => beside.push((ty.clone(), at.clone())),
+                    true => beside.push((ty.clone(), *at)),
                     false => indexed = true,
                 }
             }
@@ -7807,7 +7799,7 @@ impl<'a> Checker<'a> {
             // **Two uses that ask two types** (D2): the language below would
             // say *mismatched types* about the generated file.
             if let [(first, _), (second, at), ..] = types.as_slice() {
-                let (first, second, at) = (first.clone(), second.clone(), at.clone());
+                let (first, second, at) = (first.clone(), second.clone(), *at);
                 self.a_number_asked_for_two_types(&head.name, &first, &second, &at);
                 continue;
             }
@@ -7861,7 +7853,7 @@ impl<'a> Checker<'a> {
             // otherwise give an `i64`'s suffix is given this one.
             if let Some(ty) = decided {
                 for member in &members {
-                    self.checked.number_lets.insert(member.at.start, ty.clone());
+                    self.checked.number_lets.insert(member.at.at(), ty.clone());
                     for (statement, literals, widened) in &member.written {
                         let suffixed =
                             *widened || literals.iter().any(|v| i32::try_from(*v).is_err());
@@ -7884,7 +7876,7 @@ impl<'a> Checker<'a> {
     fn a_number_asked_for_two_types(&mut self, name: &str, first: &str, second: &str, at: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at.clone(),
+            span: *at,
             code: "NK1200",
             message: format!(
                 "`{name}` is used as {} `{first}` and here as {} `{second}`",
@@ -7969,7 +7961,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1128",
             message: format!(
                 "`{name}` is a name the language below reserves and cannot escape, \
@@ -8000,7 +7992,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1119",
             message: format!("`self` is a reserved word, so {what} may not be called that"),
             notes: vec![
@@ -8043,7 +8035,7 @@ impl<'a> Checker<'a> {
         if !matches!(
             op,
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
-        ) || self.overflowed.contains(&span.start)
+        ) || self.overflowed.contains(&span.at())
         {
             return;
         }
@@ -8072,7 +8064,7 @@ impl<'a> Checker<'a> {
         if !open.is_empty() {
             for number in open {
                 if let Some(number) = self.open_numbers.get_mut(&number) {
-                    number.derived.push((value, span.clone()));
+                    number.derived.push((value, *span));
                 }
             }
             return;
@@ -8080,7 +8072,7 @@ impl<'a> Checker<'a> {
         let before = self.checked.findings.len();
         self.a_number_that_does_not_fit(value, false, &ty, span, None);
         if self.checked.findings.len() > before {
-            self.overflowed.insert(span.start);
+            self.overflowed.insert(span.at());
         }
     }
 
@@ -8100,7 +8092,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1118",
             message: format!("this {what} by zero"),
             notes: vec![
@@ -8181,7 +8173,7 @@ impl<'a> Checker<'a> {
                     .map(|n| n.to_string())
                     .collect();
                 for name in rebound {
-                    self.written_at.push((name, span.start));
+                    self.written_at.push((name, span.at()));
                 }
                 // **A `let` over a place is a view of it** (ADR-094 D4), and
                 // the emitter needs to know before it writes the line. A bare
@@ -8189,7 +8181,7 @@ impl<'a> Checker<'a> {
                 // rename and stays a move, which is the one shape that
                 // separates this rule from `for`'s.
                 if matches!(value, Expr::Field { .. } | Expr::Index { .. }) && moves_away(&found) {
-                    self.checked.lent_lets.insert(span.start);
+                    self.checked.lent_lets.insert(span.at());
                     for name in names {
                         let name = self.parsed.text(*name).to_string();
                         self.lent_lets
@@ -8242,7 +8234,7 @@ impl<'a> Checker<'a> {
                             &want,
                             Some(value),
                             "the `let` says `String`, which is text this binding owns",
-                            span.clone(),
+                            *span,
                             "let",
                             |found, want| format!("this is `{found}`, and the `let` says `{want}`"),
                         );
@@ -8292,19 +8284,19 @@ impl<'a> Checker<'a> {
                 let open = match ty {
                     None if bound == Ty::Unknown && self.number_shaped(value) => {
                         self.open_numbers.insert(
-                            span.start,
+                            span.at(),
                             OpenNumber {
                                 name: name.clone(),
-                                at: span.clone(),
-                                joined: span.start,
+                                at: *span,
+                                joined: span.at(),
                                 asks: Vec::new(),
                                 given: Vec::new(),
                                 derived: Vec::new(),
                                 written: Vec::new(),
                             },
                         );
-                        self.open_number_given(span.start, value, span);
-                        Some(span.start)
+                        self.open_number_given(span.at(), value, span);
+                        Some(span.at())
                     }
                     _ => None,
                 };
@@ -8317,9 +8309,8 @@ impl<'a> Checker<'a> {
                 // that answers it stands *after* this line.
                 let pending = match (ty, value) {
                     (None, Expr::ListLit { items, .. }) if items.is_empty() => {
-                        self.empty_lists
-                            .insert(span.start, (name.clone(), span.clone()));
-                        Some(span.start)
+                        self.empty_lists.insert(span.at(), (name.clone(), *span));
+                        Some(span.at())
                     }
                     _ => None,
                 };
@@ -8336,7 +8327,7 @@ impl<'a> Checker<'a> {
                 // where the type is known, because the frame goes when the body
                 // does.
                 if let Some(task) = self.task_bindings.last_mut() {
-                    task.push((name.clone(), bound.clone(), span.start));
+                    task.push((name.clone(), bound.clone(), span.at()));
                 }
                 self.bind_local(Local {
                     id: a_new_binding(),
@@ -8361,8 +8352,8 @@ impl<'a> Checker<'a> {
                     // **Part I 2.1**: without the word, a change to this name
                     // is `NK1139`. The span is the statement's, which is the
                     // `let` itself — a binding has no narrower one.
-                    immutable: (!mutable).then(|| Immutable {
-                        at: span.clone(),
+                    immutable: (!mutable).then_some(Immutable {
+                        at: *span,
                         kind: Kind::Let,
                     }),
                 });
@@ -8427,7 +8418,7 @@ impl<'a> Checker<'a> {
                 // **And a part of one** (ADR-214 D2): `p.name = …` gives back
                 // what `xs.push(p.name)` took.
                 if let Some(path) = self.place_path(target) {
-                    self.written_at.push((path, span.start));
+                    self.written_at.push((path, span.at()));
                 }
                 // **D3**: an assignment into a parameter, or into a place
                 // rooted at one, changes the caller's value and says `mut`.
@@ -8524,7 +8515,7 @@ impl<'a> Checker<'a> {
                     if self.owned_text_into_a_literal_binding(target, &found, &into, span) {
                         return Ty::Tuple(Vec::new());
                     }
-                    self.expect(&found, &into, span.clone(), "assign", |found, want| {
+                    self.expect(&found, &into, *span, "assign", |found, want| {
                         format!("this is `{found}`, and what it is assigned to is `{want}`")
                     });
                 }
@@ -8570,7 +8561,7 @@ impl<'a> Checker<'a> {
                 // binding is each element itself.
                 let owned = crate::emit::is_a_place(iter) && matches!(over, Ty::Seq { .. });
                 if owned {
-                    self.checked.owned_loops.insert(span.start);
+                    self.checked.owned_loops.insert(span.at());
                 }
                 // **A `for` over a place lends** (ADR-094 D4), which the
                 // emitter writes as `.iter()` — so the binding is a *view* of
@@ -8587,7 +8578,7 @@ impl<'a> Checker<'a> {
                     if copied {
                         self.checked
                             .copied_loop_bindings
-                            .insert((span.start, name.clone()));
+                            .insert((span.at(), name.clone()));
                     }
                     // **A binding lent something that does not copy is a
                     // view of it**, and typed as one: what keeps it needs its
@@ -8720,7 +8711,7 @@ impl<'a> Checker<'a> {
                 let name = self.parsed.text(*name);
                 // `NK2101`: where this name is read, for the question a `spawn`
                 // asks about what comes after it.
-                self.read_at.push((name.to_string(), span.start));
+                self.read_at.push((name.to_string(), span.at()));
                 // **D2's question, answered where every name is read**
                 // ([ADR-135](../../docs/specification/adr/adr-135.md)): an
                 // empty list takes its element type from its first use, so a
@@ -8912,7 +8903,7 @@ impl<'a> Checker<'a> {
                 // plain condition inside does not clear the outer one.
                 let outer_condition = self.stamped_condition;
                 if cond_ty.is_seen() {
-                    self.stamped_condition = Some(span.start);
+                    self.stamped_condition = Some(span.at());
                 }
                 let choice = self.next_choice;
                 self.next_choice += 1;
@@ -8960,7 +8951,7 @@ impl<'a> Checker<'a> {
                 // **A `match` is a condition too** (ADR-111 D4).
                 let outer_condition = self.stamped_condition;
                 if on.is_seen() {
-                    self.stamped_condition = Some(span.start);
+                    self.stamped_condition = Some(span.at());
                 }
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
@@ -9295,7 +9286,7 @@ impl<'a> Checker<'a> {
                 let (args, written) = match door {
                     Some(seen) => {
                         self.the_witness_takes_no_reference(seen, span);
-                        self.checked.witnessed_sets.insert(span.start);
+                        self.checked.witnessed_sets.insert(span.at());
                         given = args.iter().chain([seen]).cloned().collect();
                         (&given[..], "set(after)".to_string())
                     }
@@ -9391,7 +9382,7 @@ impl<'a> Checker<'a> {
                         {
                             self.checked
                                 .changed_elements
-                                .insert((span.start, argument_shape(receiver)));
+                                .insert((span.at(), argument_shape(receiver)));
                         }
                     }
                 }
@@ -9409,7 +9400,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .text_as_is
-                        .insert((span.start, argument_shape(receiver)));
+                        .insert((span.at(), argument_shape(receiver)));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.inside_a_door = outer_inside;
@@ -9453,7 +9444,7 @@ impl<'a> Checker<'a> {
                     }
                     self.checked.field_calls.insert(
                         (
-                            span.start,
+                            span.at(),
                             format!("{}.{}", argument_shape(receiver), self.parsed.text(*method)),
                         ),
                         !is_sync,
@@ -9465,7 +9456,7 @@ impl<'a> Checker<'a> {
                     }
                     if throws {
                         self.fallible_methods
-                            .insert((span.start, self.parsed.text(*method).to_string()));
+                            .insert((span.at(), self.parsed.text(*method).to_string()));
                     }
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
@@ -9491,7 +9482,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .owned_copies
-                        .insert((span.start, argument_shape(receiver)));
+                        .insert((span.at(), argument_shape(receiver)));
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.inside_a_door = outer_inside;
@@ -9512,7 +9503,7 @@ impl<'a> Checker<'a> {
                     if library && args.is_empty() {
                         self.checked
                             .owned_copies
-                            .insert((span.start, argument_shape(receiver)));
+                            .insert((span.at(), argument_shape(receiver)));
                     }
                     // **A sequence's count is an `i64`** (Part I 2.2): the
                     // emitter writes the conversion a length has.
@@ -9522,7 +9513,7 @@ impl<'a> Checker<'a> {
                     if counts && !self.own.functions.contains_key(&key) {
                         self.checked
                             .counted
-                            .insert((span.start, argument_shape(receiver)));
+                            .insert((span.at(), argument_shape(receiver)));
                     }
                 }
                 self.receiver_name = outer_named;
@@ -9545,7 +9536,7 @@ impl<'a> Checker<'a> {
                     } if copies_as_a_view(&item) => {
                         self.checked
                             .copied_walks
-                            .insert((span.start, argument_shape(expr)));
+                            .insert((span.at(), argument_shape(expr)));
                         Ty::Seq {
                             item: Box::new(unviewed(&item)),
                             is_sync,
@@ -9569,7 +9560,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .filter_patterns
-                        .insert((span.start, argument_shape(lambda)));
+                        .insert((span.at(), argument_shape(lambda)));
                 }
                 // **And what `access` hands back came out of a lock** (D1).
 
@@ -9644,7 +9635,7 @@ impl<'a> Checker<'a> {
                 let (args, written) = match door {
                     Some(seen) => {
                         self.the_witness_takes_no_reference(seen, span);
-                        self.checked.witnessed_sets.insert(span.start);
+                        self.checked.witnessed_sets.insert(span.at());
                         given = args.iter().chain([seen]).cloned().collect();
                         (&given[..], "set(after)".to_string())
                     }
@@ -9678,7 +9669,7 @@ impl<'a> Checker<'a> {
                     && candidates.iter().all(|(_, c)| !c.mutates)
                     && !matches!(receiver.as_ref(), Expr::Index { .. });
                 if lent {
-                    self.checked.lent_reaches.insert((span.start, name.clone()));
+                    self.checked.lent_reaches.insert((span.at(), name.clone()));
                 }
                 let reached = self.call_on(*inner, *method, args, &written, span);
                 // **A view out of a temporary needs something to point into**
@@ -9688,14 +9679,14 @@ impl<'a> Checker<'a> {
                     other => other.is_a_view(),
                 };
                 if lent && a_view && !roots_in_a_binding(receiver) {
-                    self.checked.held_reaches.insert((span.start, name.clone()));
+                    self.checked.held_reaches.insert((span.at(), name.clone()));
                 }
                 match reached {
                     // The `and_then` case, recorded by name for the emitter
                     // exactly as a nullable field is (ADR-028: the emitter has
                     // no types and this is a question about one).
                     Ty::Nullable(result) => {
-                        self.checked.flattened_reaches.insert((span.start, name));
+                        self.checked.flattened_reaches.insert((span.at(), name));
                         Ty::Nullable(result)
                     }
                     Ty::Unknown => Ty::Unknown,
@@ -9724,7 +9715,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .boxed_reads
-                        .insert((span.start, argument_shape(expr)));
+                        .insert((span.at(), argument_shape(expr)));
                 }
                 // **A handle has no fields** (ADR-147 D3): it is an address
                 // this language never dereferences, so there is nothing inside
@@ -9808,7 +9799,7 @@ impl<'a> Checker<'a> {
                 {
                     self.checked
                         .boxed_reads
-                        .insert((span.start, argument_shape(expr)));
+                        .insert((span.at(), argument_shape(expr)));
                 }
                 let Some(fields) = self.fields_of(ty) else {
                     return Ty::Unknown;
@@ -9840,12 +9831,12 @@ impl<'a> Checker<'a> {
                             {
                                 self.checked
                                     .viewed_reaches
-                                    .insert((span.start, field.clone()), viewed_as(inner));
-                                self.checked.flattened_reaches.insert((span.start, field));
+                                    .insert((span.at(), field.clone()), viewed_as(inner));
+                                self.checked.flattened_reaches.insert((span.at(), field));
                                 Ty::Nullable(Box::new(inner.as_a_view()))
                             }
                             Ty::Nullable(_) => {
-                                self.checked.flattened_reaches.insert((span.start, field));
+                                self.checked.flattened_reaches.insert((span.at(), field));
                                 declared.ty
                             }
                             // **A member that copies comes out of a view**
@@ -9869,7 +9860,7 @@ impl<'a> Checker<'a> {
                             // [ADR-052](../../docs/specification/adr/adr-052.md)
                             // D8's translation stays for it alone.
                             plain if !crate::contracts::keeps::moves(plain) => {
-                                self.checked.copied_reaches.insert((span.start, field));
+                                self.checked.copied_reaches.insert((span.at(), field));
                                 Ty::Nullable(Box::new(plain.clone()))
                             }
                             // **And a member that does not copy comes out as a
@@ -9884,8 +9875,8 @@ impl<'a> Checker<'a> {
                                 let viewed = viewed_as(plain);
                                 self.checked
                                     .viewed_reaches
-                                    .insert((span.start, field.clone()), viewed);
-                                self.checked.copied_reaches.insert((span.start, field));
+                                    .insert((span.at(), field.clone()), viewed);
+                                self.checked.copied_reaches.insert((span.at(), field));
                                 Ty::Nullable(Box::new(plain.as_a_view()))
                             }
                             plain => Ty::Nullable(Box::new(plain.clone())),
@@ -10065,7 +10056,7 @@ impl<'a> Checker<'a> {
                             if let Some(how) = wrap_for(&found, &want, is_literal) {
                                 self.checked
                                     .nullable_fields
-                                    .entry((span.start, owner.clone(), field.clone()))
+                                    .entry((span.at(), owner.clone(), field.clone()))
                                     .or_default()
                                     .insert(value.map(argument_shape).unwrap_or_default(), how);
                                 // A view into a `String?` is still a view kept
@@ -10079,7 +10070,7 @@ impl<'a> Checker<'a> {
                                         &want,
                                         value,
                                         &keeper,
-                                        span.clone(),
+                                        *span,
                                         "field",
                                         move |found, want| {
                                             format!("`{o}.{f}` is `{want}`, and this is `{found}`")
@@ -10094,7 +10085,7 @@ impl<'a> Checker<'a> {
                                 &want,
                                 value,
                                 &keeper,
-                                span.clone(),
+                                *span,
                                 "field",
                                 move |found, want| {
                                     format!("`{owner}.{field}` is `{want}`, and this is `{found}`")
@@ -10201,15 +10192,9 @@ impl<'a> Checker<'a> {
                             let want = held.ty.clone();
                             let owner = name.clone();
                             let field = field.clone();
-                            self.expect(
-                                &given,
-                                &want,
-                                span.clone(),
-                                "field",
-                                move |given, want| {
-                                    format!("`{owner}.{field}` is `{want}`, and this is `{given}`")
-                                },
-                            );
+                            self.expect(&given, &want, *span, "field", move |given, want| {
+                                format!("`{owner}.{field}` is `{want}`, and this is `{given}`")
+                            });
                         }
                         None => self.no_such_field(&name, &field, &declared, span),
                     }
@@ -10218,7 +10203,7 @@ impl<'a> Checker<'a> {
                 // struct's name in a functional update and this node does not
                 // carry one, so the answer travels under the byte the `with`
                 // stands at rather than being worked out twice.
-                self.checked.with_types.insert(*at, name.clone());
+                self.checked.with_types.insert(*at as usize, name.clone());
                 found
             }
 
@@ -10386,7 +10371,7 @@ impl<'a> Checker<'a> {
                     // Recorded by the operator's own span, because `a + b + c`
                     // is two of them and the statement they stand in is one.
                     BinaryOp::Add if is_text(&left) || is_text(&right) => {
-                        self.checked.concatenations.insert(at.start);
+                        self.checked.concatenations.insert(at.at());
                         Ty::named("String")
                     }
                     // **`NK1191`: arithmetic on a collection** (0.0.234).
@@ -10500,7 +10485,9 @@ impl<'a> Checker<'a> {
                 let other = self.expr(fallback, span);
                 if let (Ty::Nullable(inner), Expr::LitStr { at, .. }) = (&left, &**fallback) {
                     if **inner == Ty::view("str") {
-                        self.checked.view_fallbacks.insert(self.text_at(*at));
+                        self.checked
+                            .view_fallbacks
+                            .insert(self.text_at(*at as usize));
                     }
                     // **A map's text, read, is a view of it** (ADR-213 D2): the
                     // map hands out its `String` and keeps it, so the literal
@@ -10510,7 +10497,9 @@ impl<'a> Checker<'a> {
                     // wanted the map's reference: `rustc`'s words, about a file
                     // nobody wrote.
                     if **inner == Ty::named("String") && from_a_map {
-                        self.checked.view_fallbacks.insert(self.text_at(*at));
+                        self.checked
+                            .view_fallbacks
+                            .insert(self.text_at(*at as usize));
                         return Ty::view("str");
                     }
                 }
@@ -10581,7 +10570,7 @@ impl<'a> Checker<'a> {
                 if a_range && !matches!(&**index, Expr::Range { .. }) {
                     self.checked
                         .slice_indices
-                        .insert((span.start, argument_shape(index)));
+                        .insert((span.at(), argument_shape(index)));
                 }
                 // **An index is a use that prefers an `i64`**
                 // ([ADR-249](../../docs/specification/adr/adr-249.md) D2): a
@@ -10849,7 +10838,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("nothing declares `{name}`"),
             notes: vec![
@@ -10888,7 +10877,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("`{module}` is used here and introduced nowhere"),
             notes: vec![
@@ -10932,7 +10921,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1163",
             message: format!("`{module}` has no `{last}`, and `{last}` needs no module"),
             notes: vec![
@@ -10976,7 +10965,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1117",
             message: format!("nothing declares `{name}`"),
             notes: vec![
@@ -10999,7 +10988,7 @@ impl<'a> Checker<'a> {
             Expr::LitInt(v) => {
                 self.checked
                     .unsigned_literals
-                    .insert((span.start, *v), ty.to_string());
+                    .insert((span.at(), *v), ty.to_string());
             }
             Expr::Binary { lhs, rhs, op, .. } => {
                 self.literals_are(lhs, ty, span);
@@ -11045,7 +11034,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at.clone(),
+            span: *at,
             code: "NK1197",
             message: "a bit operator beside a comparison is written in parentheses".to_string(),
             notes: vec![
@@ -11091,7 +11080,7 @@ impl<'a> Checker<'a> {
             };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: at.clone(),
+                span: *at,
                 code: "NK1198",
                 message: format!("`{written}` takes integers, and this is a `{side}`"),
                 notes: vec![
@@ -11136,7 +11125,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: at.clone(),
+            span: *at,
             code: "NK1199",
             // The article as the name is said: "an eye-sixty-four", "a
             // you-sixty-four" - NK1116's rule.
@@ -11217,7 +11206,7 @@ impl<'a> Checker<'a> {
         let fallback = &owned;
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1185",
             message: format!(
                 "this reach is a `{viewed}`, and the fallback beside it is a `{fallback}`"
@@ -11267,7 +11256,7 @@ impl<'a> Checker<'a> {
         let written = written(self.parsed, read);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1185",
             message: format!(
                 "this reads the `{held}` the map holds, and the fallback beside it is one of its own"
@@ -11310,7 +11299,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1184",
             message: format!("`{}` is not an escape this language has", refused.written),
             notes: vec![
@@ -11387,7 +11376,7 @@ impl<'a> Checker<'a> {
     fn warn_migration(&mut self, span: &Span, message: String, help: String) {
         self.checked.findings.push(Finding {
             severity: Severity::Warning,
-            span: span.clone(),
+            span: *span,
             code: "NK1111",
             message,
             notes: vec![
@@ -11466,7 +11455,7 @@ impl<'a> Checker<'a> {
             self.scope.push(frame);
             // An f-string's holes, which the emitter walks the same way.
             let outer = match literal {
-                Expr::LitInterpolated(_) => self.hole.replace((span.start, argument_shape(&hole))),
+                Expr::LitInterpolated(_) => self.hole.replace((span.at(), argument_shape(&hole))),
                 _ => self.hole.clone(),
             };
             self.expr(&hole, span);
@@ -11531,7 +11520,7 @@ impl<'a> Checker<'a> {
                 None => {
                     self.checked.findings.push(Finding {
                         severity: Severity::Error,
-                        span: span.clone(),
+                        span: *span,
                         code: "NK1124",
                         message: format!(
                             "`{}` takes locks, and this is a `{}`",
@@ -11623,7 +11612,7 @@ impl<'a> Checker<'a> {
     fn no_door(&mut self, door: MultiLock, wanted: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1124",
             message: format!("`{}` is written `{}`", door.written(), door.shape()),
             notes: vec![wanted.to_string()],
@@ -11671,7 +11660,7 @@ impl<'a> Checker<'a> {
                 .unwrap_or_else(|| "T".to_string());
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1123",
                 message: format!(
                     "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
@@ -11693,7 +11682,7 @@ impl<'a> Checker<'a> {
         if args.len() != 1 {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1101",
                 message: format!(
                     "`{name}` takes the value to put in it, and {} were passed",
@@ -11715,7 +11704,7 @@ impl<'a> Checker<'a> {
         {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1123",
                 message: format!("this is already a `{inner}`, so `{name}` has nothing to add"),
                 notes: vec![
@@ -11808,12 +11797,12 @@ impl<'a> Checker<'a> {
                 throws,
             }) = self.lookup(&name)
         {
-            self.read_at.push((name.clone(), span.start));
+            self.read_at.push((name.clone(), span.at()));
             self.arguments_given(args, &params, false, None, span);
             self.kept_arguments_are_its_own(args, &params);
             self.checked
                 .kept_calls
-                .insert((span.start, name), (!is_sync, throws));
+                .insert((span.at(), name), (!is_sync, throws));
             if let Some(current) = &self.current {
                 let entry = self.checked.methods.entry(current.clone()).or_default();
                 entry.code_pauses |= !is_sync;
@@ -12102,7 +12091,7 @@ impl<'a> Checker<'a> {
         if wanted.len() != found.len() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1101",
                 message: format!(
                     "`{key}` takes {}, and this call passes {}",
@@ -12143,7 +12132,7 @@ impl<'a> Checker<'a> {
                     let (want, ty) = (option.ty.clone(), option.ty.text());
                     let name = name.clone();
                     let key = key.to_string();
-                    self.expect(found, &want, span.clone(), "field", move |found, _| {
+                    self.expect(found, &want, *span, "field", move |found, _| {
                         format!("`{key}` takes `{name}: {ty}`, and this passes `{found}`")
                     });
                 }
@@ -12298,7 +12287,7 @@ impl<'a> Checker<'a> {
             if let Some(how) = wrap_for(found, want, is_literal) {
                 self.checked
                     .nullable_args
-                    .entry((span.start, written.to_string(), at))
+                    .entry((span.at(), written.to_string(), at))
                     .or_default()
                     .insert(given.get(at).map(argument_shape).unwrap_or_default(), how);
                 continue;
@@ -12318,7 +12307,7 @@ impl<'a> Checker<'a> {
             {
                 self.checked
                     .copied_args
-                    .entry((span.start, written.to_string(), at))
+                    .entry((span.at(), written.to_string(), at))
                     .or_default()
                     .insert(given.get(at).map(argument_shape).unwrap_or_default());
                 continue;
@@ -12332,7 +12321,7 @@ impl<'a> Checker<'a> {
                 let value = given.get(at).and_then(|arg| self.names_of(arg));
                 self.checked.findings.push(Finding {
                     severity: Severity::Error,
-                    span: span.clone(),
+                    span: *span,
                     code: "NK1115",
                     message: match &value {
                         Some(value) => {
@@ -12364,7 +12353,7 @@ impl<'a> Checker<'a> {
             };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1102",
                 message: format!(
                     "`{key}` takes `{name}: {}`, and this call passes `{}`",
@@ -12538,7 +12527,7 @@ impl<'a> Checker<'a> {
                 want,
                 given.get(at),
                 &keeper,
-                span.clone(),
+                *span,
                 "argument",
                 move |found, want| {
                     format!("`{key}` takes `{name}: {want}` here, and this call passes `{found}`")
@@ -12740,7 +12729,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1108",
             message: format!("this is `{}`, and a condition is a `bool`", found.text()),
             notes: vec![why.to_string()],
@@ -12827,7 +12816,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2605",
             message: format!("this function can fail because `{key}` can fail"),
             notes: vec![
@@ -12878,7 +12867,7 @@ impl<'a> Checker<'a> {
         let named = list(&gained.iter().map(String::as_str).collect::<Vec<_>>());
         self.checked.findings.push(Finding {
             severity: Severity::Warning,
-            span: span.clone(),
+            span: *span,
             code: "NK2402",
             message: format!("this `catch` receives {named} from `{key}` now"),
             notes: vec![
@@ -12964,7 +12953,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Warning,
-            span: span.clone(),
+            span: *span,
             code: "NK2403",
             message,
             notes: vec![
@@ -13049,7 +13038,7 @@ impl<'a> Checker<'a> {
         if seen.pauses && !promised.may_pause {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2206",
                 message: "this lambda can pause, and the parameter it is given to says `sync`"
                     .to_string(),
@@ -13073,7 +13062,7 @@ impl<'a> Checker<'a> {
         if seen.fails && !promised.may_fail {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2606",
                 message: "this lambda can fail, and the parameter it is given to does not say \
                           `throws`"
@@ -13158,7 +13147,7 @@ impl<'a> Checker<'a> {
         if self.in_parallel.is_some() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2209",
                 message: format!("{what} can pause, and this runs on several cores at once"),
                 notes: vec![
@@ -13175,7 +13164,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2202",
             message: format!("{what} can pause, and this runs with a lock held"),
             notes: vec![
@@ -13215,7 +13204,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2209",
             message: format!("`{rule}`'s action calls `{callee}`, which can pause"),
             notes: vec![
@@ -13264,7 +13253,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2202",
             message: format!("`{caller}` is `sync`, and `{callee}` can pause"),
             notes: vec![
@@ -13307,11 +13296,11 @@ impl<'a> Checker<'a> {
             .collect();
         self.checked
             .method_options
-            .insert((span.start, self.parsed.text(method).to_string()), options);
+            .insert((span.at(), self.parsed.text(method).to_string()), options);
     }
 
     fn method_propagates(&mut self, method: Ident, fails: bool, span: &Span) {
-        let key = (span.start, self.parsed.text(method).to_string());
+        let key = (span.at(), self.parsed.text(method).to_string());
         if fails {
             self.fallible_methods.insert(key);
         } else {
@@ -13353,12 +13342,12 @@ impl<'a> Checker<'a> {
             // not only where the name is used again (D2): a line further down
             // may not decide what a line further up does to a cleanup point.
             if is_a_handle(&ty) {
-                self.checked.task_handles.insert((span.start, name.clone()));
+                self.checked.task_handles.insert((span.at(), name.clone()));
             }
             if !moves_away(&ty) {
                 continue;
             }
-            self.moved_into_a_task.push((name, ty, span.end));
+            self.moved_into_a_task.push((name, ty, span.stop()));
         }
     }
 
@@ -13399,10 +13388,7 @@ impl<'a> Checker<'a> {
             self.checked.findings.push(Finding {
                 code: "NK2101",
                 severity: Severity::Error,
-                span: Span {
-                    start: used,
-                    end: used,
-                },
+                span: Span::new(used, used),
                 message: format!("this background task takes ownership of `{name}`"),
                 notes: vec![
                     format!(
@@ -13486,7 +13472,7 @@ impl<'a> Checker<'a> {
             };
             self.checked
                 .map_keys
-                .insert((span.start, argument_shape(index), writing), form);
+                .insert((span.at(), argument_shape(index), writing), form);
             return;
         }
         if keys.is_a_view() {
@@ -13500,7 +13486,7 @@ impl<'a> Checker<'a> {
                         keys,
                         Some(index),
                         "a map keeps its keys",
-                        span.clone(),
+                        *span,
                         "assign",
                         |found, want| {
                             format!("this key is `{found}`, and the map's keys are `{want}`")
@@ -13517,7 +13503,7 @@ impl<'a> Checker<'a> {
         };
         self.checked
             .map_keys
-            .insert((span.start, argument_shape(index), writing), form);
+            .insert((span.at(), argument_shape(index), writing), form);
     }
 
     /// **`NK1189`: a copy under another name than `.clone()`**
@@ -13557,7 +13543,7 @@ impl<'a> Checker<'a> {
         self.checked.findings.push(Finding {
             code: "NK1189",
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             message: format!("a copy is written `.clone()`, not `.{written}()`"),
             notes: vec![
                 "Nikaia has one word for a copy, for text and for everything else: a copy \
@@ -13590,11 +13576,11 @@ impl<'a> Checker<'a> {
             && self
                 .checked
                 .text_as_is
-                .contains(&(span.start, argument_shape(receiver)))
+                .contains(&(span.at(), argument_shape(receiver)))
         {
             return self.hands_over(receiver, ty, to, span);
         }
-        let Some(&at) = self.read_index.get(&(address(value), span.start)) else {
+        let Some(&at) = self.read_index.get(&(address(value), span.at())) else {
             return;
         };
         if !matches!(value, Expr::Variable(_) | Expr::Field { .. }) {
@@ -13656,7 +13642,7 @@ impl<'a> Checker<'a> {
         self.checked.findings.push(Finding {
             code: "NK2105",
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             message: format!("`{path}` is {to}, inside a {what} it was declared outside of"),
             notes: vec![
                 format!(
@@ -13698,7 +13684,7 @@ impl<'a> Checker<'a> {
         self.checked.findings.push(Finding {
             code: "NK2106",
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             message: format!("`{path}` is {to}, and `{root}` is only lent here"),
             notes: vec![
                 format!(
@@ -13729,7 +13715,7 @@ impl<'a> Checker<'a> {
 
     /// A read of a name, recorded once per expression and statement.
     fn a_read(&mut self, expr: &Expr, path: String, span: &Span) {
-        let key = (address(expr), span.start);
+        let key = (address(expr), span.at());
         if self.read_index.contains_key(&key) {
             return;
         }
@@ -13738,7 +13724,7 @@ impl<'a> Checker<'a> {
         let binding = self.binding(&path).map(|local| local.id);
         self.reads_on_paths.push(Read {
             path,
-            at: span.start,
+            at: span.at(),
             choices: self.branch.clone(),
             seq: self.read_seq,
             binding,
@@ -13750,16 +13736,16 @@ impl<'a> Checker<'a> {
     fn a_read_of_a_part(&mut self, base: &Expr, expr: &Expr, field: &str, span: &Span) {
         // Once per expression, as the read it extends: an argument walked a
         // second time would otherwise read `self.path.path`.
-        if self.read_index.contains_key(&(address(expr), span.start)) {
+        if self.read_index.contains_key(&(address(expr), span.at())) {
             return;
         }
-        let Some(&at) = self.read_index.get(&(address(base), span.start)) else {
+        let Some(&at) = self.read_index.get(&(address(base), span.at())) else {
             return;
         };
         let read = &mut self.reads_on_paths[at];
         read.path.push('.');
         read.path.push_str(field);
-        self.read_index.insert((address(expr), span.start), at);
+        self.read_index.insert((address(expr), span.at()), at);
     }
 
     /// A taking, where it stands.
@@ -13770,8 +13756,8 @@ impl<'a> Checker<'a> {
         Taken {
             path,
             ty,
-            from: span.start,
-            at: span.end,
+            from: span.at(),
+            at: span.stop(),
             seq,
             choices: self.branch.clone(),
             until: None,
@@ -13826,10 +13812,10 @@ impl<'a> Checker<'a> {
             return;
         }
         for walked in &mut self.walked[from.0..] {
-            walked.until.get_or_insert(span.end);
+            walked.until.get_or_insert(span.stop());
         }
         for handed in &mut self.handed[from.1..] {
-            handed.until.get_or_insert(span.end);
+            handed.until.get_or_insert(span.stop());
         }
     }
 
@@ -13863,10 +13849,7 @@ impl<'a> Checker<'a> {
             findings.push(Finding {
                 code: "NK2105",
                 severity: Severity::Error,
-                span: Span {
-                    start: used,
-                    end: used,
-                },
+                span: Span::new(used, used),
                 message,
                 notes: vec![
                     format!(
@@ -13950,7 +13933,7 @@ impl<'a> Checker<'a> {
         self.checked.findings.push(Finding {
             code: "NK2702",
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             message: format!(
                 "`{name}` is a sequence, taken inside a {} it was declared outside of",
                 around.what
@@ -14002,10 +13985,7 @@ impl<'a> Checker<'a> {
             findings.push(Finding {
                 code: "NK2702",
                 severity: Severity::Error,
-                span: Span {
-                    start: used,
-                    end: used,
-                },
+                span: Span::new(used, used),
                 message: format!("`{name}` is a sequence that was already walked"),
                 notes: vec![
                     format!(
@@ -14058,7 +14038,7 @@ impl<'a> Checker<'a> {
                 self.checked.findings.push(Finding {
                     code: "NK2104",
                     severity: Severity::Error,
-                    span: stmt.span.clone(),
+                    span: stmt.span,
                     message: format!("a branch of an `overlap` binds `{name}`"),
                     notes: vec![
                         "each statement in the block is a branch, and the block's value is \
@@ -14091,7 +14071,7 @@ impl<'a> Checker<'a> {
                 self.checked.findings.push(Finding {
                     code: "NK2104",
                     severity: Severity::Error,
-                    span: block.stmts[j].span.clone(),
+                    span: block.stmts[j].span,
                     message: "these two branches cannot run together".to_string(),
                     notes: vec![
                         format!("{} (Part I, 8.1.2)", verdict.why()),
@@ -14131,7 +14111,7 @@ impl<'a> Checker<'a> {
         self.checked.findings.push(Finding {
             code: "NK2103",
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             message: format!(
                 "this task's lambda names {named}, and a task is handed nothing (Part I, 8.2)"
             ),
@@ -14156,7 +14136,7 @@ impl<'a> Checker<'a> {
     /// including the ones nothing could be established about - `false` there is
     /// "there is no answer", and it lands in the set that *removes* the pair.
     fn method_pauses(&mut self, method: Ident, pauses: bool, span: &Span) {
-        let key = (span.start, self.parsed.text(method).to_string());
+        let key = (span.at(), self.parsed.text(method).to_string());
         if pauses {
             self.pausing_methods.insert(key);
         } else {
@@ -14199,7 +14179,7 @@ impl<'a> Checker<'a> {
         let name = self.parsed.text(method).to_string();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2701",
             message: format!("this function can fail because a step of what `{name}` walks can fail"),
             notes: vec![format!(
@@ -14226,7 +14206,7 @@ impl<'a> Checker<'a> {
     /// (Part III, C.1 and C.4).
     fn pausing_step(&mut self, over: &Ty, span: &Span) {
         if matches!(over, Ty::Seq { pauses: true, .. }) {
-            self.checked.pausing_loops.insert(span.start);
+            self.checked.pausing_loops.insert(span.at());
             // A lambda around the loop pauses with it, and a door around it
             // is held across the wait (ADR-233 D1, D3).
             self.a_call_that_may_pause("a step of this `for`", true, span);
@@ -14268,7 +14248,7 @@ impl<'a> Checker<'a> {
         if bindings != 1 {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2701",
                 message: format!("a `for` over {name} binds one name, and this binds {bindings}"),
                 notes: vec![format!(
@@ -14279,14 +14259,14 @@ impl<'a> Checker<'a> {
             return;
         }
 
-        self.checked.fallible_loops.insert(span.start);
+        self.checked.fallible_loops.insert(span.at());
 
         if self.throwing {
             return;
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2701",
             message: "this function can fail because a turn of this loop can fail".to_string(),
             notes: vec![format!(
@@ -14325,7 +14305,7 @@ impl<'a> Checker<'a> {
         let ty = ty.to_string();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1110",
             message: format!("`{ty}.{name}` is private to `{package}`"),
             notes: vec![
@@ -14366,7 +14346,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1110",
             message: format!("`{item}` is private to `{module}`"),
             notes: vec!["an item is private to the package that declares it unless it says `pub` (Part I, 9.2)".to_string()],
@@ -14432,7 +14412,7 @@ impl<'a> Checker<'a> {
             ];
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2501",
                 message: format!("`{name}` may not cross into a task, and this task uses it"),
                 notes: notes.into_iter().flatten().collect(),
@@ -14488,7 +14468,7 @@ impl<'a> Checker<'a> {
         let held = send::held_across_a_pause(&places, &pauses, &named);
         self.checked.held_across_a_pause.extend(
             held.iter()
-                .map(|name| (span.start, name.clone()))
+                .map(|name| (span.at(), name.clone()))
                 .collect::<Vec<_>>(),
         );
         for (name, ty, _) in bound.iter().filter(|(name, ..)| held.contains(name)) {
@@ -14508,7 +14488,7 @@ impl<'a> Checker<'a> {
             ];
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2501",
                 message: format!(
                     "`{name}` may not cross into a task, and this task holds it across a pause"
@@ -14542,7 +14522,7 @@ impl<'a> Checker<'a> {
         named: &mut BTreeMap<String, usize>,
     ) {
         for stmt in &body.stmts {
-            let at = stmt.span.start;
+            let at = stmt.span.at();
             crate::contracts::sync::visit_stmt(self.parsed, &stmt.node, &mut |expr| {
                 if self.pauses_here(expr, at) {
                     pauses.push(at);
@@ -14641,7 +14621,7 @@ impl<'a> Checker<'a> {
             ];
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2502",
                 message: format!("{what} may not cross a thread, and `{callee}` may put it on one"),
                 notes: notes.into_iter().flatten().collect(),
@@ -14702,7 +14682,7 @@ impl<'a> Checker<'a> {
         ];
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2503",
             message: format!("`{callee}` can reach a lock through {what}"),
             notes: notes.into_iter().flatten().collect(),
@@ -14770,7 +14750,7 @@ impl<'a> Checker<'a> {
         let near = nearest(name, &names);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1109",
             message: format!("`{key}` has no option `{name}`"),
             notes: vec![match names.is_empty() {
@@ -14824,7 +14804,7 @@ impl<'a> Checker<'a> {
             || self.own.functions.contains_key(&format!("{name}::new"));
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1135",
             message: format!("nothing declares a struct called `{name}`"),
             notes: vec![match is_a_function {
@@ -14871,7 +14851,7 @@ impl<'a> Checker<'a> {
             .join(": …, ");
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1146",
             message: format!("a struct literal is written with braces, and `{name}` is a type"),
             notes: vec![
@@ -14948,7 +14928,7 @@ impl<'a> Checker<'a> {
                             first.symmetric_difference(&names).cloned().collect();
                         self.checked.findings.push(Finding {
                             severity: Severity::Error,
-                            span: span.clone(),
+                            span: *span,
                             code: "NK1155",
                             message: format!(
                                 "the alternatives of this pattern bind different names: \
@@ -15007,7 +14987,7 @@ impl<'a> Checker<'a> {
         let slot = format!("{}[{}]", self.written(base), self.written(index));
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1162",
             message: format!("`{slot}` reads the slot as well as writing it, and reading a map through the brackets is a `T?`"),
             notes: vec![
@@ -15200,7 +15180,7 @@ impl<'a> Checker<'a> {
     fn a_case_is_missing(&mut self, missing: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1151",
             message: format!("this `match` does not cover `{missing}`"),
             notes: vec![
@@ -15439,7 +15419,7 @@ impl<'a> Checker<'a> {
     ) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1169",
             message: format!("`{bound}` writes the key `{key}` twice"),
             notes: vec![format!(
@@ -15456,7 +15436,7 @@ impl<'a> Checker<'a> {
     fn a_table_key_that_is_not_text(&mut self, bound: &str, key: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1170",
             message: format!("`{bound}` is keyed by `{key}`, and a table is keyed by text"),
             notes: vec![
@@ -15497,7 +15477,7 @@ impl<'a> Checker<'a> {
         let named: Vec<String> = ring.iter().map(|name| format!("`{name}`")).collect();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1168",
             // **The constant on this line**, which is the one the reader
             // declared; the ring below says where it goes.
@@ -15538,7 +15518,7 @@ impl<'a> Checker<'a> {
     ) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1127",
             // **The binding's name and not the callee's**, which is the same
             // sentence the generic `NK1127` writes: one code, one headline, and
@@ -15572,7 +15552,7 @@ impl<'a> Checker<'a> {
     fn a_build_time_index_is_not_there(&mut self, at: i128, len: usize, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1165",
             message: format!("this reads element {at} of {}", plural(len, "element")),
             notes: vec![
@@ -15621,7 +15601,7 @@ impl<'a> Checker<'a> {
             .zip(founds)
             .map(|(item, found)| match (item, holds_text) {
                 (Expr::LitStr { at, .. }, true) => {
-                    self.checked.owned_texts.insert(self.text_at(*at));
+                    self.checked.owned_texts.insert(self.text_at(*at as usize));
                     Ty::named("String")
                 }
                 _ => found,
@@ -15714,7 +15694,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1161",
             message: format!("this throws {what}, and what is thrown is an error"),
             notes: vec![
@@ -15777,7 +15757,7 @@ impl<'a> Checker<'a> {
     fn a_handle_has_nothing_inside(&mut self, handle: &str, what: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1160",
             message: format!("`{handle}` is a handle, and {what} reaches inside it"),
             notes: vec![format!(
@@ -15810,7 +15790,7 @@ impl<'a> Checker<'a> {
     fn a_handle_is_not_made_here(&mut self, handle: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1160",
             message: format!("`{handle}` is a handle, and nothing here makes one"),
             notes: vec![format!(
@@ -15926,7 +15906,7 @@ impl<'a> Checker<'a> {
         let buffer = named.as_deref().unwrap_or("the buffer");
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1159",
             message: format!(
                 "`{written}` reads this as the length of `{buffer}`, and it cannot be \
@@ -16014,7 +15994,7 @@ impl<'a> Checker<'a> {
         }
         self.checked
             .collected_into
-            .insert((span.start, argument_shape(receiver)));
+            .insert((span.at(), argument_shape(receiver)));
         Some(want.clone())
     }
 
@@ -16047,7 +16027,7 @@ impl<'a> Checker<'a> {
         {
             self.checked
                 .kept_lambdas
-                .insert((span.start, argument_shape(value)), (!is_sync, *throws));
+                .insert((span.at(), argument_shape(value)), (!is_sync, *throws));
             self.a_lambdas_text_is_its_own(want, value);
             // **A hull it captures, it captures a handle of** (ADR-230 D4,
             // ADR-040 D5): handing a hull on duplicates the count, so the name
@@ -16073,7 +16053,7 @@ impl<'a> Checker<'a> {
                 if !hulls.is_empty() {
                     self.checked
                         .kept_hulls
-                        .insert((span.start, argument_shape(value)), hulls);
+                        .insert((span.at(), argument_shape(value)), hulls);
                 }
             }
         }
@@ -16093,7 +16073,7 @@ impl<'a> Checker<'a> {
             if self.lookup(&named).is_none() && self.own.functions.contains_key(&named) {
                 self.checked
                     .kept_functions
-                    .insert((span.start, named), (!is_sync, *throws, params.len()));
+                    .insert((span.at(), named), (!is_sync, *throws, params.len()));
                 let (names, call) = kept_function_call(self.parsed, *name, params.len());
                 let frame = names
                     .iter()
@@ -16217,7 +16197,7 @@ impl<'a> Checker<'a> {
             }
             (_, Expr::LitStr { at, .. }) if *want == text => {
                 if owned {
-                    self.checked.owned_texts.insert(self.text_at(*at));
+                    self.checked.owned_texts.insert(self.text_at(*at as usize));
                 }
                 Some(text)
             }
@@ -16369,7 +16349,7 @@ impl<'a> Checker<'a> {
                 self.a_list_the_wrong_length_for_its_array(items.len(), n, span, Counted::Written);
                 return Some(want.clone());
             }
-            self.checked.array_literals.insert(*at);
+            self.checked.array_literals.insert(*at as usize);
         }
         // What the walk agreed this container's elements are - `Vec[E]`'s `E`,
         // and `Unknown` where they said nothing, which is the silence every
@@ -16909,7 +16889,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1167",
             message,
             notes: vec![note],
@@ -16968,7 +16948,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1167",
             message: format!(
                 "`{bound}` is a `{}`, and a `const` cannot hold one",
@@ -17000,7 +16980,7 @@ impl<'a> Checker<'a> {
         let had = plural(wanted.unsigned_abs() as usize, "element");
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1157",
             message: match how {
                 Counted::Written => format!(
@@ -17058,7 +17038,7 @@ impl<'a> Checker<'a> {
         let (first, other) = (name(first_kind, first), name(other_kind, &other.text()));
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1154",
             message: format!("this list holds {first} and {other}, and a list holds one type"),
             notes: vec![
@@ -17087,7 +17067,7 @@ impl<'a> Checker<'a> {
     fn an_empty_list_with_no_element_type(&mut self, name: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1153",
             message: format!("`{name}` is an empty list with no element type"),
             notes: vec![
@@ -17112,7 +17092,7 @@ impl<'a> Checker<'a> {
     fn a_body_that_may_not_run_at_build_time(&mut self, callee: &str, because: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1152",
             message: format!("`{callee}` may not be called while the program is built"),
             notes: vec![
@@ -17140,7 +17120,7 @@ impl<'a> Checker<'a> {
     fn a_build_time_call_went_too_deep(&mut self, callee: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1152",
             message: format!("`{callee}` calls itself too deeply to evaluate while building"),
             notes: vec![
@@ -17181,7 +17161,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1149",
             message: format!("`{ty}` is constructed by its anonymous constructor, not by `new`"),
             notes: vec![
@@ -17254,7 +17234,7 @@ impl<'a> Checker<'a> {
             };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1171",
                 message: format!("`{ty}` has no variant `{member}`"),
                 notes: vec![format!(
@@ -17288,7 +17268,7 @@ impl<'a> Checker<'a> {
             .join(", ");
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1171",
             message: format!("`{ty}` is a struct, and nothing it declares is called `{member}`"),
             notes: vec![format!(
@@ -17326,7 +17306,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1171",
             message: format!("`{ty}::{member}` is reached under a `{bound}` bound"),
             notes: vec![note],
@@ -17392,7 +17372,7 @@ impl<'a> Checker<'a> {
     fn a_let_that_binds_nothing(&mut self, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1144",
             message: "`_` ignores a value inside a pattern, and this `let` has nothing else \
                       to bind"
@@ -17422,7 +17402,7 @@ impl<'a> Checker<'a> {
     fn a_field_written_twice(&mut self, ty: &str, field: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1172",
             message: format!("`{field}` is named twice here, and `{ty}` has one of it"),
             notes: vec![
@@ -17494,7 +17474,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1175",
             message: format!("this build may not read `{path}`"),
             notes: vec![note],
@@ -17610,10 +17590,10 @@ impl<'a> Checker<'a> {
                 // whole point.
                 let already: BTreeSet<(&'static str, usize)> = self.checked.findings[..before]
                     .iter()
-                    .map(|f| (f.code, f.span.start))
+                    .map(|f| (f.code, f.span.at()))
                     .collect();
                 let mut fresh: Vec<Finding> = self.checked.findings.split_off(before);
-                fresh.retain(|f| !already.contains(&(f.code, f.span.start)));
+                fresh.retain(|f| !already.contains(&(f.code, f.span.at())));
                 for found in &mut fresh {
                     let (member, one) = match self.enums.contains_key(&on) {
                         true => (VARIANTS, "variant"),
@@ -17720,7 +17700,7 @@ impl<'a> Checker<'a> {
         let (on, name) = (on.clone(), name.to_string());
         self.checked
             .unrolled_calls
-            .insert(span.start, specialised(&name, &on));
+            .insert(span.at(), specialised(&name, &on));
         self.checked.unrolled.insert((name, on), fields);
     }
 
@@ -17743,7 +17723,7 @@ impl<'a> Checker<'a> {
         };
         let name = self.parsed.text(*name).to_string();
         if self.binding(&name).is_some_and(|local| local.lent) {
-            self.checked.viewed_numbers.insert((span.start, name));
+            self.checked.viewed_numbers.insert((span.at(), name));
         }
     }
 
@@ -17820,7 +17800,7 @@ impl<'a> Checker<'a> {
     fn a_copy_the_source_did_not_write(&mut self, name: &str, want: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1183",
             message: format!(
                 "`{name}` is a view of a `{want}`, and this `let` declares a `{want}`"
@@ -17849,7 +17829,7 @@ impl<'a> Checker<'a> {
     fn a_reflected_variant_has_two_members(&mut self, member: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1180",
             message: format!("a variant of `T::variants` has no `{member}`"),
             notes: vec![
@@ -17867,7 +17847,7 @@ impl<'a> Checker<'a> {
     fn a_reflected_field_has_two_members(&mut self, member: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1180",
             message: format!("a field of `T::fields` has no `{member}`"),
             notes: vec![
@@ -17929,7 +17909,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1179",
             message: format!("`{owner}.{field}` is a view of a run, and this is {owned}"),
             notes: vec![
@@ -18028,7 +18008,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1178",
             message,
             notes: vec![note],
@@ -18047,7 +18027,7 @@ impl<'a> Checker<'a> {
     fn an_asset_outside_a_comptime(&mut self, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1177",
             message: "`asset` reads a file while the program is **built**, and this is not a \
                       `comptime`"
@@ -18078,7 +18058,7 @@ impl<'a> Checker<'a> {
     fn a_path_that_is_not_a_literal(&mut self, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1176",
             message: "`asset` takes a written path, and this one is worked out".to_string(),
             notes: vec![
@@ -18107,7 +18087,7 @@ impl<'a> Checker<'a> {
     fn a_with_that_changes_nothing(&mut self, ty: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1174",
             message: format!("this `with` names no field, so it is the `{ty}` it copies"),
             notes: vec![
@@ -18171,7 +18151,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1173",
             message: match why {
                 // A type this compiler could not work out prints as `?`, which
@@ -18194,7 +18174,7 @@ impl<'a> Checker<'a> {
         let near = nearest(field, &names);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1107",
             message: format!("`{ty}` has no field `{field}`"),
             notes: vec![format!("`{ty}` has {}", list(&names))],
@@ -18326,7 +18306,7 @@ impl<'a> Checker<'a> {
                     // same arrangement `lent_args` and `nullable_args` have, and
                     // keyed the same way.
                     if !is_sync && declared_here {
-                        self.checked.future_lambdas.insert((span.start, at));
+                        self.checked.future_lambdas.insert((span.at(), at));
                         // **And an `async` closure where the callee *runs* it**
                         // ([ADR-192](../../docs/specification/adr/adr-192.md)
                         // D1). The box is what a **kept** parameter needs, and
@@ -18347,7 +18327,7 @@ impl<'a> Checker<'a> {
                                 .is_none_or(|(name, _)| !c.keeps.contains(&name))
                         });
                         if runs {
-                            self.checked.run_lambdas.insert((span.start, at));
+                            self.checked.run_lambdas.insert((span.at(), at));
                         }
                     }
                     // **A parameter the callee keeps is a kept function
@@ -18355,7 +18335,7 @@ impl<'a> Checker<'a> {
                     if declared_here && !self.runs_the_parameter(callee, at) {
                         self.checked
                             .kept_lambdas
-                            .insert((span.start, argument_shape(arg)), (!is_sync, *throws));
+                            .insert((span.at(), argument_shape(arg)), (!is_sync, *throws));
                     }
                     if let Some(want) = expected.get(at) {
                         self.a_lambdas_text_is_its_own(want, arg);
@@ -18415,7 +18395,7 @@ impl<'a> Checker<'a> {
                     {
                         self.checked
                             .kept_args
-                            .insert((span.start, argument_shape(arg)));
+                            .insert((span.at(), argument_shape(arg)));
                     }
                     found
                 }
@@ -18586,7 +18566,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1134",
             message: "nothing in this expression can fail, so the `catch` has nothing to handle"
                 .to_string(),
@@ -18696,7 +18676,7 @@ impl<'a> Checker<'a> {
             }
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2207",
                 message: format!(
                     "this `update` block replaces `{name}` without reading it, which is a `set`"
@@ -18741,7 +18721,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1137",
             message: "the `&` here is the compiler's to write".to_string(),
             notes: vec![
@@ -18776,7 +18756,7 @@ impl<'a> Checker<'a> {
         }
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1143",
             message: format!(
                 "`{name}` is declared `extern` and this call is not in an `unsafe` block"
@@ -18825,7 +18805,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2208",
             message: format!(
                 "`{container}` has no `set_after`; it is how `set(…; after: …)` is written below"
@@ -18897,7 +18877,7 @@ impl<'a> Checker<'a> {
         if found.iter().any(|ty| ty.is_seen()) {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2205",
                 message: format!(
                     "this `set` stores a value that was read from a lock, so `{container}` is \
@@ -18926,7 +18906,7 @@ impl<'a> Checker<'a> {
             let _ = at;
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK2205",
                 message: format!(
                     "this `set` stands under a condition read from a lock, so `{container}` is \
@@ -18974,7 +18954,7 @@ impl<'a> Checker<'a> {
         let bound = self.parsed.text(*bound).to_string();
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK2204",
             message: format!(
                 "`{bound}` holds shared mutable state, and this assigns to it directly"
@@ -19042,7 +19022,7 @@ impl<'a> Checker<'a> {
         if ty.is_some() {
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 code: "NK1136",
                 message: "a `let` that binds several names takes no type".to_string(),
                 notes: vec![
@@ -19214,7 +19194,7 @@ impl<'a> Checker<'a> {
                             self.a_constant_that_owns_memory(&bound, &want, &computed, span);
                         }
                         _ => {
-                            self.expect(&narrowed, want, span.clone(), "const", |found, want| {
+                            self.expect(&narrowed, want, *span, "const", |found, want| {
                                 format!("this is `{found}`, and the `const` says `{want}`")
                             });
                         }
@@ -19350,7 +19330,7 @@ impl<'a> Checker<'a> {
             (Some(below), Some(written)) if !said_a_part => {
                 self.checked
                     .comptime_values
-                    .insert(span.start, (below.clone(), written.clone()));
+                    .insert(span.at(), (below.clone(), written.clone()));
             }
             // …and nothing at all where the refusal has already been made by
             // name: `NK1152` and `NK1165` each say what `NK1127` would, with
@@ -19359,7 +19339,7 @@ impl<'a> Checker<'a> {
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,
-                span: span.clone(),
+                span: *span,
                 message: format!("this compiler cannot evaluate `{bound}` while it builds"),
                 notes: vec![
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
@@ -19437,7 +19417,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1133",
             message: format!("nothing after a `{word}` in the same block is reached"),
             notes: vec![format!(
@@ -19468,7 +19448,7 @@ impl<'a> Checker<'a> {
         // declares a view, is a view *of* the subject and not a move out of it.
         let lending = value.is_some_and(|value| self.hands_back_a_view_of_the_subject(value));
         if lending {
-            self.checked.lent_returns.insert(span.start);
+            self.checked.lent_returns.insert(span.at());
         }
         if let Some(value) = value
             && !lending
@@ -19504,7 +19484,7 @@ impl<'a> Checker<'a> {
             &expected,
             value,
             "the function hands it to its caller, who keeps it after this call has ended",
-            span.clone(),
+            *span,
             "returns",
             |found, want| format!("this returns `{found}`, and the function declares `{want}`"),
         );
@@ -19548,7 +19528,7 @@ impl<'a> Checker<'a> {
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
-            span: span.clone(),
+            span: *span,
             code: "NK1132",
             message,
             notes: vec![note],

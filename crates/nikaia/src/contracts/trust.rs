@@ -120,7 +120,7 @@ pub fn analyse(parsed: &Parsed, library: &Ledger) -> Trust {
     }
 
     reasons.sort_by(|a, b| a.source.cmp(&b.source));
-    roots.sort_by_key(|r| r.span.start);
+    roots.sort_by_key(|r| r.span.at());
 
     // A program that reads nothing has no input to distrust. Its maps are keyed
     // by what it wrote itself, which is the compiled-in case ADR-010 D2 calls
@@ -175,7 +175,7 @@ fn roots_of(parsed: &Parsed, block: &crate::ast::Block, library: &Ledger, out: &
             out.push(Root {
                 entry: key,
                 wrote,
-                span: stmt.span.clone(),
+                span: stmt.span,
             });
         });
         super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
@@ -263,7 +263,7 @@ pub fn render(trust: &Trust, path: &str, source: &str) -> String {
         out.push_str("    none - every path here names a directory it may not leave\n");
     }
     for root in &trust.roots {
-        let (line, column) = winnow_grammar::span::line_column(source, root.span.start);
+        let (line, column) = winnow_grammar::span::line_column(source, root.span.at());
         out.push_str(&format!(
             "    {path}:{line}:{column}  {} writes {}\n",
             root.entry,

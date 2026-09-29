@@ -116,7 +116,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Violation> 
         }
     }
 
-    found.sort_by_key(|v| v.span.start);
+    found.sort_by_key(|v| v.span.at());
     found
 }
 
@@ -555,7 +555,7 @@ fn walk_block(
     found: &mut Vec<Violation>,
 ) {
     for stmt in &block.stmts {
-        let span = stmt.span.clone();
+        let span = stmt.span;
         visit_stmt(parsed, &stmt.node, &mut |expr| {
             // **The construct half** ([ADR-163](../../../docs/specification/adr/adr-163.md)
             // D1). [ADR-027](../../../docs/specification/adr/adr-027.md) D4 says
@@ -565,7 +565,7 @@ fn walk_block(
             // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
             if let Some(construct) = joins_on_the_executor(expr) {
                 found.push(Violation {
-                    span: span.clone(),
+                    span,
                     caller: caller.to_string(),
                     promise: promise.to_string(),
                     callee: construct.to_string(),
@@ -582,7 +582,7 @@ fn walk_block(
             }
             if let Some((callee, from_library)) = called(parsed, expr, own, library) {
                 found.push(Violation {
-                    span: span.clone(),
+                    span,
                     caller: caller.to_string(),
                     promise: promise.to_string(),
                     callee,

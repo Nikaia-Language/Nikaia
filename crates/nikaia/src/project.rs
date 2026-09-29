@@ -1092,7 +1092,7 @@ pub fn check(
         &foreign.described,
         &foreign.moved,
     ));
-    all.sort_by_key(|finding| finding.span.start);
+    all.sort_by_key(|finding| finding.span.at());
     lint_where_nothing_crosses(&mut all, user_parallelism);
     let violations = sync::check(parsed, own, &library);
     if all.is_empty() && violations.is_empty() {

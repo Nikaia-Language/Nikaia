@@ -54,7 +54,7 @@ pub fn qualified_names(parsed: &Parsed) -> BTreeMap<String, Span> {
     let mut out: BTreeMap<String, Span> = BTreeMap::new();
     for item in &parsed.program.items {
         item_names(parsed, &item.node, &item.span, &mut |name: &str, span| {
-            out.entry(name.to_string()).or_insert_with(|| span.clone());
+            out.entry(name.to_string()).or_insert_with(|| *span);
         });
     }
     out
@@ -89,13 +89,9 @@ pub fn check(
                     return;
                 }
                 if !described.contains(crate_name) {
-                    first
-                        .entry(crate_name.to_string())
-                        .or_insert_with(|| span.clone());
+                    first.entry(crate_name.to_string()).or_insert_with(|| *span);
                 } else if moved.contains_key(crate_name) {
-                    stale
-                        .entry(crate_name.to_string())
-                        .or_insert_with(|| span.clone());
+                    stale.entry(crate_name.to_string()).or_insert_with(|| *span);
                 }
             },
         );
@@ -134,7 +130,7 @@ fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
     };
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK2505",
         message: format!("`{crate_name}` has moved since its description was reviewed"),
         notes: vec![
@@ -159,7 +155,7 @@ fn has_moved(crate_name: &str, files: &[String], span: &Span) -> Finding {
 fn undescribed(crate_name: &str, span: &Span) -> Finding {
     Finding {
         severity: Severity::Error,
-        span: span.clone(),
+        span: *span,
         code: "NK2504",
         message: format!("`{crate_name}` is not described"),
         notes: vec![

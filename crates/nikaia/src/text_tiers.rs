@@ -740,7 +740,7 @@ impl Walk<'_, '_> {
         self.scopes.push(BTreeMap::new());
         let mut tail = Kinds::new();
         for (i, stmt) in block.stmts.iter().enumerate() {
-            let kinds = self.stmt(&stmt.node, stmt.span.start);
+            let kinds = self.stmt(&stmt.node, stmt.span.at());
             if i + 1 == block.stmts.len() {
                 tail = kinds;
             }
@@ -1664,7 +1664,7 @@ fn visit_block_mut(
     s: &mut dyn FnMut(&mut Stmt, usize),
 ) {
     for stmt in &mut block.stmts {
-        let at = stmt.span.start;
+        let at = stmt.span.at();
         match &mut stmt.node {
             Stmt::Let { value, .. } => visit_expr_mut(value, f, s),
             Stmt::Assign { target, value, .. } => {

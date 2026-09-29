@@ -44,7 +44,7 @@ fn a_type_and_a_function_of_one_name_are_refused() {
     );
     // **The caret is on the second**, because that is the one that arrived and
     // the one to move. The `fn` starts at byte 22, after the `struct` line.
-    assert!(found[0].span.start >= 22, "{:?}", found[0].span);
+    assert!(found[0].span.at() >= 22, "{:?}", found[0].span);
 }
 
 /// **Two of a kind get the same sentence**, because the reader is doing the same

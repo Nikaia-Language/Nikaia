@@ -285,7 +285,7 @@ fn the_caret_is_on_the_parameter() {
         .iter()
         .find(|f| f.code == "NK1138")
         .expect("it is refused");
-    assert_eq!(&source[at.span.start..at.span.start + 3], "out");
+    assert_eq!(&source[at.span.at()..at.span.at() + 3], "out");
 }
 
 /// Whether the source is refused with `NK1139`.

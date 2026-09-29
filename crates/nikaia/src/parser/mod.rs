@@ -532,6 +532,7 @@ impl Parsed {
 /// literal, so they are parsed here, with the program's own interner so that
 /// the symbols they produce mean the same as everywhere else.
 pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::Expr> {
+    fits(input.len())?;
     let context = ParseContext::<Trivia> {
         interner: interner.clone(),
         ..Default::default()
@@ -554,6 +555,23 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
     }
 
     Ok(expr)
+}
+
+/// **A source every `Span` can point into**, or refused before it is read
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D2).
+///
+/// A span holds its byte offsets as `u32`, so a file longer than 4 GiB would
+/// have nodes whose place cannot be said. None has been written by hand; one
+/// that is generated can be split by what generated it.
+pub fn fits(length: usize) -> Result<()> {
+    if length > ast::LONGEST_SOURCE {
+        return Err(crate::diagnostics::refuse(format!(
+            "this source is {length} bytes, and a source is at most {} bytes (4 GiB): \
+             where a node stands is a `u32` byte offset (ADR-252 D2)",
+            ast::LONGEST_SOURCE
+        )));
+    }
+    Ok(())
 }
 
 /// **The words this language keeps for itself**
@@ -845,6 +863,7 @@ fn let_names_note(rendered: &str) -> String {
 }
 
 pub fn parse_to_ast(input: &str) -> Result<Parsed> {
+    fits(input.len())?;
     // Generated parsers run on a `Stateful` stream: `LocatingSlice` supplies the
     // spans, `ParseContext` carries the shared parser state including the
     // interner. Cloning the interner out shares it (it is an `Arc` inside), so
@@ -928,7 +947,7 @@ pub enum Postfix {
     /// `with { x: 1 }` — [ADR-118](../../../docs/specification/adr/adr-118.md)
     /// D1. The `usize` is the byte the `with` stands at, which is the key the
     /// checker records the operand's type under.
-    With(Vec<ast::FieldInit>, usize),
+    With(Vec<ast::FieldInit>, u32),
 }
 
 /// A declaration's parameters, with the config zone split into its two shapes.
@@ -1131,7 +1150,7 @@ grammar! {
         // `grammar` and `struct` come before `fn`: all three are keyword-led,
         // and the order is what keeps `grammar` from being read as an
         // identifier.
-        // `@=` puts the byte range this rule matched into `_span`, which is
+        // `@=` puts the byte range this rule matched into `Span::from(_span)`, which is
         // how every node below gets the place in the `.nika` file it came from.
         // Without it a diagnostic can only name generated Rust.
         // Labelled, here and below: where one of these fails at the position
@@ -1146,16 +1165,16 @@ grammar! {
         // (`Trivia::comment`), and `take_doc` is a *take*: an item consumes its
         // own prose, so the next one does not inherit it.
         rule item -> Spanned<Item> # "item" @=
-            d:doc_here g:grammar_item -> { Spanned::documented(g, _span, d) }
-          | d:doc_here s:struct_item -> { Spanned::documented(s, _span, d) }
-          | d:doc_here e:enum_item -> { Spanned::documented(e, _span, d) }
-          | d:doc_here im:impl_item -> { Spanned::documented(im, _span, d) }
-          | d:doc_here t:trait_item -> { Spanned::documented(t, _span, d) }
-          | d:doc_here u:use_item -> { Spanned::documented(u, _span, d) }
-          | d:doc_here c:comptime_item -> { Spanned::documented(c, _span, d) }
-          | d:doc_here e:extern_item -> { Spanned::documented(e, _span, d) }
-          | d:doc_here i:fn_item -> { Spanned::documented(i, _span, d) }
-          | d:doc_here t:test_item -> { Spanned::documented(t, _span, d) }
+            d:doc_here g:grammar_item -> { Spanned::documented(g, Span::from(_span), d) }
+          | d:doc_here s:struct_item -> { Spanned::documented(s, Span::from(_span), d) }
+          | d:doc_here e:enum_item -> { Spanned::documented(e, Span::from(_span), d) }
+          | d:doc_here im:impl_item -> { Spanned::documented(im, Span::from(_span), d) }
+          | d:doc_here t:trait_item -> { Spanned::documented(t, Span::from(_span), d) }
+          | d:doc_here u:use_item -> { Spanned::documented(u, Span::from(_span), d) }
+          | d:doc_here c:comptime_item -> { Spanned::documented(c, Span::from(_span), d) }
+          | d:doc_here e:extern_item -> { Spanned::documented(e, Span::from(_span), d) }
+          | d:doc_here i:fn_item -> { Spanned::documented(i, Span::from(_span), d) }
+          | d:doc_here t:test_item -> { Spanned::documented(t, Span::from(_span), d) }
 
         // **`test "name" { … }`**
         // ([ADR-245](../../../../docs/specification/adr/adr-245.md) D1): where a
@@ -1214,7 +1233,7 @@ grammar! {
         // this position can say that sentence without taking the word away.
         rule opaque_item -> Spanned<OpaqueType> @=
             KW_OPAQUE KW_TYPE name:NAME KW_RELEASED KW_BY released_by:NAME
-            -> { Spanned::new(OpaqueType { name, released_by }, _span) }
+            -> { Spanned::new(OpaqueType { name, released_by }, Span::from(_span)) }
 
         // Kap 4.2: behaviour lives in an `impl`, never in the struct.
         // Kap 4.2 and 4.7: `impl User` gives a type behaviour of its own,
@@ -1274,7 +1293,7 @@ grammar! {
                     ret_type: ret,
                     is_sync: sync,
                     throws,
-                }, _span, d)
+                }, Span::from(_span), d)
             }
 
         // **A method takes its prose too**
@@ -1283,7 +1302,7 @@ grammar! {
         // method's entry is in the ledger under `Type::name`, so a consumer
         // reads it there or nowhere.
         rule impl_method -> Spanned<Item> @=
-            d:doc_here f:fn_item -> { Spanned::documented(f, _span, d) }
+            d:doc_here f:fn_item -> { Spanned::documented(f, Span::from(_span), d) }
 
         rule kw_sync -> () = KW_SYNC -> { () }
         rule kw_pub -> () = KW_PUB -> { () }
@@ -1694,7 +1713,7 @@ grammar! {
         // (ADR-051 D4).
         rule field_def -> FieldDef @=
             vis:kw_pub? name:NAME ":" ty:type_ref -> {
-                FieldDef { name, ty, is_public: vis.is_some(), span: _span }
+                FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span) }
             }
 
         // --- Argumente & Typen ---
@@ -1721,10 +1740,10 @@ grammar! {
         // does not read the value, never that the signature is shorter.
         rule fn_arg_def -> FnArg @=
             mutable:kw_mut? name:NAME ":" ty:type_ref -> {
-                FnArg { name, ty, mutable: mutable.is_some(), span: _span }
+                FnArg { name, ty, mutable: mutable.is_some(), span: Span::from(_span) }
             }
           | UNDERSCORE ":" ty:type_ref -> {
-                FnArg { name: _state.intern("_"), ty, mutable: false, span: _span }
+                FnArg { name: _state.intern("_"), ty, mutable: false, span: Span::from(_span) }
             }
 
         rule return_type_arrow -> Type =
@@ -1954,7 +1973,7 @@ grammar! {
                     ret_type: ret,
                     label,
                     alts,
-                    span: _span,
+                    span: Span::from(_span),
                 }
             }
 
@@ -2043,7 +2062,7 @@ grammar! {
                 } else {
                     let mut parts = vec![head];
                     parts.extend(tail);
-                    Spanned::new(Pattern::Seq(parts), _span)
+                    Spanned::new(Pattern::Seq(parts), Span::from(_span))
                 }
             }
 
@@ -2056,17 +2075,17 @@ grammar! {
 
         // Part II, 10.1: the commit point. Once passed, a later failure is an
         // error rather than a reason to try the next alternative.
-        rule g_cut -> Spanned<Pattern> @= "=>" -> { Spanned::new(Pattern::Cut, _span) }
+        rule g_cut -> Spanned<Pattern> @= "=>" -> { Spanned::new(Pattern::Cut, Span::from(_span)) }
 
         rule g_bind -> Spanned<Pattern> @=
             name:NAME ":" p:g_postfix -> {
-                Spanned::new(Pattern::Bind { name, pat: Box::new(p) }, _span)
+                Spanned::new(Pattern::Bind { name, pat: Box::new(p) }, Span::from(_span))
             }
 
         rule g_postfix -> Spanned<Pattern> @=
             a:g_atom rep:g_repeat? -> {
                 match rep {
-                    Some(r) => Spanned::new(Pattern::Repeat { pat: Box::new(a), rep: r }, _span),
+                    Some(r) => Spanned::new(Pattern::Repeat { pat: Box::new(a), rep: r }, Span::from(_span)),
                     None => a,
                 }
             }
@@ -2107,13 +2126,13 @@ grammar! {
 
         rule g_atom -> Spanned<Pattern> @=
             f:g_fold -> { f }
-          | s:STRING -> { Spanned::new(Pattern::Literal(s), _span) }
+          | s:STRING -> { Spanned::new(Pattern::Literal(s), Span::from(_span)) }
           | g:g_group -> { g }
           | r:g_ref -> { r }
 
         rule g_group -> Spanned<Pattern> @=
             "(" p:g_choice ")" -> {
-                Spanned::new(Pattern::Group(Box::new(p)), _span)
+                Spanned::new(Pattern::Group(Box::new(p)), Span::from(_span))
             }
 
         // A rule reference, a built-in (`digit`, `frame_end`), or a call to
@@ -2128,7 +2147,7 @@ grammar! {
                         generics: generics.unwrap_or_default(),
                         args: args.unwrap_or_default(),
                     },
-                    _span,
+                    Span::from(_span),
                 )
             }
 
@@ -2148,7 +2167,7 @@ grammar! {
                 } else {
                     let mut parts = vec![head];
                     parts.extend(tail);
-                    Spanned::new(Pattern::Choice(parts), _span)
+                    Spanned::new(Pattern::Choice(parts), Span::from(_span))
                 }
             }
 
@@ -2171,7 +2190,7 @@ grammar! {
                     init,
                     step,
                     merge: Some(merge),
-                })), _span)
+                })), Span::from(_span))
             }
           | KW_FOLD "("
             r:NAME ","
@@ -2184,7 +2203,7 @@ grammar! {
                     init,
                     step,
                     merge: None,
-                })), _span)
+                })), Span::from(_span))
             }
 
         // --- Statements & Blocks ---
@@ -2196,16 +2215,16 @@ grammar! {
             stmts:stmt* -> { stmts }
 
         rule stmt -> Spanned<Stmt> # "statement" @=
-            c:comptime_stmt -> { Spanned::new(c, _span) }
-          | l:let_stmt -> { Spanned::new(l, _span) }
-          | r:return_stmt -> { Spanned::new(r, _span) }
-          | t:throw_stmt -> { Spanned::new(t, _span) }
-          | w:while_stmt -> { Spanned::new(w, _span) }
-          | f:for_stmt -> { Spanned::new(f, _span) }
-          | a:assign_stmt -> { Spanned::new(a, _span) }
-          | e:expr_stmt -> { Spanned::new(e, _span) }
-          | b:break_stmt -> { Spanned::new(b, _span) }
-          | c:continue_stmt -> { Spanned::new(c, _span) }
+            c:comptime_stmt -> { Spanned::new(c, Span::from(_span)) }
+          | l:let_stmt -> { Spanned::new(l, Span::from(_span)) }
+          | r:return_stmt -> { Spanned::new(r, Span::from(_span)) }
+          | t:throw_stmt -> { Spanned::new(t, Span::from(_span)) }
+          | w:while_stmt -> { Spanned::new(w, Span::from(_span)) }
+          | f:for_stmt -> { Spanned::new(f, Span::from(_span)) }
+          | a:assign_stmt -> { Spanned::new(a, Span::from(_span)) }
+          | e:expr_stmt -> { Spanned::new(e, Span::from(_span)) }
+          | b:break_stmt -> { Spanned::new(b, Span::from(_span)) }
+          | c:continue_stmt -> { Spanned::new(c, Span::from(_span)) }
 
         rule return_stmt -> Stmt =
             KW_RETURN value:expr? ";"? -> {
@@ -2606,19 +2625,19 @@ grammar! {
         rule or_expr -> Expr =
             head:and_expr tail:or_tail* -> { fold_binary(head, tail) }
 
-        rule or_tail -> (BinaryOp, Expr, Span) @= "||" e:and_expr -> { (BinaryOp::Or, e, _span) }
+        rule or_tail -> (BinaryOp, Expr, Span) @= "||" e:and_expr -> { (BinaryOp::Or, e, Span::from(_span)) }
 
         rule and_expr -> Expr =
             head:cmp_expr tail:and_tail* -> { fold_binary(head, tail) }
 
-        rule and_tail -> (BinaryOp, Expr, Span) @= "&&" e:cmp_expr -> { (BinaryOp::And, e, _span) }
+        rule and_tail -> (BinaryOp, Expr, Span) @= "&&" e:cmp_expr -> { (BinaryOp::And, e, Span::from(_span)) }
 
         rule cmp_expr -> Expr =
             head:bit_or_expr tail:cmp_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:bit_or_expr -> { (op, e, _span) }
+        rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:bit_or_expr -> { (op, e, Span::from(_span)) }
 
         // **The bit operators, below the comparisons and above the sums**
         // ([ADR-248](../../../../docs/specification/adr/adr-248.md) D4): Rust's
@@ -2630,24 +2649,24 @@ grammar! {
             head:bit_xor_expr tail:bit_or_tail* -> { fold_binary(head, tail) }
 
         rule bit_or_tail -> (BinaryOp, Expr, Span) @=
-            "|" not("|") not("=") e:bit_xor_expr -> { (BinaryOp::BitOr, e, _span) }
+            "|" not("|") not("=") e:bit_xor_expr -> { (BinaryOp::BitOr, e, Span::from(_span)) }
 
         rule bit_xor_expr -> Expr =
             head:bit_and_expr tail:bit_xor_tail* -> { fold_binary(head, tail) }
 
         rule bit_xor_tail -> (BinaryOp, Expr, Span) @=
-            "^" not("=") e:bit_and_expr -> { (BinaryOp::BitXor, e, _span) }
+            "^" not("=") e:bit_and_expr -> { (BinaryOp::BitXor, e, Span::from(_span)) }
 
         rule bit_and_expr -> Expr =
             head:shift_expr tail:bit_and_tail* -> { fold_binary(head, tail) }
 
         rule bit_and_tail -> (BinaryOp, Expr, Span) @=
-            "&" not("&") not("=") e:shift_expr -> { (BinaryOp::BitAnd, e, _span) }
+            "&" not("&") not("=") e:shift_expr -> { (BinaryOp::BitAnd, e, Span::from(_span)) }
 
         rule shift_expr -> Expr =
             head:add_expr tail:shift_tail* -> { fold_binary(head, tail) }
 
-        rule shift_tail -> (BinaryOp, Expr, Span) @= op:shift_op e:add_expr -> { (op, e, _span) }
+        rule shift_tail -> (BinaryOp, Expr, Span) @= op:shift_op e:add_expr -> { (op, e, Span::from(_span)) }
 
         rule shift_op -> BinaryOp =
             "<<" not("=") -> { BinaryOp::Shl }
@@ -2666,7 +2685,7 @@ grammar! {
         rule add_expr -> Expr =
             head:mul_expr tail:add_tail* -> { fold_binary(head, tail) }
 
-        rule add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:mul_expr -> { (op, e, _span) }
+        rule add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:mul_expr -> { (op, e, Span::from(_span)) }
 
         rule add_op -> BinaryOp =
             "+" -> { BinaryOp::Add }
@@ -2675,7 +2694,7 @@ grammar! {
         rule mul_expr -> Expr =
             head:cast_expr tail:mul_tail* -> { fold_binary(head, tail) }
 
-        rule mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:cast_expr -> { (op, e, _span) }
+        rule mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:cast_expr -> { (op, e, Span::from(_span)) }
 
         rule cast_expr -> Expr =
             head:unary_expr casts:cast_tail* -> {
@@ -2812,7 +2831,7 @@ grammar! {
         // whitespace behind them.
         rule with_tail -> Postfix @=
             KW_WITH "{" fields:field_inits? "}" -> {
-                Postfix::With(fields.unwrap_or_default(), _span.start)
+                Postfix::With(fields.unwrap_or_default(), crate::ast::offset(_span.start))
             }
 
         // The lambda `closure_expr` reads, in the position where it follows
@@ -3107,29 +3126,29 @@ grammar! {
         rule head_or -> Expr =
             head:head_and tail:head_or_tail* -> { fold_binary(head, tail) }
 
-        rule head_or_tail -> (BinaryOp, Expr, Span) @= "||" e:head_and -> { (BinaryOp::Or, e, _span) }
+        rule head_or_tail -> (BinaryOp, Expr, Span) @= "||" e:head_and -> { (BinaryOp::Or, e, Span::from(_span)) }
 
         rule head_and -> Expr =
             head:head_cmp tail:head_and_tail* -> { fold_binary(head, tail) }
 
-        rule head_and_tail -> (BinaryOp, Expr, Span) @= "&&" e:head_cmp -> { (BinaryOp::And, e, _span) }
+        rule head_and_tail -> (BinaryOp, Expr, Span) @= "&&" e:head_cmp -> { (BinaryOp::And, e, Span::from(_span)) }
 
         rule head_cmp -> Expr =
             head:head_add tail:cmp_head_tail? -> {
                 fold_binary(head, tail.into_iter().collect::<Vec<_>>())
             }
 
-        rule cmp_head_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:head_add -> { (op, e, _span) }
+        rule cmp_head_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:head_add -> { (op, e, Span::from(_span)) }
 
         rule head_add -> Expr =
             head:head_mul tail:head_add_tail* -> { fold_binary(head, tail) }
 
-        rule head_add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:head_mul -> { (op, e, _span) }
+        rule head_add_tail -> (BinaryOp, Expr, Span) @= op:add_op e:head_mul -> { (op, e, Span::from(_span)) }
 
         rule head_mul -> Expr =
             head:head_cast tail:head_mul_tail* -> { fold_binary(head, tail) }
 
-        rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_cast -> { (op, e, _span) }
+        rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_cast -> { (op, e, Span::from(_span)) }
 
         // `as` names a type ([ADR-054](../../../../docs/specification/adr/adr-054.md)),
         // and a type is not brace-led either - `i64`, `&str`, `Vec[T]`, `T?`.
@@ -3225,7 +3244,7 @@ grammar! {
         // byte cannot tell two literals in one statement apart.
         rule list_lit -> Expr @=
             "[" items:list_items? "]" -> {
-                Expr::ListLit { items: items.unwrap_or_default(), at: _span.start }
+                Expr::ListLit { items: items.unwrap_or_default(), at: crate::ast::offset(_span.start) }
             }
 
         rule list_items -> Vec<Expr> =
@@ -3713,7 +3732,7 @@ grammar! {
         rule else_branch -> Block @=
             KW_ELSE b:block -> { b }
           | KW_ELSE i:if_expr -> {
-                Block { stmts: vec![Spanned::new(Stmt::Expr(i), _span)] }
+                Block { stmts: vec![Spanned::new(Stmt::Expr(i), Span::from(_span))] }
             }
 
         // Blocks are expressions (Part I, 3.1).
@@ -3754,7 +3773,7 @@ grammar! {
                         binding,
                         value,
                         body,
-                        at: _span.start,
+                        at: crate::ast::offset(_span.start),
                     }
                 }
 
@@ -3859,7 +3878,7 @@ grammar! {
         // `@=` for the position, as `list_lit` has it and for its reason: what
         // the literal lowers to is its use's answer (ADR-207 D2).
         rule str_lit -> Expr @=
-            s:STRING -> { Expr::LitStr { text: s, at: _span.start } }
+            s:STRING -> { Expr::LitStr { text: s, at: crate::ast::offset(_span.start) } }
 
         // Its own rule rather than an alternative inside `str_lit`, and the
         // reason is the error message: a rule whose body is one sequence

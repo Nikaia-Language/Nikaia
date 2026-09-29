@@ -562,7 +562,7 @@ impl SourceMap {
         self.entries
             .iter()
             .find(|e| e.generated.contains(&offset))
-            .map(|e| (e.unit, e.source.clone()))
+            .map(|e| (e.unit, e.source))
     }
 
     /// The narrowest source span whose emitted text covers `offset`.
@@ -601,7 +601,7 @@ impl SourceMap {
     pub fn rows(&self) -> impl Iterator<Item = (usize, usize, usize)> + '_ {
         self.entries
             .iter()
-            .map(|e| (e.generated.start, e.source.start, e.unit))
+            .map(|e| (e.generated.start, e.source.at(), e.unit))
     }
 }
 
@@ -649,7 +649,7 @@ impl Out {
         let value = f(self)?;
         self.map.entries.push(MapEntry {
             generated: start..self.buf.len(),
-            source: span.clone(),
+            source: *span,
             // The emitter writes one module at a time and does not know which:
             // `SourceMap::placed` stamps it when the driver joins them.
             unit: 0,
@@ -3049,7 +3049,7 @@ impl<'p> Emitter<'p> {
                 item,
                 0,
                 Lifetimes::ELIDED,
-                self.carries_input.get(&span.start),
+                self.carries_input.get(&span.at()),
                 None,
             ),
             Item::Impl {
@@ -3116,7 +3116,7 @@ impl<'p> Emitter<'p> {
                 if is_cleanup {
                     out.push(&format!("impl{declares} {target_name}{applied} {{\n"));
                     for method in methods {
-                        let carries = self.carries_input.get(&method.span.start);
+                        let carries = self.carries_input.get(&method.span.at());
                         out.from(&method.span, |out| {
                             out.push("    ");
                             self.function(
@@ -3157,7 +3157,7 @@ impl<'p> Emitter<'p> {
                 };
                 out.push(&format!("{head} {{\n"));
                 for method in methods {
-                    let carries = self.carries_input.get(&method.span.start);
+                    let carries = self.carries_input.get(&method.span.at());
                     out.from(&method.span, |out| {
                         out.push("    ");
                         self.function(
@@ -3251,9 +3251,9 @@ impl<'p> Emitter<'p> {
             // D2): a package's crate is what another package reads.
             Item::Comptime { name, public, .. } => {
                 let bound = self.name(*name);
-                let Some((below, written)) = self.comptime_values.get(&span.start).cloned() else {
+                let Some((below, written)) = self.comptime_values.get(&span.at()).cloned() else {
                     return Err(refused_at!(
-                        span.start,
+                        span.at(),
                         "`{bound}` has nothing to write, which `NK1127` reports - \
                          so this item should not have reached the emitter"
                     ));
@@ -3282,7 +3282,7 @@ impl<'p> Emitter<'p> {
             } => {
                 if abi != "C" {
                     return Err(refused_at!(
-                        span.start,
+                        span.at(),
                         "`extern \"{abi}\"` names an ABI this compiler does not write. \
                          The one it writes is `extern \"C\"` (Part III 15.1)"
                     ));
@@ -3306,7 +3306,7 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            other => Err(refused_at!(span.start, "cannot emit item yet: {other:?}")),
+            other => Err(refused_at!(span.at(), "cannot emit item yet: {other:?}")),
         }
     }
 
@@ -3731,7 +3731,7 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         out.push(&format!("impl{params} {target}{params} {{\n"));
         for method in methods {
-            let carries = self.carries_input.get(&method.span.start);
+            let carries = self.carries_input.get(&method.span.at());
             out.from(&method.span, |out| {
                 out.push("    ");
                 self.function(
@@ -4124,7 +4124,7 @@ impl<'p> Emitter<'p> {
                     // function rather than a line inside one.
                     return Err(match body.stmts.first() {
                         Some(first) => refused_at!(
-                            first.span.start,
+                            first.span.at(),
                             "`Self::dsl` names the parameters of a \
                              `...args: Self::dsl`, and this function declares none"
                         ),
@@ -4468,7 +4468,7 @@ impl<'p> Emitter<'p> {
             // **The keeps a statement needs are declared before it**
             // (ADR-209), and before the `Ok(` a tail is wrapped in: a `let`
             // inside it would not be Rust.
-            self.write_keep_prelude(out, key, stmt.span.start, depth + 1);
+            self.write_keep_prelude(out, key, stmt.span.at(), depth + 1);
             out.from(&stmt.span, |out| {
                 match (wrap, binds) {
                     (true, true) => out.push(&format!("let {ARM_VALUE} = ")),
@@ -5668,7 +5668,7 @@ impl<'p> Emitter<'p> {
         let settles = block
             .stmts
             .iter()
-            .filter_map(|stmt| self.settle_lets.get(&stmt.span.start).copied())
+            .filter_map(|stmt| self.settle_lets.get(&stmt.span.at()).copied())
             .reduce(|a, b| a || b);
         // **A failure is never settled away**: where a cleanup that can fail
         // has no channel to fail into here - a lambda's body, a branch that is
@@ -5794,7 +5794,7 @@ impl<'p> Emitter<'p> {
         let Stmt::Expr(value) = &stmt.node else {
             return false;
         };
-        let flow = flow.at(stmt.span.start);
+        let flow = flow.at(stmt.span.at());
         let mut pauses = false;
         visit_expr(value, &mut |expr| match expr {
             Expr::Call { func, .. } => pauses |= self.pausing_key(func).is_some(),
@@ -5844,11 +5844,11 @@ impl<'p> Emitter<'p> {
         };
         let mut found = Vec::new();
         let mut called = false;
-        self.held_in(value, span.start, false, &mut called, &mut found);
+        self.held_in(value, span.at(), false, &mut called, &mut found);
         for (receiver, safe) in found {
             if !safe || !holdable {
                 return Err(refused_at!(
-                    span.start,
+                    span.at(),
                     "this `?.` hands back a view of a value that ends at this line, and \
                      holding that value first would change what this line runs - bind it \
                      with a `let` on the line before, and reach through the name"
@@ -5966,8 +5966,8 @@ impl<'p> Emitter<'p> {
         // passed on separately, so that everything emitted from here - an
         // expression, a nested block, a `catch` handler - sees the statement it
         // is actually in.
-        let flow = flow.at(span.start);
-        self.write_keep_prelude(out, flow.function, span.start, depth);
+        let flow = flow.at(span.at());
+        self.write_keep_prelude(out, flow.function, span.at(), depth);
         self.hold_temporaries(out, stmt, span, depth, tail, flow)?;
         match stmt {
             Stmt::Let {
@@ -5992,7 +5992,7 @@ impl<'p> Emitter<'p> {
                         .collect();
                     out.push(&format!("let {mutable}({}) = ", bound.join(", ")));
                     let (before, after) =
-                        Self::around(self.nullable_sites.get(&span.start).copied());
+                        Self::around(self.nullable_sites.get(&span.at()).copied());
                     out.push(before);
                     self.expr(out, value, depth, flow)?;
                     out.push(after);
@@ -6008,12 +6008,12 @@ impl<'p> Emitter<'p> {
                 let plan = self.keep_plan(flow.function);
                 // **A buffer whose views outlive this scope goes into a keep**
                 // (ADR-209 D1), and the binding is where it now lives.
-                let put = plan.and_then(|p| p.puts.get(&span.start)).copied();
+                let put = plan.and_then(|p| p.puts.get(&span.at())).copied();
                 // **A binding a task takes with it is packed with the task's
                 // keep** (D3), and every use of it reads through the handle.
                 let packed = plan
                     .and_then(|p| p.tethered.get(bound))
-                    .filter(|at| **at == span.start)
+                    .filter(|at| **at == span.at())
                     .is_some();
                 // **A keeper that drops entries holds each text view with its
                 // own handle** (D4): `ref String` is `Held` in its type.
@@ -6029,7 +6029,7 @@ impl<'p> Emitter<'p> {
                     // this compiler decided it, and the language below's own
                     // inference is not asked a second time - which is what left
                     // `v[i].push(x)` over a bare `let i = 0` without an answer.
-                    None => match self.number_lets.get(&span.start) {
+                    None => match self.number_lets.get(&span.at()) {
                         Some(ty) => format!(": {ty}"),
                         None => String::new(),
                     },
@@ -6038,7 +6038,7 @@ impl<'p> Emitter<'p> {
                 if packed {
                     let Some(held) = self.tethered_type(ty.as_ref(), value) else {
                         return Err(refused_at!(
-                            span.start,
+                            span.at(),
                             "`{bound}` goes to a task and keeps a buffer alive, and its type is \
                              not written: write it, `let {bound}: … = …`, so the handle it \
                              travels in can be declared (ADR-209 D3)"
@@ -6080,7 +6080,7 @@ impl<'p> Emitter<'p> {
                 // Part I 2.3: a plain value standing in a nullable slot. That hull
                 // stays the compiler's, because it is one a program cannot observe
                 // - the same value, possibly absent (ADR-064 D2's own line).
-                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 out.push(&format!("let {mutable}{}{annotation} = ", escaped(bound)));
                 out.push(before);
                 // **A `let` over a place is a view of it**
@@ -6096,7 +6096,7 @@ impl<'p> Emitter<'p> {
                 // owns what it is given. So this is narrower than `for`'s rule
                 // by exactly one shape, and that shape is the reason both are
                 // written here rather than in one test.
-                if self.lent_lets.contains(&span.start) {
+                if self.lent_lets.contains(&span.at()) {
                     out.push("&");
                 }
                 // **A `let` whose annotation is a number and whose value is a
@@ -6127,9 +6127,9 @@ impl<'p> Emitter<'p> {
             // refused as `NK1127` and never arrives.
             Stmt::Comptime { name, .. } => {
                 let bound = self.text(*name);
-                let Some((below, written)) = self.comptime_values.get(&span.start).cloned() else {
+                let Some((below, written)) = self.comptime_values.get(&span.at()).cloned() else {
                     return Err(refused_at!(
-                        span.start,
+                        span.at(),
                         "`{bound}` has nothing to write, which `NK1127` reports - \
                          so this statement should not have reached the emitter"
                     ));
@@ -6159,7 +6159,7 @@ impl<'p> Emitter<'p> {
                 let Expr::Index { base, index } = box_index else {
                     unreachable!("matched as an index")
                 };
-                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 // **The value first, and then the write**
                 // ([ADR-114](../../../docs/specification/adr/adr-114.md) D2).
                 // Since D1 a read is `index::get(&m, …)`, so the written-out
@@ -6184,7 +6184,7 @@ impl<'p> Emitter<'p> {
                 self.expr(out, base, depth, flow.place())?;
                 // **A key the map keeps goes in as it is** (ADR-213 D1): it is
                 // not a position, and `at` is for positions.
-                match self.map_key(span.start, index, true) {
+                match self.map_key(span.at(), index, true) {
                     Some(form) => {
                         out.push(", ");
                         self.key(out, form, index, depth, flow)?;
@@ -6214,7 +6214,7 @@ impl<'p> Emitter<'p> {
                 let (keeper, index) = self
                     .held_element(flow, element)
                     .expect("matched as a held element");
-                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 out.push(&format!("{{ let {STORED} = "));
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
@@ -6250,7 +6250,7 @@ impl<'p> Emitter<'p> {
                 ));
             }
             Stmt::Assign { target, op, value } => {
-                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 self.expr(out, target, depth, flow.place())?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
@@ -6357,13 +6357,13 @@ impl<'p> Emitter<'p> {
                 // the `?` below is: which sequences pause is a claim in the
                 // ledger about a *type*, and this emitter has none
                 // ([ADR-028](../../docs/specification/adr/adr-028.md)).
-                if self.pausing_loops.contains(&span.start) {
+                if self.pausing_loops.contains(&span.at()) {
                     // ADR-025 D1's `?`, unchanged: a step that can fail fails
                     // the enclosing function, and the checker has already made
                     // `throws` be there (`NK2701`).
                     let unwrap = self
                         .fallible_loops
-                        .contains(&span.start)
+                        .contains(&span.at())
                         .then(|| format!("let {bound} = {bound}?;"));
                     let pad = "    ".repeat(depth);
                     let inner = "    ".repeat(depth + 1);
@@ -6419,7 +6419,7 @@ impl<'p> Emitter<'p> {
                 // **A name holding a sequence is not a place that lends**
                 // (ADR-212 D4): it is walked by value, and a range walks a copy
                 // of itself. The checker says which loops those are.
-                let lends = is_a_place(iter) && !self.owned_loops.contains(&span.start);
+                let lends = is_a_place(iter) && !self.owned_loops.contains(&span.at());
                 match iter {
                     // **A range written into the `for` stays the language
                     // below's own** (ADR-212 D3): it is walked once, where it
@@ -6447,7 +6447,7 @@ impl<'p> Emitter<'p> {
                 // somewhere to go.
                 let unwrap = self
                     .fallible_loops
-                    .contains(&span.start)
+                    .contains(&span.at())
                     .then(|| format!("let {names} = {names}?;"));
                 // **A number, a `bool` or a `char` is read out of the view
                 // once, where the body opens** (`Checked::copied_loop_bindings`):
@@ -6458,7 +6458,7 @@ impl<'p> Emitter<'p> {
                     .iter()
                     .filter(|b| {
                         self.copied_loop_bindings
-                            .contains(&(span.start, self.text(**b).to_string()))
+                            .contains(&(span.at(), self.text(**b).to_string()))
                     })
                     .map(|b| {
                         let name = self.name(*b);
@@ -6569,7 +6569,7 @@ impl<'p> Emitter<'p> {
                 if either {
                     out.push("nikaia_std::either_text::either(");
                 }
-                if tail == Tail::Return && self.lent_returns.contains(&span.start) {
+                if tail == Tail::Return && self.lent_returns.contains(&span.at()) {
                     out.push("&");
                 }
                 self.expr(out, expr, depth, flow)?;
@@ -6626,14 +6626,14 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+        let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
         out.push(before);
         // `null` is no text of either kind (ADR-224 D2), and goes as `None`.
         let either = self.returns_either(flow.function) && !matches!(value, Expr::LitNull);
         if either {
             out.push("nikaia_std::either_text::either(");
         }
-        if self.lent_returns.contains(&span.start) {
+        if self.lent_returns.contains(&span.at()) {
             out.push("&");
         }
         self.expr(out, value, depth, flow)?;
@@ -6730,7 +6730,7 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+        let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
         out.push(before);
         self.expr(out, value, depth, flow)?;
         out.push(after);
@@ -7229,7 +7229,7 @@ impl<'p> Emitter<'p> {
             // and `[…]` in the other, and nothing in the source distinguishes
             // them.
             Expr::ListLit { items, at } => {
-                let array = self.array_literals.contains(at);
+                let array = self.array_literals.contains(&(*at as usize));
                 out.push(match array {
                     true => "[",
                     false => "vec![",
@@ -7583,9 +7583,9 @@ impl<'p> Emitter<'p> {
             // `with` stands at. There is always one, because a `with` this
             // compiler could not name a type for was refused with `NK1173`.
             Expr::With { base, fields, at } => {
-                let Some(owner) = self.with_types.get(at).cloned() else {
+                let Some(owner) = self.with_types.get(&(*at as usize)).cloned() else {
                     return Err(refused_at!(
-                        *at,
+                        *at as usize,
                         "this `with` has no type to copy, which `NK1173` reports - \
                          so it should not have reached the emitter"
                     ));
@@ -7808,7 +7808,7 @@ impl<'p> Emitter<'p> {
                 // span: a number's `+` may not move into `std`, where
                 // `overflow-checks` is off and inlining would not carry the
                 // abort across (ADR-043 D1).
-                if self.concatenations.contains(&at.start) {
+                if self.concatenations.contains(&at.at()) {
                     out.push("nikaia_std::concat::plus(");
                     self.concatenated(out, lhs, depth, flow)?;
                     out.push(", ");
@@ -7906,7 +7906,7 @@ impl<'p> Emitter<'p> {
                 // **And except for text where the left side is a view of text**
                 // (ADR-209 §6): the literal already is one.
                 let bare = a_number(fallback)
-                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at)));
+                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
@@ -8021,12 +8021,12 @@ impl<'p> Emitter<'p> {
             Expr::Return(value) => match (value, flow.throws) {
                 (Some(value), true) => {
                     out.push("return Ok(");
-                    self.nullable(out, value, &(0..0), depth, flow)?;
+                    self.nullable(out, value, &Span::default(), depth, flow)?;
                     out.push(")");
                 }
                 (Some(value), false) => {
                     out.push("return ");
-                    self.nullable(out, value, &(0..0), depth, flow)?;
+                    self.nullable(out, value, &Span::default(), depth, flow)?;
                 }
                 (None, true) => out.push("return Ok(())"),
                 (None, false) => out.push("return"),
@@ -8837,7 +8837,7 @@ impl<'p> Emitter<'p> {
             // ([ADR-239](../../docs/specification/adr/adr-239.md) D3): the
             // branch is where that failure belongs.
             Expr::Block(block) => block.stmts.iter().any(|stmt| {
-                self.settle_lets.get(&stmt.span.start) == Some(&true)
+                self.settle_lets.get(&stmt.span.at()) == Some(&true)
                     || match &stmt.node {
                         Stmt::Expr(value) | Stmt::Let { value, .. } => {
                             self.branch_can_fail(value, flow)
@@ -8930,7 +8930,7 @@ impl<'p> Emitter<'p> {
         // outcome stays a `Result` for the handler to take apart.
         let fallible = (flow.throws || flow.handled_here)
             && block.stmts.iter().any(|stmt| match &stmt.node {
-                Stmt::Expr(value) => self.branch_can_fail(value, flow.at(stmt.span.start)),
+                Stmt::Expr(value) => self.branch_can_fail(value, flow.at(stmt.span.at())),
                 _ => false,
             });
 
@@ -9003,7 +9003,7 @@ impl<'p> Emitter<'p> {
             // leave the branch, and `catch` is how D5 says a branch handles its
             // own failure.
             let inside = Flow {
-                statement: stmt.span.start,
+                statement: stmt.span.at(),
                 throws: fallible,
                 origin: flow.origin,
                 // A branch is still inside this function, so a nested vehicle
@@ -9145,7 +9145,7 @@ impl<'p> Emitter<'p> {
         let fallible = (flow.throws || flow.handled_here)
             && arms
                 .iter()
-                .any(|arm| self.branch_can_fail(&arm.value, flow.at(arm.at)));
+                .any(|arm| self.branch_can_fail(&arm.value, flow.at(arm.at as usize)));
 
         // Whose channel the arms travel in (D2): the function's where the
         // failure leaves it, the **arms'** own set where a `catch` on the block
@@ -9169,7 +9169,7 @@ impl<'p> Emitter<'p> {
             // block. What an arm's **body** does is the function's, and the body
             // is emitted below with the flow it was called with.
             let inside = Flow {
-                statement: arm.at,
+                statement: arm.at as usize,
                 throws: fallible,
                 origin: flow.origin,
                 // As an `overlap`'s branch does.
@@ -9218,9 +9218,15 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(
                     "match {WINNER} {{\n{inner}    Err({ARM_FAILED}) => Err({ARM_FAILED}),\n{inner}    Ok({name}) => {{ let {ARM_VALUE} = "
                 ));
-                out.from(&Span::from(arm.at..arm.at), |out| {
-                    self.block_opening_with(out, &arm.body, depth + 2, flow, Tail::Value, None)
-                })?;
+                out.from(
+                    &Span {
+                        start: arm.at,
+                        end: arm.at,
+                    },
+                    |out| {
+                        self.block_opening_with(out, &arm.body, depth + 2, flow, Tail::Value, None)
+                    },
+                )?;
                 out.push(&format!("; Ok({ARM_VALUE}) }},\n{inner}}}\n"));
                 continue;
             }
@@ -9228,16 +9234,22 @@ impl<'p> Emitter<'p> {
                 Some(name) => format!("let {} = {WINNER}?;", self.text(name)),
                 None => format!("{WINNER}?;"),
             });
-            out.from(&Span::from(arm.at..arm.at), |out| {
-                self.block_opening_with(
-                    out,
-                    &arm.body,
-                    depth + 1,
-                    flow,
-                    Tail::Value,
-                    opening.as_deref(),
-                )
-            })?;
+            out.from(
+                &Span {
+                    start: arm.at,
+                    end: arm.at,
+                },
+                |out| {
+                    self.block_opening_with(
+                        out,
+                        &arm.body,
+                        depth + 1,
+                        flow,
+                        Tail::Value,
+                        opening.as_deref(),
+                    )
+                },
+            )?;
             out.push("\n");
         }
         out.push(&format!("{pad}}}"));
@@ -10162,7 +10174,7 @@ impl<'p> Emitter<'p> {
             // `Vec` is wanted: a literal is a constant being built, not text
             // the program had being copied.
             Expr::LitStr { text: literal, at } => {
-                match self.owned_texts.contains(&self.text_at(*at)) {
+                match self.owned_texts.contains(&self.text_at(*at as usize)) {
                     true => out.push(&format!("String::from(\"{literal}\")")),
                     false => out.push(&format!("\"{literal}\"")),
                 }
@@ -11221,7 +11233,7 @@ impl<'p> Emitter<'p> {
                 // **A literal is a view already** (ADR-207 D3): lent to a
                 // `&str` it is written as it is, and a `&` in front of it would
                 // be a `&&str` the language below has to see through.
-                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(&self.text_at(*at)));
+                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(&self.text_at(*at as usize)));
             // **And `&mut` for a parameter the callee declared `mut`** (D3),
             // which is the one of the three states the *author* wrote rather
             // than the inference. The two maps are disjoint by construction:
