@@ -208,7 +208,9 @@ fn every_reserved_word_is_refused_as_a_name() {
 #[test]
 fn a_reserved_word_where_no_name_was_wanted_gets_no_note_about_names() {
     for source in ["impl P {\n    struct T {}\n}\n", "fn f(x ref i64) {\n}\n"] {
-        let err = parse_to_ast(source).err().expect("it does not parse");
+        let Err(err) = parse_to_ast(source) else {
+            panic!("{source} must not parse");
+        };
         let finding = nikaia::diagnostics::refused_finding(&err).expect("a finding");
         assert!(
             finding.notes.iter().all(|n| !n.contains("reserved word")),
