@@ -784,6 +784,30 @@ before the arm opens it; and a nullable field boxed inside its option, so a
 `null` costs no allocation. D1-D4 are built and `tests/recursive_types.rs`
 runs them.
 
+### 2.50. The checker's types move as values, in three steps
+
+[ADR-257](specification/adr/adr-257.md) D1-D2, after its measurement answered
+D3 with *move as values*:
+
+* **(b)** `Ty`, `Shape` and the ledger's records (`FnContract`,
+  `TypeContract`, `Signature`, `FieldContract`, `VariantContract`,
+  `ConfigContract`, `Ledger` and their small enums) are declared in a tool
+  module beside `ast.nika`. They are re-exported from `contracts`, so every
+  reader keeps its path.
+* **(c)** The text form (`Ty::parse`, `Display`, the signature strings) moves
+  next to `ledger.nika`.
+* **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,
+  and the next ring with them.
+
+The measurement also found three costs that are not `Ty`'s (ADR-257 §4.6).
+They are measured and not decided:
+
+* Reading `std.contracts` is 80.6 M instructions on every run, 35–89 % of the
+  front end. The build's `rustc` wrapper pays it again on a cache hit.
+* Resolving an interned name (`lasso`'s `DashMap` with SipHash) is 572 M of
+  2 918 M on `n-body` copied 32 times.
+* An empty program copies the ledger's records (`Program::of`, 2.3 M).
+
 ## 3. Upkeep
 
 A page that says something a later decision made false.

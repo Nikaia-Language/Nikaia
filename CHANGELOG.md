@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.283] — 2026-09-30
+
+**The checker's types move to Nikaia as they are, and the measurement that
+decided it** (ADR-257).
+
+- **The record comes first, then the prediction, then the measurement.** The
+  owner chose to move `Ty` and the ledger's records whole, as the tree moved.
+  Before the measurement, ADR-257 D3 wrote down the rule for interning them
+  (a `u32` handle into a pool, as Zig and `rustc` do), and D4 wrote down what
+  the measurement would show. Both were committed before it ran.
+- **The answer is to move them as values.** Cloning, dropping and comparing
+  `Ty` is 3.4–6.6 % of the front end on every program. The rule asks for 15 %.
+  The front end is 10.8 % of a build after an edit. Of the seven predictions,
+  P1 (the front end's share of a build) was wrong, P2 held only for the
+  examples, and P4 half held; §4 of the record says which and why.
+- **On the compiler's own modules the rule would have said intern**: `Ty` was
+  16 % of `nikaia lower-std`. It was two walks, not `Ty`.
+  - `Comparable` walked every `enum` payload with its own copy of the cycle
+    guard.
+  - An assignment into a field through anything but a name cloned every
+    `struct`'s fields.
+
+  Both are fixed and change no output. `lower-std` is 58 % fewer
+  instructions, and `Ty` falls to 4.6 %.
+- `benches/ty-census/` has the scripts, so the measurement can run again on a
+  later compiler. It runs callgrind over the corpus, attributes cost to `Ty`,
+  runs a census build for the counts, and copies one program k times so size
+  changes and nothing else does. §4.7 lists what would reopen the answer.
+- Found, and not about `Ty` (`open-work.md` 2.50): reading `std.contracts`
+  is 35–89 % of every run, and the build's `rustc` wrapper reads it again.
+  Resolving an interned name is a fifth of a large run.
+- `open-decisions.md` loses its entry on the ring after the tree.
+
 ## [0.0.282] — 2026-09-30
 
 **A variant matched on a `T?` is refused** (`NK1205`, `open-work.md` §1.33).

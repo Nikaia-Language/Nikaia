@@ -157,31 +157,3 @@ a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
 **What this file recommends: (1).** In a project the set of heads is known, so
 refusing an unknown one is not a guess; `fortunes.nika` would write
 `use std::env`.
-
-### How the ring after the tree reads the checker's types
-
-**What is blocked.** The modules that read only the tree are done or are not
-worth moving (`fold` 0.0.278, `contracts::trust` 0.0.281; the `interpreter`
-is a stub that prints `{:?}` of a node). Every module left in ADR-250 §1's
-second and third rows reads `contracts::ty::Ty` and the ledger's types -
-`FnContract`, `TypeContract`, `Signature`, `Ledger` - which are Rust: `Ty`
-is named in 11 files and 460 times in the checker alone. `contracts::trust`
-moved by handing its decisions plain data (a name, a `bool`, a line), and
-what that moved was 120 lines of a 290-line module.
-
-**Why it is the owner's.** It is the tree's question one ring out, which
-ADR-250 D2 gave a record of its own (ADR-252): whether the checker's types
-move whole, as the tree did, or stay Rust with each module moving only what
-plain data can carry.
-
-**The options.** (1) `Ty` and the ledger's types move to
-`nikaia-std/src/tools/` as the tree did, with the Rust that remains reading
-the Nikaia declaration; `Ty` holds itself through `Box` in five variants,
-which ADR-246 places. (2) They stay Rust, and each module moves only its
-decisions over plain data, as `trust` did. (3) `Ty` moves and the ledger's
-types stay, since the ledger is mostly read by the adapters that parse and
-write it.
-
-**What this file recommends: (1).** It is what made the tree's ring movable
-at all, and the measurement is `trust`: plain data moves a module's edges and
-leaves its middle in Rust.
