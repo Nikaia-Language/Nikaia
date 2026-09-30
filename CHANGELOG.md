@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.278] — 2026-09-30
+
+**`fold` is Nikaia, and a constant counts in a magnitude and a sign**
+(ADR-252 D6, decided by the owner).
+
+- `nikaia-std/src/tools/fold.nika` folds a constant integer expression in a
+  `u64` magnitude and a sign - 65 bits, every literal ADR-248 D2 allows - with
+  no `i128` anywhere in the language. The compiler's `fold` is its adapter.
+- A declared operand holds every step to its type: `let a: i32 = 2000000000`
+  then `a + a - a` is `NK1116` at `a + a`, where the lowering failed in `rustc`
+  before.
+- A fold past the 65 bits is said as *more than 18446744073709551615*.
+- Found by the move and fixed in the compiler: a described copy bound out of a
+  lent `match` is copied out, and a lent function parameter handed on gets no
+  second `&` (a recursive one overflowed `rustc`'s trait solver). Five more are
+  written up as `open-work.md` §1.31, one as §1.32.
+- A tool module sees `ast.nika` beside it. The toolchain is 3.6 % Nikaia.
+
 ## [0.0.277] — 2026-09-30
 
 **A type a ledger says copies is copied** (ADR-252 D4.1, the reading, for a

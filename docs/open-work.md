@@ -46,6 +46,38 @@ is the same refusal for a `mut` parameter, naming `.clone()` and taking it
 without `mut` as the ways out. Before 0.0.258 `keeps` named `out` for both,
 which changed nothing: a `mut` parameter is `&mut` whatever the column says.
 
+### 1.31. Five lowerings `fold.nika` was written around
+
+Found at 0.0.278, moving `fold` into Nikaia (ADR-252 D6). Each is a program
+`rustc` refuses about a file nobody wrote (Part III C.1), and `fold.nika` is
+written the way that lowers; the fix is the compiler's (ADR-250 D3).
+
+* **A literal in an arm takes no type from the `let`.** `let limit: u64 =
+  match ty { "i32" => if n { 2147483648 } else { 1 }, … }` writes
+  `2147483648i64`: the annotation does not reach an `if` inside a `match`
+  arm, and ADR-060's widening decides alone. `fold.nika` names the limits as
+  typed `comptime`s.
+* **A `ref` compared with a value.** `op != UnaryOp::Neg` for an `op: ref
+  UnaryOp` is `&UnaryOp != UnaryOp` below. `fold.nika` matches instead.
+* **A `ref String?` parameter** lowers as `Option<&str>` and its caller hands
+  `&Option<String>`. `fold.nika` keeps no nullable text: an empty `pinned` is
+  none.
+* **`a.pinned?.clone()` on an owned local moves the field out** where the
+  local is read afterwards (`&a`), which Rust calls a use of a partially moved
+  value.
+* **A function in a recursive cycle with a function-typed parameter is
+  inferred to pause** where nothing in it does: `combined` became an `async fn`
+  its caller did not await. `fold.nika` writes `sync` on it, which the checker
+  accepts - so the inference, not the code, was wrong.
+
+### 1.32. An open number's intermediate step is not held to the type it becomes
+
+Found at 0.0.278. `let a = 2000000000` then `let c = a + a - a`: `a` is an open
+number (ADR-249 D3), so the fold pins nothing and judges the result, which fits
+an `i32`; the first step does not, and `rustc` refuses the lowered `a + a`. A
+declared `let a: i32` is refused at the step (ADR-252 D6). The fix hands the
+open number's steps to ADR-249's derived values, beside its result.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

@@ -6297,6 +6297,14 @@ impl<'a> Checker<'a> {
         if found.is_a_view() {
             return false;
         }
+        // **Nor does a function this function was lent**: a code parameter
+        // the body only calls is an `&impl Fn` below already, and a second `&`
+        // on a call that hands it on is a new type at every level of a
+        // recursion - `rustc`'s *overflow evaluating the requirement*, found
+        // moving `fold` into Nikaia (ADR-252 D6).
+        if matches!(found, Ty::Fn { .. }) && self.a_lent_parameter(given) {
+            return false;
+        }
         self.checked
             .lent_args
             .entry((span.at(), written.to_string(), at))
@@ -7957,10 +7965,18 @@ impl<'a> Checker<'a> {
         // A bare literal says its own digits; anything folded says what it came
         // to, because the expression is on the line the caret is under and the
         // number is the part the reader cannot see.
+        // **A fold that left the 65 bits** has no number to name
+        // ([ADR-252](../../docs/specification/adr/adr-252.md) D6): it is said
+        // as what it is past, which is the widest there is.
+        let comes_to = match value.unsigned_abs() > u128::from(u64::MAX) {
+            true if value < 0 => format!("less than -{}", u64::MAX),
+            true => format!("more than {}", u64::MAX),
+            false => value.to_string(),
+        };
         let message = match bare {
             true => format!("`{value}` doesn't fit in {} `{ty}`.", an_or_a(ty)),
             false => format!(
-                "This comes to {value}, which doesn't fit in {} `{ty}`.",
+                "This comes to {comes_to}, which doesn't fit in {} `{ty}`.",
                 an_or_a(ty)
             ),
         };
@@ -9411,7 +9427,7 @@ impl<'a> Checker<'a> {
                         (false, true) => self
                             .pattern_parts(&arm.pattern, &typed)
                             .into_iter()
-                            .map(|(name, ty)| match copies(&ty) {
+                            .map(|(name, ty)| match self.copied(&ty) {
                                 true => (name, ty),
                                 false => (name, view_of(&ty)),
                             })
@@ -9427,7 +9443,7 @@ impl<'a> Checker<'a> {
                     if typed.is_a_view() {
                         let at = &arm.pattern as *const MatchPattern as usize;
                         for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
-                            if copies(&ty) && !ty.is_a_view() {
+                            if self.copied(&ty) && !ty.is_a_view() {
                                 self.checked.copied_bindings.insert((at, name));
                             }
                         }
@@ -21167,6 +21183,37 @@ impl Checker<'_> {
     /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
     fn takes_away(&self, ty: &Ty) -> bool {
         moves_away(ty) && !crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
+    }
+
+    /// [`copies`], and a type the library says copies: a
+    /// `winnow_grammar::Symbol` bound out of a lent `match` is copied out at
+    /// the head of the arm, as a number is.
+    /// Whether `given` names a parameter the function being checked is lent,
+    /// by the same answer its declaration is written off.
+    fn a_lent_parameter(&self, given: &Expr) -> bool {
+        let Expr::Variable(name) = given else {
+            return false;
+        };
+        let name = self.parsed.text(*name);
+        let Some(contract) = self
+            .current
+            .as_ref()
+            .and_then(|key| self.own.functions.get(key))
+        else {
+            return false;
+        };
+        let Some(at) = contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.params.iter().position(|(param, _)| param == name))
+        else {
+            return false;
+        };
+        crate::contracts::keeps::lends_in(contract, at, &[self.library])
+    }
+
+    fn copied(&self, ty: &Ty) -> bool {
+        copies(ty) || crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
     }
 }
 

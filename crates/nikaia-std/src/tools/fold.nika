@@ -1,0 +1,194 @@
+// crates/nikaia-std/src/tools/fold.nika
+//
+// **What a constant integer expression comes to** (ADR-063, ADR-252 D6), for
+// the checker's `NK1116` and the emitter's widening.
+//
+// The first module of the ring after the tree (ADR-250 §1) moved from Rust to
+// Nikaia, by ADR-196's route: lowered ahead of time by `nikaia lower-std` to
+// `fold.rs` beside it, `include!`d as `nikaia_std::tools::fold`, and called
+// from the compiler's `fold`, which turns its answer into the `i128` the Rust
+// that remains keeps a constant in.
+//
+// **A magnitude and a sign** (ADR-252 D6): a literal is as large as a `u64`
+// holds and as small as an `i64` (ADR-248 D2), so a number here is 65 bits,
+// which is exactly the shape the tree already gives a literal. A step that
+// leaves the `u64` is not wrapped: it is `Folded::TooLarge`, which the checker
+// refuses in this language's words.
+//
+// **A declared operand pins the arithmetic to its type** (D6's refinement):
+// `let a = 2000000000` then `a + a - a` ends inside an `i32`, and its first
+// step does not - the language below refuses the program there, so this does
+// too, with the step's number.
+//
+// **`Folded::Nothing` means nothing is claimed**: a name the lookup cannot
+// evaluate, an operator this does not fold, a division by zero. An expression
+// that does not fold is never refused (Part III C.4).
+
+/// A folded integer: `magnitude` with a sign, and the integer type an
+/// operand's declaration pinned - empty where none did, since a literal pins
+/// nothing (ADR-060).
+pub struct Constant {
+    pub magnitude: u64,
+    pub negative: bool,
+    pub pinned: String,
+}
+
+/// What a fold came to.
+pub enum Folded {
+    /// A number, and the type a declaration pinned it to.
+    Value(Constant),
+    /// A step left the type an operand's declaration pinned: the fold stops
+    /// there, and the step is what is refused.
+    Overflows(Constant),
+    /// A step left the 65 bits every literal fits in, with the sign it was
+    /// heading for.
+    TooLarge(bool),
+    /// Nothing is claimed.
+    Nothing,
+}
+
+// The magnitudes at the ends of each signed type. Named with their type,
+// because a bare literal past an `i32` would be written as an `i64`.
+comptime I8_LOW: u64 = 128
+comptime I8_HIGH: u64 = 127
+comptime I16_LOW: u64 = 32768
+comptime I16_HIGH: u64 = 32767
+comptime I32_LOW: u64 = 2147483648
+comptime I32_HIGH: u64 = 2147483647
+comptime I64_LOW: u64 = 9223372036854775808
+comptime I64_HIGH: u64 = 9223372036854775807
+comptime U8_HIGH: u64 = 255
+comptime U16_HIGH: u64 = 65535
+comptime U32_HIGH: u64 = 4294967295
+comptime U64_HIGH: u64 = 18446744073709551615
+
+/// Whether `c` is a number of the integer type `ty`. A name this does not
+/// know is not claimed to hold anything.
+pub fn fits(c: ref Constant, ty: ref String) -> bool sync {
+    let (low, high) = match ty {
+        "i8" => (I8_LOW, I8_HIGH),
+        "i16" => (I16_LOW, I16_HIGH),
+        "i32" => (I32_LOW, I32_HIGH),
+        "i64" => (I64_LOW, I64_HIGH),
+        "u8" => (0, U8_HIGH),
+        "u16" => (0, U16_HIGH),
+        "u32" => (0, U32_HIGH),
+        "u64" => (0, U64_HIGH),
+        else => return true,
+    }
+    return c.magnitude <= low if c.negative
+    return c.magnitude <= high
+}
+
+/// A number with its sign made plain: zero is never negative.
+fn number(magnitude: u64, negative: bool, pinned: String) -> Constant {
+    return Constant { magnitude: magnitude, negative: negative && magnitude != 0, pinned: pinned }
+}
+
+/// `a + b`, counted in magnitudes: the same sign adds, different signs take
+/// the smaller from the larger and keep the larger's sign.
+fn added(a: ref Constant, b_magnitude: u64, b_negative: bool, pinned: String) -> Folded {
+    if a.negative == b_negative {
+        let sum = a.magnitude.wrapping_add(b_magnitude)
+        return Folded::TooLarge(a.negative) if sum < a.magnitude
+        return Folded::Value(number(sum, a.negative, pinned))
+    }
+    if a.magnitude >= b_magnitude {
+        return Folded::Value(number(a.magnitude - b_magnitude, a.negative, pinned))
+    }
+    return Folded::Value(number(b_magnitude - a.magnitude, b_negative, pinned))
+}
+
+/// `a * b`: the magnitudes multiply, and the signs differ or agree.
+fn multiplied(a: ref Constant, b: ref Constant, pinned: String) -> Folded {
+    let negative = a.negative != b.negative
+    if a.magnitude == 0 {
+        return Folded::Value(number(0, false, pinned))
+    }
+    let product = a.magnitude.wrapping_mul(b.magnitude)
+    return Folded::TooLarge(negative) if product.wrapping_div(a.magnitude) != b.magnitude
+    return Folded::Value(number(product, negative, pinned))
+}
+
+/// The value a constant integer expression comes to, reading a name through
+/// `name_is`: `Folded::Value` for a name whose value the caller knows, and
+/// `Folded::Nothing` for one it does not.
+pub fn constant_of(expr: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded {
+    return match expr {
+        Expr::LitInt { value, negative } => Folded::Value(number(value, negative, "")),
+        Expr::Variable(name) => name_is(name),
+        Expr::Unary { op, expr } => negated(op, expr, name_is),
+        Expr::Binary { op, lhs, rhs, .. } => combined(op, lhs, rhs, name_is),
+        else => Folded::Nothing,
+    }
+}
+
+/// `-x`, and nothing else a unary operator does.
+fn negated(op: ref UnaryOp, inner: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded {
+    match op {
+        UnaryOp::Neg => {}
+        else => return Folded::Nothing,
+    }
+    return match constant_of(inner, name_is) {
+        Folded::Value(c) => pinned_step(number(c.magnitude, !c.negative, c.pinned)),
+        Folded::TooLarge(negative) => Folded::TooLarge(!negative),
+        other => other,
+    }
+}
+
+/// One step, held to the type an operand pinned.
+fn pinned_step(c: Constant) -> Folded {
+    // No type, and a type this does not know, answer `true` in `fits`.
+    return if fits(c, c.pinned) { Folded::Value(c) } else { Folded::Overflows(c) }
+}
+
+/// `lhs op rhs`, for the five operators the fold knows.
+fn combined(op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded sync {
+    let a = match constant_of(lhs, name_is) {
+        Folded::Value(c) => c,
+        other => return other,
+    }
+    let b = match constant_of(rhs, name_is) {
+        Folded::Value(c) => c,
+        other => return other,
+    }
+    // Two operands that pin different types are a mismatch the type check
+    // reports on its own; folding them would be arithmetic in a type neither
+    // of them has.
+    if !a.pinned.is_empty() && !b.pinned.is_empty() && a.pinned != b.pinned {
+        return Folded::Nothing
+    }
+    let pinned = if a.pinned.is_empty() { b.pinned.clone() } else { a.pinned.clone() }
+    let folded = match op {
+        BinaryOp::Add => added(a, b.magnitude, b.negative, pinned),
+        BinaryOp::Sub => added(a, b.magnitude, !b.negative, pinned),
+        BinaryOp::Mul => multiplied(a, b, pinned),
+        BinaryOp::Div => divided(a, b, pinned, false),
+        BinaryOp::Rem => divided(a, b, pinned, true),
+        else => Folded::Nothing,
+    }
+    return match folded {
+        Folded::Value(c) => pinned_step(c),
+        other => other,
+    }
+}
+
+/// `a / b` and `a % b`, truncating toward zero as the language below does: the
+/// quotient's sign is the signs' difference, the remainder's is `a`'s. A
+/// division by zero is not claimed.
+fn divided(a: ref Constant, b: ref Constant, pinned: String, remainder: bool) -> Folded {
+    return Folded::Nothing if b.magnitude == 0
+    if remainder {
+        return Folded::Value(number(a.magnitude % b.magnitude, a.negative, pinned))
+    }
+    return Folded::Value(number(a.magnitude / b.magnitude, a.negative != b.negative, pinned))
+}
+
+/// **Does this constant need the wider type, and may it have it?** (ADR-063
+/// D1): nothing pinned it, an `i32` does not hold it, and an `i64` does.
+pub fn wants_widening(folded: ref Folded) -> bool sync {
+    return match folded {
+        Folded::Value(c) => c.pinned.is_empty() && !fits(c, "i32") && fits(c, "i64"),
+        else => false,
+    }
+}

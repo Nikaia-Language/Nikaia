@@ -157,25 +157,3 @@ a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
 **What this file recommends: (1).** In a project the set of heads is known, so
 refusing an unknown one is not a guess; `fortunes.nika` would write
 `use std::env`.
-
-
-### What a constant fold counts in, once `fold` is Nikaia
-
-**What is blocked.** `fold.rs` is the smallest module of the ring after the
-tree (ADR-250 §1, 124 lines), and it folds a constant in an `i128`: a literal
-may be as large as `u64::MAX` (ADR-248 D2), and a sum past `i64` has to be a
-number `NK1116` can name rather than one that wrapped. The language has no
-`i128`, and ADR-252 §4 rejected it for one field of the tree.
-
-**Why it is the owner's.** It is the first module that needs a number wider
-than any the language offers; the answer decides whether the language grows
-one or the compiler's arithmetic is written around its absence.
-
-**The options.** (1) The fold counts in a magnitude and a sign — the shape
-`LitInt` already has (ADR-252 D4.2) — with `checked_` arithmetic on `u64`
-magnitudes written in Nikaia; (2) the fold stays in `i64` and a fold that
-leaves it answers *nothing is claimed*, so `NK1116` names a literal past
-`i64` but no longer a sum that overflows it; (3) `i128` joins Part I 2.2.
-
-**What this file recommends: (1).** It keeps every refusal `NK1116` makes
-today, needs no new type, and is the representation the tree already chose.
