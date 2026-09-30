@@ -645,8 +645,9 @@ fn a_promise_with_no_result_type_is_untouched() {
 /// loop handed it away the first time round. The answer is the one Part I 5.4 C
 /// already gives and the one every other parameter gets: a parameter the body
 /// only **calls or passes on** is not in `keeps`, so `contracts::keeps::lends`
-/// says to write the `&` — in the declaration and at the call, off one column.
-/// `&F` is a function too, which is why one `&` is all it takes.
+/// says to write the `&` in the declaration, and a call that hands the lent
+/// view on hands it as it is. `&F` is a function too, which is why one `&` is
+/// all it takes.
 #[test]
 fn a_handler_passed_on_inside_a_loop_is_lent() {
     let source = "fn twice(n: i64, f: fn(i64) -> i64) -> i64 {\n\
@@ -667,9 +668,12 @@ fn a_handler_passed_on_inside_a_loop_is_lent() {
         rust.contains("f: &impl AsyncFn(i64) -> i64"),
         "the declaration takes a view of it: {rust}"
     );
+    // **And the call hands it on as it has it**: `f` is a `&impl AsyncFn`
+    // already, and a reference is a copy. A second `&` compiled here and was a
+    // new type at every level of a recursion (ADR-252 D6, found moving `fold`).
     assert!(
-        rust.contains("twice(n, &f)"),
-        "and the call writes the `&`: {rust}"
+        rust.contains("twice(n, f)"),
+        "and the call hands on the view it was lent: {rust}"
     );
     // (1+1) + (2+2) + (3+3) = 12, times ten.
     assert_eq!(ran("passed-on", source).trim(), "120");

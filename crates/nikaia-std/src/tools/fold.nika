@@ -186,7 +186,7 @@ fn divided(a: ref Constant, b: ref Constant, pinned: String, remainder: bool) ->
 
 /// **Does this constant need the wider type, and may it have it?** (ADR-063
 /// D1): nothing pinned it, an `i32` does not hold it, and an `i64` does.
-pub fn wants_widening(folded: ref Folded) -> bool sync {
+pub fn wants_widening(folded: ref Folded) -> bool {
     return match folded {
         Folded::Value(c) => c.pinned.is_empty() && !fits(c, "i32") && fits(c, "i64"),
         else => false,

@@ -136,8 +136,6 @@ fn divided(a: &Constant, b: &Constant, pinned: String, remainder: bool) -> Folde
     Folded::Value(number(a.magnitude / b.magnitude, a.negative != b.negative, pinned))
 }
 
-// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
-// this was written - see `contracts::sync`.
 pub fn wants_widening(folded: &Folded) -> bool {
     match folded {
         Folded::Value(c) => c.pinned.is_empty() && !fits(c, "i32") && fits(c, "i64"),
