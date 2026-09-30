@@ -1,26 +1,26 @@
 === A1
-Expected `}` here, but found `temp`. (line 3, column 5)
+A `,` is missing before `temp`. (line 2, column 21)
 
 === A2
-Expected `)` here, but found `b`. (line 1, column 13)
+A `,` is missing before `b`. (line 1, column 12)
 
 === A3
-Expected `}`, but the file ended. (line 3, column 1)
+This `{` is never closed. (line 1, column 8)
 
 === A4
-Expected `]` here, but found `}`. (line 3, column 1)
+This `[` is never closed. (line 2, column 14)
 
 === A5
-Expected `}` here, but found `,`. (line 2, column 12)
+There are two commas here. (line 2, column 12)
 
 === B1
-Expected expression here, but found `}`. (line 4, column 1)
+`=` has nothing after it. (line 3, column 11)
 
 === B2
-Expected expression here, but found `}`. (line 3, column 1)
+`+` has nothing on its right. (line 2, column 15)
 
 === B3
-Expected `!`, `-`, `false` or `true` here, but found `{`. (line 2, column 8)
+`if` needs a condition before its `{`. (line 2, column 5)
 
 === B4
 Expected expression here, but found `)`. (line 2, column 18)
@@ -38,19 +38,19 @@ An action doesn't take an arrow. (line 2, column 33)
 Expected `)` here, but found `{`. (line 1, column 10)
 
 === C4
-Expected `mut` here, but found `5`. (line 2, column 9)
+`let` names what it binds, but `5` is a value. (line 2, column 9)
 
 === C5
-Expected `}` here, but found `struct`. (line 2, column 5)
+An `impl` holds methods, and a `struct` can't be declared inside one. (line 2, column 5)
 
 === D1
-Didn't expect `/` here. (line 3, column 1)
+A single `/` is division, and nothing stands before it to divide. (line 3, column 1)
 
 === D2
-Expected `{` here, but found `=`. (line 2, column 10)
+`=` gives a name a value; a condition compares with `==`. (line 2, column 10)
 
 === D3
-An action doesn't take an arrow. (line 2, column 28)
+A pattern can't contain `->`: the only `->` in a rule is its result type. (line 2, column 28)
 
 === E1
 Expected `}` here, but found `{`. (line 2, column 32)
@@ -59,19 +59,19 @@ Expected `}` here, but found `{`. (line 2, column 32)
 (parses)
 
 === E3
-Expected `->` or `{` here, but found `}`. (line 3, column 1)
+`par_fold` takes four arguments. (line 2, column 41)
 
 === F1
-Expected `"`, but the file ended. (line 4, column 1)
+This string is never closed. (line 2, column 13)
 
 === F2
 Didn't expect `}` here. (line 3, column 1)
 
 === F3
-Expected `}`, but the file ended. (line 4, column 1)
+This `{` is never closed. (line 1, column 11)
 
 === G1
-Expected expression here, but found `“`. (line 2, column 13)
+`“` isn't a quote the language reads. (line 2, column 13)
 
 === G2
 (parses)

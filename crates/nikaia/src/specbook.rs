@@ -155,8 +155,18 @@ fn discusses_a_refusal(code: &str) -> bool {
 }
 
 /// Whether an elision stands where code would.
+///
+/// `...args` is not one: three dots against a name are the typed spread of
+/// [ADR-007](../../../docs/specification/adr/adr-007.md) D5, which a driver
+/// writes as code.
 fn is_a_sketch(code: &str) -> bool {
-    code.contains("...") || code.contains('…')
+    code.contains('…')
+        || code.match_indices("...").any(|(at, _)| {
+            !code[at + 3..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+        })
 }
 
 /// The readings a block can have, best-case first is **not** the order: each is
@@ -364,5 +374,20 @@ fn opening(code: &str) -> String {
     match line.chars().count() > 56 {
         true => format!("{}…", line.chars().take(55).collect::<String>()),
         false => line.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_a_sketch;
+
+    #[test]
+    fn a_spread_is_code_and_an_elision_is_a_sketch() {
+        assert!(!is_a_sketch("pub fn execute(self; ...args: Self::dsl) {"));
+        assert!(is_a_sketch(
+            "fn process_image(path: String) -> Image { ... }"
+        ));
+        assert!(is_a_sketch("let kasse: SharedMut[i32] = ..."));
+        assert!(is_a_sketch("Account(…)"));
     }
 }

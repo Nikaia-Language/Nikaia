@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.271 (Draft)
-**Date:** 2026-09-29
+**Version:** 0.0.273 (Draft)
+**Date:** 2026-09-30
 
 ---
 
@@ -395,7 +395,7 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 
 **The condition changes nothing.** It may not pause, may not fail, and may not touch or change anything: every call in it has to be `sync`, throw nothing, touch nothing (`touches = []`) and change nothing, and a call nothing describes is not known to. A condition that could is refused where it is written (`NK1194`), because a condition with an effect would make the program depend on whether the check is performed, and a condition that reads the world has no value a compiler could prove. `assert` takes one `bool` and one option, `message:`, which is text (`NK1195`).
 
-**Outside a test, a claim is proved while the program is built, or the program does not build** ([ADR-256](adr/adr-256.md)). No check is emitted for a proved claim, so it costs nothing when the program runs and cannot stop it. The prover reads comparisons of whole numbers built with `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`, over bindings that do not change; it knows the branch an `if` is in, what a jump with its condition after it has ruled out (`return 0 if b == 0` leaves `b != 0`), a `for` over a range, a `let`'s value and every claim proved before. A claim it cannot prove is `NK1202`.
+**Outside a test, a claim is proved while the program is built, or the program does not build** ([ADR-256](adr/adr-256.md)). No check is emitted for a proved claim, so it costs nothing when the program runs and cannot stop it. The prover reads comparisons of whole numbers built with `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`, over bindings that do not change, and the `len()` of a list or text that does not change; it knows the branch an `if` is in, what a jump with its condition after it has ruled out (`return 0 if b == 0` leaves `b != 0`), a `for` over a range, a `let`'s value and every claim proved before. A claim it cannot prove is `NK1202`.
 
 **A claim about parameters is the caller's.** An `assert` at the top of a function that names only its parameters, and that the body cannot prove, is the function's precondition: the body assumes it and every call proves it, or the call is `NK1203`. `divide` below asks each caller to show `b != 0`. Until the ledger carries preconditions, a `pub fn`, a method and a function handed on as a value cannot have one (`NK1204`).
 

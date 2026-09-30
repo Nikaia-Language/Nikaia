@@ -144,10 +144,26 @@ struct Scope {
 impl Scope {
     /// `name` is bound again: nothing known about the old binding holds.
     fn rebind(&mut self, name: &str) {
+        let length = length_of(name);
         self.ints.remove(name);
+        self.ints.remove(&length);
         self.tainted.remove(name);
         self.locals.insert(name.to_string());
-        self.facts.retain(|fact| !fact.mentions(name));
+        self.facts
+            .retain(|fact| !fact.mentions(name) && !fact.mentions(&length));
+    }
+
+    /// `name` is a list or text that does not change, so `name.len()` is a
+    /// variable of the proof: a length is never negative, and a literal's is
+    /// known.
+    fn has_length(&mut self, name: &str, known: Option<i128>) {
+        let length = length_of(name);
+        self.ints.insert(length.clone());
+        self.facts.push(Formula::le(Lin::var(&length).neg()));
+        if let Some(n) = known {
+            self.facts
+                .push(Formula::eq(Lin::var(&length).add_const(-n)));
+        }
     }
 
     /// A block whose bindings this walk cannot see: no facts, no variables.
@@ -235,6 +251,10 @@ impl<'a> Prover<'a> {
                     scope.facts.push(Formula::le(Lin::var(&arg_name).neg()));
                 }
             }
+            if !arg.mutable && has_a_length(ty) {
+                scope.has_length(&arg_name, None);
+                params.insert(arg_name.clone());
+            }
         }
         let no_precondition = if method || receiver.is_some() {
             Some("A method can't have a precondition yet: its callers aren't found by name.")
@@ -314,6 +334,19 @@ impl<'a> Prover<'a> {
                         && scope.ints.contains(&name)
                     {
                         scope.facts.push(Formula::le(Lin::var(&name).neg()));
+                    }
+                    match value {
+                        Expr::ListLit { items, .. } => {
+                            scope.has_length(&name, i128::try_from(items.len()).ok());
+                        }
+                        Expr::LitStr { .. } => scope.has_length(&name, None),
+                        _ if ty
+                            .as_ref()
+                            .is_some_and(|t| has_a_length(self.parsed.text(t.name))) =>
+                        {
+                            scope.has_length(&name, None)
+                        }
+                        _ => {}
                     }
                 }
                 false
@@ -628,10 +661,38 @@ impl<'a> Prover<'a> {
         }
         // Nested blocks: their own bindings are not visible here, so they
         // start blind (the soundness note at the top).
+        // A lambda's body is the exception: its own names are its parameters,
+        // and what holds of the bindings around it holds inside it, because a
+        // binding the prover reads never changes.
+        let mut lambdas: BTreeMap<*const Block, Vec<String>> = BTreeMap::new();
+        crate::contracts::sync::visit_expr(parsed, expr, &mut |e| {
+            if let Expr::Closure {
+                params,
+                mutable,
+                body,
+            } = e
+            {
+                let names = params
+                    .iter()
+                    .chain(mutable)
+                    .map(|p| parsed.text(*p).to_string())
+                    .collect();
+                lambdas.insert(body as *const Block, names);
+            }
+        });
         let mut blocks: Vec<&Block> = Vec::new();
         crate::contracts::sync::visit_expr_blocks(expr, &mut |b| blocks.push(b));
         for block in blocks {
-            let mut inner = scope.blind();
+            let mut inner = match lambdas.get(&(block as *const Block)) {
+                Some(params) => {
+                    let mut inner = scope.clone();
+                    for param in params {
+                        inner.rebind(param);
+                    }
+                    inner
+                }
+                None => scope.blind(),
+            };
             self.block(
                 block,
                 &mut inner,
@@ -666,6 +727,15 @@ impl<'a> Prover<'a> {
             let mut with: BTreeMap<String, Option<Lin>> = BTreeMap::new();
             for (param, arg) in params.iter().zip(args) {
                 with.insert(param.clone(), lin(self.parsed, arg, scope));
+                // A list handed over carries its length: `p.len()` in the
+                // callee's claim is the argument's.
+                if let Expr::Variable(name) = arg {
+                    let length = length_of(self.parsed.text(*name));
+                    with.insert(
+                        length_of(param),
+                        scope.ints.contains(&length).then(|| Lin::var(&length)),
+                    );
+                }
             }
             let negation = substituted(self.parsed, claim, &with, false);
             let proved = negation.as_ref().is_some_and(|n| proves(&scope.facts, n));
@@ -745,6 +815,16 @@ fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Findi
         help: Some(help.to_string()),
         labels: Vec::new(),
     }
+}
+
+/// The variable `name.len()` stands for.
+fn length_of(name: &str) -> String {
+    format!("{name}.len()")
+}
+
+/// A type whose `len()` the prover reads: a list, text, an array.
+fn has_a_length(ty: &str) -> bool {
+    matches!(ty, "Vec" | "String" | "str" | "Array")
 }
 
 fn is_whole_number(ty: &str) -> bool {
@@ -896,6 +976,16 @@ fn lin_with(parsed: &Parsed, expr: &Expr, var: &dyn Fn(&str) -> Option<Lin>) -> 
             Some(Lin::constant(crate::ast::int_value(*value, *negative)))
         }
         Expr::Variable(name) => var(parsed.text(*name)),
+        // `xs.len()` of a list that does not change is a variable of its own.
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } if args.is_empty() && parsed.text(*method) == "len" => match &**receiver {
+            Expr::Variable(name) => var(&length_of(parsed.text(*name))),
+            _ => None,
+        },
         Expr::Unary {
             op: UnaryOp::Neg,
             expr,

@@ -85,10 +85,10 @@ fn a_program_that_does_not_parse_says_where_and_no_more() {
     let said = String::from_utf8_lossy(&ran.stderr);
 
     assert!(
-        said.starts_with("error: Expected expression here, but found `}`."),
+        said.starts_with("error: `=` has nothing after it."),
         "{said}"
     );
-    assert!(said.contains("main.nika:3:1"), "it names the file: {said}");
+    assert!(said.contains("main.nika:2:11"), "it names the file: {said}");
     says_nothing_of_the_compiler(&said);
     let _ = std::fs::remove_dir_all(&dir);
 }
