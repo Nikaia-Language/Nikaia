@@ -1542,10 +1542,13 @@ impl LedgerOps for Ledger {
 /// `std`'s ledger, parsed once.
 ///
 /// Embedded at build time and parsed on first use rather than on every
-/// inference. It failing to parse is a broken compiler, not a broken program:
+/// inference. **Every reader of `std`'s ledger reads this one** (0.0.296):
+/// seven places parsed `STD` again for themselves, which was 83 M of the 93 M
+/// instructions an empty program cost. A reader that only reads borrows it; one
+/// that adds a package's own entries takes [`std_library`], a copy. It failing to parse is a broken compiler, not a broken program:
 /// `crates/nikaia/tests/contracts.rs` reads the same bytes and would have said
 /// so long before a user got here.
-fn std_ledger() -> &'static Ledger {
+pub(crate) fn std_ledger() -> &'static Ledger {
     static PARSED: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
     PARSED.get_or_init(|| Ledger::parse(STD).expect("std ships a ledger this compiler can read"))
 }

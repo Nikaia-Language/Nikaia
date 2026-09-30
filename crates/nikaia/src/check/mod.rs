@@ -1896,9 +1896,7 @@ pub fn propagation_against(
     described: &Ledger,
     reads: &Reads,
 ) -> Propagation {
-    let Ok(mut library) = Ledger::parse(crate::contracts::STD) else {
-        return Propagation::default();
-    };
+    let mut library = crate::contracts::std_library();
     // **And the described crates' boundary**, as the check that refused had it
     // (`project::Foreign::library`, `std` winning a collision): what a call
     // into `hyper_shim` keeps decides how its argument is written, and a walk

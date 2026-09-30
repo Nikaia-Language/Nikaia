@@ -963,7 +963,6 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
     Ok((units, tests))
 }
 
-fn std_ledger() -> crate::contracts::Ledger {
-    crate::contracts::Ledger::parse(crate::contracts::STD)
-        .unwrap_or_else(|_| crate::contracts::Ledger::blank())
+fn std_ledger() -> &'static crate::contracts::Ledger {
+    crate::contracts::std_ledger()
 }

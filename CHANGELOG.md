@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.296] — 2026-10-01
+
+**`std`'s ledger is read once per run** (ADR-257 §4.6). Most of what the
+measurement called *reading `std.contracts`* was reading it again: seven
+places parsed `STD` for themselves - the emitter twice, the checker's
+propagation twice, `Program::emit_reading`, `Foreign::library` and the cache
+that was meant to be the only one. Every reader now borrows that one parse
+(`contracts::std_ledger`), and one that adds a package's own entries takes a
+copy (`std_library`).
+
+| Lowered with `--no-cache` | before | after |
+|---|---|---|
+| an empty program | 93.4 M | 22.8 M (−76 %) |
+| `1brc` | 186.8 M | 102.8 M (−45 %) |
+| `n-body` | 178.5 M | 94.5 M (−47 %) |
+
+- **A dependency's ledger was not read again**, measured on `hello-http`
+  building against `http`: it is read where it is absorbed (`read_beside`,
+  the ledger and its `.derived`) and by its own lowering, which compares it
+  with what it inferred (`newly`) - two readings with two purposes, 0.85 M
+  each.
+- The emitter holds `std`'s ledger by reference rather than as a copy of its
+  own.
+- Main's CI was red after 0.0.295 for a lint the local `clippy` did not
+  have yet (`collapsible_match`, 1.98); fixed in the lowered `ty.rs` (#87),
+  and the toolchain here is the one CI runs.
+
 ## [0.0.295] — 2026-09-30
 
 **What the checker asks of a type is Nikaia** (ADR-257 step (d)), which
