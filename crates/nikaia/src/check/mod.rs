@@ -6193,7 +6193,7 @@ impl<'a> Checker<'a> {
                 .insert(argument_shape(given));
             return true;
         }
-        if !crate::contracts::keeps::lends(contract, position) {
+        if !crate::contracts::keeps::lends_in(contract, position, &[self.library]) {
             return false;
         }
         let Some(given) = given else {
@@ -7205,7 +7205,7 @@ impl<'a> Checker<'a> {
                 .signature
                 .as_ref()
                 .and_then(|s| s.params.first())
-                .is_some_and(|(_, ty)| matches!(ty, Ty::Seq { .. }) || moves_away(ty));
+                .is_some_and(|(_, ty)| matches!(ty, Ty::Seq { .. }) || self.takes_away(ty));
             if contract.mutates || takes {
                 self.changed.push(name);
             }
@@ -8568,7 +8568,9 @@ impl<'a> Checker<'a> {
                 // name is deliberately not a place here: `let y = x` is a
                 // rename and stays a move, which is the one shape that
                 // separates this rule from `for`'s.
-                if matches!(value, Expr::Field { .. } | Expr::Index { .. }) && moves_away(&found) {
+                if matches!(value, Expr::Field { .. } | Expr::Index { .. })
+                    && self.takes_away(&found)
+                {
                     self.checked.lent_lets.insert(span.at());
                     for name in names {
                         let name = self.parsed.text(*name).to_string();
@@ -12703,9 +12705,10 @@ impl<'a> Checker<'a> {
             // own where the callee keeps it, and the literal as it is where the
             // callee only reads it, because that parameter is a `&str` below
             // (D3) and a constant needs no copy to be read.
-            let lent = crate::contracts::keeps::lends(
+            let lent = crate::contracts::keeps::lends_in(
                 contract,
                 at + usize::from(signature.takes_a_receiver()),
+                &[self.library],
             ) || (at == 0 && is_a_lookup(key));
             let kept = !lent;
             // **What the callee keeps, it is given** (ADR-213 D3): no `&` is
@@ -13039,9 +13042,10 @@ impl<'a> Checker<'a> {
         let arguments = signature.arguments();
         for (at, ((name, declared), want)) in arguments.iter().zip(expected).enumerate() {
             let generic = matches!(declared, Ty::Var { .. });
-            let lent = crate::contracts::keeps::lends(
+            let lent = crate::contracts::keeps::lends_in(
                 contract,
                 at + usize::from(signature.takes_a_receiver()),
+                &[self.library],
             ) || (at == 0 && is_a_lookup(key));
             let kept = !lent;
             let Some(found) = found.get(at) else { continue };
@@ -13899,7 +13903,7 @@ impl<'a> Checker<'a> {
             if is_a_handle(&ty) {
                 self.checked.task_handles.insert((span.at(), name.clone()));
             }
-            if !moves_away(&ty) {
+            if !self.takes_away(&ty) {
                 continue;
             }
             self.moved_into_a_task.push((name, ty, span.stop()));
@@ -14161,7 +14165,7 @@ impl<'a> Checker<'a> {
             return;
         }
         // A stamp is not data: what is under it decides (ADR-111 D2).
-        if !moves_away(&ty.unseen()) {
+        if !self.takes_away(&ty.unseen()) {
             return;
         }
         let root = path.split('.').next().unwrap_or_default().to_string();
@@ -20306,7 +20310,7 @@ impl<'a> Checker<'a> {
                 let taken = self.handed[from..].iter().any(|taken| {
                     taken.path == **name || taken.path.starts_with(&format!("{name}."))
                 }) || self.changed[changed_from..].iter().any(|n| n == *name);
-                moves_away(ty) && !taken && !gives_back(body, name, self.parsed)
+                self.takes_away(ty) && !taken && !gives_back(body, name, self.parsed)
             })
             .map(|(name, _)| name.clone())
             .collect();
@@ -21154,6 +21158,15 @@ fn moves_away(ty: &Ty) -> bool {
         // not. `Unknown`, a function type and a type variable claim nothing.
         Ty::Tuple(parts) => parts.iter().any(moves_away),
         _ => false,
+    }
+}
+
+impl Checker<'_> {
+    /// [`moves_away`], where a type the library says **copies** is copied
+    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1, the reading):
+    /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
+    fn takes_away(&self, ty: &Ty) -> bool {
+        moves_away(ty) && !crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
     }
 }
 

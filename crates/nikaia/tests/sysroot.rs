@@ -282,6 +282,10 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
                   \n\
                   pub fn is_main(names: ref winnow_grammar::InternerContext, n: Named) -> bool {\n\
                   \x20   return names.resolve(n.name) == \"main\"\n\
+                  }\n\
+                  \n\
+                  pub fn named(names: ref winnow_grammar::InternerContext, name: winnow_grammar::Symbol) -> bool {\n\
+                  \x20   return names.resolve(name) == \"main\" && Named { name: name } == Named { name: name }\n\
                   }\n";
     let lowered_in = |dir: &str| {
         let at = root.join(dir);
@@ -297,10 +301,21 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
         "{tool}"
     );
     assert!(!tool.contains("async fn is_main"), "{tool}");
+    // **A copy is not lent** (D4.1, the reading): a `Symbol` parameter is a
+    // `Symbol` below, handed to `resolve` and still there to build with.
+    assert!(
+        tool.contains(
+            "pub fn named(names: &winnow_grammar::InternerContext, name: winnow_grammar::Symbol)"
+        ),
+        "{tool}"
+    );
 
     // `std`'s own module sees `std` alone, and `==` on a type it cannot say
     // compares is refused by this compiler rather than by `rustc`.
     let std_module = lowered_in("src").expect_err("std does not read the description");
     let _ = std::fs::remove_dir_all(&root);
-    assert!(format!("{std_module:#}").contains("NK1188"), "{std_module:#}");
+    assert!(
+        format!("{std_module:#}").contains("NK1188"),
+        "{std_module:#}"
+    );
 }

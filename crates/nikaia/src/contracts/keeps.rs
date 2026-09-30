@@ -60,6 +60,17 @@ use super::{INPUT, Ledger};
 /// reference written on a guess is a guess the language below reports. The
 /// `keeps` clause is the column itself.
 pub fn lends(contract: &super::FnContract, at: usize) -> bool {
+    lends_in(contract, at, &[])
+}
+
+/// [`lends`], where a type a ledger says **copies** is copied rather than lent
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.1, the reading):
+/// `winnow_grammar::Symbol` is one `u32`, and a `&Symbol` handed on to a
+/// described call that takes a `Symbol` is `rustc`'s mismatch about a file
+/// nobody wrote. Only a ledger's `copies = true` answers here; a type this
+/// program declares is still lent, and reading its copy is the same step for
+/// the types a unit declares.
+pub fn lends_in(contract: &super::FnContract, at: usize, copying: &[&super::Ledger]) -> bool {
     let Some(signature) = contract.signature.as_ref() else {
         return false;
     };
@@ -83,7 +94,22 @@ pub fn lends(contract: &super::FnContract, at: usize) -> bool {
     !signature.mutable.contains(name)
         && !signature.takes_a_receiver()
         && name != "self"
-        && (ty.is_a_view() || (moves(ty) && !contract.keeps.contains(name)))
+        && (ty.is_a_view()
+            || (moves(ty) && !a_ledger_copies(ty, copying) && !contract.keeps.contains(name)))
+}
+
+/// Whether a ledger says values of `ty` are copies.
+pub fn a_ledger_copies(ty: &super::ty::Ty, copying: &[&super::Ledger]) -> bool {
+    use super::ty::Ty;
+    match ty {
+        Ty::Named {
+            name, view: false, ..
+        } => copying
+            .iter()
+            .any(|ledger| ledger.types.get(name).is_some_and(|t| t.copies)),
+        Ty::Nullable(inner) => a_ledger_copies(inner, copying),
+        _ => false,
+    }
 }
 
 /// Whether a value of this type is **moved** when it is handed on, rather than
