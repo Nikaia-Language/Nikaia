@@ -791,13 +791,11 @@ D3 with *move as values*:
 
 * **(b)** Done: `Ty` and `Shape` (0.0.285), the small records (0.0.289),
   `Signature`, `FnContract` and `TypeContract` (0.0.290), `Ledger` and `Notes`
-  (0.0.291). What reads their text back (`Touch::parse`, `Held::parse`,
-  `Class::parse`, `VariantContract::parse`, `Signature::parse`,
-  `Ledger::parse`) is still Rust, behind `*Ops` traits, and moves with (c); so
-  does `Signature::arguments`, which hands back a slice of the entry's own
-  list.
-* **(c)** The signature strings move next to `ledger.nika`. A type's text
-  is done both ways (`Ty::text` 0.0.285, `Ty::parse` 0.0.286).
+  (0.0.291).
+* **(c)** Done (0.0.292): reading a ledger back is `tools/ledger.nika`'s,
+  whole. What stays Rust of a record is writing its ledger text
+  (`Ledger::render`, `spelling::spell`) and `Signature::arguments`, which hands
+  back a slice of the entry's own list.
 * **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,
   and the next ring with them.
 
@@ -818,6 +816,15 @@ method's receiver also only read the answer, and a `??` there still takes its
 left side, so a program that reuses the name writes `.clone()`. Each is a
 position the checker walks with the answer in hand; the emitter's half is
 built.
+
+### 2.52. An arm's binding that is bound `ref` is lent again
+
+[ADR-242](specification/adr/adr-242.md) binds a `match` arm's names as views
+where the arm only reads them (`Line::Pair { ref key, ref value }`). A call
+that lends such a name writes `&key`, which is a view of a view: the same code
+below, and `clippy::needless_borrow` about it, which `nikaia-std`'s `tools`
+allow since `ledger.nika`'s reader (0.0.292). The checker knows the binding
+is a view (`lent_bindings`), so the call can know it too.
 
 ## 3. Upkeep
 

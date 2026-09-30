@@ -1968,6 +1968,12 @@ struct Flow<'a> {
     /// below's own and not a read. A read is what answers a `T?` on a map; a
     /// place has to stay a place or there is nothing to assign to.
     in_a_place: bool,
+    /// The `match` being emitted is a **statement**: its arms hand nothing
+    /// back, so a block arm's last statement keeps its semicolon, as an `if`
+    /// in statement position does. Without it `ledger.sources.insert(…)` at
+    /// the end of an arm was the arm's value (found moving the ledger's reader
+    /// into Nikaia, ADR-257).
+    arms_are_statements: bool,
     /// The byte the statement being emitted starts at.
     ///
     /// It is here because the checker's answer about method calls is keyed by
@@ -2118,6 +2124,7 @@ impl<'a> Flow<'a> {
         caught_sum: None,
         caught_member: None,
         in_a_place: false,
+        arms_are_statements: false,
         statement: usize::MAX,
         function: "",
         channel: "Box<dyn std::error::Error>",
@@ -4423,6 +4430,7 @@ impl<'p> Emitter<'p> {
             caught_sum: None,
             caught_member: None,
             in_a_place: false,
+            arms_are_statements: false,
             statement: usize::MAX,
             function: key,
             channel,
@@ -5196,6 +5204,13 @@ impl<'p> Emitter<'p> {
                 if self.text(*name) == owner
                     && variants.iter().any(|v| self.text(v.name) == variant))
         })
+        // ...or another unit of the package declares (`ledger.nika` reading
+        // `ty.nika`'s `State`), which its entry in the package's ledger says.
+        || self
+            .own_contracts
+            .types
+            .get(owner)
+            .is_some_and(|entry| entry.variants.iter().any(|v| v.name == variant))
     }
 
     /// What `Shared(x)`, `SharedMut(x)` and `Locked(x)` allocate, outermost first
@@ -6611,6 +6626,19 @@ impl<'p> Emitter<'p> {
                 flow,
                 tail,
             )?,
+            // A `match` in *statement* position, for the `if`'s reason above:
+            // its arms are not the block's value.
+            Stmt::Expr(expr @ Expr::Match { .. }) if tail == Tail::Statement => {
+                self.expr(
+                    out,
+                    expr,
+                    depth,
+                    Flow {
+                        arms_are_statements: true,
+                        ..flow
+                    },
+                )?;
+            }
             Stmt::Expr(expr) => {
                 // **A tail is a `return` written without the word**, so the `&`
                 // it may owe is the same one — `fn text(ref self) -> ref String
@@ -7199,6 +7227,11 @@ impl<'p> Emitter<'p> {
                     .cloned();
                 match held {
                     Some(name) => out.push(&name),
+                    // A map's read is not lent (0.0.246), so nothing follows
+                    // it and a `match` needs no parentheses around the `*`.
+                    None if lent.is_empty() && matches!(receiver.as_ref(), Expr::Index { .. }) => {
+                        self.expr(out, receiver, depth, flow)?
+                    }
                     None => self.postfix_base(out, receiver, depth, flow)?,
                 }
                 out.push(lent);
@@ -8049,8 +8082,36 @@ impl<'p> Emitter<'p> {
                             && self.is_variant(self.text(segments[0]), self.text(segments[1]))),
                     _ => false,
                 };
+                // **And except for a constructor of a type this file
+                // declares**, `FnContract::empty()`: its entry says it hands
+                // back the type itself, so `.into()` is the same useless
+                // conversion (found moving the ledger's reader, ADR-257).
+                let a_declared_constructor = match &**fallback {
+                    Expr::Call { func, .. } => match &**func {
+                        Expr::Path(segments) if segments.len() == 2 => {
+                            let owner = self.text(segments[0]);
+                            let key = format!("{owner}::{}", self.text(segments[1]));
+                            self.own_contracts
+                                .functions
+                                .get(&key)
+                                .and_then(|contract| contract.signature.as_ref())
+                                .and_then(|signature| signature.result.as_ref())
+                                .is_some_and(|result| {
+                                    matches!(result, crate::contracts::ty::Ty::Named { name, args, view: false }
+                                        if name == owner && args.is_empty())
+                                })
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                // **And a struct written out**, `Held { … }`: it is the type
+                // already, whatever the option holds.
+                let a_struct_written = matches!(&**fallback, Expr::StructLit { .. });
                 let bare = a_number(fallback)
                     || a_declared_variant
+                    || a_declared_constructor
+                    || a_struct_written
                     || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
@@ -10456,6 +10517,20 @@ impl<'p> Emitter<'p> {
             .take_while(|(pattern, _)| *pattern == at)
             .map(|(_, name)| name)
             .collect();
+        // Only the arm's own block is a statement; what it holds is emitted
+        // as it would be anywhere.
+        let statements = flow.arms_are_statements;
+        let flow = Flow {
+            arms_are_statements: false,
+            ..flow
+        };
+        if statements
+            && let Expr::Block(block) = body
+            && opened.is_empty()
+            && copied.is_empty()
+        {
+            return self.block(out, block, depth, flow, Tail::Statement);
+        }
         if opened.is_empty() && copied.is_empty() {
             return self.expr(out, body, depth, flow);
         }
@@ -10654,6 +10729,30 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **`text.chars().collect()` is a list of characters asked for at its
+        // size** (`nikaia_std::list::chars`): the same list, without the
+        // growing a `collect` over `Chars` does. Only where nothing declares
+        // another thing to build.
+        if let Some(Expr::MethodCall {
+            receiver: text,
+            method: chars,
+            args: none,
+            ..
+        }) = receiver
+            && self.text(method) == "collect"
+            && args.is_empty()
+            && none.is_empty()
+            && self.text(*chars) == "chars"
+            && !self.collected_into.contains(&(
+                flow.statement,
+                crate::check::argument_shape(receiver.unwrap()),
+            ))
+        {
+            out.push("nikaia_std::list::chars(");
+            self.postfix_base(out, text, depth, flow)?;
+            out.push(".chars())");
+            return Ok(());
+        }
         // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
         // operation the name says. It is a name and not the operator
         // because keeping the low digits is said rather than assumed,

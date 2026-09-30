@@ -206,7 +206,7 @@ fn between(c: &[char], from: i64, to: i64) -> String {
 }
 
 fn cut(written: &str, front: i64, back: i64) -> String {
-    let c: Vec<char> = written.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
     between(&c, front, c.len() as i64 - back)
 }
 
@@ -227,8 +227,8 @@ fn closing(c: &[char], from: i64, closer: char) -> i64 {
 
 fn word_off(tail: &str, word: &str) -> Option<String> {
     if !tail.ends_with(word) { return None; }
-    let c: Vec<char> = tail.chars().collect::<Vec<_>>();
-    let w: Vec<char> = word.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(tail.chars());
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
     let shorter = between(&c, 0, c.len() as i64 - w.len() as i64);
     if (shorter.len() as i64) == 0 { return Some(shorter); }
     if (*nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - w.len() as i64 - 1))).is_whitespace() { return Some(shorter.trim_end().to_owned()); }
@@ -271,7 +271,7 @@ fn pointed_at(viewed: &str) -> Option<Ty> {
 }
 
 fn a_function(written: &str) -> Option<Ty> {
-    let c: Vec<char> = written.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
     let close = closing(&c, 3, ')');
     if close < 0 { return None; }
     let after = between(&c, close + 1, c.len() as i64);
@@ -303,11 +303,11 @@ fn a_function(written: &str) -> Option<Ty> {
 
 fn a_sequence(written: &str, word: &str, parallel: bool) -> Option<Ty> {
     if !written.starts_with(word) { return None; }
-    let w: Vec<char> = word.chars().collect::<Vec<_>>();
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
     let after_word = cut(written, w.len() as i64, 0);
     let rest: String = after_word.trim_start().to_owned();
     if !rest.starts_with("[") { return None; }
-    let c: Vec<char> = rest.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
     let close = closing(&c, 1, ']');
     if close < 0 { return None; }
     let after = between(&c, close + 1, c.len() as i64);
@@ -368,7 +368,7 @@ fn a_name(rest: &str, view: bool) -> Ty {
     if rest.starts_with("$") && (rest.len() as i64) > 1 { return Ty::Var { name: cut(rest, 1, 0), view }; }
     if view && rest == TEXT { return Ty::Named { name: TEXT_VIEW.to_owned(), args: vec![], view: true }; }
     if !rest.ends_with("]") { return Ty::Named { name: rest.to_owned(), args: vec![], view }; }
-    let c: Vec<char> = rest.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
     let mut open: i64 = -1;
     for at in 0..c.len() as i64 { if open < 0 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '[' { open = at; } }
     if open >= 0 {

@@ -180,39 +180,7 @@ pub trait TouchOps: Sized {
 impl TouchOps for Touch {
     /// Read one back from the text a ledger writes.
     fn parse(text: &str) -> Result<Touch> {
-        let text = text.trim();
-        let (resource, access) = text.rsplit_once(' ').ok_or_else(|| {
-            anyhow!("a touch is `resource read` or `resource write`, found `{text}`")
-        })?;
-        let write = match access.trim() {
-            "read" => false,
-            "write" => true,
-            other => {
-                return Err(anyhow!(
-                    "a touch is `read` or `write`, not `{other}` (in `{text}`)"
-                ));
-            }
-        };
-
-        let resource = resource.trim();
-        let (kind, parameter) = match resource.split_once('(') {
-            Some((kind, rest)) => {
-                let parameter = rest.strip_suffix(')').ok_or_else(|| {
-                    anyhow!("a resource is `kind(parameter)`, and `{resource}` has no `)`")
-                })?;
-                (kind.trim(), Some(parameter.trim().to_string()))
-            }
-            None => (resource, None),
-        };
-        if kind.is_empty() {
-            return Err(anyhow!("a touch needs a resource kind, found `{text}`"));
-        }
-
-        Ok(Touch {
-            kind: kind.to_string(),
-            parameter,
-            write,
-        })
+        nikaia_std::tools::ledger::touch_of(text).map_err(|refusal| anyhow!("{refusal}"))
     }
 
     /// Whether this compiler knows what the named resource *is* (ADR-033 D2).

@@ -4,6 +4,57 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.292] — 2026-09-30
+
+**Reading a ledger back is Nikaia** (ADR-257 step (c)), whole: the file's
+shape, what every table and key means, a signature back from the file's
+spelling, and each record's text. `Ledger::parse` is one call into
+`tools/ledger.nika`. The toolchain is 7.4 % Nikaia, from 5.5 %, and the
+compiler reads `std`'s ledger in fewer instructions than the Rust did.
+
+- `ledger.nika` reads `ty.nika`'s records beside itself, as every tool reads
+  the tree: `READS_THE_RECORDS` in `sysroot.rs` names it, and `lib.rs` writes
+  the `use super::ty::*`. A list rather than every tool, because the records'
+  names (`State`, `Shape`) are words other tools use for their own things.
+- `touch_of`, `held_of`, `class_of`, `variant_of`, `signature_of` and
+  `unspell` are Nikaia; the compiler's `TouchOps::parse` and its siblings
+  call them. Gone from Rust: `Ledger::parse`'s body, `spelling::unspell` and
+  its helpers, and the value readers (`sync_of`, `throws_of`, `borrows_of`,
+  `provenance_of`, `split_config`, `bounds_of`).
+- A `version` that is not a number says so by line
+  (*line 1: `version` is a whole number, not `x`*) where it was Rust's
+  *invalid digit found in string*.
+- **Measured** on an empty program: 95.7 M instructions before, 127.0 M with
+  the reader as first written, 93.1 M as shipped. Three things closed it,
+  none of them a special case of the reader: the lowering below, the entry's
+  records moved into the table instead of copied, and `unspell` answering a
+  signature that needs nothing turned back as it is.
+- **The lowering of `text.chars().collect()`** into a `Vec[char]` is
+  `nikaia_std::list::chars`, which asks for the room once. `collect` over
+  `Chars` asks for a quarter and grows; it was the largest single cost of the
+  reader, and every Nikaia module that lists a text's characters
+  (`Ty::parse` among them) is cheaper for it.
+- **Defects the move found:**
+  - **`x == null` on a type that does not compare was `NK1188`.** It asks
+    whether there is a value and is lowered to `x.is_none()`, which compares
+    nothing.
+  - **A `match` in statement position wrote its arms as values**: an arm
+    ending in `m.insert(k, v)` handed back the old value, and the arms
+    disagreed with an empty one. Its arms are statements now, as an `if`'s
+    in that position already were.
+  - **A copy of a type another unit of the package declares** was a method
+    nothing describes, and made the function around it `async`. The derived
+    copy of 0.0.290 covers the package's types now.
+  - **A `?.` on a map read, `m[k]?.clone()`, wrote its scrutinee in
+    parentheses**, which the language below warns about.
+  - **A `??` whose fallback is a constructor the file declares**
+    (`FnContract::empty()`) or a struct written out, or a variant of an enum
+    another unit declares, carried a useless `.into()`.
+- Seven lints on the generated tools say how the lowering writes rather than
+  what it does, and are allowed on `tools` with the reason beside them. One of
+  them, a `&` before an arm's binding that is bound `ref` already, is
+  `open-work.md` 2.52.
+
 ## [0.0.291] — 2026-09-30
 
 **`Ledger` and `Notes` are Nikaia**, which finishes ADR-257 step (b): every

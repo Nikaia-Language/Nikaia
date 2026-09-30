@@ -7305,7 +7305,12 @@ impl<'a> Checker<'a> {
         if found.is_none()
             && entry == "clone"
             && args.is_empty()
-            && (self.structs.contains_key(name) || self.enums.contains_key(name))
+            && (self.structs.contains_key(name)
+                || self.enums.contains_key(name)
+                // ...or another unit of the package declares, which is where
+                // a tool module's records stand (`ledger.nika` beside
+                // `ty.nika`).
+                || self.own.types.contains_key(name))
         {
             return match &on {
                 Ty::Named { name, args, .. } => Ty::Named {
@@ -10978,7 +10983,15 @@ impl<'a> Checker<'a> {
                         Ty::named("bool")
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
-                        self.a_type_that_does_not_compare(&left, &right, at);
+                        // **`x == null` asks whether there is one**, and the
+                        // emitter writes it `x.is_none()` (0.0.250): nothing
+                        // of what `x` holds is compared, so a type that does
+                        // not compare is no reason to refuse it.
+                        let asks_for_null = matches!(lhs.as_ref(), Expr::LitNull)
+                            || matches!(rhs.as_ref(), Expr::LitNull);
+                        if !asks_for_null {
+                            self.a_type_that_does_not_compare(&left, &right, at);
+                        }
                         self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }

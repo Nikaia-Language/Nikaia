@@ -75,11 +75,7 @@ pub trait HeldOps: Sized {
 
 impl HeldOps for Held {
     fn parse(text: &str) -> Option<Held> {
-        let (position, state) = text.rsplit_once(':')?;
-        Some(Held {
-            position: position.trim().to_string(),
-            state: State::parse(state)?,
-        })
+        nikaia_std::tools::ledger::held_of(text)
     }
 }
 

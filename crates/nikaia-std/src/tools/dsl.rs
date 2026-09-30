@@ -5,7 +5,7 @@
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn parameters(body: &str) -> Vec<String> {
-    let c: Vec<char> = body.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(body.chars());
     let mut found: Vec<String> = Vec::new();
     let mut i: i64 = 0;
     while i < c.len() as i64 {
