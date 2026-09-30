@@ -203,6 +203,10 @@ pub struct StoredCode {
 /// with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Claim {
+    /// How the compiler holds it ([ADR-256](../../docs/specification/adr/adr-256.md)):
+    /// only a test's claim is checked when it runs, and the emitter writes
+    /// nothing for any other.
+    pub held: Option<crate::prove::Held>,
     /// `assert(blank == 1; message: "…")`, rewritten from the tree.
     pub written: String,
     /// The comparison's left operand, where its value can be shown: `blank`.
@@ -800,8 +804,8 @@ pub struct Checked {
     pub compared_views: BTreeSet<(usize, String)>,
     /// **Every `assert`, and what its failure shows**
     /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), by statement
-    /// and the shape of its condition. Nothing proves a claim yet, so every
-    /// one here is checked at run time (D4).
+    /// and the shape of its condition, and how each is held
+    /// ([ADR-256](../../docs/specification/adr/adr-256.md)).
     pub claims: BTreeMap<(usize, String), Claim>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
@@ -1292,6 +1296,17 @@ fn walked<'a>(
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
+    // **Every `assert` outside a test is proved, or the program is refused**
+    // ([ADR-256](../../docs/specification/adr/adr-256.md)). After the walk,
+    // because the checker is what decided which calls are the prelude's.
+    let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
+    let proved = crate::prove::prove(parsed, library, &keys);
+    checker.checked.findings.extend(proved.findings);
+    for (key, held) in proved.held {
+        if let Some(claim) = checker.checked.claims.get_mut(&key) {
+            claim.held = Some(held);
+        }
+    }
     // A naked view parameter that is kept past the call (`NK2302`). Also a
     // separate walk, and for the same reason: it asks where a *value* goes
     // rather than what a type is. It reads both ledgers, because **a call says
@@ -2979,6 +2994,17 @@ struct Checker<'a> {
 struct Handed {
     pauses: bool,
     fails: bool,
+    /// Whether the walk is inside the guarded half of a `catch` written **in
+    /// this lambda's body**.
+    ///
+    /// Not [`Checker::caught`], which also answers *yes* for a `catch` around
+    /// the call the lambda is handed to, and that `catch` does nothing for the
+    /// lambda: the callee runs it, and a type without `throws` has promised the
+    /// callee it never fails. A `catch` inside the body is the other way round
+    /// — the failure is handled before it leaves the lambda, which is exactly
+    /// what `NK2606`'s own help tells the reader to write, so a call it guards
+    /// is not one the lambda was seen to fail with.
+    caught: bool,
     /// What the type it was handed to allows, kept beside what it was seen to
     /// do so that the one message about a mismatch is the one that is said.
     promised: Promises,
@@ -3543,8 +3569,21 @@ impl<'a> Checker<'a> {
                 for variant in &contract.variants {
                     let key = format!("{name}::{}", variant.name);
                     self.variant_owner.insert(key.clone(), name.clone());
-                    if !variant.holds.is_empty() {
-                        self.structs.insert(key, variant.holds.clone());
+                    // **A positional variant is built by its constructor**, as
+                    // a declared enum's is: `fs::Root::Dir("site")` has to meet
+                    // `Dir(String)` so the literal is made text of its own
+                    // (ADR-207 D2). Recorded as a struct it was a type called
+                    // with no constructor, or, before the ledger said what
+                    // `Dir` holds, a `&str` handed to `rustc`.
+                    match variant.positional && !variant.holds.is_empty() {
+                        true => {
+                            let parts = variant.holds.iter().map(|f| f.ty.clone()).collect();
+                            self.variant_parts.insert(key, parts);
+                        }
+                        false if !variant.holds.is_empty() => {
+                            self.structs.insert(key, variant.holds.clone());
+                        }
+                        false => {}
                     }
                 }
                 self.enums.insert(
@@ -4937,12 +4976,34 @@ impl<'a> Checker<'a> {
         true
     }
 
-    /// **`NK1191`: an arithmetic operator on a collection** (0.0.234).
+    /// **`NK1191`: an arithmetic operator on something that has none**
+    /// (0.0.234; a declared `struct` or `enum` too, under the same code).
     ///
-    /// Only where a side is **known** to be a list, a map or a set: a value
-    /// whose type this checker could not work out is not refused on a guess
+    /// Only where a side is **known** to be a list, a map or a set, or a
+    /// `struct` or an `enum` this program declares: a value whose type this
+    /// checker could not work out is not refused on a guess
     /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
-    fn arithmetic_on_a_collection(&mut self, op: BinaryOp, left: &Ty, right: &Ty, span: &Span) {
+    ///
+    /// **A declared type has no operators because the language gives it no
+    /// way to have one**: there is no overloading
+    /// ([ADR-094](../../docs/specification/adr/adr-094.md) §1,
+    /// [ADR-144](../../docs/specification/adr/adr-144.md) §4) and no trait an
+    /// `impl` could name to give a type `+` (Part I 4.7). `a -= 30` on an
+    /// `Account` lowered as it was written and `rustc` said *binary assignment
+    /// operation `-=` cannot be applied* (E0368, E0369) about a file nobody
+    /// wrote (C.1). A type another file of this program, a package or a
+    /// described crate declares is not asked: only this unit's own
+    /// declarations are known to be Nikaia's.
+    ///
+    /// `sides` is each operand with what it was written as, and `compound` is
+    /// whether the operator was written `-=`, which is what the help writes back.
+    fn arithmetic_on_something_that_has_none(
+        &mut self,
+        op: BinaryOp,
+        sides: [(&Expr, &Ty); 2],
+        compound: bool,
+        span: &Span,
+    ) {
         let symbol = match op {
             BinaryOp::Add => "+",
             BinaryOp::Sub => "-",
@@ -4950,11 +5011,30 @@ impl<'a> Checker<'a> {
             BinaryOp::Div => "/",
             _ => "%",
         };
+        let [(_, left), (_, right)] = sides;
+        if !is_a_collection(left) && !is_a_collection(right) {
+            let declared = sides
+                .iter()
+                .position(|(_, ty)| self.declared_with_no_arithmetic(ty).is_some());
+            if let Some(at) = declared {
+                self.arithmetic_on_a_declared_type(symbol, sides, at, compound, span);
+            }
+            return;
+        }
         let (side, other) = match is_a_collection(left) {
             true => (left, right),
             false => (right, left),
         };
         let joining = matches!(op, BinaryOp::Add) && is_a_list(left) && is_a_list(right);
+        // `xs += [3]` is the one shape whose way out can be written whole.
+        let extend = match sides {
+            [(Expr::Variable(bound), _), (value, _)] if compound => format!(
+                "{}.extend({})",
+                self.parsed.text(*bound),
+                written(self.parsed, value)
+            ),
+            _ => "a.extend(b)".to_string(),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
@@ -4973,10 +5053,112 @@ impl<'a> Checker<'a> {
                 },
             }],
             help: joining.then(|| {
-                "To add one list's elements to the end of another, write `a.extend(b)`.".to_string()
+                format!("To add one list's elements to the end of another, write `{extend}`.")
             }),
             labels: Vec::new(),
         });
+    }
+
+    /// `NK1191` for a `struct` or an `enum`, the side at `at` being one.
+    ///
+    /// **The help names a field only where there is exactly one it could
+    /// mean**: the struct has one numeric field, the side is a plain name and
+    /// the other side is not a declared type too. Anything else would be a
+    /// guess, and the help says what is always true instead.
+    fn arithmetic_on_a_declared_type(
+        &mut self,
+        symbol: &str,
+        sides: [(&Expr, &Ty); 2],
+        at: usize,
+        compound: bool,
+        span: &Span,
+    ) {
+        let (side, ty) = sides[at];
+        let (other_side, other) = sides[1 - at];
+        let Some(kind) = self.declared_with_no_arithmetic(ty) else {
+            return;
+        };
+        let name = match ty.unseen() {
+            Ty::Named { name, .. } => name.clone(),
+            _ => return,
+        };
+        let numeric: Vec<String> = match kind {
+            "struct" => self
+                .structs
+                .get(&name)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .filter(|f| {
+                            matches!(&f.ty, Ty::Named { name, args, .. }
+                                if args.is_empty() && is_number(name))
+                        })
+                        .map(|f| f.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let field = match (numeric.as_slice(), side) {
+            ([field], Expr::Variable(bound))
+                if self.declared_with_no_arithmetic(other).is_none() =>
+            {
+                Some(format!("{}.{field}", self.parsed.text(*bound)))
+            }
+            _ => None,
+        };
+        let help = match field {
+            Some(field) => {
+                let other = written(self.parsed, other_side);
+                let line = match (compound, at) {
+                    (true, _) => format!("{field} {symbol}= {other}"),
+                    (false, 0) => format!("{field} {symbol} {other}"),
+                    (false, _) => format!("{other} {symbol} {field}"),
+                };
+                format!("Did you mean a field, like `{line}`?")
+            }
+            None if kind == "struct" => format!(
+                "Do the arithmetic on one of its fields, or write a method that says what \
+                 `{symbol}` means for it."
+            ),
+            None => format!("Write a method that says what `{symbol}` means for it."),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1191",
+            message: format!("You can't use `{symbol}` on {} `{name}`.", an_or_a(&name)),
+            notes: vec![format!(
+                "`{name}` is {} `{kind}`, and {} `{kind}` has no arithmetic: operators \
+                 belong to numbers, and `+` to text as well.",
+                an_or_a(kind),
+                an_or_a(kind)
+            )],
+            help: Some(help),
+            labels: Vec::new(),
+        });
+    }
+
+    /// A list, a map, a set, or a `struct` or an `enum` this unit declares.
+    fn has_no_arithmetic(&self, ty: &Ty) -> bool {
+        is_a_collection(ty) || self.declared_with_no_arithmetic(ty).is_some()
+    }
+
+    /// `"struct"` or `"enum"` where a type is known to be one **this unit**
+    /// declares, the types Part I gives no operator and no way to have one.
+    fn declared_with_no_arithmetic(&self, ty: &Ty) -> Option<&'static str> {
+        let Ty::Named { name, .. } = ty.unseen() else {
+            return None;
+        };
+        self.parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Struct { name: own, .. } if self.parsed.text(*own) == name => Some("struct"),
+                Item::Enum { name: own, .. } if self.parsed.text(*own) == name => Some("enum"),
+                _ => None,
+            })
     }
 
     /// **A type that holds itself holds itself through a box the compiler
@@ -5305,6 +5487,7 @@ impl<'a> Checker<'a> {
         self.checked.claims.insert(
             (span.at(), argument_shape(condition)),
             Claim {
+                held: None,
                 written: claimed,
                 left,
                 right,
@@ -8707,6 +8890,27 @@ impl<'a> Checker<'a> {
                 if op.is_some() {
                     self.a_compound_write_to_a_map_slot(target, span);
                 }
+                // **`NK1191` for `-=` as for `-`**: `a -= 30` on an
+                // `Account` reached `rustc` as E0368, and `xs += [3]` on a list
+                // as the same. `+=` onto text is a concatenation and is left
+                // alone, as `+` is.
+                if let Some(
+                    arithmetic @ (BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Rem),
+                ) = op
+                    && !(matches!(arithmetic, BinaryOp::Add) && is_text(&into))
+                    && (self.has_no_arithmetic(&into) || self.has_no_arithmetic(&found))
+                {
+                    self.arithmetic_on_something_that_has_none(
+                        *arithmetic,
+                        [(target, &into), (value, &found)],
+                        true,
+                        span,
+                    );
+                }
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
@@ -10578,19 +10782,25 @@ impl<'a> Checker<'a> {
                         self.checked.concatenations.insert(at.at());
                         Ty::named("String")
                     }
-                    // **`NK1191`: arithmetic on a collection** (0.0.234).
-                    // `[1] + [2]` lowered as it was written and the language
-                    // below said *cannot add `Vec<i64>` to `Vec<i64>`* about a
-                    // file nobody wrote. Part I gives a list no operator, and
-                    // ADR-253 keeps it that way for `+` on two lists.
+                    // **`NK1191`: arithmetic on something that has none**
+                    // (0.0.234). `[1] + [2]` lowered as it was written and the
+                    // language below said *cannot add `Vec<i64>` to `Vec<i64>`*
+                    // about a file nobody wrote. Part I gives a list no
+                    // operator, and ADR-253 keeps it that way for `+` on two
+                    // lists; a declared `struct` or `enum` has none either.
                     BinaryOp::Add
                     | BinaryOp::Sub
                     | BinaryOp::Mul
                     | BinaryOp::Div
                     | BinaryOp::Rem
-                        if is_a_collection(&left) || is_a_collection(&right) =>
+                        if self.has_no_arithmetic(&left) || self.has_no_arithmetic(&right) =>
                     {
-                        self.arithmetic_on_a_collection(*op, &left, &right, span);
+                        self.arithmetic_on_something_that_has_none(
+                            *op,
+                            [(lhs, &left), (rhs, &right)],
+                            false,
+                            span,
+                        );
                         Ty::Unknown
                     }
                     // Arithmetic on two of the same thing is that thing, and
@@ -10856,6 +11066,15 @@ impl<'a> Checker<'a> {
                 // itself is ordinary code again - a failure raised inside one
                 // leaves the function like any other.
                 let outer = std::mem::replace(&mut self.caught, true);
+                // **And the lambda's own record of it** (ADR-102 D2): a
+                // `catch` in a lambda's body keeps a failure from leaving the
+                // lambda, which `self.caught` cannot say because it also holds
+                // for a `catch` around the call the lambda is handed to. Put
+                // back at the same moment, so the handler's own calls count.
+                let lambda_outer = self
+                    .handed_over
+                    .as_mut()
+                    .map(|handed| std::mem::replace(&mut handed.caught, true));
                 // **A guard of its own, and the enclosing one set aside**
                 // ([ADR-091](../../../docs/specification/adr/adr-091.md)). A
                 // `catch` inside another one's guarded expression handles its
@@ -10872,6 +11091,9 @@ impl<'a> Checker<'a> {
                     self.guard_has_no_answer();
                 }
                 self.caught = outer;
+                if let (Some(handed), Some(was)) = (&mut self.handed_over, lambda_outer) {
+                    handed.caught = was;
+                }
                 self.nothing_here_can_fail(guarded.unwrap_or_default(), span);
                 self.scope
                     .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
@@ -11650,7 +11872,26 @@ impl<'a> Checker<'a> {
         //
         // Measured: widening `NK1117` to a name in an expression refused
         // `examples/escaping/src/main.nika` for its `{r.shade}` until this frame existed.
-        for (hole, bound) in crate::emit::literal_expressions_bound(self.parsed, literal) {
+        //
+        // What each of an f-string's holes says after its `:`, beside the holes
+        // that parse - the ones the walk below is handed, in the same order.
+        let specs: Vec<Option<String>> = match literal {
+            Expr::LitInterpolated(text) => crate::emit::interpolation_with_specs(text)
+                .map(|(_, holes, specs)| {
+                    holes
+                        .iter()
+                        .zip(specs)
+                        .filter(|(hole, _)| {
+                            crate::parser::parse_expression(&self.parsed.interner, hole).is_ok()
+                        })
+                        .map(|(_, spec)| spec)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let walked = crate::emit::literal_expressions_bound(self.parsed, literal);
+        for (index, (hole, bound)) in walked.into_iter().enumerate() {
             let frame: Vec<Local> = bound
                 .into_iter()
                 // What the element's type is, is a question about the
@@ -11664,10 +11905,72 @@ impl<'a> Checker<'a> {
                 Expr::LitInterpolated(_) => self.hole.replace((span.at(), argument_shape(&hole))),
                 _ => self.hole.clone(),
             };
-            self.expr(&hole, span);
+            let held = self.expr(&hole, span);
             self.hole = outer;
             self.scope.pop();
+            if let Some(spec) = specs.get(index) {
+                self.a_collection_in_a_hole(&hole, &held, spec.as_deref(), span);
+            }
         }
+    }
+
+    /// **`NK1201`: a list, a map or a set in an `f"…"` hole.**
+    ///
+    /// A hole is written as its value's text, which the emitter asks the
+    /// language below for with `{}`, its `Display` - and a `Vec`, a `HashMap`
+    /// and a `HashSet` have none, so `f"Reading: {data}"` over `[1, 2, 3]`
+    /// lowered and `rustc` said *`Vec<i64>` doesn't implement
+    /// `std::fmt::Display`* (E0277) about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **The specification gives a collection no text form.** Part I 2.5 says
+    /// a hole holds an expression and that what follows its `:` says *how* to
+    /// write the value, and names no way a list is written; ADR-035 and
+    /// ADR-032 are about which literals have holes and say nothing about what
+    /// they may hold. So this refuses rather than inventing a form, and the
+    /// help is the way out that exists: the elements joined into text first
+    /// (`Seq::join`).
+    ///
+    /// Only where the hole's type is **known** to be a collection (C.4), and
+    /// only a hole that does not say how to write itself: a `:` written in a
+    /// hole is handed to the language below as it stands, and one with a `?` in
+    /// it asks for a form every collection there has.
+    fn a_collection_in_a_hole(&mut self, hole: &Expr, held: &Ty, spec: Option<&str>, span: &Span) {
+        if !is_a_collection(held) || spec.is_some_and(|spec| spec.contains('?')) {
+            return;
+        }
+        let written = written(self.parsed, hole);
+        let (what, help) = match is_a_list(held) {
+            true => (
+                "a list".to_string(),
+                format!(
+                    "Join its elements into text first: `let text = {}.iter().join(\", \")`, \
+                     then write `{{text}}`.",
+                    match hole {
+                        Expr::Variable(_) | Expr::Field { .. } => written.clone(),
+                        _ => format!("({written})"),
+                    }
+                ),
+            ),
+            false => (
+                format!("`{held}`"),
+                "Write the parts you want in holes of their own, or build the text in a \
+                 loop first."
+                    .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1201",
+            message: format!("You can't put {what} in an `f\"…\"` hole."),
+            notes: vec![format!(
+                "A hole is written as its value's text, and lists, maps and sets have no \
+                 text form. `{written}` is {what}."
+            )],
+            help: Some(help),
+            labels: Vec::new(),
+        });
     }
 
     /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.
@@ -12990,7 +13293,14 @@ impl<'a> Checker<'a> {
             // every written call — free or method — has its callee's contract
             // in hand, and a `catch` further out does not change what the
             // *lambda* was seen to do.
-            if let Some(handed) = &mut self.handed_over {
+            //
+            // **A `catch` further in does.** `fs::read(n, …) catch { "" }`
+            // inside the body handles the failure before the lambda returns,
+            // so the lambda cannot fail and there is nothing for `NK2606` to
+            // say — its own help names this `catch` as the way out. The
+            // question is `handed.caught`, not `self.caught`, because only the
+            // first stops at the lambda's edge.
+            if let Some(handed) = self.handed_over.as_mut().filter(|h| !h.caught) {
                 handed.fails = true;
                 // **And `NK2606` is then the whole message.** Where the type
                 // the lambda was handed to declares no failure, the function
@@ -18695,6 +19005,7 @@ impl<'a> Checker<'a> {
             me.handed_over = Some(Handed {
                 pauses: false,
                 fails: false,
+                caught: false,
                 promised,
             });
             let tail = me.block(body);
@@ -20879,9 +21190,9 @@ fn unviewed(ty: &Ty) -> Ty {
 }
 
 /// **`--asserts`** ([ADR-245](../../docs/specification/adr/adr-245.md) D6):
-/// every `assert` of one file, by line, and how the compiler holds it. Today
-/// every one is held at run time (D4): there is no prover yet, and the report
-/// exists so that the day there is one, its progress can be read here.
+/// every `assert` of one file, by line, and how the compiler holds it: proved,
+/// a precondition its callers prove, a test's check, or refused
+/// ([ADR-256](../../docs/specification/adr/adr-256.md)).
 pub fn claims_report(
     parsed: &Parsed,
     source: &str,
@@ -20899,16 +21210,28 @@ pub fn claims_report(
         })
         .collect();
     rows.sort_by_key(|(line, _)| *line);
+    use crate::prove::Held;
+    let count = |want: fn(&Held) -> bool| {
+        rows.iter()
+            .filter(|(_, c)| c.held.as_ref().is_some_and(want))
+            .count()
+    };
     let mut out = format!(
-        "asserts in {path}: {} - proved 0, refuted 0, at run time {}\n",
+        "asserts in {path}: {} - proved {}, preconditions {}, checked by a test {}, refused {}\n",
         rows.len(),
-        rows.len()
+        count(|h| matches!(h, Held::Proved)),
+        count(|h| matches!(h, Held::Precondition(_))),
+        count(|h| matches!(h, Held::ByTheTest)),
+        count(|h| matches!(h, Held::Refused)),
     );
     for (line, claim) in rows {
-        out.push_str(&format!(
-            "  {path}:{line}  {}  run time: nothing proves it yet\n",
-            claim.written
-        ));
+        let how = match &claim.held {
+            Some(Held::Proved) => "proved".to_string(),
+            Some(Held::Precondition(f)) => format!("precondition of `{f}`: its callers prove it"),
+            Some(Held::ByTheTest) => "checked when the test runs".to_string(),
+            Some(Held::Refused) | None => "refused: the compiler can't prove it".to_string(),
+        };
+        out.push_str(&format!("  {path}:{line}  {}  {how}\n", claim.written));
     }
     out
 }
@@ -21237,11 +21560,11 @@ fn an(what: &str) -> String {
 /// compiler has to know and the ledger does not carry.
 ///
 /// **Empty for every other missing argument**, which is what keeps this from
-/// being a habit: the parameter has to be named `root` *and* typed `Root`.
+/// being a habit: the parameter has to be named `root` *and* typed `fs::Root`.
 fn a_root_is_one_of_two(wanted: &[(String, Ty)]) -> String {
     let is_a_root = wanted
         .iter()
-        .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "Root");
+        .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "fs::Root");
     match is_a_root {
         false => String::new(),
         true => ". The root is either `fs::Root::Dir(store)`, which keeps the path inside \

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.267 (Draft)
+**Version:** 0.0.271 (Draft)
 **Date:** 2026-09-29
 
 ---
@@ -240,9 +240,9 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 SQL written in a `dsl` block is verified while the program is built.
 
 ```nika
-use nikaia_sql::{Database, mysql}
+use nikaia_sql
 
-fn query_users(db: Shared[Database], min_age: i32) {
+fn query_users(db: Shared[nikaia_sql::Database], min_age: i32) {
     // 1. Define the statement.
     // The compiler parses this SQL, sees ':target_age' (a parameter hole
     // declared by the grammar) and generates a specialized shadow type.
@@ -253,10 +253,10 @@ fn query_users(db: Shared[Database], min_age: i32) {
     } eod
 
     // 2. Execute with typed parameters.
-    // Subject: none (method on self), so no `;` - only the option (Part I 5.1)
-    // Omitting 'target_age' is a compile error - the compiler knows the
-    // statement needs it, because it parsed the statement.
-    let users = query.execute(target_age: min_age)
+    // Subject: the connection; after the `;`, the statement's parameters
+    // (Part I 5.1, ADR-254). Omitting 'target_age' is a compile error - the
+    // compiler knows the statement needs it, because it parsed the statement.
+    let users = query.execute(db; target_age: min_age)
 }
 ```
 
@@ -281,16 +281,16 @@ call that passes a name the statement has no hole for is refused with `NK1113`:
 error[NK1112]: `query` needs `:target_age`, but this call doesn't pass it.
    --> users.nika:17:5
     |
- 17 |     let users = query.execute(targt_age: min_age)
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 17 |     let users = query.execute(db; targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: The statement's parameters are `:target_age`.
     = help: Pass it after the `;`: `target_age: …`.
 error[NK1113]: `query` has no parameter called `:targt_age`.
    --> users.nika:17:5
     |
- 17 |     let users = query.execute(targt_age: min_age)
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 17 |     let users = query.execute(db; targt_age: min_age)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: The statement's parameters are `:target_age`.
     = help: Did you mean `target_age`?
@@ -338,7 +338,7 @@ A grammar declares **synchronization points**: where a rule fails, the parser di
 // If parsing fails inside the block, skip ahead to the closing brace
 // and carry on - the errors after this point are still worth reporting.
 rule block -> Vec[Stmt] =
-    "{" => statements:recover(stmt, "}")* "}"
+    "{" => statements:recover(stmt, "}")* "}" { statements }
 ```
 
 The commit point (`=>`) and the recovery work together. Once the opening brace matched, a failure inside the block is reported rather than abandoning the alternative. The commit point decides where an error is reported; the recovery decides where parsing resumes.
@@ -375,7 +375,7 @@ Nothing here changes what a pattern means. `until(";")` consumes up to the next 
 
 ```nika
 pub rule file -> Summary =
-    par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) }, Summary::merge)
+    par_fold(MEASUREMENT, Summary, fn(acc, m) { acc.record(m) }, Summary::merge)
 ```
 
 `par_fold` is `fold` plus that merge, and it must be the whole body of its rule. The compiler cuts the file into one piece per core. Each piece repairs its own start to the next boundary, so every frame belongs to exactly one worker. Each worker folds into its own accumulator with nothing shared. The accumulators are merged at the end. A failing piece reports its error at its position in the whole file. Nothing about chunks appears in user code:
@@ -765,8 +765,8 @@ access_all(account_a, account_b) fn(a, b) {
 // And the transfer, which is a write on both: one `mut` per lock, and the
 // block changes them.
 update_all(account_a, account_b) fn(mut von, mut nach) {
-    von -= 30
-    nach += 30
+    von.balance -= 30
+    nach.balance += 30
 }
 ```
 

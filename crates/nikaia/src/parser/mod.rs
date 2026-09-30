@@ -169,6 +169,18 @@ where
     }
 }
 
+/// `jump if cond` as the tree has always written it: `if cond { jump }`
+/// ([ADR-255](../../../docs/specification/adr/adr-255.md) D1).
+fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
+    ast::Stmt::Expr(ast::Expr::If {
+        cond: Box::new(cond),
+        then_branch: ast::Block {
+            stmts: vec![ast::Spanned::new(jump, span)],
+        },
+        else_branch: None,
+    })
+}
+
 /// Part I 2.2's number, in the four spellings
 /// ([ADR-136](../../../docs/specification/adr/adr-136.md) D1): `255`,
 /// `1_000_000`, `0xFF`, `0b1010` and `0o17`.
@@ -1353,7 +1365,7 @@ grammar! {
             KW_FN
             name:NAME
             generics:generic_list?
-            params:fn_params
+            params:fn_params?
             promise_before_the_arrow?
             ret:return_type_arrow?
             promise:promise_after_the_type
@@ -1361,6 +1373,8 @@ grammar! {
                 // A trait method's `sync(f)` is not built: it reads as a method
                 // that may pause, which is the promise's weaker side.
                 let (sync, _, throws) = promise;
+                // Part I 5.1's *Optional Parentheses*, as `fn_head` has them.
+                let params = params.unwrap_or_else(FnParams::none);
                 Spanned::documented(TraitMethod {
                     name,
                     generics: generics.unwrap_or_default(),
@@ -1399,18 +1413,17 @@ grammar! {
         rule fn_item -> Item =
             vis:kw_pub?
             KW_FN
-            name:NAME?
-            generics:generic_list?
-            params:fn_params
+            head:fn_head
             promise_before_the_arrow?
             ret:return_type_arrow?
             promise:promise_after_the_type
             body:block
             -> {
+                let (name, generics, params) = head;
                 let (sync, sync_by, throws) = promise;
                 Item::Fn {
                     name,
-                    generics: generics.unwrap_or_default(),
+                    generics,
                     receiver: params.receiver,
                     args: params.args,
                     config: params.config,
@@ -1422,6 +1435,25 @@ grammar! {
                     is_public: vis.is_some(),
                     can_throw: throws,
                 }
+            }
+
+        // **A function declared without parameters may omit the parentheses**
+        // (Part I 5.1, *Optional Parentheses*): `fn init { … }` is
+        // `fn init() { … }`, the way `fn { … }` is a lambda of none. Only a
+        // *named* declaration may: the anonymous constructor of Part I 4.2 keeps
+        // its `pub fn(…)`, because a bare `pub fn { … }` would read as a lambda
+        // standing where an item belongs. The call site is untouched - `init()`
+        // is still how the function is called.
+        rule fn_head -> (Option<Symbol>, Vec<GenericParam>, FnParams) =
+            name:NAME generics:generic_list? params:fn_params? -> {
+                (
+                    Some(name),
+                    generics.unwrap_or_default(),
+                    params.unwrap_or_else(FnParams::none),
+                )
+            }
+          | generics:generic_list? params:fn_params -> {
+                (None, generics.unwrap_or_default(), params)
             }
 
         // The refusal, and it needs a rule of its own because the message is
@@ -2275,10 +2307,30 @@ grammar! {
           | b:break_stmt -> { Spanned::new(b, Span::from(_span)) }
           | c:continue_stmt -> { Spanned::new(c, Span::from(_span)) }
 
-        rule return_stmt -> Stmt =
-            KW_RETURN value:expr? ";"? -> {
-                Stmt::Return(value)
+        // **A jump may carry its condition after it**, on its own line
+        // ([ADR-255](../../../docs/specification/adr/adr-255.md)):
+        // `return 250 if speed > 250`, `throw TooFast(speed) if speed > 250`,
+        // `break if done`. It is `if cond { jump }` and nothing else - the
+        // tree is that `if`, so every rule of `if` holds.
+        //
+        // The bare `return if done` is tried first, and only where no block
+        // follows the condition: `return if c { a } else { b }` is a `return`
+        // of an `if` expression, as it always was (D2).
+        rule return_stmt -> Stmt @=
+            KW_RETURN cond:exit_guard ";"? -> {
+                guarded(Stmt::Return(None), cond, Span::from(_span))
             }
+          | KW_RETURN value:expr? cond:exit_guard? ";"? -> {
+                match cond {
+                    Some(cond) => guarded(Stmt::Return(value), cond, Span::from(_span)),
+                    None => Stmt::Return(value),
+                }
+            }
+
+        // The condition of a jump, **on the jump's line**: an `if` that begins
+        // a line is a statement of its own (D3).
+        rule exit_guard -> Expr =
+            same_line KW_IF cond:head_expr not("{") -> { cond }
 
         // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
         // **No value and no label**, which is why each of these is one keyword
@@ -2310,9 +2362,13 @@ grammar! {
         // Kap 7.1: `throw` is the only way an error originates. Without it a
         // program could propagate what `std` produced and never produce one of
         // its own (ADR-023 D2).
-        rule throw_stmt -> Stmt =
-            KW_THROW value:expr ";"? -> {
-                Stmt::Expr(Expr::Throw(Box::new(value)))
+        rule throw_stmt -> Stmt @=
+            KW_THROW value:expr cond:exit_guard? ";"? -> {
+                let jump = Stmt::Expr(Expr::Throw(Box::new(value)));
+                match cond {
+                    Some(cond) => guarded(jump, cond, Span::from(_span)),
+                    None => jump,
+                }
             }
 
         rule kw_mut -> () = KW_MUT -> { () }
@@ -2487,8 +2543,19 @@ grammar! {
         // of the compiler the tree it had. The alternative was two failed
         // keyword matches in front of every expression statement, which is the
         // cost that ordering was chosen to avoid.
-        rule expr_stmt -> Stmt =
-            e:expr ";"? -> {
+        // `break if done` and `continue if skip` are tried here and not in
+        // `break_stmt`: `break` is also an expression, so `e:expr` below takes
+        // the word and leaves the `if` for a statement of its own
+        // ([ADR-255](../../../docs/specification/adr/adr-255.md) D1). Each arm
+        // costs a keyword compare, and only on a statement no earlier arm took.
+        rule expr_stmt -> Stmt @=
+            KW_BREAK cond:exit_guard ";"? -> {
+                guarded(Stmt::Break, cond, Span::from(_span))
+            }
+          | KW_CONTINUE cond:exit_guard ";"? -> {
+                guarded(Stmt::Continue, cond, Span::from(_span))
+            }
+          | e:expr ";"? -> {
                 match e {
                     Expr::Break => Stmt::Break,
                     Expr::Continue => Stmt::Continue,
@@ -3322,17 +3389,18 @@ grammar! {
             }
 
         // **The form that is gone** ([ADR-082](../../../docs/specification/adr/adr-082.md)
-        // D1). A grammar is entered by an ordinary call — `Json.value(input)` —
-        // and every `pub` rule is an entry (D2), which is what took the silent
-        // choice away: the emitter used to pick the *first* `pub` rule, a
-        // `par_fold` one beating an earlier one.
+        // D1). A grammar is entered by an ordinary call — `Json::value(input)`,
+        // through a path since ADR-140 D3, the dot being `NK1147` — and every
+        // `pub` rule is an entry (D2), which is what took the silent choice
+        // away: the emitter used to pick the *first* `pub` rule, a `par_fold`
+        // one beating an earlier one.
         //
         // `fail` beats the alternatives at this position, the shape ADR-022
         // gave `fn:`: a form the specification taught deserves a sentence
         // rather than a parse error at whatever token happens to be next.
         rule dsl_from_expr -> Expr =
             KW_DSL name:NAME KW_FROM fail("`dsl X from e` is no longer supported. Write \
-                                           `X.rule(e)`, naming the rule you want to \
+                                           `X::rule(e)`, naming the rule you want to \
                                            start from.") -> {
                 Expr::Variable(name)
             }

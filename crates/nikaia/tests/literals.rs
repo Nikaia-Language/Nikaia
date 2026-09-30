@@ -5,6 +5,8 @@
 //! string could not hold a `\u{…}` escape, and output could not be composed
 //! without a newline attached to every piece.
 
+mod common;
+
 use nikaia::ast::{Expr, Item, MatchPattern, Stmt};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -422,4 +424,100 @@ fn the_refusal_and_the_decoder_read_one_set() {
         );
         assert!(nikaia::build_time::decoded(literal).is_none(), "{literal}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// What a hole may hold: `NK1201`
+// ---------------------------------------------------------------------------
+
+/// **A list in a hole is refused here** and not by `rustc`. `f"Reading:
+/// {data}"` over `[1, 2, 3]` lowered to a `{}` and the language below said
+/// *`Vec<i64>` doesn't implement `std::fmt::Display`* about a file nobody
+/// wrote. Part I 2.5 gives a hole an expression and a collection no text form,
+/// so the help is the way out that exists: join the elements first.
+#[test]
+fn a_list_in_a_hole_is_refused_with_the_join_that_writes_it() {
+    let source = "fn main() {\n\
+                  \x20   let data = [1, 2, 3]\n\
+                  \x20   println(f\"Reading: {data}\")\n\
+                  }\n";
+    let found = findings(source);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1201");
+    assert_eq!(
+        found[0].message,
+        "You can't put a list in an `f\"…\"` hole."
+    );
+    assert_eq!(
+        found[0].notes[0],
+        "A hole is written as its value's text, and lists, maps and sets have no text \
+         form. `data` is a list."
+    );
+    assert_eq!(
+        found[0].help.as_deref(),
+        Some(
+            "Join its elements into text first: `let text = data.iter().join(\", \")`, then write `{text}`."
+        )
+    );
+}
+
+/// **A map and a set are the same refusal**, two holes in one literal, and a
+/// hole that says `:?` is left to the form it asked for.
+#[test]
+fn a_map_or_a_set_in_a_hole_is_refused_too() {
+    let source = "use std::collections\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let m: collections::HashMap[String, i64] = collections::HashMap()\n\
+                  \x20   let s: collections::HashSet[i64] = collections::HashSet()\n\
+                  \x20   println(f\"{m} and {s}\")\n\
+                  \x20   println(f\"{m:?}\")\n\
+                  }\n";
+    let found: Vec<_> = findings(source)
+        .into_iter()
+        .filter(|f| f.code == "NK1201")
+        .collect();
+    assert_eq!(found.len(), 2, "{:#?}", findings(source));
+    assert!(
+        found[0].message.starts_with("You can't put `"),
+        "{found:#?}"
+    );
+    assert!(
+        found[1].notes[0].contains("`s` is `collections::HashSet[i64]`"),
+        "{found:#?}"
+    );
+}
+
+/// **What a hole can print it still prints**: a list's length, one element,
+/// and the joined text the help names, which compiles and runs. A value this
+/// checker cannot type is not refused on a guess (Part III C.4).
+#[test]
+fn the_way_out_runs_and_what_prints_is_untouched() {
+    let source = "fn main() {\n\
+                  \x20   let data = [1, 2, 3]\n\
+                  \x20   let text = data.iter().join(\", \")\n\
+                  \x20   let words = [\"a\", \"b\"]\n\
+                  \x20   let joined = words.iter().join(\"-\")\n\
+                  \x20   println(f\"Reading: {text} {data.len()} {data[0]} {joined}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = emit(source);
+    let dir = common::scratch_dir("literals-joined-hole");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let built = common::compile(&file, &["-o", &binary.to_string_lossy()]);
+    assert!(
+        built.status.success(),
+        "{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let out = std::process::Command::new(&binary)
+        .output()
+        .expect("run it");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Reading: 1, 2, 3 3 1 a-b\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

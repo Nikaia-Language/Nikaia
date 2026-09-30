@@ -4,6 +4,72 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.271] — 2026-09-29
+
+**Every `assert` outside a test is proved while the program is built**
+([ADR-256](docs/specification/adr/adr-256.md)), or the program is refused.
+A check at run time was a cost nobody wrote down and an abort nobody planned
+for; now there is none.
+
+- `crates/nikaia/src/prove.rs`: linear whole-number claims, proved by
+  Fourier-Motzkin with integer tightening from the branch an `if` is in, what a
+  jump with its condition after it rules out (`return 0 if b == 0`, ADR-255),
+  a `for` over a range, a `let`'s value and the claims before. Sound, and
+  incomplete: what it cannot prove is `NK1202`.
+- An unproved claim about parameters at the top of a free function is its
+  **precondition**: every call proves it (`NK1203`). Not yet on a `pub fn`, a
+  method or a function handed on as a value (`NK1204`).
+- A claim about data from outside the program (ADR-010) is refused with the
+  guard to write instead.
+- A test's `assert` is still the test's verdict. `--asserts` says for each
+  claim how it is held. Part III 14.2, ADR-245's header and C.3 say so.
+
+## [0.0.270] — 2026-09-29
+
+**What the specification's examples found in the compiler**, fixed.
+
+- `NK2606` is no longer raised for a failure caught inside the lambda.
+- `NK1191` covers arithmetic on a declared struct or enum, and `xs += [3]`;
+  `NK1201`: a list, a map or a set in an `f"…"` hole.
+- A function without parameters may leave out its parentheses (Part I 5.1).
+- `fs::Root::Dir("site")` lowers its literal to a `String`; a DSL statement's
+  parameters handed to something that is no driver are `NK1109`, and the
+  `dsl X from e` help says `X::rule(e)`.
+- Whether a call through a name nothing declares (`nowhere::wobble(1)`) is
+  refused here or left to `rustc` is on `open-decisions.md`: the fix found for
+  it contradicted Part III C.4 and was taken back.
+
+## [0.0.269] — 2026-09-29
+
+**A jump may carry its condition after it** ([ADR-255](docs/specification/adr/adr-255.md)).
+`return 250 if speed > 250`, `throw TooFast(speed) if speed > 250`,
+`continue if n % 2 != 0`, `break if done`: each is `if cond { jump }`, and the
+parser builds exactly that `if`, so nothing after it changed.
+
+- Only after `return`, `throw`, `break` and `continue`, and only on the jump's
+  own line; `return if c { a } else { b }` is still a `return` of an `if`.
+- Part I 3.2 shows the form. `tests/jump_guards.rs` runs all four.
+
+## [0.0.268] — 2026-09-29
+
+**A checked statement runs on a connection it names as its subject, and the
+connection's type carries its schema** ([ADR-254](docs/specification/adr/adr-254.md)).
+The owner answered `open-decisions.md`'s database question with option 1, and
+added the schema: a statement checked against one schema handed a connection
+to another is refused while the program is built.
+
+- `by_age.execute(db; min_age: 18)`; a driver's `open` takes the schema.
+  Part II 10.5's example and its NK1112/NK1113 transcript, Part III 17.1's
+  `sqlite` example, ADR-143's header and `open-work.md` §2.40 say so. Not
+  built.
+- **Fifteen examples in the three parts** are written as the pages' own rules
+  say, each where a rule of the specification and the compiler agree against
+  it. Where only one witness spoke, or two disagreed, the question went to
+  `open-decisions.md` instead: how a schema is bound at file level, what
+  `Path` is, whether `fs::exists` takes a root, which `Shared` Part I 6.2
+  means, how a package's DSL is named, `html::Raw::new` in Part III's
+  listing, and the `image` example's comment on locking.
+
 ## [0.0.267] — 2026-09-29
 
 **A list has no `+`** ([ADR-253](docs/specification/adr/adr-253.md)). The

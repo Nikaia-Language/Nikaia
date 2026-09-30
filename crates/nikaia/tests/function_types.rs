@@ -384,6 +384,84 @@ fn a_failing_lambda_handed_to_a_type_without_throws_is_refused() {
     );
 }
 
+/// **A failure caught inside the lambda does not leave it** (D2).
+///
+/// `NK2606`'s help says *handle it inside the lambda with `… catch { … }`*, and
+/// a program that did exactly that was refused with the same message: the
+/// lambda was marked as failing at the call, before anyone asked whether a
+/// `catch` guarded it. The `catch` that counts is one in the lambda's **body**.
+/// One around the call the lambda is handed to handles what that call throws,
+/// not what the lambda does when the callee runs it, so it still says nothing
+/// here — and neither does a handler, whose own failure leaves the lambda.
+#[test]
+fn a_failure_caught_inside_the_lambda_is_not_the_lambdas() {
+    const ERROR: &str = "enum E { Bad }\n\
+                         impl Error for E { fn message(ref self) -> String { return \"bad\" } }\n\
+                         fn risky(x: i64) -> i32 throws { throw E::Bad }\n";
+
+    // A user function's failure, caught in the body.
+    let caught = findings(&format!(
+        "{ERROR}fn attempt(step: fn()) {{ }}\n\
+         fn main() {{ attempt(fn() {{ let n = risky(1) catch {{ 0 }} }}) }}\n"
+    ));
+    assert!(caught.is_empty(), "{caught:#?}");
+
+    // A `std` entry's, through `map`: the report's own program.
+    let read = findings(
+        "use std::fs\nfn main() {\n    let names = [\"a.txt\", \"b.txt\"]\n    \
+         let texts = names.map fn(n) { fs::read(n, fs::Root::Anywhere) catch { \"\" } }\n}\n",
+    );
+    assert!(!read.iter().any(|f| f.code == "NK2606"), "{read:#?}");
+    let mapped = findings(&format!(
+        "{ERROR}fn main() {{ let ys = [1, 2].map fn(x) {{ risky(x) catch {{ 0 }} }} }}\n"
+    ));
+    assert!(!mapped.iter().any(|f| f.code == "NK2606"), "{mapped:#?}");
+    // …and what is let through is a program `rustc` takes, with the handler's
+    // value standing where the failure was.
+    let ran = ran(
+        "caught-in-lambda",
+        "enum E { Bad }\n\
+         impl Error for E { fn message(ref self) -> String { return \"bad\" } }\n\
+         fn risky(x: i64) -> i64 throws {\n    if x > 1 { throw E::Bad }\n    return x * 10\n}\n\
+         fn main() {\n    let ys = [1, 2].map fn(x) { risky(x) catch { 0 } }\n    \
+         for y in ys { println(f\"{y}\") }\n}\n",
+    );
+    assert_eq!(ran.trim(), "10\n0");
+
+    // Not caught in the body, and a `catch` around the call does not stand in
+    // for one.
+    let outside = findings(&format!(
+        "{ERROR}fn attempt(step: fn()) throws {{ risky(0) }}\n\
+         fn main() {{ attempt(fn() {{ let n = risky(1) }}) catch {{ }} }}\n"
+    ));
+    assert!(
+        outside.iter().any(|f| f.code == "NK2606"),
+        "a `catch` outside the lambda does not handle its failure: {outside:#?}"
+    );
+
+    // Nor does a `catch` in an *enclosing* lambda's body: the inner lambda is
+    // a function of its own and the edge is the same edge.
+    let nested = findings(&format!(
+        "{ERROR}fn attempt(step: fn()) {{ }}\n\
+         fn run(step: fn() -> i32) -> i32 throws {{ return risky(0) }}\n\
+         fn main() {{ attempt(fn() {{ let n = run(fn() {{ risky(1) }}) catch {{ 0 }} }}) }}\n"
+    ));
+    assert!(
+        nested.iter().any(|f| f.code == "NK2606"),
+        "the inner lambda's failure is its own: {nested:#?}"
+    );
+
+    // A handler is ordinary code again: what fails in it leaves the lambda.
+    let handler = findings(&format!(
+        "{ERROR}fn attempt(step: fn()) {{ }}\n\
+         fn main() {{ attempt(fn() {{ let n = risky(1) catch {{ risky(2) }} }}) }}\n"
+    ));
+    assert!(
+        handler.iter().any(|f| f.code == "NK2606"),
+        "the handler's own failure is the lambda's: {handler:#?}"
+    );
+}
+
 /// **A free call resolves its callee before it walks its arguments**, which is
 /// [ADR-029](../../../docs/specification/adr/adr-029.md)'s ordering — the
 /// *method* path was given it when that record landed and this one was not.
