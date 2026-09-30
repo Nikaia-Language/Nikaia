@@ -160,33 +160,35 @@ refusing an unknown one is not a guess; `fortunes.nika` would write
 
 ### Whether `??` takes its left side
 
-**What is blocked.** Nothing is blocked; a refusal stands where a question
-does. `let first = viewed ?? "none"` over a `viewed: String?` hands `viewed`
-over, and a use of it after the line is `NK2105` (0.0.286). Before that it
-reached `rustc` as *borrow of moved value*, because the lowering takes the
-option to answer from it and the checker did not know. The refusal is right
-for what the compiler does. Whether the compiler should do that is not
-written anywhere.
+**What is blocked.** Nothing; a refusal stands where the question does.
+`viewed ?? "none"` over a `viewed: String?` hands `viewed` over, and using
+`viewed` after the line is `NK2105` (0.0.286). The refusal matches what the
+compiler does. Whether it should do that is not written anywhere: Part I 3.5
+says what `??` answers, not what it does to its left side.
 
-**Why it is the owner's.** Part I 3.5 says what `??` answers and not what it
-does to its left side. The neighbouring operator is decided: *`?.` takes
-nothing*, it reaches through a view of its receiver. Whether `??` is the same
-is a language rule, not a lowering detail, and it changes which programs are
-correct.
+**Weighed as [ADR-258](specification/adr/adr-258.md) asks.** The two shapes
+that matter are the common ones:
 
-**The options.** (1) **`??` takes its left side when the result is kept, and
-lends it otherwise**, as a call lends an argument it only reads. `pointed_at(v
-?? "")` then leaves `v` usable; `let s = v ?? ""` takes it. The compiler
-writes `.as_deref()`/`.as_ref()` in the lent case, which it already does for
-a `T?` it lends (0.0.285). (2) **`??` always takes a name that does not
-copy**, which is what is built: simple to say, and the way out is `.clone()`,
-which costs a copy the program may not need. (3) **`??` never takes**: the
-answer is always a view of the left side, like `?.`, and `.clone()` is written
-where text of its own is wanted.
+* **Keep the answer**: `let name = user ?? "guest"`, `return x ?? 0`,
+  a field. `user` is not needed afterwards.
+* **Read the answer and keep the name**: `print(user ?? "guest")`,
+  `if (x ?? 0) > 3`, `pointed_at(v ?? "")`, and `user` is used again later.
 
-**What this file recommends: (1).** It is the rule arguments already follow
-(ADR-094 D1: *whether an argument is lent or handed over is decided by the
-function, not the call*), applied to the one operator that hands a value on.
-(2) is correct and costs a copy nobody asked for; (3) makes
-`let name = user ?? "guest"` a view of `user`, which is the surprise `?.`
-avoids by producing a `T?`.
+| | (1) the use decides | (2) always taken (built) | (3) never taken |
+| :--- | :--- | :--- | :--- |
+| **D1** who pays | only a program that keeps the answer *and* uses the name again: `.clone()`, as after `let b = a` | every program that reads the answer and uses the name again | every program that keeps the answer, the most common shape |
+| **D2** what the developer writes | nothing, in both shapes | `.clone()` where the compiler could lend | `.clone()` where the compiler could move |
+| **D3** what it costs running | no copy in either shape: a move, or a view | a copy in the read shape | a copy in the keep shape |
+| **D4** consistency | the rule an argument follows (lent where read, taken where kept, ADR-094 D1) and the one `let b = a` follows | a call lends what it only reads and `??` never does | agrees with `?.`, disagrees with `let b = a` |
+
+**What (1) costs to build.** It is the compiler's work, which D2 says is where
+it belongs. The checker already knows which positions only read a value
+(it lends arguments by the same column), and the emitter already opens a `T?`
+it lends (`.as_deref()`, `.as_ref()`, 0.0.285). One version. The special
+cases `??` already has (a map's read, a number, a jump in the fallback) stay
+what they are; this adds one question beside them, not a rewrite.
+
+**What this file recommends: (1).** All four weights point the same way:
+the common shapes write nothing and copy nothing, the uncommon one pays what
+`let b = a` already makes it pay, and `??` follows the rule an argument
+follows.
