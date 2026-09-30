@@ -34,6 +34,17 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
+### 1.33. A `match` over a `T?` with a variant's pattern reaches `rustc`
+
+Found at 0.0.281, writing a test for a plain arm beside a `null`.
+`match g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?` passes
+the check and is lowered as a `match` over an `Option<W>` with `W::B` as a
+pattern, which is `rustc`'s *mismatched types* (Part III C.1). Either the
+check refuses a variant pattern over a nullable and names `??` or a `null` arm
+as the way, or the lowering matches `Some(W::B)` and adds `None` to the
+`else`. Which one is a language question the entry does not decide; the
+refusal is the smaller step.
+
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:

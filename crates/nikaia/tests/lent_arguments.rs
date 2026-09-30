@@ -452,3 +452,37 @@ fn the_mutates_column_renders_and_parses_back() {
     assert!(library.functions["Vec::push"].mutates);
     assert!(!library.functions["Vec::len"].mutates);
 }
+
+/// **`std`'s `push_str` takes a view**, and says so (found moving
+/// `contracts::trust` into Nikaia): its ledger entry said `text: ?`, so
+/// `out.push_str(name)` for a `name: String` passed the check and was
+/// `rustc`'s *expected `&str`, found `String`*. A method's argument is lent
+/// where the program writes `ref`, as for any method.
+#[test]
+fn push_str_takes_a_view_and_says_so() {
+    let found = findings(
+        "fn main() {\n\
+         \x20   let mut out: String = \"a\"\n\
+         \x20   let name = \"b\".clone()\n\
+         \x20   out.push_str(name)\n\
+         \x20   println(out)\n\
+         }\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1102" && f.help.as_deref().is_some_and(|h| h.contains("ref"))),
+        "{found:#?}"
+    );
+    let rust = lowered(
+        "fn main() {\n\
+         \x20   let mut out: String = \"a\"\n\
+         \x20   let name = \"b\".clone()\n\
+         \x20   out.push_str(ref name)\n\
+         \x20   out.push_str(ref f\"{name.len()}\")\n\
+         \x20   println(out)\n\
+         }\n",
+    );
+    assert!(rust.contains("out.push_str(&name)"), "{rust}");
+    assert!(rust.contains("out.push_str(&format!("), "{rust}");
+}

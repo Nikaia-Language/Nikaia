@@ -36,6 +36,7 @@ COMPILER_NIKA = {
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
     "ast.nika": "ast: the syntax tree (ADR-252, 0.0.275)",
     "fold.nika": "fold: a constant's value (ADR-252 D6, 0.0.278)",
+    "trust.nika": "contracts::trust: what --trust says (0.0.281)",
 }
 
 

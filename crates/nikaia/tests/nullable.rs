@@ -1326,3 +1326,38 @@ fn a_nullable_view_is_handed_and_copied() {
     );
     assert_eq!(printed.trim(), "x h - x");
 }
+
+/// **A plain arm beside a `null` is `Some`** (found moving `contracts::trust`
+/// into Nikaia): `if b { 1 } else { null }` was `if b { 1 } else { None }
+/// .into()` below, which the language below cannot type - the conversion
+/// belongs to the arm, and the arm is a plain value.
+#[test]
+fn a_plain_arm_beside_a_null_is_the_value() {
+    let printed = ran(
+        "arm-beside-null",
+        "enum W { A, B }\n\
+         \n\
+         fn f(b: bool) -> i64? {\n\
+         \x20   return if b { 1 } else { null }\n\
+         }\n\
+         \n\
+         fn g(n: i64) -> W? {\n\
+         \x20   return match n {\n\
+         \x20       0 => if n == 0 { W::B } else { null },\n\
+         \x20       else => null,\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let x = f(true) ?? 0\n\
+         \x20   let y = f(false) ?? 7\n\
+         \x20   let w = g(0) ?? W::A\n\
+         \x20   let z = match w {\n\
+         \x20       W::B => 2,\n\
+         \x20       else => 3,\n\
+         \x20   }\n\
+         \x20   println(f\"{x} {y} {z}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "1 7 2");
+}

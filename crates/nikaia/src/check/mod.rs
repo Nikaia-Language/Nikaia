@@ -797,6 +797,11 @@ pub struct Checked {
     /// there, and the emitter copies the number out at the head of the arm, so
     /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// **A plain value beside a `null`**, by the address of the arm's last
+    /// expression: `if b { 1 } else { null }` is an `i64?`, and its plain arm
+    /// is `Some(1)` below. A conversion around the whole choice was a `1`
+    /// beside a `None` in the language below.
+    pub some_tails: BTreeSet<usize>,
     /// **A comparison's side that is a view, where the other side is the
     /// value** (0.0.238, any named type but text since 0.0.279), by the
     /// operator's span and `"lhs"` or `"rhs"`: the language below compares a
@@ -1773,6 +1778,11 @@ pub struct Propagation {
     pub boxed_reads: BTreeSet<(usize, String)>,
     /// [`Checked::copied_bindings`].
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// **A plain value beside a `null`**, by the address of the arm's last
+    /// expression: `if b { 1 } else { null }` is an `i64?`, and its plain arm
+    /// is `Some(1)` below. A conversion around the whole choice was a `1`
+    /// beside a `None` in the language below.
+    pub some_tails: BTreeSet<usize>,
     /// [`Checked::compared_views`].
     pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
@@ -1975,6 +1985,7 @@ pub fn propagation_against(
         boxed_members: checked.boxed_members,
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
+        some_tails: checked.some_tails,
         compared_views: checked.compared_views,
         claims: checked.claims,
         mut_args: checked.mut_args,
@@ -7195,6 +7206,13 @@ impl<'a> Checker<'a> {
                 Some(named)
             }
             Ty::Named { name, .. } => Some(name.as_str()),
+            // **A run is an `Array` whose length the caller knows**
+            // ([ADR-184](../../docs/specification/adr/adr-184.md) D3), and
+            // `std` writes its surface under `Array`: `xs.len()` for an
+            // `xs: ref Array[R]` resolved to nothing, so the function around
+            // it was inferred to pause - found moving `contracts::trust` into
+            // Nikaia.
+            Ty::Pointed { slice: true, .. } => Some(ty::ARRAY),
             _ => None,
         };
         let Some(name) = name else {
@@ -9429,7 +9447,9 @@ impl<'a> Checker<'a> {
                             then
                         } else {
                             let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
-                            self.arms_meet_at_text(&arms).unwrap_or(Ty::Unknown)
+                            self.arms_meet_at_text(&arms)
+                                .or_else(|| self.arms_meet_at_null(&arms))
+                                .unwrap_or(Ty::Unknown)
                         }
                     }
                     // An `if` with no `else` is a statement's worth of value.
@@ -9586,7 +9606,10 @@ impl<'a> Checker<'a> {
                 // or when the arms meet at text (ADR-207 D2).
                 match result {
                     Some(ty) if agree => ty,
-                    _ => self.arms_meet_at_text(&answered).unwrap_or(Ty::Unknown),
+                    _ => self
+                        .arms_meet_at_text(&answered)
+                        .or_else(|| self.arms_meet_at_null(&answered))
+                        .unwrap_or(Ty::Unknown),
                 }
             }
 
@@ -16958,6 +16981,52 @@ impl<'a> Checker<'a> {
     /// { "anonymous" }` over a `name: String` is a `String`, and the literal
     /// arm is constructed as one. A **view** arm is not a literal, so an arm
     /// holding one keeps the disagreement.
+    /// **Arms that meet at `T?`** because one of them is `null`: the plain
+    /// ones are `Some(…)` below ([`Checked::some_tails`]), and the choice is a
+    /// `T?`. Asked only where every arm that is not `null` is a `T` or a `T?`
+    /// of one `T`, so a choice this cannot type stays unknown.
+    fn arms_meet_at_null(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
+        let is_null = |arm: &Option<&Expr>| matches!(arm, Some(Expr::LitNull));
+        if !arms.iter().any(|(arm, _)| is_null(arm)) {
+            return None;
+        }
+        // **A number written down takes its type from where it stands**
+        // (ADR-060), so it agrees with whatever the other arms say, and
+        // `Some(1)` is resolved by the `T?` it goes into.
+        let a_number = |arm: &Option<&Expr>| {
+            matches!(arm, Some(Expr::LitInt { .. } | Expr::LitFloat(_)))
+                || matches!(arm, Some(Expr::Unary { op: crate::ast::UnaryOp::Neg, expr })
+                    if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
+        };
+        let mut plain: Option<Ty> = None;
+        for (arm, ty) in arms.iter().filter(|(arm, _)| !is_null(arm)) {
+            if a_number(arm) {
+                continue;
+            }
+            let inner = match ty {
+                Ty::Nullable(inner) => inner.as_ref().clone(),
+                other => other.clone(),
+            };
+            if inner.is_unknown() || arm.is_none() {
+                return None;
+            }
+            match &plain {
+                None => plain = Some(inner),
+                Some(seen) if *seen == inner => {}
+                Some(_) => return None,
+            }
+        }
+        for (arm, ty) in arms {
+            if let Some(arm) = arm
+                && !matches!(ty, Ty::Nullable(_))
+                && !matches!(arm, Expr::LitNull)
+            {
+                self.checked.some_tails.insert(*arm as *const Expr as usize);
+            }
+        }
+        Some(Ty::Nullable(Box::new(plain.unwrap_or(Ty::Unknown))))
+    }
+
     fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
         let text = Ty::named("String");
         if !arms.iter().any(|(_, ty)| *ty == text) {

@@ -270,6 +270,16 @@ pub mod tools {
         include!("tools/fold.rs");
     }
 
+    /// **What `--trust` says about a program**: `src/tools/trust.nika`, which
+    /// written root is a way around the root check and what the report says,
+    /// lowered to `src/tools/trust.rs` and committed beside it (ADR-250). The
+    /// compiler's `contracts::trust` walks the calls and reads the ledger.
+    pub mod trust {
+        use super::ast::*;
+
+        include!("tools/trust.rs");
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.
