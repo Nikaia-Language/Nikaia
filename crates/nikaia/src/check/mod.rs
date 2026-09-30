@@ -11239,6 +11239,28 @@ impl<'a> Checker<'a> {
                 // **An index of a mapping is a page fault**
                 // ([ADR-169](../../docs/specification/adr/adr-169.md) D2).
                 self.io_inside_a_door(&on, "this index", span);
+                // **A view of a run is indexed as the run is** (ADR-179 D1,
+                // ADR-215 D3): `xs[i]` for an `xs: ref Array[T]` is a `T`, and a
+                // range in the brackets is a run of it again. It was `?`, so a
+                // method called on an element was one no ledger describes, and
+                // the function around it became a future (found moving `Ty::fits`
+                // into Nikaia, ADR-257).
+                if let Ty::Pointed {
+                    item,
+                    slice: true,
+                    mutable,
+                } = &on
+                {
+                    if matches!(&**index, Expr::Range { .. }) {
+                        return Ty::Pointed {
+                            item: item.clone(),
+                            slice: true,
+                            mutable: *mutable,
+                        };
+                    }
+                    self.number_asked(index, &Ty::named("i64"), span, false);
+                    return (**item).clone();
+                }
                 let Ty::Named { name, args, .. } = &on else {
                     return Ty::Unknown;
                 };

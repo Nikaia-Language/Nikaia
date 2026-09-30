@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.295] — 2026-09-30
+
+**What the checker asks of a type is Nikaia** (ADR-257 step (d)), which
+finishes the record: `fits`, `erase`, `parameterise`, `as_a_view`,
+`is_seen`, `unseen`, `is_a_view` and `is_unknown` are `Ty`'s methods in
+`tools/ty.nika`, and `bind`, `substitute`, `qualify` and `renamed` its
+functions. The toolchain is 8.4 % Nikaia.
+
+- The compiler calls them as before: a type's own method is found before an
+  extension trait's, so `TyOps` keeps only the constructors from a name,
+  reading a type back and `from_ast`.
+- **Measured**, because `fits` is asked at every argument, assignment and
+  return: an empty program, `1brc`, `n-body` and `k-nucleotide` each lower
+  within 0.2 % of the instructions the Rust took.
+- **A defect the move found:** an element of a `ref Array[T]` was `?`, so a
+  method called on it was one no ledger describes, which may pause, and the
+  function around it became a future. It is the item now, and a range in the
+  brackets a run of it again (ADR-179 D1, ADR-215 D3).
+- **The lowering:** a `match` arm that binds a boxed or copied part and is a
+  block opens with those names inside its own braces, where it wrapped a
+  second pair around them (`unused_braces`); and a `bool` literal after `??`
+  carries no `.into()`.
+- Two more lints on the generated tools are allowed with their reason: a
+  copied binding handed straight back, and a `match` with one pattern beside
+  an empty `else`, which is how the language writes an `if let`.
+- `tests/reader_shapes.rs` runs a method on an element of a `ref Array[Row]`,
+  indexed and sliced.
+
 ## [0.0.294] — 2026-09-30
 
 **`??` lends its left side at every position that only reads the answer**

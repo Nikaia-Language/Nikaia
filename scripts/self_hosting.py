@@ -37,7 +37,7 @@ COMPILER_NIKA = {
     "ast.nika": "ast: the syntax tree (ADR-252, 0.0.275)",
     "fold.nika": "fold: a constant's value (ADR-252 D6, 0.0.278)",
     "trust.nika": "contracts::trust: what --trust says (0.0.281)",
-    "ty.nika": "contracts::ty and the ledger's records (ADR-257, 0.0.285-291)",
+    "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-257, 0.0.285-295)",
 }
 
 

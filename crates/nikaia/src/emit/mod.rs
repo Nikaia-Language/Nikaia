@@ -36,7 +36,6 @@ use crate::ast::{
 };
 use crate::check::PausingEntry;
 use crate::contracts::SignatureOps;
-use crate::contracts::ty::TyOps;
 use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
 
@@ -8105,9 +8104,10 @@ impl<'p> Emitter<'p> {
                     },
                     _ => false,
                 };
-                // **And a struct written out**, `Held { … }`: it is the type
-                // already, whatever the option holds.
-                let a_struct_written = matches!(&**fallback, Expr::StructLit { .. });
+                // **And a struct written out**, `Held { … }`, or a `bool`: it
+                // is the type already, whatever the option holds.
+                let a_struct_written =
+                    matches!(&**fallback, Expr::StructLit { .. } | Expr::LitBool(_));
                 let bare = a_number(fallback)
                     || a_declared_variant
                     || a_declared_constructor
@@ -10533,6 +10533,30 @@ impl<'p> Emitter<'p> {
         }
         if opened.is_empty() && copied.is_empty() {
             return self.expr(out, body, depth, flow);
+        }
+        // **A block arm opens with the names it binds**, inside its own
+        // braces: a second pair around it was `unused_braces` in every
+        // generated file with one (found moving `Ty::fits` into Nikaia).
+        if let Expr::Block(block) = body {
+            let mut opening = String::new();
+            for name in &opened {
+                opening.push_str(&format!("let {name} = nikaia_std::boxed::open({name}); "));
+            }
+            for name in &copied {
+                opening.push_str(&format!("let {name} = *{name}; "));
+            }
+            let tail = match statements {
+                true => Tail::Statement,
+                false => Tail::Value,
+            };
+            return self.block_opening_with(
+                out,
+                block,
+                depth,
+                flow,
+                tail,
+                Some(opening.trim_end()),
+            );
         }
         out.push("{ ");
         for name in &opened {
