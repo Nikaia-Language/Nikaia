@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.273] — 2026-09-30
+
+**The prover reads lengths and sees into lambdas** (ADR-256 D5).
+
+- `xs.len()` of a list, text or array binding that does not change is a
+  variable of the proof: never negative, known for a literal, and carried into
+  a callee's precondition, so `fn first(xs: Vec[i64])` can ask
+  `assert(xs.len() > 0)` of every caller, and `return fallback if xs.len() == 0`
+  proves it.
+- A lambda's body keeps the facts around it; its parameters are new names, so
+  one that shadows an outer name knows nothing of it.
+
 ## [0.0.272] — 2026-09-30
 
 **A parse error names the mistake where the reader made it** (Part III C.2,

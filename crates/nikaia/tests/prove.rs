@@ -301,3 +301,85 @@ fn a_tests_claim_is_not_the_provers() {
         findings(source)
     );
 }
+
+/// **A list's length is a number the prover reads** (ADR-256 D5, 0.0.273):
+/// `xs.len()` of a binding that does not change, never negative, known for a
+/// literal, and carried into a callee's precondition.
+#[test]
+fn a_length_is_a_variable_of_the_proof() {
+    let source = "fn first(xs: Vec[i64]) -> i64 {\n\
+                  \x20   assert(xs.len() > 0)\n\
+                  \x20   return xs[0]\n\
+                  }\n\
+                  \n\
+                  fn head_or(xs: Vec[i64], fallback: i64) -> i64 {\n\
+                  \x20   return fallback if xs.len() == 0\n\
+                  \x20   assert(xs.len() >= 1)\n\
+                  \x20   return first(xs)\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let xs = [3, 4]\n\
+                  \x20   assert(xs.len() == 2)\n\
+                  \x20   println(f\"{first(xs)} {head_or(xs, 0)}\")\n\
+                  }\n";
+    assert!(codes(source).is_empty(), "{:#?}", findings(source));
+
+    // And a call that shows nothing about the length is refused at the call.
+    let refusal = the_one(
+        "fn first(xs: Vec[i64]) -> i64 {\n\
+         \x20   assert(xs.len() > 0)\n\
+         \x20   return xs[0]\n\
+         }\n\
+         \n\
+         fn use_it(ys: Vec[i64]) -> i64 {\n\
+         \x20   return first(ys)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{use_it([1])}\")\n\
+         }\n",
+        "NK1203",
+    );
+    assert!(refusal.message.contains("xs.len() > 0"), "{refusal:#?}");
+}
+
+/// **A lambda keeps what holds around it**, and its own parameters are new
+/// names: a guard outside proves a claim inside, and a parameter that shadows
+/// an outer name knows nothing of it.
+#[test]
+fn a_lambda_sees_the_facts_around_it_and_not_through_its_parameters() {
+    let source = "fn scale(xs: Vec[i64], k: i64) -> Vec[i64] {\n\
+                  \x20   return [] if k <= 0\n\
+                  \x20   return xs.map fn(x) {\n\
+                  \x20       assert(k > 0)\n\
+                  \x20       x * 2\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{scale([1], 2).len()}\")\n\
+                  }\n";
+    assert!(
+        !codes(source).contains(&"NK1202"),
+        "{:#?}",
+        findings(source)
+    );
+
+    let shadowed = "fn f(k: i64) -> Vec[i64] {\n\
+                    \x20   return [] if k <= 0\n\
+                    \x20   return [1, 2].map fn(k) {\n\
+                    \x20       assert(k > 0)\n\
+                    \x20       k\n\
+                    \x20   }\n\
+                    }\n\
+                    \n\
+                    fn main() {\n\
+                    \x20   println(f\"{f(1).len()}\")\n\
+                    }\n";
+    assert!(
+        codes(shadowed).contains(&"NK1202"),
+        "{:#?}",
+        findings(shadowed)
+    );
+}
