@@ -17,11 +17,6 @@ Nikaia.
   changes.
 - `Default` gave way where the language gives none: `Ledger::default()` is
   `Ledger::blank()`, and `project::Foreign` writes its own `Default`.
-- **A field of an element being assigned kept its place.** 0.0.290's read of
-  `rows[i].a` through the reference `get` answers also reached the left of an
-  assignment, so `self.bodies[i].vx = …` (`n-body`) wrote through a shared
-  reference. A place is emitted as before; found by the example packages'
-  tests before the change merged.
 
 ## [0.0.290] — 2026-09-30
 
