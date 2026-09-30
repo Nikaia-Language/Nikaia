@@ -1664,13 +1664,19 @@ pub fn bind(pattern: ref Ty, actual: ref Ty, mut out: collections::BTreeMap[Stri
 fn bind_named(pattern_name: ref String, pattern_args: ref Array[Ty], actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
     match actual {
         Ty::Named { name, args, .. } => {
-            if name == pattern_name && args.len() == pattern_args.len() {
-                for at in 0..<args.len() {
-                    bind(pattern_args[at], args[at], out)
-                }
-            }
+            bind_arguments(pattern_name, pattern_args, name, args, out)
         }
         else => {}
+    }
+}
+
+// Argument by argument, where the two are one name with as many arguments.
+fn bind_arguments(pattern_name: ref String, pattern_args: ref Array[Ty], name: ref String, args: ref Array[Ty], mut out: collections::BTreeMap[String, Ty]) {
+    if name != pattern_name || args.len() != pattern_args.len() {
+        return
+    }
+    for at in 0..<args.len() {
+        bind(pattern_args[at], args[at], out)
     }
 }
 
