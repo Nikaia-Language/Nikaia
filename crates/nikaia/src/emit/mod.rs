@@ -1192,6 +1192,8 @@ struct Emitter<'p> {
     reached_copy: std::cell::Cell<bool>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
+    /// `??`s that lend their left side, and how it is opened (ADR-259 D1).
+    lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
     /// gets the conversion a length gets (Part I 2.2).
     counted: std::collections::BTreeSet<(usize, String)>,
@@ -2386,6 +2388,7 @@ impl<'p> Emitter<'p> {
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
+            lent_coalesces: propagation.lent_coalesces,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
             collected_into: propagation.collected_into,
@@ -7950,6 +7953,36 @@ impl<'p> Emitter<'p> {
                 out.push(" { Some(__nikaia_value) => __nikaia_value, None => ");
                 self.expr(out, fallback, depth, flow)?;
                 out.push(" }");
+            }
+            // **A `??` whose answer is only read lends its left side**
+            // ([ADR-259](../../docs/specification/adr/adr-259.md) D1): the
+            // option is opened (`.as_deref()` for text, `.as_ref()` for the
+            // rest) and the fallback is a view of what it names, so the answer
+            // is a view and the name stays usable after the line.
+            Expr::Coalesce { value, fallback }
+                if self
+                    .lent_coalesces
+                    .contains_key(&(flow.statement, crate::check::argument_shape(expr))) =>
+            {
+                let opened =
+                    self.lent_coalesces[&(flow.statement, crate::check::argument_shape(expr))];
+                out.push("nikaia_std::index::or(");
+                self.expr(out, value, depth, flow)?;
+                out.push(opened);
+                out.push(", || ");
+                match (&**fallback, opened) {
+                    (Expr::LitStr { .. }, _) => self.expr(out, fallback, depth, flow)?,
+                    (Expr::Variable(_), ".as_deref()") => {
+                        out.push("std::convert::AsRef::<str>::as_ref(&");
+                        self.expr(out, fallback, depth, flow)?;
+                        out.push(")");
+                    }
+                    _ => {
+                        out.push("&");
+                        self.expr(out, fallback, depth, flow)?;
+                    }
+                }
+                out.push(")");
             }
             Expr::Coalesce { value, fallback } => {
                 // Kap 3.5. `into()` because the fallback is written as the

@@ -157,38 +157,3 @@ a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
 **What this file recommends: (1).** In a project the set of heads is known, so
 refusing an unknown one is not a guess; `fortunes.nika` would write
 `use std::env`.
-
-### Whether `??` takes its left side
-
-**What is blocked.** Nothing; a refusal stands where the question does.
-`viewed ?? "none"` over a `viewed: String?` hands `viewed` over, and using
-`viewed` after the line is `NK2105` (0.0.286). The refusal matches what the
-compiler does. Whether it should do that is not written anywhere: Part I 3.5
-says what `??` answers, not what it does to its left side.
-
-**Weighed as [ADR-258](specification/adr/adr-258.md) asks.** The two shapes
-that matter are the common ones:
-
-* **Keep the answer**: `let name = user ?? "guest"`, `return x ?? 0`,
-  a field. `user` is not needed afterwards.
-* **Read the answer and keep the name**: `print(user ?? "guest")`,
-  `if (x ?? 0) > 3`, `pointed_at(v ?? "")`, and `user` is used again later.
-
-| | (1) the use decides | (2) always taken (built) | (3) never taken |
-| :--- | :--- | :--- | :--- |
-| **D1** who pays | only a program that keeps the answer *and* uses the name again: `.clone()`, as after `let b = a` | every program that reads the answer and uses the name again | every program that keeps the answer, the most common shape |
-| **D2** what the developer writes | nothing, in both shapes | `.clone()` where the compiler could lend | `.clone()` where the compiler could move |
-| **D3** what it costs running | no copy in either shape: a move, or a view | a copy in the read shape | a copy in the keep shape |
-| **D4** consistency | the rule an argument follows (lent where read, taken where kept, ADR-094 D1) and the one `let b = a` follows | a call lends what it only reads and `??` never does | agrees with `?.`, disagrees with `let b = a` |
-
-**What (1) costs to build.** It is the compiler's work, which D2 says is where
-it belongs. The checker already knows which positions only read a value
-(it lends arguments by the same column), and the emitter already opens a `T?`
-it lends (`.as_deref()`, `.as_ref()`, 0.0.285). One version. The special
-cases `??` already has (a map's read, a number, a jump in the fallback) stay
-what they are; this adds one question beside them, not a rewrite.
-
-**What this file recommends: (1).** All four weights point the same way:
-the common shapes write nothing and copy nothing, the uncommon one pays what
-`let b = a` already makes it pay, and `??` follows the rule an argument
-follows.

@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.288] — 2026-09-30
+
+**`??` lends its left side where the answer is only read** (ADR-259), the
+owner's choice of option (1).
+
+- The owner remembered the question. It was close, but not the same one:
+  ADR-190 and ADR-191 decided what `??` gives when its left side is already a
+  view (two views join), and ADR-114 D4 and ADR-213 that a map read stays a
+  view. What happens to an owned name on the left had not been written down;
+  every one of those records points where this one goes.
+- `println(user ?? "guest")` and `shown(v ?? other)` open the option
+  (`.as_deref()` for text, `.as_ref()` otherwise), copy nothing, and leave
+  the name usable. `let name = user ?? "guest"` and `return user ?? "x"`
+  take it, as `let b = a` does, and a use afterwards is `NK2105`. A fallback
+  is lent only where a view of it lives as long as the answer: a text
+  literal, a name, a declared variant. Part I 3.5 says so.
+- Built at a call's lent argument and the four print calls. An `f"…"` hole,
+  a comparison and a method's receiver still take, which is correct and costs
+  a `.clone()` where the name is reused: `open-work.md` 2.51.
+
 ## [0.0.287] — 2026-09-30
 
 **Four weights for a design question** (ADR-258), the owner's philosophy.

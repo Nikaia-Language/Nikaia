@@ -459,6 +459,10 @@ pub struct Checked {
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// **`??`s that lend their left side** (ADR-259 D1), by statement and
+    /// shape, with how the option is opened below: `.as_deref()` for text and
+    /// `.as_ref()` for anything else.
+    pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
     /// **`count()` calls that are `std`'s count of a sequence**, by statement
     /// and receiver shape: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
@@ -1259,6 +1263,7 @@ fn walked<'a>(
         next_choice: 0,
         reads_on_paths: Vec::new(),
         read_index: std::collections::HashMap::new(),
+        pending_coalesces: Vec::new(),
         lent_lets: BTreeSet::new(),
         handed: Vec::new(),
         changed: Vec::new(),
@@ -1671,6 +1676,8 @@ pub struct Propagation {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// [`Checked::lent_coalesces`].
+    pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
     /// [`Checked::counted`].
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
@@ -1938,6 +1945,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
+        lent_coalesces: checked.lent_coalesces,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
         collected_into: checked.collected_into,
@@ -2818,6 +2826,10 @@ struct Checker<'a> {
     /// D1). Also what keeps an expression walked twice from counting as two
     /// reads.
     read_index: std::collections::HashMap<(usize, usize), usize>,
+    /// **`??`s that may lend their left side** (ADR-259 D1), until the
+    /// statement they stand in is walked: one handed to a position that only
+    /// reads it is lent, and every other one is taken when the statement ends.
+    pending_coalesces: Vec<PendingCoalesce>,
     /// The `let`s whose name is a **view** of a place (ADR-094 D4), by name and
     /// the frame it was bound in: a part of one cannot be handed over.
     lent_lets: BTreeSet<(String, usize)>,
@@ -3164,6 +3176,20 @@ struct Read {
 /// in one statement (ADR-214 D1).
 fn address(expr: &Expr) -> usize {
     expr as *const Expr as usize
+}
+
+/// A `??` whose left side may be lent rather than taken
+/// ([`Checker::pending_coalesces`]).
+struct PendingCoalesce {
+    /// The `??`, by statement and shape: what the emitter looks it up by.
+    key: (usize, String),
+    /// The read its left side is, by address, for the hand-over.
+    left: usize,
+    /// The left side's type, `T?`.
+    ty: Ty,
+    span: Span,
+    /// How the option is opened where it is lent.
+    opened: &'static str,
 }
 
 /// Whether reading `read` touches what taking `taken` took: the same path, a
@@ -6335,6 +6361,12 @@ impl<'a> Checker<'a> {
         if matches!(found, Ty::Fn { .. }) && self.a_lent_parameter(given) {
             return false;
         }
+        // **A `??` handed to a position that only reads it lends its left
+        // side** (ADR-259 D1): the answer is a view already, of the name or of
+        // the fallback, and needs no `&` of its own.
+        if self.a_pending_coalesce_is_lent(given, span) {
+            return true;
+        }
         self.checked
             .lent_args
             .entry((span.at(), written.to_string(), at))
@@ -8613,6 +8645,7 @@ impl<'a> Checker<'a> {
         let last = block.stmts.len().saturating_sub(1);
         for (at, stmt) in block.stmts.iter().enumerate() {
             let ty = self.stmt(&stmt.node, &stmt.span);
+            self.coalesces_not_lent_are_taken();
             // **`break i` is two statements, and that is the point** - a jump
             // takes no value, so the value becomes a statement of its own and
             // the program written is not the program compiled. `while_stmt`
@@ -11059,19 +11092,29 @@ impl<'a> Checker<'a> {
             Expr::Coalesce { value, fallback } => {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
-                // **A name on the left of `??` is handed over**: the language
-                // below takes the option to answer from it, so a use of the
-                // name after the line is a use after a move. Unrecorded, that
-                // reached `rustc` as *borrow of moved value* about a file
-                // nobody wrote (found moving `Ty::parse` into Nikaia,
-                // ADR-257). A view and a copy are not taken, which
-                // `hands_over` asks.
-                if matches!(&**value, Expr::Variable(_)) {
-                    self.hands_over(value, &left, "given to `??`", span);
-                }
                 let from_a_map = std::mem::replace(&mut self.read_a_map, outer)
                     && matches!(&**value, Expr::Index { .. });
                 let other = self.expr(fallback, span);
+                // **A name on the left of `??` is taken where the answer is
+                // kept and lent where it is only read** (ADR-259 D1), which is
+                // the rule an argument follows (ADR-094 D1). Which one is known
+                // once the position is: a call that only reads the answer lends
+                // it (`the_compiler_writes_the_reference`), and every other `??`
+                // is taken when its statement ends (`block`). Taken, a use of
+                // the name after the line is `NK2105` (0.0.286). A view and a
+                // copy are neither, which `hands_over` asks.
+                if matches!(&**value, Expr::Variable(_)) {
+                    match self.a_coalesce_that_may_lend(&left, fallback, &other) {
+                        Some(opened) => self.pending_coalesces.push(PendingCoalesce {
+                            key: (span.at(), argument_shape(expr)),
+                            left: address(value),
+                            ty: left.clone(),
+                            span: *span,
+                            opened,
+                        }),
+                        None => self.hands_over(value, &left, "given to `??`", span),
+                    }
+                }
                 if let (Ty::Nullable(inner), Expr::LitStr { at, .. }) = (&left, &**fallback) {
                     if **inner == Ty::view("str") {
                         self.checked
@@ -13008,6 +13051,15 @@ impl<'a> Checker<'a> {
             ) {
                 continue;
             }
+            // **What is printed is only read** (ADR-259 D1): below, the four
+            // print calls format their argument by reference, so a `??`
+            // handed to one lends its left side as a lent argument does.
+            if matches!(written, "println" | "eprintln" | "print" | "eprint")
+                && let Some(given) = given.get(at)
+                && self.a_pending_coalesce_is_lent(given, span)
+            {
+                continue;
+            }
             let is_literal = given.get(at).is_some_and(is_literal);
             if let Some(how) = wrap_for(found, want, is_literal) {
                 self.checked
@@ -14380,6 +14432,76 @@ impl<'a> Checker<'a> {
             self.reads_on_paths[at].seq,
         );
         self.hands_over_path(path, ty, seq, to, span);
+    }
+
+    /// **Whether a `??` over a name may lend it** (ADR-259 D1), and how the
+    /// option is opened where it does. The left side is a `T?` whose `T` is
+    /// taken rather than copied; the fallback is one a view of which exists
+    /// for as long as the answer does: a text literal (a view already), a
+    /// name, or a variant of an enum this file declares. Anything else is
+    /// taken as before, which is the direction that cannot be wrong below.
+    fn a_coalesce_that_may_lend(
+        &self,
+        left: &Ty,
+        fallback: &Expr,
+        other: &Ty,
+    ) -> Option<&'static str> {
+        let Ty::Nullable(inner) = left else {
+            return None;
+        };
+        if !self.takes_away(&inner.unseen()) {
+            return None;
+        }
+        let text = matches!(inner.as_ref(), Ty::Named { name, args, view: false }
+            if args.is_empty() && name == ty::TEXT);
+        let fallback_is_viewable = match fallback {
+            Expr::LitStr { .. } => text,
+            // A name of text is viewed either way below; a name of anything
+            // else is lent by a `&`, which a view already is not.
+            Expr::Variable(_) => text || !other.is_a_view(),
+            Expr::Path(segments) => {
+                !text
+                    && segments.len() == 2
+                    && self
+                        .enums
+                        .get(self.parsed.text(segments[0]))
+                        .is_some_and(|variants| variants.contains(self.parsed.text(segments[1])))
+            }
+            _ => false,
+        };
+        fallback_is_viewable.then_some(if text { ".as_deref()" } else { ".as_ref()" })
+    }
+
+    /// **A `??` in a position that only reads it lends its left side**
+    /// (ADR-259 D1): recorded for the emitter, and no longer pending.
+    fn a_pending_coalesce_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
+        if !matches!(given, Expr::Coalesce { .. }) {
+            return false;
+        }
+        let key = (span.at(), argument_shape(given));
+        let Some(at) = self.pending_coalesces.iter().position(|p| p.key == key) else {
+            return false;
+        };
+        let pending = self.pending_coalesces.remove(at);
+        self.checked
+            .lent_coalesces
+            .insert(pending.key, pending.opened);
+        true
+    }
+
+    /// Every `??` of the statement just walked that no reading position lent
+    /// is taken (ADR-259 D1).
+    fn coalesces_not_lent_are_taken(&mut self) {
+        for pending in std::mem::take(&mut self.pending_coalesces) {
+            let Some(&at) = self.read_index.get(&(pending.left, pending.span.at())) else {
+                continue;
+            };
+            let (path, seq) = (
+                self.reads_on_paths[at].path.clone(),
+                self.reads_on_paths[at].seq,
+            );
+            self.hands_over_path(path, &pending.ty, seq, "given to `??`", &pending.span);
+        }
     }
 
     /// The same for `P { name }`, whose field is its name and which no read
