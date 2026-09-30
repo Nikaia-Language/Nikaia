@@ -16,6 +16,7 @@
 //! program in `examples/` wrote.
 
 use nikaia::contracts::order::{self, Accounted};
+use nikaia::contracts::touch::TouchOps;
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
 

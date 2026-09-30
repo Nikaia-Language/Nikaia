@@ -11103,7 +11103,13 @@ impl<'a> Checker<'a> {
                 // is taken when its statement ends (`block`). Taken, a use of
                 // the name after the line is `NK2105` (0.0.286). A view and a
                 // copy are neither, which `hands_over` asks.
-                if matches!(&**value, Expr::Variable(_)) {
+                // A field is a place as a name is: `self.parameter ?? ""` over
+                // a `ref self` lends the field where the answer is read, and
+                // where it is kept it is a part of a loan handed over, which is
+                // refused in the language's words - unrecorded, it reached
+                // `rustc` as *cannot move out of `self.parameter`* (found moving
+                // the ledger's records into Nikaia, ADR-257).
+                if matches!(&**value, Expr::Variable(_) | Expr::Field { .. }) {
                     match self.a_coalesce_that_may_lend(&left, fallback, &other) {
                         Some(opened) => self.pending_coalesces.push(PendingCoalesce {
                             key: (span.at(), argument_shape(expr)),
@@ -12524,7 +12530,7 @@ impl<'a> Checker<'a> {
                 .get(&name)
                 .or_else(|| self.library.functions.get(&name))
                 .map(|c| c.touches_a_lock)
-                .unwrap_or_default();
+                .unwrap_or(crate::contracts::Lock::No);
             self.a_lock_inside_a_lock(&name, holds, span);
         }
         // **The callee is named and resolved before the arguments are walked**

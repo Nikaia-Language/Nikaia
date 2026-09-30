@@ -1569,3 +1569,42 @@ fn main() {
         "some\n<some>\n<other>\nother\n3\nnothing\nstill usable\nsome\nsome\n"
     );
 }
+
+/// **A field on the left of `??` is a place, as a name is** (ADR-259 D1).
+/// Over a `ref self`, `self.parameter ?? "none"` handed to a reading position
+/// lends the field; bound by a `let`, it is a part of a loan handed over,
+/// `NK2106`. Unrecorded, both reached `rustc` as *cannot move out of
+/// `self.parameter`* (found moving the ledger's records into Nikaia, ADR-257).
+#[test]
+fn a_field_on_the_left_of_a_coalesce_is_a_place() {
+    let read = r#"pub struct Touch {
+    pub kind: String,
+    pub parameter: String?,
+}
+
+fn shown(text: ref String) -> String {
+    return f"<{text}>"
+}
+
+impl Touch {
+    pub fn read(ref self) -> String {
+        return shown(self.parameter ?? "none")
+    }
+}
+
+fn main() {
+    let t = Touch { kind: "file", parameter: "path" }
+    let u = Touch { kind: "lock", parameter: null }
+    println(t.read())
+    println(u.read())
+}
+"#;
+    assert!(lowered(read).contains("self.parameter.as_deref()"));
+    assert_eq!(ran("field-coalesce", read), "<path>\n<none>\n");
+    let kept = read.replace(
+        "        return shown(self.parameter ?? \"none\")",
+        "        let parameter = self.parameter ?? \"none\"\n        return shown(parameter)",
+    );
+    let found = findings(&kept);
+    assert!(found.iter().any(|f| f.code == "NK2106"), "{found:#?}");
+}

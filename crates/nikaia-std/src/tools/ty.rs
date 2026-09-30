@@ -375,3 +375,215 @@ fn a_name(rest: &str, view: bool) -> Ty {
     Ty::Named { name: rest.to_owned(), args: vec![], view }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provenance {
+    Trusted,
+    Untrusted,
+}
+
+impl Provenance {
+    pub fn join(self, other: Provenance) -> Provenance {
+        if self == Provenance::Untrusted || other == Provenance::Untrusted { return Provenance::Untrusted; }
+        Provenance::Trusted
+    }
+    pub fn as_str(self) -> String {
+        match self {
+            Provenance::Trusted => String::from("trusted"),
+            Provenance::Untrusted => String::from("untrusted"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Sync {
+    No,
+    Inferred,
+    Asserted,
+    From(String),
+}
+
+impl Sync {
+    pub fn is_sync(&self) -> bool { !matches!(self, Sync::No) }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lock {
+    No,
+    Holds,
+    Undecided,
+}
+
+impl Lock {
+    pub fn holds(self) -> bool { self == Lock::Holds }
+    pub fn or(self, other: Lock) -> Lock {
+        if self == Lock::Holds || other == Lock::Holds { return Lock::Holds; }
+        if self == Lock::Undecided || other == Lock::Undecided { return Lock::Undecided; }
+        Lock::No
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Crosses {
+    May,
+    MayNot,
+    Undecided,
+}
+
+impl Crosses {
+    pub fn may(self) -> bool { self == Crosses::May }
+    pub fn may_not(self) -> bool { self == Crosses::MayNot }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Threads {
+    May,
+    MayNot,
+    Undecided,
+}
+
+impl Threads {
+    pub fn may(self) -> bool { self == Threads::May }
+    pub fn may_not(self) -> bool { self == Threads::MayNot }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Touch {
+    pub kind: String,
+    pub parameter: Option<String>,
+    pub write: bool,
+}
+
+impl Touch {
+    pub fn names_a_lock(&self) -> bool { self.kind == "lock" }
+    pub fn text(&self) -> String { touched(&self.kind, (self.parameter).as_deref(), self.write) }
+}
+
+fn touched(kind: &str, parameter: Option<&str>, write: bool) -> String {
+    let access = if write { "write" } else { "read" };
+    if parameter.is_none() { return format!("{} {}", kind, access); }
+    let named = nikaia_std::index::or(parameter, || "");
+    format!("{}({}) {}", kind, named, access)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    Borrowed,
+    Tethered,
+}
+
+impl State {
+    pub fn as_str(self) -> String {
+        match self {
+            State::Borrowed => String::from("borrowed"),
+            State::Tethered => String::from("tethered"),
+        }
+    }
+    pub fn parse(written: &str) -> Option<State> {
+        let word = written.trim();
+        if word == "borrowed" { return Some(State::Borrowed); }
+        if word == "tethered" { return Some(State::Tethered); }
+        None
+    }
+    pub fn or(self, other: State) -> State {
+        if self == State::Tethered || other == State::Tethered { return State::Tethered; }
+        State::Borrowed
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    pub position: String,
+    pub state: State,
+}
+
+impl Held {
+    pub fn text(&self) -> String { format!("{}: {}", self.position, self.state.as_str()) }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Count {
+    Plain,
+    Word,
+    Atomic,
+}
+
+impl Count {
+    pub fn join(self, other: Count) -> Count {
+        if self == Count::Atomic || other == Count::Atomic { return Count::Atomic; }
+        if self == Count::Word || other == Count::Word { return Count::Word; }
+        Count::Plain
+    }
+    pub fn rank(self) -> i64 {
+        match self {
+            Count::Plain => 0,
+            Count::Word => 1,
+            Count::Atomic => 2,
+        }
+    }
+    pub fn as_str(self) -> String {
+        match self {
+            Count::Plain => String::from("plain"),
+            Count::Word => String::from("word"),
+            Count::Atomic => String::from("atomic"),
+        }
+    }
+    pub fn parse(written: &str) -> Option<Count> {
+        let word = written.trim();
+        if word == "plain" { return Some(Count::Plain); }
+        if word == "word" { return Some(Count::Word); }
+        if word == "atomic" { return Some(Count::Atomic); }
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Class {
+    pub members: Vec<String>,
+    pub count: Count,
+}
+
+impl Class {
+    pub fn text(&self) -> String {
+        let mut out: String = String::from("");
+        for member in self.members.iter() {
+            if !out.is_empty() { out.push_str(" | "); }
+            out.push_str(member);
+        }
+        format!("{}: {}", out, self.count.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldContract {
+    pub name: String,
+    pub ty: Ty,
+    pub public: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantContract {
+    pub name: String,
+    pub holds: Vec<FieldContract>,
+    pub positional: bool,
+}
+
+impl VariantContract {
+    pub fn text(&self) -> String {
+        if (self.holds.len() as i64) == 0 { return self.name.to_owned(); }
+        let mut parts: String = String::from("");
+        for field in self.holds.iter() {
+            if !parts.is_empty() { parts.push_str(", "); }
+            if self.positional { parts.push_str(&field.ty.text()); } else { parts.push_str(&format!("{}: {}", field.name, field.ty.text())); }
+        }
+        if self.positional { return format!("{}({})", self.name, parts); }
+        format!("{} {{ {} }}", self.name, parts)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigContract {
+    pub name: String,
+    pub ty: Ty,
+    pub default: String,
+}
+

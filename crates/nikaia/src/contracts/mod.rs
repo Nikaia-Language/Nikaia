@@ -45,8 +45,31 @@ use anyhow::{Result, anyhow};
 
 use crate::ast::Item;
 use crate::contracts::ty::TyOps;
+use crate::contracts::{sharing::ClassOps, tether::HeldOps, touch::TouchOps};
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
+
+/// **The ledger's small records are declared in Nikaia**
+/// ([ADR-257](../../../docs/specification/adr/adr-257.md) step (b)):
+/// `nikaia-std/src/tools/ty.nika`, beside the type language their fields
+/// hold. Re-exported here so that every reader keeps its path.
+pub use nikaia_std::tools::ty::{
+    ConfigContract, Crosses, FieldContract, Lock, Provenance, Sync, Threads, VariantContract,
+};
+
+/// What stays Rust of [`Sync`]: the name a `sync` was taken from.
+pub trait SyncOps {
+    fn from(&self) -> Option<&str>;
+}
+
+impl SyncOps for Sync {
+    fn from(&self) -> Option<&str> {
+        match self {
+            Sync::From(name) => Some(name),
+            _ => None,
+        }
+    }
+}
 
 /// The contracts `std` ships, as the library ships them.
 ///
@@ -77,111 +100,8 @@ pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing
 /// may say more than it knows how to use.
 pub const VERSION: u32 = 3;
 
-/// Who supplied the bytes a source hands back (ADR-010 D1).
-///
-/// A two-state lattice, `Trusted ⊑ Untrusted`, joined in the safe direction:
-/// one untrusted input makes the result untrusted. Where provenance cannot be
-/// established the answer is `Untrusted`, never `Trusted` - an analysis that
-/// fails open is a vulnerability generator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum Provenance {
-    /// The operator chose these bytes: files, arguments, the environment,
-    /// anything compiled in.
-    #[default]
-    Trusted,
-    /// Someone else chose these bytes: a remote peer, a socket, a database row
-    /// holding what a user stored yesterday.
-    Untrusted,
-}
-
-impl Provenance {
-    /// The more cautious of two, which is what a container takes from what goes
-    /// into it.
-    pub fn join(self, other: Self) -> Self {
-        self.max(other)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Provenance::Trusted => "trusted",
-            Provenance::Untrusted => "untrusted",
-        }
-    }
-}
-
-/// What the ledger knows about a function's suspension behaviour (Part II, 12.1).
-///
-/// **Three states, and the third one is why this is not a `bool`.** A function
-/// may be `sync` because someone wrote the word, or because nothing it calls
-/// can pause. Both are true, and a caller uses them the same way - but a
-/// **diff** must not treat them alike. Losing an asserted `sync` is a promise
-/// being withdrawn and someone has to have meant it; losing an inferred one is
-/// a consequence of an edit somewhere else, and the compiler should say which
-/// happened rather than print the same line for both (ADR-027 D3).
-///
-/// The two also fail differently. An assertion is *checked* - `NK2202` reports
-/// the calls that contradict it - and the check is conservative in the
-/// permissive direction: it rejects only what it can prove wrong. The inference
-/// runs the other way and claims `sync` only where it can prove it right. That
-/// is deliberate and it is the whole safety argument: a wrong `sync` in a
-/// shipped ledger lets a caller put a pausing body inside `access`, and the
-/// ledger has said before what to do about an analysis that cannot decide -
-/// "an analysis that fails open is a vulnerability generator" (`Provenance`,
-/// above). So it fails closed, and the gap between the two polarities is
-/// exactly where a person writes `sync` by hand and gets it checked.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Sync {
-    /// Not `sync`: something it calls can pause, or something it calls cannot
-    /// be resolved and therefore cannot be vouched for.
-    #[default]
-    No,
-    /// Nothing it calls can pause, and every call it makes was resolvable.
-    /// Derived from the body, so an edit elsewhere can take it away.
-    Inferred,
-    /// Written in the source. `NK2202` is what happens when the body
-    /// contradicts it.
-    Asserted,
-    /// **It does whatever the lambda it is given does** - `sync = "from(f)"`,
-    /// naming the parameter that decides (ADR-029).
-    ///
-    /// `xs.map fn { a + 1 }` cannot pause and `xs.map fn { io::read()… }` can,
-    /// and they are the same `map`. Without this a higher-order function has to
-    /// commit to one answer for every caller, and the honest one is the
-    /// pessimistic one - so no `map`, `filter` or `and_modify` could appear
-    /// inside `access` or `par_iter`, whatever its lambda did.
-    ///
-    /// **A caller reads this as "this call adds no pausing of its own"**, and
-    /// that is sound for one reason: the lambda runs *during* the call, so its
-    /// body is part of the function that writes it, and its calls are already
-    /// counted there (Part I, 5.4's `@immediate`). A parameter the callee
-    /// **stores or spawns** - `@detached` - would break that, because then the
-    /// lambda's calls belong to nobody the caller is counting. The ledger
-    /// cannot spell `@detached` yet, so the rule is written down instead:
-    /// `from` is for a lambda that runs before the call returns, and
-    /// `a_detached_lambda_may_not_use_from` in `tests/contracts.rs` is what
-    /// stops the one `std` entry that could get this wrong.
-    From(String),
-}
-
-impl Sync {
-    /// Whether a caller may treat it as `sync` - which is the question every
-    /// caller actually has, and the one place the two positive states are
-    /// deliberately the same.
-    pub fn is_sync(&self) -> bool {
-        !matches!(self, Sync::No)
-    }
-
-    /// The parameter that decides, where one does.
-    pub fn from(&self) -> Option<&str> {
-        match self {
-            Sync::From(name) => Some(name),
-            _ => None,
-        }
-    }
-}
-
 /// What a caller needs to know about one function.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnContract {
     /// Callable from outside the unit that declares it. A library's consumers
     /// see only these; the unit's own checks use all of them.
@@ -368,78 +288,30 @@ pub struct FnContract {
     pub ends_by_length: bool,
 }
 
-/// Whether a function **touches a lock**
-/// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3).
-///
-/// **Three answers and not two**, which is
-/// [`super::send::Crossing`]'s design borrowed for the same reason it was
-/// written there. `Undecided` is not `No`:
-/// [ADR-010](../../../../docs/specification/adr/adr-010.md) D1 says an analysis
-/// that fails open is a vulnerability generator, and *nothing is written down
-/// about this call* is the absence of an answer rather than a promise. But it
-/// is not `Holds` either, because the one thing this compiler may never do is
-/// reject a program that is correct
-/// ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)).
-///
-/// **The corpus is what made the third arm necessary.** With two, an
-/// unresolvable call had to set the property — D3's own fail-closed sentence,
-/// written for `sync`, where the cost is a caller writing `.await`. Measured,
-/// that gave the property to **16 of 59** functions in `examples/`, almost all
-/// of them `main`, and **not one of those programs opens a lock**. A refusal
-/// reading that column would have refused correct programs, which is the worse
-/// of the two mistakes: the deadlock it would have caught is where every
-/// program already is, and a false refusal is not.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Lock {
-    /// Nothing it reaches opens a door, and this compiler saw all of it.
-    #[default]
-    No,
-    /// It opens one of D10's doors, or reaches something that does.
-    Holds,
-    /// A call on the way is one nothing describes. **Not permission.**
-    Undecided,
-}
-
-impl Lock {
-    /// Whether a refusal may be raised on this: `Holds` and nothing else.
-    pub fn holds(self) -> bool {
-        matches!(self, Lock::Holds)
-    }
-
-    /// The worse of two answers, which is what a caller takes from a callee:
-    /// `Holds` beats `Undecided` beats `No`.
-    pub fn or(self, other: Lock) -> Lock {
-        match (self, other) {
-            (Lock::Holds, _) | (_, Lock::Holds) => Lock::Holds,
-            (Lock::Undecided, _) | (_, Lock::Undecided) => Lock::Undecided,
-            _ => Lock::No,
+/// Written out because [`Sync`], [`Lock`], [`Threads`] and [`Crosses`] are
+/// Nikaia's, which names a value rather than deriving a `Default`
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.4): these are the
+/// values the derive meant.
+impl Default for FnContract {
+    fn default() -> Self {
+        FnContract {
+            public: false,
+            sync: Sync::No,
+            throws: Default::default(),
+            touches: Default::default(),
+            touches_known: false,
+            provenance: Default::default(),
+            signature: Default::default(),
+            borrows: Default::default(),
+            keeps: Default::default(),
+            mutates: false,
+            touches_a_lock: Lock::No,
+            threads: Threads::Undecided,
+            views: Default::default(),
+            sharing: Default::default(),
+            ends_by_length: false,
         }
     }
-}
-
-/// **Whether a value of a type may cross a thread, and *may not* is an answer**
-/// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
-///
-/// Three values because the crossing verdict has three
-/// ([ADR-045](../../../../docs/specification/adr/adr-045.md)), and a boolean
-/// could only reach two of them: a described type could say *may* or say
-/// nothing, so the refusals that fire on *may not* had nothing to fire on. The
-/// shape is [`Lock`]'s, for the same reason it is - reading *nothing said* as
-/// *no* refuses correct programs, and reading it as *yes* is a promise that
-/// fails open ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Crosses {
-    /// `crosses = true`: a value of this type **may** cross a thread.
-    May,
-    /// `crosses = false`: it **may not**, which is the claim
-    /// `examples/foreign-runtime/`'s handle over an `Rc<String>` needed and
-    /// could not make.
-    MayNot,
-    /// Nothing written. **Not permission**: the compiler will not put such a
-    /// value on a thread of its own choosing, and it will not refuse a program
-    /// for it either - the two differ in who is to blame.
-    #[default]
-    Undecided,
 }
 
 /// **What a describer saw and did not claim**
@@ -456,61 +328,6 @@ pub struct Notes {
     pub about_the_crate: Vec<String>,
     /// About one entry, by the key it is written under (D3).
     pub about_a_function: BTreeMap<String, Vec<String>>,
-}
-
-/// Whether a **function** starts a thread of its own
-/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
-///
-/// [`Crosses`]' shape, for [`Crosses`]' reason, one question over: `true`,
-/// `false`, and **absent**, where the absence is *nobody said* and never *it
-/// does not*. A `threads = false` written by a hopeful hand is a false
-/// silence, and silence read as *no* is the polarity
-/// [ADR-010](../../../../docs/specification/adr/adr-010.md) D1 calls a
-/// vulnerability generator.
-///
-/// **Hand-written and never inferred**, like `crosses`: it answers for a body
-/// this compiler does not read. What a describer may do is *propose* it, and
-/// only ever `true` — nothing a signature can show entails *does not thread*,
-/// since a function may spawn something it built itself
-/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Threads {
-    /// `threads = true`: this call **may** put what it is given on a thread of
-    /// its own. `NK2502` fires on this and on nothing else (D2).
-    May,
-    /// `threads = false`: it does not. A claim, and a person's to make.
-    MayNot,
-    /// Nothing written. **Not permission and not a promise**: the call keeps
-    /// whatever answer it has today, which for a described call is silence and
-    /// for an undescribed one is `NK2502` asked of every argument.
-    #[default]
-    Undecided,
-}
-
-impl Threads {
-    /// Whether the description said it threads: `May` and nothing else. This is
-    /// what a refusal may be raised on.
-    pub fn may(self) -> bool {
-        matches!(self, Threads::May)
-    }
-
-    /// Whether the description said it does not: `MayNot` and nothing else.
-    pub fn may_not(self) -> bool {
-        matches!(self, Threads::MayNot)
-    }
-}
-
-impl Crosses {
-    /// Whether the type promised it crosses: `May` and nothing else.
-    pub fn may(self) -> bool {
-        matches!(self, Crosses::May)
-    }
-
-    /// Whether the type said it does not: `MayNot` and nothing else. This is
-    /// what a refusal may be raised on.
-    pub fn may_not(self) -> bool {
-        matches!(self, Crosses::MayNot)
-    }
 }
 
 /// A function's parameters and result.
@@ -563,71 +380,14 @@ pub struct Signature {
     pub result: Option<ty::Ty>,
 }
 
-/// One field of a type, as a caller has to know it.
-///
-/// **Including whether it is public**, which is what a consumer of another
-/// package needs and nothing inside the package does: privacy is per package
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D1), so a field's
-/// visibility only ever answers a question asked from outside. Until the ledger
-/// carried it, a type whose fields were private could be built by name from
-/// another package and nothing said no - the language below could not help
-/// either, because the emitted struct is in the same crate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldContract {
-    pub name: String,
-    pub ty: ty::Ty,
-    pub public: bool,
+/// What stays Rust of a variant's entry until its text moves (ADR-257 step
+/// (c)): reading one back. The declaration and `text` are `tools/ty.nika`'s.
+pub trait VariantOps {
+    fn parse(text: &str) -> VariantContract;
 }
 
-/// One variant of an `enum`, as a caller has to know it.
-///
-/// **Three shapes and one struct**, because that is how the source writes them
-/// (Part I 4.4): a bare name, a positional payload, or named fields. A
-/// positional one keeps its parts under the names `"0"`, `"1"` and so on — which
-/// is the arrangement the checker's own map already uses, so a variant's payload
-/// is looked up exactly as a struct's fields are and there is one field check
-/// rather than two.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VariantContract {
-    pub name: String,
-    /// What it holds, in declaration order. Empty for a bare name.
-    pub holds: Vec<FieldContract>,
-    /// `Write(String)` rather than `Move { x: i32 }`: read by position.
-    ///
-    /// A flag rather than two variants of this struct, for the reason `mutable`
-    /// is a list beside `params`: everything that walks the payload walks it the
-    /// same way, and only the *rendering* and the pattern's shape differ.
-    pub positional: bool,
-}
-
-impl VariantContract {
-    /// The one line a ledger writes for it, which is what the source wrote.
-    pub fn text(&self) -> String {
-        if self.holds.is_empty() {
-            return self.name.clone();
-        }
-        let parts: Vec<String> = match self.positional {
-            true => self.holds.iter().map(|f| f.ty.text()).collect(),
-            false => self
-                .holds
-                .iter()
-                .map(|f| format!("{}: {}", f.name, f.ty.text()))
-                .collect(),
-        };
-        match self.positional {
-            true => format!("{}({})", self.name, parts.join(", ")),
-            false => format!("{} {{ {} }}", self.name, parts.join(", ")),
-        }
-    }
-
-    /// The same line, read back.
-    ///
-    /// **Nothing here fails.** A name with no payload is a bare variant, and a
-    /// shape this does not recognise is one too — the list says which cases
-    /// exist, and a payload it could not read is a payload the checker does not
-    /// claim about, which is [Part III
-    /// C.4](../../../../docs/specification/30-nikaia-tooling.md)'s direction.
-    pub fn parse(text: &str) -> VariantContract {
+impl VariantOps for VariantContract {
+    fn parse(text: &str) -> VariantContract {
         let text = text.trim();
         if let Some((name, rest)) = text.split_once('(') {
             let inside = rest.trim_end().trim_end_matches(')');
@@ -669,16 +429,6 @@ impl VariantContract {
             positional: false,
         }
     }
-}
-
-/// One option of a function, as a caller has to know it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigContract {
-    pub name: String,
-    pub ty: ty::Ty,
-    /// The default, as the source writes it - a literal, and therefore text
-    /// that the language below spells the same way (ADR-011 D2).
-    pub default: String,
 }
 
 impl Signature {
@@ -922,7 +672,7 @@ fn matching_close(inside: &str) -> Option<usize> {
 }
 
 /// What a caller needs to know about one type.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeContract {
     pub public: bool,
     /// Every field, with its type - what a checker needs to say that `r.nmae`
@@ -1017,6 +767,26 @@ pub struct TypeContract {
     /// does. A struct with none of these is free of the input; one with any is
     /// tied to it for as long as it lives (Part II, 10.6).
     pub tethered: Vec<String>,
+}
+
+/// Written out because [`Sync`], [`Lock`], [`Threads`] and [`Crosses`] are
+/// Nikaia's, which names a value rather than deriving a `Default`
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.4): these are the
+/// values the derive meant.
+impl Default for TypeContract {
+    fn default() -> Self {
+        TypeContract {
+            public: false,
+            fields: Default::default(),
+            variants: Default::default(),
+            crosses: Crosses::Undecided,
+            iterates_fallibly: false,
+            compares: false,
+            copies: false,
+            touches: Default::default(),
+            tethered: Default::default(),
+        }
+    }
 }
 
 /// One compilation unit's contracts.

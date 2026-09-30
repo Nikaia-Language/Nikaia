@@ -96,6 +96,7 @@
 // write the contract down - ADR-033 D4's own closing argument, which is why
 // ADR-037 D8 has no keyword in it.
 
+pub use nikaia_std::tools::ty::{Class, Count};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Stmt};
@@ -126,55 +127,6 @@ const FIELDS: &str = "<field>";
 /// not know contributes nothing, and the walk that finds the names inside the
 /// lambda is over-approximate, which is the safe direction.
 const PARALLEL: &[&str] = &["par_iter", "par_fold", "par_map"];
-
-/// Which kind of count a `Shared` value needs.
-///
-/// `Plain ⊑ Atomic`, joined upwards: one crossing anywhere in a handle's
-/// equivalence class makes the whole class atomic. [`Count::Atomic`] is the
-/// default because it is the floor (ADR-037 D6) - a value nothing is known about
-/// gets the safe answer without anybody remembering to ask for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum Count {
-    /// A count only the thread that built it ever touches. What this analysis
-    /// may lower a value to, where it proves nothing crosses.
-    Plain,
-    /// **A `SharedMut` of a value that fits a machine word, which crosses**
-    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md)): the atomic
-    /// count, and the lock inside it the word itself - `update` is a
-    /// compare-and-swap (ADR-110 D2). Only for a crossing this analysis
-    /// **proved** and a value no door over several locks takes: a class the
-    /// floor answered for, or one an `update_all` holds, keeps the lock.
-    Word,
-    /// A count any thread may touch. The floor, and the answer wherever this
-    /// analysis cannot prove the other one.
-    #[default]
-    Atomic,
-}
-
-impl Count {
-    /// The more cautious of two.
-    pub fn join(self, other: Self) -> Self {
-        self.max(other)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Count::Plain => "plain",
-            Count::Word => "word",
-            Count::Atomic => "atomic",
-        }
-    }
-
-    /// Read one back from the ledger.
-    pub fn parse(text: &str) -> Option<Self> {
-        match text.trim() {
-            "plain" => Some(Count::Plain),
-            "word" => Some(Count::Word),
-            "atomic" => Some(Count::Atomic),
-            _ => None,
-        }
-    }
-}
 
 /// Every reason this analysis answers `atomic` **because nothing decided it**,
 /// as a closed list.
@@ -327,32 +279,14 @@ impl Decision {
     }
 }
 
-/// One allocation class of a function's caller-visible positions, as the ledger
-/// records it.
-///
-/// This is the summary ADR-037 D7 names as the thing that
-/// composes: **which parameters and result are one class, and which count that
-/// class gets**. A caller reads it to know what it is handing over; a later
-/// build that can read a dependency's source reads it to continue the analysis
-/// across the boundary without a representation axis.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Class {
-    /// The positions that are one allocation: parameter names, and `<result>`
-    /// for what the function hands back. Sorted, because 13.5 makes the file a
-    /// pure function of (source, toolchain).
-    pub members: Vec<String>,
-    pub count: Count,
+/// What stays Rust of a [`Class`] (ADR-257 step (b)): reading one back.
+pub trait ClassOps: Sized {
+    fn parse(text: &str) -> Option<Self>;
 }
 
-impl Class {
-    /// `counts | <result>: atomic`, which is the `borrows(a | b)` spelling
-    /// ADR-005 D3 already gave a list of positions.
-    pub fn text(&self) -> String {
-        format!("{}: {}", self.members.join(" | "), self.count.as_str())
-    }
-
+impl ClassOps for Class {
     /// Read one back from the ledger.
-    pub fn parse(text: &str) -> Option<Self> {
+    fn parse(text: &str) -> Option<Self> {
         let (members, count) = text.rsplit_once(':')?;
         let members: Vec<String> = members
             .split('|')
@@ -430,7 +364,7 @@ impl Sharing {
         self.counts
             .get(&slot(function, value))
             .copied()
-            .unwrap_or_default()
+            .unwrap_or(Count::Atomic)
     }
 }
 
@@ -1785,7 +1719,12 @@ impl<'a> Analysis<'a> {
                         class
                     })
                     .collect();
-                found.sort();
+                // The order the derive gave while `Class` was Rust: the members,
+                // then the count's rank (ADR-204 §4 leaves a declared type no
+                // order of its own, so the key is written here).
+                found.sort_by(|a, b| {
+                    (&a.members, a.count.rank()).cmp(&(&b.members, b.count.rank()))
+                });
                 (function, found)
             })
             .collect();

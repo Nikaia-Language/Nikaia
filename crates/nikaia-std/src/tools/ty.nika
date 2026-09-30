@@ -632,3 +632,307 @@ fn a_name(rest: ref String, view: bool) -> Ty {
     }
     return Ty::Named { name: rest.clone(), args: [], view: view }
 }
+
+// ---------------------------------------------------------------------------
+// The ledger's small records (ADR-257 step (b)): what a function's entry says
+// besides its signature. Their text is read by the compiler's `contracts`,
+// which writes them back through the methods here.
+// ---------------------------------------------------------------------------
+
+/// **Who chose a value's bytes** (ADR-010 D1): the program, or somebody else.
+pub enum Provenance {
+    Trusted,
+    Untrusted,
+}
+
+impl Provenance {
+    /// Both at once: untrusted where either is.
+    pub fn join(self, other: Provenance) -> Provenance {
+        if self == Provenance::Untrusted || other == Provenance::Untrusted {
+            return Provenance::Untrusted
+        }
+        return Provenance::Trusted
+    }
+
+    /// The ledger's word for it.
+    pub fn as_str(self) -> String {
+        return match self {
+            Provenance::Trusted => "trusted",
+            Provenance::Untrusted => "untrusted",
+        }
+    }
+}
+
+/// **Whether a function is `sync`** (Part II 12.1), and how that is known:
+/// not at all, inferred from its body, asserted by a hand-written entry, or
+/// taken from another function's entry.
+pub enum Sync {
+    No,
+    Inferred,
+    Asserted,
+    From(String),
+}
+
+impl Sync {
+    pub fn is_sync(ref self) -> bool {
+        return match self {
+            Sync::No => false,
+            else => true,
+        }
+    }
+}
+
+/// **Whether a function takes a lock** (ADR-039 D2): not, yes, or nobody can
+/// say yet.
+pub enum Lock {
+    No,
+    Holds,
+    Undecided,
+}
+
+impl Lock {
+    pub fn holds(self) -> bool {
+        return self == Lock::Holds
+    }
+
+    /// Either of two: a lock where one holds, undecided where one is.
+    pub fn or(self, other: Lock) -> Lock {
+        if self == Lock::Holds || other == Lock::Holds {
+            return Lock::Holds
+        }
+        if self == Lock::Undecided || other == Lock::Undecided {
+            return Lock::Undecided
+        }
+        return Lock::No
+    }
+}
+
+/// **Whether a type may cross a thread** (ADR-005 §1), as a ledger says it.
+pub enum Crosses {
+    May,
+    MayNot,
+    Undecided,
+}
+
+impl Crosses {
+    pub fn may(self) -> bool {
+        return self == Crosses::May
+    }
+
+    pub fn may_not(self) -> bool {
+        return self == Crosses::MayNot
+    }
+}
+
+/// **Whether a function may run on another thread** than its caller's.
+pub enum Threads {
+    May,
+    MayNot,
+    Undecided,
+}
+
+impl Threads {
+    pub fn may(self) -> bool {
+        return self == Threads::May
+    }
+
+    pub fn may_not(self) -> bool {
+        return self == Threads::MayNot
+    }
+}
+
+/// **What a function reaches** (ADR-033): a kind of resource, the parameter
+/// that names which one where one does, and whether it writes.
+pub struct Touch {
+    pub kind: String,
+    pub parameter: String?,
+    pub write: bool,
+}
+
+impl Touch {
+    pub fn names_a_lock(ref self) -> bool {
+        return self.kind == "lock"
+    }
+
+    /// `file(path) write`, as a ledger writes it.
+    pub fn text(ref self) -> String {
+        return touched(self.kind, self.parameter, self.write)
+    }
+}
+
+/// [`Touch::text`], over a view of the parameter.
+fn touched(kind: ref String, parameter: ref String?, write: bool) -> String {
+    let access = if write { "write" } else { "read" }
+    if parameter == null {
+        return f"{kind} {access}"
+    }
+    let named = parameter ?? ""
+    return f"{kind}({named}) {access}"
+}
+
+/// **How a view is held** (ADR-008 D2): borrowed for the call, or tethered to
+/// a buffer that has to outlive it.
+pub enum State {
+    Borrowed,
+    Tethered,
+}
+
+impl State {
+    pub fn as_str(self) -> String {
+        return match self {
+            State::Borrowed => "borrowed",
+            State::Tethered => "tethered",
+        }
+    }
+
+    pub fn parse(written: ref String) -> State? {
+        let word = written.trim()
+        if word == "borrowed" {
+            return State::Borrowed
+        }
+        if word == "tethered" {
+            return State::Tethered
+        }
+        return null
+    }
+
+    /// The stronger of two: tethered where either is.
+    pub fn or(self, other: State) -> State {
+        if self == State::Tethered || other == State::Tethered {
+            return State::Tethered
+        }
+        return State::Borrowed
+    }
+}
+
+/// A position a view is held at, and how.
+pub struct Held {
+    pub position: String,
+    pub state: State,
+}
+
+impl Held {
+    /// `path: borrowed`.
+    pub fn text(ref self) -> String {
+        return f"{self.position}: {self.state.as_str()}"
+    }
+}
+
+/// **What a shared allocation is counted with** (ADR-044): nothing, a plain
+/// word, or an atomic one, in that order of cost.
+pub enum Count {
+    Plain,
+    Word,
+    Atomic,
+}
+
+impl Count {
+    /// The costlier of two, which is what both need.
+    pub fn join(self, other: Count) -> Count {
+        if self == Count::Atomic || other == Count::Atomic {
+            return Count::Atomic
+        }
+        if self == Count::Word || other == Count::Word {
+            return Count::Word
+        }
+        return Count::Plain
+    }
+
+    /// Where the order matters to a caller that sorts: plain, word, atomic.
+    pub fn rank(self) -> i64 {
+        return match self {
+            Count::Plain => 0,
+            Count::Word => 1,
+            Count::Atomic => 2,
+        }
+    }
+
+    pub fn as_str(self) -> String {
+        return match self {
+            Count::Plain => "plain",
+            Count::Word => "word",
+            Count::Atomic => "atomic",
+        }
+    }
+
+    pub fn parse(written: ref String) -> Count? {
+        let word = written.trim()
+        if word == "plain" {
+            return Count::Plain
+        }
+        if word == "word" {
+            return Count::Word
+        }
+        if word == "atomic" {
+            return Count::Atomic
+        }
+        return null
+    }
+}
+
+/// **Positions that are one allocation** (ADR-044), and what counts it.
+pub struct Class {
+    pub members: Vec[String],
+    pub count: Count,
+}
+
+impl Class {
+    /// `counts | <result>: atomic`.
+    pub fn text(ref self) -> String {
+        let mut out: String = ""
+        for member in self.members {
+            if !out.is_empty() {
+                out.push_str(" | ")
+            }
+            out.push_str(member)
+        }
+        return f"{out}: {self.count.as_str()}"
+    }
+}
+
+/// A field of a type a ledger describes.
+pub struct FieldContract {
+    pub name: String,
+    pub ty: Ty,
+    pub public: bool,
+}
+
+/// A variant of an `enum` a ledger describes, and what it holds.
+pub struct VariantContract {
+    pub name: String,
+    pub holds: Vec[FieldContract],
+    /// `Write(String)` rather than `Move { x: i32 }`: read by position.
+    pub positional: bool,
+}
+
+impl VariantContract {
+    /// `Write(String)`, `Move { x: i32 }`, or the bare name.
+    pub fn text(ref self) -> String {
+        if self.holds.len() == 0 {
+            return self.name.clone()
+        }
+        let mut parts: String = ""
+        for field in self.holds {
+            if !parts.is_empty() {
+                parts.push_str(", ")
+            }
+            if self.positional {
+                parts.push_str(ref field.ty.text())
+            } else {
+                parts.push_str(ref f"{field.name}: {field.ty.text()}")
+            }
+        }
+        if self.positional {
+            return f"{self.name}({parts})"
+        }
+        return f"{self.name} {{ {parts} }}"
+    }
+}
+
+/// An option a function takes by name (Part I 5.1), with its type and the
+/// default the ledger writes.
+pub struct ConfigContract {
+    pub name: String,
+    pub ty: Ty,
+    pub default: String,
+}

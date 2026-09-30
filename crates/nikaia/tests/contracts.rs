@@ -9,6 +9,7 @@ mod common;
 
 use std::path::PathBuf;
 
+use nikaia::contracts::SyncOps;
 use nikaia::contracts::{Ledger, STD, Sync};
 use nikaia::parser::parse_to_ast;
 
