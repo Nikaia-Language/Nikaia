@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.293 (Draft)
+**Version:** 0.0.294 (Draft)
 **Date:** 2026-09-30
 
 ---
@@ -938,6 +938,9 @@ member copies and a view of the receiver otherwise, as a field read is (6.6).
 answer is only read** ([ADR-259](adr/adr-259.md)), as an argument is lent or
 handed over (6.6). `println(user ?? "Guest")` leaves `user` usable on the next
 line; `let shown = user ?? "Guest"` takes `user`, as `let b = a` takes `a`.
+The positions that only read are an argument the function only reads, an
+`f"…"` hole, a comparison of text, and the receiver of a method that only
+reads it.
 
 **`?.` reaches a method.** `find(1)?.greet("Hallo")` calls the method only
 where there is something to call it on; the arguments reach it, and the result
