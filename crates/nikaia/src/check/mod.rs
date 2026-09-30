@@ -17755,7 +17755,7 @@ impl<'a> Checker<'a> {
                     .unwrap_or_else(|| "T".to_string());
                 (
                     "a `Vec`",
-                    "`[T; N]`",
+                    "`Array[T, N]`",
                     format!(
                         "Declare it as `Array[{element}, {}]`: the build computed {}.",
                         items.len(),
@@ -17764,12 +17764,14 @@ impl<'a> Checker<'a> {
                 )
             }
             // **Text is the case with no length in it**, which is why the way
-            // out is shorter: `&str` says the whole thing.
+            // out is shorter: `ref String` says the whole thing. In this
+            // language's words (ADR-184 D2, D4): `&` is not a spelling a
+            // program can write, and `str` is the compiler's noun.
             _ => (
                 "a `String`",
-                "`&str`",
-                "Declare it as `&str`: the text is built into the program, and the \
-                 program holds a view of it."
+                "`ref String`",
+                "Declare it as `ref String`: the text is built into the program, and \
+                 the program holds a view of it."
                     .to_string(),
             ),
         };

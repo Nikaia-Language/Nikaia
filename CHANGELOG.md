@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.284] — 2026-09-30
+
+**`NK1167`'s way out is one a program can write.**
+
+- A `comptime` declared `String` was told *Declare it as `&str`*, and one
+  declared as a `Vec` was told it can hold *`[T; N]`*. The parser refuses
+  `&`, which left the language at 0.0.134 (ADR-184 D4), and `[T; N]` is the
+  language below's spelling. Part III C.2 says a way out that cannot be taken
+  is not one. The messages now say `ref String` and `Array[T, N]`, and
+  `tests/build_time.rs` checks that neither spelling comes back.
+
 ## [0.0.283] — 2026-09-30
 
 **The checker's types move to Nikaia as they are, and the measurement that
