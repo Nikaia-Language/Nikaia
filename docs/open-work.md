@@ -789,13 +789,13 @@ runs them.
 [ADR-257](specification/adr/adr-257.md) D1-D2, after its measurement answered
 D3 with *move as values*:
 
-* **(b)** `Ty`, `Shape` and the ledger's records (`FnContract`,
-  `TypeContract`, `Signature`, `FieldContract`, `VariantContract`,
-  `ConfigContract`, `Ledger` and their small enums) are declared in a tool
-  module beside `ast.nika`. They are re-exported from `contracts`, so every
-  reader keeps its path.
-* **(c)** The text form (`Ty::parse`, `Display`, the signature strings) moves
-  next to `ledger.nika`.
+* **(b)** The ledger's records (`FnContract`, `TypeContract`, `Signature`,
+  `FieldContract`, `VariantContract`, `ConfigContract`, `Ledger` and their
+  small enums) are declared in a tool module beside `ast.nika` and
+  re-exported from `contracts`, so every reader keeps its path. `Ty` and
+  `Shape` are done (`tools/ty.nika`, 0.0.285).
+* **(c)** The signature strings move next to `ledger.nika`. A type's text
+  is done both ways (`Ty::text` 0.0.285, `Ty::parse` 0.0.286).
 * **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,
   and the next ring with them.
 

@@ -692,10 +692,14 @@ fn a_constant_declared_a_string_is_sent_to_the_view() {
         refusal
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("Declare it as `&str`")),
+            .is_some_and(|h| h.contains("Declare it as `ref String`")),
         "the view-shaped equivalent, not `.to_string()`: {:?}",
         refusal.help
     );
+    // In the language's words (ADR-184 D2, D4): `&str` is a spelling the
+    // parser refuses, so a way out that named it could not be taken.
+    let said = format!("{:?} {:?} {}", refusal.notes, refusal.help, refusal.message);
+    assert!(!said.contains('&') && !said.contains("[T; N]"), "{said}");
 }
 
 /// **A question about the value is answered**, which 0.0.112 refused and

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.283 (Draft)
+**Version:** 0.0.286 (Draft)
 **Date:** 2026-09-30
 
 ---
@@ -429,7 +429,8 @@ and where it is kept `.clone()` makes the copy, written where it happens. A view
 in a `String` slot without it is refused with `NK1106`. **`.clone()` is the one
 word for a copy**, of text and of everything else: a copy of text is text of its
 own. `.to_owned()` is refused naming it (`NK1189`); `.to_string()` is the text
-form of a value, which for text is a copy too.
+form of a value, and the text form of text is the text itself: a view stays a
+view, and nothing is copied.
 
 **`T?` lowers to the backend's `Option<T>`**, the mapping Part III 15.2 writes
 the other way round, and `null` is a reserved word (2.1) that lowers to `None`.

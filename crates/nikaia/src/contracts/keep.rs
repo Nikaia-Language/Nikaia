@@ -741,13 +741,30 @@ impl Walk<'_> {
                 self.nested_blocks(value, at);
                 let origins = self.origins(value);
                 if let Some(root) = root_of(self.parsed, target) {
-                    if op.is_none() && matches!(target, Expr::Variable(_)) {
+                    let whole = op.is_none() && matches!(target, Expr::Variable(_));
+                    if whole {
                         self.sheds
                             .entry(root.clone())
                             .or_default()
                             .push(self.path.clone());
                     }
-                    self.flow_into(&root, origins);
+                    // **A buffer handed over whole is a move**, the rule a
+                    // `return` and a `let` already have: `inner = args` takes
+                    // the buffer along, so `inner` is the buffer now and no
+                    // view of it is left behind for a keep to hold. Flowed as
+                    // views, an `inner` declared around the buffer outlived
+                    // it, `args` went into the frame's keep as a view, and the
+                    // assignment put a view where a `String` goes - `rustc`
+                    // about a file nobody wrote (found moving `Ty::parse` into
+                    // Nikaia, ADR-257).
+                    if whole && self.is_the_buffer(value) {
+                        if let Some(local) = self.local_mut(&root) {
+                            local.buffer = true;
+                            local.origins.extend(origins);
+                        }
+                    } else {
+                        self.flow_into(&root, origins);
+                    }
                 }
             }
             Stmt::For {

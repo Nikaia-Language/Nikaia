@@ -1014,7 +1014,26 @@ impl Scanner<'_> {
     }
 
     /// A call on the subject itself, whose end this module does not see.
+    ///
+    /// **Unless the subject cannot hold a view at all**, for
+    /// [`Scanner::field_of_subject`]'s reason one level up: a `struct` whose
+    /// every field is a number, a flag or owned text has nowhere to keep one,
+    /// whatever the method does with it. `impl Shape { fn meets(ref self,
+    /// wanted: ref Shape) -> bool { … self.missing(wanted) … } }` was refused
+    /// as keeping `wanted` in a struct of three `bool`s. An `enum` answers from
+    /// what its variants carry; a subject whose parts are not known here is
+    /// still counted.
     fn subject_destination(&mut self, span: &Span) {
+        let known = self
+            .subject
+            .is_some_and(|t| self.fields.contains_key(&t.name));
+        let can_hold = self
+            .subject_fields
+            .iter()
+            .any(|(_, ty)| holds_view(ty) || names_borrowing(ty, self.borrowing));
+        if known && !can_hold {
+            return;
+        }
         if let Some(owner) = self.subject_text() {
             self.found.push((*span, Destination::Subject { owner }));
         }

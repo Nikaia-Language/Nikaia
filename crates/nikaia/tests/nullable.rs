@@ -11,6 +11,7 @@
 mod common;
 
 use nikaia::check;
+use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::{Ledger, STD, ty::Ty};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -1399,4 +1400,84 @@ fn a_variant_matched_on_a_nullable_is_refused() {
         ),
     );
     assert_eq!(printed.trim(), "2");
+}
+
+/// **A nullable part of a lent value, handed to a `ref T?`**: `name` in
+/// `Shape::Named { name, .. }` over a `ref Shape` is a view of an `Option`
+/// below, and the parameter is an option of a view. `shown(name)` reached
+/// `rustc` as *expected `Option<&str>`, found `&Option<String>`* - found
+/// moving `Ty` into Nikaia (ADR-257), where `Ty::Fn`'s result is one.
+#[test]
+fn a_nullable_part_of_a_lent_value_is_opened_for_a_nullable_view() {
+    let printed = ran(
+        "lent-nullable-part",
+        r#"pub struct Row {
+    pub id: i64,
+}
+
+pub enum Shape {
+    Named { name: String?, count: i64 },
+    Held { row: Row? },
+    Nothing,
+}
+
+fn shown(name: ref String?) -> String {
+    return name ?? "none"
+}
+
+fn id_of(row: ref Row?) -> i64 {
+    if row == null {
+        return 0
+    }
+    return row?.id ?? 0
+}
+
+fn describe(s: ref Shape) -> String {
+    return match s {
+        Shape::Named { name, count } => f"{shown(name)} {count}",
+        Shape::Held { row } => f"row {id_of(row)}",
+        Shape::Nothing => "nothing",
+    }
+}
+
+fn main() {
+    println(describe(Shape::Named { name: "a", count: 2 }))
+    println(describe(Shape::Named { name: null, count: 3 }))
+    println(describe(Shape::Held { row: Row { id: 7 } }))
+    println(describe(Shape::Held { row: null }))
+    println(describe(Shape::Nothing))
+}
+"#,
+    );
+    assert_eq!(printed, "a 2\nnone 3\nrow 7\nrow 0\nnothing\n");
+}
+
+/// **A name on the left of `??` is handed over** when what it holds does not
+/// copy: `viewed ?? "none"` takes the option, and a use of `viewed` after the
+/// line reached `rustc` as *borrow of moved value* (found moving `Ty::parse`
+/// into Nikaia, ADR-257). It is `NK2105` now, with the copy as the way out;
+/// a nullable number is copied and stays usable.
+#[test]
+fn a_name_given_to_a_coalesce_is_handed_over() {
+    let taken = findings(
+        "fn find(n: i64) -> String? {\n    if n > 0 {\n        return \"some\"\n    }\n    return null\n}\n\n\
+         fn main() {\n    let viewed = find(1)\n    let first = viewed ?? \"none\"\n    println(first)\n    \
+         if viewed != null {\n        println(\"again\")\n    }\n}\n",
+    );
+    let refusal = taken
+        .iter()
+        .find(|f| f.code == "NK2105")
+        .unwrap_or_else(|| panic!("NK2105: {taken:#?}"));
+    assert!(
+        refusal.message.contains("given to `??`"),
+        "{}",
+        refusal.message
+    );
+
+    let copied = findings(
+        "fn count(n: i64) -> i64? {\n    if n > 0 {\n        return n\n    }\n    return null\n}\n\n\
+         fn main() {\n    let c = count(1)\n    let first = c ?? 0\n    println(f\"{first}\")\n    \
+         if c != null {\n        println(\"again\")\n    }\n}\n",
+    );
+    assert!(copied.is_empty(), "{copied:#?}");
 }

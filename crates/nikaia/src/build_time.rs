@@ -36,6 +36,7 @@ use std::collections::BTreeMap;
 
 use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{BinaryOp, Block, Expr, Item, Stmt, UnaryOp};
+use crate::contracts::ty::TyOps;
 use crate::contracts::{Ledger, touch};
 use crate::parser::Parsed;
 

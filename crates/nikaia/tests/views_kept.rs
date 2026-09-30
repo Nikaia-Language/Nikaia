@@ -120,3 +120,60 @@ fn a_view_from_one_of_two_buffers_is_refused() {
     );
     assert!(found.iter().any(|f| f.code == "NK2302"), "{found:#?}");
 }
+
+/// **A call on a subject that has nowhere to keep a view keeps none.** A
+/// method of a struct of three `bool`s handed a `ref` on to another method of
+/// the same struct was refused (`NK2302`, *a call on `Shape` might keep what
+/// it's given*): the struct cannot hold the view whatever the method does,
+/// which is the rule a field of the subject already had.
+#[test]
+fn a_call_on_a_subject_that_holds_no_view_keeps_none() {
+    runs(
+        "subject-holds-no-view",
+        "pub struct Shape {\n    pub ends: bool,\n    pub sized: bool,\n}\n\n\
+         impl Shape {\n    pub fn meets(ref self, wanted: ref Shape) -> bool {\n        \
+         return self.missing(wanted).len() == 0\n    }\n\n    \
+         pub fn missing(ref self, wanted: ref Shape) -> Vec[String] {\n        \
+         let mut words: Vec[String] = []\n        \
+         if wanted.ends && !self.ends {\n            words.push(\"ends\")\n        }\n        \
+         return words\n    }\n}\n\n\
+         fn main() {\n    let a = Shape { ends: true, sized: false }\n    \
+         let b = Shape { ends: false, sized: true }\n    \
+         println(f\"{a.meets(ref b)} {b.meets(ref a)}\")\n}\n",
+        "true false",
+    );
+}
+
+/// **Owned text is not a pattern**: `starts_with`, `ends_with` and `contains`
+/// take a view of text or a character, and text of its own handed to one
+/// reached `rustc` as *`Pattern` is not implemented for `String`*. It is
+/// `NK1102` with *write `ref`*, and each shape that is accepted runs.
+#[test]
+fn owned_text_handed_to_a_pattern_is_refused_and_a_view_runs() {
+    for (argument, refused) in [
+        ("f\"{w}[\"", true),
+        ("w", true),
+        ("ref w", false),
+        ("ref f\"{w}\"", false),
+        ("\"ab\"", false),
+        ("'a'", false),
+    ] {
+        let source = format!(
+            "fn f(line: ref String, w: String) -> bool {{\n    return line.starts_with({argument})\n}}\n\n\
+             fn main() {{\n    let r = f(\"abc\", \"a\")\n    println(f\"{{r}}\")\n}}\n"
+        );
+        let found = findings(&source);
+        let refusal = found.iter().find(|f| f.code == "NK1102");
+        assert_eq!(refusal.is_some(), refused, "{argument}: {found:#?}");
+        if let Some(refusal) = refusal {
+            assert_eq!(
+                refusal.help.as_deref(),
+                Some("Write `ref` in front of it to pass a view of it."),
+                "{argument}"
+            );
+        } else {
+            let out = ran("pattern", &source, Build::default());
+            assert!(out == "true" || out == "false", "{argument}: {out}");
+        }
+    }
+}

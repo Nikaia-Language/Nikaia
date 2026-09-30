@@ -1,0 +1,634 @@
+// crates/nikaia-std/src/tools/ty.nika
+//
+// **The type language the checker reasons in, and the one the ledger records**
+// (ADR-257 D1): declared in Nikaia, lowered by `nikaia lower-std` to `ty.rs`
+// beside it, `include!`d as `nikaia_std::tools::ty`, and re-exported by the
+// compiler's `contracts::ty`, which keeps the algorithms over it until
+// ADR-257's step (d) moves them.
+//
+// **A plain tree, compared by what it says** (ADR-257 §4.7): a name here is
+// text, and two types are the same when they are written the same. A ledger is
+// a file, so nothing is interned. The measurement that decided it is in the
+// record.
+//
+// **What moved with the declaration is its text** (ADR-257 step (c)): `text`
+// below is what a diagnostic prints and what a ledger stores, and `parse`
+// reads it back. Text is read here as a list of characters, which is how
+// `ledger.nika` reads a line: this language has no slice of a `String`.
+//
+use std::text
+
+// The boxes are the compiler's (ADR-246): `Pointed`, `Nullable` and `Seq` hold
+// a `Ty` inline, and the lowering boxes them.
+
+/// A type, or the absence of a claim about one.
+///
+/// It is `ast::Type` with one addition and one subtraction. The addition is
+/// `Unknown`, which is not a type but the absence of a claim: anything
+/// involving it is compatible with anything, and an error is reported only
+/// where **both** sides are known and disagree. The subtraction is the spans:
+/// this is also what a ledger records.
+pub enum Ty {
+    /// No claim. Compatible with everything, in both directions.
+    Unknown,
+    /// A name, its arguments, and whether it is a view: `ref String`,
+    /// `Vec[Row]`, `HashMap[ref String, Stats]`.
+    Named {
+        name: String,
+        args: Vec[Ty],
+        view: bool,
+    },
+    /// `(A, B)`: a fixed number of parts and no name.
+    Tuple(Vec[Ty]),
+    /// **What the C boundary lends**
+    /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): `ref mut T`,
+    /// `ref Array[u8]` and `ref mut Array[u8]`, each a view that lives for the
+    /// call. A plain `ref T` is **not** this: it is `Named` with `view`.
+    Pointed {
+        /// What is pointed at.
+        item: Ty,
+        /// A run of them, and the length is the caller's to pass.
+        slice: bool,
+        /// The callee may write through it.
+        mutable: bool,
+    },
+    /// **A number where a type argument stands**
+    /// ([ADR-152](../../../docs/specification/adr/adr-152.md) D1): the `3` of
+    /// `Array[f64, 3]`. Compatible with nothing but itself.
+    Count(i64),
+    /// `$V`: a name in a library's signature that stands for a type the
+    /// receiver supplies ([ADR-030](../../../docs/specification/adr/adr-030.md)).
+    /// It is bound and substituted away at a call, or it becomes `Unknown`.
+    Var {
+        name: String,
+        /// `ref $V`: the view belongs to the use, not to what was bound.
+        view: bool,
+    },
+    /// `fn(ref Stats) -> R sync throws`
+    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1). The
+    /// defaults are the language's: without `sync` the code may pause, without
+    /// `throws` it cannot fail.
+    Fn {
+        params: Vec[Ty],
+        /// `-> R`, absent where the code hands nothing back.
+        result: Ty?,
+        is_sync: bool,
+        /// `throws`, which is a word this language reserves and so cannot name
+        /// a field. `ast::Code` spells it the same way.
+        can_throw: bool,
+    },
+    /// `T?`, Part I 2.3's nullable type. A wrapper rather than a flag, because
+    /// every reader of a type already recurses.
+    Nullable(Ty),
+    /// **Elements produced step by step**
+    /// ([ADR-105](../../../docs/specification/adr/adr-105.md) D1): `Seq[T]`,
+    /// and `Par[T]` with `parallel`. The words after it say what one step may
+    /// do ([ADR-172](../../../docs/specification/adr/adr-172.md) D1: `sync`
+    /// and `pauses` are not both) and what the whole is (`shape`).
+    Seq {
+        item: Ty,
+        is_sync: bool,
+        /// A positive claim, and not the absence of `sync`.
+        pauses: bool,
+        can_throw: bool,
+        parallel: bool,
+        shape: Shape,
+    },
+}
+
+/// **What a sequence is as a whole**
+/// ([ADR-212](../../../docs/specification/adr/adr-212.md) D1): the language
+/// below's `DoubleEndedIterator`, `ExactSizeIterator` and `Copy`, in this
+/// language's words.
+pub struct Shape {
+    /// It can be walked from the back as well as the front.
+    pub ends: bool,
+    /// Its length is known before it is walked.
+    pub sized: bool,
+    /// Walking it does not consume it.
+    pub replays: bool,
+}
+
+impl Shape {
+    /// None of the three: what a sequence is when nobody said. Named rather
+    /// than a `Default`, for ADR-252 D4.4's reason.
+    pub fn none() -> Shape {
+        return Shape { ends: false, sized: false, replays: false }
+    }
+
+    /// Whether a sequence of this shape can go where `wanted` is demanded.
+    pub fn meets(ref self, wanted: ref Shape) -> bool {
+        return self.missing(wanted).len() == 0
+    }
+
+    /// The words `wanted` demands and this shape does not have, in the order
+    /// they are written.
+    pub fn missing(ref self, wanted: ref Shape) -> Vec[String] {
+        let mut words: Vec[String] = []
+        if wanted.ends && !self.ends {
+            words.push(ENDS.clone())
+        }
+        if wanted.sized && !self.sized {
+            words.push(SIZED.clone())
+        }
+        if wanted.replays && !self.replays {
+            words.push(REPLAYS.clone())
+        }
+        return words
+    }
+}
+
+/// [`Shape::ends`]'s word.
+pub comptime ENDS: ref String = "ends"
+/// [`Shape::sized`]'s word.
+pub comptime SIZED: ref String = "sized"
+/// [`Shape::replays`]'s word.
+pub comptime REPLAYS: ref String = "replays"
+/// A sequence's name.
+pub comptime SEQ: ref String = "Seq"
+/// A sequence whose steps run on several cores at once.
+pub comptime PAR: ref String = "Par"
+/// The word after a sequence whose step suspends.
+pub comptime PAUSES: ref String = "pauses"
+/// **The array and the run** (ADR-184 D3): `Array[T, N]` is laid out inline,
+/// `ref Array[T]` is a view of a run.
+pub comptime ARRAY: ref String = "Array"
+/// `Array[`, and how many characters it is: where a run's element starts.
+comptime ARRAY_OPEN: ref String = "Array["
+comptime ARRAY_OPEN_LENGTH: i64 = 6
+/// **Text, in the language's word** (ADR-184 D2).
+pub comptime TEXT: ref String = "String"
+/// **The compiler's noun for a view of text**, which a message never prints.
+pub comptime TEXT_VIEW: ref String = "str"
+
+impl Ty {
+    /// **The text of a type**: what a diagnostic prints and what a ledger
+    /// stores, in the spelling a program writes (Part III, C.1). `Ty::parse`
+    /// reads it back, byte for byte.
+    pub fn text(ref self) -> String {
+        return text(self)
+    }
+}
+
+/// [`Ty::text`], as a function the arms below recurse through.
+pub fn text(ty: ref Ty) -> String {
+    return match ty {
+        Ty::Unknown => "?",
+        // The digits and nothing around them, so `Array[f64, 3]` reads as the
+        // source wrote it.
+        Ty::Count(n) => f"{n}",
+        Ty::Pointed { item, slice, mutable } => pointed(item, slice, mutable),
+        Ty::Tuple(parts) => f"({listed(parts)})",
+        Ty::Fn { params, result, is_sync, can_throw } => code(params, result, is_sync, can_throw),
+        Ty::Var { name, view } => if view { f"ref ${name}" } else { f"${name}" },
+        // `T?` and never `Option[T]`: the program cannot write the second.
+        Ty::Nullable(inner) => f"{text(inner)}?",
+        Ty::Named { name, args, view } => named(name, args, view),
+        Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => sequence(item, is_sync, pauses, can_throw, parallel, shape),
+    }
+}
+
+/// `a, b, c`, each part's text.
+fn listed(parts: ref Array[Ty]) -> String {
+    let mut out: String = ""
+    for part in parts {
+        if !out.is_empty() {
+            out.push_str(", ")
+        }
+        out.push_str(ref text(part))
+    }
+    return out
+}
+
+/// `ref mut Array[T]`, and not the pointer it lowers to. The `?` a nullable
+/// pointee carries comes out after the brackets, which is the spelling
+/// `Ty::parse` reads back (ADR-155 D5).
+fn pointed(item: ref Ty, slice: bool, mutable: bool) -> String {
+    let mut out: String = "ref "
+    if mutable {
+        out.push_str("mut ")
+    }
+    if !slice {
+        out.push_str(ref text(item))
+        return out
+    }
+    let written = match item {
+        Ty::Nullable(inner) => f"{ARRAY}[{text(inner)}]?",
+        else => f"{ARRAY}[{text(item)}]",
+    }
+    out.push_str(ref written)
+    return out
+}
+
+/// `fn(A, B) -> R sync throws`.
+fn code(params: ref Array[Ty], result: ref Ty?, is_sync: bool, can_throw: bool) -> String {
+    let mut out = f"fn({listed(params)})"
+    if result != null {
+        let returned = result?.text() ?? ""
+        out.push_str(ref f" -> {returned}")
+    }
+    if is_sync {
+        out.push_str(" sync")
+    }
+    if can_throw {
+        out.push_str(" throws")
+    }
+    return out
+}
+
+/// `ref Vec[Row]`. **`str` is the compiler's noun and `String` is the
+/// language's** (ADR-184 D2): a view of text prints as `ref String`.
+fn named(name: ref String, args: ref Array[Ty], view: bool) -> String {
+    let mut out: String = if view { "ref " } else { "" }
+    if view && name == TEXT_VIEW {
+        out.push_str(TEXT)
+    } else {
+        out.push_str(name)
+    }
+    if args.len() > 0 {
+        out.push_str(ref f"[{listed(args)}]")
+    }
+    return out
+}
+
+/// `Seq[T] sync pauses throws ends sized replays`, the words in the order they
+/// are read, so a ledger that goes through this comes out byte for byte (Part
+/// III, 13.5).
+fn sequence(item: ref Ty, is_sync: bool, pauses: bool, can_throw: bool, parallel: bool, shape: ref Shape) -> String {
+    let word = if parallel { PAR } else { SEQ }
+    let mut out = f"{word}[{text(item)}]"
+    if is_sync {
+        out.push_str(" sync")
+    }
+    if pauses {
+        out.push_str(ref f" {PAUSES}")
+    }
+    if can_throw {
+        out.push_str(" throws")
+    }
+    for word in Shape::none().missing(shape) {
+        out.push_str(ref f" {word}")
+    }
+    return out
+}
+
+/// **A type read back from its text**: what `text` writes, and the older
+/// spellings a ledger may still hold (`&T` for `ref T`, `[T]` for
+/// `Array[T]`, ADR-184 D4). Nothing here refuses: text that is not a type is
+/// read as a name, which is what a type this compiler does not know is.
+pub fn parse(written: ref String) -> Ty {
+    let trimmed = written.trim()
+    if trimmed.len() == 0 || trimmed == "?" {
+        return Ty::Unknown
+    }
+    // **A run of digits is a count** (ADR-152 D1), read first because no type
+    // name begins with a digit.
+    let count = text::parse_i64(trimmed)
+    if count != null {
+        return Ty::Count(count ?? 0)
+    }
+    // The view marker, read once: the two boundary shapes and a plain view
+    // both start with it.
+    let viewed = a_view_of(trimmed)
+    let is_a_view = viewed != null
+    let marked: String = viewed ?? ""
+    // **The two boundary shapes are read before the `?`** (ADR-155 D5): on a
+    // `ref mut T` or a `ref Array[T]` the trailing `?` is the pointee's.
+    if is_a_view {
+        let pointer = pointed_at(marked)
+        if pointer != null {
+            return pointer ?? Ty::Unknown
+        }
+    }
+    // A trailing `?` is Part I 2.3's nullable marker, read before anything
+    // else so that `ref String?` reaches the rest as what it is nullable of.
+    if trimmed.ends_with("?") {
+        return Ty::Nullable(parse(cut(trimmed, 0, 1)))
+    }
+    if trimmed.starts_with("(") && trimmed.ends_with(")") {
+        return Ty::Tuple(each(split_args(cut(trimmed, 1, 1))))
+    }
+    // `fn(Stats) -> R sync throws`: read before a view, because a
+    // function type is never one.
+    if trimmed.starts_with("fn(") {
+        let code = a_function(trimmed)
+        if code != null {
+            return code ?? Ty::Unknown
+        }
+    }
+    // `Seq[T]` and `Par[T]` with their words: never a view either, because a
+    // produced sequence is walked by value (ADR-105 D2).
+    let sequence = a_sequence(trimmed, SEQ, false)
+    if sequence != null {
+        return sequence ?? Ty::Unknown
+    }
+    let parallel = a_sequence(trimmed, PAR, true)
+    if parallel != null {
+        return parallel ?? Ty::Unknown
+    }
+    if is_a_view {
+        return a_name(marked.trim(), true)
+    }
+    return a_name(trimmed, false)
+}
+
+/// **Split `a, b[c, d], (e, f)` on the commas that are not inside a bracket**,
+/// each part trimmed. An empty last part is not one.
+pub fn split_args(written: ref String) -> Vec[String] {
+    let mut parts: Vec[String] = []
+    let mut depth = 0
+    let mut current: String = ""
+    for c in written.chars() {
+        if c == '[' || c == '(' {
+            depth += 1
+            current.push(c)
+        } else if c == ']' || c == ')' {
+            if depth > 0 {
+                depth -= 1
+            }
+            current.push(c)
+        } else if c == ',' && depth == 0 {
+            parts.push(current.trim().clone())
+            current = ""
+        } else {
+            current.push(c)
+        }
+    }
+    if current.trim().len() > 0 {
+        parts.push(current.trim().clone())
+    }
+    return parts
+}
+
+/// **The view marker off the front of a written type** (ADR-184 D1): `ref T`,
+/// and `&T`, the spelling it replaced. The word needs the space after it, so
+/// `reference` is not read as a view of `erence`.
+pub fn a_view_of(written: ref String) -> String? {
+    if written.starts_with("ref ") {
+        let rest = cut(written, 4, 0)
+        return rest.trim_start().clone()
+    }
+    if written.starts_with("&") {
+        let rest = cut(written, 1, 0)
+        return rest.trim_start().clone()
+    }
+    return null
+}
+
+/// Each part read as a type.
+fn each(parts: ref Array[String]) -> Vec[Ty] {
+    let mut read: Vec[Ty] = []
+    for part in parts {
+        read.push(parse(part))
+    }
+    return read
+}
+
+/// The characters from `from` up to `to`, as text.
+fn between(c: ref Array[char], from: i64, to: i64) -> String {
+    let mut out: String = ""
+    for k in from..<to {
+        out.push(c[k])
+    }
+    return out
+}
+
+/// `written` with `front` characters taken off the front and `back` off the
+/// back.
+fn cut(written: ref String, front: i64, back: i64) -> String {
+    let c: Vec[char] = written.chars().collect()
+    return between(c, front, c.len() - back)
+}
+
+/// Where the bracket stands that closes one opened just before `from`: `)`
+/// after `fn(`, `]` after `Seq[`. Either bracket opens; the other closer where
+/// nothing is open is a mismatch. -1 where nothing closes it.
+fn closing(c: ref Array[char], from: i64, closer: char) -> i64 {
+    let mut depth = 0
+    for at in from..<c.len() {
+        let ch = c[at]
+        if ch == '(' || ch == '[' {
+            depth += 1
+        } else if ch == closer {
+            if depth == 0 {
+                return at
+            }
+            depth -= 1
+        } else if ch == ')' || ch == ']' {
+            if depth == 0 {
+                return -1
+            }
+            depth -= 1
+        }
+    }
+    return -1
+}
+
+/// `tail` with `word` taken off its end, where the word stands on its own: at
+/// the start, or after a space. `Seq[T] ends` loses `ends`; `Seq[T]friends`
+/// does not.
+fn word_off(tail: ref String, word: ref String) -> String? {
+    if !tail.ends_with(word) {
+        return null
+    }
+    let c: Vec[char] = tail.chars().collect()
+    let w: Vec[char] = word.chars().collect()
+    let shorter = between(c, 0, c.len() - w.len())
+    if shorter.len() == 0 {
+        return shorter
+    }
+    if c[c.len() - w.len() - 1].is_whitespace() {
+        return shorter.trim_end().clone()
+    }
+    return null
+}
+
+/// **What the C boundary lends, read out of its text** (ADR-147 D1):
+/// `ref mut T`, `ref Array[T]` and the two together. A plain `ref T` is not
+/// one: it is the view every other declaration writes. The `?` at the end is
+/// the pointee's (ADR-155 D5).
+fn pointed_at(viewed: ref String) -> Ty? {
+    let mut rest: String = viewed.clone()
+    let mut mutable = false
+    if rest.starts_with("mut ") {
+        mutable = true
+        let shorter = cut(rest, 4, 0)
+        rest = shorter.trim_start().clone()
+    }
+    let mut absent = false
+    if rest.ends_with("?") {
+        absent = true
+        let shorter = cut(rest, 0, 1)
+        rest = shorter.trim_end().clone()
+    }
+    // **`Array[T]` is the run and `[T]` the spelling it replaced** (ADR-184
+    // D3, D4). `Array[T, N]` is not one: the count lays it out inline.
+    let mut slice = false
+    let mut inner: String = ""
+    if rest.starts_with(ARRAY_OPEN) && rest.ends_with("]") {
+        let args = cut(rest, ARRAY_OPEN_LENGTH, 1)
+        if split_args(args).len() == 1 {
+            slice = true
+            inner = args
+        }
+    }
+    if !slice && rest.starts_with("[") && rest.ends_with("]") {
+        slice = true
+        inner = cut(rest, 1, 1)
+    }
+    if !mutable && !slice {
+        return null
+    }
+    if !slice {
+        inner = rest.clone()
+    }
+    let item = parse(inner)
+    if absent {
+        return Ty::Pointed { item: Ty::Nullable(item), slice: slice, mutable: mutable }
+    }
+    return Ty::Pointed { item: item, slice: slice, mutable: mutable }
+}
+
+/// `fn(A, B) -> R sync throws`: the parenthesis matched rather than found at
+/// the end, and the words read off the back, because the result is whatever
+/// stands in front of them (ADR-102 D1).
+fn a_function(written: ref String) -> Ty? {
+    let c: Vec[char] = written.chars().collect()
+    let close = closing(c, 3, ')')
+    if close < 0 {
+        return null
+    }
+    let after = between(c, close + 1, c.len())
+    let mut tail: String = after.trim().clone()
+    let mut is_sync = false
+    let mut can_throw = false
+    while tail.len() > 0 {
+        let without_throws = word_off(tail, "throws")
+        if without_throws != null {
+            can_throw = true
+            tail = without_throws ?? ""
+            continue
+        }
+        let without_sync = word_off(tail, "sync")
+        if without_sync != null {
+            is_sync = true
+            tail = without_sync ?? ""
+            continue
+        }
+        break
+    }
+    let params = each(split_args(between(c, 3, close)))
+    if tail.starts_with("->") {
+        let result = parse(cut(tail, 2, 0))
+        return Ty::Fn { params: params, result: result, is_sync: is_sync, can_throw: can_throw }
+    }
+    return Ty::Fn { params: params, result: null, is_sync: is_sync, can_throw: can_throw }
+}
+
+/// `Seq[T] sync throws ends`, read the way a function type's tail is: the
+/// bracket matched, the words read off the back in any order. `sync` and
+/// `pauses` together, or a tail nobody wrote, is not this (ADR-172 D1).
+fn a_sequence(written: ref String, word: ref String, parallel: bool) -> Ty? {
+    if !written.starts_with(word) {
+        return null
+    }
+    let w: Vec[char] = word.chars().collect()
+    let after_word = cut(written, w.len(), 0)
+    let rest: String = after_word.trim_start().clone()
+    if !rest.starts_with("[") {
+        return null
+    }
+    let c: Vec[char] = rest.chars().collect()
+    let close = closing(c, 1, ']')
+    if close < 0 {
+        return null
+    }
+    let after = between(c, close + 1, c.len())
+    let mut tail: String = after.trim().clone()
+    let mut is_sync = false
+    let mut pauses = false
+    let mut can_throw = false
+    let mut ends = false
+    let mut sized = false
+    let mut replays = false
+    while tail.len() > 0 {
+        let without_ends = word_off(tail, ENDS)
+        if without_ends != null {
+            ends = true
+            tail = without_ends ?? ""
+            continue
+        }
+        let without_sized = word_off(tail, SIZED)
+        if without_sized != null {
+            sized = true
+            tail = without_sized ?? ""
+            continue
+        }
+        let without_replays = word_off(tail, REPLAYS)
+        if without_replays != null {
+            replays = true
+            tail = without_replays ?? ""
+            continue
+        }
+        let without_throws = word_off(tail, "throws")
+        if without_throws != null {
+            can_throw = true
+            tail = without_throws ?? ""
+            continue
+        }
+        let without_sync = word_off(tail, "sync")
+        if without_sync != null {
+            is_sync = true
+            tail = without_sync ?? ""
+            continue
+        }
+        let without_pauses = word_off(tail, PAUSES)
+        if without_pauses != null {
+            pauses = true
+            tail = without_pauses ?? ""
+            continue
+        }
+        break
+    }
+    if is_sync && pauses {
+        return null
+    }
+    if tail.len() > 0 {
+        return null
+    }
+    let item = parse(between(c, 1, close))
+    let shape = Shape { ends: ends, sized: sized, replays: replays }
+    return Ty::Seq { item: item, is_sync: is_sync, pauses: pauses, can_throw: can_throw, parallel: parallel, shape: shape }
+}
+
+/// A name, its arguments and whether it is a view, or a variable: `ref $V`
+/// is a view of what `$V` binds to. **A view of `String` is a view of text**
+/// (ADR-184 D2), read back as the compiler's own noun for one.
+fn a_name(rest: ref String, view: bool) -> Ty {
+    if rest.starts_with("$") && rest.len() > 1 {
+        return Ty::Var { name: cut(rest, 1, 0), view: view }
+    }
+    if view && rest == TEXT {
+        return Ty::Named { name: TEXT_VIEW.clone(), args: [], view: true }
+    }
+    // Arguments only where the text ends in the bracket that closes them.
+    if !rest.ends_with("]") {
+        return Ty::Named { name: rest.clone(), args: [], view: view }
+    }
+    let c: Vec[char] = rest.chars().collect()
+    let mut open = -1
+    for at in 0..<c.len() {
+        if open < 0 && c[at] == '[' {
+            open = at
+        }
+    }
+    if open >= 0 {
+        let named = between(c, 0, open)
+        return Ty::Named {
+            name: named.trim().clone(),
+            args: each(split_args(between(c, open + 1, c.len() - 1))),
+            view: view,
+        }
+    }
+    return Ty::Named { name: rest.clone(), args: [], view: view }
+}

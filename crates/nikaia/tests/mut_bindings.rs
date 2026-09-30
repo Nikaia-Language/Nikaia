@@ -27,6 +27,7 @@ mod common;
 
 use std::process::Command;
 
+use nikaia::contracts::ty::TyOps;
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

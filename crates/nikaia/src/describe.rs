@@ -69,6 +69,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::contracts::ty::TyOps;
 use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract, ty::Ty};
 
 /// What a run of the command did, for the line it prints.

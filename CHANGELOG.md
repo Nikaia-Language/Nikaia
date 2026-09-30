@@ -4,6 +4,79 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.286] — 2026-09-30
+
+**A type's text is read in Nikaia too** (ADR-257 step (c)), and three defects
+the move found are fixed. The toolchain is 4.7 % Nikaia.
+
+- `Ty::parse` and `split_args` are `tools/ty.nika`'s, and the compiler's
+  `contracts::ty` calls them. The Rust parser ran beside the Nikaia one first,
+  over every type the shipped ledgers write, the text of each read back, and
+  ninety-odd edge cases: 989 inputs, identical. **The price is measured:** this
+  language has no slice of text, so each piece is copied where the Rust
+  sliced; reading `std.contracts` costs 95.46 M instructions instead of
+  90.96 M (5.0 % of an empty program, 2.3 % of `json`). ADR-257 §5 records it.
+- **Defects the move found:**
+  - **A buffer assigned whole was kept as a view** (ADR-209's tether).
+    `inner = args` took `args`'s views into an `inner` declared around it, so
+    `args` went into the frame's keep and the assignment put a view where a
+    `String` goes: `rustc`'s *mismatched types*. An assignment of the buffer
+    itself is a move now, as a `return` and a `let` already were.
+  - **Owned text handed to `starts_with`, `ends_with` or `contains`** reached
+    `rustc` as *`Pattern` is not implemented for `String`*. It is `NK1102`
+    with *write `ref`*, and a literal, a character and a `ref` pass.
+  - **A name given to `??` and used again** reached `rustc` as *borrow of
+    moved value*. It is `NK2105` now. Whether `??` should lend instead is
+    `open-decisions.md`'s new question, with a recommendation.
+- The lowering writes no `.into()` after a `??` whose fallback is a variant
+  of an enum the file declares; and `manual_map` joins the tool modules'
+  allowed lints, for a `?.` on a method, which is a `match` because a method
+  may pause or fail (ADR-066). `nikaia-std`'s `lib.rs` says why.
+
+## [0.0.285] — 2026-09-30
+
+**`Ty` and `Shape` are Nikaia** (ADR-257 D1, step (b)'s first half), with
+the text a type is written as. The toolchain is 4.1 % Nikaia.
+
+- `nikaia-std/src/tools/ty.nika` declares the checker's type language: the
+  nine shapes of `Ty`, `Shape` with `meets` and `missing`, the words a
+  sequence carries, and `Ty::text`, which is what a diagnostic prints and a
+  ledger stores. The compiler's `contracts::ty` re-exports them, and what was
+  `impl Ty` is the trait `TyOps` beside it until step (d). `Display` is five
+  lines in `nikaia-std` that call `text`. The field `throws` is `can_throw`,
+  because the word is reserved; `Fn`'s result is a `Ty?`, boxed where ADR-246
+  boxes it; and `Shape::none()` stands where a `Default` was. Re-lowering all
+  of `std` with the new compiler changes no file.
+- **Four defects the move found:**
+  - **A call on a subject that cannot hold a view was taken to keep one**
+    (`NK2302`). `impl Shape { fn meets(ref self, wanted: ref Shape) -> bool
+    { … self.missing(wanted) … } }` was refused as keeping `wanted` in a
+    struct of three `bool`s. The subject now answers as its fields already
+    did: a struct or enum whose parts hold no view keeps none.
+  - **A nullable part of a lent value, handed to a `ref T?`**, reached `rustc`
+    as *expected `Option<&str>`, found `&Option<String>`*. `name` in
+    `S::Named { name, .. }` over a `ref S` is now a binding the language below
+    lent, and the call opens the option (`.as_deref()`, `.as_ref()`), as it
+    does where the compiler lends a `T?` itself.
+  - **`NK1137` named `&`**: *You don't need the `&` here … Remove the `&`*,
+    about a program that wrote `ref`. The parser refuses `&` (ADR-184 D4), so
+    the way out could not be taken (Part III C.2). It says `ref` now.
+  - **Part I 2.3 said `.to_string()` on text is a copy.** ADR-216 D4 (0.0.193,
+    the owner's decision) made it the text itself, a view where the receiver
+    is one; the checker and its tests do that, and the sentence was left from
+    0.0.192. It says what the language does now.
+
+## [0.0.284] — 2026-09-30
+
+**`NK1167`'s way out is one a program can write.**
+
+- A `comptime` declared `String` was told *Declare it as `&str`*, and one
+  declared as a `Vec` was told it can hold *`[T; N]`*. The parser refuses
+  `&`, which left the language at 0.0.134 (ADR-184 D4), and `[T; N]` is the
+  language below's spelling. Part III C.2 says a way out that cannot be taken
+  is not one. The messages now say `ref String` and `Array[T, N]`, and
+  `tests/build_time.rs` checks that neither spelling comes back.
+
 ## [0.0.283] — 2026-09-30
 
 **The checker's types move to Nikaia as they are, and the measurement that

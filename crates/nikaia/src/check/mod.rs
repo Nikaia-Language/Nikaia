@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
+use crate::contracts::ty::TyOps;
 use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
 use crate::parser::Parsed;
@@ -4201,14 +4202,7 @@ impl<'a> Checker<'a> {
         // builds what its signature hands back; anything else is the value.
         let acc = match (named, built) {
             (Some(result), _) => result,
-            (
-                None,
-                Ty::Fn {
-                    result: Some(result),
-                    ..
-                },
-            ) => *result,
-            (None, Ty::Fn { result: None, .. }) => Ty::Unknown,
+            (None, Ty::Fn { result, .. }) => (*result).unwrap_or(Ty::Unknown),
             (None, other) => other,
         };
         // **`NK2209` is the rule here and not `NK2206`**: no parameter type
@@ -6307,20 +6301,30 @@ impl<'a> Checker<'a> {
                 severity: Severity::Error,
                 span: *span,
                 code: "NK1137",
-                message: "You don't need the `&` here: the compiler adds it where it's needed."
+                message: "You don't need the `ref` here: the compiler lends where it's needed."
                     .to_string(),
                 notes: vec![format!(
                     "`{written}` only reads this argument, so it's lent already. Whether an \
                      argument is lent or handed over is decided by the function, not the call."
                 )],
-                help: Some("Remove the `&`.".to_string()),
+                help: Some("Remove the `ref`.".to_string()),
                 labels: Vec::new(),
             });
             return true;
         }
+        // **A view of a nullable handed to a nullable view** is recorded, and
+        // no `&` is what the emitter writes for it: a part a `match` was lent
+        // (`Local::lent`) of type `T?` is an `&Option<T>` below, and a
+        // `ref T?` parameter an `Option<&T>`. The emitter opens the option
+        // (`.as_deref()`, `.as_ref()`), which is what it writes where it lends
+        // a `T?` of its own.
+        let a_lent_nullable = matches!(found, Ty::Nullable(_))
+            && matches!(want, Ty::Nullable(inner) if inner.is_a_view())
+            && matches!(given, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent));
         // A value that is already a view needs nothing: the declaration and the
         // argument agree without a second `&`.
-        if found.is_a_view() {
+        if found.is_a_view() && !a_lent_nullable {
             return false;
         }
         // **Nor does a function this function was lent**: a code parameter
@@ -6980,10 +6984,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1137",
-            message: "You don't need the `&` here: the compiler adds it where it's needed."
+            message: "You don't need the `ref` here: the compiler lends where it's needed."
                 .to_string(),
             notes: vec![format!("{}, so it's lent already.", sentence(because))],
-            help: Some("Remove the `&`.".to_string()),
+            help: Some("Remove the `ref`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -7381,8 +7385,13 @@ impl<'a> Checker<'a> {
         // **The eager walks and not the lazy ones**, for the reason above read
         // the other way: a `map` has produced nothing, so nothing of it has
         // failed yet, and the failure belongs to whatever walks the result.
-        let walks_a_failing_step = matches!(&on, Ty::Seq { throws: true, .. })
-            && walks_by_value(contract)
+        let walks_a_failing_step = matches!(
+            &on,
+            Ty::Seq {
+                can_throw: true,
+                ..
+            }
+        ) && walks_by_value(contract)
             && !hands_back_a_sequence;
         if walks_a_failing_step {
             self.a_walk_of_a_failing_sequence(method, span);
@@ -7457,6 +7466,7 @@ impl<'a> Checker<'a> {
         self.a_view_kept_where_the_receiver_says_text(
             &key, contract, args, &found, &expected, span,
         );
+        self.a_pattern_of_owned_text(&key, args, &found, span);
         // The receiver first (ADR-031), then whatever the arguments can still
         // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
@@ -7604,7 +7614,7 @@ impl<'a> Checker<'a> {
             // are not words a program can write (ADR-105 D4), so a message that
             // named them would name something its reader cannot type
             // (Part III C.1).
-            let (needs, lacks, way) = match missing[0] {
+            let (needs, lacks, way) = match missing[0].as_str() {
                 ty::ENDS => (
                     "walks a sequence from the back",
                     "this one can only be walked from the front",
@@ -9539,11 +9549,23 @@ impl<'a> Checker<'a> {
                             }
                         }
                     }
+                    // **And such a part is a view the language below lent**
+                    // (`Local::lent`), whatever its type says: `name` in
+                    // `S::Named { name, .. }` over a `ref S` is an
+                    // `&Option<String>` below, where a `ref String?` parameter
+                    // is an `Option<&str>`. The two type alike here, and a call
+                    // that hands the first to the second needs the option
+                    // opened (found moving `Ty` into Nikaia, ADR-257).
+                    let lent_parts = !lendable && typed.is_a_view();
                     let frame = self
                         .pattern_bindings(&arm.pattern)
                         .into_iter()
                         .map(|local| match parts.get(&local.name) {
-                            Some(ty) => Local::free(local.name, ty.clone()),
+                            Some(ty) => {
+                                let mut bound = Local::free(local.name, ty.clone());
+                                bound.lent = lent_parts && !self.copied(ty);
+                                bound
+                            }
                             None => local,
                         })
                         .collect();
@@ -9724,14 +9746,14 @@ impl<'a> Checker<'a> {
                                     item,
                                     is_sync,
                                     pauses,
-                                    throws,
+                                    can_throw: throws,
                                     parallel,
                                     shape,
                                 } => Ty::Seq {
                                     item: Box::new(own(*item)),
                                     is_sync,
                                     pauses,
-                                    throws,
+                                    can_throw: throws,
                                     parallel,
                                     shape,
                                 },
@@ -9949,7 +9971,7 @@ impl<'a> Checker<'a> {
                     params,
                     result,
                     is_sync,
-                    throws,
+                    can_throw: throws,
                 }) = self.a_field_that_is_code(&on, *method)
                 {
                     self.arguments_given(args, &params, false, None, span);
@@ -9997,7 +10019,7 @@ impl<'a> Checker<'a> {
                     self.receiver_name = outer_named;
                     self.at_a_write_door = outer_door;
                     self.inside_a_door = outer_inside;
-                    return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
+                    return (*result).unwrap_or_else(|| Ty::named("()"));
                 }
                 // **A copy of a slice is a list** (ADR-216 D2): `to_owned`
                 // below, where `.clone()` would copy the reference.
@@ -10066,7 +10088,7 @@ impl<'a> Checker<'a> {
                         item,
                         is_sync,
                         pauses,
-                        throws,
+                        can_throw: throws,
                         parallel,
                         shape,
                     } if copies_as_a_view(&item) => {
@@ -10077,7 +10099,7 @@ impl<'a> Checker<'a> {
                             item: Box::new(unviewed(&item)),
                             is_sync,
                             pauses,
-                            throws,
+                            can_throw: throws,
                             parallel,
                             shape,
                         }
@@ -11037,6 +11059,16 @@ impl<'a> Checker<'a> {
             Expr::Coalesce { value, fallback } => {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
+                // **A name on the left of `??` is handed over**: the language
+                // below takes the option to answer from it, so a use of the
+                // name after the line is a use after a move. Unrecorded, that
+                // reached `rustc` as *borrow of moved value* about a file
+                // nobody wrote (found moving `Ty::parse` into Nikaia,
+                // ADR-257). A view and a copy are not taken, which
+                // `hands_over` asks.
+                if matches!(&**value, Expr::Variable(_)) {
+                    self.hands_over(value, &left, "given to `??`", span);
+                }
                 let from_a_map = std::mem::replace(&mut self.read_a_map, outer)
                     && matches!(&**value, Expr::Index { .. });
                 let other = self.expr(fallback, span);
@@ -11192,7 +11224,7 @@ impl<'a> Checker<'a> {
                     item: Box::new(item),
                     is_sync: true,
                     pauses: false,
-                    throws: false,
+                    can_throw: false,
                     parallel: false,
                     shape: ty::Shape {
                         ends: true,
@@ -12486,7 +12518,7 @@ impl<'a> Checker<'a> {
                 params,
                 result,
                 is_sync,
-                throws,
+                can_throw: throws,
             }) = self.lookup(&name)
         {
             self.read_at.push((name.clone(), span.at()));
@@ -12500,7 +12532,7 @@ impl<'a> Checker<'a> {
                 entry.code_pauses |= !is_sync;
                 entry.code_fails |= throws;
             }
-            return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
+            return (*result).unwrap_or_else(|| Ty::named("()"));
         }
 
         // **A variant is built by its constructor, and its parts are what it
@@ -13174,6 +13206,49 @@ impl<'a> Checker<'a> {
             finding.notes.extend(why);
             finding.help = Some(help);
         }
+    }
+
+    /// **Owned text is not a pattern** (found moving `Ty::parse` into Nikaia,
+    /// ADR-257). `starts_with`, `ends_with` and `contains` take a view of text
+    /// or a character, which is why the ledger writes their parameter `?`, and
+    /// `line.starts_with(f"{word}[")` passed and reached `rustc` as *the trait
+    /// `Pattern` is not implemented for `String`* about a file nobody wrote
+    /// (Part III C.1). It is the ordinary argument refusal, with the way out
+    /// every method argument has: a view, written `ref`. A literal is a view
+    /// already (ADR-207 D3), and a type this compiler could not work out is
+    /// left alone (C.4).
+    fn a_pattern_of_owned_text(&mut self, key: &str, given: &[Expr], found: &[Ty], span: &Span) {
+        let param = match key {
+            "str::starts_with" => "prefix",
+            "str::ends_with" => "suffix",
+            "str::contains" => "part",
+            _ => return,
+        };
+        let owned = found.first().is_some_and(|ty| {
+            matches!(ty, Ty::Named { name, args, view: false } if args.is_empty() && name == ty::TEXT)
+        });
+        if !owned
+            || given
+                .first()
+                .is_some_and(|g| matches!(g, Expr::LitStr { .. }))
+        {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!(
+                "`{key}` expects `{param}` to be `ref String` here, but you're passing `String`."
+            ),
+            notes: vec![
+                "What it looks for is a view of text or a character; text of its own is \
+                 neither."
+                    .to_string(),
+            ],
+            help: Some("Write `ref` in front of it to pass a view of it.".to_string()),
+            labels: Vec::new(),
+        });
     }
 
     /// **A view kept where the receiver says text of its own**
@@ -14865,8 +14940,13 @@ impl<'a> Checker<'a> {
     /// Asked twice — once for the `?` the emitter writes and once for the
     /// refusal — so it is one sentence rather than two that have to agree.
     fn walks_a_failing_sequence(&self, on: &Ty, contract: &FnContract) -> bool {
-        matches!(on, Ty::Seq { throws: true, .. })
-            && walks_by_value(contract)
+        matches!(
+            on,
+            Ty::Seq {
+                can_throw: true,
+                ..
+            }
+        ) && walks_by_value(contract)
             && !matches!(
                 contract.signature.as_ref().and_then(|s| s.result.as_ref()),
                 Some(Ty::Seq { .. })
@@ -14949,7 +15029,9 @@ impl<'a> Checker<'a> {
         let name = match over {
             Ty::Named { name, .. } if self.iterates_fallibly(name) => format!("`{name}`"),
             Ty::Seq {
-                throws: true, item, ..
+                can_throw: true,
+                item,
+                ..
             } => match &**item {
                 Ty::Unknown => "a sequence".to_string(),
                 item => format!("a sequence of `{item}`"),
@@ -16804,7 +16886,9 @@ impl<'a> Checker<'a> {
         }
         if let (
             Ty::Fn {
-                is_sync, throws, ..
+                is_sync,
+                can_throw: throws,
+                ..
             },
             Expr::Closure { .. },
         ) = (want, value)
@@ -16847,7 +16931,7 @@ impl<'a> Checker<'a> {
             Ty::Fn {
                 params,
                 is_sync,
-                throws,
+                can_throw: throws,
                 ..
             },
             Expr::Variable(name),
@@ -16875,13 +16959,8 @@ impl<'a> Checker<'a> {
     /// value a lambda ends in is handed to whoever calls it, as a function's
     /// is (ADR-207 D2).
     fn a_lambdas_text_is_its_own(&mut self, want: &Ty, value: &Expr) {
-        if let (
-            Ty::Fn {
-                result: Some(result),
-                ..
-            },
-            Expr::Closure { body, .. },
-        ) = (want, value)
+        if let (Ty::Fn { result, .. }, Expr::Closure { body, .. }) = (want, value)
+            && let Some(result) = result.as_ref()
             && let Some(tail) = tail_of(body)
         {
             self.text_literal(result, tail, true);
@@ -17755,7 +17834,7 @@ impl<'a> Checker<'a> {
                     .unwrap_or_else(|| "T".to_string());
                 (
                     "a `Vec`",
-                    "`[T; N]`",
+                    "`Array[T, N]`",
                     format!(
                         "Declare it as `Array[{element}, {}]`: the build computed {}.",
                         items.len(),
@@ -17764,12 +17843,14 @@ impl<'a> Checker<'a> {
                 )
             }
             // **Text is the case with no length in it**, which is why the way
-            // out is shorter: `&str` says the whole thing.
+            // out is shorter: `ref String` says the whole thing. In this
+            // language's words (ADR-184 D2, D4): `&` is not a spelling a
+            // program can write, and `str` is the compiler's noun.
             _ => (
                 "a `String`",
-                "`&str`",
-                "Declare it as `&str`: the text is built into the program, and the \
-                 program holds a view of it."
+                "`ref String`",
+                "Declare it as `ref String`: the text is built into the program, and \
+                 the program holds a view of it."
                     .to_string(),
             ),
         };
@@ -19089,7 +19170,7 @@ impl<'a> Checker<'a> {
                         params: given,
                         result,
                         is_sync,
-                        throws,
+                        can_throw: throws,
                     }),
                 ) => {
                     // **A lambda handed to a parameter whose type may pause is
@@ -19159,15 +19240,15 @@ impl<'a> Checker<'a> {
                     // `map` knows its elements. Where the type does say, what it
                     // says stands - this is an answer for a variable, not a
                     // second opinion on a written result.
-                    let result = match result.as_deref() {
-                        Some(written) if !written.is_unknown() => Some(Box::new(written.clone())),
-                        _ => (!came_to.is_unknown()).then(|| Box::new(came_to)),
+                    let result = match result.as_ref() {
+                        Some(written) if !written.is_unknown() => Some(written.clone()),
+                        _ => (!came_to.is_unknown()).then_some(came_to),
                     };
                     Ty::Fn {
                         params: given.clone(),
-                        result,
+                        result: Box::new(result),
                         is_sync: *is_sync,
-                        throws: *throws,
+                        can_throw: *throws,
                     }
                 }
                 _ => {
@@ -19512,10 +19593,10 @@ impl<'a> Checker<'a> {
             severity: Severity::Error,
             span: *span,
             code: "NK1137",
-            message: "You don't need the `&` here: the compiler adds it where it's needed."
+            message: "You don't need the `ref` here: the compiler lends where it's needed."
                 .to_string(),
             notes: vec!["`after:` is only read, so it's lent already.".to_string()],
-            help: Some("Remove the `&`.".to_string()),
+            help: Some("Remove the `ref`.".to_string()),
             labels: Vec::new(),
         });
     }
@@ -20669,7 +20750,7 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
         item,
         is_sync,
         pauses,
-        throws,
+        can_throw: throws,
         parallel,
         shape: written,
     } = result
@@ -20680,7 +20761,7 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
     if let Some(signature) = &contract.signature {
         let shape_of = |actual: &Ty| match actual {
             Ty::Seq { shape, .. } => *shape,
-            _ => ty::Shape::default(),
+            _ => ty::Shape::none(),
         };
         if let Some((name, Ty::Seq { .. })) = signature.params.first()
             && name == "self"
@@ -20699,7 +20780,7 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
         item,
         is_sync,
         pauses,
-        throws,
+        can_throw: throws,
         parallel,
         shape: ty::Shape {
             ends: written.ends && ends,
@@ -20731,11 +20812,17 @@ fn a_paused_chain(key: &str, on: &Ty) -> bool {
 /// `io::lines()` has produced nothing yet, so its failures are still ahead of
 /// whatever walks it, and the `?` goes there.
 fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
-    let fails = matches!(on, Ty::Seq { throws: true, .. });
+    let fails = matches!(
+        on,
+        Ty::Seq {
+            can_throw: true,
+            ..
+        }
+    );
     match result {
         Ty::Seq {
             item,
-            throws,
+            can_throw: throws,
             parallel,
             shape,
             ..
@@ -20743,7 +20830,7 @@ fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
             item,
             is_sync: false,
             pauses: true,
-            throws: throws || fails,
+            can_throw: throws || fails,
             parallel,
             shape: ty::Shape {
                 ends: false,

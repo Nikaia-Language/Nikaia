@@ -33,6 +33,7 @@ use std::process::Command;
 
 use crate::ast::Item;
 use crate::contracts::ty::Ty;
+use crate::contracts::ty::TyOps;
 use crate::parser::Parsed;
 
 /// Why a grammar could not be run, where the reason is this compiler's rather

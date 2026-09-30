@@ -15,6 +15,7 @@ mod common;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::ty::{self, Ty};
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;

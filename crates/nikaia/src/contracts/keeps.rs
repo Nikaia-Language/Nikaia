@@ -33,6 +33,7 @@ use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
 use super::{INPUT, Ledger};
+use crate::contracts::ty::TyOps;
 
 /// Whether a callee **lends** the parameter at `at`, so that the compiler
 /// writes the reference and the caller does not

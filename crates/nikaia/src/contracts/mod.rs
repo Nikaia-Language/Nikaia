@@ -44,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, anyhow};
 
 use crate::ast::Item;
+use crate::contracts::ty::TyOps;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
 

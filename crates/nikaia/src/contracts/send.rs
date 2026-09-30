@@ -752,6 +752,7 @@ fn field(name: &str, ty: super::ty::Ty) -> super::FieldContract {
 mod tests {
     use super::*;
     use crate::contracts::TypeContract;
+    use crate::contracts::ty::TyOps;
 
     fn ledgers() -> (Ledger, Ledger) {
         (
