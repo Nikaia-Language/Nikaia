@@ -24,7 +24,7 @@ fn std_ledger() -> Ledger {
 
 fn throws_of(source: &str, of: &str) -> Vec<String> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    Ledger::infer(&parsed).functions[of].throws.clone()
+    Ledger::infer(&parsed).functions[of].fails_with.clone()
 }
 
 /// **Nothing in `std` throws without saying what** (D1). This is the claim the
@@ -36,7 +36,7 @@ fn no_std_entry_throws_without_naming_it() {
     let unnamed: Vec<_> = std_ledger()
         .functions
         .iter()
-        .filter(|(_, c)| c.throws.iter().any(|t| t == "?"))
+        .filter(|(_, c)| c.fails_with.iter().any(|t| t == "?"))
         .map(|(key, _)| key.clone())
         .collect();
     assert!(unnamed.is_empty(), "still unnamed:\n{unnamed:#?}");
@@ -57,7 +57,11 @@ fn the_reading_and_writing_entries_name_one_type() {
         "foreign::CStr::to_string",
     ] {
         let (_, contract) = library.lookup(key).unwrap_or_else(|| panic!("{key}"));
-        assert_eq!(contract.throws, vec!["io::IoError".to_string()], "{key}");
+        assert_eq!(
+            contract.fails_with,
+            vec!["io::IoError".to_string()],
+            "{key}"
+        );
     }
 }
 
@@ -69,7 +73,7 @@ fn the_locks_two_keep_overtaken() {
     let library = std_ledger();
     for key in ["Locked::set(after)", "SharedMut::set(after)"] {
         let (_, contract) = library.lookup(key).unwrap_or_else(|| panic!("{key}"));
-        assert_eq!(contract.throws, vec!["Overtaken".to_string()], "{key}");
+        assert_eq!(contract.fails_with, vec!["Overtaken".to_string()], "{key}");
     }
 }
 

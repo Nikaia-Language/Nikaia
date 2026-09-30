@@ -307,7 +307,7 @@ fn a_type_whose_fields_are_rust_hides_what_it_holds() {
         "Opaque".to_string(),
         TypeContract {
             fields: Vec::new(),
-            ..TypeContract::default()
+            ..TypeContract::empty()
         },
     );
     let source = "fn zaehle(o: Opaque) {\n\

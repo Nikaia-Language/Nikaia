@@ -87,7 +87,7 @@ fn stds_ledger_is_written_in_nikaias_spelling() {
     let map = std
         .functions
         .iter()
-        .find(|(_, c)| matches!(c.sync, Sync::From(_)))
+        .find(|(_, c)| matches!(c.sync_claim, Sync::From(_)))
         .expect("std has a function whose lambda decides");
     assert!(
         nikaia::contracts::STD.contains(&format!("[fn.\"{}\"]", map.0)),

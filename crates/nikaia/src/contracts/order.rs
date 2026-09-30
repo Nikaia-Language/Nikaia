@@ -59,6 +59,7 @@ use crate::parser::Parsed;
 
 use super::Ledger;
 use super::touch::Reached;
+use crate::contracts::SignatureOps;
 use crate::contracts::touch::TouchOps;
 
 /// One statement, reduced to what deciding an order needs.
@@ -325,7 +326,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
         // a diverting handler is refused, and ADR-034 D2 in general (D5's "no
         // speculation" had this case too). Starting the next operation early
         // would perform work the program as written might never have performed.
-        if !caught && !contract.throws.is_empty() {
+        if !caught && !contract.fails_with.is_empty() {
             return Accounted::UncaughtFailure(key);
         }
 

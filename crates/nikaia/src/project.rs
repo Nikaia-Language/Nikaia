@@ -32,6 +32,7 @@ use orchestrator::project::{
     write_if_changed,
 };
 
+use crate::contracts::SignatureOps;
 use crate::contracts::{Ledger, STD, sync};
 use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
@@ -1411,9 +1412,9 @@ fn newly(root: &Path, inferred: &Ledger) -> check::Newly {
         .filter_map(|(name, contract)| {
             let before = committed.functions.get(name)?;
             let gained: Vec<String> = contract
-                .throws
+                .fails_with
                 .iter()
-                .filter(|error| !before.throws.contains(error))
+                .filter(|error| !before.fails_with.contains(error))
                 .cloned()
                 .collect();
             (!gained.is_empty()).then(|| (name.clone(), gained))

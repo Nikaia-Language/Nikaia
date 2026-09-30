@@ -824,7 +824,7 @@ fn the_copy_fails_in_one_way() {
     // D1 it has a name for it.** The doc below has always said *the same
     // failure `fs::read_to_string` has*, and a set of one that says which is
     // stronger evidence for *one way* than a `"?"` ever was.
-    assert_eq!(copy.throws, vec!["io::IoError".to_string()]);
+    assert_eq!(copy.fails_with, vec!["io::IoError".to_string()]);
 }
 
 /// **Measured where it matters: the nullable runs, both ways.**

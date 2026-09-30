@@ -195,3 +195,45 @@ fn the_promise_names_a_function_parameter() {
         assert!(stderr.contains(why), "{named}: {stderr}");
     }
 }
+
+/// **A copy of a type this program declares does not pause**: its `clone` is
+/// the derived one. `r.clone()` on a declared `struct` was answered as a
+/// method nothing describes, and the function around it - `main` too - was
+/// lowered `async` (found moving the ledger's records into Nikaia, ADR-257).
+#[test]
+fn a_clone_of_a_declared_type_is_sync() {
+    let source = r#"pub struct Row {
+    pub id: i64,
+}
+
+pub struct Holder {
+    pub row: Row?,
+    pub name: String?,
+}
+
+impl Holder {
+    pub fn row_copy(ref self) -> Row {
+        return self.row?.clone() ?? Row { id: 0 }
+    }
+
+    pub fn plain(ref self, r: ref Row) -> Row {
+        return r.clone()
+    }
+
+    pub fn name_copy(ref self) -> String {
+        return self.name?.clone() ?? "none"
+    }
+}
+
+fn main() {
+    let h = Holder { row: Row { id: 3 }, name: "n" }
+    println(f"{h.row_copy().id} {h.name_copy()}")
+}
+"#;
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust;
+    assert!(!rust.contains("async fn"), "{rust}");
+    runs("declared-clone", source, "3 n\n");
+}

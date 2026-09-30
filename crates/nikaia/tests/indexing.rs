@@ -403,3 +403,24 @@ fn a_range_that_counts_from_the_end_is_an_access_out_of_bounds() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A field of an element is read through the reference the read answers**:
+/// `rows[1].a` is `get(&rows, 1).a`, with no `*` the language below does on
+/// its own (found moving the ledger's records into Nikaia, ADR-257, where
+/// `clippy` refused the deref in `std`).
+#[test]
+fn a_field_of_an_element_is_read_without_a_deref() {
+    let source = r#"struct Row {
+    a: i64,
+    name: String,
+}
+
+fn main() {
+    let rows = [Row { a: 1, name: "x" }, Row { a: 2, name: "y" }]
+    println(f"{rows[1].a} {rows[0].name}")
+}
+"#;
+    let rust = lowered("element-field", source);
+    assert!(!rust.contains("(*nikaia_std::index::get("), "{rust}");
+    assert_eq!(ran("element-field", source), "2 x\n");
+}

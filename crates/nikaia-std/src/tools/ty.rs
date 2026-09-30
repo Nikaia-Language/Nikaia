@@ -587,3 +587,104 @@ pub struct ConfigContract {
     pub default: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    pub bounds: Vec<(String, Vec<String>)>,
+    pub params: Vec<(String, Ty)>,
+    pub mutable: Vec<String>,
+    pub config: Vec<ConfigContract>,
+    pub result: Option<Ty>,
+}
+
+impl Signature {
+    pub fn empty() -> Signature { Signature { bounds: vec![], params: vec![], mutable: vec![], config: vec![], result: None } }
+    pub fn takes_a_receiver(&self) -> bool { (self.params.len() as i64) > 0 && nikaia_std::index::get(&self.params, 0).0 == "self" }
+    pub fn result_or_unit(&self) -> Ty {
+        nikaia_std::index::or(match self.result.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || Ty::Tuple(vec![]))
+    }
+    pub fn text(&self) -> String {
+        let mut inside: String = String::from("");
+        for (name, ty) in self.params.iter() {
+            if !inside.is_empty() { inside.push_str(", "); }
+            if name == "self" { inside.push_str(&ty.text()); } else {
+                if self.mutable.contains(name) { inside.push_str("mut "); }
+                inside.push_str(&format!("{}: {}", name, ty.text()));
+            }
+        }
+        if (self.config.len() as i64) > 0 {
+            inside.push_str("; ");
+            let mut first = true;
+            for option in self.config.iter() {
+                if !first { inside.push_str(", "); }
+                first = false;
+                inside.push_str(&format!("{}: {} = {}", option.name, option.ty.text(), option.default));
+            }
+        }
+        let mut before: String = String::from("");
+        if (self.bounds.len() as i64) > 0 {
+            before.push('[');
+            let mut first = true;
+            for (name, traits) in self.bounds.iter() {
+                if !first { before.push_str(", "); }
+                first = false;
+                before.push_str(name);
+                if (traits.len() as i64) > 0 {
+                    before.push_str(": ");
+                    let mut one = true;
+                    for bound in traits.iter() {
+                        if !one { before.push_str(" + "); }
+                        one = false;
+                        before.push_str(bound);
+                    }
+                }
+            }
+            before.push(']');
+        }
+        if self.result.is_none() { return format!("{}({})", before, inside); }
+        format!("{}({}) -> {}", before, inside, self.result_or_unit().text())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnContract {
+    pub public: bool,
+    pub sync_claim: Sync,
+    pub fails_with: Vec<String>,
+    pub touches: Vec<Touch>,
+    pub touches_known: bool,
+    pub provenance: Option<Provenance>,
+    pub signature: Option<Signature>,
+    pub borrows: Vec<String>,
+    pub keeps: Vec<String>,
+    pub mutates: bool,
+    pub touches_a_lock: Lock,
+    pub threads: Threads,
+    pub views: Vec<Held>,
+    pub sharing: Vec<Class>,
+    pub ends_by_length: bool,
+}
+
+impl FnContract {
+    pub fn empty() -> FnContract { FnContract { public: false, sync_claim: Sync::No, fails_with: vec![], touches: vec![], touches_known: false, provenance: None, signature: None, borrows: vec![], keeps: vec![], mutates: false, touches_a_lock: Lock::No, threads: Threads::Undecided, views: vec![], sharing: vec![], ends_by_length: false } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeContract {
+    pub public: bool,
+    pub fields: Vec<FieldContract>,
+    pub variants: Vec<VariantContract>,
+    pub crosses: Crosses,
+    pub iterates_fallibly: bool,
+    pub compares: bool,
+    pub copies: bool,
+    pub touches: Vec<String>,
+    pub tethered: Vec<String>,
+}
+
+impl TypeContract {
+    pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![] } }
+}
+

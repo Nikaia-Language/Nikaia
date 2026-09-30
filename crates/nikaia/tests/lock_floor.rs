@@ -88,8 +88,8 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
     // without this reset the second row of the table above could not be asked at
     // all: the probe would measure the shipped entry and call it the variant's.
     for contract in ledger.functions.values_mut() {
-        if contract.sync == Sync::Inferred {
-            contract.sync = Sync::No;
+        if contract.sync_claim == Sync::Inferred {
+            contract.sync_claim = Sync::No;
         }
     }
 
@@ -108,7 +108,7 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
     ledger
         .functions
         .iter()
-        .map(|(name, contract)| (name.clone(), contract.sync.clone()))
+        .map(|(name, contract)| (name.clone(), contract.sync_claim.clone()))
         .collect()
 }
 

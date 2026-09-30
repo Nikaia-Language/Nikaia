@@ -34,6 +34,7 @@ use crate::ast::{
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::check::PausingEntry;
+use crate::contracts::SignatureOps;
 use crate::contracts::ty::TyOps;
 use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
@@ -4315,7 +4316,7 @@ impl<'p> Emitter<'p> {
                 self.own_contracts
                     .functions
                     .get(&key)
-                    .is_some_and(|c| !c.sync.is_sync())
+                    .is_some_and(|c| !c.sync_claim.is_sync())
             });
         // **A function written `sync(f)` is the `async fn` its body is**
         // ([ADR-244](../../docs/specification/adr/adr-244.md) D3, D4): `f` may
@@ -7339,7 +7340,24 @@ impl<'p> Emitter<'p> {
                 if boxed {
                     out.push("(*");
                 }
-                self.postfix_base(out, base, depth, flow)?;
+                // **A field of an element is read through the reference the
+                // read answers**, as a read of a read is (0.0.238): `xs[0].a`
+                // was `(*get(&xs, 0)).a`, a deref the language below does on
+                // its own and `clippy` refuses in a `std` written in Nikaia
+                // (`tools/ty.nika`, ADR-257).
+                match &**base {
+                    Expr::Index {
+                        base: inner,
+                        index: at,
+                    } if !flow.in_a_place
+                        && !self.slices(flow.statement, at)
+                        && self.map_key(flow.statement, at, false).is_none()
+                        && !self.reads_through_handle(flow, inner) =>
+                    {
+                        self.index_read(out, inner, at, depth, flow, false)?;
+                    }
+                    _ => self.postfix_base(out, base, depth, flow)?,
+                }
                 out.push(&format!(".{}", self.name(*name)));
                 if boxed {
                     out.push(")");
@@ -8018,9 +8036,17 @@ impl<'p> Emitter<'p> {
                 // conversion to the same type, which the language below's
                 // lint calls useless (found moving `Ty::parse` into Nikaia,
                 // ADR-257).
-                let a_declared_variant = matches!(&**fallback, Expr::Path(segments)
-                    if segments.len() == 2
-                        && self.is_variant(self.text(segments[0]), self.text(segments[1])));
+                let a_declared_variant = match &**fallback {
+                    Expr::Path(segments) => {
+                        segments.len() == 2
+                            && self.is_variant(self.text(segments[0]), self.text(segments[1]))
+                    }
+                    // ...and one built with its parts, `Ty::Tuple([])`.
+                    Expr::Call { func, .. } => matches!(&**func, Expr::Path(segments)
+                        if segments.len() == 2
+                            && self.is_variant(self.text(segments[0]), self.text(segments[1]))),
+                    _ => false,
+                };
                 let bare = a_number(fallback)
                     || a_declared_variant
                     || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
@@ -9458,7 +9484,7 @@ impl<'p> Emitter<'p> {
     /// needs the generated sum that is not built, and a type another package
     /// declares is not this unit's to name in a signature.
     fn named_error(&self, key: &str) -> Option<Named<'_>> {
-        self.named_error_of(&self.own_contracts.functions.get(key)?.throws)
+        self.named_error_of(&self.own_contracts.functions.get(key)?.fails_with)
     }
 
     /// [`Emitter::named_error`] asked of the **set** rather than of a function.
@@ -9496,7 +9522,7 @@ impl<'p> Emitter<'p> {
     /// only write `'static` for it.
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
         match self.own_contracts.functions.get(key) {
-            Some(contract) => self.channel_of(&contract.throws, lifetimes, borrows),
+            Some(contract) => self.channel_of(&contract.fails_with, lifetimes, borrows),
             None => "Box<dyn std::error::Error>".to_string(),
         }
     }
@@ -9572,7 +9598,7 @@ impl<'p> Emitter<'p> {
     fn error_sums(&self) -> std::collections::BTreeMap<Vec<String>, String> {
         let mut out = std::collections::BTreeMap::new();
         for contract in self.own_contracts.functions.values() {
-            let members = &contract.throws;
+            let members = &contract.fails_with;
             if members.len() < 2 {
                 continue;
             }
@@ -9872,7 +9898,7 @@ impl<'p> Emitter<'p> {
 
     fn sum_of(&self, key: &str) -> Option<&str> {
         let contract = self.own_contracts.functions.get(key)?;
-        self.sums.get(&contract.throws).map(String::as_str)
+        self.sums.get(&contract.fails_with).map(String::as_str)
     }
 
     /// Whose one error type a **member** of a set is, asked of the name alone.
@@ -9986,7 +10012,7 @@ impl<'p> Emitter<'p> {
                     .get(&name)
                     .or_else(|| self.library.functions.get(&name))
                 {
-                    Some(contract) => set.extend(contract.throws.iter().cloned()),
+                    Some(contract) => set.extend(contract.fails_with.iter().cloned()),
                     None => {
                         set.insert(crate::contracts::UNNAMED_ERROR.to_string());
                     }
@@ -10049,7 +10075,7 @@ impl<'p> Emitter<'p> {
         self.own_contracts
             .functions
             .get(key)
-            .is_some_and(|contract| !contract.sync.is_sync())
+            .is_some_and(|contract| !contract.sync_claim.is_sync())
     }
 
     /// Whether a call to a **library** entry pauses (ADR-055 §6 step 3), and
@@ -10076,7 +10102,7 @@ impl<'p> Emitter<'p> {
         self.library
             .functions
             .get(key)
-            .filter(|contract| !contract.sync.is_sync())
+            .filter(|contract| !contract.sync_claim.is_sync())
             .map(|_| key.to_string())
     }
 
@@ -10104,7 +10130,7 @@ impl<'p> Emitter<'p> {
         self.own_contracts
             .functions
             .get(key)
-            .is_some_and(|contract| matches!(contract.sync, crate::contracts::Sync::From(_)))
+            .is_some_and(|contract| matches!(contract.sync_claim, crate::contracts::Sync::From(_)))
     }
 
     /// Whether the function under `key` is lowered as an `async fn`.
@@ -10162,7 +10188,7 @@ impl<'p> Emitter<'p> {
                     .map(|contract| (constructor.clone(), contract))
             });
         match resolved {
-            Some((key, contract)) => (!contract.sync.is_sync()).then_some(key),
+            Some((key, contract)) => (!contract.sync_claim.is_sync()).then_some(key),
             None => self.library_pauses(&name),
         }
     }
@@ -10217,7 +10243,7 @@ impl<'p> Emitter<'p> {
             // owed here - without it the crate's `Result` reached the rest of
             // the line, and `rustc` said so about a file nobody wrote.
             .or_else(|| self.described.functions.get(&name))
-            .is_some_and(|contract| !contract.throws.is_empty())
+            .is_some_and(|contract| !contract.fails_with.is_empty())
     }
 
     /// Whether the checker said this conversion narrows, and which kind it is.
@@ -12298,7 +12324,7 @@ fn pausing_reach(
     let pausing: BTreeSet<&str> = contracts
         .functions
         .iter()
-        .filter(|(_, contract)| !contract.sync.is_sync())
+        .filter(|(_, contract)| !contract.sync_claim.is_sync())
         .map(|(name, _)| name.as_str())
         .collect();
     if pausing.is_empty() {

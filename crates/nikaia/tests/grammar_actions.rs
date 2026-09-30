@@ -156,7 +156,7 @@ fn an_entry_is_sync_in_the_ledger() {
          \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
          }\n",
     );
-    assert_eq!(ledger.functions["Nums::number"].sync, Sync::Asserted);
+    assert_eq!(ledger.functions["Nums::number"].sync_claim, Sync::Asserted);
 }
 
 /// **And a caller keeps its own claim**, which is the half that needed more than
@@ -176,8 +176,8 @@ fn a_function_that_parses_stays_sync() {
          fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n",
     );
     assert!(
-        ledger.functions["read"].sync.is_sync(),
+        ledger.functions["read"].sync_claim.is_sync(),
         "{:?}",
-        ledger.functions["read"].sync
+        ledger.functions["read"].sync_claim
     );
 }

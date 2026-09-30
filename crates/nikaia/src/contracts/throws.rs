@@ -135,7 +135,7 @@ pub fn infer(
                         ledger
                             .functions
                             .get(callee)
-                            .map(|c| c.throws.iter().cloned().collect())
+                            .map(|c| c.fails_with.iter().cloned().collect())
                     })
                     .unwrap_or_default();
                 for error in theirs {
@@ -156,10 +156,10 @@ pub fn infer(
         let Some(contract) = ledger.functions.get_mut(&name) else {
             continue;
         };
-        if contract.throws.is_empty() {
+        if contract.fails_with.is_empty() {
             continue;
         }
-        contract.throws = if set.is_empty() {
+        contract.fails_with = if set.is_empty() {
             vec![UNNAMED_ERROR.to_string()]
         } else {
             set.into_iter().collect()
@@ -221,7 +221,9 @@ fn contrib_of(
                 contrib.calls.insert(callee.clone());
             } else {
                 match library.functions.get(callee) {
-                    Some(FnContract { throws, .. }) => {
+                    Some(FnContract {
+                        fails_with: throws, ..
+                    }) => {
                         contrib.direct.extend(throws.iter().cloned());
                     }
                     None => {
@@ -283,7 +285,10 @@ fn collect(
                     // A library names its errors in its own ledger, or does not.
                     // `std` does not: its failures are the Rust ones below, and
                     // ADR-020 D5 has those entries written by hand.
-                    if let Some(FnContract { throws, .. }) = library.functions.get(&key) {
+                    if let Some(FnContract {
+                        fails_with: throws, ..
+                    }) = library.functions.get(&key)
+                    {
                         for error in throws {
                             into.direct.insert(error.clone());
                         }

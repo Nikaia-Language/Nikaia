@@ -64,9 +64,12 @@ fn a_call_into_a_dependency_is_answered_from_its_ledger() {
         &depends_on(&dir.join("lib")),
     )
     .expect("the program reads");
-    assert_eq!(program.contracts.functions["caller"].sync, Sync::Inferred);
     assert_eq!(
-        program.contracts.functions["lib::hello"].sync,
+        program.contracts.functions["caller"].sync_claim,
+        Sync::Inferred
+    );
+    assert_eq!(
+        program.contracts.functions["lib::hello"].sync_claim,
         Sync::Inferred
     );
 
@@ -96,8 +99,8 @@ fn a_ledger_whose_hashes_match_is_believed() {
         "hello".to_string(),
         nikaia::contracts::FnContract {
             public: true,
-            sync: Sync::No,
-            ..Default::default()
+            sync_claim: Sync::No,
+            ..nikaia::contracts::FnContract::empty()
         },
     );
     std::fs::write(dir.join("lib/nikaia.contracts"), shipped.render()).expect("ship it");
@@ -111,7 +114,7 @@ fn a_ledger_whose_hashes_match_is_believed() {
     )
     .expect("the program reads");
     assert_eq!(
-        program.contracts.functions["lib::hello"].sync,
+        program.contracts.functions["lib::hello"].sync_claim,
         Sync::No,
         "the shipped answer is the one that counts, not this build's"
     );
@@ -142,8 +145,8 @@ fn a_ledger_whose_sources_moved_is_derived_again() {
         "hello".to_string(),
         nikaia::contracts::FnContract {
             public: true,
-            sync: Sync::No,
-            ..Default::default()
+            sync_claim: Sync::No,
+            ..nikaia::contracts::FnContract::empty()
         },
     );
     std::fs::write(dir.join("lib/nikaia.contracts"), shipped.render()).expect("ship it");
@@ -161,7 +164,7 @@ fn a_ledger_whose_sources_moved_is_derived_again() {
     )
     .expect("the program reads");
     assert_eq!(
-        program.contracts.functions["lib::hello"].sync,
+        program.contracts.functions["lib::hello"].sync_claim,
         Sync::Inferred,
         "a hash that does not match is a derivation, never a belief"
     );
@@ -186,8 +189,8 @@ fn a_ledger_that_records_no_sources_is_not_believed() {
         "hello".to_string(),
         nikaia::contracts::FnContract {
             public: true,
-            sync: Sync::No,
-            ..Default::default()
+            sync_claim: Sync::No,
+            ..nikaia::contracts::FnContract::empty()
         },
     );
     let rendered = shipped.render();
@@ -200,7 +203,7 @@ fn a_ledger_that_records_no_sources_is_not_believed() {
     )
     .expect("the program reads");
     assert_eq!(
-        program.contracts.functions["lib::hello"].sync,
+        program.contracts.functions["lib::hello"].sync_claim,
         Sync::Inferred
     );
 
@@ -227,7 +230,7 @@ fn a_ledger_that_does_not_parse_is_derived_again_rather_than_refused() {
     )
     .expect("an unreadable ledger is not a failed build");
     assert_eq!(
-        program.contracts.functions["lib::hello"].sync,
+        program.contracts.functions["lib::hello"].sync_claim,
         Sync::Inferred
     );
 
@@ -308,18 +311,16 @@ fn a_transitive_packages_entries_are_not_absorbed_with_its_parents() {
     let mut shipped = Ledger::empty();
     shipped
         .functions
-        .insert("show".to_string(), nikaia::contracts::FnContract::default());
-    shipped.functions.insert(
-        "c::two".to_string(),
-        nikaia::contracts::FnContract::default(),
-    );
-    shipped.types.insert(
-        "Row".to_string(),
-        nikaia::contracts::TypeContract::default(),
-    );
+        .insert("show".to_string(), nikaia::contracts::FnContract::empty());
+    shipped
+        .functions
+        .insert("c::two".to_string(), nikaia::contracts::FnContract::empty());
+    shipped
+        .types
+        .insert("Row".to_string(), nikaia::contracts::TypeContract::empty());
     shipped.types.insert(
         "c::Id".to_string(),
-        nikaia::contracts::TypeContract::default(),
+        nikaia::contracts::TypeContract::empty(),
     );
 
     let published = shipped.published(&BTreeSet::from(["c".to_string()]));
@@ -333,7 +334,7 @@ fn a_transitive_packages_entries_are_not_absorbed_with_its_parents() {
     let mut with_methods = Ledger::empty();
     with_methods.functions.insert(
         "Row::new".to_string(),
-        nikaia::contracts::FnContract::default(),
+        nikaia::contracts::FnContract::empty(),
     );
     assert!(
         with_methods

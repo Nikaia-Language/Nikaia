@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
+use crate::contracts::SignatureOps;
 use crate::contracts::ty::TyOps;
 use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
@@ -6147,7 +6148,7 @@ impl<'a> Checker<'a> {
             .own
             .functions
             .get(key)
-            .is_some_and(|c| !c.throws.is_empty());
+            .is_some_and(|c| !c.fails_with.is_empty());
         if fallible && let Some(guarded) = &mut self.guarded {
             guarded.fallible = true;
         }
@@ -6662,7 +6663,7 @@ impl<'a> Checker<'a> {
                         ledger
                             .functions
                             .get(&format!("{owner}::cleanup"))
-                            .is_some_and(|contract| !contract.throws.is_empty())
+                            .is_some_and(|contract| !contract.fails_with.is_empty())
                     });
                     return Some((owner, fails));
                 }
@@ -7293,6 +7294,27 @@ impl<'a> Checker<'a> {
             }
             _ => None,
         });
+        // **A copy of a type this program declares is the derived one**: it
+        // does not pause, cannot fail, and hands back the type itself, owned.
+        // No ledger describes it because nothing has to - and answered as
+        // *nothing describes this method*, `r.clone()` on a declared `struct`
+        // made the function around it `async`, found moving the ledger's
+        // records into Nikaia (ADR-257), where `Signature::text` became a
+        // future.
+        if found.is_none()
+            && entry == "clone"
+            && args.is_empty()
+            && (self.structs.contains_key(name) || self.enums.contains_key(name))
+        {
+            return match &on {
+                Ty::Named { name, args, .. } => Ty::Named {
+                    name: name.clone(),
+                    args: args.clone(),
+                    view: false,
+                },
+                other => other.clone(),
+            };
+        }
         let Some((key, contract)) = found else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
@@ -7364,7 +7386,7 @@ impl<'a> Checker<'a> {
         self.method_options(method, contract, span);
         self.method_propagates(
             method,
-            !contract.throws.is_empty() || self.walks_a_failing_sequence(&on, contract),
+            !contract.fails_with.is_empty() || self.walks_a_failing_sequence(&on, contract),
             span,
         );
         // ADR-055 D2, the method half. Either ledger since §6 step 3
@@ -7386,7 +7408,7 @@ impl<'a> Checker<'a> {
             matches!(&on, Ty::Seq { pauses: true, .. }) && walks_by_value(contract) && !chained;
         self.method_pauses(
             method,
-            !contract.sync.is_sync() || walks_a_pausing_step,
+            !contract.sync_claim.is_sync() || walks_a_pausing_step,
             span,
         );
         // …and a **lazy** walk of one is another such sequence, as an adapter
@@ -7431,7 +7453,7 @@ impl<'a> Checker<'a> {
         self.a_pausing_method_in_a_sync_body(&key, contract, span);
         self.a_call_that_may_pause(
             self.parsed.text(method),
-            !contract.sync.is_sync() || walks_a_pausing_step,
+            !contract.sync_claim.is_sync() || walks_a_pausing_step,
             span,
         );
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
@@ -12790,7 +12812,7 @@ impl<'a> Checker<'a> {
             );
         }
         self.may_fail_here(&key, contract, span);
-        self.a_call_that_may_pause(&name, !contract.sync.is_sync(), span);
+        self.a_call_that_may_pause(&name, !contract.sync_claim.is_sync(), span);
         self.a_pausing_call_in_an_action(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
@@ -13595,7 +13617,7 @@ impl<'a> Checker<'a> {
         // `self.caught` is what sends this function home, and a call that
         // carries a `throws` is precisely what gives that `catch` something to
         // do ([ADR-091](../../../docs/specification/adr/adr-091.md)).
-        if !contract.throws.is_empty() {
+        if !contract.fails_with.is_empty() {
             if let Some(guarded) = &mut self.guarded {
                 guarded.fallible = true;
             }
@@ -13629,7 +13651,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        if contract.throws.is_empty() || self.throwing || self.caught {
+        if contract.fails_with.is_empty() || self.throwing || self.caught {
             return;
         }
         // A grammar action is not code inside a function, and its failure does
@@ -13661,7 +13683,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{key}` can fail with {}.",
                     contract
-                        .throws
+                        .fails_with
                         .iter()
                         .map(|error| format!("`{error}`"))
                         .collect::<Vec<_>>()
@@ -14047,7 +14069,7 @@ impl<'a> Checker<'a> {
     /// Without it the emitter wrote `.await` inside the synchronous parser the
     /// `grammar!` macro generates, and the backend answered about it.
     fn a_pausing_call_in_an_action(&mut self, callee: &str, contract: &FnContract, span: &Span) {
-        if contract.sync.is_sync() {
+        if contract.sync_claim.is_sync() {
             return;
         }
         let Some(rule) = self.inside_an_action.clone() else {
@@ -14094,7 +14116,7 @@ impl<'a> Checker<'a> {
         contract: &FnContract,
         span: &Span,
     ) {
-        if contract.sync.is_sync() {
+        if contract.sync_claim.is_sync() {
             return;
         }
         let Some(caller) = self.inside_a_sync_function.clone() else {
@@ -15489,7 +15511,7 @@ impl<'a> Checker<'a> {
                 .own
                 .functions
                 .get(&name)
-                .is_some_and(|c| !c.sync.is_sync()),
+                .is_some_and(|c| !c.sync_claim.is_sync()),
             Some(crate::contracts::sync::Reached::Library { sync, .. }) => !sync,
             // A call this compiler cannot name may do anything, pausing
             // included - which is the fail-closed direction for a question
@@ -15967,7 +15989,7 @@ impl<'a> Checker<'a> {
         self.own
             .functions
             .get(&key)
-            .is_some_and(|contract| contract.throws.len() > 1)
+            .is_some_and(|contract| contract.fails_with.len() > 1)
     }
 
     /// The **one** error type a guarded expression can fail with, where exactly
@@ -16001,7 +16023,7 @@ impl<'a> Checker<'a> {
             .functions
             .get(&key)
             .or_else(|| self.library.lookup(&key).map(|(_, c)| c).as_ref().copied())?;
-        match contract.throws.as_slice() {
+        match contract.fails_with.as_slice() {
             [one] if one != "?" => Some(Ty::Named {
                 name: one.clone(),
                 args: Vec::new(),
@@ -21803,10 +21825,10 @@ pub const ASSERT: &str = "assert";
 /// fail, touches something or changes a value. A `touches` nobody wrote is not
 /// an answer, and counts as touching.
 fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
-    if !contract.sync.is_sync() {
+    if !contract.sync_claim.is_sync() {
         return Some("can pause");
     }
-    if !contract.throws.is_empty() {
+    if !contract.fails_with.is_empty() {
         return Some("can fail");
     }
     if contract.mutates {
