@@ -7979,7 +7979,17 @@ impl<'p> Emitter<'p> {
                 // what joins them.
                 // **And except for text where the left side is a view of text**
                 // (ADR-209 §6): the literal already is one.
+                //
+                // **And except for a variant of an enum this file declares**:
+                // `Ty::Unknown` is already a `Ty`, and `.into()` on it is a
+                // conversion to the same type, which the language below's
+                // lint calls useless (found moving `Ty::parse` into Nikaia,
+                // ADR-257).
+                let a_declared_variant = matches!(&**fallback, Expr::Path(segments)
+                    if segments.len() == 2
+                        && self.is_variant(self.text(segments[0]), self.text(segments[1])));
                 let bare = a_number(fallback)
+                    || a_declared_variant
                     || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;

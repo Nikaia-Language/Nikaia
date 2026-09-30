@@ -641,3 +641,44 @@ fn an_element_taken_out_stays_held_and_a_field_is_written_through_the_handle() {
     );
     assert!(!rust.contains("unsafe"), "{rust}");
 }
+
+/// **A buffer assigned whole is moved, not viewed**: `inner = args` takes the
+/// text along, as a `return args` and a `let other = args` already did. Read as
+/// views flowing into an `inner` declared around the buffer, `args` went into
+/// the frame's keep and the assignment put a view where a `String` goes -
+/// `rustc`'s *mismatched types* about a file nobody wrote (found moving
+/// `Ty::parse` into Nikaia, ADR-257).
+#[test]
+fn a_buffer_assigned_whole_is_moved() {
+    let source = "fn cut(written: ref String, front: i64) -> String {
+    let c: Vec[char] = written.chars().collect()
+    let mut out: String = \"\"
+    for k in front..<c.len() {
+        out.push(c[k])
+    }
+    return out
+}
+
+fn pick(rest: ref String) -> String {
+    let mut inner: String = \"\"
+    if rest.starts_with(\"a\") {
+        let args = cut(rest, 1)
+        if args.len() > 1 {
+            inner = args
+        }
+    }
+    return inner
+}
+
+fn main() {
+    println(pick(\"abc\"))
+    println(pick(\"ax\"))
+    println(pick(\"zzz\"))
+}
+";
+    assert!(
+        !lowered(source, Build::default()).contains("put("),
+        "nothing is kept: the buffer moves"
+    );
+    runs("assigned-whole", source, "bc");
+}

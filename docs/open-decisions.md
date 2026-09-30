@@ -157,3 +157,36 @@ a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
 **What this file recommends: (1).** In a project the set of heads is known, so
 refusing an unknown one is not a guess; `fortunes.nika` would write
 `use std::env`.
+
+### Whether `??` takes its left side
+
+**What is blocked.** Nothing is blocked; a refusal stands where a question
+does. `let first = viewed ?? "none"` over a `viewed: String?` hands `viewed`
+over, and a use of it after the line is `NK2105` (0.0.286). Before that it
+reached `rustc` as *borrow of moved value*, because the lowering takes the
+option to answer from it and the checker did not know. The refusal is right
+for what the compiler does. Whether the compiler should do that is not
+written anywhere.
+
+**Why it is the owner's.** Part I 3.5 says what `??` answers and not what it
+does to its left side. The neighbouring operator is decided: *`?.` takes
+nothing*, it reaches through a view of its receiver. Whether `??` is the same
+is a language rule, not a lowering detail, and it changes which programs are
+correct.
+
+**The options.** (1) **`??` takes its left side when the result is kept, and
+lends it otherwise**, as a call lends an argument it only reads. `pointed_at(v
+?? "")` then leaves `v` usable; `let s = v ?? ""` takes it. The compiler
+writes `.as_deref()`/`.as_ref()` in the lent case, which it already does for
+a `T?` it lends (0.0.285). (2) **`??` always takes a name that does not
+copy**, which is what is built: simple to say, and the way out is `.clone()`,
+which costs a copy the program may not need. (3) **`??` never takes**: the
+answer is always a view of the left side, like `?.`, and `.clone()` is written
+where text of its own is wanted.
+
+**What this file recommends: (1).** It is the rule arguments already follow
+(ADR-094 D1: *whether an argument is lent or handed over is decided by the
+function, not the call*), applied to the one operator that hands a value on.
+(2) is correct and costs a copy nobody asked for; (3) makes
+`let name = user ?? "guest"` a view of `user`, which is the surprise `?.`
+avoids by producing a `T?`.

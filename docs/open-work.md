@@ -794,8 +794,8 @@ D3 with *move as values*:
   small enums) are declared in a tool module beside `ast.nika` and
   re-exported from `contracts`, so every reader keeps its path. `Ty` and
   `Shape` are done (`tools/ty.nika`, 0.0.285).
-* **(c)** Reading a type's text (`Ty::parse`) and the signature strings move
-  next to `ledger.nika`. Writing it is done (`Ty::text`, 0.0.285).
+* **(c)** The signature strings move next to `ledger.nika`. A type's text
+  is done both ways (`Ty::text` 0.0.285, `Ty::parse` 0.0.286).
 * **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,
   and the next ring with them.
 

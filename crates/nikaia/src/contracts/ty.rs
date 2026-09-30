@@ -36,7 +36,7 @@ use crate::parser::Parsed;
 /// type is written as. What stays here is what the checker does with them, as
 /// [`TyOps`], until ADR-257's step (d) moves it too.
 pub use nikaia_std::tools::ty::{
-    ARRAY, ENDS, PAR, PAUSES, REPLAYS, SEQ, SIZED, Shape, TEXT, TEXT_VIEW, Ty,
+    ARRAY, ENDS, PAR, PAUSES, REPLAYS, SEQ, SIZED, Shape, TEXT, TEXT_VIEW, Ty, split_args,
 };
 
 /// The stamp a lock puts on what it hands out
@@ -425,200 +425,10 @@ impl TyOps for Ty {
         }
     }
 
-    /// Read one back.
+    /// Read one back: `tools/ty.nika`'s `parse` (ADR-257 step (c)), which reads
+    /// what [`Ty::text`] writes and the older spellings a ledger may still hold.
     fn parse(text: &str) -> Ty {
-        let text = text.trim();
-        if text.is_empty() || text == "?" {
-            return Ty::Unknown;
-        }
-        // **A run of digits is a count**
-        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1), read
-        // first because nothing else in this language can be one: no type name
-        // begins with a digit, so there is nothing for this to take away.
-        if let Ok(n) = text.parse::<i64>() {
-            return Ty::Count(n);
-        }
-        // **The two boundary shapes are read before the `?`**
-        // ([ADR-155](../../../docs/specification/adr/adr-155.md) D5): on a
-        // `&mut T` or a `&[T]` the trailing `?` is the **pointee's**, so
-        // `&mut sqlite3?` is a slot that holds a handle or nothing rather than
-        // a view that may be absent. A plain `&T?` is untouched and is Part I
-        // 2.3's own nullable view, which is what `let mut m: &str? = null`
-        // writes.
-        if let Some(pointed) = pointed_at(text) {
-            return pointed;
-        }
-        // A trailing `?` is Part I 2.3's nullable marker, read before anything
-        // else so that `&str?` and `Vec[i64]?` reach the branches below as the
-        // types they are nullable *of*. `"?"` alone is `Unknown` and was taken
-        // one line up, which is what keeps the two spellings apart.
-        if let Some(inner) = text.strip_suffix('?') {
-            return Ty::Nullable(Box::new(Ty::parse(inner)));
-        }
-        if let Some(inner) = text.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
-            return Ty::Tuple(split_args(inner).iter().map(|p| Ty::parse(p)).collect());
-        }
-        // `fn(&Stats)`, and `fn()` for a lambda that is handed nothing. Read
-        // before the `&`, because a function type is never a view.
-        //
-        // **Since [ADR-102](../../../docs/specification/adr/adr-102.md) D1 the
-        // closing `)` is not the end**: `fn(Request) -> Response sync throws`
-        // is the whole spelling, so the parenthesis is matched rather than
-        // found at the end, and what follows it is read backwards — the two
-        // words first, because the result is whatever is left in front of them.
-        if let Some(rest) = text.strip_prefix("fn(")
-            && let Some(close) = closing_paren(rest)
-        {
-            let mut tail = rest[close + 1..].trim();
-            let mut is_sync = false;
-            let mut throws = false;
-            loop {
-                if let Some(shorter) = word_off(tail, "throws") {
-                    throws = true;
-                    tail = shorter;
-                    continue;
-                }
-                if let Some(shorter) = word_off(tail, "sync") {
-                    is_sync = true;
-                    tail = shorter;
-                    continue;
-                }
-                break;
-            }
-            let result = tail
-                .strip_prefix("->")
-                .map(Ty::parse)
-                .filter(|_| !tail.is_empty());
-            return Ty::Fn {
-                params: split_args(&rest[..close])
-                    .iter()
-                    .map(|p| Ty::parse(p))
-                    .collect(),
-                result: Box::new(result),
-                is_sync,
-                can_throw: throws,
-            };
-        }
-        // **`Seq[T] sync throws`, read the way a function type's tail is**
-        // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1): the
-        // two words stand after the type and say what one **step** may do. The
-        // closing bracket is matched rather than found at the end, for the same
-        // reason `fn(` matches its parenthesis - `Seq[HashMap[$K, $V]] sync` has
-        // a `]` in the middle.
-        //
-        // Before the `&`, because a produced sequence is never a view: it is
-        // walked by value (D2), which is what the once-only rule rests on.
-        for (word, parallel) in [(SEQ, false), (PAR, true)] {
-            let Some(rest) = text.strip_prefix(word).map(str::trim_start) else {
-                continue;
-            };
-            let Some(rest) = rest.strip_prefix('[') else {
-                continue;
-            };
-            let Some(close) = closing_bracket(rest) else {
-                continue;
-            };
-            let mut tail = rest[close + 1..].trim();
-            let mut is_sync = false;
-            let mut pauses = false;
-            let mut throws = false;
-            let mut shape = Shape::none();
-            loop {
-                // **The shape's three words** (ADR-212 D1), in any order among
-                // the step's.
-                let words = [
-                    (ENDS, &mut shape.ends),
-                    (SIZED, &mut shape.sized),
-                    (REPLAYS, &mut shape.replays),
-                ];
-                let mut took = false;
-                for (word, flag) in words {
-                    if let Some(shorter) = word_off(tail, word) {
-                        *flag = true;
-                        tail = shorter;
-                        took = true;
-                        break;
-                    }
-                }
-                if took {
-                    continue;
-                }
-                if let Some(shorter) = word_off(tail, "throws") {
-                    throws = true;
-                    tail = shorter;
-                    continue;
-                }
-                if let Some(shorter) = word_off(tail, "sync") {
-                    is_sync = true;
-                    tail = shorter;
-                    continue;
-                }
-                // **The third word** ([ADR-172](../../../../docs/specification/adr/adr-172.md)
-                // D1), read here and nowhere else: a step that suspends says so
-                // rather than being inferred from the absence of `sync`.
-                if let Some(shorter) = word_off(tail, PAUSES) {
-                    pauses = true;
-                    tail = shorter;
-                    continue;
-                }
-                break;
-            }
-            // Both words is not a type, and reading it as either would be a
-            // claim the file does not make - the same rule the leftover tail
-            // below is refused by.
-            if is_sync && pauses {
-                continue;
-            }
-            // Anything left over is not this: `Sequence[T] of stuff` is a name
-            // with arguments and a tail nobody wrote, and reading it as a `Seq`
-            // would be a claim the file does not make.
-            if !tail.is_empty() {
-                continue;
-            }
-            return Ty::Seq {
-                item: Box::new(Ty::parse(&rest[..close])),
-                is_sync,
-                pauses,
-                can_throw: throws,
-                parallel,
-                shape,
-            };
-        }
-        let (view, rest) = match a_view_of(text) {
-            Some(rest) => (true, rest.trim()),
-            None => (false, text),
-        };
-        // After the `&`, because `&$V` is a view of what `$V` binds to and not
-        // a type whose name begins with a dollar.
-        if let Some(name) = rest.strip_prefix('$').filter(|name| !name.is_empty()) {
-            return Ty::Var {
-                name: name.to_string(),
-                view,
-            };
-        }
-        match rest.find('[') {
-            Some(at) if rest.ends_with(']') => Ty::Named {
-                name: rest[..at].trim().to_string(),
-                args: split_args(&rest[at + 1..rest.len() - 1])
-                    .iter()
-                    .map(|p| Ty::parse(p))
-                    .collect(),
-                view,
-            },
-            // **A view of `String` is a view of text**
-            // ([ADR-184](../../../docs/specification/adr/adr-184.md) D2), and
-            // that is the whole of what the second noun was for: `str` is not
-            // a type a program may write, so `ref String` and the `&str` it
-            // replaces are read back as one thing. Without this they were two,
-            // and a call that passed one where the other was declared was
-            // `NK1102` about a distinction the language does not have.
-            _ if view && rest == TEXT => Ty::view(TEXT_VIEW),
-            _ => Ty::Named {
-                name: rest.to_string(),
-                args: Vec::new(),
-                view,
-            },
-        }
+        nikaia_std::tools::ty::parse(text)
     }
 
     /// The same type with every name in `parameters` replaced by `Unknown`.
@@ -922,73 +732,6 @@ impl TyOps for Ty {
     }
 }
 
-/// **What the C boundary lends**
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1), read out of its
-/// text: `&mut T`, `&[T]` and the two together.
-///
-/// A plain `&T` is **not** one of these — that is the view every other
-/// declaration in this language writes, and it stays a `Named` with `view`.
-///
-/// A trailing `?` belongs to the **pointee**
-/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which is why
-/// this is read before `parse` strips one.
-/// **The view marker off the front of a written type**
-/// ([ADR-184](../../../docs/specification/adr/adr-184.md) D1).
-///
-/// `ref T` is what this language writes and `&T` is the spelling it replaces —
-/// both are read while the corpus moves, and D4 is where the second one leaves.
-/// The **word** needs the space after it, for the reason `mut ` does one line
-/// down: without it `reference` would be read as a view of `erence`.
-pub(crate) fn a_view_of(text: &str) -> Option<&str> {
-    if let Some(rest) = text.strip_prefix("ref ") {
-        return Some(rest.trim_start());
-    }
-    text.strip_prefix('&').map(str::trim_start)
-}
-
-fn pointed_at(text: &str) -> Option<Ty> {
-    let rest = a_view_of(text)?;
-    // The space after `mut` is what keeps `mutable` from being read as a type
-    // whose name begins with those three letters.
-    let (mutable, rest) = match rest.strip_prefix("mut ") {
-        Some(shorter) => (true, shorter.trim_start()),
-        None => (false, rest),
-    };
-    let (rest, absent) = match rest.strip_suffix('?') {
-        Some(shorter) => (shorter.trim_end(), true),
-        None => (rest, false),
-    };
-    // **`Array[T]` is the run and `[T]` is the spelling it replaces**
-    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D3, D4). An
-    // `Array[T, N]` is **not** one: the count is what makes it a type laid out
-    // inline, so the comma is what tells the two apart and nothing else has to.
-    let named = rest
-        .strip_prefix(ARRAY)
-        .and_then(|args| args.strip_prefix('['))
-        .and_then(|args| args.strip_suffix(']'))
-        .filter(|args| split_args(args).len() == 1);
-    let bracketed = rest.starts_with('[') && rest.ends_with(']');
-    let slice = named.is_some() || bracketed;
-    if !mutable && !slice {
-        return None;
-    }
-    let inner = match (named, bracketed) {
-        (Some(args), _) => args,
-        (None, true) => &rest[1..rest.len() - 1],
-        (None, false) => rest,
-    };
-    let item = Ty::parse(inner);
-    let item = match absent {
-        true => Ty::Nullable(Box::new(item)),
-        false => item,
-    };
-    Some(Ty::Pointed {
-        item: Box::new(item),
-        slice,
-        mutable,
-    })
-}
-
 /// Whether a value of this type lends a **run** of `item` laid out in memory
 /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1).
 ///
@@ -1014,31 +757,6 @@ fn lends_a_run_of(found: &Ty, item: &Ty) -> bool {
         },
         _ => false,
     }
-}
-
-/// Split `a, b[c, d], (e, f)` on the commas that are not inside a bracket.
-pub fn split_args(text: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut current = String::new();
-    for c in text.chars() {
-        match c {
-            '[' | '(' => {
-                depth += 1;
-                current.push(c);
-            }
-            ']' | ')' => {
-                depth = depth.saturating_sub(1);
-                current.push(c);
-            }
-            ',' if depth == 0 => parts.push(std::mem::take(&mut current)),
-            c => current.push(c),
-        }
-    }
-    if !current.trim().is_empty() {
-        parts.push(current);
-    }
-    parts.iter().map(|p| p.trim().to_string()).collect()
 }
 
 #[cfg(test)]
@@ -1327,66 +1045,6 @@ pub fn renamed(ty: &Ty, renames: &std::collections::BTreeMap<String, String>) ->
         },
         Ty::Nullable(inner) => Ty::Nullable(Box::new(renamed(inner, renames))),
         other => other.clone(),
-    }
-}
-
-/// The index of the `)` that closes a `fn(` already stripped from the front,
-/// or nothing where there is none.
-///
-/// Counted rather than searched from the end, because
-/// [ADR-102](../../../docs/specification/adr/adr-102.md) D1 lets a function
-/// type stand wherever a type may — including inside another one's parameters —
-/// and `fn(fn(i64)) -> i64`'s last `)` closes the wrong thing. Brackets are
-/// counted with it for a `Vec[fn(i64)]`.
-fn closing_paren(text: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    for (at, c) in text.char_indices() {
-        match c {
-            '(' | '[' => depth += 1,
-            ']' => depth = depth.checked_sub(1)?,
-            ')' => match depth {
-                0 => return Some(at),
-                _ => depth -= 1,
-            },
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The `]` that closes the `[` this text is the inside of, if there is one.
-///
-/// [`closing_paren`]'s twin, for
-/// [ADR-105](../../../../docs/specification/adr/adr-105.md) D1's `Seq[T] sync`:
-/// the tail begins after the bracket, so the bracket has to be **matched**
-/// rather than found at the end - `Seq[HashMap[$K, $V]] sync` has one in the
-/// middle.
-fn closing_bracket(text: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    for (at, c) in text.char_indices() {
-        match c {
-            '(' | '[' => depth += 1,
-            ')' => depth = depth.checked_sub(1)?,
-            ']' => match depth {
-                0 => return Some(at),
-                _ => depth -= 1,
-            },
-            _ => {}
-        }
-    }
-    None
-}
-
-/// `text` without a trailing `word`, where what is left ends at a boundary.
-///
-/// The boundary is what keeps a type from being clipped: a result called
-/// `Resync` ends in `sync` and is not one.
-fn word_off<'a>(text: &'a str, word: &str) -> Option<&'a str> {
-    let shorter = text.strip_suffix(word)?;
-    match shorter.chars().next_back() {
-        None => Some(shorter),
-        Some(c) if c.is_whitespace() => Some(shorter.trim_end()),
-        Some(_) => None,
     }
 }
 

@@ -143,3 +143,37 @@ fn a_call_on_a_subject_that_holds_no_view_keeps_none() {
         "true false",
     );
 }
+
+/// **Owned text is not a pattern**: `starts_with`, `ends_with` and `contains`
+/// take a view of text or a character, and text of its own handed to one
+/// reached `rustc` as *`Pattern` is not implemented for `String`*. It is
+/// `NK1102` with *write `ref`*, and each shape that is accepted runs.
+#[test]
+fn owned_text_handed_to_a_pattern_is_refused_and_a_view_runs() {
+    for (argument, refused) in [
+        ("f\"{w}[\"", true),
+        ("w", true),
+        ("ref w", false),
+        ("ref f\"{w}\"", false),
+        ("\"ab\"", false),
+        ("'a'", false),
+    ] {
+        let source = format!(
+            "fn f(line: ref String, w: String) -> bool {{\n    return line.starts_with({argument})\n}}\n\n\
+             fn main() {{\n    let r = f(\"abc\", \"a\")\n    println(f\"{{r}}\")\n}}\n"
+        );
+        let found = findings(&source);
+        let refusal = found.iter().find(|f| f.code == "NK1102");
+        assert_eq!(refusal.is_some(), refused, "{argument}: {found:#?}");
+        if let Some(refusal) = refusal {
+            assert_eq!(
+                refusal.help.as_deref(),
+                Some("Write `ref` in front of it to pass a view of it."),
+                "{argument}"
+            );
+        } else {
+            let out = ran("pattern", &source, Build::default());
+            assert!(out == "true" || out == "false", "{argument}: {out}");
+        }
+    }
+}

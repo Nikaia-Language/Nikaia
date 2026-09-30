@@ -7466,6 +7466,7 @@ impl<'a> Checker<'a> {
         self.a_view_kept_where_the_receiver_says_text(
             &key, contract, args, &found, &expected, span,
         );
+        self.a_pattern_of_owned_text(&key, args, &found, span);
         // The receiver first (ADR-031), then whatever the arguments can still
         // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
@@ -11058,6 +11059,16 @@ impl<'a> Checker<'a> {
             Expr::Coalesce { value, fallback } => {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
+                // **A name on the left of `??` is handed over**: the language
+                // below takes the option to answer from it, so a use of the
+                // name after the line is a use after a move. Unrecorded, that
+                // reached `rustc` as *borrow of moved value* about a file
+                // nobody wrote (found moving `Ty::parse` into Nikaia,
+                // ADR-257). A view and a copy are not taken, which
+                // `hands_over` asks.
+                if matches!(&**value, Expr::Variable(_)) {
+                    self.hands_over(value, &left, "given to `??`", span);
+                }
                 let from_a_map = std::mem::replace(&mut self.read_a_map, outer)
                     && matches!(&**value, Expr::Index { .. });
                 let other = self.expr(fallback, span);
@@ -13195,6 +13206,49 @@ impl<'a> Checker<'a> {
             finding.notes.extend(why);
             finding.help = Some(help);
         }
+    }
+
+    /// **Owned text is not a pattern** (found moving `Ty::parse` into Nikaia,
+    /// ADR-257). `starts_with`, `ends_with` and `contains` take a view of text
+    /// or a character, which is why the ledger writes their parameter `?`, and
+    /// `line.starts_with(f"{word}[")` passed and reached `rustc` as *the trait
+    /// `Pattern` is not implemented for `String`* about a file nobody wrote
+    /// (Part III C.1). It is the ordinary argument refusal, with the way out
+    /// every method argument has: a view, written `ref`. A literal is a view
+    /// already (ADR-207 D3), and a type this compiler could not work out is
+    /// left alone (C.4).
+    fn a_pattern_of_owned_text(&mut self, key: &str, given: &[Expr], found: &[Ty], span: &Span) {
+        let param = match key {
+            "str::starts_with" => "prefix",
+            "str::ends_with" => "suffix",
+            "str::contains" => "part",
+            _ => return,
+        };
+        let owned = found.first().is_some_and(|ty| {
+            matches!(ty, Ty::Named { name, args, view: false } if args.is_empty() && name == ty::TEXT)
+        });
+        if !owned
+            || given
+                .first()
+                .is_some_and(|g| matches!(g, Expr::LitStr { .. }))
+        {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!(
+                "`{key}` expects `{param}` to be `ref String` here, but you're passing `String`."
+            ),
+            notes: vec![
+                "What it looks for is a view of text or a character; text of its own is \
+                 neither."
+                    .to_string(),
+            ],
+            help: Some("Write `ref` in front of it to pass a view of it.".to_string()),
+            labels: Vec::new(),
+        });
     }
 
     /// **A view kept where the receiver says text of its own**

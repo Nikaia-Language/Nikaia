@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.286] — 2026-09-30
+
+**A type's text is read in Nikaia too** (ADR-257 step (c)), and three defects
+the move found are fixed. The toolchain is 4.7 % Nikaia.
+
+- `Ty::parse` and `split_args` are `tools/ty.nika`'s, and the compiler's
+  `contracts::ty` calls them. The Rust parser ran beside the Nikaia one first,
+  over every type the shipped ledgers write, the text of each read back, and
+  ninety-odd edge cases: 989 inputs, identical. **The price is measured:** this
+  language has no slice of text, so each piece is copied where the Rust
+  sliced; reading `std.contracts` costs 95.46 M instructions instead of
+  90.96 M (5.0 % of an empty program, 2.3 % of `json`). ADR-257 §5 records it.
+- **Defects the move found:**
+  - **A buffer assigned whole was kept as a view** (ADR-209's tether).
+    `inner = args` took `args`'s views into an `inner` declared around it, so
+    `args` went into the frame's keep and the assignment put a view where a
+    `String` goes: `rustc`'s *mismatched types*. An assignment of the buffer
+    itself is a move now, as a `return` and a `let` already were.
+  - **Owned text handed to `starts_with`, `ends_with` or `contains`** reached
+    `rustc` as *`Pattern` is not implemented for `String`*. It is `NK1102`
+    with *write `ref`*, and a literal, a character and a `ref` pass.
+  - **A name given to `??` and used again** reached `rustc` as *borrow of
+    moved value*. It is `NK2105` now. Whether `??` should lend instead is
+    `open-decisions.md`'s new question, with a recommendation.
+- The lowering writes no `.into()` after a `??` whose fallback is a variant
+  of an enum the file declares; and `manual_map` joins the tool modules'
+  allowed lints, for a `?.` on a method, which is a `match` because a method
+  may pause or fail (ADR-066). `nikaia-std`'s `lib.rs` says why.
+
 ## [0.0.285] — 2026-09-30
 
 **`Ty` and `Shape` are Nikaia** (ADR-257 D1, step (b)'s first half), with

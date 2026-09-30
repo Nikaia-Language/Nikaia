@@ -111,7 +111,18 @@ pub mod text {
 /// writes `.clone()` (`template.nika`'s `at.clone()`), as it must, and the Rust
 /// below calls that a clone of a copy. When the checker reads the copy, the
 /// `.clone()` is not written and this goes.
-#[allow(clippy::explicit_counter_loop, clippy::clone_on_copy)]
+///
+/// **And `manual_map`, for a `?.` on a method**
+/// ([ADR-066](../../../docs/specification/adr/adr-066.md)): the reach is a
+/// `match` below because a method may pause or fail, and neither an `.await`
+/// nor a `?` works inside the closure `.map` takes. Where the method does
+/// neither, the `match` is the same thing written longer, which is what the
+/// lint says (`ty.nika`'s `result?.text()`, ADR-257).
+#[allow(
+    clippy::explicit_counter_loop,
+    clippy::clone_on_copy,
+    clippy::manual_map
+)]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
     /// mean*: `src/tools/spelling.nika`, lowered to `src/tools/spelling.rs`
