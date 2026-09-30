@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.286 (Draft)
+**Version:** 0.0.287 (Draft)
 **Date:** 2026-09-30
 
 ---
@@ -13,6 +13,14 @@ predictable execution, memory safety and concise source. Memory management,
 concurrency constraints and representation details are enforced by the
 compiler. The compiler translates Nikaia source to Rust and drives the Rust
 toolchain, which is called the **backend** throughout this specification.
+
+Four weights decide a question about the language
+([ADR-258](adr/adr-258.md)). **The special case carries the cost**, not the
+common one. **The compiler works for the developer**, not the developer for
+the compiler: what can be worked out is not written. **The common case has
+zero overhead**: it costs what the same program costs written by hand in the
+backend. **The language is consistent with itself**: a rule reads the same
+wherever its shape appears.
 
 ### 1.2. One language, and the build options
 There is one Nikaia. The same source compiles for every target and under every

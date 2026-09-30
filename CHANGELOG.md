@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.287] — 2026-09-30
+
+**Four weights for a design question** (ADR-258), the owner's philosophy.
+
+- The owner decides at the level of cost and benefit, and gave the language's
+  philosophy instead of a technical answer. The special case carries the cost,
+  not the common one. The compiler works for the developer, not the other way
+  round. The common case has zero overhead. The language is consistent with
+  itself. Part I 1.1 states them, and ADR-258 D5 says how an open question is
+  prepared against them.
+- `open-decisions.md`'s question on `??` is rewritten that way: a table of
+  what each option costs under the four weights. All four recommend (1): the
+  use decides, taken where the answer is kept and lent where it is only read,
+  as an argument is.
+
 ## [0.0.286] — 2026-09-30
 
 **A type's text is read in Nikaia too** (ADR-257 step (c)), and three defects
