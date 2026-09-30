@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.293] — 2026-09-30
+
+**A part an arm binds as a view is handed on as it is** (`open-work.md`
+2.52). ADR-242 binds a `match` arm's names `ref` where the arm only reads
+them, and a call that lends such a name wrote `&key` all the same: a view of
+a view, the same code below, and the lint `nikaia-std` allowed on its tools
+for `ledger.nika`'s reader (0.0.292). The allowance is gone.
+
+- Decided in the checker, after the arm is walked, because only then is it
+  known which parts are lent: the references recorded for the arm's own
+  statements drop the names it binds `ref`, in its `f"…"` holes as well.
+  Only for an arm that is a block and binds none of the names again.
+- `tests/reader_shapes.rs` runs the shape: `Line::Pair { ref key, ref value }`
+  handed to a function that reads text, in a statement and in a hole.
+
 ## [0.0.292] — 2026-09-30
 
 **Reading a ledger back is Nikaia** (ADR-257 step (c)), whole: the file's
@@ -52,8 +67,8 @@ compiler reads `std`'s ledger in fewer instructions than the Rust did.
     another unit declares, carried a useless `.into()`.
 - Seven lints on the generated tools say how the lowering writes rather than
   what it does, and are allowed on `tools` with the reason beside them. One of
-  them, a `&` before an arm's binding that is bound `ref` already, is
-  `open-work.md` 2.52.
+  them, a `&` before an arm's binding that is bound `ref` already, was
+  `open-work.md` 2.52 and is gone in 0.0.293.
 
 ## [0.0.291] — 2026-09-30
 

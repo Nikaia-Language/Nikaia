@@ -20823,8 +20823,67 @@ impl<'a> Checker<'a> {
             .map(|(name, _)| name.clone())
             .collect();
         if !lent.is_empty() {
+            self.a_lent_part_is_handed_on_as_it_is(body, &lent);
             let at = pattern as *const MatchPattern as usize;
             self.checked.lent_bindings.insert(at, lent);
+        }
+    }
+
+    /// **A part the arm binds `ref` is a view already** (`open-work.md` 2.52):
+    /// a call that lends it hands it on as it is, where the reference the
+    /// compiler writes for a lent argument made it a view of a view - the same
+    /// code below, and a `&` the language below's lint points at.
+    ///
+    /// Decided here, after the arm, because whether a part is lent is known
+    /// only once the arm is walked; the arguments recorded meanwhile are the
+    /// arm's statements', by where they start. Only for an arm that is a
+    /// block, whose statements are its own, and only where nothing in it binds
+    /// the name again.
+    fn a_lent_part_is_handed_on_as_it_is(&mut self, body: &Expr, lent: &BTreeSet<String>) {
+        let Expr::Block(block) = body else {
+            return;
+        };
+        let (Some(first), Some(last)) = (block.stmts.first(), block.stmts.last()) else {
+            return;
+        };
+        let (from, to) = (first.span.start, last.span.end);
+        let mut shapes: BTreeSet<String> = BTreeSet::new();
+        let mut bound_again = false;
+        let holes: std::cell::RefCell<Vec<Expr>> = std::cell::RefCell::new(Vec::new());
+        let parsed = self.parsed;
+        let mut look = |expr: &Expr| match expr {
+            Expr::Variable(name) if lent.contains(parsed.text(*name)) => {
+                shapes.insert(argument_shape(expr));
+            }
+            Expr::Block(inner) => {
+                bound_again |= inner.stmts.iter().any(|stmt| {
+                    matches!(&stmt.node, Stmt::Let { names, .. }
+                        if names.iter().any(|n| lent.contains(parsed.text(*n))))
+                });
+            }
+            // An `f"…"` hole is read again from its text, with the names it
+            // shares with the arm, so its calls are the arm's too.
+            Expr::LitInterpolated(_) => holes.borrow_mut().extend(
+                crate::emit::literal_expressions_bound(parsed, expr)
+                    .into_iter()
+                    .map(|(hole, _)| hole),
+            ),
+            _ => {}
+        };
+        crate::emit::visit_expr(body, &mut look);
+        loop {
+            let Some(hole) = holes.borrow_mut().pop() else {
+                break;
+            };
+            crate::emit::visit_expr(&hole, &mut look);
+        }
+        if bound_again || shapes.is_empty() {
+            return;
+        }
+        for ((at, _, _), given) in self.checked.lent_args.iter_mut() {
+            if (from..to).contains(&(*at as u32)) {
+                given.retain(|shape| !shapes.contains(shape));
+            }
         }
     }
 

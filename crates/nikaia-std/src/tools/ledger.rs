@@ -212,7 +212,7 @@ pub fn read(written: &str) -> Result<Ledger, nikaia_std::error::Thrown<Refused>>
                 }
                 section = Section::Sources;
             },
-            Line::Pair { ref key, ref value } => { if section == Section::Header { header(&mut ledger, &key, &value, n)?; } else if section == Section::Sources { ledger.sources.insert(unquoted(&key, n)?, unquoted(&value, n)?); } else if section == Section::Function { function_key(&mut function, &current, &key, &value, n)?; } else if section == Section::Kind { type_key(&mut a_type, &key, &value, n)?; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a `trait` or an `impl` table has no keys, and this has `{}`", n, key)), &"read")); } },
+            Line::Pair { ref key, ref value } => { if section == Section::Header { header(&mut ledger, key, value, n)?; } else if section == Section::Sources { ledger.sources.insert(unquoted(key, n)?, unquoted(value, n)?); } else if section == Section::Function { function_key(&mut function, &current, key, value, n)?; } else if section == Section::Kind { type_key(&mut a_type, key, value, n)?; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a `trait` or an `impl` table has no keys, and this has `{}`", n, key)), &"read")); } },
         }
     }
     if section == Section::Function { ledger.functions.insert(current.to_owned(), function); }
