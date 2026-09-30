@@ -967,6 +967,17 @@ fn a_lambda_that_reaches_for_a_withdrawn_name_is_refused() {
     }
 }
 
+/// **Outside a lambda, `a` is just a name nothing declares**: the note about
+/// withdrawn lambda arguments would explain a mistake nobody made.
+#[test]
+fn a_stray_a_outside_a_lambda_gets_the_general_note() {
+    let found = findings("fn main() {\n    a\n}\n");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1117");
+    let notes = found[0].notes.join(" ");
+    assert!(!notes.contains("no longer there automatically"), "{notes}");
+}
+
 /// **A lambda that names its arguments is fine**, and so is one that names none
 /// and reaches for none. The first is the form; the second is the zero-argument
 /// lambda `.or_insert_with fn { Stats(0) }` has always wanted.

@@ -654,11 +654,50 @@ fn the_spelling_ref_replaced_note(found: Option<&str>) -> Option<String> {
     })
 }
 
-fn reserved_word_note(found: Option<&str>) -> Option<String> {
+/// `` `struct` is a reserved word`` - said only where a **name** was what
+/// the parser needed: the program parses further with a plain name in the
+/// word's place. `let struct = 1` gets it; `struct` inside an `impl`, or `ref`
+/// where a `:` was missing, is some other mistake, and the note would explain
+/// the wrong one.
+fn reserved_word_note(found: Option<&str>, source: &str, at: usize) -> Option<String> {
     let token = found?;
-    RESERVED_WORDS
-        .contains(&token)
-        .then(|| format!("`{token}` is a reserved word, so it can't be used as a name here."))
+    if !RESERVED_WORDS.contains(&token) || !source[at..].starts_with(token) {
+        return None;
+    }
+    let mut with_a_name = source.to_string();
+    with_a_name.replace_range(at..at + token.len(), &"z".repeat(token.len()));
+    let further = match stops_at(&with_a_name) {
+        None => true,
+        Some(offset) => offset > at + token.len(),
+    };
+    further.then(|| format!("`{token}` is a reserved word, so it can't be used as a name here."))
+}
+
+/// `fn(info) sync { … }`: an effect written on a lambda, which Part I 7.2 and
+/// ADR-006 D6 write for the panic hook and nothing in the grammar gives a
+/// lambda yet. Said where the word stands right after a parameter list.
+fn an_effect_on_a_lambda_note(found: Option<&str>, before: &str) -> Option<String> {
+    let word = found.filter(|w| matches!(*w, "sync" | "throws"))?;
+    let before = before.trim_end();
+    (before.ends_with(')') && before.contains("fn")).then(|| {
+        format!(
+            "`{word}` isn't written on a lambda yet: a lambda's parameter list is followed by \
+             its block and nothing else."
+        )
+    })
+}
+
+/// Where a parse of `input` stops, or `None` where it goes through.
+fn stops_at(input: &str) -> Option<usize> {
+    let mut stream = ParseInput::<Trivia> {
+        state: ParseContext::<Trivia>::default(),
+        input: LocatingSlice::new(input),
+    };
+    match CompilerGrammar::parse_program().parse_next(&mut stream) {
+        Ok(_) if stream.input.is_empty() => None,
+        Ok(_) => Some(input.len() - stream.input.len()),
+        Err(e) => Some(e.offset),
+    }
 }
 
 /// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
@@ -903,7 +942,8 @@ fn a_parse_error(error: &ParseError, source: &str) -> crate::check::Finding {
         None => (what_was_expected(error), None),
     };
     let mut notes: Vec<String> = [
-        reserved_word_note(found),
+        reserved_word_note(found, source, at),
+        an_effect_on_a_lambda_note(found, before),
         the_spelling_ref_replaced_note(found),
     ]
     .into_iter()

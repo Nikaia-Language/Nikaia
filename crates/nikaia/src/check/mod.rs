@@ -11382,7 +11382,11 @@ impl<'a> Checker<'a> {
     /// Hands back whether it said anything, so the general refusal can stand
     /// aside for it.
     fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
-        if !matches!(name, "a" | "b" | "c") {
+        // **Only inside a lambda**, where the three names used to mean
+        // something: a stray `a` in `main` is the general refusal's, and a
+        // note about lambdas there would explain the wrong mistake.
+        let in_a_lambda = self.repeats.iter().any(|r| r.what == "lambda");
+        if !matches!(name, "a" | "b" | "c") || !in_a_lambda {
             return false;
         }
         self.checked.findings.push(Finding {

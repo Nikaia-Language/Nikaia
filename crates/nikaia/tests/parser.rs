@@ -202,6 +202,21 @@ fn every_reserved_word_is_refused_as_a_name() {
     }
 }
 
+/// **The reserved-word note only where a name was wanted**: `struct` inside an
+/// `impl` and `ref` where a `:` is missing are other mistakes, and a note about
+/// names would explain the wrong one.
+#[test]
+fn a_reserved_word_where_no_name_was_wanted_gets_no_note_about_names() {
+    for source in ["impl P {\n    struct T {}\n}\n", "fn f(x ref i64) {\n}\n"] {
+        let err = parse_to_ast(source).err().expect("it does not parse");
+        let finding = nikaia::diagnostics::refused_finding(&err).expect("a finding");
+        assert!(
+            finding.notes.iter().all(|n| !n.contains("reserved word")),
+            "{source}: {finding:#?}"
+        );
+    }
+}
+
 /// **And the grammar sublanguage's words are not reserved**, which is the other
 /// half of the decision: they are keywords inside a `grammar` block and names
 /// everywhere else.

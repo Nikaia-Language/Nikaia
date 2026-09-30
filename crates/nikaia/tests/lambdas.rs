@@ -294,14 +294,15 @@ fn the_expression_lambda_still_says_it_was_removed() {
 ///
 /// **Which is the whole point of the list.** What is unbuilt is unchanged; what
 /// changed is that a program writing the specification's own form is told so
-/// instead of quietly meaning something else.
+/// instead of quietly meaning something else - and the note says what is not
+/// built, rather than that `sync` is not a name, which nobody used it as.
 #[test]
 fn an_effect_annotation_on_a_lambda_is_refused_where_the_annotation_is() {
     let source = "fn main() { panic::on_panic fn(info) sync { info } }";
     let message = rendered(source);
     assert!(message.contains("`sync`"), "{message}");
     assert!(
-        message.contains("is a reserved word"),
+        message.contains("`sync` isn't written on a lambda yet"),
         "the note says why, which is what a reader acts on: {message}"
     );
 }
