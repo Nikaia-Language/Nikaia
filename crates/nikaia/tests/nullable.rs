@@ -1361,3 +1361,42 @@ fn a_plain_arm_beside_a_null_is_the_value() {
     );
     assert_eq!(printed.trim(), "1 7 2");
 }
+
+/// **`NK1205`: a variant matched on a `T?`** (`open-work.md` §1.33): the
+/// pattern says nothing about `null`, and the lowering was a `match` over an
+/// `Option<W>` with `W::B` as its pattern. The way out, `??` first, compiles.
+#[test]
+fn a_variant_matched_on_a_nullable_is_refused() {
+    let source = |scrutinee: &str| {
+        format!(
+            "enum W {{ A, B }}\n\
+             fn g(n: i64) -> W? {{\n\
+             \x20   return if n == 0 {{ W::B }} else {{ null }}\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   {scrutinee}\n\
+             \x20   println(f\"{{z}}\")\n\
+             }}\n"
+        )
+    };
+    let found = findings(&source(
+        "let z = match g(0) {\n        W::B => 2,\n        else => 3,\n    }",
+    ));
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1205")
+        .unwrap_or_else(|| panic!("no NK1205: {found:#?}"));
+    assert!(it.message.contains("`W::B`"), "{it:#?}");
+    assert!(
+        it.help.as_deref().is_some_and(|h| h.contains("??")),
+        "{it:#?}"
+    );
+
+    let printed = ran(
+        "variant-after-fallback",
+        &source(
+            "let w = g(0) ?? W::A\n    let z = match w {\n        W::B => 2,\n        else => 3,\n    }",
+        ),
+    );
+    assert_eq!(printed.trim(), "2");
+}

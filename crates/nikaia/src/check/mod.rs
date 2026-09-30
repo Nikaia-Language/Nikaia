@@ -9601,6 +9601,7 @@ impl<'a> Checker<'a> {
                     _ => on,
                 };
                 self.a_match_that_misses_a_case(&on, arms, span);
+                self.a_variant_matched_on_a_nullable(&on, value, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same -
                 // or when the arms meet at text (ADR-207 D2).
@@ -15835,6 +15836,57 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`NK1205`: a variant matched on a `T?`** (`open-work.md` §1.33): `match
+    /// g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?` names a
+    /// variant of `W` where the value may be `null`, and was lowered as a
+    /// `match` over an `Option<W>` with `W::B` as its pattern - `rustc`'s
+    /// *mismatched types* about a file nobody wrote (Part III C.1). The way
+    /// out is to say what `null` stands for first, with `??`.
+    fn a_variant_matched_on_a_nullable(
+        &mut self,
+        on: &Ty,
+        value: &Expr,
+        arms: &[ast::MatchArm],
+        span: &Span,
+    ) {
+        let Ty::Nullable(inner) = on else {
+            return;
+        };
+        let names_a_variant = |pattern: &MatchPattern| match pattern {
+            MatchPattern::Path(path)
+            | MatchPattern::Tuple { path, .. }
+            | MatchPattern::Named { path, .. } => path.len() >= 2,
+            _ => false,
+        };
+        let Some(arm) = arms.iter().find(|arm| names_a_variant(&arm.pattern)) else {
+            return;
+        };
+        let (written, variant) = (
+            written(self.parsed, value),
+            written_pattern(self.parsed, &arm.pattern),
+        );
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1205",
+            message: format!(
+                "`{written}` may be `null`, so `{variant}` can't be matched on it directly."
+            ),
+            notes: vec![format!(
+                "`{written}` is a `{}`: a `{}` or nothing, and a pattern of the `{}` says \
+                 nothing about the nothing.",
+                on.text(),
+                inner.text(),
+                inner.text()
+            )],
+            help: Some(format!(
+                "Say what `null` stands for first: `let value = {written} ?? …`, and \
+                 `match value`."
+            )),
+            labels: Vec::new(),
+        });
+    }
+
     fn a_match_that_misses_a_case(&mut self, on: &Ty, arms: &[ast::MatchArm], span: &Span) {
         // **A guarded arm covers nothing** (
         // [ADR-137](../../docs/specification/adr/adr-137.md) D2): the pattern
@@ -21550,6 +21602,23 @@ fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
 /// the parser keeps no text, and an `assert`'s failure names its condition
 /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2). What this does not
 /// spell out it writes as `…`, which a reader recognises and nothing parses.
+/// A pattern's path as the source wrote it, with `(…)` or `{ … }` where it
+/// takes a variant apart.
+fn written_pattern(parsed: &Parsed, pattern: &MatchPattern) -> String {
+    let path = |path: &[Ident]| {
+        path.iter()
+            .map(|s| parsed.text(*s))
+            .collect::<Vec<_>>()
+            .join("::")
+    };
+    match pattern {
+        MatchPattern::Path(p) => path(p),
+        MatchPattern::Tuple { path: p, .. } => format!("{}(…)", path(p)),
+        MatchPattern::Named { path: p, .. } => format!("{} {{ … }}", path(p)),
+        _ => "this pattern".to_string(),
+    }
+}
+
 pub fn written(parsed: &Parsed, expr: &Expr) -> String {
     let w = |e: &Expr| written(parsed, e);
     let list = |items: &[Expr]| {

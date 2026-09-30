@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.282] — 2026-09-30
+
+**A variant matched on a `T?` is refused** (`NK1205`, `open-work.md` §1.33).
+
+- `match g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?`
+  passed the check and was lowered as a `match` over an `Option<W>` with
+  `W::B` as its pattern, which `rustc` refused. The pattern says nothing about
+  `null`; the help hands over `??` first and a `match` of what it gives. Part
+  III's table of codes has the entry.
+- The defects list is empty again.
+
 ## [0.0.281] — 2026-09-30
 
 **`contracts::trust` is Nikaia** (ADR-250 D1, D2), and three defects the move
