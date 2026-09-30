@@ -4,6 +4,12 @@
 #[allow(unused_imports)]
 pub use nikaia_std::error::Full;
 
+#[allow(unused_imports)]
+use nikaia_std::collections;
+
+#[allow(unused_imports)]
+use nikaia_std::text;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
     Table { kind: String, name: String },
@@ -68,7 +74,7 @@ fn table_kind(line: &str) -> &str {
 }
 
 fn table_name(line: &str, kind: &str, n: i64) -> Result<String, nikaia_std::error::Thrown<Refused>> {
-    let c: Vec<char> = line.chars().collect::<Vec<_>>();
+    let c: Vec<char> = nikaia_std::list::chars(line.chars());
     let start = kind.len() as i64 + 3;
     if !line.ends_with("\"]") || (c.len() as i64) < start + 2 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unterminated section header", n)), &"table_name")); }
     let mut name: String = String::from("");
@@ -86,8 +92,12 @@ fn pair(line: &str, n: i64) -> Result<Line, nikaia_std::error::Thrown<Refused>> 
 }
 
 pub fn unquote(value: &str) -> Result<String, nikaia_std::error::Thrown<Refused>> {
-    let c: Vec<char> = value.chars().collect::<Vec<_>>();
-    if (c.len() as i64) < 2 || *nikaia_std::index::get(&c, 0) != '"' || *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 1)) != '"' { return Err(nikaia_std::error::throwing(Refused::Because(format!("expected a quoted string, found `{}`", value)), &"unquote")); }
+    Ok(unquote_at(value, "")?)
+}
+
+fn unquote_at(value: &str, at: &str) -> Result<String, nikaia_std::error::Thrown<Refused>> {
+    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    if (c.len() as i64) < 2 || *nikaia_std::index::get(&c, 0) != '"' || *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 1)) != '"' { return Err(nikaia_std::error::throwing(Refused::Because(format!("{}expected a quoted string, found `{}`", at, value)), &"unquote_at")); }
     let mut out: String = String::from("");
     let mut escaped = false;
     for k in 1..c.len() as i64 - 1 {
@@ -96,13 +106,17 @@ pub fn unquote(value: &str) -> Result<String, nikaia_std::error::Thrown<Refused>
             escaped = false;
         } else if *nikaia_std::index::get(&c, nikaia_std::index::at(k)) == '\\' { escaped = true; } else { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
     }
-    if escaped { return Err(nikaia_std::error::throwing(Refused::Because(format!("a `\\` at the end of `{}`", value)), &"unquote")); }
+    if escaped { return Err(nikaia_std::error::throwing(Refused::Because(format!("{}a `\\` at the end of `{}`", at, value)), &"unquote_at")); }
     Ok(out)
 }
 
 pub fn list(value: &str) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
-    let c: Vec<char> = value.chars().collect::<Vec<_>>();
-    if (c.len() as i64) < 2 || *nikaia_std::index::get(&c, 0) != '[' || *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 1)) != ']' { return Err(nikaia_std::error::throwing(Refused::Because(format!("expected a list, found `{}`", value)), &"list")); }
+    Ok(list_at(value, "")?)
+}
+
+fn list_at(value: &str, at: &str) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
+    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    if (c.len() as i64) < 2 || *nikaia_std::index::get(&c, 0) != '[' || *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 1)) != ']' { return Err(nikaia_std::error::throwing(Refused::Because(format!("{}expected a list, found `{}`", at, value)), &"list_at")); }
     let mut entries: Vec<String> = vec![];
     let mut entry: String = String::from("");
     let mut quoted = false;
@@ -113,20 +127,746 @@ pub fn list(value: &str) -> Result<Vec<String>, nikaia_std::error::Thrown<Refuse
             if escaped { escaped = false; } else if here == '\\' { escaped = true; } else if here == '"' { quoted = false; }
             entry.push(here);
         } else if here == ',' {
-            take(&entry, &mut entries)?;
+            take(&entry, &mut entries, at)?;
             entry = String::from("");
         } else {
             if here == '"' { quoted = true; }
             entry.push(here);
         }
     }
-    take(&entry, &mut entries)?;
+    take(&entry, &mut entries, at)?;
     Ok(entries)
 }
 
-fn take(entry: &str, entries: &mut Vec<String>) -> Result<(), nikaia_std::error::Thrown<Refused>> {
+fn take(entry: &str, entries: &mut Vec<String>, at: &str) -> Result<(), nikaia_std::error::Thrown<Refused>> {
     let written = entry.trim();
-    if (written.len() as i64) > 0 { entries.push(unquote(written)?); }
+    if (written.len() as i64) > 0 { entries.push(unquote_at(written, at)?); }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Header,
+    Function,
+    Kind,
+    Sources,
+    Nothing,
+}
+
+pub fn read(written: &str) -> Result<Ledger, nikaia_std::error::Thrown<Refused>> {
+    let mut ledger = Ledger::blank();
+    let mut section = Section::Header;
+    let mut current: String = String::from("");
+    let mut function = FnContract::empty();
+    let mut a_type = TypeContract::empty();
+    let mut traits: Vec<String> = vec![];
+    let mut functions: Vec<String> = vec![];
+    let mut answers: Vec<(String, String)> = vec![];
+    for one in lines(written)? {
+        let n = one.at;
+        match one.line {
+            Line::Table { ref kind, ref name } => {
+                if section == Section::Function {
+                    ledger.functions.insert(current.to_owned(), function);
+                    function = FnContract::empty();
+                }
+                if section == Section::Kind {
+                    ledger.types.insert(current.to_owned(), a_type);
+                    a_type = TypeContract::empty();
+                }
+                current = name.to_owned();
+                if kind == "fn" {
+                    if ledger.functions.contains_key(&current) {
+                        function = nikaia_std::index::or(match *nikaia_std::index::get(&ledger.functions, &current) {
+                            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                            None => None,
+                        }, || FnContract::empty());
+                    }
+                    functions.push(current.to_owned());
+                    section = Section::Function;
+                } else if kind == "type" {
+                    if ledger.types.contains_key(&current) {
+                        a_type = nikaia_std::index::or(match *nikaia_std::index::get(&ledger.types, &current) {
+                            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                            None => None,
+                        }, || TypeContract::empty());
+                    }
+                    section = Section::Kind;
+                } else if kind == "trait" {
+                    if !ledger.traits.contains_key(&current) { ledger.traits.insert(current.to_owned(), collections::BTreeSet::new()); }
+                    traits.push(current.to_owned());
+                    section = Section::Nothing;
+                } else {
+                    answers.push(implemented(&current, n)?);
+                    section = Section::Nothing;
+                }
+            },
+            Line::Sources => {
+                if section == Section::Function {
+                    ledger.functions.insert(current.to_owned(), function);
+                    function = FnContract::empty();
+                }
+                if section == Section::Kind {
+                    ledger.types.insert(current.to_owned(), a_type);
+                    a_type = TypeContract::empty();
+                }
+                section = Section::Sources;
+            },
+            Line::Pair { ref key, ref value } => { if section == Section::Header { header(&mut ledger, &key, &value, n)?; } else if section == Section::Sources { ledger.sources.insert(unquoted(&key, n)?, unquoted(&value, n)?); } else if section == Section::Function { function_key(&mut function, &current, &key, &value, n)?; } else if section == Section::Kind { type_key(&mut a_type, &key, &value, n)?; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a `trait` or an `impl` table has no keys, and this has `{}`", n, key)), &"read")); } },
+        }
+    }
+    if section == Section::Function { ledger.functions.insert(current.to_owned(), function); }
+    if section == Section::Kind { ledger.types.insert(current.to_owned(), a_type); }
+    for name in traits.iter() {
+        let prefix = format!("{}::", name);
+        let mut methods: collections::BTreeSet<String> = collections::BTreeSet::new();
+        for entry in functions.iter() {
+            let method = after(entry, &prefix);
+            if method.is_some() {
+                let rest = nikaia_std::index::or(method, || "".into());
+                if !rest.contains("::") { methods.insert(rest.to_owned()); }
+            }
+        }
+        ledger.traits.insert(name.to_owned(), methods);
+    }
+    let mut done: Vec<String> = vec![];
+    for (trait_name, _) in answers.iter() {
+        if !done.contains(trait_name) {
+            let mut types: collections::BTreeSet<String> = collections::BTreeSet::new();
+            for (other, answering) in answers.iter() { if other == trait_name { types.insert(answering.to_owned()); } }
+            ledger.implementations.insert(trait_name.to_owned(), types);
+            done.push(trait_name.to_owned());
+        }
+    }
+    Ok(ledger)
+}
+
+fn header(ledger: &mut Ledger, key: &str, value: &str, n: i64) -> Result<(), nikaia_std::error::Thrown<Refused>> {
+    if key == "version" {
+        let number = nikaia_std::index::or(text::parse_i64(value), || -1);
+        if number < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `version` is a whole number, not `{}`", n, value)), &"header")); }
+        if number > 4294967295i64 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `version` is a whole number, not `{}`", n, value)), &"header")); }
+        ledger.version = u32::try_from(number).unwrap_or_else(|_| panic!("the value does not fit in an `u32`"));
+    } else if key == "toolchain" { ledger.toolchain = unquoted(value, n)?; } else if key == "inference" { ledger.inference = unquoted(value, n)?; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown header key `{}`", n, key)), &"header")); }
+    Ok(())
+}
+
+fn implemented(name: &str, n: i64) -> Result<(String, String), nikaia_std::error::Thrown<Refused>> {
+    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let at = find_text(&c, 0, " for ");
+    if at < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: an `impl` entry is `A for T`: {}", n, name)), &"implemented")); }
+    Ok((trimmed(&slice(&c, 0, at)), trimmed(&slice(&c, at + 5, c.len() as i64))))
+}
+
+fn function_key(entry: &mut FnContract, name: &str, key: &str, value: &str, n: i64) -> Result<(), nikaia_std::error::Thrown<Refused>> {
+    if key == "pub" { entry.public = value == "true"; } else if key == "sync" { entry.sync_claim = sync_of(value, n)?; } else if key == "throws" { entry.fails_with = throws_of(value, n)?; } else if key == "returns" { entry.borrows = borrows_of(&unquoted(value, n)?, n)?; } else if key == "signature" {
+        let spelled = unspell(&unquoted(value, n)?, name);
+        if spelled.mutates { entry.mutates = true; }
+        if (spelled.borrows.len() as i64) > 0 { entry.borrows = spelled.borrows.to_owned(); }
+        entry.signature = Some(signature_of(&spelled.text)?);
+    } else if key == "keeps" { entry.keeps = entries(value, n)?; } else if key == "mutates" { entry.mutates = value == "true"; } else if key == "locks" {
+        let said = value.trim();
+        if said == "true" { entry.touches_a_lock = Lock::Holds; } else if said == "\"?\"" { entry.touches_a_lock = Lock::Undecided; } else { entry.touches_a_lock = Lock::No; }
+    } else if key == "threads" {
+        let said = value.trim();
+        if said == "true" { entry.threads = Threads::May; } else if said == "false" { entry.threads = Threads::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `threads` is `true` or `false`, not `{}`. (Leave it out if nobody knows.)", n, said)), &"function_key")); }
+    } else if key == "touches" {
+        let mut touches: Vec<Touch> = vec![];
+        for one in entries(value, n)? { touches.push(touch_of(&one)?); }
+        entry.touches = touches;
+        entry.touches_known = true;
+    } else if key == "provenance" { entry.provenance = Some(provenance_of(&unquoted(value, n)?, n)?); } else if key == "views" {
+        let mut views: Vec<Held> = vec![];
+        for held in entries(value, n)? {
+            let read = held_of(&held);
+            if read.is_none() { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a tether state is `name: borrowed` or `name: tethered`, not `{}`", n, held)), &"function_key")); }
+            views.push(nikaia_std::index::or(read, || Held { position: String::from(""), state: State::Borrowed }));
+        }
+        entry.views = views;
+    } else if key == "sharing" {
+        let mut classes: Vec<Class> = vec![];
+        for class in entries(value, n)? {
+            let read = class_of(&class);
+            if read.is_none() { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a sharing class is `a | b: plain` or `a | b: atomic`, not `{}`", n, class)), &"function_key")); }
+            classes.push(nikaia_std::index::or(read, || Class { members: vec![], count: Count::Atomic }));
+        }
+        entry.sharing = classes;
+    } else if key == "ends_by_length" { entry.ends_by_length = value == "true"; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a fn", n, key)), &"function_key")); }
+    Ok(())
+}
+
+fn type_key(entry: &mut TypeContract, key: &str, value: &str, n: i64) -> Result<(), nikaia_std::error::Thrown<Refused>> {
+    if key == "pub" { entry.public = value == "true"; } else if key == "crosses" { if value == "true" { entry.crosses = Crosses::May; } else if value == "false" { entry.crosses = Crosses::MayNot; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `crosses` is `true` or `false`, not `{}` - and leaving the line out is the third answer", n, value)), &"type_key")); } } else if key == "compares" { entry.compares = value.trim() == "true"; } else if key == "copies" { entry.copies = value.trim() == "true"; } else if key == "tethered" { entry.tethered = entries(value, n)?; } else if key == "touches" { entry.touches = entries(value, n)?; } else if key == "iterates" {
+        let said = unquoted(value, n)?;
+        if said != "throws" { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `iterates` is `throws` and nothing else, not `{}` - a step that cannot fail says nothing", n, said)), &"type_key")); }
+        entry.iterates_fallibly = true;
+    } else if key == "variants" {
+        let mut variants: Vec<VariantContract> = vec![];
+        for one in entries(value, n)? { variants.push(variant_of(&one)); }
+        entry.variants = variants;
+    } else if key == "fields" {
+        let mut fields: Vec<FieldContract> = vec![];
+        for one in entries(value, n)? { fields.push(field_of(&one)); }
+        entry.fields = fields;
+    } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a type", n, key)), &"type_key")); }
+    Ok(())
+}
+
+fn unquoted(value: &str, n: i64) -> Result<String, nikaia_std::error::Thrown<Refused>> {
+    Ok(unquote_at(value, &format!("line {}: ", n))?)
+}
+
+fn entries(value: &str, n: i64) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
+    Ok(list_at(value, &format!("line {}: ", n))?)
+}
+
+fn sync_of(value: &str, n: i64) -> Result<Sync, nikaia_std::error::Thrown<Refused>> {
+    if value == "true" { return Ok(Sync::Asserted); }
+    if value == "false" { return Ok(Sync::No); }
+    if value == "\"inferred\"" { return Ok(Sync::Inferred); }
+    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    if value.ends_with(")\"") && (value.starts_with("\"sync(") || value.starts_with("\"from(")) && (c.len() as i64) >= 8 {
+        let inside = slice(&c, 6, c.len() as i64 - 2);
+        let name = inside.trim();
+        if (name.len() as i64) > 0 { return Ok(Sync::From(name.to_owned())); }
+    }
+    return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: `sync` is `true` (the source says so), `\"inferred\"` (the body implies it) or `\"sync(f)\"` (its lambda decides), not `{}`", n, value)), &"sync_of"))
+}
+
+fn throws_of(value: &str, n: i64) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
+    if value == "true" {
+        let unnamed: String = String::from("?");
+        return Ok(vec![unnamed]);
+    }
+    Ok(entries(value, n)?)
+}
+
+fn borrows_of(value: &str, n: i64) -> Result<Vec<String>, nikaia_std::error::Thrown<Refused>> {
+    let c: Vec<char> = nikaia_std::list::chars(value.chars());
+    let mut from: i64 = -1;
+    if value.ends_with(")") { if value.starts_with("ref(") { from = 4; } else if value.starts_with("borrows(") { from = 8; } }
+    if from < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: expected `ref(…)`, found `{}`", n, value)), &"borrows_of")); }
+    let inside = slice(&c, from, c.len() as i64 - 1);
+    let mut names: Vec<String> = vec![];
+    for part in inside.split("|") {
+        let name = part.trim();
+        if (name.len() as i64) > 0 { names.push(name.to_owned()); }
+    }
+    Ok(names)
+}
+
+fn provenance_of(value: &str, n: i64) -> Result<Provenance, nikaia_std::error::Thrown<Refused>> {
+    if value == "trusted" { return Ok(Provenance::Trusted); }
+    if value == "untrusted" { return Ok(Provenance::Untrusted); }
+    return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: a provenance is `trusted` or `untrusted`, not `{}`", n, value)), &"provenance_of"))
+}
+
+pub fn touch_of(written: &str) -> Result<Touch, nikaia_std::error::Thrown<Refused>> {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    let whole = written.trim();
+    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let space = find_last(&c, ' ');
+    if space < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("a touch is `resource read` or `resource write`, found `{}`", whole)), &"touch_of")); }
+    let said = slice(&c, space + 1, c.len() as i64);
+    let access = said.trim();
+    let mut write = false;
+    if access == "write" { write = true; } else if access != "read" { return Err(nikaia_std::error::throwing(Refused::Because(format!("a touch is `read` or `write`, not `{}` (in `{}`)", access, whole)), &"touch_of")); }
+    let before = slice(&c, 0, space);
+    let resource = before.trim();
+    let r: Vec<char> = nikaia_std::list::chars(resource.chars());
+    let open = find(&r, 0, '(');
+    let mut kind: String = resource.to_owned();
+    let mut parameter: Option<String> = None;
+    if open >= 0 {
+        if !resource.ends_with(")") { return Err(nikaia_std::error::throwing(Refused::Because(format!("a resource is `kind(parameter)`, and `{}` has no `)`", resource)), &"touch_of")); }
+        let named = __keep_frame.put(slice(&r, 0, open));
+        kind = named.trim().to_owned();
+        let inside = __keep_frame.put(slice(&r, open + 1, r.len() as i64 - 1));
+        parameter = Some(inside.trim().to_owned());
+    }
+    if (kind.len() as i64) == 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("a touch needs a resource kind, found `{}`", whole)), &"touch_of")); }
+    Ok(Touch { kind, parameter, write })
+}
+
+pub fn held_of(written: &str) -> Option<Held> {
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let colon = find_last(&c, ':');
+    if colon < 0 { return None; }
+    let state = State::parse(&slice(&c, colon + 1, c.len() as i64));
+    if state.is_none() { return None; }
+    let position = slice(&c, 0, colon);
+    Some(Held { position: position.trim().to_owned(), state: nikaia_std::index::or(state, || State::Borrowed) })
+}
+
+pub fn class_of(written: &str) -> Option<Class> {
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let colon = find_last(&c, ':');
+    if colon < 0 { return None; }
+    let named = slice(&c, 0, colon);
+    let mut members: Vec<String> = vec![];
+    for part in named.split("|") {
+        let member = part.trim();
+        if (member.len() as i64) > 0 { members.push(member.to_owned()); }
+    }
+    if (members.len() as i64) == 0 { return None; }
+    let count = Count::parse(&slice(&c, colon + 1, c.len() as i64));
+    if count.is_none() { return None; }
+    Some(Class { members, count: nikaia_std::index::or(count, || Count::Atomic) })
+}
+
+pub fn variant_of(written: &str) -> VariantContract {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    let whole = written.trim();
+    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let paren = find(&c, 0, '(');
+    if paren >= 0 {
+        let named = slice(&c, 0, paren);
+        let rest = slice(&c, paren + 1, c.len() as i64);
+        let inside = without_last(rest.trim_end(), ')');
+        let mut holds: Vec<FieldContract> = vec![];
+        let mut at = 0;
+        for part in split_args(&inside) {
+            holds.push(FieldContract { name: format!("{}", at), ty: parse(&part), public: true });
+            at += 1;
+        }
+        return VariantContract { name: named.trim().to_owned(), holds, positional: true };
+    }
+    let brace = find(&c, 0, '{');
+    if brace >= 0 {
+        let named = slice(&c, 0, brace);
+        let rest = slice(&c, brace + 1, c.len() as i64);
+        let inside = without_last(rest.trim_end(), '}');
+        let mut holds: Vec<FieldContract> = vec![];
+        for part in split_args(&inside) {
+            let p: Vec<char> = nikaia_std::list::chars(part.chars());
+            let colon = find(&p, 0, ':');
+            if colon >= 0 {
+                let field = __keep_frame.put(slice(&p, 0, colon));
+                holds.push(FieldContract { name: field.trim().to_owned(), ty: parse(&slice(&p, colon + 1, p.len() as i64)), public: true });
+            }
+        }
+        return VariantContract { name: named.trim().to_owned(), holds, positional: false };
+    }
+    let nothing: Vec<FieldContract> = vec![];
+    VariantContract { name: whole.to_owned(), holds: nothing, positional: false }
+}
+
+fn field_of(written: &str) -> FieldContract {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    let mut field: String = written.trim().to_owned();
+    let mut public = false;
+    if field.starts_with("pub ") {
+        public = true;
+        let rest = __keep_frame.put(from_char(&field, 4));
+        field = rest.trim().to_owned();
+    }
+    let c: Vec<char> = nikaia_std::list::chars(field.chars());
+    let colon = find(&c, 0, ':');
+    if colon < 0 { return FieldContract { name: field.to_owned(), ty: Ty::Unknown, public }; }
+    let name = slice(&c, 0, colon);
+    FieldContract { name: name.trim().to_owned(), ty: parse(&slice(&c, colon + 1, c.len() as i64)), public }
+}
+
+pub fn signature_of(written: &str) -> Result<Signature, nikaia_std::error::Thrown<Refused>> {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    let mut whole: String = written.trim().to_owned();
+    let mut bounds: Vec<(String, Vec<String>)> = vec![];
+    if whole.starts_with("[") {
+        let b: Vec<char> = nikaia_std::list::chars(whole.chars());
+        let close = find(&b, 1, ']');
+        if close < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("a bound list is `[T: Trait]`, found `{}`", whole)), &"signature_of")); }
+        bounds = bounds_of(&slice(&b, 1, close));
+        let rest = __keep_frame.put(slice(&b, close + 1, b.len() as i64));
+        whole = rest.trim().to_owned();
+    }
+    if !whole.starts_with("(") { return Err(nikaia_std::error::throwing(Refused::Because(format!("a signature starts with `(`, found `{}`", whole)), &"signature_of")); }
+    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let close = paren_closing(&c, 1);
+    if close < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("a signature is `(…) -> T`, found `{}`", whole)), &"signature_of")); }
+    let inside = slice(&c, 1, close);
+    let after = slice(&c, close + 1, c.len() as i64);
+    let i: Vec<char> = nikaia_std::list::chars(inside.chars());
+    let semicolon = config_starts(&i);
+    let mut positional: String = inside.to_owned();
+    let mut options: String = String::from("");
+    if semicolon >= 0 {
+        positional = slice(&i, 0, semicolon);
+        options = slice(&i, semicolon + 1, i.len() as i64);
+    }
+    let mut mutable: Vec<String> = vec![];
+    let mut params: Vec<(String, Ty)> = vec![];
+    for part in split_args(&positional) {
+        let p: Vec<char> = nikaia_std::list::chars(part.chars());
+        let at = name_ends(&p);
+        if at < 0 { params.push(a_param("self", &part)); } else {
+            let mut name = trimmed(&slice(&p, 0, at));
+            if name.starts_with("mut ") {
+                name = trimmed(&from_char(&name, 4));
+                mutable.push(name.to_owned());
+            }
+            params.push(a_param(&name, &slice(&p, at + 1, p.len() as i64)));
+        }
+    }
+    let mut config: Vec<ConfigContract> = vec![];
+    for part in split_args(&options) {
+        let p: Vec<char> = nikaia_std::list::chars(part.chars());
+        let colon = find(&p, 0, ':');
+        if colon < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("an option is `name: T = value`, found `{}`", part)), &"signature_of")); }
+        let named = __keep_frame.put(slice(&p, 0, colon));
+        let name = named.trim();
+        let equals = find(&p, colon + 1, '=');
+        if equals < 0 { return Err(nikaia_std::error::throwing(Refused::Because(format!("an option needs a default: `{}: T = value`", name)), &"signature_of")); }
+        let given = __keep_frame.put(slice(&p, equals + 1, p.len() as i64));
+        config.push(ConfigContract { name: name.to_owned(), ty: parse(&slice(&p, colon + 1, equals)), default: given.trim().to_owned() });
+    }
+    let mut result: Option<Ty> = None;
+    let tail = after.trim();
+    if tail.starts_with("->") { result = Some(parse(&from_char(tail, 2))); }
+    Ok(Signature { bounds, params, mutable, config, result })
+}
+
+fn bounds_of(inside: &str) -> Vec<(String, Vec<String>)> {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    let mut bounds: Vec<(String, Vec<String>)> = vec![];
+    for part in split_args(inside) {
+        if (part.len() as i64) == 0 { continue; }
+        let p: Vec<char> = nikaia_std::list::chars(part.chars());
+        let at = name_ends(&p);
+        let mut traits: Vec<String> = vec![];
+        if at < 0 { bounds.push((part.to_owned(), traits)); } else {
+            let listed = __keep_frame.put(slice(&p, at + 1, p.len() as i64));
+            for one in listed.split("+") {
+                let named = one.trim();
+                if (named.len() as i64) > 0 { traits.push(named.to_owned()); }
+            }
+            let name = __keep_frame.put(slice(&p, 0, at));
+            bounds.push((name.trim().to_owned(), traits));
+        }
+    }
+    bounds
+}
+
+fn name_ends(c: &[char]) -> i64 {
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' {
+            if at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':' {
+                at += 2;
+                continue;
+            }
+            return at;
+        }
+        at += 1;
+    }
+    -1
+}
+
+fn paren_closing(c: &[char], from: i64) -> i64 {
+    let mut depth = 0;
+    for at in from..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '(' { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ')' {
+            if depth == 0 { return at; }
+            depth -= 1;
+        }
+    }
+    -1
+}
+
+fn config_starts(c: &[char]) -> i64 {
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for at in 0..c.len() as i64 {
+        let here = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
+        if quoted { if escaped { escaped = false; } else if here == '\\' { escaped = true; } else if here == '"' { quoted = false; } } else if here == '"' { quoted = true; } else if here == '[' || here == '(' { depth += 1; } else if here == ']' || here == ')' { if depth > 0 { depth -= 1; } } else if here == ';' && depth == 0 { return at; }
+    }
+    -1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unspelled {
+    pub text: String,
+    pub borrows: Vec<String>,
+    pub mutates: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Parts {
+    bracket: Vec<String>,
+    inside: String,
+    result: String,
+}
+
+pub fn unspell(written: &str, key: &str) -> Unspelled {
+    let __keep_frame = nikaia_std::tether::Keep::new();
+    if !written.starts_with("[") && !written.contains("self") && !written.contains("ref(") { return Unspelled { text: written.to_owned(), borrows: vec![], mutates: false }; }
+    let found = parts_of(written);
+    if found.is_none() { return Unspelled { text: written.to_owned(), borrows: vec![], mutates: false }; }
+    let parts = nikaia_std::index::or(found, || Parts { bracket: vec![], inside: String::from(""), result: String::from("") });
+    let mut names: Vec<String> = vec![];
+    let mut bounded: Vec<String> = vec![];
+    for declared in parts.bracket.iter() {
+        let d: Vec<char> = nikaia_std::list::chars(declared.chars());
+        let colon = find(&d, 0, ':');
+        if colon < 0 { names.push(declared.trim().to_owned()); } else {
+            let name = __keep_frame.put(slice(&d, 0, colon));
+            names.push(name.trim().to_owned());
+            bounded.push(declared.to_owned());
+        }
+    }
+    let inside: Vec<char> = nikaia_std::list::chars(parts.inside.chars());
+    let semicolon = semicolon_at(&inside);
+    let original = positional_of(&parts.inside, &inside, semicolon);
+    let options = options_of(&inside, semicolon);
+    let mut positional: Vec<String> = original.to_owned();
+    let mut mutates = false;
+    let owner = nikaia_std::index::or(owner_of(key), || "?".into());
+    if (positional.len() as i64) > 0 {
+        let first = (*nikaia_std::index::get(&positional, 0)).trim().to_owned();
+        let mut as_type: Option<String> = None;
+        if first == "self" { as_type = Some(owner.to_owned()); } else if first == "ref self" { as_type = Some(format!("ref {}", owner)); } else if first == "ref mut self" {
+            mutates = true;
+            as_type = Some(format!("ref {}", owner));
+        } else if first.starts_with("mut self:") {
+            mutates = true;
+            let rest = __keep_frame.put(from_char(&first, 9));
+            as_type = Some(rest.trim().to_owned());
+        } else if first.starts_with("self:") {
+            let rest = __keep_frame.put(from_char(&first, 5));
+            as_type = Some(rest.trim().to_owned());
+        }
+        if as_type.is_some() { { let __nikaia_stored = nikaia_std::index::or(as_type, || "".into()); nikaia_std::index::set(&mut positional, nikaia_std::index::at(0), __nikaia_stored); } }
+    }
+    let takes_self = (positional.len() as i64) > 0 && receiver_written(&original);
+    let gathered = refs_gathered(&parts.result);
+    let mut order: Vec<String> = vec![];
+    if takes_self {
+        let receiver: String = String::from("self");
+        order.push(receiver);
+    }
+    for part in positional.iter() {
+        let p: Vec<char> = nikaia_std::list::chars(part.chars());
+        let colon = find(&p, 0, ':');
+        if colon >= 0 && is_named(part) {
+            let named = slice(&p, 0, colon);
+            let mut name: String = named.trim().to_owned();
+            while name.starts_with("mut ") { name = from_char(&name, 4); }
+            order.push(name.trim().to_owned());
+        }
+    }
+    let mut borrows: Vec<String> = vec![];
+    for name in order.iter() { if gathered.names.contains(name) { borrows.push(name.to_owned()); } }
+    for name in gathered.names.iter() { if !borrows.contains(name) { borrows.push(name.to_owned()); } }
+    let mut body = joined(&positional);
+    if options.is_some() {
+        let chosen = nikaia_std::index::or(options, || "".into());
+        body = format!("{}; {}", body, chosen);
+    }
+    let mut before: String = String::from("");
+    if (bounded.len() as i64) > 0 {
+        let listed = joined(&bounded);
+        before = format!("[{}]", listed);
+    }
+    let marked_body = variables_marked(&body, &names);
+    let marked_result = variables_marked(&gathered.text, &names);
+    Unspelled { text: format!("{}({}){}", before, marked_body, marked_result), borrows, mutates }
+}
+
+fn parts_of(written: &str) -> Option<Parts> {
+    let whole = written.trim();
+    let c: Vec<char> = nikaia_std::list::chars(whole.chars());
+    let mut bracket: Vec<String> = vec![];
+    let mut start: i64 = 0;
+    if whole.starts_with("[") {
+        let close = bracket_closing(&c, 1, '[', ']');
+        if close < 0 { return None; }
+        for declared in split_args(&slice(&c, 1, close)) { if (declared.trim().len() as i64) > 0 { bracket.push(declared.trim().to_owned()); } }
+        start = close + 1;
+        while start < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(start))).is_whitespace() { start += 1; }
+    }
+    if start >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(start)) != '(' { return None; }
+    let close = bracket_closing(&c, start + 1, '(', ')');
+    if close < 0 { return None; }
+    Some(Parts { bracket, inside: slice(&c, start + 1, close), result: slice(&c, close + 1, c.len() as i64) })
+}
+
+fn positional_of(inside: &str, c: &Vec<char>, at: i64) -> Vec<String> {
+    let mut parts: Vec<String> = vec![];
+    if at < 0 {
+        for part in split_args(inside) { if (part.len() as i64) > 0 { parts.push(part); } }
+        return parts;
+    }
+    for part in split_args(&slice(c, 0, at)) { if (part.len() as i64) > 0 { parts.push(part); } }
+    parts
+}
+
+fn options_of(c: &Vec<char>, at: i64) -> Option<String> {
+    if at < 0 { return None; }
+    Some(trimmed(&slice(c, at + 1, c.len() as i64)))
+}
+
+fn semicolon_at(c: &[char]) -> i64 {
+    let mut depth = 0;
+    for at in 0..c.len() as i64 {
+        let here = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
+        if here == '[' || here == '(' { depth += 1; } else if here == ']' || here == ')' { if depth > 0 { depth -= 1; } } else if here == ';' && depth == 0 { return at; }
+    }
+    -1
+}
+
+fn receiver_written(positional: &Vec<String>) -> bool {
+    if (positional.len() as i64) == 0 { return false; }
+    let first = (*nikaia_std::index::get(&positional, 0)).trim();
+    first == "self" || first == "ref self" || first == "ref mut self" || first.starts_with("self:") || first.starts_with("mut self:") || !is_named(first)
+}
+
+fn owner_of(key: &str) -> Option<String> {
+    let c: Vec<char> = nikaia_std::list::chars(key.chars());
+    let mut last: i64 = -1;
+    for at in 0..c.len() as i64 { if at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':' { last = at; } }
+    if last < 0 { return None; }
+    Some(slice(&c, 0, last))
+}
+
+fn is_named(part: &str) -> bool {
+    let c: Vec<char> = nikaia_std::list::chars(part.chars());
+    let mut at: i64 = 0;
+    while at < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(at))).is_whitespace() { at += 1; }
+    while at + 3 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == 'm' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == 'u' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 2)) == 't' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 3)) == ' ' { at += 4; }
+    if at >= c.len() as i64 || !(*nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '_' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) >= 'a' && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) <= 'z') { return false; }
+    while at < c.len() as i64 && a_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(at))) { at += 1; }
+    while at < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(at))).is_whitespace() { at += 1; }
+    at < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' && !(at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':')
+}
+
+fn bracket_closing(c: &[char], from: i64, open: char, close: char) -> i64 {
+    let mut depth = 0;
+    for at in from..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == open { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == close {
+            if depth == 0 { return at; }
+            depth -= 1;
+        }
+    }
+    -1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Gathered {
+    text: String,
+    names: Vec<String>,
+}
+
+fn refs_gathered(written: &str) -> Gathered {
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let mut out: String = String::from("");
+    let mut names: Vec<String> = vec![];
+    let mut from: i64 = 0;
+    let mut going = true;
+    while going {
+        let at = find_text(&c, from, "ref(");
+        if at < 0 { going = false; } else if at > from && a_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(at - 1))) {
+            out.push_str(&slice(&c, from, at + 4));
+            from = at + 4;
+        } else {
+            let close = find(&c, at + 4, ')');
+            if close < 0 { going = false; } else {
+                let inside = slice(&c, at + 4, close);
+                for part in inside.split("|") {
+                    let name = trimmed(part);
+                    if (name.len() as i64) > 0 && !names.contains(&name) { names.push(name); }
+                }
+                out.push_str(&slice(&c, from, at));
+                out.push_str("ref");
+                from = close + 1;
+            }
+        }
+    }
+    out.push_str(&slice(&c, from, c.len() as i64));
+    Gathered { text: out, names }
+}
+
+fn variables_marked(written: &str, names: &Vec<String>) -> String {
+    if (names.len() as i64) == 0 { return written.to_owned(); }
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let mut out: String = String::from("");
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        let here = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
+        if here == '_' || here >= 'a' && here <= 'z' || here >= 'A' && here <= 'Z' {
+            let start: i64 = at;
+            while at < c.len() as i64 && a_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(at))) { at += 1; }
+            let word = slice(&c, start, at);
+            let marked = start >= 1 && *nikaia_std::index::get(&c, nikaia_std::index::at(start - 1)) == '$';
+            let path_before = start >= 2 && *nikaia_std::index::get(&c, nikaia_std::index::at(start - 1)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(start - 2)) == ':';
+            let path_after = at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':';
+            if names.contains(&word) && !marked && !path_before && !path_after { out.push('$'); }
+            out.push_str(&word);
+            continue;
+        }
+        out.push(here);
+        at += 1;
+    }
+    out
+}
+
+fn a_word_char(c: char) -> bool { c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' }
+
+fn find(c: &[char], from: i64, target: char) -> i64 {
+    for at in from..c.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == target { return at; } }
+    -1
+}
+
+fn find_last(c: &[char], target: char) -> i64 {
+    let mut found: i64 = -1;
+    for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == target { found = at; } }
+    found
+}
+
+fn find_text(c: &[char], from: i64, word: &str) -> i64 {
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    if (w.len() as i64) == 0 || (c.len() as i64) < w.len() as i64 { return -1; }
+    for at in from..c.len() as i64 - w.len() as i64 + 1 {
+        let mut same = true;
+        for k in 0..w.len() as i64 { if same && *nikaia_std::index::get(&c, nikaia_std::index::at(at + k)) != *nikaia_std::index::get(&w, nikaia_std::index::at(k)) { same = false; } }
+        if same { return at; }
+    }
+    -1
+}
+
+fn slice(c: &[char], from: i64, to: i64) -> String {
+    let mut out: String = String::from("");
+    for k in from..to { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
+    out
+}
+
+fn from_char(written: &str, front: i64) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    slice(&c, front, c.len() as i64)
+}
+
+fn after(written: &str, prefix: &str) -> Option<String> {
+    if !written.starts_with(prefix) { return None; }
+    let p: Vec<char> = nikaia_std::list::chars(prefix.chars());
+    Some(from_char(written, p.len() as i64))
+}
+
+fn without_last(written: &str, last: char) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(written.chars());
+    let mut end = c.len() as i64;
+    while end > 0 && *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1)) == last { end -= 1; }
+    slice(&c, 0, end)
+}
+
+fn a_param(name: &str, written: &str) -> (String, Ty) { (name.to_owned(), parse(written)) }
+
+fn trimmed(written: &str) -> String { written.trim().to_owned() }
+
+fn joined(parts: &[String]) -> String {
+    let mut out: String = String::from("");
+    for part in parts.iter() {
+        if !out.is_empty() { out.push_str(", "); }
+        out.push_str(part);
+    }
+    out
 }
 

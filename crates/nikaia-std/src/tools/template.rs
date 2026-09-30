@@ -81,13 +81,13 @@ pub fn literal_length(segments: &[Segment]) -> i64 {
             Segment::Text(text) => { total += text.len() as i64; },
             Segment::For { body, .. } => { total += literal_length(body); },
             _ => { },
-        };
+        }
     }
     total
 }
 
 pub fn split(body: &str) -> Result<Vec<Segment>, nikaia_std::error::Thrown<Refused>> {
-    let mut splitter = Splitter { c: body.chars().collect::<Vec<_>>(), at: 0, scan: Scan { state: State::Text, tail: vec![], attribute: String::from("") } };
+    let mut splitter = Splitter { c: nikaia_std::list::chars(body.chars()), at: 0, scan: Scan { state: State::Text, tail: vec![], attribute: String::from("") } };
     let segments = splitter.until(false)?;
     if splitter.at < splitter.c.len() as i64 { return Err(nikaia_std::error::throwing(Refused::Because(String::from("`</for>` without a `<for …>` before it")), &"split")); }
     Ok(segments)
@@ -99,10 +99,10 @@ pub fn illegal(segments: &[Segment]) -> Vec<(String, Position)> {
     let mut found: Vec<(String, Position)> = vec![];
     for segment in segments.iter() {
         match segment {
-            Segment::Hole { expr, at } => { if !at.escapable() { found.push((expr.to_owned(), at.clone())) } },
+            Segment::Hole { expr, at } => { if !at.escapable() { found.push((expr.to_owned(), at.clone())); } },
             Segment::For { body, .. } => { for inner in illegal(body) { found.push(inner); } },
             _ => { },
-        };
+        }
     }
     found
 }
@@ -282,7 +282,7 @@ impl Scan {
             State::Script => { if self.ended_with("</script") { self.state = State::Tag; } },
             State::Style => { if self.ended_with("</style") { self.state = State::Tag; } },
             _ => self.in_a_tag(c),
-        };
+        }
     }
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.

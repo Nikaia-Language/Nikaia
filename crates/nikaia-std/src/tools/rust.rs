@@ -616,10 +616,10 @@ fn joined(pieces: Vec<Called<'_>>) -> Vec<&str> {
     let mut all = Vec::new();
     for piece in pieces.into_iter() {
         match piece {
-            Called::One(one) => { all.push(one) },
+            Called::One(one) => { all.push(one); },
             Called::Many(ref many) => { for one in many.iter() { all.push(one); } },
             Called::Nothing => { },
-        };
+        }
     }
     all
 }
@@ -628,9 +628,9 @@ fn kept(found: Vec<Found<'_>>) -> Vec<Item<'_>> {
     let mut all = Vec::new();
     for f in found.into_iter() {
         match f {
-            Found::One(item) => { all.push(item) },
+            Found::One(item) => { all.push(item); },
             Found::Skip => { },
-        };
+        }
     }
     all
 }

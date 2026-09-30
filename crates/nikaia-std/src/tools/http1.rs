@@ -93,9 +93,9 @@ fn fields(lines: Vec<Line<'_>>) -> Vec<Field<'_>> {
     let mut all = Vec::new();
     for line in lines.into_iter() {
         match line {
-            Line::Field(f) => { all.push(f) },
+            Line::Field(f) => { all.push(f); },
             Line::Skip => { },
-        };
+        }
     }
     all
 }
