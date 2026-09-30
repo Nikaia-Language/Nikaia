@@ -34,6 +34,7 @@ COMPILER_NIKA = {
     "template.nika": "emit::template: the HTML scan (0.0.252)",
     "ledger.nika": "contracts: reading a ledger's lines and lists (0.0.258)",
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
+    "ast.nika": "ast: the syntax tree (ADR-252, 0.0.275)",
 }
 
 

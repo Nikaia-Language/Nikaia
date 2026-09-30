@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.275] — 2026-09-30
+
+**The syntax tree is declared in Nikaia** (ADR-252 D1, D5 step 4).
+
+- `nikaia-std/src/tools/ast.nika` declares all of the compiler's tree, and
+  `nikaia lower-std` writes `ast.rs` beside it. `crate::ast` re-exports it, so
+  no reader names a new path; what stays Rust is what Nikaia cannot say — a
+  `Span`'s `usize` doors and the backend's `WithSpan` in `nikaia-std`, and
+  `int_value` over an `i128` in the compiler.
+- The boxes are the compiler's (ADR-246 D1), and three differ from the
+  hand-written tree: `Expr::Return` and `Type.code` are `Box<Option<…>>`,
+  `Code.result` is boxed too, and `Pattern::Fold` is not. Its twenty readers
+  follow the declaration (ADR-252 D3).
+- `Span::nowhere()` replaces the derived `Default`, for D4.4's reason.
+- The toolchain is 3.4 % Nikaia (`scripts/self_hosting.py`), from 2.4 %.
+
 ## [0.0.274] — 2026-09-30
 
 **A described Rust type says whether it copies and compares** (ADR-252 D4.3).

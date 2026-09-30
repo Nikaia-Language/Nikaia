@@ -246,8 +246,8 @@ fn ty_names(parsed: &Parsed, ty: &Type, span: &Span, found: &mut impl FnMut(&str
     for argument in &ty.generics {
         ty_names(parsed, argument, span, found);
     }
-    if let Some(code) = &ty.code
-        && let Some(result) = &code.result
+    if let Some(code) = &*ty.code
+        && let Some(result) = &*code.result
     {
         ty_names(parsed, result, span, found);
     }

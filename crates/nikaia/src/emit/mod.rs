@@ -4309,7 +4309,7 @@ impl<'p> Emitter<'p> {
         // type is code and does not say `sync`, which is the default.
         let awaited: Vec<Symbol> = args
             .iter()
-            .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| !code.is_sync))
+            .filter(|arg| (*arg.ty.code).as_ref().is_some_and(|code| !code.is_sync))
             .map(|arg| arg.name)
             .collect();
         let declared = Declared {
@@ -4831,7 +4831,7 @@ impl<'p> Emitter<'p> {
                     is_view: false,
                     is_tuple: false,
                     is_nullable: false,
-                    code: None,
+                    code: Box::new(None),
                     count: None,
                     is_mut: false,
                     is_slice: false,
@@ -5278,13 +5278,13 @@ impl<'p> Emitter<'p> {
         // `throws` puts the same `Result` on the closure's result that a
         // `throws` function's own declaration puts on its (Kap 7.1), which is
         // what makes a lambda that fails fit it.
-        if let Some(code) = &ty.code {
+        if let Some(code) = &*ty.code {
             let params: Vec<String> = ty
                 .generics
                 .iter()
                 .map(|g| self.ty_counted(g, lifetimes, count))
                 .collect();
-            let outcome = match (&code.result, code.can_throw) {
+            let outcome = match (&*code.result, code.can_throw) {
                 (Some(r), false) => self.ty_counted(r, lifetimes, count),
                 (Some(r), true) => format!(
                     "Result<{}, Box<dyn std::error::Error>>",
@@ -5360,7 +5360,7 @@ impl<'p> Emitter<'p> {
                 );
             }
             if code.is_sync {
-                let shape = match (&code.result, code.can_throw) {
+                let shape = match (&*code.result, code.can_throw) {
                     (None, false) => String::new(),
                     _ => format!(" -> {outcome}"),
                 };
@@ -8035,15 +8035,15 @@ impl<'p> Emitter<'p> {
             // is `!` there too, so an arm that returns beside an arm that hands
             // back a value is a `match` of that value's type by the backend's
             // own rule and not by a coercion this had to write.
-            Expr::Return(value) => match (value, flow.throws) {
+            Expr::Return(value) => match (&**value, flow.throws) {
                 (Some(value), true) => {
                     out.push("return Ok(");
-                    self.nullable(out, value, &Span::default(), depth, flow)?;
+                    self.nullable(out, value, &Span::nowhere(), depth, flow)?;
                     out.push(")");
                 }
                 (Some(value), false) => {
                     out.push("return ");
-                    self.nullable(out, value, &Span::default(), depth, flow)?;
+                    self.nullable(out, value, &Span::nowhere(), depth, flow)?;
                 }
                 (None, true) => out.push("return Ok(())"),
                 (None, false) => out.push("return"),
@@ -11936,9 +11936,9 @@ fn binary_op(op: BinaryOp) -> &'static str {
 /// body the backend generates a piece driver for.
 fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
     rule.alts.iter().find_map(|alt| match &alt.pattern.node {
-        Pattern::Fold(spec) if spec.parallel => Some(&**spec),
+        Pattern::Fold(spec) if spec.parallel => Some(spec),
         Pattern::Bind { pat, .. } => match &pat.node {
-            Pattern::Fold(spec) if spec.parallel => Some(&**spec),
+            Pattern::Fold(spec) if spec.parallel => Some(spec),
             _ => None,
         },
         _ => None,
@@ -12360,8 +12360,12 @@ pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
             visit_expr(rhs, f);
         }
         Expr::Try(inner) | Expr::Throw(inner) => visit_expr(inner, f),
-        Expr::Return(Some(value)) => visit_expr(value, f),
-        Expr::Return(None) | Expr::Break | Expr::Continue => {}
+        Expr::Return(value) => {
+            if let Some(value) = &**value {
+                visit_expr(value, f)
+            }
+        }
+        Expr::Break | Expr::Continue => {}
         Expr::Index { base, index } => {
             visit_expr(base, f);
             visit_expr(index, f);
