@@ -1653,7 +1653,7 @@ fn element_refusal(
         .keys()
         .find(|(_, k)| k == keeper)
         .map(|(at, _)| Span::new(*at, *at))
-        .unwrap_or_default();
+        .unwrap_or(Span::nowhere());
     crate::check::Finding {
         severity: crate::check::Severity::Error,
         span,

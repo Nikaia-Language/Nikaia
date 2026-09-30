@@ -4370,7 +4370,7 @@ impl<'a> Checker<'a> {
                 Some(target) => format!("{target}::{own_name}"),
                 None => own_name.clone(),
             };
-            let at = body.stmts.first().map(|s| s.span).unwrap_or_default();
+            let at = body.stmts.first().map_or(Span::nowhere(), |s| s.span);
             for named in sync_by {
                 let named = self.parsed.text(*named).to_string();
                 self.a_lambda_the_promise_names(&key, &named, args, &at);
@@ -4537,7 +4537,7 @@ impl<'a> Checker<'a> {
         if let (Some(expected), Some(Stmt::Expr(value))) =
             (&expected, body.stmts.last().map(|s| &s.node))
         {
-            let at = body.stmts.last().map(|s| s.span).unwrap_or_default();
+            let at = body.stmts.last().map_or(Span::nowhere(), |s| s.span);
             self.number_asked(value, expected, &at, true);
         }
         self.numbers_typed_by_their_uses();
@@ -10893,7 +10893,7 @@ impl<'a> Checker<'a> {
             // statement form asks — the answer to *what is a `return` worth* is
             // the same wherever it is written.
             Expr::Return(value) => {
-                self.returns(value.as_deref(), span);
+                self.returns((**value).as_ref(), span);
                 Ty::Unknown
             }
             Expr::Break | Expr::Continue => {
@@ -21090,7 +21090,13 @@ fn gives_back(body: &Expr, name: &str, parsed: &Parsed) -> bool {
     fn returns(expr: &Expr, name: &str, parsed: &Parsed) -> bool {
         let mut found = false;
         crate::emit::visit_expr(expr, &mut |inner| match inner {
-            Expr::Return(Some(value)) if is_name(value, name, parsed) => found = true,
+            Expr::Return(value)
+                if (**value)
+                    .as_ref()
+                    .is_some_and(|value| is_name(value, name, parsed)) =>
+            {
+                found = true
+            }
             Expr::Block(block) | Expr::Unsafe(block) => {
                 found |= block_returns(block, name, parsed);
             }

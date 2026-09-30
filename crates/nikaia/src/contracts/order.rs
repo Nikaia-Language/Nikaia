@@ -1137,7 +1137,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
         }
         Expr::Spawn { body, .. } | Expr::Throw(body) => names_in(parsed, body, out),
         Expr::Return(value) => {
-            if let Some(value) = value {
+            if let Some(value) = &**value {
                 names_in(parsed, value, out);
             }
         }

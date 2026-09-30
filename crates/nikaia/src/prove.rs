@@ -495,7 +495,7 @@ impl<'a> Prover<'a> {
                 true
             }
             Expr::Return(value) => {
-                if let Some(value) = value {
+                if let Some(value) = &**value {
                     self.expr(value, span, scope, &nested);
                 }
                 true

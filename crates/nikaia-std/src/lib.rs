@@ -191,6 +191,74 @@ pub mod tools {
         }
     }
 
+    /// **The compiler's syntax tree**: `src/tools/ast.nika`, lowered to
+    /// `src/tools/ast.rs` and committed beside it
+    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D1). The
+    /// compiler's `crate::ast` re-exports it.
+    ///
+    /// What stands here in Rust is what Nikaia cannot say, and it is in this
+    /// crate because Rust lets an `impl` of a type stand only where the type
+    /// is declared: a `Span`'s `usize` doors, which slice a source the
+    /// compiler holds as a `&str`, and the grammar backend's `WithSpan`.
+    pub mod ast {
+        include!("tools/ast.rs");
+
+        /// The longest source the compiler reads: a `Span` holds a byte offset
+        /// in a `u32` (ADR-252 D2).
+        pub const LONGEST_SOURCE: usize = u32::MAX as usize;
+
+        /// A byte offset as a `Span` holds it. The 4 GiB refusal in
+        /// `parser::parse` is what makes this total.
+        pub fn offset(at: usize) -> u32 {
+            u32::try_from(at).expect("a source is at most 4 GiB (ADR-252 D2)")
+        }
+
+        impl Span {
+            /// The span from byte `start` to byte `end`.
+            pub fn new(start: usize, end: usize) -> Span {
+                Span {
+                    start: offset(start),
+                    end: offset(end),
+                }
+            }
+
+            /// The bytes it covers, to slice the source with.
+            pub fn bytes(self) -> std::ops::Range<usize> {
+                self.start as usize..self.end as usize
+            }
+
+            /// The byte it starts at, which is the key the checker files its
+            /// answers under (ADR-028).
+            pub fn at(self) -> usize {
+                self.start as usize
+            }
+
+            /// The byte after its last.
+            pub fn stop(self) -> usize {
+                self.end as usize
+            }
+
+            /// Whether byte `offset` is inside it.
+            pub fn contains(self, offset: usize) -> bool {
+                self.bytes().contains(&offset)
+            }
+        }
+
+        impl From<std::ops::Range<usize>> for Span {
+            fn from(range: std::ops::Range<usize>) -> Span {
+                Span::new(range.start, range.end)
+            }
+        }
+
+        /// Lets a rule written `-> Spanned<T> @=` wrap its value without an
+        /// action.
+        impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
+            fn with_span(node: T, span: std::ops::Range<usize>) -> Self {
+                Spanned::new(node, Span::from(span))
+            }
+        }
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.

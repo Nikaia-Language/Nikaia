@@ -608,7 +608,7 @@ fn a_trailing_sync_belongs_to_the_type_it_follows() {
     assert!(!is_sync, "the trailing `sync` is not the declaration's");
     let code = ret_type
         .as_ref()
-        .and_then(|t| t.code.as_ref())
+        .and_then(|t| (*t.code).as_ref())
         .expect("the result is a function type");
     assert!(code.is_sync, "it is the result type's");
 }

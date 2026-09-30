@@ -1229,7 +1229,7 @@ impl Walk<'_, '_> {
                 Kinds::new()
             }
             Expr::Return(value) => {
-                if let Some(value) = value {
+                if let Some(value) = &**value {
                     let kinds = self.expr(value);
                     self.flow_result(value, &kinds);
                 }
@@ -1727,7 +1727,11 @@ fn visit_expr_mut(
         | Expr::Try(expr)
         | Expr::Throw(expr)
         | Expr::Cast { expr, .. } => visit_expr_mut(expr, f, s),
-        Expr::Return(Some(value)) => visit_expr_mut(value, f, s),
+        Expr::Return(value) => {
+            if let Some(value) = &mut **value {
+                visit_expr_mut(value, f, s)
+            }
+        }
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => visit_expr_mut(base, f, s),
         Expr::Index { base, index } => {
             visit_expr_mut(base, f, s);

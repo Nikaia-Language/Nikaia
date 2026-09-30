@@ -1105,15 +1105,14 @@ impl Ty {
         // before the `?` for the tuple's reason: what a `fn(…)?` would mean is
         // not written anywhere, and the grammar gives the form no `?` to begin
         // with.
-        if let Some(code) = &ty.code {
+        if let Some(code) = &*ty.code {
             return Ty::Fn {
                 params: ty
                     .generics
                     .iter()
                     .map(|g| Ty::from_ast(parsed, g))
                     .collect(),
-                result: code
-                    .result
+                result: (*code.result)
                     .as_ref()
                     .map(|r| Box::new(Ty::from_ast(parsed, r))),
                 is_sync: code.is_sync,

@@ -576,8 +576,8 @@ fn written_at(
     for argument in &ty.generics {
         written(parsed, argument, known, span, out);
     }
-    if let Some(code) = &ty.code
-        && let Some(result) = &code.result
+    if let Some(code) = &*ty.code
+        && let Some(result) = &*code.result
     {
         written(parsed, result, known, span, out);
     }

@@ -2213,7 +2213,7 @@ grammar! {
                     is_view: view.is_some(),
                     is_tuple: false,
                     is_nullable: nullable.is_some(),
-                    code: None,
+                    code: Box::new(None),
                     count: None,
                     is_mut: mutable,
                     is_slice: false,
@@ -2238,7 +2238,7 @@ grammar! {
                     is_view: false,
                     is_tuple: false,
                     is_nullable: false,
-                    code: None,
+                    code: Box::new(None),
                     count: i64::try_from(n).ok(),
                     is_mut: false,
                     is_slice: false,
@@ -2258,7 +2258,7 @@ grammar! {
                     is_view: false,
                     is_tuple: true,
                     is_nullable: false,
-                    code: None,
+                    code: Box::new(None),
                     count: None,
                     is_mut: false,
                     is_slice: false,
@@ -2284,8 +2284,8 @@ grammar! {
                     is_view: false,
                     is_tuple: false,
                     is_nullable: false,
-                    code: Some(Box::new(Code {
-                        result,
+                    code: Box::new(Some(Code {
+                        result: Box::new(result),
                         is_sync: s.is_some(),
                         can_throw: t.is_some(),
                     })),
@@ -2600,13 +2600,13 @@ grammar! {
             step:expr ","
             merge:expr ")"
             -> {
-                Pattern::Fold(Box::new(FoldSpec {
+                Pattern::Fold(FoldSpec {
                     parallel: true,
                     rule: r,
                     init,
                     step,
                     merge: Some(merge),
-                }))
+                })
             }
           // Read to the closing parenthesis, so this is the reading that got
           // furthest and its sentence is the one said.
@@ -2624,13 +2624,13 @@ grammar! {
             init:expr ","
             step:expr ")"
             -> {
-                Pattern::Fold(Box::new(FoldSpec {
+                Pattern::Fold(FoldSpec {
                     parallel: false,
                     rule: r,
                     init,
                     step,
                     merge: None,
-                }))
+                })
             }
           // Read to the closing parenthesis, so this is the reading that got
           // furthest and its sentence is the one said.
@@ -2913,7 +2913,7 @@ grammar! {
                 match e {
                     Expr::Break => Stmt::Break,
                     Expr::Continue => Stmt::Continue,
-                    Expr::Return(value) => Stmt::Return(value.map(|v| *v)),
+                    Expr::Return(value) => Stmt::Return(*value),
                     e => Stmt::Expr(e),
                 }
             }
@@ -3464,7 +3464,7 @@ grammar! {
 
         rule jump_expr -> Expr =
             KW_THROW e:expr -> { Expr::Throw(Box::new(e)) }
-          | KW_RETURN e:expr? -> { Expr::Return(e.map(Box::new)) }
+          | KW_RETURN e:expr? -> { Expr::Return(Box::new(e)) }
           | KW_BREAK -> { Expr::Break }
           | KW_CONTINUE -> { Expr::Continue }
 

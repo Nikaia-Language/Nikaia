@@ -392,7 +392,7 @@ fn reach_of(
     let code: BTreeMap<String, bool> = args
         .iter()
         .filter_map(|arg| {
-            let declared = arg.ty.code.as_ref()?;
+            let declared = (*arg.ty.code).as_ref()?;
             Some((parsed.text(arg.name).to_string(), !declared.is_sync))
         })
         .collect();
@@ -513,7 +513,7 @@ fn walk_fn(
     // allows.
     let mut sync_code: BTreeSet<String> = args
         .iter()
-        .filter(|arg| arg.ty.code.as_ref().is_some_and(|code| code.is_sync))
+        .filter(|arg| (*arg.ty.code).as_ref().is_some_and(|code| code.is_sync))
         .map(|arg| parsed.text(arg.name).to_string())
         .collect();
     sync_code.extend(sync_by.iter().map(|name| parsed.text(*name).to_string()));
