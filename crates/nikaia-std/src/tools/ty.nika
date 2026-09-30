@@ -936,3 +936,172 @@ pub struct ConfigContract {
     pub ty: Ty,
     pub default: String,
 }
+
+/// **What a function's parameters and result are**, as the ledger writes them:
+/// `[H: Handler](mut out: Vec[i64], text: ref String; limit: i64 = 10) -> T`.
+pub struct Signature {
+    /// The type parameters and what each must implement (ADR-205 D1).
+    pub bounds: Vec[(String, Vec[String])],
+    pub params: Vec[(String, Ty)],
+    /// The parameters written `mut` (ADR-094 D3).
+    pub mutable: Vec[String],
+    /// The options it takes by name (Part I 5.1).
+    pub config: Vec[ConfigContract],
+    pub result: Ty?,
+}
+
+impl Signature {
+    /// A signature that says nothing: no parameters and no result.
+    pub fn empty() -> Signature {
+        return Signature { bounds: [], params: [], mutable: [], config: [], result: null }
+    }
+
+    /// Whether the first parameter is the receiver.
+    pub fn takes_a_receiver(ref self) -> bool {
+        return self.params.len() > 0 && self.params[0].0 == "self"
+    }
+
+    /// The result, and the empty tuple where nothing is handed back.
+    pub fn result_or_unit(ref self) -> Ty {
+        return self.result?.clone() ?? Ty::Tuple([])
+    }
+
+    /// The ledger's spelling of it.
+    pub fn text(ref self) -> String {
+        let mut inside: String = ""
+        for (name, ty) in self.params {
+            if !inside.is_empty() {
+                inside.push_str(", ")
+            }
+            if name == "self" {
+                inside.push_str(ref ty.text())
+            } else {
+                if self.mutable.contains(name) {
+                    inside.push_str("mut ")
+                }
+                inside.push_str(ref f"{name}: {ty.text()}")
+            }
+        }
+        if self.config.len() > 0 {
+            inside.push_str("; ")
+            let mut first = true
+            for option in self.config {
+                if !first {
+                    inside.push_str(", ")
+                }
+                first = false
+                inside.push_str(ref f"{option.name}: {option.ty.text()} = {option.default}")
+            }
+        }
+        // **In front, where the declaration writes them** (ADR-205 D1).
+        let mut before: String = ""
+        if self.bounds.len() > 0 {
+            before.push('[')
+            let mut first = true
+            for (name, traits) in self.bounds {
+                if !first {
+                    before.push_str(", ")
+                }
+                first = false
+                before.push_str(name)
+                if traits.len() > 0 {
+                    before.push_str(": ")
+                    let mut one = true
+                    for bound in traits {
+                        if !one {
+                            before.push_str(" + ")
+                        }
+                        one = false
+                        before.push_str(bound)
+                    }
+                }
+            }
+            before.push(']')
+        }
+        if self.result == null {
+            return f"{before}({inside})"
+        }
+        return f"{before}({inside}) -> {self.result_or_unit().text()}"
+    }
+}
+
+/// **What a ledger says about one function**: whether others may call it,
+/// whether it is `sync`, what it may fail with, what it touches, where its
+/// bytes come from, its signature, and what the analyses found about its
+/// parameters.
+pub struct FnContract {
+    pub public: bool,
+    /// What the entry claims about `sync` (Part II 12.1). `sync` is a word
+    /// this language reserves, so it cannot name the field.
+    pub sync_claim: Sync,
+    /// What it may fail with: the error types that can leave it (Kap 7.1).
+    pub fails_with: Vec[String],
+    pub touches: Vec[Touch],
+    /// Whether `touches` is what somebody wrote rather than what was inferred.
+    pub touches_known: bool,
+    pub provenance: Provenance?,
+    pub signature: Signature?,
+    pub borrows: Vec[String],
+    pub keeps: Vec[String],
+    pub mutates: bool,
+    pub touches_a_lock: Lock,
+    pub threads: Threads,
+    pub views: Vec[Held],
+    pub sharing: Vec[Class],
+    pub ends_by_length: bool,
+}
+
+impl FnContract {
+    /// An entry that says nothing: not public, not `sync`, touching nothing
+    /// known, and undecided where a question has a third answer.
+    pub fn empty() -> FnContract {
+        return FnContract {
+            public: false,
+            sync_claim: Sync::No,
+            fails_with: [],
+            touches: [],
+            touches_known: false,
+            provenance: null,
+            signature: null,
+            borrows: [],
+            keeps: [],
+            mutates: false,
+            touches_a_lock: Lock::No,
+            threads: Threads::Undecided,
+            views: [],
+            sharing: [],
+            ends_by_length: false,
+        }
+    }
+}
+
+/// **What a ledger says about one type**: its fields or variants, and the
+/// questions the analyses ask of it.
+pub struct TypeContract {
+    pub public: bool,
+    pub fields: Vec[FieldContract],
+    pub variants: Vec[VariantContract],
+    pub crosses: Crosses,
+    pub iterates_fallibly: bool,
+    pub compares: bool,
+    pub copies: bool,
+    pub touches: Vec[String],
+    pub tethered: Vec[String],
+}
+
+impl TypeContract {
+    /// An entry that says nothing, and undecided about crossing a thread.
+    pub fn empty() -> TypeContract {
+        return TypeContract {
+            public: false,
+            fields: [],
+            variants: [],
+            crosses: Crosses::Undecided,
+            iterates_fallibly: false,
+            compares: false,
+            copies: false,
+            touches: [],
+            tethered: [],
+        }
+    }
+}

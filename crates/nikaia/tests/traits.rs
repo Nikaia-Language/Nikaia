@@ -308,7 +308,7 @@ fn a_trait_method_carries_the_word_it_was_written_with() {
         own.functions
             .get("Summarize::summary")
             .expect("the declaration is in the ledger")
-            .sync,
+            .sync_claim,
         Sync::No,
         "`Summarize` does not say `sync`, so its method may pause",
     );
@@ -316,7 +316,7 @@ fn a_trait_method_carries_the_word_it_was_written_with() {
         !own.functions
             .get("shout")
             .expect("the bounded function is in the ledger")
-            .sync
+            .sync_claim
             .is_sync(),
         "and a body that calls it through a bound pauses with it",
     );
@@ -329,7 +329,7 @@ fn a_trait_method_carries_the_word_it_was_written_with() {
     )
     .expect("the source parses");
     assert_eq!(
-        Ledger::infer(&with).functions["Named::name"].sync,
+        Ledger::infer(&with).functions["Named::name"].sync_claim,
         Sync::Asserted,
     );
 }

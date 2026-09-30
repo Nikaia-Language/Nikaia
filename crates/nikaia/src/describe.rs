@@ -187,7 +187,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
                 // be. Read from the source and written for review, as the rest.
                 compares: derives.get(&name).is_some_and(|d| d.contains("PartialEq")),
                 copies: derives.get(&name).is_some_and(|d| d.contains("Copy")),
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
     }
@@ -1232,18 +1232,18 @@ impl Function {
             public: true,
             // **D3's row, and the default is the strict one**: a plain `fn`
             // cannot pause, and an `async fn` can. Nothing between them.
-            sync: match self.pauses {
+            sync_claim: match self.pauses {
                 true => Sync::No,
                 false => Sync::Asserted,
             },
-            throws,
+            fails_with: throws,
             keeps,
             signature: Some(Signature {
                 params,
                 result,
-                ..Signature::default()
+                ..Signature::empty()
             }),
-            ..FnContract::default()
+            ..FnContract::empty()
         };
         (contract, mentioned)
     }

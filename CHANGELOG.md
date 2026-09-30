@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.290] — 2026-09-30
+
+**`Signature`, `FnContract` and `TypeContract` are Nikaia** (ADR-257 step
+(b)), and two defects the move found are fixed. The toolchain is 5.4 %
+Nikaia.
+
+- `tools/ty.nika` declares the three records, with `Signature::text`,
+  `takes_a_receiver` and `result_or_unit`, and `empty()` for each where a
+  `Default` was. Reading a signature back and the slice of its arguments stay
+  Rust behind `SignatureOps`. Two fields are renamed because their words are
+  reserved: `FnContract.throws` is `fails_with`, `FnContract.sync` is
+  `sync_claim`; the ledger file's keys do not change.
+- **Defects the move found:**
+  - **A `clone` of a type the program declares made the function around it
+    `async`.** No ledger describes the derived copy, so `r.clone()` on a
+    declared `struct` was a method nothing describes, which may pause; the
+    function became a future, and `main` with it. It is the derived copy
+    now: it does not pause, cannot fail, and hands back the type, owned.
+    ADR-258 D3's zero overhead, for every program that copies its own types.
+  - **A field of an element was read through a deref**: `rows[1].a` was
+    `(*get(&rows, 1)).a`, which the language below does on its own and
+    `clippy` refuses in `std`. It is `get(&rows, 1).a`, as a read of a read
+    already was (0.0.238).
+- A `??` whose fallback is a declared variant built with its parts
+  (`Ty::Tuple([])`) is written without `.into()`, as a unit variant already
+  was.
+
 ## [0.0.289] — 2026-09-30
 
 **The ledger's small records are Nikaia** (ADR-257 step (b)), and a field on

@@ -8,6 +8,7 @@
 
 mod common;
 
+use nikaia::contracts::SignatureOps;
 use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::{Ledger, STD};
 use nikaia::emit::{Build, emit_program};

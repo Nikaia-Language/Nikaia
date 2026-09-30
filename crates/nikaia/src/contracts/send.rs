@@ -1032,21 +1032,21 @@ mod tests {
                     field("name", Ty::named("String")),
                     field("temp", Ty::named("f64")),
                 ],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
         own.types.insert(
             "Counter".to_string(),
             TypeContract {
                 fields: vec![field("hits", Ty::parse("Shared[Locked[i64]]"))],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
         own.types.insert(
             "Opaque".to_string(),
             TypeContract {
                 fields: vec![field("held", Ty::named("Mapped"))],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
         // And a struct of structs, which is the transitive case.
@@ -1054,7 +1054,7 @@ mod tests {
             "Report".to_string(),
             TypeContract {
                 fields: vec![field("counter", Ty::named("Counter"))],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
 
@@ -1114,7 +1114,7 @@ mod tests {
                     field("value", Ty::named("i64")),
                     field("next", Ty::parse("Option[Node]")),
                 ],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
         assert_eq!(
@@ -1129,7 +1129,7 @@ mod tests {
                     field("held", Ty::parse("Shared[Locked[i64]]")),
                     field("next", Ty::parse("Option[Ring]")),
                 ],
-                ..TypeContract::default()
+                ..TypeContract::empty()
             },
         );
         // The cycle terminates at both destinations, and the lock is still found

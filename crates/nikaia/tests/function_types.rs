@@ -498,7 +498,7 @@ fn a_free_calls_lambda_is_typed_from_the_signature() {
 fn the_parameters_type_decides_whether_the_callee_pauses() {
     let sync_of = |source: &str, of: &str| {
         let parsed = parse_to_ast(source).expect("the source parses");
-        Ledger::infer(&parsed).functions[of].sync.clone()
+        Ledger::infer(&parsed).functions[of].sync_claim.clone()
     };
     assert!(
         sync_of(
@@ -539,7 +539,7 @@ fn the_parameters_type_decides_whether_the_callee_pauses() {
 fn a_kept_parameter_is_answered_from_the_type() {
     let sync_of = |source: &str, of: &str| {
         let parsed = parse_to_ast(source).expect("the source parses");
-        Ledger::infer(&parsed).functions[of].sync.clone()
+        Ledger::infer(&parsed).functions[of].sync_claim.clone()
     };
     // Stored and run, and the type allows pausing: the claim is off.
     assert!(
@@ -580,7 +580,11 @@ fn a_body_that_also_pauses_keeps_no_claim() {
          \x20   return f(x) }\n",
     )
     .expect("the source parses");
-    assert!(!Ledger::infer(&parsed).functions["twice"].sync.is_sync());
+    assert!(
+        !Ledger::infer(&parsed).functions["twice"]
+            .sync_claim
+            .is_sync()
+    );
 }
 
 /// **The trailing words are greedy**, which settles the one ambiguity D1 does
@@ -634,7 +638,11 @@ fn a_promise_before_the_arrow_is_refused() {
 #[test]
 fn a_promise_with_no_result_type_is_untouched() {
     let parsed = parse_to_ast("fn tick() sync { }\n").expect("it parses");
-    assert!(Ledger::infer(&parsed).functions["tick"].sync.is_sync());
+    assert!(
+        Ledger::infer(&parsed).functions["tick"]
+            .sync_claim
+            .is_sync()
+    );
 }
 
 /// **A handler handed on, in a loop** — which is what the first program to write

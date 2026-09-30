@@ -38,7 +38,7 @@ fn lowered(source: &str) -> String {
 
 fn throws_of(source: &str, of: &str) -> Vec<String> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    Ledger::infer(&parsed).functions[of].throws.clone()
+    Ledger::infer(&parsed).functions[of].fails_with.clone()
 }
 
 /// Lower it, compile it, run it, and hand back what it printed — which is the
@@ -474,7 +474,7 @@ fn a_variant_of_a_librarys_type_names_the_type() {
                   }\n\
                   fn main() { }\n";
     let parsed = parse_to_ast(source).expect("the source parses");
-    let throws = Ledger::infer(&parsed).functions["boom"].throws.clone();
+    let throws = Ledger::infer(&parsed).functions["boom"].fails_with.clone();
     assert_eq!(throws, vec!["io::IoError".to_string()], "{throws:#?}");
 }
 
