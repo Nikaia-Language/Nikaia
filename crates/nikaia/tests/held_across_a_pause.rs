@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nikaia::contracts::send::held_across_a_pause;
 use nikaia::contracts::ty::TyOps;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 /// What the checker found each `spawn` in this source holds across a pause.
@@ -181,7 +181,7 @@ fn nothing_may_not_cross_into_our_own_code_today() {
     use nikaia::contracts::send::{Crossing, Destination, crossing};
     use nikaia::contracts::ty::Ty;
 
-    let own = Ledger::default();
+    let own = Ledger::blank();
     let library = Ledger::parse(STD).expect("std ships a ledger");
     for text in [
         "i64",

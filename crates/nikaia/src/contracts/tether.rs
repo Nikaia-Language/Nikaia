@@ -52,6 +52,7 @@
 // **The buffer table is not here either** (D4). Its shape is a fact about a
 // container's representation, and this file writes no representation.
 
+use crate::contracts::LedgerOps;
 pub use nikaia_std::tools::ty::{Held, State};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -650,7 +651,8 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     }
     // **And where each buffer lives** (ADR-209 D6): the keep plan, per
     // function, in the words a reader asks the question in.
-    let library = crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default();
+    let library = crate::contracts::Ledger::parse(crate::contracts::STD)
+        .unwrap_or_else(|_| crate::contracts::Ledger::blank());
     for plan in super::keep::plans(parsed, ledger, &library) {
         let mut said = Vec::new();
         for (at, keep) in &plan.puts {

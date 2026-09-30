@@ -20,6 +20,7 @@
 
 mod common;
 
+use nikaia::contracts::LedgerOps;
 use std::process::Command;
 
 use nikaia::emit::{Build, emit_program};

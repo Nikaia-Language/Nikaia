@@ -24,6 +24,7 @@
 // package (ADR-046 D1), and depending on one is not built (ADR-047 §5), so a
 // `use` that is not `std`'s is refused with what to do instead.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -674,7 +675,7 @@ impl Program {
 
         Ok(Program {
             units,
-            described: crate::contracts::Ledger::default(),
+            described: crate::contracts::Ledger::blank(),
             contracts,
             as_its_own,
             tests: Vec::new(),
@@ -963,5 +964,6 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
 }
 
 fn std_ledger() -> crate::contracts::Ledger {
-    crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
+    crate::contracts::Ledger::parse(crate::contracts::STD)
+        .unwrap_or_else(|_| crate::contracts::Ledger::blank())
 }

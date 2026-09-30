@@ -21,7 +21,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::emit::Build;
 use nikaia::modules::Program;
 

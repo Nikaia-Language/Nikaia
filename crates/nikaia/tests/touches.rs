@@ -8,7 +8,7 @@
 //! everything"*. Safe, and useless: the walk stopped at the first call out of
 //! `std`.
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::parser::parse_to_ast;
 
 /// What the ledger says one function reaches, after the inference.

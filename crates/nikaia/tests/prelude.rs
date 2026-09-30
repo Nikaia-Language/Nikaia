@@ -12,7 +12,7 @@
 //! printing functions said *they are in the prelude* while Part I's list wrote
 //! three of the four. This is the test that would have said so.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 
 /// What the checker says about a source.
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {

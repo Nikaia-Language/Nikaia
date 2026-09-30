@@ -11,7 +11,7 @@
 mod common;
 
 use nikaia::check;
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

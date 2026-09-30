@@ -54,8 +54,8 @@ use crate::parser::Parsed;
 /// `nikaia-std/src/tools/ty.nika`, beside the type language their fields
 /// hold. Re-exported here so that every reader keeps its path.
 pub use nikaia_std::tools::ty::{
-    ConfigContract, Crosses, FieldContract, FnContract, Lock, Provenance, Signature, Sync, Threads,
-    TypeContract, VariantContract,
+    ConfigContract, Crosses, FieldContract, FnContract, Ledger, Lock, Notes, Provenance, Signature,
+    Sync, Threads, TypeContract, VariantContract,
 };
 
 /// What stays Rust of [`Sync`]: the name a `sync` was taken from.
@@ -100,22 +100,6 @@ pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing
 /// always meant - and the version is what tells a *reader* that the file it has
 /// may say more than it knows how to use.
 pub const VERSION: u32 = 3;
-
-/// **What a describer saw and did not claim**
-/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3, D5).
-///
-/// Rendered as comments into `contracts/<crate>.contracts` and never parsed
-/// back. The distinction the record rests on: [ADR-123](../../../../docs/specification/adr/adr-123.md)
-/// D2 lets the describer *fill* `crosses` because a field holding an `Rc`
-/// **entails** not sendable; nothing a signature can show entails *threads*, so
-/// what it saw is a sentence and the column stays a person's.
-#[derive(Debug, Clone, Default)]
-pub struct Notes {
-    /// About the crate: the `unsafe impl Send`/`Sync` items it contains (D5).
-    pub about_the_crate: Vec<String>,
-    /// About one entry, by the key it is written under (D3).
-    pub about_a_function: BTreeMap<String, Vec<String>>,
-}
 
 /// What stays Rust of a variant's entry until its text moves (ADR-257 step
 /// (c)): reading one back. The declaration and `text` are `tools/ty.nika`'s.
@@ -354,82 +338,46 @@ fn matching_close(inside: &str) -> Option<usize> {
     None
 }
 
-/// One compilation unit's contracts.
-///
-/// Ordered maps throughout, because the file is a **pure function of (source,
-/// toolchain)** (13.5) and a hash map's iteration order is not. The
-/// determinism is the feature: `--locked` compares bytes, so it needs no
-/// tolerance and no semantic comparison.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Ledger {
-    pub version: u32,
-    pub toolchain: String,
-    pub inference: String,
-    /// The sources these entries were derived from: one unit of the package by
-    /// file name, and the SHA-256 of its bytes
-    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3).
-    ///
-    /// **What it is for is telling a stale ledger from a believed one.** A
-    /// consumer reads a dependency's ledger rather than deriving it (D1), and
-    /// the only thing that makes believing safe is that a ledger is never
-    /// believed against its own sources: where a hash does not match, that
-    /// package is derived again. So this is not a checksum of the file — it is
-    /// the record of what the file is an answer *about*.
-    ///
-    /// **The file name and not a path**, because a package is one directory of
-    /// `.nika` files (`modules::collect`) and a path would put the machine that
-    /// built it into a file Part III 13.5 makes a pure function of the source
-    /// tree.
-    ///
-    /// Empty where nothing knows the sources — a ledger inferred from one
-    /// `Parsed` that never came from a file, and `std`'s own, whose Rust half
-    /// has no `.nika` to hash ([ADR-020](../../../docs/specification/adr/adr-020.md)
-    /// D5). An empty table renders nothing, so no existing ledger changes.
-    pub sources: BTreeMap<String, String>,
-    pub functions: BTreeMap<String, FnContract>,
-    pub types: BTreeMap<String, TypeContract>,
-    /// **Whether the code stored in a function field touches a lock**, by
-    /// `Type.field` ([ADR-230](../../../docs/specification/adr/adr-230.md) D1):
-    /// over everything this package stores there. The package's own answer and
-    /// not written to the ledger file - a published field is stored into by
-    /// packages that do not exist yet, so the file has nothing to say about it.
-    pub code_locks: BTreeMap<String, Lock>,
-    /// Kap 4.7: every `trait` declared here, with the names of its methods.
-    ///
-    /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
-    /// is where a bound looks one up. This map answers the other question a
-    /// bound asks first: *is `Summarize` a trait at all*
-    /// ([ADR-078](../../../docs/specification/adr/adr-078.md) D3). A name that
-    /// is not in here names no trait, and a bound on it is refused rather than
-    /// quietly believed.
-    ///
-    /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
-    /// it ([ADR-106](../../../docs/specification/adr/adr-106.md) D3): they are
-    /// the `fn` entries beside it, under `Handler::handle`, and the set is
-    /// filled from those once the whole file is parsed.
-    /// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left *a trait a
-    /// package publishes* as a question about modules; D1 and D3 of that later
-    /// record answered it, and a bound has taken a path since 0.0.171.
-    pub traits: BTreeMap<String, BTreeSet<String>>,
-    /// **Who answers for what**: a trait's name to the types that `impl` it
-    /// ([ADR-174](../../../docs/specification/adr/adr-174.md) D1).
-    ///
-    /// The other half of a bound, and the reason it is here rather than in the
-    /// checker: `impl Speaks for Dog` may stand in a **different file** from
-    /// the `fn tell[T: Speaks]` that needs the answer, and one file's walk sees
-    /// one file. A program's ledger is absorbed from its units', so the union
-    /// over the files is a thing this map already knows how to be.
-    ///
-    /// **Written to the ledger file** as `[impl."Handler for Static"]`
-    /// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4), one line per
-    /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
-    /// the trait's package, in the type's, or in a consumer for its own type —
-    /// so the answer at a call is the union over every ledger the program reads
-    /// plus its own, and no ledger claims completeness.
-    pub implementations: BTreeMap<String, BTreeSet<String>>,
+/// What the compiler does with a ledger: infer, absorb, render and read it
+/// back. The record is `tools/ty.nika`'s (ADR-257 D1); these stay Rust until
+/// step (c) and (d) move them.
+pub trait LedgerOps: Sized {
+    fn empty() -> Self;
+    fn infer(parsed: &Parsed) -> Self;
+    fn infer_package(units: &[&Parsed], library: &Ledger) -> Self;
+    fn published(&self, foreign: &BTreeSet<String>) -> Ledger;
+    fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String>;
+    fn absorb(&mut self, module: Option<&str>, other: Ledger);
+    fn absorb_renaming(
+        &mut self,
+        module: Option<&str>,
+        renames: &std::collections::BTreeMap<String, String>,
+        other: Ledger,
+    );
+    fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked);
+    fn infer_package_checked(
+        units: &[&Parsed],
+        library: &Ledger,
+    ) -> (Self, Vec<crate::check::Checked>);
+    fn function(
+        &self,
+        parsed: &Parsed,
+        item: &Item,
+        target: Option<&str>,
+        outer: &BTreeSet<String>,
+    ) -> (String, FnContract);
+    fn lookup(&self, name: &str) -> Option<(String, &FnContract)>;
+    fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)>;
+    fn render(&self) -> String;
+    fn render_derived(&self) -> String;
+    fn read_beside(path: &std::path::Path) -> Option<Ledger>;
+    fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String;
+    fn render_from(&self, out: &mut String);
+    fn render_from_with(&self, out: &mut String, notes: &Notes);
+    fn parse(text: &str) -> Result<Self>;
 }
 
-impl Ledger {
+impl LedgerOps for Ledger {
     /// The contracts of a parsed program.
     ///
     /// Two passes, because the second needs the first to have finished. The
@@ -448,16 +396,16 @@ impl Ledger {
     /// `std` alone.
     /// A ledger with a header and nothing in it - what a program of several
     /// files starts from before it absorbs its modules.
-    pub fn empty() -> Self {
+    fn empty() -> Self {
         Ledger {
             version: VERSION,
             toolchain: toolchain(),
             inference: INFERENCE.to_string(),
-            ..Default::default()
+            ..Ledger::blank()
         }
     }
 
-    pub fn infer(parsed: &Parsed) -> Self {
+    fn infer(parsed: &Parsed) -> Self {
         Self::infer_checked(parsed).0
     }
 
@@ -485,7 +433,7 @@ impl Ledger {
     /// answered from it; what is in neither it nor the package's own entries is
     /// code no ledger describes, and *that* is what fails closed
     /// ([ADR-027](../../../docs/specification/adr/adr-027.md)).
-    pub fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
+    fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
         Self::infer_package_checked(units, library).0
     }
 
@@ -503,7 +451,7 @@ impl Ledger {
     ///
     /// `foreign` is the depending build's record of what words this package
     /// uses for packages of its own (`modules::Dependency::reachable`).
-    pub fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
+    fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
         let theirs = |key: &str| {
             key.split_once("::")
                 .is_some_and(|(first, _)| foreign.contains(first))
@@ -546,7 +494,7 @@ impl Ledger {
     /// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1). A package
     /// with a ledger and **no sources** is the third row of D3's table and is
     /// not this function's question: nothing calls it with an empty `sources`.
-    pub fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
+    fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
         let mut moved: BTreeSet<String> = BTreeSet::new();
         for (unit, hash) in sources {
             if self.sources.get(unit) != Some(hash) {
@@ -583,7 +531,7 @@ impl Ledger {
     /// the two were different types, and the help line asked for what was already
     /// written. They are one type with two spellings, and this is the only place
     /// that knows both the module and what it declares.
-    pub fn absorb(&mut self, module: Option<&str>, other: Ledger) {
+    fn absorb(&mut self, module: Option<&str>, other: Ledger) {
         self.absorb_renaming(module, &std::collections::BTreeMap::new(), other)
     }
 
@@ -602,7 +550,7 @@ impl Ledger {
     /// Applied **after** qualifying and not instead of it: a name the package
     /// declares itself is its own and is never renamed, because `qualify` has
     /// already put this package's word in front of it.
-    pub fn absorb_renaming(
+    fn absorb_renaming(
         &mut self,
         module: Option<&str>,
         renames: &std::collections::BTreeMap<String, String>,
@@ -733,7 +681,7 @@ impl Ledger {
     /// wants it too - it carries the findings and the fallible loops - and
     /// running the checker twice per build to get one of them would be waste,
     /// not caution.
-    pub fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
+    fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
         let (ledger, mut checked) = Self::infer_package_checked(&[parsed], std_ledger());
         (ledger, checked.remove(0))
     }
@@ -747,7 +695,7 @@ impl Ledger {
     /// merged - and merging it is sound for the reason the package is one graph
     /// in the first place: one namespace, so one function per name
     /// (`modules::collect` refuses the second).
-    pub fn infer_package_checked(
+    fn infer_package_checked(
         units: &[&Parsed],
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>) {
@@ -755,7 +703,7 @@ impl Ledger {
             version: VERSION,
             toolchain: toolchain(),
             inference: INFERENCE.to_string(),
-            ..Default::default()
+            ..Ledger::blank()
         };
 
         // **The package's types and not the file's.** `impl_parameters` asks
@@ -1368,7 +1316,7 @@ impl Ledger {
     /// `io::read` in a unit that does not carry the ledger of the package
     /// beside it, and the `throws` column then spoke for a callee nobody had
     /// resolved.
-    pub fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
+    fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
         self.functions
             .get(name)
             .map(|contract| (name.to_string(), contract))
@@ -1390,7 +1338,7 @@ impl Ledger {
     /// a lent `self` reads, to [`keeps`], as one that takes its receiver whole
     /// (found moving the ledger's reader to Nikaia, 0.0.258). An entry with no
     /// signature is still a candidate - what it takes is unknown.
-    pub fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
+    fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
         let suffix = format!("::{method}");
         self.functions
             .iter()
@@ -1410,7 +1358,7 @@ impl Ledger {
     /// Only what is *true* is recorded: a `sync = false` on every entry would
     /// treble the file and say nothing, and a diff should show a promise being
     /// made or withdrawn rather than a column of falses.
-    pub fn render(&self) -> String {
+    fn render(&self) -> String {
         let mut out = String::new();
         out.push_str("# AUTO-GENERATED by `nikaia`. Commit this file like a lockfile.\n");
         out.push_str("# Do not edit by hand - it is regenerated on every build.\n");
@@ -1433,7 +1381,7 @@ impl Ledger {
     /// decides whether a consumer may believe the contract
     /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3) and never
     /// what the contract says, which is why it is a file of its own.
-    pub fn render_derived(&self) -> String {
+    fn render_derived(&self) -> String {
         let mut out = String::new();
         out.push_str("# AUTO-GENERATED by `nikaia`, beside the contract it describes.\n");
         out.push_str("# What that contract was derived from: the compiler, the inference and\n");
@@ -1458,7 +1406,7 @@ impl Ledger {
     /// **A contract with no record beside it has no sources**, which every
     /// reader of `sources` already takes for *nothing recorded*, the
     /// fail-closed answer (ADR-100 D3).
-    pub fn read_beside(path: &std::path::Path) -> Option<Ledger> {
+    fn read_beside(path: &std::path::Path) -> Option<Ledger> {
         let mut ledger = Ledger::parse(&std::fs::read_to_string(path).ok()?).ok()?;
         if let Some(derived) = std::fs::read_to_string(derived_path(path))
             .ok()
@@ -1481,7 +1429,7 @@ impl Ledger {
     /// not say what a field does — D5 expects the edit rather than tolerating
     /// it, and a file that told its reader not to make one would be telling
     /// them not to do the thing the record asks of them.
-    pub fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String {
+    fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "# The boundary of `{crate_name}`, described before it is called\n"
@@ -1522,7 +1470,7 @@ impl Ledger {
 
     /// The header line and everything after it, shared by both renderings.
     fn render_from(&self, out: &mut String) {
-        self.render_from_with(out, &Notes::default());
+        self.render_from_with(out, &Notes::empty());
     }
 
     /// The same, with the describer's notes spliced above the entries they are
@@ -1786,7 +1734,7 @@ impl Ledger {
     /// than a TOML parser: the file is generated, so the shapes it can take are
     /// the shapes written above, and a dependency to read one's own output back
     /// is a dependency to keep in step.
-    pub fn parse(text: &str) -> Result<Self> {
+    fn parse(text: &str) -> Result<Self> {
         /// Which table the lines being read belong to.
         ///
         /// An enum rather than the pair it used to be, because
@@ -1806,7 +1754,7 @@ impl Ledger {
 
         use nikaia_std::tools::ledger::Line;
 
-        let mut ledger = Ledger::default();
+        let mut ledger = Ledger::blank();
         let mut section: Option<In> = None;
 
         // **The file's shape is read in Nikaia** (`tools/ledger.nika`, 0.0.258,

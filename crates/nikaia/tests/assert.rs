@@ -8,7 +8,7 @@ mod common;
 
 use std::process::{Command, Output};
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {

@@ -26,6 +26,7 @@
 //! compiler answers from inside the compiler makes that pairing impossible
 //! rather than merely discouraged.
 
+use crate::contracts::LedgerOps;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -270,7 +271,7 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     {
         crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?
     } else {
-        crate::contracts::Ledger::default()
+        crate::contracts::Ledger::blank()
     };
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());

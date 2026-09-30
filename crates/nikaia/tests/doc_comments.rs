@@ -6,7 +6,7 @@
 //! body it cannot see, and a sentence is not that. The parser still reads the
 //! prose, for whatever reaches a dependency's documentation later.
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::parser::parse_to_ast;
 
 fn items(source: &str) -> Vec<(String, Option<String>)> {

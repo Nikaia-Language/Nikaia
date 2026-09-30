@@ -25,6 +25,7 @@
 // expression-level spans are open work in the parser, and a caret on the right
 // line is worth more than none at all.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::assets::{ASSET, Denied, Reads};

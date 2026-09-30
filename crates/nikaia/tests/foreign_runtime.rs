@@ -22,7 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::contracts::{Ledger, STD, order};
+use nikaia::contracts::{Ledger, LedgerOps, STD, order};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {

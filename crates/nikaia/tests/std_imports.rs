@@ -8,7 +8,7 @@
 //! already knows. A line that reads like an import and does nothing is what
 //! this closes.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {

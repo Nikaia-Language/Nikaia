@@ -20,7 +20,7 @@ mod common;
 
 use nikaia::assets::{Allowlist, Reads};
 use nikaia::check::{self, Finding};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

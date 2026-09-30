@@ -18,6 +18,7 @@
 //! which is the one question the parser can no longer answer and no longer has
 //! to.
 
+use nikaia::contracts::LedgerOps;
 use nikaia::parser::parse_to_ast;
 
 fn lowered(source: &str) -> Result<String, String> {

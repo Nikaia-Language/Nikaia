@@ -789,13 +789,13 @@ runs them.
 [ADR-257](specification/adr/adr-257.md) D1-D2, after its measurement answered
 D3 with *move as values*:
 
-* **(b)** `Ledger` (with `Notes`) is declared beside the rest and
-  re-exported from `contracts`. Done: `Ty` and `Shape` (0.0.285), the small
-  records (0.0.289), and `Signature`, `FnContract` and `TypeContract`
-  (0.0.290). What reads their text back (`Touch::parse`, `Held::parse`,
-  `Class::parse`, `VariantContract::parse`, `Signature::parse`) is still Rust,
-  behind `*Ops` traits, and moves with (c); so does `Signature::arguments`,
-  which hands back a slice of the entry's own list.
+* **(b)** Done: `Ty` and `Shape` (0.0.285), the small records (0.0.289),
+  `Signature`, `FnContract` and `TypeContract` (0.0.290), `Ledger` and `Notes`
+  (0.0.291). What reads their text back (`Touch::parse`, `Held::parse`,
+  `Class::parse`, `VariantContract::parse`, `Signature::parse`,
+  `Ledger::parse`) is still Rust, behind `*Ops` traits, and moves with (c); so
+  does `Signature::arguments`, which hands back a slice of the entry's own
+  list.
 * **(c)** The signature strings move next to `ledger.nika`. A type's text
   is done both ways (`Ty::text` 0.0.285, `Ty::parse` 0.0.286).
 * **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,

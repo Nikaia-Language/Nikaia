@@ -39,6 +39,7 @@
 //! Run once, right after parsing, so that the checker, every derived column,
 //! the ledger and the emitter all read one answer off the types.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Stmt, Type};

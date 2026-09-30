@@ -33,6 +33,7 @@
 // **assertion you write where you want it held**, checked against the body,
 // rather than a mode you have to enter.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Span, Stmt};

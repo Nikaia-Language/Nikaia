@@ -8,7 +8,7 @@
 //! two rulings, and both are pinned here: what `[]` is (D2), and what a `[` at
 //! the start of a line means (D3).
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
