@@ -1481,3 +1481,91 @@ fn a_name_given_to_a_coalesce_is_handed_over() {
     );
     assert!(copied.is_empty(), "{copied:#?}");
 }
+
+/// **`??` lends its left side where the answer is only read, and takes it
+/// where the answer is kept** (ADR-259 D1): the rule an argument follows. Each
+/// read shape - a text literal, a name of text, a declared variant, a name of
+/// a struct - leaves the name usable after the line and copies nothing; a
+/// `return` and a `let` take it, as `let b = a` does.
+#[test]
+fn a_coalesce_lends_where_it_is_read_and_takes_where_it_is_kept() {
+    let source = r#"pub struct Row {
+    pub id: i64,
+}
+
+pub enum Shape {
+    Square,
+    Nothing,
+}
+
+fn find(n: i64) -> String? {
+    if n > 0 {
+        return "some"
+    }
+    return null
+}
+
+fn row(n: i64) -> Row? {
+    if n > 0 {
+        return Row { id: n }
+    }
+    return null
+}
+
+fn shape(n: i64) -> Shape? {
+    if n > 0 {
+        return Shape::Square
+    }
+    return null
+}
+
+fn shown(text: ref String) -> String {
+    return f"<{text}>"
+}
+
+fn id_of(r: ref Row) -> i64 {
+    return r.id
+}
+
+fn named(s: ref Shape) -> String {
+    return match s {
+        Shape::Square => "square",
+        Shape::Nothing => "nothing",
+    }
+}
+
+fn kept(n: i64) -> String {
+    let user = find(n)
+    return user ?? "x"
+}
+
+fn main() {
+    let user = find(1)
+    println(user ?? "guest")
+    println(shown(user ?? "guest"))
+    let other: String = "other"
+    let nobody = find(0)
+    println(shown(nobody ?? other))
+    println(other)
+    let r = row(3)
+    let spare = Row { id: 0 }
+    println(f"{id_of(r ?? spare)}")
+    let s = shape(0)
+    println(named(s ?? Shape::Nothing))
+    if user != null && r != null && s == null {
+        println("still usable")
+    }
+    println(kept(1))
+    let name = user ?? "guest"
+    println(name)
+}
+"#;
+    let lowered = lowered(source);
+    assert!(lowered.contains("user.as_deref()"), "{lowered}");
+    assert!(lowered.contains("r.as_ref(), || &spare"), "{lowered}");
+    assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
+    assert_eq!(
+        ran("coalesce-lends", source),
+        "some\n<some>\n<other>\nother\n3\nnothing\nstill usable\nsome\nsome\n"
+    );
+}

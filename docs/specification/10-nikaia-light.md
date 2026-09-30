@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.287 (Draft)
+**Version:** 0.0.288 (Draft)
 **Date:** 2026-09-30
 
 ---
@@ -933,6 +933,11 @@ that is not `T?` always has a value, and the plain `.` reaches it.
 **`?.` takes nothing.** It reaches through a view of its receiver, so `user` is
 usable on the line after `user?.name`. What comes out is a copy where the
 member copies and a view of the receiver otherwise, as a field read is (6.6).
+
+**`??` takes its left side where the answer is kept, and lends it where the
+answer is only read** ([ADR-259](adr/adr-259.md)), as an argument is lent or
+handed over (6.6). `println(user ?? "Guest")` leaves `user` usable on the next
+line; `let shown = user ?? "Guest"` takes `user`, as `let b = a` takes `a`.
 
 **`?.` reaches a method.** `find(1)?.greet("Hallo")` calls the method only
 where there is something to call it on; the arguments reach it, and the result
