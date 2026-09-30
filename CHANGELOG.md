@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.272] — 2026-09-30
+
+**A parse error names the mistake where the reader made it** (Part III C.2,
+rule 5). A parse stops where the input stopped making sense, often a line after
+the mistake; a failed parse is now read once more for the mistake itself. All
+twenty-four failing rows of `docs/error-corpus.md` say what a reader needs,
+where 0.0.266 left twelve that misled.
+
+- *A `,` is missing before `temp`.*, *There are two commas here.*, *`=` has
+  nothing after it.*, *`if` needs a condition before its `{`.*, *`let` names
+  what it binds, but `5` is a value.*, *`=` gives a name a value; a condition
+  compares with `==`.*, *This `{` / `[` / string is never closed.* at the
+  bracket or quote that opened it, and the rest in the corpus.
+- A reading that proposes a change is offered only where the program, changed
+  that way, parses further; a reserved word is said to be one only where a
+  plain name in its place would have parsed.
+- `par_fold(` and `fold(` commit to a fold, so a wrong count is said at the
+  call; an arrow inside a pattern points at the commit `=>`, where deleting it
+  would silently have made a plain sequence.
+- NK1117's note on `a`, `b` and `c` is said only inside a lambda; `...args` is
+  no longer a sketch to the specification's walk.
+- `docs/error-corpus.md` describes today's messages and how they are found.
+
 ## [0.0.271] — 2026-09-29
 
 **Every `assert` outside a test is proved while the program is built**

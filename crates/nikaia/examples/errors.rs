@@ -34,7 +34,7 @@ pub fn render_corpus(dir: &Path) -> String {
         match parse_to_ast(&source) {
             // A case that parses is not a hole in the corpus: it says the
             // grammar admits something, and that belongs in the diff too.
-            // Three of them do - see docs/error-corpus.md.
+            // Two of them do, E2 and G2 - see docs/error-corpus.md.
             Ok(_) => out.push_str("(parses)\n"),
             Err(e) => {
                 out.push_str(&e.to_string());

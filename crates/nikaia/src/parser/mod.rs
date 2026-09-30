@@ -687,6 +687,278 @@ fn an_effect_on_a_lambda_note(found: Option<&str>, before: &str) -> Option<Strin
     })
 }
 
+/// **The mistake, where the reader made it** ([Part III C.2](../../../../docs/specification/30-nikaia-tooling.md),
+/// rule 5; `docs/error-corpus.md`): a parse stops where the input stopped
+/// making sense, which is often a line after the mistake - a missing `,`
+/// fails at the next field, a missing value at the `}` below it, an unclosed
+/// `{` at the end of the file. Each reading here names one such mistake and
+/// puts the caret where it was made. A reading that proposes a change is
+/// only offered where the program, changed that way, parses further.
+fn a_better_reading(
+    error: &ParseError,
+    source: &str,
+    at: usize,
+    found: Option<&str>,
+) -> Option<crate::check::Finding> {
+    // What the parser needed here, and not what it could also have taken:
+    // an open string is always something it *could* have continued.
+    let expected = |what: &str| error.expected.iter().any(|e| e == what);
+    let prev_end = source[..at].trim_end().len();
+    let prev = previous_token(source, prev_end);
+    let finding = |at: usize, word: &str, message: &str, help: &str| {
+        Some(a_parse_finding(
+            at,
+            word,
+            message.to_string(),
+            Vec::new(),
+            Some(help.to_string()),
+        ))
+    };
+
+    // The file ended inside a string: the caret on the quote that opened it.
+    if found.is_none() && expected("`\"`") {
+        if let Some(open) = unclosed_quote(source) {
+            return finding(
+                open,
+                "\"",
+                "This string is never closed.",
+                "End it with `\"` where the text is meant to stop.",
+            );
+        }
+    }
+    // A block, a list or a call never closed: the file ended inside it, or
+    // another bracket closed first (`[1, 2` and then `}`). The caret goes on
+    // the bracket that opened it.
+    let wrong_closer = matches!(found, Some("}" | ")" | "]"))
+        && !found.is_some_and(|f| expected(&format!("`{f}`")));
+    if (found.is_none() || wrong_closer) && (expected("`}`") || expected("`)`") || expected("`]`"))
+    {
+        let Some((open, bracket)) = unclosed_bracket(&source[..at]) else {
+            return None;
+        };
+        let close = match bracket {
+            '{' => '}',
+            '(' => ')',
+            _ => ']',
+        };
+        let why = match found {
+            None => "the file ended while it was still open".to_string(),
+            Some(other) => format!("a `{other}` closed something else first"),
+        };
+        return finding(
+            open,
+            &bracket.to_string(),
+            &format!("This `{bracket}` is never closed."),
+            &format!("Add the `{close}` where it's meant to end; {why}."),
+        );
+    }
+    // `struct` inside an `impl`: an `impl` holds methods.
+    if let Some(word) =
+        found.filter(|w| matches!(*w, "struct" | "enum" | "trait" | "impl" | "grammar"))
+        && let Some((open, '{')) = unclosed_bracket(&source[..at])
+        && source[..open]
+            .trim_end()
+            .rsplit('\n')
+            .next()
+            .is_some_and(|l| l.trim_start().starts_with("impl"))
+    {
+        return finding(
+            at,
+            word,
+            &format!("An `impl` holds methods, and a `{word}` can't be declared inside one."),
+            &format!("Move the `{word}` out of the `impl`, to the top level of the file."),
+        );
+    }
+    // `/ text` at the start of a line: a comment written with one slash.
+    if found == Some("/")
+        && source[..at]
+            .rsplit('\n')
+            .next()
+            .is_some_and(|l| l.trim().is_empty())
+        && !source[at..].starts_with("//")
+    {
+        return finding(
+            at,
+            "/",
+            "A single `/` is division, and nothing stands before it to divide.",
+            "A comment starts with `//`.",
+        );
+    }
+    // `“hi”`: a typographic quote, from a word processor or a phone.
+    if let Some(quote) = found.filter(|q| matches!(*q, "“" | "”" | "‘" | "’" | "„")) {
+        return finding(
+            at,
+            quote,
+            &format!("`{quote}` isn't a quote the language reads."),
+            "Text is written between straight quotes: `\"hi\"`.",
+        );
+    }
+    // A value is missing: `let y =` or `1 +` with nothing after it, found at
+    // whatever stands on the next line.
+    let closes = matches!(
+        found,
+        None | Some("}") | Some(")") | Some("]") | Some("newline")
+    );
+    if expected("expression") && closes {
+        let operator = prev.as_str();
+        let message = match operator {
+            "=" => "`=` has nothing after it.".to_string(),
+            "+" | "-" | "*" | "/" | "%" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "&&" | "||" => {
+                format!("`{operator}` has nothing on its right.")
+            }
+            _ => return None,
+        };
+        return finding(
+            prev_end - operator.len(),
+            operator,
+            &message,
+            "Write the value after it, on the same line.",
+        );
+    }
+    // `if { … }`: a condition is missing.
+    if found == Some("{") && matches!(prev.as_str(), "if" | "while") {
+        let word = prev.as_str();
+        return finding(
+            prev_end - word.len(),
+            word,
+            &format!("`{word}` needs a condition before its `{{`."),
+            &format!("Write `{word} cond {{ … }}`."),
+        );
+    }
+    // `let 5 = x`: a value where the name goes.
+    if matches!(prev.as_str(), "let" | "mut")
+        && let Some(word) = found
+        && word.starts_with(|c: char| c.is_ascii_digit() || c == '"' || c == '\'')
+    {
+        return finding(
+            at,
+            word,
+            &format!("`let` names what it binds, but `{word}` is a value."),
+            "Write a name: `let x = …`, then use `x`.",
+        );
+    }
+    // `a: i32,,`: two commas.
+    if found == Some(",") && prev == "," {
+        return finding(at, ",", "There are two commas here.", "Remove one.");
+    }
+    // `if a = b`: an assignment where a comparison goes.
+    if found == Some("=")
+        && source[..at].lines().last().is_some_and(|l| {
+            let l = l.trim_start();
+            l.starts_with("if ") || l.starts_with("while ") || l.contains(" if ")
+        })
+    {
+        let mut compared = source.to_string();
+        compared.replace_range(at..at + 1, "==");
+        if parses_further(&compared, at + 2) {
+            return finding(
+                at,
+                "=",
+                "`=` gives a name a value; a condition compares with `==`.",
+                "Write `==` here.",
+            );
+        }
+    }
+    // `name: String` then `temp: i32` with no `,` between: the caret after
+    // the element the comma belongs to.
+    let closer_wanted = expected("`}`") || expected("`)`") || expected("`]`");
+    if closer_wanted
+        && let Some(word) = found
+        && word.starts_with(|c: char| c.is_alphabetic() || c == '_')
+    {
+        let mut separated = source.to_string();
+        separated.insert(prev_end, ',');
+        if parses_further(&separated, at + 1) {
+            return finding(
+                prev_end,
+                "",
+                &format!("A `,` is missing before `{word}`."),
+                &format!("Separate `{prev}` and `{word}` with a comma."),
+            );
+        }
+    }
+    None
+}
+
+/// Whether `input` parses past `past`.
+fn parses_further(input: &str, past: usize) -> bool {
+    stops_at(input).is_none_or(|stop| stop > past)
+}
+
+/// The token that ends at `end`: a word, or a run of operator characters, or
+/// one other character.
+fn previous_token(source: &str, end: usize) -> String {
+    let before = &source[..end];
+    let Some(last) = before.chars().last() else {
+        return String::new();
+    };
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let operator = |c: char| "=+-*/%<>!&|".contains(c);
+    let start = if word(last) {
+        before.trim_end_matches(word).len()
+    } else if operator(last) {
+        before.trim_end_matches(operator).len()
+    } else {
+        end - last.len_utf8()
+    };
+    before[start..].to_string()
+}
+
+/// Where the last string that is never closed opens.
+fn unclosed_quote(source: &str) -> Option<usize> {
+    let mut open: Option<usize> = None;
+    let mut chars = source.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match (open, c) {
+            (Some(_), '\\') => {
+                chars.next();
+            }
+            (Some(_), '"') => open = None,
+            (None, '"') => open = Some(i),
+            (None, '/') if chars.peek().is_some_and(|(_, n)| *n == '/') => {
+                for (_, n) in chars.by_ref() {
+                    if n == '\n' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    open
+}
+
+/// The innermost bracket still open at the end of the file, outside strings
+/// and `//` comments.
+fn unclosed_bracket(source: &str) -> Option<(usize, char)> {
+    let mut stack: Vec<(usize, char)> = Vec::new();
+    let mut in_string = false;
+    let mut chars = source.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match (in_string, c) {
+            (true, '\\') => {
+                chars.next();
+            }
+            (true, '"') => in_string = false,
+            (true, _) => {}
+            (false, '"') => in_string = true,
+            (false, '/') if chars.peek().is_some_and(|(_, n)| *n == '/') => {
+                for (_, n) in chars.by_ref() {
+                    if n == '\n' {
+                        break;
+                    }
+                }
+            }
+            (false, '{' | '(' | '[') => stack.push((i, c)),
+            (false, '}' | ')' | ']') => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.pop()
+}
+
 /// Where a parse of `input` stops, or `None` where it goes through.
 fn stops_at(input: &str) -> Option<usize> {
     let mut stream = ParseInput::<Trivia> {
@@ -934,6 +1206,11 @@ fn a_parse_error(error: &ParseError, source: &str) -> crate::check::Finding {
     let found = error.found.as_deref();
     let line_start = source[..at].rfind('\n').map_or(0, |i| i + 1);
     let before = &source[line_start..at];
+    if error.message.is_none()
+        && let Some(better) = a_better_reading(error, source, at, found)
+    {
+        return better;
+    }
     let (message, mut help) = match &error.message {
         Some(written) => {
             let (headline, rest) = first_sentence(written);
@@ -2160,7 +2437,13 @@ grammar! {
         // the arrow is there, and the `fail` stands **at** the arrow rather than
         // after the block, so the caret is on the character to delete.
         rule g_alt -> GrammarAlt =
-            p:g_seq "->" fail(
+            // **A fold first**: `par_fold` and `fold` are words of this
+            // sublanguage and never a rule's name, and a fold with the wrong
+            // count is told so at the call rather than at the rule's end.
+            f:g_fold -> {
+                GrammarAlt { pattern: f, action: None }
+            }
+          | p:g_seq "->" peek("{") fail(
                 "An action doesn't take an arrow. Write `pattern { action }`: the only \
                  `->` in a rule is its result type."
             ) -> {
@@ -2168,11 +2451,17 @@ grammar! {
                 // binding is here because the action has to be well-typed.
                 GrammarAlt { pattern: p, action: None }
             }
+          // **An arrow in the middle of a pattern** is most often the commit
+          // point written with the wrong arrow: `a:B -> C { 1 }`. Deleting it,
+          // as the message above says, would silently make a plain sequence.
+          | p:g_seq "->" fail(
+                "A pattern can't contain `->`: the only `->` in a rule is its result type. \
+                 To commit to this alternative once what comes before has matched, write `=>`."
+            ) -> {
+                GrammarAlt { pattern: p, action: None }
+            }
           | p:g_seq action:block -> {
                 GrammarAlt { pattern: p, action: Some(action) }
-            }
-          | f:g_fold -> {
-                GrammarAlt { pattern: f, action: None }
             }
 
         rule g_seq -> Spanned<Pattern> @=
@@ -2299,32 +2588,58 @@ grammar! {
         // for it is how the user says a different chunk count is the same
         // answer to them.
         rule g_fold -> Spanned<Pattern> @=
-            KW_PAR_FOLD "("
+            // **Committed at the parenthesis**: `par_fold(` and `fold(` are
+            // nothing but a fold, so a wrong argument count is said at the
+            // call, and not as *expected `->`* where the rule's reading
+            // finally gave up a line later.
+            KW_PAR_FOLD "(" => spec:par_fold_args -> { Spanned::new(spec, Span::from(_span)) }
+          | KW_FOLD "(" => spec:fold_args -> { Spanned::new(spec, Span::from(_span)) }
+
+        rule par_fold_args -> Pattern =
             r:NAME ","
             init:expr ","
             step:expr ","
             merge:expr ")"
             -> {
-                Spanned::new(Pattern::Fold(Box::new(FoldSpec {
+                Pattern::Fold(Box::new(FoldSpec {
                     parallel: true,
                     rule: r,
                     init,
                     step,
                     merge: Some(merge),
-                })), Span::from(_span))
+                }))
             }
-          | KW_FOLD "("
+          // Read to the closing parenthesis, so this is the reading that got
+          // furthest and its sentence is the one said.
+          | _args:until(")") fail(
+                "`par_fold` takes four arguments. Write `par_fold(Rule, init, step, merge)`: \
+                 the rule each chunk is read with, the starting value, how one item joins it, \
+                 and how two chunks' results join."
+            ) -> {
+                // Never reached: `fail` has already ended the alternative.
+                Pattern::Literal(String::new())
+            }
+
+        rule fold_args -> Pattern =
             r:NAME ","
             init:expr ","
             step:expr ")"
             -> {
-                Spanned::new(Pattern::Fold(Box::new(FoldSpec {
+                Pattern::Fold(Box::new(FoldSpec {
                     parallel: false,
                     rule: r,
                     init,
                     step,
                     merge: None,
-                })), Span::from(_span))
+                }))
+            }
+          // Read to the closing parenthesis, so this is the reading that got
+          // furthest and its sentence is the one said.
+          | _args:until(")") fail(
+                "`fold` takes three arguments. Write `fold(Rule, init, step)`: the rule each \
+                 item is read with, the starting value, and how one item joins it."
+            ) -> {
+                Pattern::Literal(String::new())
             }
 
         // --- Statements & Blocks ---
