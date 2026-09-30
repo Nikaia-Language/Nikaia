@@ -249,3 +249,42 @@ fn a_lambda_that_pauses_is_handed_to_the_pausing_counterpart() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A call in a `match` arm is a call of the function around it**
+/// (`open-work.md` §1.31): `R::A => slow()` is not a block, so the walk that
+/// reads bodies passed it by, and `pick` came out of the ledger `sync` while
+/// its lowering awaited `slow()`. A list's items, a `with`'s fields and a
+/// `return` written as an expression were passed by the same way.
+#[test]
+fn a_call_in_a_match_arm_makes_its_function_pause() {
+    let dir = common::scratch_dir("pausing-arm");
+    let rust = lower(
+        &dir,
+        "use std::time\n\
+         \n\
+         enum R { A, B }\n\
+         \n\
+         fn slow() -> i64 {\n\
+         \x20   time::sleep(1.millis())\n\
+         \x20   return 1\n\
+         }\n\
+         \n\
+         fn pick(r: R) -> i64 {\n\
+         \x20   return match r {\n\
+         \x20       R::A => slow(),\n\
+         \x20       R::B => 2,\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn listed() -> Vec[i64] {\n\
+         \x20   return [slow(), 2]\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{pick(R::A)} {listed().len()}\")\n\
+         }",
+    );
+    assert!(rust.contains("async fn pick("), "{rust}");
+    assert!(rust.contains("async fn listed("), "{rust}");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1186,6 +1186,9 @@ struct Emitter<'p> {
     slice_indices: std::collections::BTreeSet<(usize, String)>,
     /// `std` copies, written `to_owned` (ADR-215 D4).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
+    /// Whether the `?.` being written copies the view it reached, which is
+    /// `owned_copies` asked of the receiver the `match` bound.
+    reached_copy: std::cell::Cell<bool>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
@@ -2440,6 +2443,7 @@ impl<'p> Emitter<'p> {
             specialising: std::cell::RefCell::new(None),
             at_field: std::cell::RefCell::new(None),
             code_parameter_runs: std::cell::RefCell::new(false),
+            reached_copy: std::cell::Cell::new(false),
             flattened_reaches: propagation.flattened,
             copied_reaches: propagation.copied,
             viewed_reaches: propagation.viewed,
@@ -7179,7 +7183,16 @@ impl<'p> Emitter<'p> {
                 if !flattens {
                     out.push("Some(");
                 }
-                self.method_call(out, None, *method, args, config, depth + 1, flow)?;
+                // **A copy of the view reached** is `to_owned`, as the plain
+                // call's is (ADR-215 D4): the receiver the rewrite reads is the
+                // one this `match` bound.
+                let copy = self
+                    .owned_copies
+                    .contains(&(flow.statement, crate::check::argument_shape(receiver)));
+                let held_copy = self.reached_copy.replace(copy);
+                let written = self.method_call(out, None, *method, args, config, depth + 1, flow);
+                self.reached_copy.set(held_copy);
+                written?;
                 if !flattens {
                     out.push(")");
                 }
@@ -10642,10 +10655,12 @@ impl<'p> Emitter<'p> {
         }) {
             return self.postfix_base(out, text, depth, flow);
         }
-        let copies = receiver.is_some_and(|receiver| {
-            self.owned_copies
-                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
-        });
+        let copies = match receiver {
+            Some(receiver) => self
+                .owned_copies
+                .contains(&(flow.statement, crate::check::argument_shape(receiver))),
+            None => self.reached_copy.get(),
+        };
         let written = match self.text(method) {
             "drain" if args.is_empty() => "into_iter",
             // **A copy is `to_owned` below** (ADR-215 D4): `.clone()` of a
@@ -11338,12 +11353,50 @@ impl<'p> Emitter<'p> {
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3), and
             // a Rust reference in front of it would be the wrong address —
             // `&FILE` is `FILE**` where C wants `FILE*`.
+            // **A nullable view is lent inside its option** (`open-work.md`
+            // §1.31): a `ref String?` parameter is an `Option<&str>` (Part I
+            // 2.3), and what reaches it from a `String?` is `x.as_deref()` -
+            // `&x` was an `&Option<String>`. A `null` is `None` as it is.
+            let inside_the_option = lend
+                .then(|| {
+                    self.own_contracts
+                        .functions
+                        .get(callee)
+                        .and_then(|c| c.signature.as_ref())
+                        .and_then(|s| s.arguments().get(i))
+                        .and_then(|(_, ty)| match ty {
+                            crate::contracts::ty::Ty::Nullable(inner) if inner.is_a_view() => {
+                                Some(match inner.as_ref() {
+                                    crate::contracts::ty::Ty::Named { name, .. }
+                                        if matches!(
+                                            crate::contracts::ty::base(name),
+                                            "String" | "str"
+                                        ) =>
+                                    {
+                                        ".as_deref()"
+                                    }
+                                    _ => ".as_ref()",
+                                })
+                            }
+                            _ => None,
+                        })
+                })
+                .flatten();
+            let lend = lend && inside_the_option.is_none();
+            if matches!(arg, Expr::LitNull) && inside_the_option.is_some() {
+                out.push("None");
+                out.push(after);
+                continue;
+            }
             if pointer.is_none() {
                 if change {
                     out.push("&mut ");
                 } else if lend {
                     out.push("&");
                 }
+            }
+            if inside_the_option.is_some() {
+                out.push("(");
             }
             if let Some(Pointer::Reference { mutable }) = pointer {
                 out.push(match mutable {
@@ -11475,6 +11528,10 @@ impl<'p> Emitter<'p> {
             // from being released twice.
             if let Some(Pointer::Handle { give: false }) = pointer {
                 out.push(".lent()");
+            }
+            if let Some(how) = inside_the_option {
+                out.push(")");
+                out.push(how);
             }
             if count {
                 out.push(")");

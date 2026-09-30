@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.280] — 2026-09-30
+
+**The defects list is empty** (`open-work.md` §1.31, §1.32): four found moving
+`fold` into Nikaia, and two they led to.
+
+- **A call in a `match` arm is a call of its function.** The walk every
+  derived column reads (`sync`, `throws`, `touches`, `keeps`) passed by an arm
+  that is not a block, a list's items, a `with`, a `return` written as an
+  expression and a `select`'s values: `R::A => slow()` left `pick` `sync`
+  while its lowering awaited `slow()`. `throw error` in a handler passes the
+  caught error on and adds nothing to the function's errors, which the walk
+  now says, since it reaches that arm.
+- **What a `match` over a call binds has the variant's type**: `match g(n) {
+  R::Value(c) => c, … }` left `c`, and the whole `match`, untyped. A method on
+  it made its function look as if it paused (`fold`'s `combined` needed a
+  written `sync`, and needs none now), and `a.name?.clone()` moved the field.
+- **A nullable view**, `ref String?`, is an `Option<&str>` (Part I 2.3): the
+  caller hands `x.as_deref()` (or `x.as_ref()` for other types) and `None` for
+  `null`, and `b?.clone()` in the body is `to_owned()`.
+- **An open number's step is held to what it becomes** (ADR-249 D3):
+  `let a = 2000000000` then `a + a - a` is `NK1116` at the step where `a` is
+  an `i32`, and accepted where a use makes it an `i64`.
+- `fold.nika` writes `return Folded::Nothing if op != UnaryOp::Neg` and no
+  `sync` of its own.
+
 ## [0.0.279] — 2026-09-30
 
 **Three lowerings that reached `rustc` are this compiler's now**

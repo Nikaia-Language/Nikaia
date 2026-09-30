@@ -1257,3 +1257,72 @@ fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
         "{refused}"
     );
 }
+
+/// **What a `match` over a call binds has the variant's type**
+/// (`open-work.md` §1.31, found moving `fold` into Nikaia): `let a = match
+/// make(n) { R::Value(c) => c, other => return other }` left `a` untyped, so
+/// `a.name?.clone()` moved the field out where `a` was read again, and a
+/// method on `a` made the function look as if it paused.
+#[test]
+fn a_part_of_a_matched_call_is_typed_and_read_in_place() {
+    let printed = ran(
+        "matched-call",
+        "struct C { name: String?, n: i64 }\n\
+         enum R { Value(C), Nothing }\n\
+         \n\
+         fn make(n: i64) -> R {\n\
+         \x20   return if n > 0 { R::Value(C { name: \"a\", n: n }) } else { R::Nothing }\n\
+         }\n\
+         \n\
+         fn both(n: i64) -> R {\n\
+         \x20   let a = match make(n) {\n\
+         \x20       R::Value(c) => c,\n\
+         \x20       other => return other,\n\
+         \x20   }\n\
+         \x20   let b = match make(n + 1) {\n\
+         \x20       R::Value(c) => c,\n\
+         \x20       other => return other,\n\
+         \x20   }\n\
+         \x20   let pinned: String? = if a.name == null { b.name?.clone() } else { a.name?.clone() }\n\
+         \x20   return R::Value(C { name: pinned, n: a.n + b.n })\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   match both(1) {\n\
+         \x20       R::Value(c) => println(f\"{c.n}\"),\n\
+         \x20       R::Nothing => println(\"none\"),\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "3");
+}
+
+/// **A nullable view is lent inside its option, and a copy of it is text of
+/// its own** (`open-work.md` §1.31, found moving `fold` into Nikaia): a
+/// `ref String?` parameter is an `Option<&str>` (Part I 2.3), its caller hands
+/// `x.as_deref()` and `None` for `null`, and `b?.clone()` in the body is
+/// `to_owned()` of the `&str` reached.
+#[test]
+fn a_nullable_view_is_handed_and_copied() {
+    let printed = ran(
+        "nullable-view",
+        "fn either(a: ref String?, b: ref String?) -> String? {\n\
+         \x20   return b?.clone() if a == null\n\
+         \x20   return a?.clone()\n\
+         }\n\
+         \n\
+         struct Holder { name: String? }\n\
+         \n\
+         fn main() {\n\
+         \x20   let x: String? = \"x\"\n\
+         \x20   let y: String? = null\n\
+         \x20   let h = Holder { name: \"h\" }\n\
+         \x20   let got = either(y, x) ?? \"-\"\n\
+         \x20   let from = either(h.name, null) ?? \"-\"\n\
+         \x20   let none = either(null, null) ?? \"-\"\n\
+         \x20   let kept = x ?? \"?\"\n\
+         \x20   println(f\"{got} {from} {none} {kept}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "x h - x");
+}
