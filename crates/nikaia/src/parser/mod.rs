@@ -716,15 +716,16 @@ fn a_better_reading(
     };
 
     // The file ended inside a string: the caret on the quote that opened it.
-    if found.is_none() && expected("`\"`") {
-        if let Some(open) = unclosed_quote(source) {
-            return finding(
-                open,
-                "\"",
-                "This string is never closed.",
-                "End it with `\"` where the text is meant to stop.",
-            );
-        }
+    if found.is_none()
+        && expected("`\"`")
+        && let Some(open) = unclosed_quote(source)
+    {
+        return finding(
+            open,
+            "\"",
+            "This string is never closed.",
+            "End it with `\"` where the text is meant to stop.",
+        );
     }
     // A block, a list or a call never closed: the file ended inside it, or
     // another bracket closed first (`[1, 2` and then `}`). The caret goes on
@@ -733,9 +734,7 @@ fn a_better_reading(
         && !found.is_some_and(|f| expected(&format!("`{f}`")));
     if (found.is_none() || wrong_closer) && (expected("`}`") || expected("`)`") || expected("`]`"))
     {
-        let Some((open, bracket)) = unclosed_bracket(&source[..at]) else {
-            return None;
-        };
+        let (open, bracket) = unclosed_bracket(&source[..at])?;
         let close = match bracket {
             '{' => '}',
             '(' => ')',
