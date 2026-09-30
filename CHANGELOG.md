@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.294] — 2026-09-30
+
+**`??` lends its left side at every position that only reads the answer**
+(ADR-259 §4, `open-work.md` 2.51): an `f"…"` hole, a comparison of text and
+the receiver of a method that only reads it, beside a call's argument and the
+print calls. A name used again after such a line needs no `.clone()` now,
+where it was `NK2105`.
+
+- A comparison lends a `??` of text only: the language below compares a view
+  of text with text and with a view, and a view of anything else with a view
+  alone. Over a struct it takes, as before.
+- A receiver lends where every method the name may be takes its receiver as a
+  view and changes nothing, as `lent_reaches` asks for a `?.` (ADR-189 D2).
+- `tests/nullable.rs` runs the three with the name used again after each.
+
 ## [0.0.293] — 2026-09-30
 
 **A part an arm binds as a view is handed on as it is** (`open-work.md`

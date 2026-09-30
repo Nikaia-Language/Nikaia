@@ -9753,6 +9753,15 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **A receiver the method only reads is lent** (ADR-259 D1):
+                // `(name ?? "guest").len()` asks the answer and keeps nothing
+                // of it, where every candidate for the method takes its
+                // receiver as a view and changes nothing.
+                if matches!(receiver.as_ref(), Expr::Coalesce { .. })
+                    && self.only_reads_its_receiver(self.parsed.text(*method))
+                {
+                    self.a_pending_coalesce_is_lent(receiver, span);
+                }
                 // **The tier pass's own conversion**
                 // ([ADR-224](../../docs/specification/adr/adr-224.md) D2):
                 // `value.into_either()` is written into the program where a
@@ -10983,6 +10992,14 @@ impl<'a> Checker<'a> {
                         Ty::named("bool")
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
+                        // **A comparison only reads its sides** (ADR-259 D1):
+                        // a `??` of text on either side lends its left side.
+                        // Text alone, because the language below compares a
+                        // view of text with text and with a view, and a view of
+                        // anything else with nothing but a view.
+                        for side in [lhs, rhs] {
+                            self.a_pending_coalesce_of_text_is_lent(side, span);
+                        }
                         // **`x == null` asks whether there is one**, and the
                         // emitter writes it `x.is_none()` (0.0.250): nothing
                         // of what `x` holds is compared, so a type that does
@@ -12201,6 +12218,11 @@ impl<'a> Checker<'a> {
                 _ => self.hole.clone(),
             };
             let held = self.expr(&hole, span);
+            // **A hole is formatted by reference** (ADR-259 D1): a `??` that
+            // is the hole lends its left side, as a print call's argument does.
+            if matches!(literal, Expr::LitInterpolated(_)) {
+                self.a_pending_coalesce_is_lent(&hole, span);
+            }
             self.hole = outer;
             self.scope.pop();
             if let Some(spec) = specs.get(index) {
@@ -14529,6 +14551,36 @@ impl<'a> Checker<'a> {
             .lent_coalesces
             .insert(pending.key, pending.opened);
         true
+    }
+
+    /// The same for a `??` of text, where the position is a comparison
+    /// (`open-work.md` 2.51).
+    fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
+        let key = (span.at(), argument_shape(given));
+        let of_text = self
+            .pending_coalesces
+            .iter()
+            .any(|p| p.key == key && p.opened == ".as_deref()");
+        of_text && self.a_pending_coalesce_is_lent(given, span)
+    }
+
+    /// Whether every method this name may be takes its receiver as a view and
+    /// changes nothing: a call that only reads what it is called on. A name
+    /// nothing describes is claimed nothing about (Part III C.4).
+    fn only_reads_its_receiver(&self, method: &str) -> bool {
+        let candidates: Vec<_> = self
+            .own
+            .candidates(method)
+            .into_iter()
+            .chain(self.library.candidates(method))
+            .collect();
+        !candidates.is_empty()
+            && candidates.iter().all(|(_, contract)| {
+                !contract.mutates
+                    && contract.signature.as_ref().is_some_and(|signature| {
+                        signature.takes_a_receiver() && signature.params[0].1.is_a_view()
+                    })
+            })
     }
 
     /// Every `??` of the statement just walked that no reading position lent

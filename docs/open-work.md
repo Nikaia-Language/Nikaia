@@ -808,15 +808,6 @@ They are measured and not decided:
   2 918 M on `n-body` copied 32 times.
 * An empty program copies the ledger's records (`Program::of`, 2.3 M).
 
-### 2.51. `??` lends at the other positions that only read it
-
-[ADR-259](specification/adr/adr-259.md) D1 is built at a call's argument the
-callee only reads and at the print calls. An `f"…"` hole, a comparison and a
-method's receiver also only read the answer, and a `??` there still takes its
-left side, so a program that reuses the name writes `.clone()`. Each is a
-position the checker walks with the answer in hand; the emitter's half is
-built.
-
 ## 3. Upkeep
 
 A page that says something a later decision made false.
