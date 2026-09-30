@@ -34,9 +34,11 @@ AREAS = {
         "Orchestrator",
         "Incremental Compilation",
         "`nikaia describe",
+        "`nikaia test",
         "`nikaia fmt",
         "`nikaia doc",
         "LSP Server",
+        "Self-hosting",
     ],
     "Extended targets": [
         "A library for other languages",
