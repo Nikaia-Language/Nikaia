@@ -20,6 +20,7 @@
 //! line. What is here is Nikaia's half - which file is the entry, which
 //! switches were chosen, and what the lowering does.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -864,7 +865,7 @@ pub const DERIVED: &str = "derived";
 /// asked for it. Measured on a three-line project, where a description saying
 /// `() -> i64` left the call's result untyped and `n.no_such_method()` went
 /// through.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Foreign {
     /// `[dependencies]` with `type = "rust"`, under the name a program writes
     /// (`manifest::foreign_crates`).
@@ -894,6 +895,17 @@ pub struct Foreign {
     /// Two descriptions cannot disagree about a name without disagreeing about
     /// whose it is.
     pub descriptions: Ledger,
+}
+
+impl Default for Foreign {
+    fn default() -> Self {
+        Foreign {
+            declared: BTreeSet::new(),
+            described: BTreeSet::new(),
+            moved: BTreeMap::new(),
+            descriptions: Ledger::blank(),
+        }
+    }
 }
 
 impl Foreign {

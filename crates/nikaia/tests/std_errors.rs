@@ -15,7 +15,7 @@
 //! [ADR-023](../../../docs/specification/adr/adr-023.md) D6's worked output and
 //! in Part III 13.5's own example row.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn std_ledger() -> Ledger {

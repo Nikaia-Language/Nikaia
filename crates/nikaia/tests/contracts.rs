@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use nikaia::contracts::SignatureOps;
 use nikaia::contracts::SyncOps;
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {

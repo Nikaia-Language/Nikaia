@@ -5,6 +5,7 @@ mod common;
 
 use std::process::Command;
 
+use nikaia::contracts::LedgerOps;
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

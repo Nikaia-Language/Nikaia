@@ -52,6 +52,7 @@
 // ledger key needs the type checker, an argument that is not a literal, a
 // callee nobody described.
 
+use crate::contracts::LedgerOps;
 use std::collections::BTreeSet;
 
 use crate::ast::{BinaryOp, Expr, Item, Spanned, Stmt};

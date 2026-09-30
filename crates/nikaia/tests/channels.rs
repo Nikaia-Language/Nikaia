@@ -10,7 +10,7 @@ mod common;
 
 use nikaia::contracts::SignatureOps;
 use nikaia::contracts::ty::TyOps;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -205,7 +205,7 @@ fn there_is_no_unbounded_channel() {
 fn a_channel_is_answered_by_what_it_carries() {
     use nikaia::contracts::send::{Crossing, Destination, crossing};
     use nikaia::contracts::ty::Ty;
-    let own = Ledger::default();
+    let own = Ledger::blank();
     let library = Ledger::parse(STD).expect("std ships a ledger");
     assert_eq!(
         crossing(

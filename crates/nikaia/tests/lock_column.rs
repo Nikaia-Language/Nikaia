@@ -21,7 +21,7 @@
 
 mod common;
 
-use nikaia::contracts::{Ledger, Lock};
+use nikaia::contracts::{Ledger, LedgerOps, Lock};
 use nikaia::parser::parse_to_ast;
 
 /// What the ledger says one function's lock property is.

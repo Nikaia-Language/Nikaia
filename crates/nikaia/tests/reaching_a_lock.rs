@@ -21,7 +21,7 @@
 //! verdict carries the word; nothing here guesses it from a type's name.
 
 use nikaia::check::{self, Finding};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn crossings(source: &str) -> Vec<Finding> {

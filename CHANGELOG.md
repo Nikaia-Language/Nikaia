@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.291] — 2026-09-30
+
+**`Ledger` and `Notes` are Nikaia**, which finishes ADR-257 step (b): every
+record a ledger holds is declared in `tools/ty.nika`. The toolchain is 5.5 %
+Nikaia.
+
+- `Ledger` is declared with ordered `collections::BTreeMap` and `BTreeSet`
+  tables and a `blank()` constructor; `Notes` with `empty()`. What the
+  compiler does with a ledger (infer, absorb, render, read it back) stays Rust
+  behind `LedgerOps`, which a caller imports beside `Ledger`. No ledger byte
+  changes.
+- `Default` gave way where the language gives none: `Ledger::default()` is
+  `Ledger::blank()`, and `project::Foreign` writes its own `Default`.
+- **A field of an element being assigned kept its place.** 0.0.290's read of
+  `rows[i].a` through the reference `get` answers also reached the left of an
+  assignment, so `self.bodies[i].vx = …` (`n-body`) wrote through a shared
+  reference. A place is emitted as before; found by the example packages'
+  tests before the change merged.
+
 ## [0.0.290] — 2026-09-30
 
 **`Signature`, `FnContract` and `TypeContract` are Nikaia** (ADR-257 step

@@ -12,6 +12,7 @@
 
 mod common;
 
+use nikaia::contracts::LedgerOps;
 use std::path::PathBuf;
 use std::process::Command;
 

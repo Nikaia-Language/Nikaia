@@ -16,7 +16,7 @@
 mod common;
 
 use nikaia::check;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<check::Finding> {

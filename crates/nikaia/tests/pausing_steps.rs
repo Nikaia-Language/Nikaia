@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 
 use nikaia::contracts::ty::Ty;
 use nikaia::contracts::ty::TyOps;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
 

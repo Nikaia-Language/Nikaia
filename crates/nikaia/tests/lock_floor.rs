@@ -27,7 +27,7 @@
 use std::collections::BTreeMap;
 
 use nikaia::check::MethodCalls;
-use nikaia::contracts::{Ledger, STD, Sync, sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync, sync};
 use nikaia::parser::parse_to_ast;
 
 /// Part II 12.2's idiom, with a helper below it so the propagation is visible.

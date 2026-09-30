@@ -29,6 +29,7 @@
 // there is.
 
 use crate::ast::{Expr, Item, Span};
+use crate::contracts::LedgerOps;
 use crate::parser::Parsed;
 
 use super::{Ledger, Provenance};

@@ -10,7 +10,7 @@
 //! needed the spelling decided first, because a pattern's range includes both
 //! ends and `..` meant the other thing until D4 was built.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

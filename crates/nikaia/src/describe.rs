@@ -64,6 +64,7 @@
 // "nothing" is the polarity [ADR-010](../../docs/specification/adr/adr-010.md)
 // D1 forbids.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -196,7 +197,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     // ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5), gathered
     // after the entries because a proposal is written above the one it is
     // about.
-    let mut notes = Notes::default();
+    let mut notes = Notes::empty();
     if !surface.promises.is_empty() {
         notes.about_the_crate.push(
             "**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool"

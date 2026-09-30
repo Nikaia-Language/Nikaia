@@ -17,6 +17,7 @@
 // `ledger.nika` reads a line: this language has no slice of a `String`.
 //
 use std::text
+use std::collections
 
 // The boxes are the compiler's (ADR-246): `Pointed`, `Nullable` and `Seq` hold
 // a `Ty` inline, and the lowering boxes them.
@@ -1103,5 +1104,118 @@ impl TypeContract {
             touches: [],
             tethered: [],
         }
+    }
+}
+
+/// **One compilation unit's contracts** (ADR-257 D1).
+///
+/// Ordered maps throughout, because the file is a **pure function of (source,
+/// toolchain)** (13.5) and a hash map's iteration order is not. The
+/// determinism is the feature: `--locked` compares bytes, so it needs no
+/// tolerance and no semantic comparison.
+pub struct Ledger {
+    pub version: u32,
+    pub toolchain: String,
+    pub inference: String,
+    /// The sources these entries were derived from: one unit of the package by
+    /// file name, and the SHA-256 of its bytes
+    /// (ADR-100 D3).
+    ///
+    /// **What it is for is telling a stale ledger from a believed one.** A
+    /// consumer reads a dependency's ledger rather than deriving it (D1), and
+    /// the only thing that makes believing safe is that a ledger is never
+    /// believed against its own sources: where a hash does not match, that
+    /// package is derived again. So this is not a checksum of the file — it is
+    /// the record of what the file is an answer *about*.
+    ///
+    /// **The file name and not a path**, because a package is one directory of
+    /// `.nika` files (`modules::collect`) and a path would put the machine that
+    /// built it into a file Part III 13.5 makes a pure function of the source
+    /// tree.
+    ///
+    /// Empty where nothing knows the sources — a ledger inferred from one
+    /// `Parsed` that never came from a file, and `std`'s own, whose Rust half
+    /// has no `.nika` to hash (ADR-020
+    /// D5). An empty table renders nothing, so no existing ledger changes.
+    pub sources: collections::BTreeMap[String, String],
+    pub functions: collections::BTreeMap[String, FnContract],
+    pub types: collections::BTreeMap[String, TypeContract],
+    /// **Whether the code stored in a function field touches a lock**, by
+    /// `Type.field` (ADR-230 D1):
+    /// over everything this package stores there. The package's own answer and
+    /// not written to the ledger file - a published field is stored into by
+    /// packages that do not exist yet, so the file has nothing to say about it.
+    pub code_locks: collections::BTreeMap[String, Lock],
+    /// Kap 4.7: every `trait` declared here, with the names of its methods.
+    ///
+    /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
+    /// is where a bound looks one up. This map answers the other question a
+    /// bound asks first: *is `Summarize` a trait at all*
+    /// (ADR-078 D3). A name that
+    /// is not in here names no trait, and a bound on it is refused rather than
+    /// quietly believed.
+    ///
+    /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
+    /// it (ADR-106 D3): they are
+    /// the `fn` entries beside it, under `Handler::handle`, and the set is
+    /// filled from those once the whole file is parsed.
+    /// ADR-078 §4 left *a trait a
+    /// package publishes* as a question about modules; D1 and D3 of that later
+    /// record answered it, and a bound has taken a path since 0.0.171.
+    pub traits: collections::BTreeMap[String, collections::BTreeSet[String]],
+    /// **Who answers for what**: a trait's name to the types that `impl` it
+    /// (ADR-174 D1).
+    ///
+    /// The other half of a bound, and the reason it is here rather than in the
+    /// checker: `impl Speaks for Dog` may stand in a **different file** from
+    /// the `fn tell[T: Speaks]` that needs the answer, and one file's walk sees
+    /// one file. A program's ledger is absorbed from its units', so the union
+    /// over the files is a thing this map already knows how to be.
+    ///
+    /// **Written to the ledger file** as `[impl."Handler for Static"]`
+    /// (ADR-106 D4), one line per
+    /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
+    /// the trait's package, in the type's, or in a consumer for its own type —
+    /// so the answer at a call is the union over every ledger the program reads
+    /// plus its own, and no ledger claims completeness.
+    pub implementations: collections::BTreeMap[String, collections::BTreeSet[String]],
+}
+
+impl Ledger {
+    /// A ledger with no header and nothing in it: what the compiler's `empty`
+    /// stamps a header onto, and what a reader fills.
+    pub fn blank() -> Ledger {
+        return Ledger {
+            version: 0,
+            toolchain: "",
+            inference: "",
+            sources: collections::BTreeMap(),
+            functions: collections::BTreeMap(),
+            types: collections::BTreeMap(),
+            code_locks: collections::BTreeMap(),
+            traits: collections::BTreeMap(),
+            implementations: collections::BTreeMap(),
+        }
+    }
+}
+
+/// **What a describer saw and did not claim** (ADR-193 D3, D5).
+///
+/// Rendered as comments into `contracts/<crate>.contracts` and never parsed
+/// back. The distinction the record rests on: ADR-123 D2 lets the describer
+/// *fill* `crosses` because a field holding an `Rc` **entails** not sendable;
+/// nothing a signature can show entails *threads*, so what it saw is a
+/// sentence and the column stays a person's.
+pub struct Notes {
+    /// About the crate: the `unsafe impl Send`/`Sync` items it contains (D5).
+    pub about_the_crate: Vec[String],
+    /// About one entry, by the key it is written under (D3).
+    pub about_a_function: collections::BTreeMap[String, Vec[String]],
+}
+
+impl Notes {
+    /// Nothing seen.
+    pub fn empty() -> Notes {
+        return Notes { about_the_crate: [], about_a_function: collections::BTreeMap() }
     }
 }

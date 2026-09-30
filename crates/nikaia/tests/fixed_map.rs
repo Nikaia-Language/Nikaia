@@ -16,7 +16,7 @@
 mod common;
 
 use nikaia::check::{self, Finding};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
 use std::process::Command;

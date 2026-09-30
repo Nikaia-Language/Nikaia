@@ -19,7 +19,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{self, Build};
 use nikaia::parser::parse_to_ast;
 

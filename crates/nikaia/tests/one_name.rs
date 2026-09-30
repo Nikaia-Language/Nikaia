@@ -16,7 +16,7 @@
 //! [ADR-133](../../../docs/specification/adr/adr-133.md) D1 gives it — with a
 //! help that sends the reader to a line building the struct.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn refusals(source: &str) -> Vec<nikaia::check::Finding> {

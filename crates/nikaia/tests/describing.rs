@@ -14,6 +14,7 @@
 //! A test that only showed the cases it gets right would be describing a
 //! different tool.
 
+use nikaia::contracts::LedgerOps;
 use std::path::{Path, PathBuf};
 
 use nikaia::describe::draft;

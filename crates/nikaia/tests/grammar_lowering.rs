@@ -9,7 +9,7 @@
 //! Each generated file goes in a module of its own, because each is a whole
 //! compilation unit and brings its own imports.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

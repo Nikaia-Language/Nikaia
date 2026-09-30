@@ -24,6 +24,7 @@
 // would be. Each reading is tried and the furthest one is what the block is
 // recorded as, so a fragment is reported as a fragment rather than as a failure.
 
+use crate::contracts::LedgerOps;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

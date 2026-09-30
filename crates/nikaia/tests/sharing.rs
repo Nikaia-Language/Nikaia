@@ -25,7 +25,7 @@
 //! `tests/shared.rs`, which compiles and runs.
 
 use nikaia::contracts::sharing::{self, Count, Fallback};
-use nikaia::contracts::{Ledger, STD, TypeContract};
+use nikaia::contracts::{Ledger, LedgerOps, STD, TypeContract};
 use nikaia::parser::parse_to_ast;
 
 /// A parsed program with the two ledgers every analysis here needs.

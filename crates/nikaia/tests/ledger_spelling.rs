@@ -6,7 +6,7 @@
 //! again to the same bytes - and `std`'s hand-written ledger, which moved to
 //! this spelling at 0.0.254, is read by the same reader.
 
-use nikaia::contracts::{Ledger, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn written(source: &str) -> (Ledger, String) {

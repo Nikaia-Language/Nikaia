@@ -19,7 +19,7 @@ use std::process::Command;
 use nikaia::ast::Item;
 use nikaia::contracts::ty::Ty;
 use nikaia::contracts::ty::TyOps;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

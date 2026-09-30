@@ -16,6 +16,7 @@
 
 mod common;
 
+use nikaia::contracts::LedgerOps;
 use std::process::Command;
 
 use nikaia::contracts::ty::Ty;

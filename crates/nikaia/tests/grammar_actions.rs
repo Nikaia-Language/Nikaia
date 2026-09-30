@@ -16,7 +16,7 @@
 //! the contract carried no `sync`, so every function that parses became
 //! `async`. Both answers were answers to a question nobody had asked.
 
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {

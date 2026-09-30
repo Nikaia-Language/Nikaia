@@ -8,7 +8,7 @@
 
 mod common;
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

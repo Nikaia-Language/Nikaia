@@ -21,6 +21,7 @@
 // It emits a [`SourceMap`] alongside the code, because a transpiler that only
 // emits code can only be told about errors in a file nobody wrote (ADR-012).
 
+use crate::contracts::LedgerOps;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
@@ -750,7 +751,7 @@ pub fn emit_program_with_trust(
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
     let own = crate::contracts::Ledger::infer_package(&[parsed], &std_ledger());
-    emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::default())
+    emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::blank())
 }
 
 /// The same, for a module that reads Rust it was handed described: a tool of
@@ -806,7 +807,7 @@ pub fn emit_module_body(
         build,
         provenance,
         contracts,
-        &crate::contracts::Ledger::default(),
+        &crate::contracts::Ledger::blank(),
         false,
         &Reads::none(),
     )
@@ -1049,7 +1050,8 @@ fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
 /// means treating the input as untrusted, which is the safe direction
 /// (ADR-010 D1) and never a silent upgrade.
 fn std_ledger() -> crate::contracts::Ledger {
-    crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
+    crate::contracts::Ledger::parse(crate::contracts::STD)
+        .unwrap_or_else(|_| crate::contracts::Ledger::blank())
 }
 
 /// The words the **language below** reserves and this one does not.
@@ -2258,7 +2260,7 @@ impl<'p> Emitter<'p> {
             build,
             provenance,
             own,
-            &crate::contracts::Ledger::default(),
+            &crate::contracts::Ledger::blank(),
             reads,
         )
     }
@@ -12444,7 +12446,7 @@ pub fn branch_starts_first<'p>(
         build,
         crate::contracts::Provenance::Trusted,
         contracts.clone(),
-        &crate::contracts::Ledger::default(),
+        &crate::contracts::Ledger::blank(),
         // This asks whether a branch pauses, which no file a build read can
         // change — so D1's default is the honest answer here.
         &Reads::none(),

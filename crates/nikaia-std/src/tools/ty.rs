@@ -5,6 +5,9 @@
 #[allow(unused_imports)]
 use nikaia_std::text;
 
+#[allow(unused_imports)]
+use nikaia_std::collections;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ty {
     Unknown,
@@ -686,5 +689,32 @@ pub struct TypeContract {
 
 impl TypeContract {
     pub fn empty() -> TypeContract { TypeContract { public: false, fields: vec![], variants: vec![], crosses: Crosses::Undecided, iterates_fallibly: false, compares: false, copies: false, touches: vec![], tethered: vec![] } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ledger {
+    pub version: u32,
+    pub toolchain: String,
+    pub inference: String,
+    pub sources: collections::BTreeMap<String, String>,
+    pub functions: collections::BTreeMap<String, FnContract>,
+    pub types: collections::BTreeMap<String, TypeContract>,
+    pub code_locks: collections::BTreeMap<String, Lock>,
+    pub traits: collections::BTreeMap<String, collections::BTreeSet<String>>,
+    pub implementations: collections::BTreeMap<String, collections::BTreeSet<String>>,
+}
+
+impl Ledger {
+    pub fn blank() -> Ledger { Ledger { version: 0, toolchain: String::from(""), inference: String::from(""), sources: collections::BTreeMap::new(), functions: collections::BTreeMap::new(), types: collections::BTreeMap::new(), code_locks: collections::BTreeMap::new(), traits: collections::BTreeMap::new(), implementations: collections::BTreeMap::new() } }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notes {
+    pub about_the_crate: Vec<String>,
+    pub about_a_function: collections::BTreeMap<String, Vec<String>>,
+}
+
+impl Notes {
+    pub fn empty() -> Notes { Notes { about_the_crate: vec![], about_a_function: collections::BTreeMap::new() } }
 }
 
