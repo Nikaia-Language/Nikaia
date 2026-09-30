@@ -747,16 +747,34 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
+    emit_std_against(parsed, &crate::contracts::Ledger::default())
+}
+
+/// The same, for a module that reads Rust it was handed described: a tool of
+/// `nikaia-std`'s, whose tree names are `winnow_grammar::Symbol`s
+/// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3).
+pub fn emit_std_against(parsed: &Parsed, described: &crate::contracts::Ledger) -> Result<Lowered> {
     // Named rather than defaulted: the default is the machine this runs on,
     // and the committed text must not depend on where it was lowered.
     let build = Build {
         target: Target::X86_64Linux,
         ..Build::default()
     };
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
-    Emitter::new(parsed, build, trust.provenance)
-        .for_std()
-        .program()
+    let mut library = std_ledger();
+    library.types.extend(described.types.clone());
+    library.functions.extend(described.functions.clone());
+    let trust = crate::contracts::trust::analyse(parsed, &library);
+    Emitter::with_contracts(
+        parsed,
+        &[],
+        build,
+        trust.provenance,
+        crate::contracts::Ledger::infer_package(&[parsed], &library),
+        described,
+        &Reads::none(),
+    )
+    .for_std()
+    .program()
 }
 
 /// A module's items, with no preamble and no `mod` around them.

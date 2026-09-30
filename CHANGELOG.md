@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.276] — 2026-09-30
+
+**A tool reads the tree's names as described** (ADR-252 D4.3, the rest of it).
+
+- `nikaia-std/src/tools/described.contracts` describes the Rust a tool module
+  reads: `winnow_grammar::Symbol` copies and compares, and
+  `InternerContext::resolve` is `sync`. `nikaia lower-std` checks and lowers a
+  module of `src/tools/` against it and `std`'s ledger; `std`'s own modules
+  still see `std` alone.
+- The tree now derives `PartialEq` wherever its parts compare, and
+  `OpaqueType` is `Copy`.
+- `docs/open-decisions.md` asks what a constant fold counts in once `fold`
+  is Nikaia, since the language has no `i128`.
+
 ## [0.0.275] — 2026-09-30
 
 **The syntax tree is declared in Nikaia** (ADR-252 D1, D5 step 4).
