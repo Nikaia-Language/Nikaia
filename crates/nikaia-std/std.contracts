@@ -1300,7 +1300,7 @@ signature = "(ref mut self, c: char)"
 pub = true
 sync = true
 touches = []
-signature = "(ref mut self, text: ?)"
+signature = "(ref mut self, text: ref String)"
 
 # Whether the list holds nothing.
 [fn."Vec::is_empty"]

@@ -1486,6 +1486,8 @@ struct Emitter<'p> {
     boxed_reads: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_bindings` (0.0.236).
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::some_tails`: a plain arm beside a `null`, by address.
+    some_tails: std::collections::BTreeSet<usize>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
@@ -2456,6 +2458,7 @@ impl<'p> Emitter<'p> {
             boxed_members: propagation.boxed_members,
             boxed_reads: propagation.boxed_reads,
             copied_bindings: propagation.copied_bindings,
+            some_tails: propagation.some_tails,
             compared_views: propagation.compared_views,
             claims: propagation.claims,
             boxed_args: std::cell::RefCell::new(None),
@@ -6860,6 +6863,24 @@ impl<'p> Emitter<'p> {
     }
 
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
+        // **A plain arm beside a `null` is `Some`** (`check::Checked::some_tails`).
+        if self.some_tails.contains(&(expr as *const Expr as usize)) {
+            out.push("Some(");
+            self.expr_as_written(out, expr, depth, flow)?;
+            out.push(")");
+            return Ok(());
+        }
+        self.expr_as_written(out, expr, depth, flow)
+    }
+
+    /// [`Emitter::expr`], without the wrap an arm beside a `null` takes.
+    fn expr_as_written(
+        &self,
+        out: &mut Out,
+        expr: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
         match expr {
             // **A literal in an unsigned place carries that type's suffix**
             // (ADR-248 D1), ahead of the widening a bare one gets.

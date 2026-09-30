@@ -4,6 +4,40 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.282] — 2026-09-30
+
+**A variant matched on a `T?` is refused** (`NK1205`, `open-work.md` §1.33).
+
+- `match g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?`
+  passed the check and was lowered as a `match` over an `Option<W>` with
+  `W::B` as its pattern, which `rustc` refused. The pattern says nothing about
+  `null`; the help hands over `??` first and a `match` of what it gives. Part
+  III's table of codes has the entry.
+- The defects list is empty again.
+
+## [0.0.281] — 2026-09-30
+
+**`contracts::trust` is Nikaia** (ADR-250 D1, D2), and three defects the move
+found are this compiler's now.
+
+- `nikaia-std/src/tools/trust.nika` holds the module's decisions: which
+  written root is a way around the root check (`Root::Anywhere`,
+  `Root::Dir("/")`) and what `--trust` prints. The compiler's
+  `contracts::trust` keeps the call walk and the ledger and hands over names,
+  `bool`s and line numbers. The toolchain is 3.8 % Nikaia.
+- **A plain arm beside a `null` is `Some`**: `if b { 1 } else { null }` and a
+  `match` with a `null` arm were a `1` beside a `None` below; the checker
+  records the plain arms of a choice that meets at `T?`, and the emitter wraps
+  them.
+- **`String::push_str` takes a view** in `std`'s ledger, which said `text: ?`:
+  `out.push_str(name)` for a `name: String` is `NK1102` with *write `ref`*,
+  where it was `rustc`'s *expected `&str`*.
+- **A run's methods are `Array`'s** (ADR-184 D3): `xs.len()` for an
+  `xs: ref Array[R]` resolved to nothing, so its function was inferred to
+  pause.
+- Found and written up: a `match` over a `T?` with a variant's pattern reaches
+  `rustc` (`open-work.md` §1.33).
+
 ## [0.0.280] — 2026-09-30
 
 **The defects list is empty** (`open-work.md` §1.31, §1.32): four found moving

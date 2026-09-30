@@ -2,6 +2,12 @@
 //
 // Where a program's bytes came from (ADR-010).
 //
+// **The adapter of `nikaia-std/src/tools/trust.nika`** (ADR-250 D1, D2): the
+// module's decisions - which written root is a way around the root check, and
+// what `--trust` says - are Nikaia. What stays here is what it reads, which is
+// the compiler's: the call walk and the ledger, handed over as names, `bool`s
+// and line numbers.
+//
 // `Trusted ⊑ Untrusted`, joined in the safe direction: one untrusted input
 // makes the result untrusted. The sources are `std`'s, stated in its ledger
 // (ADR-020) - a file the operator named, a pipe they connected, the arguments
@@ -63,24 +69,9 @@ pub struct Root {
     pub span: Span,
 }
 
-/// Which of the two spellings D4 lists this is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wrote {
-    /// `fs::Root::Anywhere` — no check, and the program answers for the name.
-    Anywhere,
-    /// `fs::Root::Dir("/")` — a check whose root is everything, which is
-    /// `Anywhere` with more characters.
-    TheFilesystemRoot,
-}
-
-impl Wrote {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Wrote::Anywhere => "Anywhere",
-            Wrote::TheFilesystemRoot => "Dir(\"/\") - which is every directory",
-        }
-    }
-}
+/// Which of the two spellings D4 lists a root is, declared in Nikaia
+/// (`nikaia-std/src/tools/trust.nika`).
+pub use nikaia_std::tools::trust::Wrote;
 
 /// The provenance of this program's input.
 pub fn analyse(parsed: &Parsed, library: &Ledger) -> Trust {
@@ -191,34 +182,7 @@ fn roots_of(parsed: &Parsed, block: &crate::ast::Block, library: &Ledger, out: &
 /// deliberately: what the name holds is a run-time value, and a report that
 /// guessed would be a report a reviewer has to check.
 fn written_root(parsed: &Parsed, arg: &Expr) -> Option<Wrote> {
-    let tail = |segments: &[winnow_grammar::Symbol]| -> Vec<String> {
-        segments
-            .iter()
-            .map(|s| parsed.text(*s).to_string())
-            .collect()
-    };
-    match arg {
-        Expr::Path(segments) => match tail(segments).as_slice() {
-            [.., ty, variant] if ty == "Root" && variant == "Anywhere" => Some(Wrote::Anywhere),
-            _ => None,
-        },
-        Expr::Call { func, args, .. } => {
-            let Expr::Path(segments) = func.as_ref() else {
-                return None;
-            };
-            match tail(segments).as_slice() {
-                [.., ty, variant] if ty == "Root" && variant == "Dir" => match args.first() {
-                    // **The one literal that is `Anywhere` in another spelling.**
-                    Some(Expr::LitStr { text, .. }) if text == "/" => {
-                        Some(Wrote::TheFilesystemRoot)
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+    nikaia_std::tools::trust::written_root(&parsed.interner, arg)
 }
 
 /// What `nikaia --explain --trust` prints
@@ -230,47 +194,36 @@ fn written_root(parsed: &Parsed, arg: &Expr) -> Option<Wrote> {
 /// *the security review of a program's file access is that list* — which a list
 /// without line numbers is not.
 pub fn render(trust: &Trust, path: &str, source: &str) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "input provenance: {}\n",
-        trust.provenance.as_str()
-    ));
-
-    if trust.reasons.is_empty() {
-        out.push_str("    no source is read, so nothing entered from outside\n");
-    }
-    for reason in &trust.reasons {
-        out.push_str(&format!(
-            "    {} is {}\n",
-            reason.source,
-            reason.provenance.as_str()
-        ));
-    }
-
-    out.push_str(&format!(
-        "hash for a map keyed by the input: {}\n",
-        match trust.provenance {
-            Provenance::Trusted => "fast, fixed seed - no adversary chooses these keys",
-            Provenance::Untrusted =>
-                "keyed, per-process random seed - key choice cannot be aimed at the table",
-        }
-    ));
-
-    // **ADR-108 D4's third place.** The word is at the line and in the ledger
-    // already; this is the one a review reads before a release.
-    out.push_str("file access with no root to check against:\n");
-    if trust.roots.is_empty() {
-        out.push_str("    none - every path here names a directory it may not leave\n");
-    }
-    for root in &trust.roots {
-        let (line, column) = winnow_grammar::span::line_column(source, root.span.at());
-        out.push_str(&format!(
-            "    {path}:{line}:{column}  {} writes {}\n",
-            root.entry,
-            root.wrote.as_str()
-        ));
-    }
-    out
+    use nikaia_std::tools::trust as nika;
+    let reasons: Vec<nika::Reason> = trust
+        .reasons
+        .iter()
+        .map(|r| nika::Reason {
+            source: r.source.clone(),
+            untrusted: r.provenance == Provenance::Untrusted,
+        })
+        .collect();
+    // **A site is a line and a column**, counted here where the source is:
+    // what crosses into Nikaia is two numbers.
+    let places: Vec<nika::Place> = trust
+        .roots
+        .iter()
+        .map(|root| {
+            let (line, column) = winnow_grammar::span::line_column(source, root.span.at());
+            nika::Place {
+                line: line as i64,
+                column: column as i64,
+                entry: root.entry.clone(),
+                wrote: root.wrote,
+            }
+        })
+        .collect();
+    nika::render(
+        trust.provenance == Provenance::Untrusted,
+        &reasons,
+        &places,
+        path,
+    )
 }
 
 /// Whether a call names something, for the walker below.

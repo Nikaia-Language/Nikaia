@@ -1,0 +1,106 @@
+// crates/nikaia-std/src/tools/trust.nika
+//
+// **What `--trust` says about a program** (ADR-010 D7, ADR-108 D4): which
+// sources it reads and who chose their bytes, and every file access whose
+// root is a word rather than a directory.
+//
+// The second module of the ring after the tree (ADR-250 §1) moved from Rust
+// to Nikaia, by ADR-196's route: lowered by `nikaia lower-std` to `trust.rs`
+// beside it, `include!`d as `nikaia_std::tools::trust`, and called from the
+// compiler's `contracts::trust`.
+//
+// **What moved is the module's decisions**: which written root is a way
+// around the root check, and what the report says. What stays Rust is what
+// it reads, the ledger and the call walk (ADR-250 D2): the compiler's
+// `contracts::trust` finds the calls, asks the ledger who chose a source's
+// bytes and which parameter is a root, and hands this module plain data - a
+// name, a `bool`, a line and a column.
+
+/// Which of the two spellings ADR-108 D4 lists a root is.
+pub enum Wrote {
+    /// `fs::Root::Anywhere`: no check, and the program answers for the name.
+    Anywhere,
+    /// `fs::Root::Dir("/")`: a check whose root is everything, which is
+    /// `Anywhere` with more characters.
+    TheFilesystemRoot,
+}
+
+/// How the report names it.
+pub fn spelled(wrote: ref Wrote) -> String {
+    return match wrote {
+        Wrote::Anywhere => "Anywhere",
+        Wrote::TheFilesystemRoot => "Dir(\"/\") - which is every directory",
+    }
+}
+
+/// The root an argument writes, where it is one the review wants to see:
+/// `Root::Anywhere`, or `Root::Dir("/")`, under whatever module path.
+pub fn written_root(names: ref winnow_grammar::InternerContext, arg: ref Expr) -> Wrote? {
+    return match arg {
+        Expr::Path(segments) => if named(names, segments, "Anywhere") { Wrote::Anywhere } else { null },
+        Expr::Call { func, args, .. } => the_whole_filesystem(names, func, args),
+        else => null,
+    }
+}
+
+/// `Root::Dir("/")`, and no other directory.
+fn the_whole_filesystem(names: ref winnow_grammar::InternerContext, func: ref Expr, args: ref Vec[Expr]) -> Wrote? {
+    let is_dir = match func {
+        Expr::Path(segments) => named(names, segments, "Dir"),
+        else => false,
+    }
+    return null if !is_dir || args.len() == 0
+    return match args[0] {
+        Expr::LitStr { text, .. } => if text == "/" { Wrote::TheFilesystemRoot } else { null },
+        else => null,
+    }
+}
+
+/// Whether a path ends `Root::<variant>`.
+fn named(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol], variant: ref String) -> bool {
+    let n = segments.len()
+    return n >= 2 && names.resolve(segments[n - 2]) == "Root" && names.resolve(segments[n - 1]) == variant
+}
+
+/// A source the program calls, and whether someone else chose its bytes.
+pub struct Reason {
+    pub source: String,
+    pub untrusted: bool,
+}
+
+/// A call that wrote a root the review wants to see, where it stands.
+pub struct Place {
+    pub line: i64,
+    pub column: i64,
+    pub entry: String,
+    pub wrote: Wrote,
+}
+
+/// The report `--trust` prints for one file.
+pub fn render(untrusted: bool, reasons: ref Array[Reason], places: ref Array[Place], path: ref String) -> String {
+    let mut out = f"input provenance: {provenance(untrusted)}\n"
+    if reasons.len() == 0 {
+        out.push_str("    no source is read, so nothing entered from outside\n")
+    }
+    for reason in reasons {
+        out.push_str(ref f"    {reason.source} is {provenance(reason.untrusted)}\n")
+    }
+    let hash = if untrusted {
+        "keyed, per-process random seed - key choice cannot be aimed at the table"
+    } else {
+        "fast, fixed seed - no adversary chooses these keys"
+    }
+    out.push_str(ref f"hash for a map keyed by the input: {hash}\n")
+    out.push_str("file access with no root to check against:\n")
+    if places.len() == 0 {
+        out.push_str("    none - every path here names a directory it may not leave\n")
+    }
+    for place in places {
+        out.push_str(ref f"    {path}:{place.line}:{place.column}  {place.entry} writes {spelled(place.wrote)}\n")
+    }
+    return out
+}
+
+fn provenance(untrusted: bool) -> String {
+    return if untrusted { "untrusted" } else { "trusted" }
+}

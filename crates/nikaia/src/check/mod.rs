@@ -797,6 +797,11 @@ pub struct Checked {
     /// there, and the emitter copies the number out at the head of the arm, so
     /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// **A plain value beside a `null`**, by the address of the arm's last
+    /// expression: `if b { 1 } else { null }` is an `i64?`, and its plain arm
+    /// is `Some(1)` below. A conversion around the whole choice was a `1`
+    /// beside a `None` in the language below.
+    pub some_tails: BTreeSet<usize>,
     /// **A comparison's side that is a view, where the other side is the
     /// value** (0.0.238, any named type but text since 0.0.279), by the
     /// operator's span and `"lhs"` or `"rhs"`: the language below compares a
@@ -1773,6 +1778,11 @@ pub struct Propagation {
     pub boxed_reads: BTreeSet<(usize, String)>,
     /// [`Checked::copied_bindings`].
     pub copied_bindings: BTreeSet<(usize, String)>,
+    /// **A plain value beside a `null`**, by the address of the arm's last
+    /// expression: `if b { 1 } else { null }` is an `i64?`, and its plain arm
+    /// is `Some(1)` below. A conversion around the whole choice was a `1`
+    /// beside a `None` in the language below.
+    pub some_tails: BTreeSet<usize>,
     /// [`Checked::compared_views`].
     pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
@@ -1975,6 +1985,7 @@ pub fn propagation_against(
         boxed_members: checked.boxed_members,
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
+        some_tails: checked.some_tails,
         compared_views: checked.compared_views,
         claims: checked.claims,
         mut_args: checked.mut_args,
@@ -7195,6 +7206,13 @@ impl<'a> Checker<'a> {
                 Some(named)
             }
             Ty::Named { name, .. } => Some(name.as_str()),
+            // **A run is an `Array` whose length the caller knows**
+            // ([ADR-184](../../docs/specification/adr/adr-184.md) D3), and
+            // `std` writes its surface under `Array`: `xs.len()` for an
+            // `xs: ref Array[R]` resolved to nothing, so the function around
+            // it was inferred to pause - found moving `contracts::trust` into
+            // Nikaia.
+            Ty::Pointed { slice: true, .. } => Some(ty::ARRAY),
             _ => None,
         };
         let Some(name) = name else {
@@ -9429,7 +9447,9 @@ impl<'a> Checker<'a> {
                             then
                         } else {
                             let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
-                            self.arms_meet_at_text(&arms).unwrap_or(Ty::Unknown)
+                            self.arms_meet_at_text(&arms)
+                                .or_else(|| self.arms_meet_at_null(&arms))
+                                .unwrap_or(Ty::Unknown)
                         }
                     }
                     // An `if` with no `else` is a statement's worth of value.
@@ -9581,12 +9601,16 @@ impl<'a> Checker<'a> {
                     _ => on,
                 };
                 self.a_match_that_misses_a_case(&on, arms, span);
+                self.a_variant_matched_on_a_nullable(&on, value, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same -
                 // or when the arms meet at text (ADR-207 D2).
                 match result {
                     Some(ty) if agree => ty,
-                    _ => self.arms_meet_at_text(&answered).unwrap_or(Ty::Unknown),
+                    _ => self
+                        .arms_meet_at_text(&answered)
+                        .or_else(|| self.arms_meet_at_null(&answered))
+                        .unwrap_or(Ty::Unknown),
                 }
             }
 
@@ -15812,6 +15836,57 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`NK1205`: a variant matched on a `T?`** (`open-work.md` §1.33): `match
+    /// g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?` names a
+    /// variant of `W` where the value may be `null`, and was lowered as a
+    /// `match` over an `Option<W>` with `W::B` as its pattern - `rustc`'s
+    /// *mismatched types* about a file nobody wrote (Part III C.1). The way
+    /// out is to say what `null` stands for first, with `??`.
+    fn a_variant_matched_on_a_nullable(
+        &mut self,
+        on: &Ty,
+        value: &Expr,
+        arms: &[ast::MatchArm],
+        span: &Span,
+    ) {
+        let Ty::Nullable(inner) = on else {
+            return;
+        };
+        let names_a_variant = |pattern: &MatchPattern| match pattern {
+            MatchPattern::Path(path)
+            | MatchPattern::Tuple { path, .. }
+            | MatchPattern::Named { path, .. } => path.len() >= 2,
+            _ => false,
+        };
+        let Some(arm) = arms.iter().find(|arm| names_a_variant(&arm.pattern)) else {
+            return;
+        };
+        let (written, variant) = (
+            written(self.parsed, value),
+            written_pattern(self.parsed, &arm.pattern),
+        );
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1205",
+            message: format!(
+                "`{written}` may be `null`, so `{variant}` can't be matched on it directly."
+            ),
+            notes: vec![format!(
+                "`{written}` is a `{}`: a `{}` or nothing, and a pattern of the `{}` says \
+                 nothing about the nothing.",
+                on.text(),
+                inner.text(),
+                inner.text()
+            )],
+            help: Some(format!(
+                "Say what `null` stands for first: `let value = {written} ?? …`, and \
+                 `match value`."
+            )),
+            labels: Vec::new(),
+        });
+    }
+
     fn a_match_that_misses_a_case(&mut self, on: &Ty, arms: &[ast::MatchArm], span: &Span) {
         // **A guarded arm covers nothing** (
         // [ADR-137](../../docs/specification/adr/adr-137.md) D2): the pattern
@@ -16958,6 +17033,52 @@ impl<'a> Checker<'a> {
     /// { "anonymous" }` over a `name: String` is a `String`, and the literal
     /// arm is constructed as one. A **view** arm is not a literal, so an arm
     /// holding one keeps the disagreement.
+    /// **Arms that meet at `T?`** because one of them is `null`: the plain
+    /// ones are `Some(…)` below ([`Checked::some_tails`]), and the choice is a
+    /// `T?`. Asked only where every arm that is not `null` is a `T` or a `T?`
+    /// of one `T`, so a choice this cannot type stays unknown.
+    fn arms_meet_at_null(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
+        let is_null = |arm: &Option<&Expr>| matches!(arm, Some(Expr::LitNull));
+        if !arms.iter().any(|(arm, _)| is_null(arm)) {
+            return None;
+        }
+        // **A number written down takes its type from where it stands**
+        // (ADR-060), so it agrees with whatever the other arms say, and
+        // `Some(1)` is resolved by the `T?` it goes into.
+        let a_number = |arm: &Option<&Expr>| {
+            matches!(arm, Some(Expr::LitInt { .. } | Expr::LitFloat(_)))
+                || matches!(arm, Some(Expr::Unary { op: crate::ast::UnaryOp::Neg, expr })
+                    if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
+        };
+        let mut plain: Option<Ty> = None;
+        for (arm, ty) in arms.iter().filter(|(arm, _)| !is_null(arm)) {
+            if a_number(arm) {
+                continue;
+            }
+            let inner = match ty {
+                Ty::Nullable(inner) => inner.as_ref().clone(),
+                other => other.clone(),
+            };
+            if inner.is_unknown() || arm.is_none() {
+                return None;
+            }
+            match &plain {
+                None => plain = Some(inner),
+                Some(seen) if *seen == inner => {}
+                Some(_) => return None,
+            }
+        }
+        for (arm, ty) in arms {
+            if let Some(arm) = arm
+                && !matches!(ty, Ty::Nullable(_))
+                && !matches!(arm, Expr::LitNull)
+            {
+                self.checked.some_tails.insert(*arm as *const Expr as usize);
+            }
+        }
+        Some(Ty::Nullable(Box::new(plain.unwrap_or(Ty::Unknown))))
+    }
+
     fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
         let text = Ty::named("String");
         if !arms.iter().any(|(_, ty)| *ty == text) {
@@ -21481,6 +21602,23 @@ fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
 /// the parser keeps no text, and an `assert`'s failure names its condition
 /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2). What this does not
 /// spell out it writes as `…`, which a reader recognises and nothing parses.
+/// A pattern's path as the source wrote it, with `(…)` or `{ … }` where it
+/// takes a variant apart.
+fn written_pattern(parsed: &Parsed, pattern: &MatchPattern) -> String {
+    let path = |path: &[Ident]| {
+        path.iter()
+            .map(|s| parsed.text(*s))
+            .collect::<Vec<_>>()
+            .join("::")
+    };
+    match pattern {
+        MatchPattern::Path(p) => path(p),
+        MatchPattern::Tuple { path: p, .. } => format!("{}(…)", path(p)),
+        MatchPattern::Named { path: p, .. } => format!("{} {{ … }}", path(p)),
+        _ => "this pattern".to_string(),
+    }
+}
+
 pub fn written(parsed: &Parsed, expr: &Expr) -> String {
     let w = |e: &Expr| written(parsed, e);
     let list = |items: &[Expr]| {

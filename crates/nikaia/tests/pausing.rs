@@ -288,3 +288,28 @@ fn a_call_in_a_match_arm_makes_its_function_pause() {
     assert!(rust.contains("async fn listed("), "{rust}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A run's methods are `Array`'s** (ADR-184 D3, found moving
+/// `contracts::trust` into Nikaia): `xs.len()` for an `xs: ref Array[R]`
+/// resolved to nothing, and a method nothing resolves may pause - so a
+/// function that counted its list was `async`.
+#[test]
+fn a_method_of_a_run_is_resolved_and_does_not_pause() {
+    let dir = common::scratch_dir("pausing-run");
+    let rust = lower(
+        &dir,
+        "struct R { k: i64 }\n\
+         \n\
+         fn count(xs: ref Array[R]) -> i64 {\n\
+         \x20   return xs.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let v = [R { k: 1 }, R { k: 2 }]\n\
+         \x20   println(f\"{count(v)}\")\n\
+         }",
+    );
+    assert!(rust.contains("fn count("), "{rust}");
+    assert!(!rust.contains("async fn count("), "{rust}");
+    std::fs::remove_dir_all(&dir).ok();
+}
