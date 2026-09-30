@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.279] — 2026-09-30
+
+**Three lowerings that reached `rustc` are this compiler's now**
+(`open-work.md` §1.30, §1.31).
+
+- A `mut` parameter given away whole - `return out`, `Keep { items: out }`,
+  `let taken = out` - is `NK1131`, the shape `ref self` already has (Part I
+  6.6 says so now): it stays the caller's, and the help names `out.clone()`
+  and taking it without `mut`. It was *mismatched types* below.
+- A view compared with a value is read for any named type but text:
+  `op == Op::Neg` for an `op: ref Op` is `*op == Op::Neg`. The answer is
+  keyed by the operator and the side, so `a == b && Op::Add != a` reads only
+  the second `a`.
+- A literal in a branch takes the unsigned type the `let` wrote:
+  `let l: u64 = match … { … => if n { 2147483648 } else { 1 } }` is `u64`
+  throughout, where the `if` wrote `2147483648i64`.
+- §1.31 keeps three: a nullable view's call and clone, a safe-navigation
+  clone that moves a field, and a recursive cycle inferred to pause.
+
 ## [0.0.278] — 2026-09-30
 
 **`fold` is Nikaia, and a constant counts in a magnitude and a sign**

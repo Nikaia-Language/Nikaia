@@ -7885,16 +7885,13 @@ impl<'p> Emitter<'p> {
                 let here = precedence(*op);
                 // **A view compared with a value is read** (0.0.238,
                 // `check::Checked::compared_views`).
-                let read = |side: &Expr| {
-                    self.compared_views
-                        .contains(&(flow.statement, crate::check::argument_shape(side)))
-                };
-                if read(lhs) {
+                let read = |side: &str| self.compared_views.contains(&(at.at(), side.to_string()));
+                if read("lhs") {
                     out.push("*");
                 }
                 self.nested(out, lhs, here, depth, flow)?;
                 out.push(&format!(" {} ", binary_op(*op)));
-                if read(rhs) {
+                if read("rhs") {
                     out.push("*");
                 }
                 self.nested(out, rhs, here + 1, depth, flow)?;

@@ -216,3 +216,31 @@ fn the_comparisons_run() {
     );
     assert_eq!(printed.trim(), "enum not struct float");
 }
+
+/// **A view compared with a value is read, whatever the type**
+/// (`open-work.md` §1.31, found moving `fold` into Nikaia): `op == Op::Neg`
+/// for an `op: ref Op` compared a `&Op` with an `Op` below. And two
+/// comparisons of one name in one statement are told apart - only the one
+/// against a value reads it.
+#[test]
+fn a_view_of_a_declared_type_compares_with_a_value() {
+    let printed = ran(
+        "view-compared",
+        "enum Op { Add, Neg }\n\
+         \n\
+         fn is_neg(op: ref Op) -> bool {\n\
+         \x20   return op == Op::Neg\n\
+         }\n\
+         \n\
+         fn both(a: ref Op, b: ref Op) -> bool {\n\
+         \x20   return a == b && Op::Add != a\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let o = Op::Neg\n\
+         \x20   if is_neg(o) { print(\"neg \") }\n\
+         \x20   if both(o, o) { print(\"both\") }\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "neg both");
+}

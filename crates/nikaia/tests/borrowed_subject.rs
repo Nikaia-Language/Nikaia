@@ -525,3 +525,51 @@ fn main() { println("x") }
         "a view out of a subject taken by value is refused: {found:#?}"
     );
 }
+
+/// **A `mut` parameter given away whole is the same shape**
+/// (`open-work.md` §1.30): it is passed as `ref mut`, so the function borrows
+/// it as a method borrows `ref self`. `Box { items: out }` and `return out`
+/// were `rustc`'s *mismatched types* about a file nobody wrote.
+#[test]
+fn a_mut_parameter_given_away_whole_is_refused() {
+    for body in [
+        "    out.push(\"x\")\n    return Keep { items: out }",
+        "    out.push(\"x\")\n    let taken = out\n    return Keep { items: taken }",
+    ] {
+        let source = format!(
+            "struct Keep {{ items: Vec[String] }}\n\
+             fn store(mut out: Vec[String]) -> Keep {{\n{body}\n}}\n\
+             fn main() {{\n    let mut v: Vec[String] = []\n    let k = store(v)\n}}\n"
+        );
+        let found = findings(&source);
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1131")
+            .unwrap_or_else(|| panic!("no NK1131 for {body}: {found:#?}"));
+        assert!(it.message.contains("`out`"), "{it:#?}");
+        assert!(
+            it.help
+                .as_deref()
+                .is_some_and(|h| h.contains("out.clone()")),
+            "{it:#?}"
+        );
+    }
+
+    // **The ways out run**: a copy, and a parameter changed in place and read.
+    let printed = ran(
+        "mut-parameter-copied",
+        "struct Keep { items: Vec[String] }\n\
+         \n\
+         fn store(mut out: Vec[String]) -> Keep {\n\
+         \x20   out.push(\"x\")\n\
+         \x20   return Keep { items: out.clone() }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut v: Vec[String] = []\n\
+         \x20   let k = store(v)\n\
+         \x20   println(f\"{k.items.len()} {v.len()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "1 1");
+}
