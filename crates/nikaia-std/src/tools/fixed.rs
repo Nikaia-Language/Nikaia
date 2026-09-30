@@ -35,7 +35,7 @@ pub fn build(keys: &[String]) -> Option<Table> {
         let mut written: Vec<String> = vec![];
         let mut order: Vec<i64> = vec![];
         for at in 0..n {
-            written.push((*nikaia_std::index::get(&keys, nikaia_std::index::at(at))).clone());
+            written.push((*nikaia_std::index::get(&keys, nikaia_std::index::at(at))).to_owned());
             order.push(at);
         }
         return Some(Table { seed: 0, disps: vec![], keys: written, order });
@@ -110,7 +110,7 @@ fn attempt(keys: &[String], seed: u64, buckets: i64, n: i64) -> Option<Table> {
     for slot in slots.iter() {
         let slot = nikaia_std::num::value(slot);
         if slot < 0 { return None; }
-        written.push((*nikaia_std::index::get(&keys, nikaia_std::index::at(slot))).clone());
+        written.push((*nikaia_std::index::get(&keys, nikaia_std::index::at(slot))).to_owned());
         at_of.push(slot);
     }
     Some(Table { seed, disps, keys: written, order: at_of })

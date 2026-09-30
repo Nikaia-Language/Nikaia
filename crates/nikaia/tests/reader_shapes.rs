@@ -147,3 +147,33 @@ fn main() {
     assert!(!rust.contains("shout(&value)"), "{rust}");
     assert_eq!(ran("ref-part", source), "A=B\n");
 }
+
+/// **An element of a view of a run is its item** (ADR-179 D1): `xs[0]` for an
+/// `xs: ref Array[Row]` is a `Row`, so a method on it is one the ledger
+/// describes. It was `?`, and a method nothing describes may pause: the
+/// function around it became `async` (found moving `Ty::fits` into Nikaia).
+#[test]
+fn an_element_of_a_view_of_a_run_is_its_item() {
+    let source = r#"struct Row {
+    value: i64,
+}
+
+impl Row {
+    fn doubled(ref self) -> i64 {
+        return self.value * 2
+    }
+}
+
+fn first(rows: ref Array[Row]) -> i64 {
+    return rows[0].doubled() + rows[1..<2][0].doubled()
+}
+
+fn main() {
+    let rows = [Row { value: 1 }, Row { value: 5 }]
+    println(f"{first(rows)}")
+}
+"#;
+    let rust = lowered("run-element", source);
+    assert!(!rust.contains("async fn first"), "{rust}");
+    assert_eq!(ran("run-element", source), "12\n");
+}

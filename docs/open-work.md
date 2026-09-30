@@ -784,7 +784,7 @@ before the arm opens it; and a nullable field boxed inside its option, so a
 `null` costs no allocation. D1-D4 are built and `tests/recursive_types.rs`
 runs them.
 
-### 2.50. The checker's types move as values, in three steps
+### 2.50. The checker's types move as values, in three steps (done), and what the measurement found beside them
 
 [ADR-257](specification/adr/adr-257.md) D1-D2, after its measurement answered
 D3 with *move as values*:
@@ -796,8 +796,13 @@ D3 with *move as values*:
   whole. What stays Rust of a record is writing its ledger text
   (`Ledger::render`, `spelling::spell`) and `Signature::arguments`, which hands
   back a slice of the entry's own list.
-* **(d)** The algorithms (`fits`, `bind`, `substitute`, `qualify`, …) move,
-  and the next ring with them.
+* **(d)** Done (0.0.295): what the checker asks of a type (`fits`, `erase`,
+  `parameterise`, `is_a_view`, `unseen`, …) and the walks over one (`bind`,
+  `substitute`, `qualify`, `renamed`) are `tools/ty.nika`'s. What stays Rust
+  of `Ty` is its constructors from a name, `base` and `from_ast`, which reads
+  this compiler's tree. The next ring - the analyses that read `Ty` and the
+  records (`contracts::touch`, `tether`, `sharing`, `keep`, …) - is ADR-250's
+  road from here: each moves when everything it reads is Nikaia.
 
 The measurement also found three costs that are not `Ty`'s (ADR-257 §4.6).
 They are measured and not decided:
