@@ -8892,7 +8892,7 @@ impl<'a> Checker<'a> {
                             .collect(),
                     };
                     for owner in owners {
-                        let code = self.fields_of(&owner).is_some_and(|d| {
+                        let code = self.fields_seen(&owner).is_some_and(|d| {
                             d.iter()
                                 .any(|f| f.name == field && matches!(f.ty, Ty::Fn { .. }))
                         });
@@ -20437,8 +20437,16 @@ impl<'a> Checker<'a> {
     }
 
     fn fields_of(&self, name: &str) -> Option<Vec<FieldContract>> {
+        self.fields_seen(name).map(<[FieldContract]>::to_vec)
+    }
+
+    /// [`Checker::fields_of`] without the copy, for a question asked of every
+    /// `struct` in the program: an assignment into `a.b.c = …` asks it once per
+    /// declared type, and a copy each time made that quadratic in the program's
+    /// size ([ADR-257](../../docs/specification/adr/adr-257.md) §4).
+    fn fields_seen(&self, name: &str) -> Option<&[FieldContract]> {
         if let Some(fields) = self.structs.get(name) {
-            return Some(fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
+            return Some(fields.as_slice()).filter(|f| !f.is_empty());
         }
         // A type of **another file of this program**, by the qualified name a
         // caller writes: `pool::Conn`. By the exact key and never by suffix,
@@ -20448,14 +20456,14 @@ impl<'a> Checker<'a> {
         // the module a library writes in front of it, which is why that one is
         // matched the other way (ADR-011 D2).
         if let Some(contract) = self.own.types.get(name) {
-            return Some(contract.fields.clone()).filter(|f: &Vec<_>| !f.is_empty());
+            return Some(contract.fields.as_slice()).filter(|f| !f.is_empty());
         }
         let suffix = format!("::{name}");
         self.library
             .types
             .iter()
             .find(|(key, _)| *key == name || key.ends_with(&suffix))
-            .map(|(_, contract)| contract.fields.clone())
+            .map(|(_, contract)| contract.fields.as_slice())
             .filter(|f| !f.is_empty())
     }
 
@@ -22162,19 +22170,13 @@ impl Comparable<'_> {
                         .get(name)
                         .map(|params| params.iter().cloned().zip(args.iter().cloned()).collect())
                         .unwrap_or_default();
-                    return fields.iter().all(|f| {
-                        let ty = match bound.is_empty() {
-                            true => f.ty.clone(),
-                            false => ty::substitute(&f.ty, &bound),
-                        };
-                        self.asking(&ty, how, seen)
+                    return fields.iter().all(|f| match bound.is_empty() {
+                        true => self.asking(&f.ty, how, seen),
+                        false => self.asking(&ty::substitute(&f.ty, &bound), how, seen),
                     });
                 }
                 if self.enums.contains_key(name) {
-                    return self
-                        .payloads(name)
-                        .iter()
-                        .all(|ty| self.asking(ty, how, &mut seen.clone()));
+                    return self.payloads(name).all(|ty| self.asking(ty, how, seen));
                 }
                 // **A type whose parts are Rust**: the column, whose absence is
                 // no. And it answers the `==` question only — a library type is
@@ -22196,20 +22198,22 @@ impl Comparable<'_> {
     /// A declared `enum` answers from [`Checker::enum_payloads`]; one that
     /// arrived in a ledger answers from its `variants` column, which carries the
     /// payload types for the same reason.
-    fn payloads(&self, name: &str) -> Vec<Ty> {
+    fn payloads<'s>(&'s self, name: &str) -> Box<dyn Iterator<Item = &'s Ty> + 's> {
         if let Some(held) = self.payloads.get(name) {
-            return held.clone();
+            return Box::new(held.iter());
         }
-        [self.own, self.library]
-            .into_iter()
-            .filter_map(|ledger| ledger.types.get(name))
-            .flat_map(|contract| {
-                contract
-                    .variants
-                    .iter()
-                    .flat_map(|variant| variant.holds.iter().map(|f| f.ty.clone()))
-            })
-            .collect()
+        let name = name.to_string();
+        Box::new(
+            [self.own, self.library]
+                .into_iter()
+                .filter_map(move |ledger| ledger.types.get(&name))
+                .flat_map(|contract| {
+                    contract
+                        .variants
+                        .iter()
+                        .flat_map(|variant| variant.holds.iter().map(|f| &f.ty))
+                }),
+        )
     }
 }
 
