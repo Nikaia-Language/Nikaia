@@ -804,14 +804,25 @@ D3 with *move as values*:
   records (`contracts::touch`, `tether`, `sharing`, `keep`, …) - is ADR-250's
   road from here: each moves when everything it reads is Nikaia.
 
-The measurement also found three costs that are not `Ty`'s (ADR-257 §4.6).
-They are measured and not decided:
+The measurement also found three costs that are not `Ty`'s (ADR-257 §4.6):
 
-* Reading `std.contracts` is 80.6 M instructions on every run, 35–89 % of the
-  front end. The build's `rustc` wrapper pays it again on a cache hit.
+* **Reading `std.contracts`, answered (0.0.296).** Most of it was not the
+  reading but its **repetition**: seven places parsed `STD` for themselves,
+  so an empty program read it seven times (83 M of 93 M). Every reader now
+  borrows the one parse (`contracts::std_ledger`), and one that adds a
+  package's own entries takes a copy: an empty program lowers in 22.8 M
+  (−76 %), `1brc` in 102.8 M (−45 %), `n-body` in 94.5 M (−47 %). What is left
+  is one parse per process, 11.6 M, which the `rustc` wrapper also pays on a
+  cache hit. A dependency's ledger is read once where it is absorbed
+  (`read_beside`, the ledger and its `.derived`) and once more by its own
+  lowering, which compares it with what it inferred (`newly`) - two readings
+  with two purposes.
 * Resolving an interned name (`lasso`'s `DashMap` with SipHash) is 572 M of
-  2 918 M on `n-body` copied 32 times.
-* An empty program copies the ledger's records (`Program::of`, 2.3 M).
+  2 918 M on `n-body` copied 32 times. The recommendation is a faster hasher
+  first, measured on ADR-257's corpus, before a resolver without a map.
+* An empty program copies the ledger's records (`Program::of`, 2.3 M): with
+  the one parse, what copies it is a reader that adds to it, which is the
+  copy D1 of ADR-100 asks for.
 
 ## 3. Upkeep
 

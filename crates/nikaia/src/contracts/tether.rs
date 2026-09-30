@@ -647,8 +647,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     }
     // **And where each buffer lives** (ADR-209 D6): the keep plan, per
     // function, in the words a reader asks the question in.
-    let library = crate::contracts::Ledger::parse(crate::contracts::STD)
-        .unwrap_or_else(|_| crate::contracts::Ledger::blank());
+    let library = crate::contracts::std_ledger();
     for plan in super::keep::plans(parsed, ledger, &library) {
         let mut said = Vec::new();
         for (at, keep) in &plan.puts {

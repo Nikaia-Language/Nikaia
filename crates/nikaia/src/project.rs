@@ -34,7 +34,7 @@ use orchestrator::project::{
 };
 
 use crate::contracts::SignatureOps;
-use crate::contracts::{Ledger, STD, sync};
+use crate::contracts::{Ledger, sync};
 use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
@@ -956,7 +956,7 @@ impl Foreign {
     /// The day one does, that is a refusal to write and not a silence to keep —
     /// `docs/open-work.md` carries it.
     pub fn library(&self) -> Result<Ledger> {
-        let mut library = Ledger::parse(STD).context("std's shipped ledger")?;
+        let mut library = crate::contracts::std_library();
         for (name, contract) in &self.descriptions.functions {
             library
                 .functions
@@ -1593,7 +1593,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     if !want.asked() {
         return Ok(());
     }
-    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let library = crate::contracts::std_ledger();
     let several = program.units.len() > 1;
 
     // **Once for the program and not once per file**

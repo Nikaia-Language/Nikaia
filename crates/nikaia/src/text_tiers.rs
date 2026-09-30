@@ -1286,11 +1286,8 @@ fn viewed(received: &Kinds) -> Kinds {
 
 /// What a function of `std` hands back, off its ledger entry.
 fn std_result(callee: &str) -> Kinds {
-    static STD: std::sync::OnceLock<Option<crate::contracts::Ledger>> = std::sync::OnceLock::new();
-    let ledger = STD.get_or_init(|| crate::contracts::Ledger::parse(crate::contracts::STD).ok());
-    let view = ledger
-        .as_ref()
-        .and_then(|l| l.lookup(callee))
+    let view = crate::contracts::std_ledger()
+        .lookup(callee)
         .and_then(|(_, c)| c.signature.as_ref())
         .and_then(|s| s.result.as_ref())
         .is_some_and(|r| r.text() == "ref String");

@@ -768,7 +768,7 @@ pub fn emit_std_against(
         target: Target::X86_64Linux,
         ..Build::default()
     };
-    let mut library = std_ledger();
+    let mut library = std_ledger().clone();
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());
     let trust = crate::contracts::trust::analyse(parsed, &library);
@@ -1048,9 +1048,8 @@ fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
 /// program, and the tests read the same file - so failing to parse it here
 /// means treating the input as untrusted, which is the safe direction
 /// (ADR-010 D1) and never a silent upgrade.
-fn std_ledger() -> crate::contracts::Ledger {
-    crate::contracts::Ledger::parse(crate::contracts::STD)
-        .unwrap_or_else(|_| crate::contracts::Ledger::blank())
+fn std_ledger() -> &'static crate::contracts::Ledger {
+    crate::contracts::std_ledger()
 }
 
 /// The words the **language below** reserves and this one does not.
@@ -1553,7 +1552,7 @@ struct Emitter<'p> {
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
-    library: crate::contracts::Ledger,
+    library: &'static crate::contracts::Ledger,
     /// **The described crates' boundary**
     /// ([ADR-237](../../docs/specification/adr/adr-237.md) D1). Asked one
     /// question, whether a call into one can fail - and deliberately not
@@ -2361,7 +2360,7 @@ impl<'p> Emitter<'p> {
         let shared = crate::contracts::sharing::analyse_program(
             parsed,
             &own_contracts,
-            &library,
+            library,
             build.user_parallelism == UserParallelism::Yes,
         )
         .counts;

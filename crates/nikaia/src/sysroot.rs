@@ -267,8 +267,7 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     // is compiled against anyway, and the checks that need a project — a
     // manifest's boundary, an allowlist, a package's other units — have nothing
     // to say about a file that is one unit and depends on nothing.
-    let mut library =
-        crate::contracts::Ledger::parse(crate::contracts::STD).context("std's shipped ledger")?;
+    let mut library = crate::contracts::std_library();
     // **A tool reads the Rust it is handed, described** (ADR-252 D4.3): the
     // compiler's tree names are `winnow_grammar::Symbol`s, and a module that
     // reads the tree has to know that one copies and compares. `std`'s own

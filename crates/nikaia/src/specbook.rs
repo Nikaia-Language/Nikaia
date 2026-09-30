@@ -297,8 +297,7 @@ fn reach(source: &str) -> (Stage, BTreeSet<String>) {
         return (Stage::Fragment, BTreeSet::new());
     };
     let own = crate::contracts::Ledger::infer(&parsed);
-    let library = crate::contracts::Ledger::parse(crate::contracts::STD)
-        .expect("std's shipped ledger parses");
+    let library = crate::contracts::std_ledger();
     let found = crate::check::check(&parsed, &own, &library);
     let codes: BTreeSet<String> = found.findings.iter().map(|f| f.code.to_string()).collect();
     // A warning is not a refusal, but it is worth recording: `NK1111` on a page
