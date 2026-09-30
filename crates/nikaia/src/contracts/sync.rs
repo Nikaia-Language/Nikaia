@@ -878,6 +878,8 @@ pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block
                 visit_expr_blocks(&arm.body, f);
             }
         }
+        // A `select` arm's body runs in this function once its value won.
+        Expr::Select(arms) => arms.iter().for_each(|arm| f(&arm.body)),
         _ => {}
     }
 }
@@ -954,11 +956,45 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         }
         Expr::TryCatch { expr, .. } => visit_expr(parsed, expr, f),
         Expr::If { cond, .. } => visit_expr(parsed, cond, f),
-        Expr::Match { value, .. } => visit_expr(parsed, value, f),
+        // **An arm is an expression of this function** (`open-work.md`
+        // §1.31): `R::A => slow()` is a call, and only an arm that is a block
+        // reached `visit_expr_blocks`. `pick` came out of the ledger `sync`
+        // while its lowering awaited `slow()`, which `rustc` refused - the
+        // fail-open direction ADR-027 D2 names, for `throws`, `touches` and
+        // `keeps` as much as for `sync`. A guard runs too.
+        Expr::Match { value, arms } => {
+            visit_expr(parsed, value, f);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    visit_expr(parsed, guard, f);
+                }
+                visit_expr(parsed, &arm.body, f);
+            }
+        }
         Expr::StructLit { fields, .. } => fields
             .iter()
             .filter_map(|field| field.value.as_ref())
             .for_each(|value| visit_expr(parsed, value, f)),
+        // **And the four other places a value is computed** that the walk
+        // passed by, for the same reason: a list's items, the copy a `with`
+        // is made of and its fields, what a `return` hands back where it is an
+        // expression (ADR-138), and what each arm of a `select` starts.
+        Expr::ListLit { items, .. } => items.iter().for_each(|item| visit_expr(parsed, item, f)),
+        Expr::With { base, fields, .. } => {
+            visit_expr(parsed, base, f);
+            fields
+                .iter()
+                .filter_map(|field| field.value.as_ref())
+                .for_each(|value| visit_expr(parsed, value, f));
+        }
+        Expr::Return(value) => {
+            if let Some(value) = &**value {
+                visit_expr(parsed, value, f);
+            }
+        }
+        Expr::Select(arms) => arms
+            .iter()
+            .for_each(|arm| visit_expr(parsed, &arm.value, f)),
         _ => {}
     }
 }

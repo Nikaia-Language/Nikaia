@@ -8511,9 +8511,6 @@ impl<'a> Checker<'a> {
         let (Some(left), Some(right)) = (self.constant_of(lhs), self.constant_of(rhs)) else {
             return;
         };
-        let Some(ty) = left.pinned.clone().or(right.pinned.clone()) else {
-            return;
-        };
         let value = match op {
             BinaryOp::Add => left.value.checked_add(right.value),
             BinaryOp::Sub => left.value.checked_sub(right.value),
@@ -8526,7 +8523,10 @@ impl<'a> Checker<'a> {
         };
         // **An open number in it is measured with that number**, once its
         // uses have decided what it is (ADR-249 D3) - and a refusal there
-        // names the cause.
+        // names the cause. **Asked before the pinned type**, which an open
+        // number never has: `a + a - a` for `let a = 2000000000` recorded the
+        // result and not the step, and the step is what the language below
+        // refuses (`open-work.md` §1.32).
         let mut open = Vec::new();
         self.open_numbers_in(lhs, &mut open);
         self.open_numbers_in(rhs, &mut open);
@@ -8538,6 +8538,9 @@ impl<'a> Checker<'a> {
             }
             return;
         }
+        let Some(ty) = left.pinned.clone().or(right.pinned.clone()) else {
+            return;
+        };
         let before = self.checked.findings.len();
         self.a_number_that_does_not_fit(value, false, &ty, span, None);
         if self.checked.findings.len() > before {
@@ -9493,7 +9496,14 @@ impl<'a> Checker<'a> {
                                 false => (name, view_of(&ty)),
                             })
                             .collect(),
-                        (false, false) => BTreeMap::new(),
+                        // **Over a value made here, a part is the value's own**
+                        // (`open-work.md` §1.31): `match g(n) { R::Value(c) =>
+                        // c, … }` moves the temporary apart, so `c` is the
+                        // variant's `C`. Untyped, the whole `match` was
+                        // unknown, a method on what it bound resolved to
+                        // nothing, and the function around it was inferred to
+                        // pause - found moving `fold` into Nikaia.
+                        (false, false) => self.pattern_parts(&arm.pattern, &typed),
                     };
                     // **A number bound out of a value the `match` was lent**
                     // is copied out at the head of the arm (0.0.236): the
@@ -10167,11 +10177,23 @@ impl<'a> Checker<'a> {
                 // reference and not the list, and `rustc` refused the `??`
                 // after it. The receiver of a `?.` that is an index can only be
                 // a map's, since a list's element is not a `T?` (`NK1121`).
+                // **Nor is a nullable view** (`open-work.md` §1.31): an
+                // `Option<&str>` is a copy already, and lending it made the
+                // reached value a `&&str`, whose `.to_owned()` is the `&str`.
                 let lent = !candidates.is_empty()
                     && candidates.iter().all(|(_, c)| !c.mutates)
-                    && !matches!(receiver.as_ref(), Expr::Index { .. });
+                    && !matches!(receiver.as_ref(), Expr::Index { .. })
+                    && !inner.is_a_view();
                 if lent {
                     self.checked.lent_reaches.insert((span.at(), name.clone()));
+                }
+                // **And a copy of a view is text of its own** (ADR-215 D4),
+                // reached or not: `b?.clone()` for a `b: ref String?` is a
+                // `String?`, which `.clone()` of the `&str` inside is not.
+                if inner.is_a_view() && name == "clone" && args.is_empty() {
+                    self.checked
+                        .owned_copies
+                        .insert((span.at(), argument_shape(receiver)));
                 }
                 let reached = self.call_on(*inner, *method, args, &written, span);
                 // **A view out of a temporary needs something to point into**

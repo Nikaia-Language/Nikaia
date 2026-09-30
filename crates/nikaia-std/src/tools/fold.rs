@@ -90,10 +90,7 @@ pub fn constant_of(expr: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Fol
 }
 
 fn negated(op: &UnaryOp, inner: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Folded) -> Folded {
-    match op {
-        UnaryOp::Neg => { },
-        _ => return Folded::Nothing,
-    };
+    if *op != UnaryOp::Neg { return Folded::Nothing; }
     match constant_of(inner, name_is) {
         Folded::Value(c) => pinned_step(number(c.magnitude, !c.negative, c.pinned)),
         Folded::TooLarge(negative) => Folded::TooLarge(!negative),
@@ -103,8 +100,6 @@ fn negated(op: &UnaryOp, inner: &Expr, name_is: &impl Fn(winnow_grammar::Symbol)
 
 fn pinned_step(c: Constant) -> Folded { if fits(&c, &c.pinned) { Folded::Value(c) } else { Folded::Overflows(c) } }
 
-// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
-// this was written - see `contracts::sync`.
 fn combined(op: &BinaryOp, lhs: &Expr, rhs: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Folded) -> Folded {
     let a = match constant_of(lhs, name_is) {
         Folded::Value(c) => c,
@@ -115,7 +110,7 @@ fn combined(op: &BinaryOp, lhs: &Expr, rhs: &Expr, name_is: &impl Fn(winnow_gram
         other => return other,
     };
     if !a.pinned.is_empty() && !b.pinned.is_empty() && a.pinned != b.pinned { return Folded::Nothing; }
-    let pinned = if a.pinned.is_empty() { b.pinned.clone() } else { a.pinned.clone() };
+    let pinned = if a.pinned.is_empty() { b.pinned.to_owned() } else { a.pinned.to_owned() };
     let folded = match op {
         BinaryOp::Add => added(&a, b.magnitude, b.negative, pinned),
         BinaryOp::Sub => added(&a, b.magnitude, !b.negative, pinned),

@@ -200,7 +200,7 @@ fn contrib_of(
     };
 
     let mut contrib = Contrib::default();
-    collect(parsed, body, own, library, &mut contrib);
+    collect(parsed, body, own, library, false, &mut contrib);
 
     // What the walk above left to somebody else: this function's method calls,
     // as the type checker resolved them (ADR-028). Merged rather than
@@ -235,9 +235,36 @@ fn contrib_of(
     Some((key, contrib))
 }
 
-fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into: &mut Contrib) {
+fn collect(
+    parsed: &Parsed,
+    block: &Block,
+    own: &Ledger,
+    library: &Ledger,
+    in_a_handler: bool,
+    into: &mut Contrib,
+) {
     for stmt in &block.stmts {
+        // **The handlers written in this statement**, so the walk into them
+        // knows where it is.
+        let mut handlers: Vec<*const Block> = Vec::new();
         visit_stmt(parsed, &stmt.node, &mut |expr| {
+            if let Expr::TryCatch { handler, .. } = expr {
+                handlers.push(handler as *const Block);
+            }
+        });
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
+            // **`throw error` in a handler passes the caught error on**
+            // (ADR-157 D2): its types are the guarded expression's, which the
+            // call there already contributed. Read as a value this compiler
+            // cannot name, it added `"?"` and the function's sum fell back to
+            // the unnamed error - found the day a `match` arm that is not a
+            // block was walked at all (`open-work.md` §1.31).
+            if in_a_handler
+                && let Expr::Throw(thrown) = expr
+                && matches!(&**thrown, Expr::Variable(name) if parsed.text(*name) == "error")
+            {
+                return;
+            }
             if let Expr::Throw(thrown) = expr {
                 match error_type(parsed, thrown) {
                     Some(name) => into.direct.insert(name),
@@ -279,7 +306,8 @@ fn collect(parsed: &Parsed, block: &Block, own: &Ledger, library: &Ledger, into:
             }
         });
         visit_stmt_blocks(&stmt.node, &mut |inner| {
-            collect(parsed, inner, own, library, into)
+            let handler = in_a_handler || handlers.contains(&(inner as *const Block));
+            collect(parsed, inner, own, library, handler, into)
         });
     }
 }

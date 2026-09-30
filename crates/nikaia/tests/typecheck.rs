@@ -1312,7 +1312,8 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
 /// language below refuses, so this does, with the step's number.
 ///
 /// A bare `let a = 2000000000` is an open number (ADR-249 D3), which pins
-/// nothing until its uses decide; its steps are `open-work.md`'s.
+/// nothing until its uses decide: its step is measured with the type they
+/// decide, `i32` where nothing asks for more (0.0.280).
 #[test]
 fn a_step_that_leaves_the_pinned_type_is_refused_where_it_leaves() {
     let found = findings("fn main() { let a: i32 = 2000000000\n let c = a + a - a }");
@@ -1329,6 +1330,19 @@ fn a_step_that_leaves_the_pinned_type_is_refused_where_it_leaves() {
             .iter()
             .any(|f| f.code == "NK1116"),
         "the annotated form is a correct program"
+    );
+    // **An open number's step** is held to what the number became.
+    assert!(
+        findings("fn main() { let a = 2000000000\n let c = a + a - a }")
+            .iter()
+            .any(|f| f.code == "NK1116" && f.message.contains("4000000000")),
+        "an open number's step past its type"
+    );
+    assert!(
+        !findings("fn main() { let a = 2000000000\n let c = a + a - a\n let w: i64 = a }")
+            .iter()
+            .any(|f| f.code == "NK1116"),
+        "a use that makes it an `i64` holds the step"
     );
     // And a fold with nothing pinned is judged by what it comes to.
     assert!(

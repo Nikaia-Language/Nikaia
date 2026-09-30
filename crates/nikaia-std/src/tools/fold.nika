@@ -125,10 +125,7 @@ pub fn constant_of(expr: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded
 
 /// `-x`, and nothing else a unary operator does.
 fn negated(op: ref UnaryOp, inner: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded {
-    match op {
-        UnaryOp::Neg => {}
-        else => return Folded::Nothing,
-    }
+    return Folded::Nothing if op != UnaryOp::Neg
     return match constant_of(inner, name_is) {
         Folded::Value(c) => pinned_step(number(c.magnitude, !c.negative, c.pinned)),
         Folded::TooLarge(negative) => Folded::TooLarge(!negative),
@@ -143,7 +140,7 @@ fn pinned_step(c: Constant) -> Folded {
 }
 
 /// `lhs op rhs`, for the five operators the fold knows.
-fn combined(op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded sync {
+fn combined(op: ref BinaryOp, lhs: ref Expr, rhs: ref Expr, name_is: fn(winnow_grammar::Symbol) -> Folded sync) -> Folded {
     let a = match constant_of(lhs, name_is) {
         Folded::Value(c) => c,
         other => return other,
