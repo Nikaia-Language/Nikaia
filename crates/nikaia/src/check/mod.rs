@@ -797,10 +797,11 @@ pub struct Checked {
     /// there, and the emitter copies the number out at the head of the arm, so
     /// `Expr::Num(n) => n` is the `i64` the pattern's type says.
     pub copied_bindings: BTreeSet<(usize, String)>,
-    /// **A comparison's side that is a view of a copied value, where the other
-    /// side is the value** (0.0.238), by statement and the side's shape: the
-    /// language below compares a `char` with a `char` and not with a `&char`,
-    /// so the emitter reads the view (`*c`).
+    /// **A comparison's side that is a view, where the other side is the
+    /// value** (0.0.238, any named type but text since 0.0.279), by the
+    /// operator's span and `"lhs"` or `"rhs"`: the language below compares a
+    /// `char` with a `char` and not with a `&char`, so the emitter reads the
+    /// view (`*c`).
     pub compared_views: BTreeSet<(usize, String)>,
     /// **Every `assert`, and what its failure shows**
     /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), by statement
@@ -5625,7 +5626,7 @@ impl<'a> Checker<'a> {
         left: &Ty,
         rhs: &Expr,
         right: &Ty,
-        span: &Span,
+        at: &Span,
     ) {
         // **A name a `for` lends is a view below whatever its type says**
         // (`Local::lent`, the question `a_cast_over_a_lent_binding` asks for
@@ -5639,19 +5640,33 @@ impl<'a> Checker<'a> {
             matches!(ty, Ty::Named { name, view: false, .. }
                 if is_number(name) || matches!(name.as_str(), "char" | "bool"))
         };
-        let is_view = |side: &Expr, ty: &Ty| copies_as_a_view(ty) || (lent(side) && copied(ty));
+        // **And a view of any other named type**, read the same way: `*op ==
+        // UnaryOp::Neg` is `PartialEq::eq(&*op, …)` below and moves nothing,
+        // where `op == UnaryOp::Neg` compared a `&UnaryOp` with a `UnaryOp` -
+        // found moving `fold` into Nikaia (`open-work.md` §1.31). Text is left
+        // alone: the language below compares a `&str` with a `String` as it is.
+        let a_view_of_a_type = |ty: &Ty| {
+            matches!(ty, Ty::Named { name, view: true, .. }
+                if !matches!(ty::base(name), "String" | "str"))
+        };
+        let is_view = |side: &Expr, ty: &Ty| {
+            copies_as_a_view(ty) || a_view_of_a_type(ty) || (lent(side) && copied(ty))
+        };
         let is_value = |side: &Expr, ty: &Ty| !ty.is_unknown() && !ty.is_a_view() && !lent(side);
         let read_left = is_view(lhs, left) && is_value(rhs, right);
         let read_right = is_view(rhs, right) && is_value(lhs, left);
+        // **By the operator's own span and the side**: a statement may hold
+        // two comparisons of one name, `a == b && Op::Not != a`, and only the
+        // second reads `a` (ADR-081 D1's key, for its reason).
         if read_left {
             self.checked
                 .compared_views
-                .insert((span.at(), argument_shape(lhs)));
+                .insert((at.at(), "lhs".to_string()));
         }
         if read_right {
             self.checked
                 .compared_views
-                .insert((span.at(), argument_shape(rhs)));
+                .insert((at.at(), "rhs".to_string()));
         }
     }
 
@@ -6295,6 +6310,14 @@ impl<'a> Checker<'a> {
         // A value that is already a view needs nothing: the declaration and the
         // argument agree without a second `&`.
         if found.is_a_view() {
+            return false;
+        }
+        // **Nor does a function this function was lent**: a code parameter
+        // the body only calls is an `&impl Fn` below already, and a second `&`
+        // on a call that hands it on is a new type at every level of a
+        // recursion - `rustc`'s *overflow evaluating the requirement*, found
+        // moving `fold` into Nikaia (ADR-252 D6).
+        if matches!(found, Ty::Fn { .. }) && self.a_lent_parameter(given) {
             return false;
         }
         self.checked
@@ -7086,6 +7109,49 @@ impl<'a> Checker<'a> {
                      `ref self` if the method is meant to use up its value."
                 ),
             }),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **A `mut` parameter given away whole** (`open-work.md` §1.30, Part I
+    /// 6.6): it is passed as `ref mut`, so the function borrows it as a method
+    /// borrows `ref self`, and giving it away is [`Self::a_field_of_a_borrowed_subject`]'s
+    /// shape one position over. `store(mut out: Vec[String])` then
+    /// `Box { items: out }` was `rustc`'s *mismatched types* about a file
+    /// nobody wrote.
+    fn a_mut_parameter_given_away(&mut self, value: &Expr, span: &Span, what: &str) {
+        let Expr::Variable(name) = value else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        // `Local::changing`: a `let` of the same name is a binding of its own.
+        if !self.binding(&name).is_some_and(|local| local.changing) {
+            return;
+        }
+        let ty = self.expr(value, span);
+        if ty.is_unknown() || self.copied(&ty) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1131",
+            message: format!(
+                "You can't give away `{name}` here: a `mut` parameter is only borrowed."
+            ),
+            notes: vec![format!(
+                "`mut {name}` is passed as `ref mut`, so the caller's `{}` is changed in \
+                 place and stays the caller's. Giving it away would take it from them.",
+                ty.text()
+            )],
+            help: Some(format!(
+                "Write `{name}.clone()` for a copy{}, or drop the `mut` if the function is \
+                 meant to use up its value.",
+                match what {
+                    "handed back" => " to return",
+                    _ => "",
+                }
+            )),
             labels: Vec::new(),
         });
     }
@@ -7894,17 +7960,19 @@ impl<'a> Checker<'a> {
         if self.overflowed.contains(&span.at()) {
             return;
         }
-        let Some(folded) = self.constant_of(value) else {
-            return;
-        };
         // The type it answers to: what stands beside it if that is an integer
         // this language offers, and otherwise what an operand's declaration
         // pinned. Neither, and there is nothing to measure against - which is
         // the literal-alone case that must stay accepted (C.4).
         let named = want.and_then(integer_named);
+        // **Before the fold**, which answers nothing for a `match` or an `if`
+        // whose branches hand back the literals.
         if let Some(unsigned) = named.as_deref().filter(|n| matches!(*n, "u32" | "u64")) {
             self.literals_are(value, unsigned, span);
         }
+        let Some(folded) = self.constant_of(value) else {
+            return;
+        };
         let ty = match named.or(folded.pinned) {
             Some(ty) => ty,
             // **Nothing beside it and nothing pinning it**, which is the
@@ -7957,10 +8025,18 @@ impl<'a> Checker<'a> {
         // A bare literal says its own digits; anything folded says what it came
         // to, because the expression is on the line the caret is under and the
         // number is the part the reader cannot see.
+        // **A fold that left the 65 bits** has no number to name
+        // ([ADR-252](../../docs/specification/adr/adr-252.md) D6): it is said
+        // as what it is past, which is the widest there is.
+        let comes_to = match value.unsigned_abs() > u128::from(u64::MAX) {
+            true if value < 0 => format!("less than -{}", u64::MAX),
+            true => format!("more than {}", u64::MAX),
+            false => value.to_string(),
+        };
         let message = match bare {
             true => format!("`{value}` doesn't fit in {} `{ty}`.", an_or_a(ty)),
             false => format!(
-                "This comes to {value}, which doesn't fit in {} `{ty}`.",
+                "This comes to {comes_to}, which doesn't fit in {} `{ty}`.",
                 an_or_a(ty)
             ),
         };
@@ -8535,6 +8611,7 @@ impl<'a> Checker<'a> {
                 value,
             } => {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
+                self.a_mut_parameter_given_away(value, span, "bound");
                 let found = self.expr(value, span);
                 // **A value with a cleanup, bound here, dies where this block
                 // ends** (ADR-239 D2).
@@ -9411,7 +9488,7 @@ impl<'a> Checker<'a> {
                         (false, true) => self
                             .pattern_parts(&arm.pattern, &typed)
                             .into_iter()
-                            .map(|(name, ty)| match copies(&ty) {
+                            .map(|(name, ty)| match self.copied(&ty) {
                                 true => (name, ty),
                                 false => (name, view_of(&ty)),
                             })
@@ -9427,7 +9504,7 @@ impl<'a> Checker<'a> {
                     if typed.is_a_view() {
                         let at = &arm.pattern as *const MatchPattern as usize;
                         for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
-                            if copies(&ty) && !ty.is_a_view() {
+                            if self.copied(&ty) && !ty.is_a_view() {
                                 self.checked.copied_bindings.insert((at, name));
                             }
                         }
@@ -10366,6 +10443,9 @@ impl<'a> Checker<'a> {
                         self.stored_frames.push(StoredCode::default());
                     }
                     // `Reading { name, temp }` is shorthand for `name: name`.
+                    if let Some(value) = &init.value {
+                        self.a_mut_parameter_given_away(value, span, "put into a field");
+                    }
                     let found = match &init.value {
                         Some(value) => self.expr(value, span),
                         None => self.lookup(&field).unwrap_or(Ty::Unknown),
@@ -10775,11 +10855,11 @@ impl<'a> Checker<'a> {
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
                         self.a_type_that_does_not_compare(&left, &right, at);
-                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, span);
+                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }
                     BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, span);
+                        self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }
                     // **A `+` where either side is text is a concatenation**
@@ -11443,7 +11523,38 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Unary { expr, .. } => self.literals_are(expr, ty, span),
+            // **And the value a branch hands back** (`open-work.md` §1.31):
+            // `let limit: u64 = match t { "i32" => if n { 2147483648 } else
+            // { 1 }, … }` wrote `2147483648i64`, because the type stopped at
+            // the `match`.
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.literals_in_the_tail(then_branch, ty);
+                if let Some(otherwise) = else_branch {
+                    self.literals_in_the_tail(otherwise, ty);
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for arm in arms {
+                    self.literals_are(&arm.body, ty, span);
+                }
+            }
+            Expr::Block(block) => self.literals_in_the_tail(block, ty),
             _ => {}
+        }
+    }
+
+    /// [`Checker::literals_are`] for the value a block ends with.
+    fn literals_in_the_tail(&mut self, block: &Block, ty: &str) {
+        // Keyed by the tail's own statement, which is the one the emitter is
+        // writing when it reaches the literal.
+        if let Some(last) = block.stmts.last()
+            && let Stmt::Expr(tail) = &last.node
+        {
+            self.literals_are(tail, ty, &last.span);
         }
     }
 
@@ -19974,6 +20085,7 @@ impl<'a> Checker<'a> {
             && !lending
         {
             self.a_field_of_a_borrowed_subject(value, span, "handed back");
+            self.a_mut_parameter_given_away(value, span, "handed back");
         }
         let found = match value {
             Some(value) => self.expr(value, span),
@@ -21167,6 +21279,37 @@ impl Checker<'_> {
     /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
     fn takes_away(&self, ty: &Ty) -> bool {
         moves_away(ty) && !crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
+    }
+
+    /// [`copies`], and a type the library says copies: a
+    /// `winnow_grammar::Symbol` bound out of a lent `match` is copied out at
+    /// the head of the arm, as a number is.
+    /// Whether `given` names a parameter the function being checked is lent,
+    /// by the same answer its declaration is written off.
+    fn a_lent_parameter(&self, given: &Expr) -> bool {
+        let Expr::Variable(name) = given else {
+            return false;
+        };
+        let name = self.parsed.text(*name);
+        let Some(contract) = self
+            .current
+            .as_ref()
+            .and_then(|key| self.own.functions.get(key))
+        else {
+            return false;
+        };
+        let Some(at) = contract
+            .signature
+            .as_ref()
+            .and_then(|s| s.params.iter().position(|(param, _)| param == name))
+        else {
+            return false;
+        };
+        crate::contracts::keeps::lends_in(contract, at, &[self.library])
+    }
+
+    fn copied(&self, ty: &Ty) -> bool {
+        copies(ty) || crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
     }
 }
 

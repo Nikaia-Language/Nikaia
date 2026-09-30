@@ -1296,6 +1296,47 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
             .any(|f| f.code == "NK1116" && f.help.as_deref().is_some_and(|h| h.contains("widest"))),
         "{past:#?}"
     );
+    // **A fold past the 65 bits has no number to name**
+    // ([ADR-252](../../../docs/specification/adr/adr-252.md) D6), and says what
+    // it is past.
+    assert!(
+        past.iter()
+            .any(|f| f.code == "NK1116" && f.message.contains("more than 18446744073709551615")),
+        "{past:#?}"
+    );
+}
+
+/// **A declared operand holds every step to its type**
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D6, the refinement):
+/// `a + a - a` ends inside an `i32`, and its first step does not - which the
+/// language below refuses, so this does, with the step's number.
+///
+/// A bare `let a = 2000000000` is an open number (ADR-249 D3), which pins
+/// nothing until its uses decide; its steps are `open-work.md`'s.
+#[test]
+fn a_step_that_leaves_the_pinned_type_is_refused_where_it_leaves() {
+    let found = findings("fn main() { let a: i32 = 2000000000\n let c = a + a - a }");
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1116")
+        .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
+    assert!(it.message.contains("comes to 4000000000"), "{it:#?}");
+    assert!(it.message.contains("`i32`"), "{it:#?}");
+
+    // The wider declaration holds every step.
+    assert!(
+        !findings("fn main() { let a: i64 = 2000000000\n let c = a + a - a }")
+            .iter()
+            .any(|f| f.code == "NK1116"),
+        "the annotated form is a correct program"
+    );
+    // And a fold with nothing pinned is judged by what it comes to.
+    assert!(
+        !findings("fn main() { let c = 2000000000 + 2000000000 - 2000000000 }")
+            .iter()
+            .any(|f| f.code == "NK1116"),
+        "a literal pins nothing"
+    );
 }
 
 /// **And it reaches a name inside an expression**, which is what

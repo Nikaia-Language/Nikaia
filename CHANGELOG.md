@@ -4,6 +4,43 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.279] — 2026-09-30
+
+**Three lowerings that reached `rustc` are this compiler's now**
+(`open-work.md` §1.30, §1.31).
+
+- A `mut` parameter given away whole - `return out`, `Keep { items: out }`,
+  `let taken = out` - is `NK1131`, the shape `ref self` already has (Part I
+  6.6 says so now): it stays the caller's, and the help names `out.clone()`
+  and taking it without `mut`. It was *mismatched types* below.
+- A view compared with a value is read for any named type but text:
+  `op == Op::Neg` for an `op: ref Op` is `*op == Op::Neg`. The answer is
+  keyed by the operator and the side, so `a == b && Op::Add != a` reads only
+  the second `a`.
+- A literal in a branch takes the unsigned type the `let` wrote:
+  `let l: u64 = match … { … => if n { 2147483648 } else { 1 } }` is `u64`
+  throughout, where the `if` wrote `2147483648i64`.
+- §1.31 keeps three: a nullable view's call and clone, a safe-navigation
+  clone that moves a field, and a recursive cycle inferred to pause.
+
+## [0.0.278] — 2026-09-30
+
+**`fold` is Nikaia, and a constant counts in a magnitude and a sign**
+(ADR-252 D6, decided by the owner).
+
+- `nikaia-std/src/tools/fold.nika` folds a constant integer expression in a
+  `u64` magnitude and a sign - 65 bits, every literal ADR-248 D2 allows - with
+  no `i128` anywhere in the language. The compiler's `fold` is its adapter.
+- A declared operand holds every step to its type: `let a: i32 = 2000000000`
+  then `a + a - a` is `NK1116` at `a + a`, where the lowering failed in `rustc`
+  before.
+- A fold past the 65 bits is said as *more than 18446744073709551615*.
+- Found by the move and fixed in the compiler: a described copy bound out of a
+  lent `match` is copied out, and a lent function parameter handed on gets no
+  second `&` (a recursive one overflowed `rustc`'s trait solver). Five more are
+  written up as `open-work.md` §1.31, one as §1.32.
+- A tool module sees `ast.nika` beside it. The toolchain is 3.6 % Nikaia.
+
 ## [0.0.277] — 2026-09-30
 
 **A type a ledger says copies is copied** (ADR-252 D4.1, the reading, for a

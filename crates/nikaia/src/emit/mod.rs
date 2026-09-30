@@ -747,13 +747,19 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
-    emit_std_against(parsed, &crate::contracts::Ledger::default())
+    let own = crate::contracts::Ledger::infer_package(&[parsed], &std_ledger());
+    emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::default())
 }
 
 /// The same, for a module that reads Rust it was handed described: a tool of
 /// `nikaia-std`'s, whose tree names are `winnow_grammar::Symbol`s
 /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3).
-pub fn emit_std_against(parsed: &Parsed, described: &crate::contracts::Ledger) -> Result<Lowered> {
+pub fn emit_std_against(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &crate::contracts::Ledger,
+    described: &crate::contracts::Ledger,
+) -> Result<Lowered> {
     // Named rather than defaulted: the default is the machine this runs on,
     // and the committed text must not depend on where it was lowered.
     let build = Build {
@@ -766,10 +772,10 @@ pub fn emit_std_against(parsed: &Parsed, described: &crate::contracts::Ledger) -
     let trust = crate::contracts::trust::analyse(parsed, &library);
     Emitter::with_contracts(
         parsed,
-        &[],
+        beside,
         build,
         trust.provenance,
-        crate::contracts::Ledger::infer_package(&[parsed], &library),
+        own.clone(),
         described,
         &Reads::none(),
     )
@@ -7879,16 +7885,13 @@ impl<'p> Emitter<'p> {
                 let here = precedence(*op);
                 // **A view compared with a value is read** (0.0.238,
                 // `check::Checked::compared_views`).
-                let read = |side: &Expr| {
-                    self.compared_views
-                        .contains(&(flow.statement, crate::check::argument_shape(side)))
-                };
-                if read(lhs) {
+                let read = |side: &str| self.compared_views.contains(&(at.at(), side.to_string()));
+                if read("lhs") {
                     out.push("*");
                 }
                 self.nested(out, lhs, here, depth, flow)?;
                 out.push(&format!(" {} ", binary_op(*op)));
-                if read(rhs) {
+                if read("rhs") {
                     out.push("*");
                 }
                 self.nested(out, rhs, here + 1, depth, flow)?;

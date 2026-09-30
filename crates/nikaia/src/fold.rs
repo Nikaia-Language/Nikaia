@@ -14,9 +14,13 @@
 //! it exactly the subset of expressions that can be answered without looking
 //! anything up.
 //!
-//! **Folded in an `i128`**, so a sum that cannot fit an `i64` is a number the
-//! caller can name rather than one this wrapped: the fold must not do quietly
-//! what it exists to report.
+//! **The fold is Nikaia** (`nikaia-std/src/tools/fold.nika`,
+//! [ADR-252](../../../docs/specification/adr/adr-252.md) D6): a magnitude and
+//! a sign, 65 bits, held at every step to the type a declared operand pinned.
+//! This module is its adapter: the checker keeps a constant in an `i128`, so
+//! the answer is turned into one here, and a fold that left the 65 bits is a
+//! number one past `u64::MAX` - which no type holds, and which the checker
+//! says as *more than* the widest.
 //!
 //! **Every step is `checked_`, and `None` means nothing is claimed.** A name the
 //! lookup cannot evaluate, an operator this does not fold, a division by a
@@ -27,14 +31,16 @@
 
 use winnow_grammar::Symbol;
 
-use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::ast::Expr;
+use nikaia_std::tools::fold as nika;
 
 /// What a constant integer expression came to, and the type an operand's
 /// declaration pinned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant {
-    /// Folded in an `i128` so a sum that cannot fit an `i64` is still a number
-    /// the caller can name rather than one that wrapped.
+    /// A number the checker can compare against a type's range. A fold that
+    /// left the 65 bits every literal fits in is one past `u64::MAX`, with its
+    /// sign.
     pub value: i128,
     /// The integer type an operand's *declaration* fixed, where one did. **A
     /// literal pins nothing**: `3000000000` is an `i64` wherever a use asks for
@@ -43,6 +49,9 @@ pub struct Constant {
     /// to take the wider type ([ADR-060](../../../docs/specification/adr/adr-060.md)).
     pub pinned: Option<String>,
 }
+
+/// The magnitude of a number no integer type holds: one past `u64::MAX`.
+pub const BEYOND: i128 = u64::MAX as i128 + 1;
 
 /// What a name is worth, where the caller knows anything about it.
 ///
@@ -61,64 +70,46 @@ pub fn nothing_is_known(_: Symbol) -> Option<Constant> {
 
 /// The value a constant integer expression comes to, or `None` where nothing is
 /// claimed about it.
+///
+/// A step that left the type a declared operand pinned is answered with that
+/// step's number, so the caller refuses it where the language below would.
 pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
-    match expr {
-        Expr::LitInt { value, negative } => Some(Constant {
-            value: crate::ast::int_value(*value, *negative),
+    let lookup = |name: Symbol| match name_is(name).as_ref().and_then(to_nikaia) {
+        Some(known) => nika::Folded::Value(known),
+        None => nika::Folded::Nothing,
+    };
+    match nika::constant_of(expr, &lookup) {
+        nika::Folded::Value(c) | nika::Folded::Overflows(c) => Some(from_nikaia(c)),
+        nika::Folded::TooLarge(negative) => Some(Constant {
+            value: if negative { -BEYOND } else { BEYOND },
             pinned: None,
         }),
-        Expr::Variable(name) => name_is(*name),
-        Expr::Unary {
-            op: UnaryOp::Neg,
-            expr,
-        } => {
-            let inner = constant_of(expr, name_is)?;
-            Some(Constant {
-                value: inner.value.checked_neg()?,
-                pinned: inner.pinned,
-            })
-        }
-        Expr::Binary { op, lhs, rhs, .. } => {
-            let lhs = constant_of(lhs, name_is)?;
-            let rhs = constant_of(rhs, name_is)?;
-            // Two operands that pin different types are a mismatch the type
-            // check reports on its own; folding them would be arithmetic in a
-            // type neither of them has.
-            let pinned = match (&lhs.pinned, &rhs.pinned) {
-                (Some(a), Some(b)) if a != b => return None,
-                (Some(a), _) => Some(a.clone()),
-                (_, pinned) => pinned.clone(),
-            };
-            let value = match op {
-                BinaryOp::Add => lhs.value.checked_add(rhs.value)?,
-                BinaryOp::Sub => lhs.value.checked_sub(rhs.value)?,
-                BinaryOp::Mul => lhs.value.checked_mul(rhs.value)?,
-                BinaryOp::Div => lhs.value.checked_div(rhs.value)?,
-                BinaryOp::Rem => lhs.value.checked_rem(rhs.value)?,
-                _ => return None,
-            };
-            Some(Constant { value, pinned })
-        }
-        _ => None,
+        nika::Folded::Nothing => None,
     }
 }
 
 /// **Does this constant need the wider type, and may it have it?**
 /// ([ADR-063](../../../docs/specification/adr/adr-063.md) D1.)
 ///
-/// Three things have to hold, and each is a different half of the rule:
-///
-/// * **nothing pinned it.** `let a: i32 = 2` then `a + a` is arithmetic in an
-///   `i32` because a declaration said so, and widening it would be this
-///   compiler quietly choosing a type over the one written down;
-/// * **an `i32` does not hold it**, so there is a reason to move at all - a
-///   value that fits stays untouched, which is what keeps every program that
-///   compiles today compiling (Part I 2.4);
-/// * **an `i64` does hold it.** A value past that has no second answer either,
-///   and it is refused rather than widened - by `NK1116`, in this language's
-///   words.
+/// Nothing pinned it, an `i32` does not hold it, and an `i64` does - the fold's
+/// own answer, asked of the number the checker keeps.
 pub fn wants_widening(folded: &Constant) -> bool {
-    folded.pinned.is_none()
-        && i32::try_from(folded.value).is_err()
-        && i64::try_from(folded.value).is_ok()
+    to_nikaia(folded).is_some_and(|c| nika::wants_widening(&nika::Folded::Value(c)))
+}
+
+/// An `i128` as the fold counts: `None` past the 65 bits.
+fn to_nikaia(c: &Constant) -> Option<nika::Constant> {
+    Some(nika::Constant {
+        magnitude: u64::try_from(c.value.unsigned_abs()).ok()?,
+        negative: c.value < 0,
+        pinned: c.pinned.clone().unwrap_or_default(),
+    })
+}
+
+fn from_nikaia(c: nika::Constant) -> Constant {
+    let magnitude = i128::from(c.magnitude);
+    Constant {
+        value: if c.negative { -magnitude } else { magnitude },
+        pinned: (!c.pinned.is_empty()).then_some(c.pinned),
+    }
 }

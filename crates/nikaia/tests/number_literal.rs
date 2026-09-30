@@ -252,3 +252,22 @@ fn a_negative_number_may_be_written_in_any_radix() {
     let rust = lowered("    let n = -0xFF\n    println(f\"{n}\")");
     assert!(rust.contains("let n = -255;"), "{rust}");
 }
+
+/// **A literal in a branch is of the type the `let` wrote** (`open-work.md`
+/// §1.31, found moving `fold` into Nikaia): `2147483648` in an `if` inside a
+/// `match` arm was written `2147483648i64` under a `let l: u64`, because the
+/// type stopped at the `match`.
+#[test]
+fn a_literal_in_a_branch_takes_the_type_the_let_wrote() {
+    let rust = lowered(
+        "    let negative = true\n\
+         \x20   let l: u64 = match negative {\n\
+         \x20       true => if negative { 2147483648 } else { 1 },\n\
+         \x20       false => 4294967295,\n\
+         \x20   }\n\
+         \x20   println(f\"{l}\")",
+    );
+    assert!(rust.contains("2147483648u64"), "{rust}");
+    assert!(rust.contains("4294967295u64"), "{rust}");
+    assert!(!rust.contains("i64"), "{rust}");
+}

@@ -52,6 +52,9 @@ const NIKA: &str = "nika";
 /// ([`Sysroot::tool_modules`]).
 const TOOLS: &str = "tools";
 
+/// The compiler's syntax tree, which a tool module reads beside itself.
+const TREE: &str = "ast.nika";
+
 /// What the Rust a tool module reads says it does (ADR-252 D4.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
 
@@ -271,8 +274,38 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     };
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());
-    let own = crate::contracts::Ledger::infer_package(&[&parsed], &library);
-    let checked = crate::check::check(&parsed, &own, &library);
+    // **A tool that reads the tree reads its declaration** (ADR-252 D1): the
+    // tree is the one Nikaia module every other tool may name, as the files of
+    // a package name one another (Part I 9.1). In Rust each tool is a module
+    // of its own, and `nikaia-std`'s `lib.rs` writes the `use super::ast::*`.
+    let tree = match path.file_name() == Some(std::ffi::OsStr::new(TREE)) {
+        true => None,
+        false => match path.with_file_name(TREE) {
+            beside if described.types.is_empty() || !beside.exists() => None,
+            beside => {
+                let text = std::fs::read_to_string(&beside)
+                    .with_context(|| format!("reading {}", beside.display()))?;
+                Some(
+                    crate::parser::parse_to_ast(&text)
+                        .map_err(|e| anyhow::anyhow!("{}: {e}", beside.display()))?,
+                )
+            }
+        },
+    };
+    let beside: Vec<&crate::parser::Parsed> = tree.iter().collect();
+    let units: Vec<&crate::parser::Parsed> = std::iter::once(&parsed)
+        .chain(beside.iter().copied())
+        .collect();
+    let own = crate::contracts::Ledger::infer_package(&units, &library);
+    let checked = crate::check::check_against(
+        &parsed,
+        &beside,
+        &own,
+        &library,
+        &std::collections::BTreeSet::new(),
+        &crate::check::Newly::default(),
+        &crate::assets::Reads::none(),
+    );
     let refusals: Vec<&crate::check::Finding> = checked
         .findings
         .iter()
@@ -290,7 +323,7 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
             }
         );
     }
-    let lowered = crate::emit::emit_std_against(&parsed, &described)
+    let lowered = crate::emit::emit_std_against(&parsed, &beside, &own, &described)
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)
 }

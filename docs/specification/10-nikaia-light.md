@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.277 (Draft)
+**Version:** 0.0.279 (Draft)
 **Date:** 2026-09-30
 
 ---
@@ -1870,7 +1870,8 @@ A parameter the function changes in place says `mut` in the declaration,
 nothing, as `xs.push(1)` shows nothing. A parameter the body changes without
 `mut` is refused with `NK1138`. A `mut` parameter handed to another `mut`
 parameter is passed straight on. `ref self` is written by the author, and that
-shape is `NK1131`.
+shape is `NK1131`, as is a `mut` parameter given away whole: it stays the
+caller's, so the way out is `.clone()` or taking it without `mut`.
 
 A `for` **lends** its list, so the list is still there after the loop;
 iteration that takes the elements away is written `for x in xs.drain()`. A

@@ -259,6 +259,17 @@ pub mod tools {
         }
     }
 
+    /// **What a constant integer expression comes to**:
+    /// `src/tools/fold.nika`, a magnitude and a sign held to the type an
+    /// operand pinned, lowered to `src/tools/fold.rs` and committed beside it
+    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D6). The
+    /// compiler's `fold` turns its answer into an `i128`.
+    pub mod fold {
+        use super::ast::*;
+
+        include!("tools/fold.rs");
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.

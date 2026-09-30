@@ -34,17 +34,37 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-### 1.30. A parameter written `mut` handed away whole reaches `rustc`
+### 1.31. Three lowerings `fold.nika` was written around
 
-Found at 0.0.258, probing what `keeps` may drop for a `mut` argument.
-`fn store(mut out: Vec[String]) -> Box { return Box { items: out } }` lowers
-`out` as `&mut Vec<String>` (ADR-094 D3) and the struct literal as
-`Box { items: out }` - *mismatched types* about a file nobody wrote (Part III
-C.1). `return out` from `fn give(mut out: Vec[String]) -> Vec[String]` is the
-same. `NK1131` refuses exactly this for a field of a borrowed `self`; the fix
-is the same refusal for a `mut` parameter, naming `.clone()` and taking it
-without `mut` as the ways out. Before 0.0.258 `keeps` named `out` for both,
-which changed nothing: a `mut` parameter is `&mut` whatever the column says.
+Found at 0.0.278, moving `fold` into Nikaia (ADR-252 D6). Each is a program
+`rustc` refuses about a file nobody wrote (Part III C.1), and `fold.nika` is
+written the way that lowers; the fix is the compiler's (ADR-250 D3). Two of
+the five found are fixed at 0.0.279: a literal in a branch takes the `let`'s
+unsigned type, and a view compared with a value is read (`*op == Op::Neg`),
+keyed by the operator so two comparisons in one statement are told apart.
+
+* **A `ref String?` parameter** lowers as `Option<&str>`, which is Part I
+  2.3's reading of a nullable view and right. Its two neighbours are not: the
+  caller hands `&x` for an `x: String?` where `x.as_deref()` is wanted (and a
+  bare `None` for `null`), and the body's `b?.clone()` clones the `&str` where
+  the result is a `String?` and wants `to_string()`. Both are the lowering of
+  a nullable view, in the call writer and the safe-navigation writer.
+  `fold.nika` keeps no nullable text: an empty `pinned` is none.
+* **`a.pinned?.clone()` on an owned local moves the field out** where the
+  local is read afterwards (`&a`), which Rust calls a use of a partially moved
+  value.
+* **A function in a recursive cycle with a function-typed parameter is
+  inferred to pause** where nothing in it does: `combined` became an `async fn`
+  its caller did not await. `fold.nika` writes `sync` on it, which the checker
+  accepts - so the inference, not the code, was wrong.
+
+### 1.32. An open number's intermediate step is not held to the type it becomes
+
+Found at 0.0.278. `let a = 2000000000` then `let c = a + a - a`: `a` is an open
+number (ADR-249 D3), so the fold pins nothing and judges the result, which fits
+an `i32`; the first step does not, and `rustc` refuses the lowered `a + a`. A
+declared `let a: i32` is refused at the step (ADR-252 D6). The fix hands the
+open number's steps to ADR-249's derived values, beside its result.
 
 ## 2. Decided and unbuilt
 

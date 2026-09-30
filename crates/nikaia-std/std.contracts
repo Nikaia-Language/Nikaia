@@ -1280,6 +1280,13 @@ sync = true
 touches = []
 signature = "(ref self) -> i64"
 
+# Whether the text is empty: no bytes, and so no characters.
+[fn."String::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(ref self) -> bool"
+
 # Add one character to the end of the text.
 [fn."String::push"]
 pub = true
