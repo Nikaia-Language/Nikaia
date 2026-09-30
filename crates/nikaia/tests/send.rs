@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use nikaia::check::{self, Finding};
 use nikaia::contracts::order;
 use nikaia::contracts::send::{self, Crossing};
+use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::{Ledger, STD, ty::Ty};
 use nikaia::parser::parse_to_ast;
 

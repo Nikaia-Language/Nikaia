@@ -280,6 +280,24 @@ pub mod tools {
         include!("tools/trust.rs");
     }
 
+    /// **The type language the checker reasons in and the ledger records**:
+    /// `src/tools/ty.nika`, `Ty` and `Shape` and the text a type is written
+    /// as, lowered to `src/tools/ty.rs` and committed beside it (ADR-257 D1).
+    /// The compiler's `contracts::ty` re-exports them and keeps the algorithms
+    /// over them until ADR-257's step (d).
+    pub mod ty {
+        include!("tools/ty.rs");
+
+        /// A type prints as its text, which is the one thing a `Display` of
+        /// it can say. The language has no `Display` of its own to write this
+        /// in, so it is the one line of Rust beside the declaration.
+        impl std::fmt::Display for Ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&text(self))
+            }
+        }
+    }
+
     /// **A Rust file's public surface**, read by a Nikaia grammar:
     /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
     /// compiler and committed beside it.

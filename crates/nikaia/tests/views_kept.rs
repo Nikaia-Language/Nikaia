@@ -120,3 +120,26 @@ fn a_view_from_one_of_two_buffers_is_refused() {
     );
     assert!(found.iter().any(|f| f.code == "NK2302"), "{found:#?}");
 }
+
+/// **A call on a subject that has nowhere to keep a view keeps none.** A
+/// method of a struct of three `bool`s handed a `ref` on to another method of
+/// the same struct was refused (`NK2302`, *a call on `Shape` might keep what
+/// it's given*): the struct cannot hold the view whatever the method does,
+/// which is the rule a field of the subject already had.
+#[test]
+fn a_call_on_a_subject_that_holds_no_view_keeps_none() {
+    runs(
+        "subject-holds-no-view",
+        "pub struct Shape {\n    pub ends: bool,\n    pub sized: bool,\n}\n\n\
+         impl Shape {\n    pub fn meets(ref self, wanted: ref Shape) -> bool {\n        \
+         return self.missing(wanted).len() == 0\n    }\n\n    \
+         pub fn missing(ref self, wanted: ref Shape) -> Vec[String] {\n        \
+         let mut words: Vec[String] = []\n        \
+         if wanted.ends && !self.ends {\n            words.push(\"ends\")\n        }\n        \
+         return words\n    }\n}\n\n\
+         fn main() {\n    let a = Shape { ends: true, sized: false }\n    \
+         let b = Shape { ends: false, sized: true }\n    \
+         println(f\"{a.meets(ref b)} {b.meets(ref a)}\")\n}\n",
+        "true false",
+    );
+}

@@ -102,6 +102,7 @@ use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
 use super::{Ledger, send, ty::Ty};
+use crate::contracts::ty::TyOps;
 
 /// The type whose count this is about.
 const SHARED: &str = "Shared";

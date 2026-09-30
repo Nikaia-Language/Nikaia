@@ -21,6 +21,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use nikaia::contracts::ty::Ty;
+use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::{Ledger, STD};
 use nikaia::emit;
 use nikaia::parser::parse_to_ast;
@@ -42,7 +43,7 @@ fn a_sequence_says_whether_its_step_pauses() {
             &pausing,
             Ty::Seq {
                 pauses: true,
-                throws: true,
+                can_throw: true,
                 is_sync: false,
                 ..
             }

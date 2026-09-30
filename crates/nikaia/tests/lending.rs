@@ -401,3 +401,24 @@ fn the_way_out_of_that_refusal_runs() {
     );
     assert_eq!(printed, "1\n2\n7\n");
 }
+
+/// **`NK1137` speaks the program's word** (ADR-184 D4, Part III C.1-C.2): the
+/// program wrote `ref`, and `&` is a spelling the parser refuses, so *remove
+/// the `&`* was a way out nobody could take.
+#[test]
+fn a_ref_the_compiler_writes_is_named_ref() {
+    let parsed = nikaia::parser::parse_to_ast(
+        "fn show(r: ref String?) -> String {\n    return \"x\"\n}\n\nfn main() {\n    \
+         let a: String? = \"x\"\n    println(show(ref a))\n}\n",
+    )
+    .expect("parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library = nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std");
+    let found = nikaia::check::check_program(&parsed, &own, &library, &Default::default()).findings;
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1137")
+        .unwrap_or_else(|| panic!("NK1137: {found:#?}"));
+    let said = format!("{} {:?} {:?}", refusal.message, refusal.notes, refusal.help);
+    assert!(said.contains("`ref`") && !said.contains('&'), "{said}");
+}

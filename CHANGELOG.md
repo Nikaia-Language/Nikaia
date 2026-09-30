@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.285] — 2026-09-30
+
+**`Ty` and `Shape` are Nikaia** (ADR-257 D1, step (b)'s first half), with
+the text a type is written as. The toolchain is 4.1 % Nikaia.
+
+- `nikaia-std/src/tools/ty.nika` declares the checker's type language: the
+  nine shapes of `Ty`, `Shape` with `meets` and `missing`, the words a
+  sequence carries, and `Ty::text`, which is what a diagnostic prints and a
+  ledger stores. The compiler's `contracts::ty` re-exports them, and what was
+  `impl Ty` is the trait `TyOps` beside it until step (d). `Display` is five
+  lines in `nikaia-std` that call `text`. The field `throws` is `can_throw`,
+  because the word is reserved; `Fn`'s result is a `Ty?`, boxed where ADR-246
+  boxes it; and `Shape::none()` stands where a `Default` was. Re-lowering all
+  of `std` with the new compiler changes no file.
+- **Four defects the move found:**
+  - **A call on a subject that cannot hold a view was taken to keep one**
+    (`NK2302`). `impl Shape { fn meets(ref self, wanted: ref Shape) -> bool
+    { … self.missing(wanted) … } }` was refused as keeping `wanted` in a
+    struct of three `bool`s. The subject now answers as its fields already
+    did: a struct or enum whose parts hold no view keeps none.
+  - **A nullable part of a lent value, handed to a `ref T?`**, reached `rustc`
+    as *expected `Option<&str>`, found `&Option<String>`*. `name` in
+    `S::Named { name, .. }` over a `ref S` is now a binding the language below
+    lent, and the call opens the option (`.as_deref()`, `.as_ref()`), as it
+    does where the compiler lends a `T?` itself.
+  - **`NK1137` named `&`**: *You don't need the `&` here … Remove the `&`*,
+    about a program that wrote `ref`. The parser refuses `&` (ADR-184 D4), so
+    the way out could not be taken (Part III C.2). It says `ref` now.
+  - **Part I 2.3 said `.to_string()` on text is a copy.** ADR-216 D4 (0.0.193,
+    the owner's decision) made it the text itself, a view where the receiver
+    is one; the checker and its tests do that, and the sentence was left from
+    0.0.192. It says what the language does now.
+
 ## [0.0.284] — 2026-09-30
 
 **`NK1167`'s way out is one a program can write.**

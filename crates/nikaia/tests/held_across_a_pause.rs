@@ -25,6 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nikaia::contracts::send::held_across_a_pause;
+use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
 

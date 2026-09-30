@@ -34,6 +34,7 @@ use crate::ast::{
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::check::PausingEntry;
+use crate::contracts::ty::TyOps;
 use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
 
