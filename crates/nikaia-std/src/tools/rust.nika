@@ -130,6 +130,11 @@ pub struct Rec {
     pub what: ref String,
     pub name: ref String,
     pub parts: Vec[Part],
+    // The text inside each `#[derive(…)]` in front of it, one entry per
+    // attribute, as written: `Clone, Copy, PartialEq`. Whether the type copies
+    // and compares is read from these ([ADR-252](../../../../docs/specification/adr/adr-252.md)
+    // D4.3), and splitting them is string work for whoever reads them.
+    pub derives: Vec[ref String],
 }
 
 // A named scope holding items: `mod`, `trait`, `impl`, `unsafe impl`.
@@ -370,15 +375,30 @@ grammar Rust {
     // ---- structs, enums ------------------------------------------------
 
     rule record -> Rec =
-          PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}" {
-              Rec { what: "struct", name, parts: fs }
+          ds:attributes PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}" {
+              Rec { what: "struct", name, parts: fs, derives: ds }
           }
-        | PUB STRUCT name:IDENT generics tuple_body where_clause ";" {
-              Rec { what: "struct", name, parts: Vec() }
+        | ds:attributes PUB STRUCT name:IDENT generics tuple_body where_clause ";" {
+              Rec { what: "struct", name, parts: Vec(), derives: ds }
           }
-        | PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}" {
-              Rec { what: "enum", name, parts: vs }
+        | ds:attributes PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}" {
+              Rec { what: "enum", name, parts: vs, derives: ds }
           }
+
+    // The attributes in front of a type: what each `derive` lists, and
+    // nothing for any other attribute.
+    rule attributes -> Vec[ref String] =
+        all:attribute* {
+            let mut derives = Vec()
+            for d in all.drain() {
+                if !d.is_empty() { derives.push(d) }
+            }
+            derives
+        }
+
+    rule attribute -> ref String =
+          "#" "[" DERIVE "(" d:text(TUPLE_INNER) ")" "]" { d.trim() }
+        | "#" "[" BRACKET_INNER "]" { "" }
 
     rule tuple_body = "(" TUPLE_INNER ")" { } | empty { }
 
@@ -550,6 +570,7 @@ grammar Rust {
     rule UNSAFE = "unsafe" not(WORD) { }
     rule EXTERN = "extern" not(WORD) { }
     rule STRUCT = "struct" not(WORD) { }
+    rule DERIVE = "derive" not(WORD) { }
     rule ENUM = "enum" not(WORD) { }
     rule TRAIT = "trait" not(WORD) { }
     rule IMPL = "impl" not(WORD) { }

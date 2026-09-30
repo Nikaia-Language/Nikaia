@@ -3458,7 +3458,17 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
-        let mut copies = BTreeSet::new();
+        // **A described Rust type that says it copies** is a part that copies
+        // ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3): `describe`
+        // read its `#[derive(Copy)]`, and the line was reviewed. Nothing else
+        // from a crate is.
+        let mut copies: BTreeSet<String> = self
+            .library
+            .types
+            .iter()
+            .filter(|(_, contract)| contract.copies)
+            .map(|(name, _)| name.clone())
+            .collect();
         loop {
             let joining: Vec<String> = declared
                 .iter()
@@ -3493,7 +3503,12 @@ impl<'a> Checker<'a> {
             }
             copies.extend(joining);
         }
-        self.checked.copies = copies;
+        // What the emitter derives `Copy` for: the program's own types. A
+        // described one was a part here, and its derive is its crate's.
+        self.checked.copies = copies
+            .into_iter()
+            .filter(|name| declared.contains(name))
+            .collect();
     }
 
     /// **Which declared types compare**
@@ -21878,8 +21893,9 @@ impl Comparable<'_> {
 
 /// **A part that lets the type holding it derive `Copy`**
 /// ([`Checker::collect_copies`]): a number, a truth value, a character, a
-/// declared type already found to be one, and a tuple, a nullable or an array
-/// of those. Never a view, a type variable, an unknown or a Rust crate's type:
+/// declared type already found to be one, a Rust type whose description says
+/// `copies` (ADR-252 D4.3), and a tuple, a nullable or an array of those.
+/// Never a view, a type variable, an unknown or any other Rust crate's type:
 /// each is a claim nothing here can back.
 fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
     match ty {

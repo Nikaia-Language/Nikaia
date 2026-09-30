@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.274] — 2026-09-30
+
+**A described Rust type says whether it copies and compares** (ADR-252 D4.3).
+
+- `nikaia describe` reads a type's `#[derive(…)]`, by each path's last segment,
+  and drafts `copies = true` for `Copy` and `compares = true` for `PartialEq`.
+  A type with no `derive` says neither, which is *no* (ADR-010 D1).
+- A declared type whose parts include such a type is itself a copy
+  (`Checked::copies`), as it is for a number; `==` on it already read
+  `compares`.
+- `winnow_grammar`'s `Symbol` waits for step 4, which is the first to read it.
+
 ## [0.0.273] — 2026-09-30
 
 **The prover reads lengths and sees into lambdas** (ADR-256 D5).

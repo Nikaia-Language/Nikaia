@@ -137,6 +137,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     surface.resolve();
     let types = surface.types.clone();
     let fields = surface.fields.clone();
+    let derives = surface.derives.clone();
 
     let mut ledger = Ledger::empty();
     ledger.inference = "described-from-signatures".to_string();
@@ -179,6 +180,12 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
                 // ([ADR-123](../../docs/specification/adr/adr-123.md) D2), and
                 // the one thing here a Rust *signature* could never say.
                 crosses: crosses(fields.get(&name).map(Vec::as_slice)),
+                // **What the type derives is what it promises**
+                // ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3):
+                // `PartialEq` is `==`, and `Copy` is a copy where a move would
+                // be. Read from the source and written for review, as the rest.
+                compares: derives.get(&name).is_some_and(|d| d.contains("PartialEq")),
+                copies: derives.get(&name).is_some_and(|d| d.contains("Copy")),
                 ..TypeContract::default()
             },
         );
@@ -563,6 +570,9 @@ struct Surface {
     fields: BTreeMap<String, Vec<String>>,
     /// Every `pub struct` and `pub enum`, by the path it is defined at.
     types: BTreeSet<String>,
+    /// What each of those derives, by the trait's last segment: `Copy`,
+    /// `PartialEq` ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3).
+    derives: BTreeMap<String, BTreeSet<String>>,
     /// Every `mod` declaration found, by the module's path, and whether it was
     /// written `pub`.
     ///
@@ -656,6 +666,14 @@ impl Surface {
                             r.parts.iter().map(|p| p.ty.to_string()).collect(),
                         );
                     }
+                    let derived: BTreeSet<String> = r
+                        .derives
+                        .iter()
+                        .flat_map(|list| list.split(','))
+                        .map(|name| name.trim().rsplit("::").next().unwrap_or("").to_string())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    self.derives.insert(path.clone(), derived);
                     self.types.insert(path);
                 }
                 Item::Export(text) => self.exports.extend(exported(at, text)),

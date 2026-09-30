@@ -984,6 +984,15 @@ pub struct TypeContract {
     /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1's polarity,
     /// and [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)).
     pub compares: bool,
+    /// Whether a value of this type is **copied rather than moved**
+    /// ([ADR-252](../../../../docs/specification/adr/adr-252.md) D4.3): a
+    /// declared type whose every part copies may itself derive `Copy`, and one
+    /// holding a Rust type needs the Rust type to say so.
+    ///
+    /// `nikaia describe` writes it from the type's `#[derive(Copy, …)]`, as it
+    /// writes `compares` from `PartialEq`, and the reviewer reads it like any
+    /// other line. Absence is *does not copy*, which only ever costs a move.
+    pub copies: bool,
     /// What **reading a value of this type touches**
     /// ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1), in
     /// [ADR-033](../../../../docs/specification/adr/adr-033.md)'s own
@@ -1579,6 +1588,7 @@ impl Ledger {
                                 // compares, so nothing is written here: this
                                 // column is for a type whose parts are Rust.
                                 compares: false,
+                                copies: false,
                                 touches: Vec::new(),
                                 // The tether is a field's question and a variant's
                                 // payload is not a field a program assigns to;
@@ -1630,6 +1640,7 @@ impl Ledger {
                                 // compares, so nothing is written here: this
                                 // column is for a type whose parts are Rust.
                                 compares: false,
+                                copies: false,
                                 // Nor does a declared `struct` read anything when
                                 // it is read: a field access is memory. The types
                                 // that are not are `std`'s, whose bodies are Rust
@@ -2402,6 +2413,9 @@ impl Ledger {
             if contract.compares {
                 out.push_str("compares = true\n");
             }
+            if contract.copies {
+                out.push_str("copies = true\n");
+            }
             if contract.iterates_fallibly {
                 out.push_str("iterates = \"throws\"\n");
             }
@@ -2629,6 +2643,7 @@ impl Ledger {
                             }
                         }
                         "compares" => entry.compares = value.trim() == "true",
+                        "copies" => entry.copies = value.trim() == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
                         "touches" => entry.touches = string_list(value, at())?,
                         "iterates" => {

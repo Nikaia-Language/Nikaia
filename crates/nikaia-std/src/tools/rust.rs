@@ -25,6 +25,7 @@ pub struct Rec<'a> {
     pub what: &'a str,
     pub name: &'a str,
     pub parts: Vec<Part<'a>>,
+    pub derives: Vec<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,12 +263,26 @@ grammar! {
             -> { }
 
         rule record -> Rec<'a> =
-            PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}"
-            -> { Rec { what: "struct", name, parts: fs } }
-          | PUB STRUCT name:IDENT generics tuple_body where_clause ";"
-            -> { Rec { what: "struct", name, parts: Vec::new() } }
-          | PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}"
-            -> { Rec { what: "enum", name, parts: vs } }
+            ds:attributes PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}"
+            -> { Rec { what: "struct", name, parts: fs, derives: ds } }
+          | ds:attributes PUB STRUCT name:IDENT generics tuple_body where_clause ";"
+            -> { Rec { what: "struct", name, parts: Vec::new(), derives: ds } }
+          | ds:attributes PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}"
+            -> { Rec { what: "enum", name, parts: vs, derives: ds } }
+
+        rule attributes -> Vec<&'a str> =
+            all:attribute*
+            -> {
+                let mut derives = Vec::new();
+                for d in all.into_iter() { if !d.is_empty() { derives.push(d); } }
+                derives
+            }
+
+        rule attribute -> &'a str =
+            "#" "[" DERIVE "(" d:text(TUPLE_INNER) ")" "]"
+            -> { d.trim() }
+          | "#" "[" BRACKET_INNER "]"
+            -> { "" }
 
         rule tuple_body =
             "(" TUPLE_INNER ")"
@@ -527,6 +542,10 @@ grammar! {
 
         rule STRUCT =
             "struct" not(WORD)
+            -> { }
+
+        rule DERIVE =
+            "derive" not(WORD)
             -> { }
 
         rule ENUM =

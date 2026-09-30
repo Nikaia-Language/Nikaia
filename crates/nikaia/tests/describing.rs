@@ -564,6 +564,52 @@ fn a_types_fields_answer_whether_it_crosses() {
     assert!(!says("Tuple").contains("crosses"), "{}", says("Tuple"));
 }
 
+/// **A type's `derive` says whether it copies and compares** ([ADR-252](../../../docs/specification/adr/adr-252.md)
+/// D4.3): `Copy` is what a declared struct holding it needs to copy too, and
+/// `PartialEq` is what `==` on it needs. A type with no `derive` says neither.
+#[test]
+fn a_derive_says_whether_a_type_copies_and_compares() {
+    let root = project(
+        "derives",
+        "#[derive(Clone, Copy, PartialEq, Debug)]\n\
+         pub struct Pair { a: i64 }\n\
+         #[derive(Clone, std::cmp::PartialEq)]\n\
+         pub struct Compared { a: String }\n\
+         pub struct Plain { a: i64 }\n\
+         pub fn a(x: Pair) -> i64 { 0 }\n\
+         pub fn b(x: Compared) -> i64 { 0 }\n\
+         pub fn c(x: Plain) -> i64 { 0 }\n",
+        "fn main() {\n\
+         \x20   fremd::a(1)\n\
+         \x20   fremd::b(1)\n\
+         \x20   fremd::c(1)\n\
+         }\n",
+    );
+    let text = entries(&root);
+    let says = |name: &str| {
+        let at = text
+            .find(&format!("[type.\"fremd::{name}\"]"))
+            .unwrap_or_else(|| panic!("no entry for {name}:\n{text}"));
+        let rest = &text[at..];
+        let end = rest[1..].find("\n[").map(|e| e + 1).unwrap_or(rest.len());
+        rest[..end].to_string()
+    };
+
+    assert!(says("Pair").contains("copies = true"), "{}", says("Pair"));
+    assert!(says("Pair").contains("compares = true"), "{}", says("Pair"));
+
+    // A path in the `derive` is read by its last segment.
+    assert!(
+        says("Compared").contains("compares = true"),
+        "{}",
+        says("Compared")
+    );
+    assert!(!says("Compared").contains("copies"), "{}", says("Compared"));
+
+    assert!(!says("Plain").contains("copies"), "{}", says("Plain"));
+    assert!(!says("Plain").contains("compares"), "{}", says("Plain"));
+}
+
 /// **An entry exists because a program asked for it** ([ADR-028](../../../docs/specification/adr/adr-028.md)
 /// D5), so the draft is proportional to use and not to the crate.
 #[test]
