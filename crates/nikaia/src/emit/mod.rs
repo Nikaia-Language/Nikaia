@@ -747,16 +747,34 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
+    emit_std_against(parsed, &crate::contracts::Ledger::default())
+}
+
+/// The same, for a module that reads Rust it was handed described: a tool of
+/// `nikaia-std`'s, whose tree names are `winnow_grammar::Symbol`s
+/// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3).
+pub fn emit_std_against(parsed: &Parsed, described: &crate::contracts::Ledger) -> Result<Lowered> {
     // Named rather than defaulted: the default is the machine this runs on,
     // and the committed text must not depend on where it was lowered.
     let build = Build {
         target: Target::X86_64Linux,
         ..Build::default()
     };
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
-    Emitter::new(parsed, build, trust.provenance)
-        .for_std()
-        .program()
+    let mut library = std_ledger();
+    library.types.extend(described.types.clone());
+    library.functions.extend(described.functions.clone());
+    let trust = crate::contracts::trust::analyse(parsed, &library);
+    Emitter::with_contracts(
+        parsed,
+        &[],
+        build,
+        trust.provenance,
+        crate::contracts::Ledger::infer_package(&[parsed], &library),
+        described,
+        &Reads::none(),
+    )
+    .for_std()
+    .program()
 }
 
 /// A module's items, with no preamble and no `mod` around them.
@@ -3869,7 +3887,7 @@ impl<'p> Emitter<'p> {
                 // handed over is one lifetime, which the elision names.
                 let lent = |at: usize| {
                     self.own_contracts.functions.get(&key).is_some_and(|c| {
-                        crate::contracts::keeps::lends(c, at)
+                        crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
                             && !c
                                 .signature
                                 .as_ref()
@@ -3964,8 +3982,9 @@ impl<'p> Emitter<'p> {
                 .is_some_and(|s| s.mutable.iter().any(|m| m == name));
             let reference = if changes {
                 "&mut "
-            } else if lent.is_some_and(|c| crate::contracts::keeps::lends(c, at))
-                && !written_as_a_view
+            } else if lent.is_some_and(|c| {
+                crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
+            }) && !written_as_a_view
             {
                 "&"
             } else {

@@ -1,0 +1,26 @@
+# **The Rust the toolchain's own Nikaia reads** (ADR-252 D4.3), described as
+# `nikaia describe` describes a crate for a program: a claim reviewed like
+# code. `nikaia lower-std` checks a module of `src/tools/` against `std`'s
+# ledger and this one; a program never reads it.
+version = 2
+toolchain = "described"
+inference = "described"
+
+# An interned name: the compiler's tree holds one wherever the source wrote a
+# name. A `Copy` handle of one `u32`, compared as that number.
+[type."winnow_grammar::Symbol"]
+pub = true
+crosses = true
+compares = true
+copies = true
+
+# What a `Symbol` was interned from.
+[type."winnow_grammar::InternerContext"]
+pub = true
+
+# The text a name was interned from.
+[fn."winnow_grammar::InternerContext::resolve"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref winnow_grammar::InternerContext, symbol: winnow_grammar::Symbol) -> ref(self) String"

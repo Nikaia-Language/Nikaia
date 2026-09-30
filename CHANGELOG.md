@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.277] — 2026-09-30
+
+**A type a ledger says copies is copied** (ADR-252 D4.1, the reading, for a
+described type).
+
+- `contracts::keeps::lends_in` and the checker's `takes_away` read
+  `copies = true` off the library: a parameter of such a type is a value
+  below, not a `&`, and a value handed on is still there to hand on again
+  (`NK2105` no longer fires on a second use).
+- So a tool module passes a `winnow_grammar::Symbol` the way it passes a
+  number, which the first reader of the tree needs.
+- A type the program declares is still lent: reading its copy waits for the
+  ledger to carry `copies` for a unit's own types.
+
+## [0.0.276] — 2026-09-30
+
+**A tool reads the tree's names as described** (ADR-252 D4.3, the rest of it).
+
+- `nikaia-std/src/tools/described.contracts` describes the Rust a tool module
+  reads: `winnow_grammar::Symbol` copies and compares, and
+  `InternerContext::resolve` is `sync`. `nikaia lower-std` checks and lowers a
+  module of `src/tools/` against it and `std`'s ledger; `std`'s own modules
+  still see `std` alone.
+- The tree now derives `PartialEq` wherever its parts compare, and
+  `OpaqueType` is `Copy`.
+- `docs/open-decisions.md` asks what a constant fold counts in once `fold`
+  is Nikaia, since the language has no `i128`.
+
 ## [0.0.275] — 2026-09-30
 
 **The syntax tree is declared in Nikaia** (ADR-252 D1, D5 step 4).

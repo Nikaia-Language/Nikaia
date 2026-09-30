@@ -52,6 +52,9 @@ const NIKA: &str = "nika";
 /// ([`Sysroot::tool_modules`]).
 const TOOLS: &str = "tools";
 
+/// What the Rust a tool module reads says it does (ADR-252 D4.3).
+const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
+
 /// A sysroot: a directory with `nikaia-std/` in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sysroot {
@@ -253,9 +256,22 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     // is compiled against anyway, and the checks that need a project — a
     // manifest's boundary, an allowlist, a package's other units — have nothing
     // to say about a file that is one unit and depends on nothing.
-    let own = crate::contracts::Ledger::infer(&parsed);
-    let library =
+    let mut library =
         crate::contracts::Ledger::parse(crate::contracts::STD).context("std's shipped ledger")?;
+    // **A tool reads the Rust it is handed, described** (ADR-252 D4.3): the
+    // compiler's tree names are `winnow_grammar::Symbol`s, and a module that
+    // reads the tree has to know that one copies and compares. `std`'s own
+    // modules are checked against `std` alone, as a program's `std` is.
+    let described = if path.parent().and_then(|dir| dir.file_name())
+        == Some(std::ffi::OsStr::new(TOOLS))
+    {
+        crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?
+    } else {
+        crate::contracts::Ledger::default()
+    };
+    library.types.extend(described.types.clone());
+    library.functions.extend(described.functions.clone());
+    let own = crate::contracts::Ledger::infer_package(&[&parsed], &library);
     let checked = crate::check::check(&parsed, &own, &library);
     let refusals: Vec<&crate::check::Finding> = checked
         .findings
@@ -274,8 +290,8 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
             }
         );
     }
-    let lowered =
-        crate::emit::emit_std(&parsed).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let lowered = crate::emit::emit_std_against(&parsed, &described)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)
 }
 

@@ -24,12 +24,12 @@ impl<T> Spanned<T> {
     pub fn documented(node: T, span: Span, doc: Option<String>) -> Spanned<T> { Spanned { node, span, doc } }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub items: Vec<Spanned<Item>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Fn { name: Option<winnow_grammar::Symbol>, generics: Vec<GenericParam>, receiver: Option<Receiver>, args: Vec<FnArg>, config: Vec<ConfigParam>, spread: Option<winnow_grammar::Symbol>, ret_type: Option<Type>, body: Block, is_sync: bool, sync_by: Vec<winnow_grammar::Symbol>, is_public: bool, can_throw: bool },
     Enum { name: winnow_grammar::Symbol, variants: Vec<EnumVariant>, is_public: bool },
@@ -44,12 +44,12 @@ pub enum Item {
     Import { path: Vec<winnow_grammar::Symbol>, alias: Option<winnow_grammar::Symbol> },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub stmts: Vec<Spanned<Stmt>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let { names: Vec<winnow_grammar::Symbol>, mutable: bool, ty: Option<Type>, value: Expr },
     Comptime { name: winnow_grammar::Symbol, ty: Option<Type>, value: Expr },
@@ -62,7 +62,7 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     LitInt { value: u64, negative: bool },
     Match { value: Box<Expr>, arms: Vec<MatchArm> },
@@ -106,7 +106,7 @@ pub enum Expr {
     TryCatch { expr: Box<Expr>, handler: Block },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: winnow_grammar::Symbol,
     pub generics: Vec<Type>,
@@ -120,39 +120,39 @@ pub struct Type {
     pub either: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExternMember {
     Declared(Spanned<TraitMethod>),
     Opaque(Spanned<OpaqueType>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OpaqueType {
     pub name: winnow_grammar::Symbol,
     pub released_by: winnow_grammar::Symbol,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Code {
     pub result: Box<Option<Type>>,
     pub is_sync: bool,
     pub can_throw: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: winnow_grammar::Symbol,
     pub fields: VariantFields,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VariantFields {
     Unit,
     Tuple(Vec<Type>),
     Named(Vec<FieldDef>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectArm {
     pub binding: Option<winnow_grammar::Symbol>,
     pub value: Expr,
@@ -160,14 +160,14 @@ pub struct SelectArm {
     pub at: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: MatchPattern,
     pub guard: Option<Expr>,
     pub body: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MatchPattern {
     Otherwise,
     Literal(Expr),
@@ -178,13 +178,13 @@ pub enum MatchPattern {
     Range { start: Expr, end: Expr },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub name: winnow_grammar::Symbol,
     pub bounds: Vec<winnow_grammar::Symbol>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TraitMethod {
     pub name: winnow_grammar::Symbol,
     pub generics: Vec<GenericParam>,
@@ -196,7 +196,7 @@ pub struct TraitMethod {
     pub can_throw: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FnArg {
     pub name: winnow_grammar::Symbol,
     pub ty: Type,
@@ -204,20 +204,20 @@ pub struct FnArg {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConfigArg {
     pub name: winnow_grammar::Symbol,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConfigParam {
     pub name: winnow_grammar::Symbol,
     pub ty: Type,
     pub default: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldDef {
     pub name: winnow_grammar::Symbol,
     pub ty: Type,
@@ -225,7 +225,7 @@ pub struct FieldDef {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AsmBinding {
     pub alias: winnow_grammar::Symbol,
     pub direction: String,
@@ -233,7 +233,7 @@ pub struct AsmBinding {
     pub variable: winnow_grammar::Symbol,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
     pub name: winnow_grammar::Symbol,
     pub value: Option<Expr>,
@@ -273,13 +273,13 @@ impl BinaryOp {
     pub fn is_comparison(self) -> bool { matches!(self, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge) }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GrammarDef {
     pub name: winnow_grammar::Symbol,
     pub rules: Vec<GrammarRule>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GrammarRule {
     pub name: winnow_grammar::Symbol,
     pub is_public: bool,
@@ -300,13 +300,13 @@ impl FrameAttr {
     pub fn bare() -> FrameAttr { FrameAttr { boundary: None, unchecked: false } }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GrammarAlt {
     pub pattern: Spanned<Pattern>,
     pub action: Option<Block>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Seq(Vec<Spanned<Pattern>>),
     Choice(Vec<Spanned<Pattern>>),
@@ -329,7 +329,7 @@ pub enum Repeat {
     Between(u32, u32),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FoldSpec {
     pub parallel: bool,
     pub rule: winnow_grammar::Symbol,
@@ -344,7 +344,7 @@ pub struct Receiver {
     pub is_mut: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FnParams {
     pub receiver: Option<Receiver>,
     pub args: Vec<FnArg>,
@@ -356,7 +356,7 @@ impl FnParams {
     pub fn none() -> FnParams { FnParams { receiver: None, args: vec![], config: vec![], spread: None } }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConfigZone {
     Options(Vec<ConfigParam>),
     Spread(winnow_grammar::Symbol),
