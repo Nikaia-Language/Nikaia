@@ -133,3 +133,37 @@ fn a_type_that_is_dropped_is_not_a_copy() {
     );
     assert!(!derive_of(&rust, "FileHandle").contains("Copy"), "{rust}");
 }
+
+/// **A described Rust type that says it copies is a part that copies**
+/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.3), and one that
+/// says nothing is not: the line is a reviewed claim, and its absence is *no*.
+#[test]
+fn a_described_type_that_copies_is_a_part_that_copies() {
+    use nikaia::check::check_program;
+    use nikaia::contracts::Ledger;
+
+    let library = |copies: &str| {
+        Ledger::parse(&format!(
+            "version = 2\n\
+             toolchain = \"probe\"\n\
+             inference = \"probe\"\n\
+             \n\
+             [type.\"fremd::Pair\"]\n\
+             pub = true\n\
+             {copies}"
+        ))
+        .expect("the test's ledger parses")
+    };
+    let parsed = parse_to_ast(
+        "struct Held { pair: fremd::Pair, n: i64 }\n\
+         fn main() { print(\"x\") }\n",
+    )
+    .expect("parses");
+    let copied = |ledger: &Ledger| {
+        check_program(&parsed, &Ledger::empty(), ledger, &Default::default())
+            .copies
+            .contains("Held")
+    };
+    assert!(copied(&library("copies = true\n")));
+    assert!(!copied(&library("")));
+}
