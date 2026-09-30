@@ -1004,9 +1004,14 @@ pub fn bind(pattern: &Ty, actual: &Ty, out: &mut collections::BTreeMap<String, T
 
 fn bind_named(pattern_name: &str, pattern_args: &[Ty], actual: &Ty, out: &mut collections::BTreeMap<String, Ty>) {
     match actual {
-        Ty::Named { name, args, .. } => { if name == pattern_name && (args.len() as i64) == pattern_args.len() as i64 { for at in 0..args.len() as i64 { bind(nikaia_std::index::get(&pattern_args, nikaia_std::index::at(at)), nikaia_std::index::get(&args, nikaia_std::index::at(at)), out); } } },
+        Ty::Named { name, args, .. } => { bind_arguments(pattern_name, pattern_args, name, args, out); },
         _ => { },
     }
+}
+
+fn bind_arguments(pattern_name: &str, pattern_args: &[Ty], name: &str, args: &[Ty], out: &mut collections::BTreeMap<String, Ty>) {
+    if name != pattern_name || (args.len() as i64) != pattern_args.len() as i64 { return; }
+    for at in 0..args.len() as i64 { bind(nikaia_std::index::get(&pattern_args, nikaia_std::index::at(at)), nikaia_std::index::get(&args, nikaia_std::index::at(at)), out); }
 }
 
 fn bind_item(pattern: &Ty, actual: &Ty, out: &mut collections::BTreeMap<String, Ty>) {
