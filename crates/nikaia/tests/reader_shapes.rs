@@ -113,3 +113,37 @@ fn the_characters_of_a_text_are_listed_at_their_size() {
     assert!(rust.contains("nikaia_std::list::chars("), "{rust}");
     assert_eq!(ran("chars", source), "5 é\n");
 }
+
+/// **A part an arm binds `ref` is handed on as it is** (`open-work.md` 2.52):
+/// ADR-242 binds `key` as a view where the arm only reads it, so a call that
+/// lends it writes `key` and not `&key`, a view of a view.
+#[test]
+fn a_part_bound_as_a_view_is_lent_as_it_is() {
+    let source = r#"enum Line {
+    Pair { key: String, value: String },
+    Skip,
+}
+
+fn shout(text: ref String) -> String {
+    return text.to_uppercase()
+}
+
+fn main() {
+    let mut lines = [Line::Pair { key: "a", value: "b" }, Line::Skip]
+    for one in lines.drain() {
+        match one {
+            Line::Pair { key, value } => {
+                let said = shout(key)
+                println(f"{said}={shout(value)}")
+            }
+            Line::Skip => {}
+        }
+    }
+}
+"#;
+    let rust = lowered("ref-part", source);
+    assert!(rust.contains("ref key"), "{rust}");
+    assert!(!rust.contains("shout(&key)"), "{rust}");
+    assert!(!rust.contains("shout(&value)"), "{rust}");
+    assert_eq!(ran("ref-part", source), "A=B\n");
+}

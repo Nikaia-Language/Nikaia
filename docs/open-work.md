@@ -817,15 +817,6 @@ left side, so a program that reuses the name writes `.clone()`. Each is a
 position the checker walks with the answer in hand; the emitter's half is
 built.
 
-### 2.52. An arm's binding that is bound `ref` is lent again
-
-[ADR-242](specification/adr/adr-242.md) binds a `match` arm's names as views
-where the arm only reads them (`Line::Pair { ref key, ref value }`). A call
-that lends such a name writes `&key`, which is a view of a view: the same code
-below, and `clippy::needless_borrow` about it, which `nikaia-std`'s `tools`
-allow since `ledger.nika`'s reader (0.0.292). The checker knows the binding
-is a view (`lent_bindings`), so the call can know it too.
-
 ## 3. Upkeep
 
 A page that says something a later decision made false.
