@@ -27,6 +27,18 @@
 // read: it reaches everything, and stays where it was written.
 
 use anyhow::{Result, anyhow};
+pub use nikaia_std::tools::ty::Touch;
+
+/// **The order a set of touches is kept and written in**: the kind, then the
+/// parameter (none first), then read before write - the order the derive gave
+/// while `Touch` was Rust, spelled out now that it is Nikaia's, which has no
+/// order of its own (ADR-204 §4). A ledger written before and after reads the
+/// same.
+type TouchKey = (String, Option<String>, bool);
+
+fn order_of(touch: &Touch) -> TouchKey {
+    (touch.kind.clone(), touch.parameter.clone(), touch.write)
+}
 
 /// Every resource a `touches` entry may name (ADR-033 D2).
 ///
@@ -157,43 +169,17 @@ fn family(kind: &str) -> &str {
         .unwrap_or(kind)
 }
 
-/// One resource an operation reaches.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Touch {
-    /// What kind of thing - one of [`KINDS`], or a word this compiler does not
-    /// know.
-    ///
-    /// Two touches of *different* kinds never conflict, which is the cheap half
-    /// of the rule and the half that does most of the work. It is also why an
-    /// unknown kind may not simply be carried along: it would be *different*
-    /// from every kind there is, and therefore disjoint from all of them.
-    /// [`Touch::kind_is_known`] is the question, and `contracts::order` refuses
-    /// the whole entry where the answer is no (ADR-033 D4).
-    pub kind: String,
-    /// The parameter that names which one - `file(path)` is the file named by
-    /// the argument passed for `path`.
-    ///
-    /// `None` where the kind names the resource on its own: there is one
-    /// `stdout`, so `stdout` needs no argument to say which.
-    pub parameter: Option<String>,
-    /// Whether it changes the resource. Two reads never conflict - the same
-    /// rule a processor applies to two loads.
-    pub write: bool,
+/// What stays Rust of a [`Touch`] (ADR-257 step (b)): reading one back, and
+/// the list of kinds this compiler knows. The declaration and `text` are
+/// `tools/ty.nika`'s.
+pub trait TouchOps: Sized {
+    fn parse(text: &str) -> Result<Self>;
+    fn kind_is_known(&self) -> bool;
 }
 
-impl Touch {
-    /// Whether this touch is a **lock**
-    /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D2).
-    ///
-    /// What hangs on it is whether a callee could write a stamped value into
-    /// the lock it reaches: one that touches none cannot, so a `Seen` passes
-    /// through it and comes out stamped.
-    pub fn names_a_lock(&self) -> bool {
-        self.kind == "lock"
-    }
-
+impl TouchOps for Touch {
     /// Read one back from the text a ledger writes.
-    pub fn parse(text: &str) -> Result<Touch> {
+    fn parse(text: &str) -> Result<Touch> {
         let text = text.trim();
         let (resource, access) = text.rsplit_once(' ').ok_or_else(|| {
             anyhow!("a touch is `resource read` or `resource write`, found `{text}`")
@@ -237,16 +223,8 @@ impl Touch {
     /// library's forward step into a build failure. D4 already says what to do
     /// with an effect that cannot be read, and it is the same answer here as
     /// everywhere else: it reaches everything, so the statement stays put.
-    pub fn kind_is_known(&self) -> bool {
+    fn kind_is_known(&self) -> bool {
         KINDS.contains(&self.kind.as_str())
-    }
-
-    pub fn text(&self) -> String {
-        let access = if self.write { "write" } else { "read" };
-        match &self.parameter {
-            Some(parameter) => format!("{}({parameter}) {access}", self.kind),
-            None => format!("{} {access}", self.kind),
-        }
     }
 }
 
@@ -467,7 +445,7 @@ struct Reach {
     /// is *"nobody said"*. The claim is off and no fixpoint brings it back.
     unknown: bool,
     /// What it reaches directly, through callees a library describes.
-    outside: BTreeSet<Touch>,
+    outside: BTreeMap<TouchKey, Touch>,
     /// The functions in this **package** it calls — every unit of it, since
     /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Its claim holds
     /// only while theirs do.
@@ -604,7 +582,7 @@ pub fn infer(
         if !holds {
             continue;
         }
-        let mut found: BTreeSet<Touch> = BTreeSet::new();
+        let mut found: BTreeMap<TouchKey, Touch> = BTreeMap::new();
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut todo = vec![*name];
         while let Some(here) = todo.pop() {
@@ -614,14 +592,14 @@ pub fn infer(
             let Some(reach) = graph.get(here) else {
                 continue;
             };
-            found.extend(reach.outside.iter().cloned());
+            found.extend(reach.outside.iter().map(|(k, t)| (k.clone(), t.clone())));
             todo.extend(reach.calls.iter().map(|c| c.as_str()));
         }
         if let Some(contract) = ledger.functions.get_mut(*name) {
             // **Only where nobody said.** A hand-written entry is what its
             // author wrote, the way `sync::infer` leaves an assertion alone.
             if !contract.touches_known {
-                contract.touches = found.into_iter().collect();
+                contract.touches = found.into_values().collect();
                 contract.touches_known = true;
             }
         }
@@ -708,7 +686,7 @@ fn absorb(contract: Option<&crate::contracts::FnContract>, reach: &mut Reach) {
         match touch.parameter {
             Some(_) => reach.unknown = true,
             None => {
-                reach.outside.insert(touch.clone());
+                reach.outside.insert(order_of(touch), touch.clone());
             }
         }
     }

@@ -52,6 +52,7 @@
 // **The buffer table is not here either** (D4). Its shape is a fact about a
 // container's representation, and this file writes no representation.
 
+pub use nikaia_std::tools::ty::{Held, State};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Item, Type};
@@ -66,54 +67,13 @@ use super::{INPUT, Ledger};
 /// same position read by two analyses.
 pub const RESULT: &str = "<result>";
 
-/// One of Part I 6.6's states, as far as this analysis assigns them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum State {
-    /// A plain reference into a buffer that outlives every use. Costs nothing.
-    Borrowed,
-    /// The value outlives the scope that owns its buffer, so the buffer has to
-    /// be kept alive with it. **Not built** — a program that reaches this state
-    /// is refused today.
-    Tethered,
+/// What stays Rust of a [`Held`] (ADR-257 step (b)): reading one back.
+pub trait HeldOps: Sized {
+    fn parse(text: &str) -> Option<Self>;
 }
 
-impl State {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            State::Borrowed => "borrowed",
-            State::Tethered => "tethered",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<State> {
-        match text.trim() {
-            "borrowed" => Some(State::Borrowed),
-            "tethered" => Some(State::Tethered),
-            _ => None,
-        }
-    }
-
-    /// The lattice's join: the wider of the two.
-    pub fn or(self, other: State) -> State {
-        self.max(other)
-    }
-}
-
-/// One view position in a signature, and the state it solved to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Held {
-    /// A parameter's name, `self`, or [`RESULT`].
-    pub position: String,
-    pub state: State,
-}
-
-impl Held {
-    /// `path: borrowed`, the shape a `sharing` class is written in.
-    pub fn text(&self) -> String {
-        format!("{}: {}", self.position, self.state.as_str())
-    }
-
-    pub fn parse(text: &str) -> Option<Held> {
+impl HeldOps for Held {
+    fn parse(text: &str) -> Option<Held> {
         let (position, state) = text.rsplit_once(':')?;
         Some(Held {
             position: position.trim().to_string(),

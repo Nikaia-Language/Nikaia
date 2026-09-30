@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.289] — 2026-09-30
+
+**The ledger's small records are Nikaia** (ADR-257 step (b)), and a field on
+the left of `??` is a place. The toolchain is 5.1 % Nikaia.
+
+- `tools/ty.nika` declares `Provenance`, `Sync`, `Lock`, `Crosses`,
+  `Threads`, `Touch`, `State`, `Held`, `Count`, `Class`, `FieldContract`,
+  `VariantContract` and `ConfigContract`, with the methods that say them
+  (`as_str`, `text`, `join`, `or`, `holds`, `may`). Reading their text back
+  stays Rust behind `*Ops` traits until the text form moves.
+- **What the Rust derived and the language does not give is written where it
+  is used**, as what the derive meant. `Default`: the named variant
+  (`Lock::No`, `Count::Atomic`, …) and hand-written `Default`s on
+  `FnContract`, `TypeContract` and one of `locks`' own records. `Ord`: three
+  places needed it, and each now says its key (touches by kind, parameter and
+  access; classes by members and `Count::rank`; `join` and `or` as a
+  `match`). The order is the derive's, so no ledger byte changes. Whether a
+  declared type has an order stays ADR-204 §4's open question.
+- **Defect the move found:** `self.parameter ?? ""` inside a `ref self`
+  method moved a field out of a borrowed value, and `rustc` refused the file.
+  A field on the left of `??` is a place now, as a name is (ADR-259): lent
+  where the answer is only read (`self.parameter.as_deref()`), and `NK2106`
+  where it is kept, with the copy as the way out.
+
 ## [0.0.288] — 2026-09-30
 
 **`??` lends its left side where the answer is only read** (ADR-259), the

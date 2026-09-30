@@ -59,6 +59,7 @@ use crate::parser::Parsed;
 
 use super::Ledger;
 use super::touch::Reached;
+use crate::contracts::touch::TouchOps;
 
 /// One statement, reduced to what deciding an order needs.
 #[derive(Debug, Clone)]

@@ -5226,7 +5226,7 @@ impl<'p> Emitter<'p> {
         self.shared
             .get(&format!("{function}::{value}"))
             .copied()
-            .unwrap_or_default()
+            .unwrap_or(crate::contracts::sharing::Count::Atomic)
     }
 
     /// A type, with the atomic floor for any `Shared` inside it.

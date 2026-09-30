@@ -103,13 +103,24 @@ pub fn free_calls(parsed: &Parsed, body: &Block) -> BTreeSet<String> {
 }
 
 /// What one body reaches, before the fixpoint.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Reaches {
     /// What the body says on its own: a door it opens, or the doubt an
     /// unresolvable call leaves.
     itself: Lock,
     /// The functions it calls, by the key the ledger records them under.
     callees: BTreeSet<String>,
+}
+
+/// Written out because [`Lock`] is Nikaia's, which names its value rather
+/// than deriving a `Default` (ADR-252 D4.4).
+impl Default for Reaches {
+    fn default() -> Self {
+        Reaches {
+            itself: Lock::No,
+            callees: Default::default(),
+        }
+    }
 }
 
 /// Give every function of this package its `touches_a_lock`.
