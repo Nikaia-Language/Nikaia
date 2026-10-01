@@ -81,7 +81,7 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     ListLit { items: Vec<Expr>, at: u32 },
     LitStr { text: String, at: u32 },
-    LitInterpolated { text: String, parts: Vec<FPart> },
+    LitInterpolated { parts: Vec<FPart> },
     LitChar(String),
     LitBool(bool),
     LitNull,
@@ -120,7 +120,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FPart {
     Text(String),
-    Hole { expr: Expr, spec: Option<String> },
+    Hole { expr: Expr, spec: Option<String>, at: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq)]

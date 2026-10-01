@@ -1149,11 +1149,17 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
             names_in(parsed, expr, out);
             names_in_block(parsed, handler, out);
         }
-        // The holes of an `f"…"` are Nikaia this has not parsed, and a `dsl`
-        // body is a foreign syntax whose actions are Nikaia too. Every word in
-        // the raw text counts, which finds every name they could hold and a
-        // good many they could not.
-        Expr::LitInterpolated { text, .. } => words_in(text, out),
+        // The holes of an `f"…"` are the grammar's (ADR-262 D2), walked like
+        // any other expression. A `dsl` body is a foreign syntax whose actions
+        // are Nikaia too: every word in its raw text counts, which finds every
+        // name they could hold and a good many they could not.
+        Expr::LitInterpolated { parts } => {
+            for part in parts {
+                if let crate::ast::FPart::Hole { expr, .. } = part {
+                    names_in(parsed, expr, out);
+                }
+            }
+        }
         Expr::Dsl {
             target,
             context,

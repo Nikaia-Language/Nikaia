@@ -405,10 +405,8 @@ pub enum Expr {
     /// **The grammar parses its holes** ([ADR-262](../../../docs/specification/adr/adr-262.md)
     /// D1, D2): `parts` is the body as text runs and holes, and a hole is an
     /// expression of the tree like any other - a walk sees it without parsing
-    /// anything. `text` is the body as written, kept until the emitter builds
-    /// from the parts (D5).
+    /// anything, and the emitter builds the format string from the parts (D5).
     LitInterpolated {
-        text: String,
         parts: Vec[FPart],
     },
     /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
@@ -688,12 +686,14 @@ pub enum Expr {
 
 /// **One piece of an `f"…"`** ([ADR-262](../../../docs/specification/adr/adr-262.md)
 /// D2): a run of text, as written - escapes and `{{` kept - or a hole, an
-/// expression and what follows its `:`.
+/// expression and what follows its `:`, with the byte its `{` stands at, which
+/// is what a reader of one hole finds it again by.
 pub enum FPart {
     Text(String),
     Hole {
         expr: Expr,
         spec: String?,
+        at: u32,
     },
 }
 

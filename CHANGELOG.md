@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.331] — 2026-10-01
+
+**The emitter builds an `f"…"` from its parts** (#107, ADR-262 D5). The format
+string is the text runs as written and `{}` or `{:spec}` per hole
+(`emit::format_of`); the body as written is gone from the tree
+(`Expr::LitInterpolated { parts }`), and with it `emit::interpolation`, the
+scanner that found holes in text. A hole carries the byte its `{` stands at,
+which is what the tier pass's wraps are keyed by now - per hole, where the
+hole's text was shared by every hole that read the same. The Rust emitted for
+`benches/template.nika`, `page.nika`, `jumps.nika`, `awaits.nika` and
+`examples/1brc.nika` is byte for byte what it was, so they measure the same.
+
 ## [0.0.330] — 2026-10-01
 
 **The grammar parses the holes of an `f"…"`** (#107, ADR-262 D1-D4). `f"…"`

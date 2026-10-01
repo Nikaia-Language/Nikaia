@@ -323,9 +323,9 @@ struct Flows {
     /// published parameter whose value leaves through something fixed is
     /// fixed with it.
     param_into: BTreeSet<(Position, Position)>,
-    /// The same inside an `f"…"` hole, by the hole's text and the value's
+    /// The same inside an `f"…"` hole, by the hole's place and the value's
     /// shape (ADR-229 D1).
-    hole_wraps: BTreeMap<String, BTreeSet<(String, Hand)>>,
+    hole_wraps: BTreeMap<u32, BTreeSet<(String, Hand)>>,
     /// Two positions a whole value goes between - a list handed back, handed
     /// over, or bound - which are therefore one representation below, and get
     /// one tier (ADR-224 D3).
@@ -379,9 +379,9 @@ struct Walk<'d, 'p> {
     result: Option<String>,
     /// Inside an `f"…"` hole (see [`Flows::unwrappable`]).
     in_hole: bool,
-    /// The text of the hole being walked, where it is one this pass can hand
-    /// a value over in (ADR-229 D1).
-    hole_text: Option<String>,
+    /// The place of the hole being walked - the byte its `{` stands at -
+    /// where it is one this pass can hand a value over in (ADR-229 D1).
+    hole_text: Option<u32>,
 }
 
 impl Walk<'_, '_> {
@@ -662,11 +662,11 @@ impl Walk<'_, '_> {
     /// pass can rewrite the program, by the hole's text and the value's shape
     /// inside an `f"…"` hole (ADR-229 D1).
     fn hand_over(&mut self, value: &Expr, hand: Hand) {
-        match &self.hole_text {
-            Some(text) if self.in_hole => {
+        match self.hole_text {
+            Some(at) if self.in_hole => {
                 self.flows
                     .hole_wraps
-                    .entry(text.clone())
+                    .entry(at)
                     .or_default()
                     .insert((crate::check::argument_shape(value), hand));
             }
@@ -979,14 +979,11 @@ impl Walk<'_, '_> {
             // **And a value handed over inside one is handed over there**
             // ([ADR-229](../../docs/specification/adr/adr-229.md) D1): each hole
             // is walked with its text, which is what the wrap is recorded by.
-            Expr::LitInterpolated {
-                text: literal,
-                parts,
-            } => {
+            Expr::LitInterpolated { parts } => {
                 let outer = std::mem::replace(&mut self.in_hole, true);
-                // The holes the grammar parsed (ADR-262 D2), each with its text.
-                for (text, hole) in crate::emit::interpolated_holes(literal, parts) {
-                    let held = self.hole_text.replace(text);
+                // The holes the grammar parsed (ADR-262 D2), each by its place.
+                for (at, hole) in crate::emit::interpolated_holes(parts) {
+                    let held = self.hole_text.replace(at);
                     self.expr(hole);
                     self.hole_text = held;
                 }
@@ -1470,12 +1467,12 @@ pub fn refine(parsed: &mut Parsed) {
     parsed.hole_wraps = flows
         .hole_wraps
         .iter()
-        .map(|(text, wraps)| {
+        .map(|(at, wraps)| {
             let wraps = wraps
                 .iter()
                 .map(|(shape, hand)| (shape.clone(), into[*hand as usize]))
                 .collect();
-            (text.clone(), wraps)
+            (*at, wraps)
         })
         .collect();
     rewrite(parsed, &tiers, &lets, text, &flows.wraps, into);
