@@ -425,9 +425,8 @@ A claim whose branch is abandoned is deleted by whoever notices.
 is the one that gets forgotten, because nothing catches it. A renumbered record
 keeps a working link from every sentence that cited its old number, so
 `check-adr-refs.py` stays quiet while the sentence now points at whatever record
-took the number. Two such sentences were found in the former backlog file by reading them:
-both said *"ADR-073 D4"* about a `break`, and ADR-073's D4 is about whether a
-type may be written.
+took the number. For example, two sentences said *"ADR-073 D4"* about a `break` after a
+renumbering, and ADR-073's D4 is about whether a type may be written.
 
 **A guard for this was measured and not built.** The one mechanical shape
 available — *a sentence naming an `NK` code and an ADR should name the ADR that
