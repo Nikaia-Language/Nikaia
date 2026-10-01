@@ -118,8 +118,8 @@ pub struct Reads {
     /// `None` is D1, and D1 is the default.
     list: Option<Allowlist>,
     /// **Where this build compiles the parsers it runs**
-    /// ([`crate::grammar_run`], [`open-work.md`](../../../docs/open-work.md)
-    /// §2.9).
+    /// ([`crate::grammar_run`], issue #178
+    /// issue #178).
     ///
     /// Here rather than threaded a second time through the same six
     /// signatures, and it belongs with the reads for the reason they belong

@@ -77,7 +77,7 @@ enum Flow {
 /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5) — an integer, a
 /// `bool`, a **list** of them, and **text**.
 ///
-/// **The array is the aggregate `open-work.md` §2.8 was about**, and it is an
+/// **The array is the aggregate issue #174 was about**, and it is an
 /// array rather than a `Vec` for the reason that entry gives from the other
 /// side: a `Vec` allocates and a `const` cannot hold one, where `[T; N]` is
 /// exactly what one holds ([ADR-152](../../../docs/specification/adr/adr-152.md)).
@@ -221,7 +221,7 @@ pub enum Refusal {
     /// differs per shape, so the sentence is the checker's to write.
     MayNotRead { path: String, why: Denied },
     /// **A grammar this compiler could not run**
-    /// ([`open-work.md`](../../../docs/open-work.md) §2.9).
+    /// (issue #178).
     ///
     /// Six reasons and one variant, because the sentence is the checker's to
     /// write and they share nothing but the code: a parser that did not compile
@@ -523,7 +523,7 @@ impl<'a> BuildTime<'a> {
             }
             Expr::MethodCall { method, .. } => Err(self.no_method_here(*method)),
             // **A grammar's entry, run by compiling the parser it generates**
-            // ([`open-work.md`](../../../docs/open-work.md) §2.9, Part II
+            // (issue #178, Part II
             // 10.2 A). `Json::value(asset("config.json"))` says *when* with the
             // `comptime` around it, *where the bytes come from* with `asset`,
             // and *what is done with them* here.
@@ -862,7 +862,7 @@ impl<'a> BuildTime<'a> {
         }
     }
     /// **A grammar, run while the program is built**
-    /// ([`open-work.md`](../../../docs/open-work.md) §2.9).
+    /// (issue #178).
     ///
     /// Not interpreted: the generated parser is compiled and run, so there is
     /// one implementation of the grammar language and Part II 10.2's *the same
@@ -988,7 +988,7 @@ impl<'a> BuildTime<'a> {
             // never will be, because half of it is Rust
             // ([ADR-014](../../../docs/specification/adr/adr-014.md)).
             //
-            // Reimplementing one here is the thing `open-work.md` §2.9 argues
+            // Reimplementing one here is the thing issue #178 argues
             // against one construct over: two implementations of one meaning
             // is a promise that becomes a hope.
             return Err(Refusal::NotHere {
@@ -1353,7 +1353,7 @@ impl<'a> BuildTime<'a> {
 
     /// A `for` over a range, which is the one shape a build-time loop has: a
     /// list needs a value this evaluator does not carry yet, and that is
-    /// `docs/open-work.md` §2.9's next step rather than this one's.
+    /// issue #178's next step rather than this one's.
     fn walk(
         &mut self,
         bindings: &[winnow_grammar::Symbol],
@@ -1554,7 +1554,7 @@ pub fn an_escape_nothing_names(literal: &str) -> Option<Refused> {
 /// rather than by a page here. Measured: `println("a\qb")` is *unknown
 /// character escape: `q`* — on the `.nika` line, which is
 /// [ADR-012](../../../docs/specification/adr/adr-012.md)'s source map working,
-/// and in `rustc`'s vocabulary, which is `open-work.md`'s.
+/// and in `rustc`'s vocabulary, which is issue #197's.
 ///
 /// So this is a **faithful reading** and not a second definition. `None` where
 /// the escape is one `rustc` would reject: that program does not compile either

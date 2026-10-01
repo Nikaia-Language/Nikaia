@@ -256,7 +256,7 @@ fn a_head_nothing_declares_is_its_own_refusal() {
 }
 
 /// **Every head the corpus writes still passes**, which is the measurement
-/// `open-work.md`'s entry rested on: seven distinct paths used as values, each
+/// issue #141's entry rested on: seven distinct paths used as values, each
 /// either a variant of an enum the program declares or a key a ledger records.
 ///
 /// And the three the entry named as the reason to fail open — a module of this

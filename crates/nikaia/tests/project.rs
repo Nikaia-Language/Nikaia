@@ -686,7 +686,7 @@ fn compiled_stds(cache: &Path) -> BTreeMap<PathBuf, Option<std::time::SystemTime
     found
 }
 
-/// **The explain modes reach a project build** (`docs/open-work.md`, since closed).
+/// **The explain modes reach a project build** (issue #210, since closed).
 ///
 /// `--sharing`'s own help says why they exist: there is no way to *ask* for the
 /// cheaper reference count, every fallback is enumerated instead, and *"that is
@@ -1059,7 +1059,7 @@ fn arithmetic_in_a_package_aborts_like_the_programs_own() {
 
 /// **A trait a package publishes, implemented by a body that calls back into
 /// that package** ([ADR-100](../../../docs/specification/adr/adr-100.md) D1,
-/// D5) — the shape `open-work.md` carried as a defect for as long as the entry
+/// D5) — the shape issue #228 carried as a defect for as long as the entry
 /// existed.
 ///
 /// It was `NK1129`: *"`Fixed::greet` can pause, and `lib::Greeter` declares it
@@ -1828,7 +1828,7 @@ fn ask(address: &str, request: &[u8]) -> (String, String) {
 ///
 /// The body is a struct literal rather than a call to `handler::plain()`, and
 /// that is not tidiness: a call out of the unit is `NK1129` today
-/// (`open-work.md`, *a `sync` body is refused as pausing when the call leaves
+/// (issue #228, *a `sync` body is refused as pausing when the call leaves
 /// the unit*), so a fixture that made one would be testing two things and
 /// failing for the other.
 #[test]
@@ -1977,7 +1977,7 @@ fn a_hand_edited_dependency_ledger_is_repaired_before_it_is_read() {
 /// test depends on the order two processes reach a write.
 ///
 /// **It runs in every sweep again** (0.0.215). It was `#[ignore]`d while
-/// `docs/open-work.md` §3.1 said it flaked inside a fully parallel `-p nikaia`
+/// issue #201 said it flaked inside a fully parallel `-p nikaia`
 /// run; measured again, it passed in two full parallel sweeps, in the first run
 /// after a rebuild and beside the tests that share Cargo's package cache, and
 /// without [ADR-166](../../../docs/specification/adr/adr-166.md) D1 it still
@@ -2076,7 +2076,7 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
         "the parse happened while the program was built: {}",
         said(&ran)
     );
-    // **And the backend has nothing to say about it** (0.0.230, `open-work.md` §1.20 before it):
+    // **And the backend has nothing to say about it** (0.0.230, issue #163 before it):
     // the expansion tests `feature = "trace"` in this crate, and the generated
     // manifest declares it, so `rustc` has no unexpected `cfg` to warn about.
     let stderr = String::from_utf8_lossy(&ran.stderr);
@@ -2224,7 +2224,7 @@ fn a_head_the_next_file_declares_is_not_refused() {
 
 /// **A grammar entry in tail position over a local that owns its input**
 /// ([ADR-185](../../../docs/specification/adr/adr-185.md) D2, closing
-/// `open-work.md`'s entry for it at 0.0.136).
+/// issue #139's entry for it at 0.0.136).
 ///
 /// The lowering of an entry is a block holding `let _source = &*data` and a
 /// stream over it. In `Ok({ … }?)` those temporaries live to the end of the
@@ -2344,7 +2344,7 @@ fn a_bound_takes_a_path_across_a_package() {
 /// **A bound a package declares is checked at a consumer's call**
 /// ([ADR-205](../../../docs/specification/adr/adr-205.md) D1).
 ///
-/// It was the one thing left in `open-work.md` §1: `Checker::declared_bounds` is
+/// It was the one thing left in issue #162: `Checker::declared_bounds` is
 /// built from the AST of the unit being checked, under the key a call in *that*
 /// unit resolves to, and a call written `handler::dispatch` resolves to a key no
 /// unit's AST produced. So what a reader got was the backend's words on their own
@@ -2362,7 +2362,7 @@ fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
         "pub struct Answer {\n         \x20   pub text: String,\n         }\n         \n         pub trait Handler {\n         \x20   fn handle(ref self) -> Answer\n         }\n         \n         pub fn dispatch[H: Handler](h: H) -> String {\n         \x20   return h.handle().text\n         }\n",
     );
 
-    // **The type that implements nothing**, which is the shape §1.10 recorded.
+    // **The type that implements nothing**, which is the shape issue #162 recorded.
     let refused = a_program_and_a_package(
         "package-bound-refused",
         "handler",
@@ -2569,7 +2569,7 @@ fn a_type_that_implements_nothing_is_refused_at_a_path_bound() {
 }
 
 /// **A package's own bound is answered in the package's own namespace**
-/// ([`open-work.md`](../../../docs/open-work.md) §1.9, closed).
+/// (issue #159, closed).
 ///
 /// `pub fn dispatch[H: Handler](h: H)` compiled on its own and was `NK1126` —
 /// *nothing says it has a method* — the moment a program depended on the
@@ -2800,7 +2800,7 @@ fn a_boundary_mismatch_names_the_description_to_redo() {
 }
 
 /// **A text literal handed to a Rust crate's generic parameter is a `String`**
-/// (0.0.230, `open-work.md` §1.19 before it).
+/// (0.0.230, issue #155 before it).
 ///
 /// `examples/foreign-runtime/serve` stopped building when a literal began
 /// lowering as `&str`: `across_a_thread<T: Describe>(value: T)` has `Describe`

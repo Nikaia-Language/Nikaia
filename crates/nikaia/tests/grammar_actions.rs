@@ -77,8 +77,8 @@ fn a_pausing_call_in_a_folds_step_is_refused() {
     );
 }
 
-/// **A pause reached through a method on the accumulator** (0.0.230, `open-work.md`
-/// §1.17). The step's parameters had no type, so `acc.record(m)` resolved to
+/// **A pause reached through a method on the accumulator** (0.0.230, issue #160
+/// issue #160). The step's parameters had no type, so `acc.record(m)` resolved to
 /// nothing and a pausing `record` compiled into a future the fold dropped: the
 /// parse counted nothing. The accumulator is typed from `init` - here a type's
 /// name, which is its constructor - and the item from the rule it folds.

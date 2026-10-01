@@ -3,7 +3,7 @@
 Written at the end of a session that could not finish, because the change it
 depends on lived in a repository that session had no push access to. That
 change is merged and Nikaia is on it. What is still open is one entry in
-[`open-work.md`](open-work.md); what is here is how to work on this area and
+[[#105](https://github.com/Nikaia-Language/Nikaia/issues/105)](https://github.com/Nikaia-Language/Nikaia/issues); what is here is how to work on this area and
 what has already been measured. Read this file first before touching the parser
 backend.
 
@@ -232,7 +232,7 @@ is left is 3 and 4, and neither is a performance question.
    one so the join is checked rather than assumed on that day.
 
 4. **What `fortunes.nika` waits on — moved.** G7 is built; the two runtime pieces
-   that are left are an entry in [`open-work.md`](open-work.md), because open work
+   that are left are an entry in [[#105](https://github.com/Nikaia-Language/Nikaia/issues/105)](https://github.com/Nikaia-Language/Nikaia/issues), because open work
    belongs in the list of open work and this file is a guide to the parser
    backend. Kept below for the reasoning, which is not repeated there.
    [ADR-017](specification/adr/adr-017.md) is implemented: `dsl html { … } eod`

@@ -622,7 +622,7 @@ fn reads_for(layout: &Layout, allowlist: Option<&Path>) -> Result<assets::Reads>
         Some(list) => assets::Reads::with(&layout.root, assets::Allowlist::read(list)?),
         None => assets::Reads::at(&layout.root),
     };
-    // **Where a grammar's parser is compiled** (`open-work.md` §2.9). Beside
+    // **Where a grammar's parser is compiled** (issue #178). Beside
     // the cache rather than under the root, which is the rule that file already
     // keeps: a loose `.nika` outside a project has nothing written next to it.
     Ok(reads.building_in(layout.store.with_file_name("build-time")))
@@ -753,7 +753,7 @@ pub fn lower_reading(
                 reads: &reads,
             };
             // **A dependency's unit is checked as its own package writes it**
-            // ([`open-work.md`](../../docs/open-work.md) §1.9). The program's
+            // (issue #159). The program's
             // contracts are the right ledger for the program's own files and the
             // wrong one for a package's: absorbing qualified its keys *and the
             // types inside them*, and the package's file writes the bare word.
@@ -954,7 +954,7 @@ impl Foreign {
     /// crate word in front of them, `std`'s carry a module's, and no manifest in
     /// this repository declares a crate whose word is one of `std`'s modules.
     /// The day one does, that is a refusal to write and not a silence to keep —
-    /// `docs/open-work.md` carries it.
+    /// issue #100 carries it.
     pub fn library(&self) -> Result<Ledger> {
         let mut library = crate::contracts::std_library();
         for (name, contract) in &self.descriptions.functions {
@@ -2914,7 +2914,7 @@ pub fn runtime_dependencies_for(rust: &str) -> Vec<(String, String)> {
 /// expansion writes `#[cfg(feature = "trace")]` into the crate that invokes it,
 /// so that crate is the one that has to declare `trace`, or every build of a
 /// program with a `grammar` carries `rustc`'s *unexpected `cfg` condition
-/// value* (0.0.230, `open-work.md` §1.20 before it). It forwards to `winnow-grammar`'s
+/// value* (0.0.230, issue #163 before it). It forwards to `winnow-grammar`'s
 /// own `trace`, as `nikaia` and `nikaia-std` do, so turning it on traces the
 /// parser end to end.
 fn runtime_features(dependencies: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Vec<String>> {
@@ -3181,7 +3181,7 @@ mod tests {
     }
 
     /// A `grammar!` expansion tests `feature = "trace"` in the crate that
-    /// invokes it, so that crate declares it (0.0.230, `open-work.md` §1.20 before it), forwarding
+    /// invokes it, so that crate declares it (0.0.230, issue #163 before it), forwarding
     /// to `winnow-grammar`'s. A program without a grammar declares no feature.
     #[test]
     fn a_program_with_a_grammar_declares_trace() {

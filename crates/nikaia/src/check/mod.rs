@@ -1914,7 +1914,7 @@ pub fn propagation_against(
     // (`project::Foreign::library`, `std` winning a collision): what a call
     // into `hyper_shim` keeps decides how its argument is written, and a walk
     // that could not resolve the callee lowered a literal it had been told to
-    // build as text of its own (0.0.230, `open-work.md` §1.19 before it).
+    // build as text of its own (0.0.230, issue #155 before it).
     for (name, contract) in &described.functions {
         library
             .functions
@@ -4223,7 +4223,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **A fold's `init`, `step` and `merge`, typed** (0.0.230, `open-work.md` §1.17
+    /// **A fold's `init`, `step` and `merge`, typed** (0.0.230, issue #160
     /// before it).
     ///
     /// The step is handed the accumulator `init` builds and one item of the
@@ -4887,7 +4887,7 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// **A lookup's key is lent** (0.0.235, `open-work.md` §1.21).
+    /// **A lookup's key is lent** (0.0.235, issue #169).
     ///
     /// `m.get(k)`, `m.contains_key(k)` and a set's `contains(k)` and
     /// `remove(k)` take the key by reference in the language below, and a
@@ -5703,7 +5703,7 @@ impl<'a> Checker<'a> {
         // **And a view of any other named type**, read the same way: `*op ==
         // UnaryOp::Neg` is `PartialEq::eq(&*op, …)` below and moves nothing,
         // where `op == UnaryOp::Neg` compared a `&UnaryOp` with a `UnaryOp` -
-        // found moving `fold` into Nikaia (`open-work.md` §1.31). Text is left
+        // found moving `fold` into Nikaia (issue #171). Text is left
         // alone: the language below compares a `&str` with a `String` as it is.
         let a_view_of_a_type = |ty: &Ty| {
             matches!(ty, Ty::Named { name, view: true, .. }
@@ -5964,7 +5964,7 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK1125",
             // **A `?` whose inside has no type is not written `??`**
-            // (0.0.230, `open-work.md` §1.18 before it): that is the operator, and a reader told
+            // (0.0.230, issue #154 before it): that is the operator, and a reader told
             // "`??` may be absent" is told about the wrong thing. What is known
             // is that the value may be absent, so that is what is said.
             message: match on {
@@ -7043,7 +7043,7 @@ impl<'a> Checker<'a> {
     /// *type* the place ([`Checked::lent_lets`]), and where it could not, the
     /// written `&` is the program's only way to say what the line means — so
     /// refusing it there would take away the escape hatch before the inference
-    /// that replaces it exists. `open-work.md` carries that as the rest of D4.
+    /// that replaces it exists. issue #96 carries that as the rest of D4.
     fn the_caller_writes_no_reference(&mut self, value: &Expr, span: &Span, because: &str) {
         if !matches!(
             value,
@@ -7202,7 +7202,7 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// **A `mut` parameter given away whole** (`open-work.md` §1.30, Part I
+    /// **A `mut` parameter given away whole** (issue #161, Part I
     /// 6.6): it is passed as `ref mut`, so the function borrows it as a method
     /// borrows `ref self`, and giving it away is [`Self::a_field_of_a_borrowed_subject`]'s
     /// shape one position over. `store(mut out: Vec[String])` then
@@ -7809,8 +7809,8 @@ impl<'a> Checker<'a> {
             // key a call in *that* unit resolves to; a call written
             // `handler::dispatch` resolves to a key no unit's AST produced, and
             // what the bound was came back as `rustc`'s words about the type
-            // this program picked ([`open-work.md`](../../docs/open-work.md)
-            // §1.10).
+            // this program picked (issue #162
+            // issue #162).
             None => match self.bounds_in_a_signature(key) {
                 Some(wanted) => wanted,
                 None => return,
@@ -8054,7 +8054,7 @@ impl<'a> Checker<'a> {
     /// literal has no type of its own on purpose: `Expr::LitInt` answers
     /// `Unknown`, so `add(3)` is right wherever the parameter is numeric, and
     /// `let m = 3000000000` is a correct program where the next line passes `m`
-    /// to an `i64` (Part I 2.4, and `docs/open-work.md`'s out-of-range literal).
+    /// to an `i64` (Part I 2.4, and issue #142's out-of-range literal).
     /// So the places are an
     /// annotated `let`, a `return` against a declared result, and an argument
     /// whose parameter says what it takes.
@@ -8617,7 +8617,7 @@ impl<'a> Checker<'a> {
     /// Nikaia line the table names (ADR-044). Only a zero it can *prove* is
     /// refused.
     /// **`NK1116` at the operation that overflows**, wherever it stands
-    /// (0.0.251, `open-work.md` §1.27): in an `f"…"` hole, a condition, a list,
+    /// (0.0.251, issue #176): in an `f"…"` hole, a condition, a list,
     /// a receiver - not only where a `let`, a `return` or a parameter stands
     /// beside it. Where a name pinned the type
     /// ([ADR-063](../../docs/specification/adr/adr-063.md) D2) the operation
@@ -8654,7 +8654,7 @@ impl<'a> Checker<'a> {
         // names the cause. **Asked before the pinned type**, which an open
         // number never has: `a + a - a` for `let a = 2000000000` recorded the
         // result and not the step, and the step is what the language below
-        // refuses (`open-work.md` §1.32).
+        // refuses (issue #170).
         let mut open = Vec::new();
         self.open_numbers_in(lhs, &mut open);
         self.open_numbers_in(rhs, &mut open);
@@ -9635,7 +9635,7 @@ impl<'a> Checker<'a> {
                             })
                             .collect(),
                         // **Over a value made here, a part is the value's own**
-                        // (`open-work.md` §1.31): `match g(n) { R::Value(c) =>
+                        // (issue #171): `match g(n) { R::Value(c) =>
                         // c, … }` moves the temporary apart, so `c` is the
                         // variant's `C`. Untyped, the whole `match` was
                         // unknown, a method on what it bound resolved to
@@ -10345,7 +10345,7 @@ impl<'a> Checker<'a> {
                 // reference and not the list, and `rustc` refused the `??`
                 // after it. The receiver of a `?.` that is an index can only be
                 // a map's, since a list's element is not a `T?` (`NK1121`).
-                // **Nor is a nullable view** (`open-work.md` §1.31): an
+                // **Nor is a nullable view** (issue #171): an
                 // `Option<&str>` is a copy already, and lending it made the
                 // reached value a `&&str`, whose `.to_owned()` is the `&str`.
                 let lent = !candidates.is_empty()
@@ -11465,7 +11465,7 @@ impl<'a> Checker<'a> {
                 self.caught_one = single;
                 self.scope.pop();
                 // **And so the `catch` is the guarded value's type**
-                // (0.0.230, `open-work.md` §1.18 before it): where the handler leaves,
+                // (0.0.230, issue #154 before it): where the handler leaves,
                 // or hands back that type, or something this checker cannot
                 // name. It used to be `?` always, so `let report = Log::file(d)
                 // catch { return }` typed nothing that followed - a field read
@@ -11729,7 +11729,7 @@ impl<'a> Checker<'a> {
     /// Keyed on the three names, and **only** on them. A general "this expression
     /// names something nothing declares" is a much wider claim than the statement
     /// rule above makes, and this checker does not make it yet
-    /// (`docs/open-work.md`).
+    /// (issue #141).
     /// Hands back whether it said anything, so the general refusal can stand
     /// aside for it.
     fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
@@ -11777,7 +11777,7 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Unary { expr, .. } => self.literals_are(expr, ty, span),
-            // **And the value a branch hands back** (`open-work.md` §1.31):
+            // **And the value a branch hands back** (issue #171):
             // `let limit: u64 = match t { "i32" => if n { 2147483648 } else
             // { 1 }, … }` wrote `2147483648i64`, because the type stopped at
             // the `match`.
@@ -13100,7 +13100,7 @@ impl<'a> Checker<'a> {
                 );
             }
             // **A type variable only this argument decides takes the
-            // argument's own type** (0.0.230, `open-work.md` §1.19 before it): a text
+            // argument's own type** (0.0.230, issue #155 before it): a text
             // literal is a `String`, so where a kept, by-value `$T` is bound by
             // nothing else - no receiver, no other parameter - it is constructed
             // as one. `hyper_shim::across_a_thread(value: $T)` with
@@ -14419,14 +14419,14 @@ impl<'a> Checker<'a> {
     /// its maps that way, and a view goes through `at` untouched.
     fn a_map_key(&mut self, keys: &Ty, found: &Ty, index: &Expr, writing: bool, span: &Span) {
         // **A map whose key type nothing pinned is keyed by what goes in the
-        // brackets** (0.0.235, `open-work.md` §1.21). `collections::HashMap()`
+        // brackets** (0.0.235, issue #169). `collections::HashMap()`
         // with no annotation has `?` keys, and the brackets went through `at`,
         // which made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the
         // language below refused. Where the key is a known value that is not
         // a view, it is the map's key; a view or a key of no known type goes
         // through `at` as before, which is the path every map of views takes.
-        // **A map whose key type nothing pinned** (0.0.235, `open-work.md`
-        // §1.21). `collections::HashMap()` with no annotation has `?` keys,
+        // **A map whose key type nothing pinned** (0.0.235, issue #169
+        // issue #169). `collections::HashMap()` with no annotation has `?` keys,
         // and the brackets went through `at`, which is for a **position**: it
         // made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the
         // language below refused. A key is not a position, and the receiver is
@@ -14618,7 +14618,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The same for a `??` of text, where the position is a comparison
-    /// (`open-work.md` 2.51).
+    /// (issue #98).
     fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
         let key = (span.at(), argument_shape(given));
         let of_text = self
@@ -16198,7 +16198,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **`NK1205`: a variant matched on a `T?`** (`open-work.md` §1.33): `match
+    /// **`NK1205`: a variant matched on a `T?`** (issue #180): `match
     /// g(0) { W::B => 2, else => 3 }` for a `g` that hands back a `W?` names a
     /// variant of `W` where the value may be `null`, and was lowered as a
     /// `match` over an `Option<W>` with `W::B` as its pattern - `rustc`'s
@@ -18374,7 +18374,7 @@ impl<'a> Checker<'a> {
     /// a module of a package, a foreign crate's item and a name the ledger has
     /// not been told about all look the same from here, and refusing on absence
     /// would refuse correct programs. That case is
-    /// [`open-work.md`](../../docs/open-work.md) §1.2, with the measurement
+    /// issue #141, with the measurement
     /// that says how rare it is. What is answered here is the case where this
     /// compiler has read the declaration and can see that the name is not in
     /// it: the same knowledge `NK1135`'s map and the exhaustiveness check
@@ -18916,7 +18916,7 @@ impl<'a> Checker<'a> {
     /// view without a copy being **inserted**
     /// ([ADR-008](../../docs/specification/adr/adr-008.md) D5). A `let r: Row =
     /// <binding>` is a different question with a different answer, and it is
-    /// [`open-work.md`](../../docs/open-work.md) §1.6's to carry until
+    /// issue #153's to carry until
     /// somebody decides it.
     fn a_number_read_through_a_lent_binding(&mut self, want: &Ty, value: &Expr, span: &Span) {
         let Ty::Named {
@@ -19101,7 +19101,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1178`: a grammar this compiler could not run while it built**
-    /// ([`open-work.md`](../../docs/open-work.md) §2.9).
+    /// (issue #178).
     ///
     /// One code and six sentences, because what a reader can do about it
     /// differs completely: input the parser refused is theirs to fix, a parser
@@ -20945,7 +20945,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **A part the arm binds `ref` is a view already** (`open-work.md` 2.52):
+    /// **A part the arm binds `ref` is a view already** (issue #270):
     /// a call that lends it hands it on as it is, where the reference the
     /// compiler writes for a lent argument made it a view of a view - the same
     /// code below, and a `&` the language below's lint points at.

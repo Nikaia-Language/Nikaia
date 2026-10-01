@@ -1,5 +1,5 @@
 //! **What an envelope costs a library's error** — the measurement
-//! `open-work.md` §2.25 asked for before the list may travel to a caller with a
+//! issue #199 asked for before the list may travel to a caller with a
 //! bare channel of its own, and on which
 //! [ADR-241](../../../../docs/specification/adr/adr-241.md) decided.
 //!

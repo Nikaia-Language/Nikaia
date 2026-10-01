@@ -93,7 +93,7 @@ pub mod text {
 ///
 /// **What none of it is, is *refused***, and that is a defect rather than a
 /// decision: `use std::tools` in a Nikaia program lowers, and `rustc` is what
-/// complains, about a file nobody wrote. `open-work.md` §1.7 carries it, and it
+/// complains, about a file nobody wrote. issue #146 carries it, and it
 /// is older than this module - `use std::<anything>` has always been accepted.
 ///
 /// **Clippy reads what the emitter wrote**, and one lint is allowed here

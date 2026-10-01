@@ -8,7 +8,7 @@ recommendation, and what either direction costs if it is wrong.
 An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
-[`open-work.md`](open-work.md). Each entry says what the
+[the issue tracker](https://github.com/Nikaia-Language/Nikaia/issues). Each entry says what the
 question is, why it is the owner's, and what this file recommends.
 
 **What is here is what has been asked**, which is not the same as what is

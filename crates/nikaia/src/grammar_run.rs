@@ -1,5 +1,5 @@
 //! **Running a grammar while the program is built is not interpretation**
-//! ([`docs/open-work.md`](../../../docs/open-work.md) §2.9, Part II 10.2 A).
+//! (issue #178, Part II 10.2 A).
 //!
 //! A grammar could be run here by walking the grammar tree this compiler
 //! already holds. **It must not be**, and the reason is not the size of the
@@ -215,7 +215,7 @@ fn write_if_changed(path: &Path, text: &str) -> Result<(), Wall> {
 fn manifest(key: &str, program: &str) -> String {
     let mut out = String::from(
         "# GENERATED. A parser compiled so that a grammar can run while the program\n\
-         # is built (`docs/open-work.md` §2.9). Rewritten when the grammar changes.\n\n\
+         # is built (issue #178). Rewritten when the grammar changes.\n\n\
          [workspace]\n\n\
          [package]\n",
     );

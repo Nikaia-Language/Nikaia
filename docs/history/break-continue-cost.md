@@ -196,7 +196,7 @@ baseline in `benches/jumps.nika` is shaped the way it is.
 
 This is pre-existing and has nothing to do with jumps, but it is not unrelated:
 the workaround for a missing `break` is *"put the exit condition in the head"*,
-and the language cannot express that. It is on [`open-work.md`](../open-work.md).
+and the language cannot express that. It is on [[#206](https://github.com/Nikaia-Language/Nikaia/issues/206)](https://github.com/Nikaia-Language/Nikaia/issues).
 
 **And it is the same finding as §2's first row**, which neither half of this page
 noticed while it was being written. The baseline was carrying two handicaps and
@@ -335,7 +335,7 @@ pub rule file -> i64 = fold(N, zero, fn(acc, m) { break })
 lowered to `|acc, m| { break; }` and was refused by `rustc`. An undeclared name
 in the same position is not refused either, so the gap is older and wider than
 jumps. This branch closes **the half a jump can reach**, with a walk that reports
-`NK1132` and nothing else; the rest is on [`open-work.md`](../open-work.md), because
+`NK1132` and nothing else; the rest is on [[#237](https://github.com/Nikaia-Language/Nikaia/issues/237)](https://github.com/Nikaia-Language/Nikaia/issues), because
 walking those bodies with the whole checker would newly refuse things that have
 nothing to do with this construct.
 
@@ -456,7 +456,7 @@ meet it — `NK1133` refuses `break i` outright — so D1 stands as written and
 [ADR-071](../specification/adr/adr-071.md) reserved it for and what
 [ADR-084](../specification/adr/adr-084.md) D7 records.
 
-**`open-work.md`'s unreachable-`return` entry was invalidated as written** — the one [ADR-093](../specification/adr/adr-093.md) later closed — and this is
+**[#183](https://github.com/Nikaia-Language/Nikaia/issues/183)'s unreachable-`return` entry was invalidated as written** — the one [ADR-093](../specification/adr/adr-093.md) later closed — and this is
 the one place where building the construct made something else more expensive.
 It has since been rewritten; what follows is the argument that had to go.
 The entry proposes a diagnostic improvement — a `while true { … }` cannot be left,

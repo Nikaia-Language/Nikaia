@@ -621,7 +621,7 @@ impl Program {
         // `Request` is in one file and whose `route(r: Request)` is in another has
         // to arrive as one ledger, or the signature keeps the bare name and a
         // caller writing `http::Request` is told the two are different types.
-        // That was the file-level defect (`open-work.md`'s cross-file type entry,
+        // That was the file-level defect (issue #229's cross-file type entry,
         // since closed) one level up.
         //
         // The units arrive grouped (`collect_with`), so this is a walk and not a

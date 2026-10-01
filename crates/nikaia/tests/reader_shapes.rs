@@ -114,7 +114,7 @@ fn the_characters_of_a_text_are_listed_at_their_size() {
     assert_eq!(ran("chars", source), "5 é\n");
 }
 
-/// **A part an arm binds `ref` is handed on as it is** (`open-work.md` 2.52):
+/// **A part an arm binds `ref` is handed on as it is** (issue #270):
 /// ADR-242 binds `key` as a view where the arm only reads it, so a call that
 /// lends it writes `key` and not `&key`, a view of a view.
 #[test]

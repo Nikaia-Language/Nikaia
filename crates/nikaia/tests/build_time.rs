@@ -9,7 +9,7 @@
 //! with it the file reading [ADR-072](../../../docs/specification/adr/adr-072.md)
 //! waits behind. [ADR-075](../../../docs/specification/adr/adr-075.md) answered
 //! Q4, and three records have been waiting on this since
-//! (`docs/open-work.md` §2.9).
+//! (issue #178).
 
 mod common;
 
@@ -181,7 +181,7 @@ fn a_callee_from_elsewhere_is_unevaluable() {
     assert_eq!(found[0].code, "NK1127", "{found:#?}");
 }
 
-/// **A `for` over a range**, which is `open-work.md` §2.9's second step: the
+/// **A `for` over a range**, which is issue #178's second step: the
 /// loop the evaluator used to refuse.
 #[test]
 fn a_for_over_a_range_is_evaluated() {
@@ -312,7 +312,7 @@ fn the_loops_binding_does_not_outlive_it() {
     assert_eq!(found.len(), 1, "{found:#?}");
 }
 
-/// **The aggregate value** ([`open-work.md`](../../../docs/open-work.md) §2.8,
+/// **The aggregate value** (issue #174,
 /// [ADR-079](../../../docs/specification/adr/adr-079.md) §3's *evaluator that
 /// can loop and push*).
 ///
@@ -729,7 +729,7 @@ fn a_question_about_the_value_is_answered() {
 /// read while the program is built and while it runs, is the same bytes.
 ///
 /// A decoder and its inverse are two implementations of one meaning, which is
-/// the hazard [`open-work.md`](../../../docs/open-work.md) §2.9 argues about one
+/// the hazard issue #178 argues about one
 /// construct over. What makes this one safe is not care, it is this test — and
 /// it **runs** the program, because a decoder that agrees with itself proves
 /// nothing.

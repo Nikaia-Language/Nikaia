@@ -641,7 +641,7 @@ fn a_head_holds_every_expression_that_is_not_brace_led() {
          }\n";
     // One hole per `println`: several in one `f"…"` walks into a defect that
     // has nothing to do with heads — the second `null` comes out `Some(None)`
-    // — and it is on `open-work.md` with its own reproduction.
+    // — and it is on issue #225 with its own reproduction.
     assert_eq!(output_of("head-complete", source), "1\n2\n3\n4\n");
 }
 

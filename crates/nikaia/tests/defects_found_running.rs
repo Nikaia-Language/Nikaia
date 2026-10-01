@@ -1,6 +1,6 @@
 //! **Programs that reached `rustc` as a file nobody wrote, or were refused
 //! though correct**, each found by running something and kept as the program
-//! that found it: 0.0.244's four (`open-work.md` §1.23, §1.24, §1.25, and a
+//! that found it: 0.0.244's four (issue #166 and #158 and #167, and a
 //! bare call nothing declares) and 0.0.245's loops, keys and lists of
 //! functions. Every program is run, at both settings of `user_parallelism`.
 
@@ -63,7 +63,7 @@ fn runs_in(purpose: &str, source: &str, expected: &str, prepare: fn(&std::path::
     }
 }
 
-/// **§1.23: a `sync` function calls a parameter whose type says `sync`.** The
+/// **issue #166: a `sync` function calls a parameter whose type says `sync`.** The
 /// caller is held to the word (`NK2206`), so the call keeps the promise; it was
 /// refused as a call to something no ledger knows. A parameter *without* the
 /// word is still refused.
@@ -101,7 +101,7 @@ fn a_sync_function_calls_a_sync_parameter() {
     );
 }
 
-/// **§1.24: a `Shared` written into a variant takes the variant's count.** The
+/// **issue #158: a `Shared` written into a variant takes the variant's count.** The
 /// part was declared with the atomic floor and the value built with the count
 /// its position got, and `rustc` said *expected `Shared[E]`, found
 /// `Shared[E]`*.
@@ -125,7 +125,7 @@ fn a_shared_value_in_a_variant_has_the_parts_count() {
     );
 }
 
-/// **§1.25: a `?.` chain through two nullable fields of a lent value.** The
+/// **issue #167: a `?.` chain through two nullable fields of a lent value.** The
 /// first step took `a.b` out of a lent `a`; a member that comes out as a view
 /// needs its receiver lent, as one that copies did.
 #[test]
@@ -482,7 +482,7 @@ fn a_graph_over_a_map_of_lists() {
 }
 
 /// **`list(item, sep)` is a rule the backend is given** (Part II 10.8,
-/// `open-work.md` §1.26, 0.0.249): the backend has no such element and read
+/// issue #165, 0.0.249): the backend has no such element and read
 /// `list` as a rule of the grammar's own, so the macro said *expected ident*
 /// about the generated file. An empty item between two separators is an item,
 /// and an empty input is an empty list.

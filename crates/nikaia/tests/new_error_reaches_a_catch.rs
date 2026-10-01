@@ -18,7 +18,7 @@
 //! gave `std` its error type: the file has nine `throws` lines now, seven of
 //! them `io::IoError` and two `Overtaken`, and **not one** is `["?"]`. What is
 //! left of that spelling is a **grammar** rule's entry, which is
-//! `open-work.md` §2.13 and a question on `open-decisions.md`.
+//! issue #179 and a question on `open-decisions.md`.
 
 use std::collections::BTreeSet;
 

@@ -56,10 +56,14 @@ rewrite was wrong.
 **What was tried, measured and learned.** The laboratory notebook. Nothing here
 is normative and nothing may depend on it to know what a program means.
 
-* [`open-work.md`](open-work.md) — **the running list**: what is found and
+* [the issue tracker](https://github.com/Nikaia-Language/Nikaia/issues) — **the running list**: what is found and
   broken, what an ADR decided and the compiler does not do yet, and which
   specification sentences a later decision made false. Every entry carries its
-  reproduction or says it has none.
+  reproduction or says it has none. The type says what kind it is (`Bug` for
+  anything false — in the compiler, a specification page or an ADR — `Feature`,
+  `Task`), a label says where (`language`, `libraries`, `tools`, `targets`,
+  `selfhosting`, `compiler`, `spec`), and **Priority** and **Effort** give the
+  order. Big pieces are issues with sub-issues. A closed issue stays: every entry the old `open-work.md` ever carried, closed ones included, is an issue, and the citations of its `§N.M` numbers in the CHANGELOG, the ADRs and code comments name the issue they mean. "The former backlog file" in old text means that file as a whole.
 * [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
   each with what is blocked by it, the options, and a recommendation. **Only
   what is open**: an answered question leaves this file for its
@@ -68,7 +72,7 @@ is normative and nothing may depend on it to know what a program means.
 * [`handoff.md`](handoff.md) — how to work on the **parser backend**: testing a
   change against Nikaia, what the upstream patch does, and what was tried and
   must not be redone. A guide; the open work that was in it is in
-  [`open-work.md`](open-work.md).
+  [the issue tracker](https://github.com/Nikaia-Language/Nikaia/issues).
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
 * [`stored-views.md`](stored-views.md) — the `E0621` a stored naked view used to

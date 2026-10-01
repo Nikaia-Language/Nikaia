@@ -8,7 +8,7 @@
 //! ([ADR-053](../../../docs/specification/adr/adr-053.md) D3), so an answer
 //! derived on the consumer's side can only be the same or worse — and two
 //! builds deriving one function differently is a program that awaits an `i64`.
-//! The reverted settling pass in `open-work.md` is that failure, measured.
+//! The reverted settling pass in issue #228 is that failure, measured.
 //!
 //! **And why it is safe.** A ledger is never believed against its own sources:
 //! the header names the units it was derived from and their SHA-256, and a hash

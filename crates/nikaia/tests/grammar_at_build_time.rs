@@ -1,5 +1,5 @@
 //! **A grammar runs while the program is built, by compiling the parser it
-//! generates** — [`open-work.md`](../../../docs/open-work.md) §2.9,
+//! generates** — issue #178,
 //! Part II 10.2 A.
 //!
 //! **It is not interpreted, and that is the whole entry.** `winnow-grammar` is

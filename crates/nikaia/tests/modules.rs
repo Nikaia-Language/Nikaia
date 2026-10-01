@@ -420,7 +420,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
 }
 
 /// **A type another file declares can be named and built**
-/// (`docs/open-work.md`'s cross-file type defect, since closed).
+/// (issue #229's cross-file type defect, since closed).
 ///
 /// Three things were broken and only the first worked: the *call* was fine, the
 /// **type name** resolved to a different type from the one the call handed back,
@@ -508,7 +508,7 @@ fn a_foreign_type_is_still_checked() {
 }
 
 /// **A `Shared` in a field another file declares keeps the atomic count**
-/// (`docs/open-work.md`'s twice-decided `Shared` slot, since closed).
+/// (issue #143's twice-decided `Shared` slot, since closed).
 ///
 /// The sharing analysis runs once per **file**, and a package of several files is
 /// still several runs of it - so neither run sees the whole of such a field: the

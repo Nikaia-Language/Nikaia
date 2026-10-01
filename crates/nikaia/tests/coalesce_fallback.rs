@@ -3,7 +3,7 @@
 //!
 //! **`??` sat above the whole binary chain**, so its fallback reached rightwards
 //! across every operator there is: `a ?? 0 > 3` was `a ?? (0 > 3)` while looking
-//! like `(a ?? 0) > 3`. `open-work.md` carried that as a **suspicion**, because
+//! like `(a ?? 0) > 3`. issue #214 carried that as a **suspicion**, because
 //! the shape it had produced a type error rather than a wrong answer, and
 //! whether both readings could ever type-check was *precisely what had not been
 //! established*.

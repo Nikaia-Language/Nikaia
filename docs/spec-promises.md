@@ -61,9 +61,9 @@ the Result column; every other row is the original run.
 | `a ?? b ?? c` | I 3.5 | **built** ([ADR-066](specification/adr/adr-066.md) D4): right-associative. It used to be a parse error naming the second `??` |
 | `a?.b.c` | I 2.3, 3.5 | **refused**, `NK1125` ([ADR-066](specification/adr/adr-066.md) D6): a `?.` guards its own member and no more, and a `T?` is a type of its own — so the unguarded `.c` is a member the type does not have. `a?.b?.c` is the program |
 | `a ?? 1` | I 3.5 | **built**: `a.unwrap_or_else(\|\| 1.into())` |
-| `f(a??)` (postfix unwrap) | — [ADR-018](specification/adr/adr-018.md) D3 and III 17.1 write one; **I 3.5 does not define it** | parse error, and since [ADR-089](specification/adr/adr-089.md) D2 it is that record's sentence: *expected one value, or an expression in brackets* — the `??` is read as the infix one missing its fallback, which is what it is. The two examples that write one are on [`open-work.md`](open-work.md)'s list, as *two examples write a postfix `??` the language does not have* |
+| `f(a??)` (postfix unwrap) | — [ADR-018](specification/adr/adr-018.md) D3 and III 17.1 write one; **I 3.5 does not define it** | parse error, and since [ADR-089](specification/adr/adr-089.md) D2 it is that record's sentence: *expected one value, or an expression in brackets* — the `??` is read as the infix one missing its fallback, which is what it is. The two examples that write one are on [[#191](https://github.com/Nikaia-Language/Nikaia/issues/191)](https://github.com/Nikaia-Language/Nikaia/issues)'s list, as *two examples write a postfix `??` the language does not have* |
 | `Conn(id: 1)` (same file) | I 4.2 | **built** |
-| `http::Response(status: 400, …)` | III 17.1, [ADR-018](specification/adr/adr-018.md) D3 | **parses**, and lowers to `http::Response { status: 400 }` — the qualified path used to be the parse error here (*expected one of `)`, `,`; found `:`*) and is not any more. What is missing is `http` itself, which is a library and not a syntax ([`open-work.md`](open-work.md), *there is no HTTP server*) |
+| `http::Response(status: 400, …)` | III 17.1, [ADR-018](specification/adr/adr-018.md) D3 | **parses**, and lowers to `http::Response { status: 400 }` — the qualified path used to be the parse error here (*expected one of `)`, `,`; found `:`*) and is not any more. What is missing is `http` itself, which is a library and not a syntax ([[#90](https://github.com/Nikaia-Language/Nikaia/issues/90)](https://github.com/Nikaia-Language/Nikaia/issues), *there is no HTTP server*) |
 | `use a::{b, c}` | II 10.5 | **re-run**, and a sentence now: *"names are not brought in; a package is reached through its name. Write `use http`, and `http::Request` where you need it — and `use http as h` if the prefix is long"*, with the caret on the brace ([ADR-046](specification/adr/adr-046.md) D2) |
 | `use std::fs`, `use utils` | I 9.1 | **built** |
 | `Point { line, .. }` (pattern) | I 7.1 | parse error: *expected `}`; found `.`* |
@@ -150,7 +150,7 @@ read against the day it was written.
    *expected `(`; found unexpected token `fn`*, this compiler's refusal at the
    `fn` rather than `rustc`'s about the generated file. Both readings above are
    gone and the decision left here is untouched — what `spawn` **means** is
-   still `open-work.md`'s `spawn` entry, and the parser's `spawn "(" expr ")"` rule is still
+   still [#219](https://github.com/Nikaia-Language/Nikaia/issues/219)'s `spawn` entry, and the parser's `spawn "(" expr ")"` rule is still
    what it was.
 
    **The spelling is settled; the rest of this entry is not.** `spawn fn { … }`

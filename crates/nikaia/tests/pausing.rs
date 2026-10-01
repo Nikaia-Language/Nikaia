@@ -251,7 +251,7 @@ fn a_lambda_that_pauses_is_handed_to_the_pausing_counterpart() {
 }
 
 /// **A call in a `match` arm is a call of the function around it**
-/// (`open-work.md` §1.31): `R::A => slow()` is not a block, so the walk that
+/// (issue #171): `R::A => slow()` is not a block, so the walk that
 /// reads bodies passed it by, and `pick` came out of the ledger `sync` while
 /// its lowering awaited `slow()`. A list's items, a `with`'s fields and a
 /// `return` written as an expression were passed by the same way.

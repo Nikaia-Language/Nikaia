@@ -65,7 +65,7 @@ fn ran(purpose: &str, source: &str) -> String {
 ///
 /// The body interpolates where the page writes `"User: " + self.username`, and
 /// that is **not** a tidy-up: `&str + String` is accepted here and refused by
-/// the language below (`E0369`), which `open-work.md` now carries with its
+/// the language below (`E0369`), which issue #207 now carries with its
 /// reproduction. Found by writing this fixture, which is the third time this
 /// session that running one of the specification's own programs turned one up.
 const SUMMARIZE: &str = r#"

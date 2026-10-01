@@ -259,7 +259,7 @@ fn a_let_over_a_whole_name_stays_a_move() {
 
 /// **A cast over a `for` binding is a cast over a view**
 /// ([ADR-182](../../../docs/specification/adr/adr-182.md) D1, which closed
-/// `open-work.md`'s entry for it at 0.0.131).
+/// issue #138's entry for it at 0.0.131).
 ///
 /// The loop binds a view of each element, which is what D4 is for and is what
 /// lets the loop read without copying — and Rust's `as` does not see through
@@ -336,7 +336,7 @@ fn a_narrowing_cast_over_a_for_binding_still_aborts() {
 
 /// **A `let` that declares the element's type over a `for` binding is refused**
 /// ([ADR-185](../../../docs/specification/adr/adr-185.md) D1, closing
-/// `open-work.md`'s entry for it at 0.0.136).
+/// issue #153's entry for it at 0.0.136).
 ///
 /// A `for` lends (D4), so the binding is a **view** and an annotation naming
 /// the element is a type the value does not have. `rustc` said *mismatched
