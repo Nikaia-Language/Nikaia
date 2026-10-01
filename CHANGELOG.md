@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.312] — 2026-10-01
+
+**A `for` over a `T?` is refused** (`NK1206`, #296). `for word in pick(1)`
+for a `pick` that hands back a `Vec[String]?` was checked as a walk over the
+list and lowered as a walk over the option - once, with the whole list as
+`word` - so `word.len()` counted the list and the program printed a number
+nobody asked for. A map read is a `T?` too, so `for x in m[k]` was the same.
+The help hands over `?? []`; for a map, `NK1185` then hands over the copy.
+
 ## [0.0.311] — 2026-10-01
 
 **`nikaia describe` says what crosses a thread in Nikaia** (ADR-193 D3-D5,
