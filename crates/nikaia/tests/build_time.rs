@@ -571,6 +571,29 @@ fn a_constant_declared_a_vec_is_told_the_length_it_computed() {
     );
 }
 
+/// **An `Array` written without its length is told the length**, not handed
+/// back the type it already wrote: `Array[ref String]` and a two-element list
+/// used to say *make it an `Array[ref String]`*.
+#[test]
+fn an_array_without_a_length_is_told_the_length() {
+    let source = "comptime WORDS: Array[ref String] = [\"a\", \"b\"]\n\
+                  fn main() { println(WORDS[0]) }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1166")
+        .unwrap_or_else(|| panic!("NK1166: {found:#?}"));
+    assert!(refusal.message.contains("no length"), "{refusal:#?}");
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("Array[ref String, 2]")),
+        "{refusal:#?}"
+    );
+    assert_eq!(found.len(), 1, "one mistake, one error: {found:#?}");
+}
+
 /// **And a body that could not be run is not told its declaration is wrong.**
 /// `NK1152` says the callee may not run while the program is built; adding
 /// *this is a `Vec[i64]` and the `const` says `Array[i64, 1]`* would send the

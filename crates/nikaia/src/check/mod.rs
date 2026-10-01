@@ -20511,6 +20511,39 @@ impl<'a> Checker<'a> {
                             let (want, computed) = (want.clone(), computed.clone());
                             self.a_constant_that_owns_memory(&bound, &want, &computed, span);
                         }
+                        // **An `Array` with no length** is what a `comptime`
+                        // list was written as, and the mismatch is the length:
+                        // the help handed back the type that was written, which
+                        // told nobody anything.
+                        (Some(build_time::Value::List(items)), false)
+                            if matches!(want, Ty::Named { name, args, .. }
+                                if name == "Array" && args.len() == 1) =>
+                        {
+                            let element = match want {
+                                Ty::Named { args, .. } => args[0].text(),
+                                _ => unreachable!("matched above"),
+                            };
+                            self.checked.findings.push(Finding {
+                                severity: Severity::Error,
+                                span: *span,
+                                code: "NK1166",
+                                message: format!(
+                                    "`{bound}` is an `Array[{element}]` with no length, which a \
+                                     `comptime` needs."
+                                ),
+                                notes: vec![
+                                    "An `Array` built into the program carries its length in \
+                                     its type."
+                                        .to_string(),
+                                ],
+                                help: Some(format!(
+                                    "Declare it as `Array[{element}, {}]`: the build computed {}.",
+                                    items.len(),
+                                    plural(items.len(), "element")
+                                )),
+                                labels: Vec::new(),
+                            });
+                        }
                         _ => {
                             self.expect(&narrowed, want, *span, "const", |found, want| {
                                 format!(
