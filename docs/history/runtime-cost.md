@@ -325,12 +325,31 @@ Kernel work is not in an instruction count, so the syscalls a read makes are in 
   `read(2)` on the caller's own thread — roughly 2.8 times what the whole blocking read costs in
   user space. It is the same at `no` and `yes`, so it is the I/O path and not the pool.
 
-**What it does not decide.** That road is what makes two reads in an `overlap` cost nothing
-(§2), and a program that never overlaps pays it on every read. Whether such a read — on a
-runtime with nothing else in flight — should take the caller's own thread instead is a design
-question, recorded here with its number and left to its owner.
+**What it decided.** That road is what makes two reads in an `overlap` cost nothing (§2), and a
+program that never overlaps pays it on every read. [ADR-263](../specification/adr/adr-263.md)
+answers it: on a runtime with nothing else in flight, a file operation runs on the calling thread
+- once the normal path is cheapened (§7.2) and if it still measures.
 
-### 7.1 How to run it again
+### 7.2 Where the instructions go
+
+Both profiles of the 1,000-read run at `user_parallelism = yes` (2,819,075 instructions blocking,
+6,140,340 as lowered: **3,321 a read**), compared function by function under
+`callgrind_annotate`. What the lowered program spends a read on that the blocking one does not:
+
+| what | instructions a read | where |
+| :--- | ---: | :--- |
+| the ring: submit, wait, reap, poll its slot | ~1,030 | `file_ring::Ring::{submit_one, reap, poll_slot, begin}`, `Submitter::submit_and_wait`, `rt::io::poll`, `park_for` |
+| allocation and copying | ~830 | `malloc`/`free`/`calloc`, `memset`, `memcpy`, `finish_grow`: the read's buffer is **zeroed** before the kernel fills it (`vec![0u8; size + 1]`), and copied on its way out |
+| the executor parking and waking | ~450 | `exec::block_on` and its queue, polled again after every pause |
+| the text of an error nobody reports | ~425 | `Utf8Chunks::next`: `fs::read_to_string` writes the path into a `String` on **every** call, for the message it would give if the read failed |
+| a lock taken under contention | ~80 | `Mutex::lock_contended` |
+
+About 2,800 of the 3,321 are named; the rest is spread too thinly to name. Two of the five rows are not
+the hand-off at all - the zeroed buffer and the eager error text - and cost the same whichever way
+the read is made; [ADR-263](../specification/adr/adr-263.md) D3 removes them first, so that what
+D1 of that record saves is measured on its own.
+
+### 7.3 How to run it again
 
 ```sh
 cargo test -p nikaia --release --test measure what_an_await -- --ignored --nocapture

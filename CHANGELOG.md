@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.328] — 2026-10-01
+
+**Two decisions, recorded.**
+
+[ADR-262](docs/specification/adr/adr-262.md): **the grammar parses the holes of
+an `f"…"`** (#107). A hole was found in the literal's text after parsing and
+parsed again on its own - which a walk written in Nikaia cannot do, so every
+walk that must see a hole stayed Rust. `f"…"` becomes a rule of text and holes,
+a hole an ordinary expression; the tree holds the parts; a hole is written as
+code is written, `f"{emphasised("Ada")}"`, and `\"` is refused there; a broken
+hole is a parse error at its place; the emitter builds from the parts once it
+measures the same. Takes ADR-032 §3's option (a), deferred there *for now*.
+
+[ADR-263](docs/specification/adr/adr-263.md): **a file operation on an idle
+runtime runs on the calling thread** (#106). Go and Java's virtual threads do
+the syscall on the calling thread; the pool runtimes hand off every time, which
+is what Nikaia did. A regular-file operation with nothing else in flight - no
+other task, no outstanding operation, no timer - is a blocking syscall where it
+was asked, decided by `std` and not by the compiler or a setting, since what
+overlaps is already written in the source. First the normal path stops doing
+work it does not need, and the rule enters `std` only if it then measures.
+
+**Where a read's 3,321 extra instructions go** (`docs/history/runtime-cost.md`
+§7.2): the ring ~1,030, allocation and copying ~830 - the read's buffer is
+zeroed before the kernel fills it - the executor ~450, and ~425 for the text of
+an error `fs::read_to_string` writes on every call and reports on none.
+
 ## [0.0.327] — 2026-10-01
 
 **What being `async` costs a program that never overlaps is measured** (#106).
