@@ -212,7 +212,7 @@ fn load(path: String, mut into: collections::HashMap[ref String, ref String]) th
 fn main() throws {
     let mut merged: collections::HashMap[ref String, ref String] = collections::HashMap()
     load("app.conf", merged)
-    println(f"host = {merged[\"host\"] ?? \"-\"}, mode = {merged[\"mode\"] ?? \"-\"}")
+    println(f"host = {merged["host"] ?? "-"}, mode = {merged["mode"] ?? "-"}")
 }
 "##;
 
@@ -284,7 +284,7 @@ fn load(path: String) -> Vec[Setting] throws {
 }
 
 fn main() throws {
-    println(f"{load(\"app.conf\").len()}")
+    println(f"{load("app.conf").len()}")
 }
 "##;
 
@@ -455,7 +455,7 @@ fn a_buffer_nothing_outlives_is_left_alone() {
                   \x20   let text = fs::read_to_string(path, fs::Root::Anywhere)\n\
                   \x20   return text\n\
                   }\n\
-                  fn main() throws { println(f\"{count(\\\"app.conf\\\")} {whole(\\\"app.conf\\\").len()}\") }\n";
+                  fn main() throws { println(f\"{count(\"app.conf\")} {whole(\"app.conf\").len()}\") }\n";
     let rust = lowered(source, Build::default());
     assert!(!rust.contains("nikaia_std::tether"), "{rust}");
     assert_eq!(ran("left-alone", source, Build::default()), "59 63");

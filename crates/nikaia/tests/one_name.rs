@@ -126,7 +126,7 @@ fn a_program_that_declares_each_name_once_is_untouched() {
          trait Summary { fn s(ref self) -> i64 }\n\
          grammar Nums { pub rule number -> i64 = d:dec[i64](digit+) { d } }\n\
          fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n\
-         fn main() { println(f\"{read(\\\"7\\\")}\") }\n",
+         fn main() { println(f\"{read(\"7\")}\") }\n",
     );
     assert!(found.is_empty(), "{found:#?}");
 }

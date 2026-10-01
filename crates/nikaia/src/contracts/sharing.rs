@@ -1088,7 +1088,7 @@ impl<'a> Analysis<'a> {
             Expr::LitInt { .. }
             | Expr::LitFloat(_)
             | Expr::LitStr { .. }
-            | Expr::LitInterpolated(_)
+            | Expr::LitInterpolated { .. }
             | Expr::LitChar(_)
             | Expr::LitBool(_)
             | Expr::LitNull
@@ -1383,7 +1383,7 @@ impl<'a> Analysis<'a> {
             // parameter was decided atomic in the file declaring it - and the two
             // met in one generated file as `Rc` against `Arc`. Any analysis that
             // stops at a literal is one a hole can be hidden in.
-            Expr::LitInterpolated(_) => {
+            Expr::LitInterpolated { .. } => {
                 for hole in crate::emit::literal_expressions(self.parsed, expr) {
                     self.expr(function, &hole, scope);
                 }
@@ -1770,7 +1770,7 @@ fn held_that_does_not_copy(ty: &Ty) -> Option<String> {
 /// The type a literal is: a word-sized one, or text.
 fn literal_type(expr: &Expr) -> Option<&'static str> {
     match expr {
-        Expr::LitStr { .. } | Expr::LitInterpolated(_) => Some("String"),
+        Expr::LitStr { .. } | Expr::LitInterpolated { .. } => Some("String"),
         Expr::LitInt { .. } => Some("i64"),
         Expr::LitFloat(_) => Some("f64"),
         Expr::LitBool(_) => Some("bool"),

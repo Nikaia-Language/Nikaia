@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.329 (Draft)
+**Version:** 0.0.330 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -544,7 +544,8 @@ print("{ margin: 0 }")    // a rule, not a hole
 ```
 
 **`f"…"` has code in it.** Between `{` and `}` stands an expression: a name, a
-field, a call, an index. What follows a `:` inside a hole says *how* to write
+field, a call, an index. It is written as code is written anywhere else, so a
+string inside a hole has plain quotes: `f"{greet("Ada")}"`. What follows a `:` inside a hole says *how* to write
 the value rather than which value. The first colon that is not inside a call or
 an index separates the two, so `move(by: 1)` in a hole keeps its own colon.
 

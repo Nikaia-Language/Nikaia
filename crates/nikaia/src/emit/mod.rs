@@ -7030,7 +7030,7 @@ impl<'p> Emitter<'p> {
                 }
             }
             Expr::LitFloat(v) => out.push(v),
-            Expr::LitStr { .. } | Expr::LitInterpolated(_) => {
+            Expr::LitStr { .. } | Expr::LitInterpolated { .. } => {
                 self.string(out, expr, depth, flow)?
             }
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
@@ -8948,9 +8948,15 @@ impl<'p> Emitter<'p> {
             // piece by piece - a pretty-printer, a progress line - cannot be
             // written with the newline attached.
             if matches!(text, "println" | "eprintln" | "print" | "eprint") {
-                if let [Expr::LitInterpolated(literal)] = args {
+                if let [
+                    Expr::LitInterpolated {
+                        text: literal,
+                        parts,
+                    },
+                ] = args
+                {
                     out.push(&format!("{text}!("));
-                    self.format_string(out, literal, depth, flow)?;
+                    self.format_string(out, literal, parts, depth, flow)?;
                     out.push(")");
                     return Ok(());
                 }
@@ -10614,7 +10620,10 @@ impl<'p> Emitter<'p> {
             // because the checker says it is and the two have to agree. With no
             // hole there is nothing to format, and `format!("x")` is a
             // roundabout way of writing what `.to_string()` says plainly.
-            Expr::LitInterpolated(literal) => {
+            Expr::LitInterpolated {
+                text: literal,
+                parts,
+            } => {
                 // **A malformed literal is refused on its own line**
                 // ([ADR-171](../../docs/specification/adr/adr-171.md) D1):
                 // `interpolation` has the text and not the place, and the place
@@ -10624,7 +10633,7 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push("format!(");
-                self.format_string(out, literal, depth, flow)?;
+                self.format_string(out, literal, parts, depth, flow)?;
                 out.push(")");
                 Ok(())
             }
@@ -10650,16 +10659,16 @@ impl<'p> Emitter<'p> {
         &self,
         out: &mut Out,
         literal: &str,
+        parts: &[crate::ast::FPart],
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (format, holes) = at_the_statement(flow, interpolation(literal))?;
+        let (format, _) = at_the_statement(flow, interpolation(literal))?;
         out.push(&format!("\"{format}\""));
 
-        for hole in holes {
-            let mut expr = self.parsed.hole(&hole).map_err(|e| {
-                refused_at!(flow.statement, "The hole `{{{hole}}}` can't be read. {e}")
-            })?;
+        // **The holes the grammar parsed** (ADR-262 D2), each beside its text.
+        for (hole, expr) in interpolated_holes(literal, parts) {
+            let mut expr = expr.clone();
             // What the tier pass hands over inside it (ADR-229 D1), as every
             // other reader of a hole sees it (`literal_expressions`).
             if let Some(wraps) = self.parsed.hole_wraps.get(&hole) {
@@ -13063,22 +13072,46 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
     }
 }
 
+/// **An `f"…"`'s holes as the grammar parsed them**
+/// ([ADR-262](../../docs/specification/adr/adr-262.md) D2), each beside its
+/// text as written - the key the tier pass's wraps are recorded by
+/// ([ADR-229](../../docs/specification/adr/adr-229.md) D1). The text is found
+/// by place among the literal's holes, so nothing is parsed to find it.
+pub(crate) fn interpolated_holes<'e>(
+    text: &str,
+    parts: &'e [crate::ast::FPart],
+) -> Vec<(String, &'e Expr)> {
+    let written = interpolation(text)
+        .map(|(_, holes)| holes)
+        .unwrap_or_default();
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            crate::ast::FPart::Hole { expr, .. } => Some(expr),
+            crate::ast::FPart::Text(_) => None,
+        })
+        .enumerate()
+        .map(|(at, hole)| (written.get(at).cloned().unwrap_or_default(), hole))
+        .collect()
+}
+
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
-        // Each with what the tier pass hands over inside it (ADR-229 D1).
-        Expr::LitInterpolated(literal) => match interpolation(literal) {
-            Ok((_, holes)) => holes
-                .iter()
-                .filter_map(|hole| {
-                    let mut expr = parsed.hole(hole).ok()?;
-                    if let Some(wraps) = parsed.hole_wraps.get(hole) {
-                        crate::text_tiers::wrap_hole(&mut expr, wraps);
-                    }
-                    Some(expr)
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        },
+        // **The grammar parsed them** ([ADR-262](../../docs/specification/adr/adr-262.md)
+        // D2): the holes are the literal's parts, read and not parsed again.
+        // Each with what the tier pass hands over inside it (ADR-229 D1),
+        // which is keyed by the hole's text - the hole at the same place among
+        // the text's holes, so nothing is parsed to find it.
+        Expr::LitInterpolated { text, parts } => interpolated_holes(text, parts)
+            .into_iter()
+            .map(|(written, hole)| {
+                let mut expr = hole.clone();
+                if let Some(wraps) = parsed.hole_wraps.get(&written) {
+                    crate::text_tiers::wrap_hole(&mut expr, wraps);
+                }
+                expr
+            })
+            .collect(),
         // A template's holes are Nikaia too (ADR-017), and reach the emitter by
         // the same route: text, split on the way out. A deferred-parameter
         // statement has none: its braces are the foreign syntax's, and reading
@@ -13255,24 +13288,11 @@ pub(crate) fn interpolation_with_specs(
                 let mut nesting = 0;
 
                 while let Some(c) = chars.next() {
-                    // A hole is Nikaia source that was written *inside* a string
-                    // literal, so the escaping it carries is that literal's. The
-                    // two characters the enclosing string had to escape are the
-                    // two undone here - without this, `"{f(\"a\")}"` hands the
-                    // parser `f(\"a\")`, which is not an expression.
-                    if c == '\\' {
-                        match chars.peek() {
-                            Some('"') | Some('\\') => {
-                                let c = chars.next().expect("peeked");
-                                match &mut spec {
-                                    Some(spec) => spec.push(c),
-                                    None => hole.push(c),
-                                }
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
+                    // **A hole is code as written** ([ADR-262](../../docs/specification/adr/adr-262.md)
+                    // D3): the grammar has parsed it already, and a string
+                    // inside it is written with plain quotes, so nothing here is
+                    // undone. A `\"` the enclosing literal used to need is
+                    // refused by the grammar before this runs.
                     match c {
                         '{' => depth += 1,
                         '}' => {

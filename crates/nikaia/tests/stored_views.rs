@@ -378,7 +378,7 @@ use std::collections
         }
         fn main() {
             let s = Summary()
-            println(f"{s.has(\"Hamburg\")}")
+            println(f"{s.has("Hamburg")}")
         }
     "#;
     assert_eq!(lower_compile_run(source, "stored-view-read"), "false");

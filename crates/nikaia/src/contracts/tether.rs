@@ -391,7 +391,7 @@ pub(crate) fn makes_a_buffer(
             "to_owned" => Buffer::Named("String".to_string()),
             "to_string" => match receiver.as_ref() {
                 Expr::LitStr { .. } => Buffer::None,
-                Expr::LitInterpolated(_) | Expr::LitInt { .. } | Expr::LitFloat(_) => {
+                Expr::LitInterpolated { .. } | Expr::LitInt { .. } | Expr::LitFloat(_) => {
                     Buffer::Named("String".to_string())
                 }
                 _ => Buffer::Unknown,
@@ -401,7 +401,7 @@ pub(crate) fn makes_a_buffer(
             "clone"
                 if matches!(
                     receiver.as_ref(),
-                    Expr::LitStr { .. } | Expr::LitInterpolated(_)
+                    Expr::LitStr { .. } | Expr::LitInterpolated { .. }
                 ) =>
             {
                 Buffer::Named("String".to_string())

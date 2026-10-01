@@ -442,7 +442,7 @@ fn pair(a: i64?, b: i64?) -> i64 {
 }
 
 fn main() {
-    println(f\"{shown(\\\"here\\\")}\")
+    println(f\"{shown(\"here\")}\")
     println(f\"{shown(null)}\")
     println(f\"{pair(1, 2)}\")
 }
@@ -812,9 +812,9 @@ impl U {
 fn main() {
     let u = U { name: \"Ada\" }
     let v = U { name: \"zzz\" }
-    println(f\"{u.copy() ?? \\\"none\\\"}\")
-    println(f\"{u.rest() ?? \\\"no prefix\\\"}\")
-    println(f\"{v.rest() ?? \\\"no prefix\\\"}\")
+    println(f\"{u.copy() ?? \"none\"}\")
+    println(f\"{u.rest() ?? \"no prefix\"}\")
+    println(f\"{v.rest() ?? \"no prefix\"}\")
 }
 ",
     );
@@ -1229,7 +1229,7 @@ fn main() {
     let a = find(1)?.label() ?? \"none\"
     let b = find(2)?.first() ?? \"none\"
     let c = find(1)?.first()
-    println(f\"{a} {b} {c ?? \\\"-\\\"}\")
+    println(f\"{a} {b} {c ?? \"-\"}\")
 }
 ";
 
@@ -1744,7 +1744,7 @@ fn a_name_bound_to_a_map_read_is_read_as_one() {
              \x20   let mut i: collections::BTreeMap[String, String] = collections::BTreeMap()\n\
              \x20   i.insert(\"spawn\", \"tokio::spawn\")\n\
              \x20   let n = count(\"a\", m)\n\
-             \x20   println(f\"{{n}} {{resolve(\\\"spawn\\\", i)}} {{resolve(\\\"x\\\", i)}}\")\n\
+             \x20   println(f\"{{n}} {{resolve(\"spawn\", i)}} {{resolve(\"x\", i)}}\")\n\
              }}\n"
         )
     };

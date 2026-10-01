@@ -84,7 +84,7 @@ fn a_literal_is_a_string_wherever_one_is_kept() {
                       let p = Person { name: \"Ada\", nick: \"A\" }\n\
                       let s: String = \"let\"\n\
                       let names: Vec[String] = [\"a\", \"b\", \"c\"]\n\
-                      println(f\"{p.name} {p.nick ?? \\\"-\\\"} {s} {names.len()} {keep(\\\"kept\\\")} {label()}\")\n\
+                      println(f\"{p.name} {p.nick ?? \"-\"} {s} {names.len()} {keep(\"kept\")} {label()}\")\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     assert_eq!(ran("kept", source).trim(), "Ada A let 3 kept label");
@@ -180,7 +180,7 @@ fn a_literal_beside_text_of_its_own_becomes_it() {
                   fn main() {\n\
                       let n = 3\n\
                       let names = [\"a\", f\"c{n}\"]\n\
-                      println(f\"{names.len()} {name_or(false, f\\\"ada\\\")} {pick(0, f\\\"ada\\\")} {pick(1, f\\\"ada\\\")} {pick(5, f\\\"ada\\\")}\")\n\
+                      println(f\"{names.len()} {name_or(false, f\"ada\")} {pick(0, f\"ada\")} {pick(1, f\"ada\")} {pick(5, f\"ada\")}\")\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:?}", findings(source));
     let rust = lowered(source);

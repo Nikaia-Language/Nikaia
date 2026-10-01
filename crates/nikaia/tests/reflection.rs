@@ -113,7 +113,7 @@ fn a_body_wrong_for_one_field_names_the_turn() {
          \x20   return total\n\
          }\n\
          \n\
-         fn main() { println(f\"{sum(User { name: \\\"ada\\\", age: 36 })}\") }\n",
+         fn main() { println(f\"{sum(User { name: \"ada\", age: 36 })}\") }\n",
     );
     assert_eq!(
         found.len(),

@@ -82,7 +82,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
          \x20   return n\n\
          }}\n\
          \n\
-         fn main() {{ println(f\"{{both(\\\"x\\\") catch {{ -1 }}}}\") }}\n"
+         fn main() {{ println(f\"{{both(\"x\") catch {{ -1 }}}}\") }}\n"
     );
     let ledger = ledger_of(&source);
     assert_eq!(
@@ -116,7 +116,7 @@ fn the_two_member_channel_compiles() {
          \x20   return n\n\
          }}\n\
          \n\
-         fn main() {{ println(f\"{{both(\\\"x\\\") catch {{ -1 }}}}\") }}\n"
+         fn main() {{ println(f\"{{both(\"x\") catch {{ -1 }}}}\") }}\n"
     ));
     let dir = common::scratch_dir("parse-error-channel");
     let file = dir.join("main.rs");

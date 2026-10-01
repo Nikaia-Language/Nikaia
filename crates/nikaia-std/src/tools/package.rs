@@ -81,7 +81,7 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     ListLit { items: Vec<Expr>, at: u32 },
     LitStr { text: String, at: u32 },
-    LitInterpolated(String),
+    LitInterpolated { text: String, parts: Vec<FPart> },
     LitChar(String),
     LitBool(bool),
     LitNull,
@@ -115,6 +115,12 @@ pub enum Expr {
     Asm { bindings: Vec<AsmBinding>, code: String },
     Unsafe(Block),
     TryCatch { expr: Box<Expr>, handler: Block },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FPart {
+    Text(String),
+    Hole { expr: Expr, spec: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5269,7 +5275,7 @@ fn renamed_result(result: Option<&Ty>, renames: &collections::BTreeMap<String, S
 
 pub mod ast {
     #[allow(unused_imports)]
-    pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
+    pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
 }
 pub mod calls {
     #[allow(unused_imports)]

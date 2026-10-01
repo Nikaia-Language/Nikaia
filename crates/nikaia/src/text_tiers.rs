@@ -979,17 +979,15 @@ impl Walk<'_, '_> {
             // **And a value handed over inside one is handed over there**
             // ([ADR-229](../../docs/specification/adr/adr-229.md) D1): each hole
             // is walked with its text, which is what the wrap is recorded by.
-            Expr::LitInterpolated(literal) => {
+            Expr::LitInterpolated {
+                text: literal,
+                parts,
+            } => {
                 let outer = std::mem::replace(&mut self.in_hole, true);
-                let holes = crate::emit::interpolation(literal)
-                    .map(|(_, holes)| holes)
-                    .unwrap_or_default();
-                for text in holes {
-                    let Ok(hole) = self.declared.parsed.hole(&text) else {
-                        continue;
-                    };
+                // The holes the grammar parsed (ADR-262 D2), each with its text.
+                for (text, hole) in crate::emit::interpolated_holes(literal, parts) {
                     let held = self.hole_text.replace(text);
-                    self.expr(&hole);
+                    self.expr(hole);
                     self.hole_text = held;
                 }
                 self.in_hole = outer;

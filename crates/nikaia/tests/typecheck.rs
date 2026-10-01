@@ -426,11 +426,18 @@ fn a_hole_in_a_template_is_checked_too() {
     assert_eq!(code, "NK1101");
 }
 
-/// A hole that does not parse is the emitter's to report, in its own words at
-/// the place it happens. The checker says nothing rather than guessing.
+/// A hole that does not parse is the **parser's** to report, at its place
+/// ([ADR-262](../../../docs/specification/adr/adr-262.md) D4): nothing reaches
+/// the checker that the grammar did not accept, so it never has to guess.
 #[test]
 fn a_hole_that_does_not_parse_is_not_the_checkers_business() {
-    assert!(findings("fn main() { println(f\"{let}\") }").is_empty());
+    let refused = parse_to_ast("fn main() { println(f\"{let}\") }")
+        .expect_err("a broken hole is a parse error");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    // `{let}`: the `let` is the twenty-fourth byte, where the hole's expression
+    // should have started.
+    assert_eq!(finding.span.start, 23, "{finding:?}");
 }
 
 // --- a loop whose step can fail (ADR-025) ------------------------------------

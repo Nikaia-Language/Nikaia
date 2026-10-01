@@ -53,9 +53,28 @@ pub struct Trivia {
     /// `doc_reaches`, which is a fact about the input rather than a flag a
     /// losing branch can spoil.
     doc_live: bool,
+    /// **The input itself**, for the one rule that keeps the text it matched
+    /// beside what it parsed: an `f"…"` keeps its body as written until the
+    /// emitter builds from the parts ([ADR-262](../../../docs/specification/adr/adr-262.md)
+    /// D2). Shared, so the state's clone before a diagnosing replay is a count.
+    source: std::sync::Arc<str>,
 }
 
 impl Trivia {
+    /// The state a parse of `input` starts with.
+    fn over(input: &str) -> Trivia {
+        Trivia {
+            source: input.into(),
+            ..Trivia::default()
+        }
+    }
+
+    /// The input between two byte offsets, as written; empty where the parse
+    /// was not given its input ([`stops_at`] asks only where a parse stops).
+    fn source_between(&self, from: usize, to: usize) -> String {
+        self.source.get(from..to).unwrap_or_default().to_string()
+    }
+
     /// Record a run of trivia.
     ///
     /// A comment that a line break ran straight into **carries** the flag, so
@@ -370,9 +389,11 @@ pub struct Parsed {
     pub text_tiers: Vec<String>,
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
     /// hole's text: the shape of each value and the method it is handed over
-    /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). A hole
-    /// is parsed again by every reader, so the wrap is applied where it is
-    /// parsed - [`crate::emit::literal_expressions`] - and every reader sees it.
+    /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
+    /// `f"…"`'s holes are the grammar's ([ADR-262](../../../docs/specification/adr/adr-262.md)),
+    /// and each reader takes a copy of one, so the wrap is applied where the
+    /// copy is taken - [`crate::emit::literal_expressions`] - and every reader
+    /// sees it.
     pub hole_wraps: std::collections::BTreeMap<String, Vec<(String, winnow_grammar::Symbol)>>,
     /// **Every hole this file's readers parsed, by its text**: what
     /// [`Parsed::hole`] answered before. Each analysis walks every literal and
@@ -564,6 +585,7 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
     fits(input.len())?;
     let context = ParseContext::<Trivia> {
         interner: interner.clone(),
+        user_state: Trivia::over(input),
         ..Default::default()
     };
 
@@ -1164,7 +1186,10 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // spans, `ParseContext` carries the shared parser state including the
     // interner. Cloning the interner out shares it (it is an `Arc` inside), so
     // the handles in the AST stay resolvable after parsing.
-    let context = ParseContext::<Trivia>::default();
+    let context = ParseContext::<Trivia> {
+        user_state: Trivia::over(input),
+        ..Default::default()
+    };
     let interner = context.interner.clone();
 
     let mut stream = ParseInput::<Trivia> {
@@ -4341,8 +4366,72 @@ grammar! {
         // quote are one token: `f "x"` with a space is the variable `f`
         // followed by a string, and reading it as an interpolation would make
         // whitespace change what a program means.
-        rule FSTRING -> String =
-            "f\"" parts:STR_CHAR* "\"" -> { parts.concat() }
+        //
+        // **And the holes are parsed here** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+        // D1): the body is text and holes, and a hole's expression is the
+        // ordinary `expr`, so every walk sees it as a child of the literal. The
+        // body as written is kept beside the parts until the emitter builds
+        // from them (D2, D5).
+        rule F_STRING -> Expr @=
+            "f\"" parts:F_PART* "\"" -> {
+                Expr::LitInterpolated {
+                    text: _state.user().source_between(_span.start + 2, _span.end - 1),
+                    parts,
+                }
+            }
+
+        rule F_PART -> crate::ast::FPart =
+            t:F_TEXT -> { crate::ast::FPart::Text(t) }
+          | h:F_HOLE -> { h }
+
+        // Text as written: an escape whole, and `{{` and `}}` doubled - the
+        // body is transcribed into a format string, which spells them so.
+        rule F_TEXT -> String =
+            s:text(F_TEXT_CHAR+) -> { s.to_string() }
+
+        // `\u{…}` first: its braces belong to the escape, not to a hole
+        // (Part I 2.5).
+        rule F_TEXT_CHAR -> () =
+            "\\u{" (not("}") any)* "}" -> { () }
+          | "\\" any -> { () }
+          | "{{" -> { () }
+          | "}}" -> { () }
+          | not("\"") not("{") not("}") not("\\") any -> { () }
+
+        // A hole: `{`, an expression, and what follows its `:`. Lexical, so
+        // the whitespace after the expression is said (`WS`); the expression
+        // skips its own. The `:` is the first one the expression does not
+        // take, which is Part I 2.5's *first colon not inside a call or an
+        // index* said by the grammar.
+        rule F_HOLE -> crate::ast::FPart =
+            "{" e:expr WS spec:F_SPEC? "}" -> {
+                crate::ast::FPart::Hole { expr: e, spec: spec.map(str::to_string) }
+            }
+          // **A hole is code** (D3): a string inside one is written with plain
+          // quotes. The `\"` a hole used to need is not code, and is named.
+          // Each is asked by a lookahead first, so a hole that is closed and
+          // does not parse keeps the expression's own error; then read up to
+          // what it found, so the refusal stands where the expression stopped
+          // and wins there.
+          | "{" peek(((not("}") not("\\\"") not("\"") any)* "\\\""))
+                (not("}") not("\\\"") not("\"") any)* => fail(
+                "A hole in an `f\"…\"` is code, so a string inside it is written with \
+                 plain quotes: `f\"{greet(\"Ada\")}\"`, not `\\\"`."
+            ) -> { crate::ast::FPart::Text(String::new()) }
+          | "}" => fail(
+                "This `}` has no `{` before it. Write `}}` for a literal brace."
+            ) -> { crate::ast::FPart::Text(String::new()) }
+          // A `{` the string ends inside of: the quote comes before any `}`.
+          // Only then, so that a hole that is closed and does not parse keeps
+          // the expression's own error.
+          | "{" peek(((not("}") not("\"") any)* "\""))
+                (not("}") not("\"") any)* => fail(
+                "A `{` in this string is never closed. Close the hole with `}`, or \
+                 write `{{` for a literal brace."
+            ) -> { crate::ast::FPart::Text(String::new()) }
+
+        rule F_SPEC -> &'a str =
+            ":" s:text((not("}") any)*) -> { s }
 
         // `@=` for the position, as `list_lit` has it and for its reason: what
         // the literal lowers to is its use's answer (ADR-207 D2).
@@ -4359,7 +4448,7 @@ grammar! {
         // deliberately: a Kap 5.1 default and a `match` pattern are constants,
         // and `f"…"` is a call to `format!`. The grammar is where that is said.
         rule f_str_lit -> Expr =
-            s:FSTRING -> { Expr::LitInterpolated(s) }
+            s:F_STRING -> { s }
 
         // Kap 2.2. Lexical, and the body is kept as written - a `'\n'` is two
         // characters here and one in the value, and the language below reads

@@ -93,7 +93,7 @@ fn main() throws {
     let d: collections::BTreeSet[String] = text.lines().collect()
     let t: String = "ab".chars().collect()
     let xs = text.lines().collect()
-    println(f"{m.len()} {m[\"port = 8080\"] ?? 0} {s.len()} {d.len()} {t} {xs.len()}")
+    println(f"{m.len()} {m["port = 8080"] ?? 0} {s.len()} {d.len()} {t} {xs.len()}")
 }
 "##;
 
@@ -118,7 +118,7 @@ fn counted(text: ref String) -> collections::HashMap[String, i64] {
 fn main() throws {
     let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
     let m = counted(text)
-    println(f"{m.len()} {m[\"total\"] ?? 0}")
+    println(f"{m.len()} {m["total"] ?? 0}")
 }
 "##;
 

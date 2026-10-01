@@ -240,7 +240,7 @@ fn a_program_with_both_kinds_runs() {
          }\n\
          \n\
          fn main() throws {\n\
-         \x20   println(f\"{plain(21)} {size(\\\"eins.txt\\\")}\")\n\
+         \x20   println(f\"{plain(21)} {size(\"eins.txt\")}\")\n\
          }",
     );
     std::fs::write(dir.join("eins.txt"), "hallo").expect("the input");

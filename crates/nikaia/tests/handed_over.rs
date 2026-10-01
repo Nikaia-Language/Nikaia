@@ -326,7 +326,7 @@ fn what_is_not_refused_runs() {
          \x20   let mut again: String = \"d\"\n\
          \x20   xs.push(again)\n\
          \x20   again = \"e\"\n\
-         \x20   println(f\"{again} {xs.len()} {serve(\\\"x\\\".clone(), 1)}\")\n\
+         \x20   println(f\"{again} {xs.len()} {serve(\"x\".clone(), 1)}\")\n\
          }\n",
         "c\ne 1 2",
     );
@@ -650,7 +650,7 @@ fn a_copy_is_owned_whatever_it_copied() {
          \x20   let xs = [1, 2, 3]\n\
          \x20   let part = ref xs[0..<2]\n\
          \x20   let owned = first(part)\n\
-         \x20   println(f\"{owned.len()} {shout(\\\"hey\\\")}\")\n\
+         \x20   println(f\"{owned.len()} {shout(\"hey\")}\")\n\
          }\n",
         "2 hey!",
     );
@@ -714,8 +714,8 @@ fn a_bare_literal_is_text_of_its_own_where_it_is_kept() {
          \x20   let u = U { name: \"Ada\" }\n\
          \x20   let (n, word) = pair()\n\
          \x20   println(f\"{n} {word} {grade(85)}\")\n\
-         \x20   println(f\"{u.copy() ?? \\\"none\\\"}\")\n\
-         \x20   println(f\"{u.rest() ?? \\\"n/a\\\"}\")\n\
+         \x20   println(f\"{u.copy() ?? \"none\"}\")\n\
+         \x20   println(f\"{u.rest() ?? \"n/a\"}\")\n\
          }\n",
         "1 one B\nnone\nda",
     );

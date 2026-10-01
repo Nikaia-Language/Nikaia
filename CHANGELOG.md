@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.330] — 2026-10-01
+
+**The grammar parses the holes of an `f"…"`** (#107, ADR-262 D1-D4). `f"…"`
+is a rule of text runs and holes, and a hole is the ordinary expression rule;
+the tree holds the parts (`Expr::LitInterpolated { text, parts }`, an
+`FPart` each), so the checker, the emitter, the tier pass and the build-time
+evaluator read the holes the grammar parsed rather than parsing the text again.
+Every walk sees a hole as a child of its literal - which a walk written in
+Nikaia needs, having no parser of its own.
+
+- **A hole is written as code is** (D3): a string inside one has plain
+  quotes, `f"{greet("Ada")}"`. `\"` inside a hole is refused with that
+  sentence; `examples/escaping` and about fifty lines of tests moved to plain quotes,
+  and Part I 2.5 says so.
+- **A broken hole is a parse error, where it is** (D4): `f"{let}"` is
+  *expected expression* at the `let`; a `{` the string ends inside of and a
+  `}` with no `{` are named, as the emitter named them.
+- The body as written is kept beside the parts until the emitter builds from
+  them (D5, next).
+
 ## [0.0.329] — 2026-10-01
 
 **A file read stops doing work nobody asked for** (#320, ADR-263 D3). The

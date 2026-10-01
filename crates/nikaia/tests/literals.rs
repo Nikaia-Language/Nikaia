@@ -99,23 +99,18 @@ fn print_is_a_macro_like_println() {
     assert!(emitted.contains(r#"eprint!("b")"#), "{emitted}");
 }
 
-/// A hole is Nikaia source that was written **inside** a string literal, so the
-/// escaping it carries is that literal's and has to be undone before it is
-/// parsed.
-///
-/// Without this the parser is handed `f(\"a\")`, which is not an expression -
-/// and a program that wants to print the result of a call taking a string could
-/// not say so.
+/// **A hole is code as written** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// D3): the grammar parses it, so a string inside one is written with plain
+/// quotes, as in any other expression.
 #[test]
 fn a_hole_may_hold_a_string_literal() {
     let emitted =
-        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f(\"a\")}") }"#);
+        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f("a")}") }"#);
     assert!(emitted.contains(r#"f("a")"#), "{emitted}");
 
-    // A backslash the inner text wants keeps its meaning: only the two
-    // characters the enclosing literal had to escape are undone.
+    // The inner string's own escapes are its own.
     let escaped =
-        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f(\"a\\nb\")}") }"#);
+        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f("a\nb")}") }"#);
     assert!(escaped.contains(r#"f("a\nb")"#), "{escaped}");
 }
 
@@ -363,8 +358,8 @@ fn the_whole_set_is_accepted() {
 fn a_character_and_an_interpolation_are_asked_too() {
     assert!(refused("fn main() { let c = '\\q' }").is_some());
     assert!(refused("fn main() { println(f\"x\\qy\") }").is_some());
-    // A `\"` inside a hole belongs to the **literal**, and it is in the set.
-    assert!(refused("fn main() { println(f\"{greet(\\\"a\\\")}\") }\nfn greet(s: ref String) -> String { return s.clone() }").is_none());
+    // A string inside a hole is its own literal, and its escapes are its own.
+    assert!(refused("fn main() { println(f\"{greet(\"a\")}\") }\nfn greet(s: ref String) -> String { return s.clone() }").is_none());
 }
 
 /// **A malformed `\x` or `\u{…}` is refused with the form it should have had**,
@@ -521,4 +516,68 @@ fn the_way_out_runs_and_what_prints_is_untouched() {
         "Reading: 1, 2, 3 3 1 a-b\n"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **The grammar parses a hole** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// D1, D2): the literal's parts are text runs and holes, and a hole is an
+/// expression of the tree - with its format, where one follows the `:`.
+#[test]
+fn the_tree_holds_the_parts_of_an_interpolation() {
+    use nikaia::ast::{Expr, FPart, Item, Stmt};
+    let parsed = nikaia::parser::parse_to_ast(
+        "fn main() { let n = 3 println(f\"a {n:>4} b {g(\"x\")} {{c}}\") }",
+    )
+    .expect("it parses");
+    let Item::Fn { body, .. } = &parsed.program.items[0].node else {
+        panic!("a function");
+    };
+    let Stmt::Expr(Expr::Call { args, .. }) = &body.stmts[1].node else {
+        panic!("a call: {:?}", body.stmts[1].node);
+    };
+    let Expr::LitInterpolated { text, parts } = &args[0] else {
+        panic!("an interpolation: {:?}", args[0]);
+    };
+    assert_eq!(text, "a {n:>4} b {g(\"x\")} {{c}}");
+    let holes: Vec<_> = parts
+        .iter()
+        .filter_map(|p| match p {
+            FPart::Hole { expr, spec } => Some((expr, spec.as_deref())),
+            FPart::Text(_) => None,
+        })
+        .collect();
+    assert_eq!(holes.len(), 2, "{parts:?}");
+    assert!(
+        matches!(holes[0], (Expr::Variable(_), Some(">4"))),
+        "{:?}",
+        holes[0]
+    );
+    assert!(
+        matches!(holes[1], (Expr::Call { .. }, None)),
+        "{:?}",
+        holes[1]
+    );
+    assert!(
+        parts
+            .iter()
+            .any(|p| matches!(p, FPart::Text(t) if t == " {{c}}")),
+        "{parts:?}"
+    );
+}
+
+/// **A broken hole is the parser's**, said where it is (ADR-262 D3, D4): a
+/// quote the hole escaped, a `{` the string ends inside of, and a `}` with
+/// no `{`.
+#[test]
+fn a_broken_hole_is_refused_by_the_parser() {
+    let said = |source: &str| {
+        let refused = nikaia::parser::parse_to_ast(source).expect_err("a parse error");
+        let finding = nikaia::diagnostics::refused_finding(&refused).expect("a finding");
+        nikaia::diagnostics::render_finding(finding, "app.nika", source)
+    };
+    let escaped = said("fn main() { println(f\"{g(\\\"a\\\")}\") }");
+    assert!(escaped.contains("plain quotes"), "{escaped}");
+    let unclosed = said("fn main() { let n = 1 println(f\"x {n\") }");
+    assert!(unclosed.contains("is never closed"), "{unclosed}");
+    let stray = said("fn main() { println(f\"x } y\") }");
+    assert!(stray.contains("has no `{` before it"), "{stray}");
 }

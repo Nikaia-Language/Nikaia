@@ -132,11 +132,14 @@ fn a_call_of_options_alone_needs_no_semicolon() {
 /// spelling to send a reader to.
 #[test]
 fn a_leading_semicolon_at_a_call_is_refused() {
-    let said = lowered(
-        "fn execute(target_age: i64 = 0) -> i64 { return target_age }\n\
-         fn main() { println(f\"{execute(; target_age: 30)}\") }",
-    )
-    .expect_err("the leading form is a parse error");
+    // In a hole, which the grammar parses (ADR-262 D4): the refusal is the
+    // parser's, at its place, and carries its help like any parse error.
+    let source = "fn execute(target_age: i64 = 0) -> i64 { return target_age }\n\
+                  fn main() { println(f\"{execute(; target_age: 30)}\") }";
+    let refused = parse_to_ast(source).expect_err("the leading form is a parse error");
+    let finding =
+        nikaia::diagnostics::refused_finding(&refused).expect("a parse error carries its finding");
+    let said = nikaia::diagnostics::render_finding(finding, "app.nika", source);
     assert!(said.contains("`;` has nothing before it."), "{said}");
     assert!(
         said.contains("execute(target_age: 30)"),

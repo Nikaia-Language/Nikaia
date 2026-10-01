@@ -337,7 +337,7 @@ fn main() throws {
         }
     }
     let ws = words("a b c")
-    println(f"{p.name.len()} {names.len()} {counts[\"=\"] ?? 0} {ws.len()} {ws[2]}")
+    println(f"{p.name.len()} {names.len()} {counts["="] ?? 0} {ws.len()} {ws[2]}")
 }
 "##;
 
@@ -379,7 +379,7 @@ fn main() throws {
     let loud = shout(last)
     // A parameter that only reads is lent either kind; one that keeps is
     // handed each as it is, from inside a hole as anywhere else.
-    println(f"{loud} {shout(f\"x\")} {tag(last).s} {tag(f\"y\").s} {all.len()} {all[1]}")
+    println(f"{loud} {shout(f"x")} {tag(last).s} {tag(f"y").s} {all.len()} {all[1]}")
 }
 "##;
 
@@ -426,7 +426,7 @@ fn main() throws {
     for line in text.lines() {
         last = line.trim()
     }
-    println(f"{e.note ?? \"-\"} {f.note ?? \"-\"} {port(text) ?? \"-\"} {last ?? \"-\"}")
+    println(f"{e.note ?? "-"} {f.note ?? "-"} {port(text) ?? "-"} {last ?? "-"}")
 }
 "##;
 
@@ -478,7 +478,7 @@ fn main() throws {
     all.push(text.lines().next())
     all.push(f"x")
     all.push(null)
-    println(f"{e.note ?? \"-\"} {f.note ?? \"-\"} {g.note ?? \"-\"} {find(text, true) ?? \"-\"} {find(\"a\", true) ?? \"-\"} {last ?? \"-\"} {all.len()}")
+    println(f"{e.note ?? "-"} {f.note ?? "-"} {g.note ?? "-"} {find(text, true) ?? "-"} {find("a", true) ?? "-"} {last ?? "-"} {all.len()}")
 }
 "##;
 
@@ -689,7 +689,7 @@ fn main() throws {
         m[line] = line.len()
     }
     m[f"own"] = 3
-    println(f"{m.insert(text.trim(), 1) ?? 0} {m.len()} {count([text.trim(), f\"x\"])} {count([f\"ab\"])}")
+    println(f"{m.insert(text.trim(), 1) ?? 0} {m.len()} {count([text.trim(), f"x"])} {count([f"ab"])}")
 }
 "##;
 

@@ -353,7 +353,10 @@ impl<'a> BuildTime<'a> {
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a
             // value somebody could have written down.
-            Expr::LitInterpolated(literal) => self.interpolated(literal, frame),
+            Expr::LitInterpolated {
+                text: literal,
+                parts,
+            } => self.interpolated(literal, parts, frame),
             // **A variant that carries nothing**: `Shade::Odd`, which is a
             // value and not a call. The path arm below a call, one shape out.
             Expr::Path(path) => {
@@ -716,18 +719,20 @@ impl<'a> BuildTime<'a> {
     fn interpolated(
         &mut self,
         literal: &str,
+        parts: &[crate::ast::FPart],
         frame: &BTreeMap<String, Value>,
     ) -> Result<Value, Refusal> {
-        let (format, holes) = crate::emit::interpolation(literal).map_err(|_| {
+        let (format, _) = crate::emit::interpolation(literal).map_err(|_| {
             // A malformed literal is the lowering's refusal and it names the
             // line; saying anything else here would be a second sentence about
             // one mistake.
             Refusal::Unevaluable
         })?;
+        // The holes the grammar parsed (ADR-262 D2).
+        let holes = crate::emit::interpolated_holes(literal, parts);
         let mut values = Vec::with_capacity(holes.len());
-        for hole in &holes {
-            let expr = self.parsed.hole(hole).map_err(|_| Refusal::Unevaluable)?;
-            values.push(self.expr(&expr, frame)?);
+        for (_, expr) in &holes {
+            values.push(self.expr(expr, frame)?);
         }
 
         // **The literal parts are still *written*.** `interpolation` splits

@@ -401,7 +401,16 @@ pub enum Expr {
     /// its text and nothing made anyone look. A variant makes the question
     /// unavoidable - every `match` on an expression has to say what it does
     /// with this one, and the compiler names the sites that forgot.
-    LitInterpolated(String),
+    ///
+    /// **The grammar parses its holes** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+    /// D1, D2): `parts` is the body as text runs and holes, and a hole is an
+    /// expression of the tree like any other - a walk sees it without parsing
+    /// anything. `text` is the body as written, kept until the emitter builds
+    /// from the parts (D5).
+    LitInterpolated {
+        text: String,
+        parts: Vec[FPart],
+    },
     /// Kap 2.2: `'a'`, `'\n'`. The body is kept **as written**, escape and
     /// all: the language below spells a character literal the same way, so the
     /// lowering is a transcription and nothing has to decode it twice.
@@ -674,6 +683,17 @@ pub enum Expr {
     TryCatch {
         expr: Expr,
         handler: Block, // Der Block mit 'error' Variable
+    },
+}
+
+/// **One piece of an `f"…"`** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// D2): a run of text, as written - escapes and `{{` kept - or a hole, an
+/// expression and what follows its `:`.
+pub enum FPart {
+    Text(String),
+    Hole {
+        expr: Expr,
+        spec: String?,
     },
 }
 
