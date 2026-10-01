@@ -4,7 +4,7 @@
 //! [ADR-039](../../../docs/specification/adr/adr-039.md) D10 gave shared
 //! mutable state four doors and stated the two mistakes that come with them.
 //! Both were catalogued in Part III Appendix C and raised by nothing, which is
-//! the state the former backlog file calls the one that rots fastest: a rule with no
+//! the state that rots fastest: a rule with no
 //! program to be tested against quietly stops being true.
 //!
 //! **Both are local**, which is why they are these two and not the other three

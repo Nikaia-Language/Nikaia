@@ -13,9 +13,8 @@
 // **Both rules here are refusals that cost nothing today.** Nothing in
 // `examples/`, `tests/samples/` or `crates/nikaia-std/src/` declares a trait at
 // all — [ADR-078](../../../docs/specification/adr/adr-078.md) made the
-// declaration possible one commit ago — so this is the former backlog file's own
-// principle at its cheapest moment: *a refusal is free before programs exist and
-// breaking afterwards*.
+// declaration possible one commit ago — so this is the cheapest moment for a
+// refusal: *a refusal is free before programs exist and breaking afterwards*.
 
 use std::collections::{BTreeMap, BTreeSet};
 
