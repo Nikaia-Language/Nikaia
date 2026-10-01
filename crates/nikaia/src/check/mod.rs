@@ -7500,6 +7500,7 @@ impl<'a> Checker<'a> {
         self.a_call_that_may_pause(
             self.parsed.text(method),
             !contract.sync_claim.is_sync() || walks_a_pausing_step,
+            unpromised(contract) && !walks_a_pausing_step,
             span,
         );
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
@@ -7662,7 +7663,7 @@ impl<'a> Checker<'a> {
         self.settled_methods.remove(&written);
         self.pausing_methods.insert(written);
         let callee = key.to_string();
-        self.a_call_that_may_pause(&callee, true, span);
+        self.a_call_that_may_pause(&callee, true, false, span);
         result
     }
 
@@ -12920,7 +12921,12 @@ impl<'a> Checker<'a> {
             );
         }
         self.may_fail_here(&key, contract, span);
-        self.a_call_that_may_pause(&name, !contract.sync_claim.is_sync(), span);
+        self.a_call_that_may_pause(
+            &name,
+            !contract.sync_claim.is_sync(),
+            unpromised(contract),
+            span,
+        );
         self.a_pausing_call_in_an_action(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
@@ -14061,12 +14067,13 @@ impl<'a> Checker<'a> {
     /// [ADR-233](../../docs/specification/adr/adr-233.md) D3): a door's block
     /// runs with the lock open, and a pause there holds the lock for as long
     /// as the wait takes. `callee` is the call's name as the message says it.
-    fn a_call_that_may_pause(&mut self, callee: &str, pauses: bool, span: &Span) {
+    fn a_call_that_may_pause(&mut self, callee: &str, pauses: bool, unpromised: bool, span: &Span) {
         if !pauses {
             return;
         }
         let pause = Pause {
             what: format!("`{callee}`"),
+            unpromised: unpromised.then(|| callee.to_string()),
             before_walk: format!(
                 "Call `{callee}` before the walk and pass the values in, or walk with \
                  `iter()`, whose lambda may pause."
@@ -14085,6 +14092,7 @@ impl<'a> Checker<'a> {
     fn a_cleanup_that_may_pause(&mut self, name: &str, span: &Span) {
         let pause = Pause {
             what: format!("the cleanup of `{name}`"),
+            unpromised: None,
             before_walk: format!(
                 "Create `{name}` outside the walk and pass it in, or walk with `iter()`, \
                  whose lambda may pause."
@@ -14100,9 +14108,21 @@ impl<'a> Checker<'a> {
     fn a_pause(&mut self, pause: Pause, span: &Span) {
         let Pause {
             what,
+            unpromised,
             before_walk,
             before_door,
         } = pause;
+        // **Another package's function that does not pause and never said so**
+        // (ADR-244 D1) is refused as one that may, and the message says which
+        // of the two it is: *can pause* would send the reader looking for a
+        // pause that is not there.
+        let (pauses, why) = match &unpromised {
+            Some(callee) => (
+                "doesn't promise that it never pauses",
+                Some(not_promised_note(callee)),
+            ),
+            None => ("can pause", None),
+        };
         if let Some(handed) = &mut self.handed_over {
             handed.pauses = true;
         }
@@ -14115,14 +14135,16 @@ impl<'a> Checker<'a> {
                 span: *span,
                 code: "NK2209",
                 message: format!(
-                    "{} can pause, but this runs on several cores at once.",
+                    "{} {pauses}, but this runs on several cores at once.",
                     sentence(&what)
                 ),
-                notes: vec![
+                notes: std::iter::once(
                     "A `par_iter()` lambda runs on every core at once, and a core that waits \
                      holds up its share of the work, so the lambda must never pause."
                         .to_string(),
-                ],
+                )
+                .chain(why.clone())
+                .collect(),
                 help: Some(before_walk),
                 labels: Vec::new(),
             });
@@ -14135,14 +14157,16 @@ impl<'a> Checker<'a> {
             span: *span,
             code: "NK2202",
             message: format!(
-                "{} can pause, but you're holding a lock here.",
+                "{} {pauses}, but you're holding a lock here.",
                 sentence(&what)
             ),
-            notes: vec![
+            notes: std::iter::once(
                 "While the lock is held, every other task that needs the value waits, so \
                  a pause here makes all of them wait too."
                     .to_string(),
-            ],
+            )
+            .chain(why)
+            .collect(),
             help: Some(before_door),
             labels: Vec::new(),
         });
@@ -14173,16 +14197,25 @@ impl<'a> Checker<'a> {
         let Some(rule) = self.inside_an_action.clone() else {
             return;
         };
+        let (pauses, why) = match unpromised(contract) {
+            true => (
+                "doesn't promise that it never pauses",
+                Some(not_promised_note(callee)),
+            ),
+            false => ("can pause", None),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK2209",
-            message: format!("The action of `{rule}` calls `{callee}`, which can pause."),
-            notes: vec![
+            message: format!("The action of `{rule}` calls `{callee}`, which {pauses}."),
+            notes: std::iter::once(
                 "A grammar's actions may never pause: a parser works on text that's \
                  already there, which is what lets `@frame` parse in parallel."
                     .to_string(),
-            ],
+            )
+            .chain(why)
+            .collect(),
             help: Some(
                 "Read what the parser needs before parsing and pass it in, or process the \
                  result after the parse."
@@ -14220,14 +14253,21 @@ impl<'a> Checker<'a> {
         let Some(caller) = self.inside_a_sync_function.clone() else {
             return;
         };
+        let (pauses, why) = match unpromised(contract) {
+            true => (
+                "doesn't promise that it never pauses",
+                not_promised_note(callee),
+            ),
+            false => ("can pause", format!("`{callee}` isn't `sync`.")),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
             code: "NK2202",
-            message: format!("`{caller}` is `sync`, but it calls `{callee}`, which can pause."),
+            message: format!("`{caller}` is `sync`, but it calls `{callee}`, which {pauses}."),
             notes: vec![
                 "A `sync` function promises never to pause or do I/O.".to_string(),
-                format!("`{callee}` isn't `sync`."),
+                why,
             ],
             help: Some(format!(
                 "Remove `sync` from `{caller}`, or move the call out of it."
@@ -15283,7 +15323,7 @@ impl<'a> Checker<'a> {
             self.checked.pausing_loops.insert(span.at());
             // A lambda around the loop pauses with it, and a door around it
             // is held across the wait (ADR-233 D1, D3).
-            self.a_call_that_may_pause("a step of this `for`", true, span);
+            self.a_call_that_may_pause("a step of this `for`", true, false, span);
         }
     }
 
@@ -22881,8 +22921,28 @@ fn brace_groups(text: &str) -> Vec<String> {
 
 /// A pause the checker was told of, in the words its refusals use: what
 /// pauses, and the way out of a walk and of a door.
+/// **Whether an entry is another package's `sync` that was never promised**
+/// ([ADR-244](../../docs/specification/adr/adr-244.md) D1): the one reading of
+/// *may pause* that is not a pause.
+fn unpromised(contract: &FnContract) -> bool {
+    contract.sync_claim == crate::contracts::Sync::Unpromised
+}
+
+/// What a refusal adds about such an entry: whose it is, and that the word is
+/// missing there rather than a pause here.
+fn not_promised_note(callee: &str) -> String {
+    let (package, function) = callee.split_once("::").unwrap_or(("its package", callee));
+    format!(
+        "`{callee}` is `{package}`'s, and its source doesn't say `sync`. That its body doesn't \
+         pause today is not a promise another package can rely on: write `sync` after the \
+         result of `{function}` in `{package}` to make it."
+    )
+}
+
 struct Pause {
     what: String,
+    /// The callee, where it is another package's and never promised `sync`.
+    unpromised: Option<String>,
     before_walk: String,
     before_door: String,
 }

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.302 (Draft)
+**Version:** 0.0.303 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -307,9 +307,13 @@ Only what is true is written. **An absent `sync` on an entry means not `sync`.**
 
 **The contract carries no prose** ([ADR-251](adr/adr-251.md) D2). A `///` in front of a declaration is the source's (Part I), and the compiler does not copy it into the ledger. `std.contracts`, which is written by hand, keeps its sentences as `#` comments above the entries they are about.
 
-**`sync` is written in two forms.** `sync = true` is a promise the source made; a body that contradicts it is refused with `NK2202`. `sync = "inferred"` is a promise the body implies: nothing the function calls can pause, so the function cannot pause.
+**`sync` is written in two forms.** `sync = true` is a promise the source made; a body that contradicts it is refused with `NK2202`. `sync = "inferred"` is an observation about the body: nothing the function calls can pause, so today the function cannot pause.
 
-A caller does not distinguish the two forms. Both mean *this cannot pause*, and both satisfy the `sync` half of what `access` and `par_iter` require. A diff distinguishes them: the narration of a withdrawn asserted `sync` differs from that of a lost inferred one.
+**Inside a package a caller does not distinguish the two forms.** Both mean *this cannot pause*, and both satisfy the `sync` half of what `access` and `par_iter` require.
+
+**A caller in another package reads only the promise** ([ADR-244](adr/adr-244.md) D1). Across a package boundary, `"inferred"` means *may pause*: a change inside the body may withdraw it, and nobody promised it. A `sync` function, a lock's `update` or `access`, a `par_iter` lambda or a grammar's action that calls such a function is refused, and the message names the word to write in the other package (`sync`, or `sync(f)`). Only the check reads it so. The call is lowered by what the body is, and a function that cannot pause is not awaited (D3). A caller whose only pausing call is such a function may pause itself, to its own consumers.
+
+A diff distinguishes the two forms: the narration of a withdrawn asserted `sync` differs from that of a lost inferred one.
 
 `sync` is one of two conditions for a body inside a lock. A body goes inside a lock only if it cannot pause and reaches no lock of its own; the first condition is `sync`, the second is `locks`.
 

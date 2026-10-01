@@ -1303,7 +1303,10 @@ impl LedgerOps for Ledger {
             // asks `is_sync` reads this file exactly as it did before.
             match &contract.sync_claim {
                 Sync::Asserted => out.push_str("sync = true\n"),
-                Sync::Inferred => out.push_str("sync = \"inferred\"\n"),
+                // `Unpromised` is the checker's reading of an `"inferred"`
+                // from another package (ADR-244 D1) and is not meant to be
+                // rendered; where it is, it is still that fact.
+                Sync::Inferred | Sync::Unpromised => out.push_str("sync = \"inferred\"\n"),
                 // **The source's own word** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
                 // D4, [ADR-251](../../../../docs/specification/adr/adr-251.md) D4).
                 Sync::From(name) => out.push_str(&format!("sync = \"sync({name})\"\n")),

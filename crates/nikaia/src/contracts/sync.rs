@@ -59,6 +59,10 @@ pub struct Violation {
     pub callee: String,
     /// Which ledger answered - this program's, or a library's.
     pub from_library: bool,
+    /// Whether `callee` is another package's that never pauses and does not
+    /// promise it ([ADR-244](../../../docs/specification/adr/adr-244.md) D1):
+    /// refused for the missing word, not for a pause, and said so.
+    pub unpromised: bool,
     /// Whether `callee` is a **construct** rather than a function
     /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D1).
     ///
@@ -571,6 +575,7 @@ fn walk_block(
                     promise: promise.to_string(),
                     callee: construct.to_string(),
                     from_library: false,
+                    unpromised: false,
                     construct: true,
                 });
                 return;
@@ -581,13 +586,14 @@ fn walk_block(
             {
                 return;
             }
-            if let Some((callee, from_library)) = called(parsed, expr, own, library) {
+            if let Some((callee, from_library, unpromised)) = called(parsed, expr, own, library) {
                 found.push(Violation {
                     span,
                     caller: caller.to_string(),
                     promise: promise.to_string(),
                     callee,
                     from_library,
+                    unpromised,
                     construct: false,
                 });
             }
@@ -745,13 +751,19 @@ pub(crate) fn reached(
 /// the *check*: it is not a call, it is a call this compiler cannot resolve, or
 /// it resolves to something a ledger says is `sync`. The permissive direction,
 /// stated as code.
-fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Option<(String, bool)> {
+fn called(
+    parsed: &Parsed,
+    expr: &Expr,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<(String, bool, bool)> {
     match reached(parsed, expr, own, library)? {
         Reached::Own(name) => {
             let contract = own.functions.get(&name)?;
-            (!contract.sync_claim.is_sync()).then_some((name, false))
+            let unpromised = contract.sync_claim == Sync::Unpromised;
+            (!contract.sync_claim.is_sync()).then_some((name, false, unpromised))
         }
-        Reached::Library { key, sync } => (!sync).then_some((key, true)),
+        Reached::Library { key, sync } => (!sync).then_some((key, true, false)),
         // A method call the check deliberately does not resolve, and the reason
         // is the diagnostic rather than the analysis: `NK2202` names one call
         // and puts a caret under it, where the type checker answers per
@@ -770,6 +782,7 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
         // reports this checker and `NK2202` at *statement* granularity already.
         Reached::Opaque(name) => Some((
             name.unwrap_or_else(|| "something this compiler cannot resolve".to_string()),
+            false,
             false,
         )),
     }

@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.303] — 2026-10-01
+
+**Another package's function is `sync` where its source says so** (ADR-244 D1
+and D3, #127). A dependency's `sync = "inferred"` is what its body happens to
+be today, and a change inside it withdraws it; it was read as a promise, so a
+log line in a library could break callers it never saw. A consumer's check now
+reads it as *may pause*: a `sync` function, a lock's door, a `par_iter` lambda
+or an action that calls such a function is refused, and told that the callee
+*doesn't promise that it never pauses* - with the word to write in the other
+package - rather than that it pauses. The lowering still reads the body, so the
+call is not awaited (D3); only a caller whose sole pausing call is an
+unpromised one becomes *may pause* itself. Inside a package nothing changes.
+Part III 13.5 says so.
+
 ## [0.0.302] — 2026-10-01
 
 **Part III 14 says what `assert` is now** (#104). 14.1 and 14.2 had been

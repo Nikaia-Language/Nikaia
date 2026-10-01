@@ -50,27 +50,47 @@ const LIB: &str = "pub fn hello() -> i64 {\n    return 1\n}\n";
 const APP: &str = "use lib\n\nfn caller() -> i64 {\n    return lib::hello()\n}\n\nfn main() { }\n";
 
 /// **The consumer resolves a call into its dependency**, which is the whole of
-/// D1 from the consumer's side: `caller` earns `sync` because `lib::hello` is an
-/// answer rather than an absence.
+/// D1 from the consumer's side: `lib::hello` is an answer rather than an
+/// absence - and the answer is what `lib`'s source **promised**
+/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1), not what its
+/// body happens to be today. `hello` writes no `sync`, so `caller` may pause;
+/// written, `caller` earns its `sync`. Either way the entry stays `"inferred"`
+/// in the program's contracts, because that is what the lowering reads (D3).
 #[test]
 fn a_call_into_a_dependency_is_answered_from_its_ledger() {
     let dir = a_program_and_a_package(
         "dependency-ledger-resolves",
         &[("lib/src/main.nika", LIB), ("app/src/main.nika", APP)],
     );
+    let read = || {
+        Program::read_with(
+            &dir.join("app/src/main.nika"),
+            &depends_on(&dir.join("lib")),
+        )
+        .expect("the program reads")
+    };
 
-    let program = Program::read_with(
-        &dir.join("app/src/main.nika"),
-        &depends_on(&dir.join("lib")),
-    )
-    .expect("the program reads");
+    let program = read();
     assert_eq!(
         program.contracts.functions["caller"].sync_claim,
-        Sync::Inferred
+        Sync::No,
+        "`hello` never promised `sync`, so a caller in another package counts it as one \
+         that may pause"
     );
     assert_eq!(
         program.contracts.functions["lib::hello"].sync_claim,
         Sync::Inferred
+    );
+
+    std::fs::write(
+        dir.join("lib/src/main.nika"),
+        "pub fn hello() -> i64 sync {\n    return 1\n}\n",
+    )
+    .expect("promise it");
+    assert_eq!(
+        read().contracts.functions["caller"].sync_claim,
+        Sync::Inferred,
+        "a written `sync` is a promise the caller may count on"
     );
 
     std::fs::remove_dir_all(&dir).ok();

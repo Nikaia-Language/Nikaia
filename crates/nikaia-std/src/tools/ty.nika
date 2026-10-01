@@ -678,17 +678,26 @@ impl Provenance {
 /// **Whether a function is `sync`** (Part II 12.1), and how that is known:
 /// not at all, inferred from its body, asserted by a hand-written entry, or
 /// taken from another function's entry.
+///
+/// **`Unpromised` is never written.** It is what another package's
+/// `"inferred"` reads as where it is checked from outside
+/// ([ADR-244](../../../../docs/specification/adr/adr-244.md) D1): the body
+/// cannot pause, and nobody promised it, so a caller has to count it as one
+/// that may. It is kept apart from `No` so that a refusal can say which of the
+/// two it is, and how the other package's author makes the promise.
 pub enum Sync {
     No,
     Inferred,
     Asserted,
     From(String),
+    Unpromised,
 }
 
 impl Sync {
     pub fn is_sync(ref self) -> bool {
         return match self {
             Sync::No => false,
+            Sync::Unpromised => false,
             else => true,
         }
     }

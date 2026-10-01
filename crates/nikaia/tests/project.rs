@@ -3109,3 +3109,74 @@ fn nikaia_run_becomes_the_program() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **Another package's function is `sync` where its source says so, and only
+/// there** ([ADR-244](../../../docs/specification/adr/adr-244.md) D1, D3).
+///
+/// `lib::plus` cannot pause and does not promise it. A `sync` function of the
+/// program may not count on it, and is told that the word is missing in `lib`
+/// rather than that `plus` pauses. A plain caller builds and runs: the call is
+/// checked against the promise and **lowered by the body**, so it is not
+/// awaited - an `.await` on a plain function is what `rustc` would have refused.
+#[test]
+fn another_packages_sync_is_what_its_source_promised() {
+    let dir = a_program_and_a_package(
+        "sync-across-a-package",
+        "lib",
+        &[
+            (
+                "lib/src/main.nika",
+                "pub fn plus(x: i64) -> i64 {\n    return x + 1\n}\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use lib\n\nfn total() -> i64 sync {\n    return lib::plus(1)\n}\n\n\
+                 fn main() {\n    println(total())\n}\n",
+            ),
+        ],
+    );
+    let refused = nikaia(&["build"], &dir.join("app"));
+    assert!(!refused.status.success(), "{}", said(&refused));
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        told.contains("NK2202") && told.contains("doesn't promise that it never pauses"),
+        "{}",
+        said(&refused)
+    );
+    assert!(
+        told.contains("Write `sync` after the result of `plus` in `lib`"),
+        "{}",
+        said(&refused)
+    );
+
+    std::fs::write(
+        dir.join("app/src/main.nika"),
+        "use lib\n\nfn total() -> i64 {\n    return lib::plus(1)\n}\n\n\
+         fn main() {\n    println(total())\n}\n",
+    )
+    .expect("a plain caller");
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "2",
+        "{}",
+        said(&ran)
+    );
+
+    std::fs::write(
+        dir.join("lib/src/main.nika"),
+        "pub fn plus(x: i64) -> i64 sync {\n    return x + 1\n}\n",
+    )
+    .expect("promise it");
+    std::fs::write(
+        dir.join("app/src/main.nika"),
+        "use lib\n\nfn total() -> i64 sync {\n    return lib::plus(1)\n}\n\n\
+         fn main() {\n    println(total())\n}\n",
+    )
+    .expect("the sync caller again");
+    let promised = nikaia(&["run"], &dir.join("app"));
+    assert!(promised.status.success(), "{}", said(&promised));
+    assert_eq!(String::from_utf8_lossy(&promised.stdout).trim(), "2");
+    std::fs::remove_dir_all(&dir).ok();
+}

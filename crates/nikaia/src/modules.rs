@@ -519,6 +519,31 @@ fn package_ledger(
     own
 }
 
+/// **What another package may rely on about pausing**
+/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1): what its source
+/// wrote, `sync` or `sync(f)`, and not what the inference observed about
+/// today's body. Each entry `another` says is across the boundary and reads
+/// `"inferred"` reads as *may pause* in the copy this returns -
+/// [`Sync::Unpromised`](crate::contracts::Sync::Unpromised), so a refusal can
+/// say that the callee does not promise it rather than that it pauses.
+///
+/// **The copy is the checker's and never the lowering's** (D3): a call is
+/// checked against the promise and lowered by what the body is, so an
+/// unpromised `sync` callee is still called without an `.await`. `std` has no
+/// `"inferred"` entry, its ledger being written by hand, so only a package's
+/// entries are ever changed.
+pub(crate) fn as_promised(
+    mut ledger: crate::contracts::Ledger,
+    another: impl Fn(&str) -> bool,
+) -> crate::contracts::Ledger {
+    for (key, contract) in ledger.functions.iter_mut() {
+        if contract.sync_claim == crate::contracts::Sync::Inferred && another(key) {
+            contract.sync_claim = crate::contracts::Sync::Unpromised;
+        }
+    }
+    ledger
+}
+
 /// A package's committed `nikaia.contracts`, where it has one this compiler can
 /// read.
 ///
@@ -700,7 +725,11 @@ impl Program {
                 &crate::contracts::std_library(),
             );
             as_its_own.insert(package.clone(), own.clone());
-            library.absorb_renaming(Some(&package), &renames, own.clone());
+            // **The program's own inference reads the dependency as promised**
+            // (ADR-244 D1): a call into it that only the inference calls `sync`
+            // makes the caller *may pause*. `contracts` keeps the entry as it
+            // is, because that is what the lowering reads (D3).
+            library.absorb_renaming(Some(&package), &renames, as_promised(own.clone(), |_| true));
             contracts.absorb_renaming(Some(&package), &renames, own);
         }
 
@@ -720,6 +749,18 @@ impl Program {
             contracts,
             as_its_own,
             tests: Vec::new(),
+        })
+    }
+
+    /// **The program's contracts as its own files are checked against them**
+    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1): every
+    /// dependency's entry reads only what that package's source promised about
+    /// pausing ([`as_promised`]). [`Program::contracts`] stays the ledger the
+    /// lowering reads and the one written beside the program.
+    pub fn contracts_as_promised(&self) -> crate::contracts::Ledger {
+        as_promised(self.contracts.clone(), |key| {
+            key.split_once("::")
+                .is_some_and(|(package, _)| self.as_its_own.contains_key(package))
         })
     }
 

@@ -411,10 +411,11 @@ pub enum Sync {
     Inferred,
     Asserted,
     From(String),
+    Unpromised,
 }
 
 impl Sync {
-    pub fn is_sync(&self) -> bool { !matches!(self, Sync::No) }
+    pub fn is_sync(&self) -> bool { !matches!(self, Sync::No | Sync::Unpromised) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
