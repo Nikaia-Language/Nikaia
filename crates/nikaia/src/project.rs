@@ -866,13 +866,18 @@ pub fn lower_reading(
             // types inside them*, and the package's file writes the bare word.
             // `Program::as_its_own` is the ledger that package was inferred
             // with, kept rather than reconstructed.
+            //
+            // **And the program's own files against what each dependency
+            // promised** (ADR-244 D1), not what its body happens to be: an
+            // `"inferred"` `sync` reads as *may pause* across the boundary.
+            let promised = program.contracts_as_promised();
             for unit in &program.units {
                 let contracts = match &unit.package {
                     Some(package) => program
                         .as_its_own
                         .get(package)
                         .unwrap_or(&program.contracts),
-                    None => &program.contracts,
+                    None => &promised,
                 };
                 check(
                     &unit.parsed,

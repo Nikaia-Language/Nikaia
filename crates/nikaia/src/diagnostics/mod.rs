@@ -868,6 +868,9 @@ pub fn render_sync_violation(
     path: &str,
     source: &str,
 ) -> String {
+    if violation.unpromised {
+        return render_finding(&unpromised_call(violation), path, source);
+    }
     let ledger = if violation.from_library {
         "`std`"
     } else {
@@ -918,6 +921,43 @@ pub fn render_sync_violation(
         }],
     };
     render_finding(&finding, path, source)
+}
+
+/// **`NK2202` for a call the callee never promised** ([ADR-244](../../../docs/specification/adr/adr-244.md)
+/// D1): another package's function that does not pause today and whose source
+/// does not say `sync`. Saying *which can pause* would be false, and would
+/// send the reader looking for a pause; what is missing is a word in the other
+/// package, and that is what the message names.
+pub fn unpromised_call(violation: &crate::contracts::sync::Violation) -> crate::check::Finding {
+    let (package, function) = violation
+        .callee
+        .split_once("::")
+        .unwrap_or(("its package", violation.callee.as_str()));
+    crate::check::Finding {
+        severity: crate::check::Severity::Error,
+        span: violation.span,
+        code: "NK2202",
+        message: format!(
+            "`{}` is `{}`, but it calls `{}`, which doesn't promise that it never pauses.",
+            violation.caller, violation.promise, violation.callee
+        ),
+        notes: vec![format!(
+            "`{}` is `{package}`'s, and its source doesn't say `sync`. That its body \
+                 doesn't pause today is not a promise another package can rely on.",
+            violation.callee
+        )],
+        help: Some(format!(
+            "Write `sync` after the result of `{function}` in `{package}`, or remove `{}` \
+             from `{}`.",
+            violation.promise, violation.caller
+        )),
+        labels: vec![crate::check::Label {
+            span: violation.span,
+            word: violation.callee.clone(),
+            text: "doesn't promise `sync`".to_string(),
+            main: true,
+        }],
+    }
 }
 
 /// One of the type checker's findings, on the `.nika` line it is about.
