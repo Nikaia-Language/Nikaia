@@ -1,0 +1,127 @@
+// crates/nikaia-std/src/tools/touch.nika
+//
+// **What an operation reaches, and whether it changes it** (ADR-033, ADR-067
+// D2) - the decisions of the compiler's `contracts::touch`, moved from Rust
+// (ADR-250, #125): when two reached resources might be one and force an
+// order, and the fixpoint that gives every function the `touches` its body
+// earns.
+//
+// What stays Rust is reading a `touches` entry back, the list of kinds this
+// compiler knows, and the walk that finds what each body reaches and whom it
+// calls: it is `sync`'s walk (ADR-028), and it moves with it.
+
+use std::collections
+
+/// Which resource a **call** reaches, with the parameter filled in. A ledger
+/// says `file(path)`; a call site says `file` of `"measurements.txt"`, and
+/// this is the second, what two calls are compared on.
+pub struct Reached {
+    pub kind: String,
+    /// The argument that named it, where the compiler could see one. `null`
+    /// means the kind's only resource (`stdout`) **or** an argument this
+    /// compiler cannot evaluate - not told apart, because an unknown argument
+    /// is "might be any of them", which is the answer both want.
+    pub named: String?,
+    /// Where the argument was not readable, so `named` is not a name.
+    pub unknown: bool,
+    pub write: bool,
+}
+
+impl Reached {
+    /// Whether two reached resources might be the same one. Different
+    /// **families** never are (`stdout` and `stderr` are one destination as
+    /// soon as somebody writes `2>&1`); the same family under two different
+    /// known names never are. Everything else might be, and "might be" is the
+    /// answer that keeps the order.
+    pub fn might_be_same(ref self, other: ref Reached) -> bool {
+        if family(self.kind) != family(other.kind) {
+            return false
+        }
+        if self.unknown || other.unknown {
+            return true
+        }
+        let mine = self.named?.clone() ?? return true
+        let theirs = other.named?.clone() ?? return true
+        return mine == theirs
+    }
+
+    /// Whether two reached resources force an order between their operations.
+    /// Two reads never do, however much they overlap: reading does not change
+    /// what the other one sees.
+    pub fn conflicts_with(ref self, other: ref Reached) -> bool {
+        return (self.write || other.write) && self.might_be_same(other)
+    }
+}
+
+/// The family a kind belongs to, which is what two resources are compared
+/// on: the two console handles are one, and every other kind is its own.
+/// Deliberately not the claim that any two resources might coincide - D2
+/// names the file the program named, and D7's `seq` is the escape for
+/// resources that look disjoint and are not.
+fn family(kind: ref String) -> String {
+    if kind == "stderr" {
+        return "stdout"
+    }
+    return kind.clone()
+}
+
+/// **What every function whose claim holds touches**, by name - the greatest
+/// fixpoint, for `sync`'s reason: start from "every function touches
+/// nothing", and take the claim away from anything that reaches one without
+/// it, until nothing changes. Mutual recursion between two functions that
+/// touch nothing keeps the claim, which is right. `unknown` is a body that
+/// reaches something unaccounted for, `outside` what it reaches through
+/// callees a library describes, `calls` whom in this package it calls. The
+/// set is a union over the whole reachable graph, because what a caller
+/// reaches is what everything it calls reaches.
+pub fn touches_of(unknown: ref collections::BTreeMap[String, bool], outside: ref collections::BTreeMap[String, Vec[Touch]], calls: ref collections::BTreeMap[String, collections::BTreeSet[String]]) -> collections::BTreeMap[String, Vec[Touch]] {
+    let mut known: collections::BTreeMap[String, bool] = collections::BTreeMap()
+    for (name, lost) in unknown {
+        known.insert(name.clone(), !lost)
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, called) in calls {
+            let holds = known[name] ?? false
+            if !holds {
+                continue
+            }
+            let mut reaches_unknown = false
+            for callee in called {
+                let theirs = known[callee] ?? false
+                if !theirs {
+                    reaches_unknown = true
+                }
+            }
+            if reaches_unknown {
+                known.insert(name.clone(), false)
+                changed = true
+            }
+        }
+    }
+    let mut settled: collections::BTreeMap[String, Vec[Touch]] = collections::BTreeMap()
+    for (name, holds) in known {
+        if !holds {
+            continue
+        }
+        let mut found: Vec[Touch] = []
+        let mut seen: collections::BTreeSet[String] = collections::BTreeSet()
+        let mut todo: Vec[String] = [name.clone()]
+        while todo.len() > 0 {
+            let here = todo.pop() ?? break
+            if seen.contains(here) {
+                continue
+            }
+            seen.insert(here.clone())
+            for touch in outside[here]?.clone() ?? [] {
+                found.push(touch)
+            }
+            for callee in calls[here]?.clone() ?? collections::BTreeSet() {
+                todo.push(callee)
+            }
+        }
+        settled.insert(name.clone(), found)
+    }
+    return settled
+}
