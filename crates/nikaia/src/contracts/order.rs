@@ -639,7 +639,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // Text with code in it (ADR-035). What it says depends on what its holes
         // hold, and the holes are Nikaia this has not parsed - so what they call
         // is unknown, which is the reason this counts as performing something.
-        Expr::LitInterpolated(_) => out.refuse(Accounted::Opaque(
+        Expr::LitInterpolated { .. } => out.refuse(Accounted::Opaque(
             "text with code in it, whose holes this has not parsed",
         )),
         // *Which* ledger entry `xs.len()` is depends on what `xs` is, and that
@@ -1153,7 +1153,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
         // body is a foreign syntax whose actions are Nikaia too. Every word in
         // the raw text counts, which finds every name they could hold and a
         // good many they could not.
-        Expr::LitInterpolated(text) => words_in(text, out),
+        Expr::LitInterpolated { text, .. } => words_in(text, out),
         Expr::Dsl {
             target,
             context,

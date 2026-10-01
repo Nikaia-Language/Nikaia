@@ -56,5 +56,5 @@ fn main() {
     ]
 
     println(f"{table(rows)}")
-    println(f"{emphasised(\"Ada\")}")
+    println(f"{emphasised("Ada")}")
 }

@@ -1562,7 +1562,7 @@ fn catches_everything(pattern: &MatchPattern) -> bool {
 fn element_kind(expr: &Expr, ty: &Ty) -> Option<&'static str> {
     match expr {
         Expr::LitInt { .. } | Expr::LitFloat(_) => return Some("a number"),
-        Expr::LitStr { .. } | Expr::LitInterpolated(_) => return Some("text"),
+        Expr::LitStr { .. } | Expr::LitInterpolated { .. } => return Some("text"),
         Expr::LitChar(_) => return Some("a character"),
         Expr::LitBool(_) => return Some("a `bool`"),
         _ => {}
@@ -9599,7 +9599,7 @@ impl<'a> Checker<'a> {
             // Nikaia source written inside a literal, and until that walk
             // existed it was source no analysis could see - the same mistake
             // was caught outside a hole and silently passed inside one.
-            Expr::LitInterpolated(text) => {
+            Expr::LitInterpolated { text, .. } => {
                 // **The whole literal, holes and all**, because an escape
                 // belongs to the *literal* and not to the hole: `f"{f(\"a\")}"`
                 // writes `\"` twice inside a hole and the outer quotes are what
@@ -12654,16 +12654,14 @@ impl<'a> Checker<'a> {
         // What each of an f-string's holes says after its `:`, beside the holes
         // that parse - the ones the walk below is handed, in the same order.
         let specs: Vec<Option<String>> = match literal {
-            Expr::LitInterpolated(text) => crate::emit::interpolation_with_specs(text)
-                .map(|(_, holes, specs)| {
-                    holes
-                        .iter()
-                        .zip(specs)
-                        .filter(|(hole, _)| self.parsed.hole(hole).is_ok())
-                        .map(|(_, spec)| spec)
-                        .collect()
+            // As the grammar parsed them (ADR-262 D2): every hole parses.
+            Expr::LitInterpolated { parts, .. } => parts
+                .iter()
+                .filter_map(|part| match part {
+                    crate::ast::FPart::Hole { spec, .. } => Some(spec.clone()),
+                    crate::ast::FPart::Text(_) => None,
                 })
-                .unwrap_or_default(),
+                .collect(),
             _ => Vec::new(),
         };
         let walked = crate::emit::literal_expressions_bound(self.parsed, literal);
@@ -12678,13 +12676,15 @@ impl<'a> Checker<'a> {
             self.scope.push(frame);
             // An f-string's holes, which the emitter walks the same way.
             let outer = match literal {
-                Expr::LitInterpolated(_) => self.hole.replace((span.at(), argument_shape(&hole))),
+                Expr::LitInterpolated { .. } => {
+                    self.hole.replace((span.at(), argument_shape(&hole)))
+                }
                 _ => self.hole.clone(),
             };
             let held = self.expr(&hole, span);
             // **A hole is formatted by reference** (ADR-259 D1): a `??` that
             // is the hole lends its left side, as a print call's argument does.
-            if matches!(literal, Expr::LitInterpolated(_)) {
+            if matches!(literal, Expr::LitInterpolated { .. }) {
                 self.a_pending_coalesce_is_lent(&hole, span);
             }
             self.hole = outer;
@@ -21513,7 +21513,7 @@ impl<'a> Checker<'a> {
             }
             // An `f"…"` hole is read again from its text, with the names it
             // shares with the arm, so its calls are the arm's too.
-            Expr::LitInterpolated(_) => holes.borrow_mut().extend(
+            Expr::LitInterpolated { .. } => holes.borrow_mut().extend(
                 crate::emit::literal_expressions_bound(parsed, expr)
                     .into_iter()
                     .map(|(hole, _)| hole),
@@ -21780,7 +21780,7 @@ fn grown_text(parsed: &Parsed, body: &Block) -> BTreeSet<String> {
                             Expr::Binary {
                                 op: BinaryOp::Add,
                                 ..
-                            } | Expr::LitInterpolated(_)
+                            } | Expr::LitInterpolated { .. }
                         ));
                 if grows {
                     out.insert(parsed.text(*name).to_string());
@@ -22272,7 +22272,7 @@ fn is_literal(expr: &Expr) -> bool {
         Expr::LitInt { .. }
             | Expr::LitFloat(_)
             | Expr::LitStr { .. }
-            | Expr::LitInterpolated(_)
+            | Expr::LitInterpolated { .. }
             | Expr::LitChar(_)
             | Expr::LitBool(_)
     )
@@ -22541,7 +22541,7 @@ pub fn claims_report(
 fn is_a_literal_other_than(expr: &Expr, kind: &str) -> bool {
     match expr {
         Expr::LitBool(_) => kind != "bool",
-        Expr::LitStr { .. } | Expr::LitInterpolated(_) => kind != "text",
+        Expr::LitStr { .. } | Expr::LitInterpolated { .. } => kind != "text",
         Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitChar(_) | Expr::LitNull => true,
         _ => false,
     }
@@ -22627,7 +22627,7 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
         Expr::LitBool(b) => b.to_string(),
         Expr::LitChar(c) => format!("'{c}'"),
         Expr::LitStr { text, .. } => format!("\"{text}\""),
-        Expr::LitInterpolated(text) => format!("f\"{text}\""),
+        Expr::LitInterpolated { text, .. } => format!("f\"{text}\""),
         Expr::LitNull => "null".to_string(),
         Expr::Variable(name) => parsed.text(*name).to_string(),
         Expr::Path(segments) => segments

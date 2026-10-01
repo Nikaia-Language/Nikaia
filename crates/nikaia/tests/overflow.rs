@@ -462,7 +462,7 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
          }\n\
          \n\
          fn main() {\n    \
-             println(f\"{shrink(5000000000)} {floored(1e20)} {counted(\\\"hello\\\")} {widened(7)} {imprecise(9007199254740993)}\")\n\
+             println(f\"{shrink(5000000000)} {floored(1e20)} {counted(\"hello\")} {widened(7)} {imprecise(9007199254740993)}\")\n\
          }\n",
     );
     assert!(

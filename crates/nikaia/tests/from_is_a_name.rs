@@ -89,7 +89,7 @@ fn the_paths_two_names_parse_as_the_page_writes_them() {
             "fn rename(from: ref String, to: ref String) -> i64 {\n\
          \x20   return from.len() + to.len()\n\
          }\n\
-         fn main() { println(f\"{rename(\\\"a\\\", \\\"b\\\")}\") }"
+         fn main() { println(f\"{rename(\"a\", \"b\")}\") }"
         )
         .is_ok()
     );

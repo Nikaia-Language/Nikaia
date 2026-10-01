@@ -613,7 +613,7 @@ impl Walk<'_> {
     /// Anything else is the list's answer, which is the one that keeps more.
     fn copies_text(&self, receiver: &Expr) -> bool {
         match receiver {
-            Expr::LitStr { .. } | Expr::LitInterpolated(_) => true,
+            Expr::LitStr { .. } | Expr::LitInterpolated { .. } => true,
             Expr::Variable(name) => self.local(self.parsed.text(*name)).is_some_and(|local| {
                 local.text
                     || local.ty.as_ref().is_some_and(|ty| {
@@ -1224,7 +1224,7 @@ impl Walk<'_> {
             // **A hole is code** (ADR-032): a call in `f"{load(p).len()}"` is
             // a call of this statement, and the text built around it is text
             // of its own.
-            Expr::LitInterpolated(_) => {
+            Expr::LitInterpolated { .. } => {
                 for hole in crate::emit::literal_expressions(self.parsed, expr) {
                     let _ = self.origins(&hole);
                 }

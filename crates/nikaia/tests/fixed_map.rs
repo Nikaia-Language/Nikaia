@@ -65,10 +65,10 @@ fn run(purpose: &str, source: &str) -> String {
 const SMALL: &str = "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"put\", 3)]\n\
      \n\
      fn main() {\n\
-     \x20   println(f\"{ROUTES.get(\\\"get\\\") ?? 0}\")\n\
-     \x20   println(f\"{ROUTES.get(\\\"post\\\") ?? 0}\")\n\
-     \x20   println(f\"{ROUTES.get(\\\"put\\\") ?? 0}\")\n\
-     \x20   println(f\"{ROUTES.get(\\\"patch\\\") ?? 0}\")\n\
+     \x20   println(f\"{ROUTES.get(\"get\") ?? 0}\")\n\
+     \x20   println(f\"{ROUTES.get(\"post\") ?? 0}\")\n\
+     \x20   println(f\"{ROUTES.get(\"put\") ?? 0}\")\n\
+     \x20   println(f\"{ROUTES.get(\"patch\") ?? 0}\")\n\
      \x20   println(f\"{ROUTES.len()}\")\n\
      }";
 
@@ -81,10 +81,10 @@ const LARGE: &str = "comptime WORDS: Fixed[ref String, i64] = [\n\
      ]\n\
      \n\
      fn main() {\n\
-     \x20   println(f\"{WORDS.get(\\\"alpha\\\") ?? 0}\")\n\
-     \x20   println(f\"{WORDS.get(\\\"golf\\\") ?? 0}\")\n\
-     \x20   println(f\"{WORDS.get(\\\"november\\\") ?? 0}\")\n\
-     \x20   println(f\"{WORDS.get(\\\"zulu\\\") ?? 0}\")\n\
+     \x20   println(f\"{WORDS.get(\"alpha\") ?? 0}\")\n\
+     \x20   println(f\"{WORDS.get(\"golf\") ?? 0}\")\n\
+     \x20   println(f\"{WORDS.get(\"november\") ?? 0}\")\n\
+     \x20   println(f\"{WORDS.get(\"zulu\") ?? 0}\")\n\
      \x20   println(f\"{WORDS.len()}\")\n\
      }";
 
@@ -183,7 +183,7 @@ fn a_tables_values_may_be_text() {
 fn main() {
     println(MIME.get("json") ?? "?")
     println(MIME.get("css") ?? "?")
-    println(f"{MIME.has(\"html\")}")
+    println(f"{MIME.has("html")}")
 }"#;
     assert_eq!(run("fixed-text", source), "application/json\n?\ntrue\n");
 }
@@ -203,7 +203,7 @@ fn a_table_of_nothing_is_a_table() {
     let source = r#"comptime EMPTY: Fixed[ref String, i64] = []
 
 fn main() {
-    println(f"{EMPTY.len()} {EMPTY.is_empty()} {EMPTY.get(\"get\") ?? 0}")
+    println(f"{EMPTY.len()} {EMPTY.is_empty()} {EMPTY.get("get") ?? 0}")
 }"#;
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert_eq!(run("fixed-empty", source), "0 true 0\n");
@@ -297,9 +297,9 @@ fn a_table_holds_a_declared_type_and_the_program_reads_it() {
                   comptime SHADES: Fixed[ref String, Shade] = [(\"a\", Shade::Odd), (\"b\", Shade::Even)]\n\
                   \n\
                   fn main() {\n\
-                  \x20   println(f\"{TABLE.get(\\\"y\\\")?.a ?? 0}\")\n\
-                  \x20   println(f\"{TABLE.get(\\\"x\\\")?.tags?.len() ?? 0}\")\n\
-                  \x20   println(f\"{TABLE.get(\\\"zz\\\")?.a ?? -1}\")\n\
+                  \x20   println(f\"{TABLE.get(\"y\")?.a ?? 0}\")\n\
+                  \x20   println(f\"{TABLE.get(\"x\")?.tags?.len() ?? 0}\")\n\
+                  \x20   println(f\"{TABLE.get(\"zz\")?.a ?? -1}\")\n\
                   \x20   println(f\"{SHADES.len()}\")\n\
                   }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));

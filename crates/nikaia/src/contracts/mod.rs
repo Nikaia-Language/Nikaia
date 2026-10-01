@@ -1741,7 +1741,7 @@ fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
         // A default is a constant (Kap 5.1), and `f"…"` is a call to `format!`.
         // The parser admits it here, so this says no in words rather than
         // recording something a reader would take for text.
-        Expr::LitInterpolated(_) => {
+        Expr::LitInterpolated { .. } => {
             unreachable!("a default is a literal, and `f\"…\"` is built at run time")
         }
         Expr::Unary {

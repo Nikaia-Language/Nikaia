@@ -204,7 +204,7 @@ fn a_named_function_is_kept_as_the_closure_that_calls_it() {
          fn measure(text: String) -> i64 { return text.len() as i64 }\n\n\
          fn main() {\n\
          \x20   let t = Tools { double: double, measure: measure }\n\
-         \x20   println(f\"{t.double(21)} {t.measure(\\\"four\\\")}\")\n\
+         \x20   println(f\"{t.double(21)} {t.measure(\"four\")}\")\n\
          }\n",
         "42 4",
     );

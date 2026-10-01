@@ -2255,7 +2255,7 @@ fn a_grammar_entry_in_tail_position_over_a_local_runs() {
          }\n\
          \n\
          fn main() throws {\n\
-         \x20   println(f\"{both(\\\"42\\\")}\")\n\
+         \x20   println(f\"{both(\"42\")}\")\n\
          }\n",
     );
 
@@ -2661,7 +2661,7 @@ fn a_published_parameter_takes_either_kind_from_its_package_and_its_own_from_oth
                 "app/src/main.nika",
                 "use tags\n\nfn main() {\n\
                  \x20   let t = tags::tag(f\"app\")\n\
-                 \x20   println(f\"{t.label()} {tags::both(\\\"  x  \\\")}\")\n}\n",
+                 \x20   println(f\"{t.label()} {tags::both(\"  x  \")}\")\n}\n",
             ),
         ],
     );
