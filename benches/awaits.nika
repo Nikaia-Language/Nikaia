@@ -1,0 +1,41 @@
+// benches/awaits.nika
+//
+// What being `async` costs a program that never overlaps (#106).
+//
+// The emitted Rust is `async` (ADR-055) and every pausing call runs on the
+// executor, its I/O on the runtime's worker. This program never overlaps
+// anything: `n` reads of one small file, one after the other, each through a
+// chain of three functions - so every read is three `.await`s deep, which is
+// the shape a program that reads a file from a helper has.
+//
+// `n` is the first argument and the path the second. Measured by
+// `crates/nikaia/tests/measure.rs`, which holds the A/B: this program as it is
+// lowered, and the same Rust with `async` and `.await` taken out and the read
+// made the blocking call it was before ADR-055.
+
+use std::cli
+use std::fs
+
+fn read(path: ref String) -> i64 throws {
+    let text = fs::read_to_string(ref path, fs::Root::Anywhere)
+    return text.len()
+}
+
+fn checked(path: ref String) -> i64 throws {
+    return read(path)
+}
+
+fn measured(path: ref String) -> i64 throws {
+    return checked(path)
+}
+
+fn main() throws {
+    let count = cli::args().nth(1) ?? "1000"
+    let n: i32 = count.parse() catch { 1000 }
+    let path = cli::args().nth(2) ?? "benches/awaits.nika"
+    let mut total = 0
+    for i in 0..<n {
+        total = total + measured(path)
+    }
+    println(f"{total}")
+}

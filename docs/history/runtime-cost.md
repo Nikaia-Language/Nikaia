@@ -282,3 +282,56 @@ benches/overlap/lowered.sh                          # both mechanisms, 200 000 p
 benches/overlap/lowered.sh /tmp/somewhere 20000 3   # …in a named directory, quicker
 benches/overlap/runtime.sh /tmp/elsewhere 9         # the control above
 ```
+
+---
+
+## 7. What being `async` costs a program that never overlaps
+
+**Date:** October 1, 2026 · [#106](https://github.com/Nikaia-Language/Nikaia/issues/106)
+
+Everything above measures the **mechanism**, and was taken before the waiting moved into the
+executor ([ADR-055](../specification/adr/adr-055.md) §6). What had not been measured is what the
+`async` lowering costs the program that never uses it: one that reads, then reads again, and
+never has two operations in flight.
+
+**The method.** `benches/awaits.nika` reads one small file `n` times, one read after the other,
+each three `.await`s deep. Three variants, one tree and one emitter
+(`crates/nikaia/tests/measure.rs`, `what_an_await_costs_a_program_that_never_overlaps`):
+
+* **blocking** — the emitted Rust with `async`, `.await` and `block_on` taken out and the read
+  made `std::fs::read_to_string`: what the lowering wrote before ADR-055;
+* **async, the read blocking** — `async` and the executor kept, only the read made blocking: the
+  futures without the hand-off;
+* **async (as lowered)** — the program as it is.
+
+Instructions retired under callgrind, every thread counted; the runtime is started in all three.
+Kernel work is not in an instruction count, so the syscalls a read makes are in none of them.
+
+| `user_parallelism` | reads | blocking | async, the read blocking | async (as lowered) |
+| :--- | ---: | ---: | ---: | ---: |
+| `no` | 100 | 665,003 | 665,337 (+0.1 %) | 1,020,613 (+53.5 %) |
+| `no` | 1,000 | 2,404,726 | 2,430,260 (+1.1 %) | 5,936,428 (+146.9 %) |
+| `yes` | 100 | 778,621 | 767,875 (−1.4 %) | 1,086,714 (+39.6 %) |
+| `yes` | 1,000 | 3,070,124 | 2,815,235 (−8.3 %) | 6,185,811 (+101.5 %) |
+
+**What it says.**
+
+* **An `.await` costs nothing measurable.** Three of them per read, and the state machines and
+  the executor's polling come to **3 to 25 instructions a read** at `no` — inside the noise at
+  `yes`, where the thread interleaving moves the totals by more than that. The `async` lowering
+  itself is free for a program that does not overlap.
+* **The read's road through the runtime is not.** About **3,100 to 3,500 instructions a read** at
+  both settings: handing the read to the runtime's I/O and taking the answer back, against a
+  `read(2)` on the caller's own thread — roughly 2.8 times what the whole blocking read costs in
+  user space. It is the same at `no` and `yes`, so it is the I/O path and not the pool.
+
+**What it does not decide.** That road is what makes two reads in an `overlap` cost nothing
+(§2), and a program that never overlaps pays it on every read. Whether such a read — on a
+runtime with nothing else in flight — should take the caller's own thread instead is a design
+question, recorded here with its number and left to its owner.
+
+### 7.1 How to run it again
+
+```sh
+cargo test -p nikaia --release --test measure what_an_await -- --ignored --nocapture
+```
