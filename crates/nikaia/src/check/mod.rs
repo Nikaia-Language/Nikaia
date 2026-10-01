@@ -482,6 +482,10 @@ pub struct Checked {
     /// does not copy, and the arm does not keep it - so the name stays whole
     /// after the `match` (Part I 6.5, ADR-242).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// **A `match` over a field reached through a view**, by the scrutinee's
+    /// address: matched by reference below, so its parts are bound as the
+    /// views they are here.
+    pub lent_scrutinees: BTreeSet<usize>,
     /// **A guard that reads names bound inside a boxed part** (ADR-246 D5
     /// item 2), by the arm's pattern, and which of those names copy: the
     /// lowering binds them again inside the guard, through the box, and copies
@@ -1711,6 +1715,8 @@ pub struct Propagation {
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::guards_inside_boxes`].
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
+    /// [`Checked::lent_scrutinees`].
+    pub lent_scrutinees: BTreeSet<usize>,
     /// [`Checked::collected_into`].
     pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::copied_walks`].
@@ -1978,6 +1984,7 @@ pub fn propagation_against(
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
         guards_inside_boxes: checked.guards_inside_boxes,
+        lent_scrutinees: checked.lent_scrutinees,
         collected_into: checked.collected_into,
         copied_walks: checked.copied_walks,
         filter_patterns: checked.filter_patterns,
@@ -3359,6 +3366,74 @@ impl<'a> Checker<'a> {
     // --- the shape of a program ---------------------------------------------
 
     fn collect_types(&mut self) {
+        // **A generic struct another file of the package declares**
+        // (Part I 9.1): its fields and type parameters, so `item.node` over a
+        // `Spanned[Item]` that `ast.nika` declares is an `Item` in
+        // `traits.nika` as it is in `ast.nika` (found moving `traits` into
+        // Nikaia, #125). This file's own declarations come after, and a name
+        // it declares is its own.
+        for other in self.beside {
+            for item in &other.program.items {
+                // **And an enum's variants**: `Item::Impl { methods, .. }`
+                // over an `Item` `ast.nika` declares binds a `methods` of the
+                // type the variant says, here as there.
+                if let Item::Enum { name, variants, .. } = &item.node {
+                    let owner = other.text(*name).to_string();
+                    for variant in variants {
+                        let key = format!("{owner}::{}", other.text(variant.name));
+                        match &variant.fields {
+                            ast::VariantFields::Named(fields) => {
+                                let held: Vec<FieldContract> = fields
+                                    .iter()
+                                    .map(|f| FieldContract {
+                                        name: other.text(f.name).to_string(),
+                                        ty: Ty::from_ast(other, &f.ty),
+                                        public: true,
+                                    })
+                                    .collect();
+                                self.variant_owner.insert(key.clone(), owner.clone());
+                                self.structs.insert(key, held);
+                            }
+                            ast::VariantFields::Tuple(types) => {
+                                let parts =
+                                    types.iter().map(|ty| Ty::from_ast(other, ty)).collect();
+                                self.variant_parts.insert(key, parts);
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                let Item::Struct {
+                    name,
+                    generics,
+                    fields,
+                    ..
+                } = &item.node
+                else {
+                    continue;
+                };
+                if generics.is_empty() {
+                    continue;
+                }
+                let order: Vec<String> = generics
+                    .iter()
+                    .map(|g| other.text(g.name).to_string())
+                    .collect();
+                let parameters: BTreeSet<String> = order.iter().cloned().collect();
+                let held: Vec<FieldContract> = fields
+                    .iter()
+                    .map(|f| FieldContract {
+                        name: other.text(f.name).to_string(),
+                        ty: Ty::from_ast(other, &f.ty).parameterise(&parameters),
+                        public: f.is_public,
+                    })
+                    .collect();
+                let named = other.text(*name).to_string();
+                self.struct_parameters.insert(named.clone(), order);
+                self.structs.insert(named, held);
+            }
+        }
         for item in &self.parsed.program.items {
             match &item.node {
                 Item::Struct {
@@ -9781,6 +9856,33 @@ impl<'a> Checker<'a> {
                     _ => on.clone(),
                 };
                 let lendable = self.an_owned_place(value, &typed);
+                // **A field reached through a view is matched as the view it
+                // is** (found moving `traits` into Nikaia, #125): `match
+                // item.node` for a lent `item` is a place behind a reference
+                // below, and a pattern that binds a part of it moved it out -
+                // `rustc`'s *cannot move out of `item.node`*. Its parts are
+                // views here, so the emitter matches `&item.node`.
+                let through_a_view = {
+                    let mut root = &**value;
+                    while let Expr::Field { base, .. } = root {
+                        root = base;
+                    }
+                    matches!(&**value, Expr::Field { .. })
+                        && matches!(root, Expr::Variable(name)
+                            if self.binding(self.parsed.text(*name))
+                                .is_some_and(|local| local.lent || local.ty.is_a_view()))
+                };
+                let typed = match through_a_view && !typed.is_a_view() && self.takes_away(&typed) {
+                    true => {
+                        self.checked
+                            .lent_scrutinees
+                            .insert(&**value as *const Expr as usize);
+                        // And read as the view it is below, so a part that
+                        // copies is copied out at the head of the arm.
+                        view_of(&typed)
+                    }
+                    false => typed,
+                };
                 // **A `match` is a condition too** (ADR-111 D4).
                 let outer_condition = self.stamped_condition;
                 if on.is_seen() {

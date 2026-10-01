@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.320] — 2026-10-01
+
+**The trait check is Nikaia** (#125). What `traits.rs` checked - a method of
+an `impl Trait for T` the trait does not declare, and one it declares that the
+`impl` leaves out (`NK1130`), a receiver written differently from the
+declaration's (`NK1196`), and a method that can pause or fail where the trait
+says it does not (`NK1129`, `NK1140`) - is `tools/traits.nika`, and
+`traits.rs` is the adapter that hands it the tree and the ledger. What a check
+of the toolchain reports is one record, `Finding` in `tools/findings.nika`:
+a code, a span, a message, notes, a help and whether it is a warning - the
+shape the next rings report in too. Rust reads it into its own `Finding`. The
+messages are the same words, so the trait tests are unchanged.
+
+Moving it found four things the compiler did wrong, each fixed in the
+compiler (ADR-250 D3):
+
+- **A `match` on a field reached through a view** moved the field out of what
+  the function was only lent: `match item.node` with `item` lent was `rustc`'s
+  E0507. It is matched in place, and what an arm binds is a view of the field.
+- **A generic struct or an enum's variants declared in another file of a
+  package** were untyped in the files beside it, so `item.node` of a
+  `Spanned[Item]` was unknown, and so was every call on it.
+- **What a function of a package costs was inferred with each file read
+  alone**, so a call into a file beside was a call nothing described, and a
+  function that made one was inferred to pause.
+- `std`'s ledger had no `clone` for its maps and sets.
+
+The ceiling of unanswered method calls in the corpus is 48, from 50: a tool is
+read there with the Rust it reads described, as `lower-std` reads it.
+
 ## [0.0.319] — 2026-10-01
 
 **A name bound to a map read is read as one** (#297). `let found =

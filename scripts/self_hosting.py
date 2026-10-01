@@ -43,6 +43,8 @@ COMPILER_NIKA = {
     "crossing.nika": "describe: what crosses a thread, and the notes (0.0.311, 0.0.316)",
     "signature.nika": "describe: a Rust signature in the ledger's words (0.0.314, 0.0.316)",
     "surface.nika": "describe: what a crate offers (0.0.315)",
+    "findings.nika": "a refusal a check of the toolchain reports, as one record (0.0.320)",
+    "traits.nika": "traits: an impl against the trait it implements (0.0.320)",
 }
 
 

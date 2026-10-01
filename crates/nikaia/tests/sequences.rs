@@ -20,6 +20,8 @@ use nikaia::contracts::ty::{self, Ty};
 use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
+const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
+
 fn library() -> Ledger {
     Ledger::parse(STD).expect("std's shipped ledger parses")
 }
@@ -283,6 +285,12 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// ledger's records, and `surface.nika` on the Rust grammar's items. And a
 /// `for` over a set binds its element (#302), which answers two more -
 /// measured: 52 without it, 50 with.
+///
+/// **48 at 0.0.320**, a fall. A tool is read with the Rust it reads described
+/// (`described.contracts`), as `lower-std` reads it. That answers the eleven
+/// calls of the new `traits.nika` - `names.resolve(..)` and the `.clone()` on
+/// what it hands back - and two in `trust.nika` that were counted before - measured: 61 without
+/// it, 48 with.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -341,6 +349,20 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
                 .chain(beside.iter().copied())
                 .collect();
+            // And with the Rust the tools read described (ADR-252 D4.3), as
+            // `lower-std` reads them: without it every `names.resolve(..)` in
+            // `traits.nika` is unanswered, and so is what it hands back (0.0.320).
+            let library = match in_tools {
+                false => library.clone(),
+                true => {
+                    let mut read = library.clone();
+                    let described =
+                        Ledger::parse(TOOLS_DESCRIBED).expect("the tools' ledger parses");
+                    read.types.extend(described.types);
+                    read.functions.extend(described.functions);
+                    read
+                }
+            };
             let own = match beside.is_empty() {
                 true => Ledger::infer(&parsed),
                 false => Ledger::infer_package(&units, &library),
@@ -365,8 +387,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 50,
-        "{unanswered} unanswered method calls in {files} programs, and 50 is the \
+        unanswered <= 48,
+        "{unanswered} unanswered method calls in {files} programs, and 48 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

@@ -1236,6 +1236,8 @@ struct Emitter<'p> {
     /// **A guard that reads names bound inside a boxed part**, by the arm's
     /// pattern, and which of them copy (ADR-246 D5 item 2).
     guards_inside_boxes: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
+    /// `check::Checked::lent_scrutinees`.
+    lent_scrutinees: std::collections::BTreeSet<usize>,
     /// `collect()` into a declared map, set or text (ADR-227 D1).
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
@@ -2445,6 +2447,7 @@ impl<'p> Emitter<'p> {
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
             guards_inside_boxes: propagation.guards_inside_boxes,
+            lent_scrutinees: propagation.lent_scrutinees,
             collected_into: propagation.collected_into,
             copied_walks: propagation.copied_walks,
             filter_patterns: propagation.filter_patterns,
@@ -7377,6 +7380,14 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 out.push("match ");
+                // A field reached through a view is matched by reference
+                // (`check::Checked::lent_scrutinees`).
+                if self
+                    .lent_scrutinees
+                    .contains(&(&**value as *const Expr as usize))
+                {
+                    out.push("&");
+                }
                 self.expr(out, value, depth, flow)?;
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);

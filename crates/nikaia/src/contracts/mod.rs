@@ -815,10 +815,28 @@ impl LedgerOps for Ledger {
         // **Every unit is checked against the whole package's declarations**,
         // which is the other half of D2: a call to the file next door resolves
         // here too, so the method calls the walks below read are the package's.
+        // With the other files **beside** it, so a type another file
+        // declares has its fields and variants here as there (#125).
         let checked: Vec<crate::check::Checked> = units
             .iter()
-            .copied()
-            .map(|parsed| crate::check::check(parsed, &ledger, library))
+            .enumerate()
+            .map(|(at, parsed)| {
+                let beside: Vec<&Parsed> = units
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != at)
+                    .map(|(_, other)| *other)
+                    .collect();
+                crate::check::check_against(
+                    parsed,
+                    &beside,
+                    &ledger,
+                    library,
+                    &BTreeSet::new(),
+                    &crate::check::Newly::default(),
+                    &crate::assets::Reads::none(),
+                )
+            })
             .collect();
         let resolved: BTreeMap<String, crate::check::MethodCalls> = checked
             .iter()
