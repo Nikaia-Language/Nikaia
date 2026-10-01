@@ -51,14 +51,7 @@ pub fn resolve(surface: &mut Surface) {
     for path in surface.types.iter() { if offered(&surface, path) { direct.push(path.to_owned()); } }
     for path in direct.iter() { surface.reachable.insert(path.to_owned(), path.to_owned()); }
     let mut exports: Vec<Export> = vec![];
-    for export in surface.exports.iter() {
-        if offered(&surface, &joined(&export.at, "x")) {
-            exports.push(Export { at: export.at.to_owned(), prefix: export.prefix.to_owned(), name: match export.name.as_ref() {
-                Some(__nikaia_it) => Some(__nikaia_it.clone()),
-                None => None,
-            } });
-        }
-    }
+    for export in surface.exports.iter() { if offered(&surface, &joined(&export.at, "x")) { exports.push(export.clone()); } }
     for _ in 0..8 {
         let mut added = false;
         for export in exports.iter() {

@@ -96,7 +96,10 @@ pub fn reaches_a_thread(from: &str, calls: &collections::BTreeMap<String, Vec<St
         let at = (*nikaia_std::index::get(&queue, nikaia_std::index::at(next))).to_owned();
         let how = (*nikaia_std::index::get(&ways, nikaia_std::index::at(next))).to_owned();
         next += 1;
-        for call in calls_of(&at, calls) {
+        for call in nikaia_std::index::or(match *nikaia_std::index::get(&calls, &at) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || vec![].into()) {
             if is_a_sink(&call) {
                 let mut path = how.to_owned();
                 path.push(call.to_owned());
@@ -127,11 +130,6 @@ pub fn the_crates_own(call: &str, calls: &collections::BTreeMap<String, Vec<Stri
         }
     }
     found
-}
-
-fn calls_of(function: &str, calls: &collections::BTreeMap<String, Vec<String>>) -> Vec<String> {
-    for (path, called) in calls.iter() { if path == function { return called.to_owned(); } }
-    vec![]
 }
 
 fn is_a_sink(call: &str) -> bool {

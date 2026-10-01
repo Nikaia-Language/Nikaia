@@ -173,7 +173,7 @@ pub fn reaches_a_thread(from: ref String, calls: ref collections::BTreeMap[Strin
         let at = queue[next].clone()
         let how = ways[next].clone()
         next += 1
-        for call in calls_of(at, calls) {
+        for call in calls[at]?.clone() ?? [] {
             if is_a_sink(call) {
                 let mut path = how.clone()
                 path.push(call.clone())
@@ -216,16 +216,6 @@ pub fn the_crates_own(call: ref String, calls: ref collections::BTreeMap[String,
         }
     }
     return found
-}
-
-// What one of the crate's functions calls, or nothing where it is not one.
-fn calls_of(function: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> Vec[String] {
-    for (path, called) in calls {
-        if path == function {
-            return called.clone()
-        }
-    }
-    return []
 }
 
 // Whether a call is one of the thread sinks.

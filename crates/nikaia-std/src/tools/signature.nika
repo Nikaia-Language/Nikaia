@@ -120,7 +120,13 @@ pub fn sent_across(names: ref Vec[String], types: ref Vec[String], bounds: ref S
     for at in 0..<names.len() {
         let ty = types[at].trim()
         let named = unreferenced(ty)
-        if bounds_send(ty) || sent.contains(named.clone()) {
+        let mut reached = bounds_send(ty)
+        for one in sent {
+            if one == named {
+                reached = true
+            }
+        }
+        if reached {
             out.push(names[at].clone())
         }
     }
