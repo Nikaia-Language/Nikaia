@@ -2857,3 +2857,105 @@ fn a_literal_handed_to_a_foreign_generic_is_text_of_its_own() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A file inside a project is a file of that project**
+/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D1): `--input` on a
+/// project's entry reads the dependencies its `nikaia.toml` declares, as
+/// `nikaia build` does. It used to read the `[build]` section and hand the
+/// lowering no packages, so `use http` was refused with *add it to
+/// `[dependencies]`* about a line that was already there (issue #130).
+///
+/// **And what it is checked against is part of the key**: an edit to the
+/// dependency is a miss, not a lowering from cache.
+#[test]
+fn a_file_of_a_project_is_lowered_with_the_projects_dependencies() {
+    let dir = a_program_and_a_package(
+        "file-in-project",
+        "http",
+        &[
+            (
+                "http/src/main.nika",
+                "pub fn ok(body: ref String) -> String {\n    \
+                     return f\"200 {body}\"\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use http\n\nfn main() {\n    println(http::ok(\"/\"))\n}\n",
+            ),
+        ],
+    );
+    let lower = || {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .arg("--input")
+            .arg(dir.join("app/src/main.nika"))
+            .arg("--output")
+            .arg(dir.join("app.rs"))
+            .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+            .output()
+            .expect("the nikaia binary runs")
+    };
+
+    let first = lower();
+    assert!(first.status.success(), "{}", said(&first));
+    assert!(
+        std::fs::read_to_string(dir.join("app.rs"))
+            .expect("the Rust is written")
+            .contains("http::ok("),
+        "the call reaches the package"
+    );
+    let again = lower();
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("lowering from cache"),
+        "nothing changed, so the second lowering is a hit: {}",
+        said(&again)
+    );
+
+    std::fs::write(
+        dir.join("http/src/main.nika"),
+        "pub fn ok(body: ref String) -> String {\n    return f\"201 {body}\"\n}\n",
+    )
+    .expect("edit the package");
+    let edited = lower();
+    assert!(edited.status.success(), "{}", said(&edited));
+    assert!(
+        !String::from_utf8_lossy(&edited.stdout).contains("lowering from cache"),
+        "the dependency changed, so the key did: {}",
+        said(&edited)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A file outside any project is standalone, and says so**
+/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D2): it has no
+/// dependencies, and a `use` of one is told that - and where one is declared -
+/// rather than to add a line to a manifest that does not exist.
+#[test]
+fn a_file_outside_a_project_is_told_it_has_no_dependencies() {
+    let dir = common::scratch_dir("file-alone");
+    let input = dir.join("main.nika");
+    std::fs::write(&input, "use http\n\nfn main() { }\n").expect("source");
+
+    let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .arg("--input")
+        .arg(&input)
+        .arg("--output")
+        .arg(dir.join("main.rs"))
+        .env("NIKAIA_CACHE_DIR", dir.join("cache"))
+        .output()
+        .expect("the nikaia binary runs");
+    assert!(!run.status.success(), "{}", said(&run));
+    let message = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        message.contains("a single file outside a project has no dependencies"),
+        "{}",
+        said(&run)
+    );
+    assert!(message.contains("nikaia.toml"), "{}", said(&run));
+    assert!(
+        !message.contains("there's no dependency called"),
+        "not the message for a project that forgot a line: {}",
+        said(&run)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

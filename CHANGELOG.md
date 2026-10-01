@@ -4,6 +4,45 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.298] — 2026-10-01
+
+**A file inside a project is a file of that project** (ADR-260 D1 and D2,
+#130). `nikaia --input` on a project's file read the `[build]` section of its
+`nikaia.toml` and handed the lowering no packages, so `use http` in
+`examples/hello-http/src/main.nika` was refused with *add it to
+`[dependencies]`* about a line that was already there. It now reads the
+dependencies the manifest declares, through the same `packages_of` that
+`nikaia build` uses, and lowers the file to what `nikaia build` emits for it
+(the abort table names the file as it was handed in). The cache key gains the
+dependencies with them: their files are units of the program, so an edit to a
+dependency is a miss. A file outside any project is standalone, and a `use` of
+a package in it is told that *a single file outside a project has no
+dependencies*, and that they are declared in a `nikaia.toml`.
+
+**And the lowering got faster again**, measured on this compiler's own use
+(#269, #273, #274, #277):
+
+- **A hole is parsed once per file.** Every analysis walk parsed each `f"…"`
+  and template hole again, each time with a fresh parse context and its own
+  intern cache: a fifth of lowering `1brc`, as much as parsing the file.
+  `Parsed::hole` keeps the tree of each hole that parsed.
+- **The checker asks for a type's fields through an index** built once per
+  walk, rather than scanning both ledgers per question; `std`'s modules are
+  found from their few dozen distinct prefixes rather than from each of its
+  keys.
+- **`winnow-grammar` is pinned to a commit** (27d2d3c) rather than following
+  its `main`, so a build is the build that was measured. Interned names hash
+  with `ahash`, keyed per process from the operating system (#275); keys
+  built into the binary would be keys anyone holding it can read, and a
+  parser that interns its input would be open to colliding names. Where a
+  WebAssembly target gets its keys is #276.
+
+| Lowered with `--no-cache` | 0.0.297 | 0.0.298 |
+|---|---|---|
+| `1brc` | 73.8 M | 54.2 M (−27 %) |
+| `n-body` | 72.6 M | 60.5 M (−17 %) |
+| `k-nucleotide` | 69.5 M | 55.6 M (−20 %) |
+
 ## [0.0.297] — 2026-10-01
 
 **The ledger is read by grammars** (ADR-257 §4.6), and what made them fast
