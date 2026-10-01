@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.299 (Draft)
+**Version:** 0.0.300 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -28,7 +28,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 
 ### 13.2. Core Commands
 * `nikaia build`: compiles the project.
-* `nikaia run`: compiles and executes.
+* `nikaia run`: compiles and executes. `nikaia run <file>.nika` compiles and executes one file. Inside a project the file has to be that project's entry point. Outside any project it is built as a project of its own, kept in the user's cache directory and keyed on the file's path, through the same Cargo workspace `nikaia build` makes. The interpreter is not what `run` uses.
 * `nikaia test`: runs the package's `test` blocks, each in a process of its own, and its output tests, `tests/NAME.stdout` (14.1). `--both-settings` runs each at `user_parallelism = no` and `yes`.
 * `nikaia bench`: runs performance benchmarks.
 * `nikaia fmt`: formats the source.
