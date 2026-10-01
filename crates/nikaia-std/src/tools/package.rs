@@ -3564,6 +3564,82 @@ fn quoted(attribute: &str) -> Position {
 fn blank(c: char) -> bool { c.is_whitespace() }
 
 
+// --- throws.nika ---
+
+pub fn error_sets(direct: &collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &collections::BTreeMap<String, collections::BTreeSet<String>>, own: &Ledger) -> collections::BTreeMap<String, Vec<String>> {
+    let mut sets = direct.to_owned();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, callees) in calls.iter() {
+            let before = nikaia_std::index::or(match *nikaia_std::index::get(&sets, name) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || collections::BTreeSet::new().into());
+            let mut grown = before.to_owned();
+            for callee in callees.iter() { for error in theirs(&sets, own, callee) { grown.insert(error); } }
+            if (grown.len() as i64) != before.len() as i64 {
+                sets.insert(name.to_owned(), grown);
+                changed = true;
+            }
+        }
+    }
+    let mut settled: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for (name, set) in sets.iter() {
+        let contract = match *nikaia_std::index::get(&own.functions, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if (contract.fails_with.len() as i64) == 0 { continue; }
+        let mut errors: Vec<String> = vec![];
+        for error in set.iter() { errors.push(error.to_owned()); }
+        if (errors.len() as i64) == 0 { errors.push(String::from("?")); }
+        settled.insert(name.to_owned(), errors);
+    }
+    settled
+}
+
+fn theirs(sets: &collections::BTreeMap<String, collections::BTreeSet<String>>, own: &Ledger, callee: &str) -> Vec<String> {
+    let mut errors: Vec<String> = vec![];
+    if sets.contains_key(callee) {
+        let set = match *nikaia_std::index::get(&sets, callee) { Some(__nikaia_value) => __nikaia_value, None => return errors };
+        for error in set.iter() { errors.push(error.to_owned()); }
+        return errors;
+    }
+    let contract = match *nikaia_std::index::get(&own.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return errors };
+    for error in contract.fails_with.iter() { errors.push(error.to_owned()); }
+    errors
+}
+
+pub fn error_type(names: &winnow_grammar::InternerContext, thrown: &Expr) -> Option<String> {
+    match thrown {
+        Expr::Path(segments) => if (segments.len() as i64) > 1 { Some(all_but_the_last(names, segments)) } else { None },
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); error_type(names, func) },
+        Expr::StructLit { name, .. } => { let name = *name; Some(struct_type(names.resolve(name))) },
+        _ => None,
+    }
+}
+
+fn all_but_the_last(names: &winnow_grammar::InternerContext, segments: &Vec<winnow_grammar::Symbol>) -> String {
+    let mut written: String = String::from("");
+    for k in 0..segments.len() as i64 - 1 {
+        if k > 0 { written = format!("{}::", written); }
+        let segment = names.resolve(*nikaia_std::index::get(&segments, nikaia_std::index::at(k)));
+        written = format!("{}{}", written, segment);
+    }
+    written
+}
+
+fn struct_type(written: &str) -> String {
+    let mut parts: Vec<String> = vec![];
+    for part in written.split("::") { parts.push(part.to_owned()); }
+    if (parts.len() as i64) < 2 { return written.to_owned(); }
+    let mut ty: String = String::from("");
+    for k in 0..parts.len() as i64 - 1 {
+        if k > 0 { ty = format!("{}::", ty); }
+        ty = format!("{}{}", ty, *nikaia_std::index::get(&parts, nikaia_std::index::at(k)));
+    }
+    ty
+}
+
+
 // --- traits.nika ---
 
 pub fn check_impls(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, own: &Ledger) -> Vec<Finding> {
@@ -5030,6 +5106,10 @@ pub mod surface {
 pub mod template {
     #[allow(unused_imports)]
     pub use super::{Position, Segment, literal_length, split, illegal, illegal_message};
+}
+pub mod throws {
+    #[allow(unused_imports)]
+    pub use super::{error_sets, error_type};
 }
 pub mod traits {
     #[allow(unused_imports)]
