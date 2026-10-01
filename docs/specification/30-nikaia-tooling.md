@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.306 (Draft)
+**Version:** 0.0.307 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -1018,6 +1018,7 @@ Every function below may fail for environmental reasons, so every one of them `t
 // Subject: the path, and the root it may not leave ; Config: options
 pub fn read(path: Path, root: Root) -> Bytes throws                  // whole file, as bytes
 pub fn read_to_string(path: Path, root: Root) -> String throws       // whole file, UTF-8 validated
+pub fn walk(path: Path, root: Root) -> Vec[String] throws           // every file under a directory
 pub fn write(path: Path, root: Root, data: ref Array[u8]; append: bool = false, create: bool = true) throws
 ```
 
@@ -1034,6 +1035,15 @@ operator typed.
 hands it back as `Dir`, so what is written under it is checked to stay there
 ([ADR-247](adr/adr-247.md) D5). Under `nikaia test` it is inside the test's own directory and is
 removed with it (14.1); elsewhere it is a new directory under the system's temporary directory.
+
+**A directory walk.** `walk(path, root)` hands back every file under the directory `path`, as
+names relative to it with `/` between the parts, sorted, so two runs over one tree agree
+([ADR-195](adr/adr-195.md) D4). Directories are not listed, and each is visited once, so a link
+back up the tree ends the walk. Under `Dir(store)` the root holds for every name the walk finds:
+an entry that leads out of it, a symlink pointing away, is left out rather than failing the walk.
+It throws where the directory itself cannot be read, and `NotText` where a name under it is not
+UTF-8. A name it hands back opens under the same root: `fs::read_to_string(ref name, root)`
+after `fs::walk(".", root)`.
 
 **The reactor.** `read`, `read_to_string` and `write` go through the runtime's reactor. Where the
 machine has a completion queue, the kernel performs the operation and reports when it is done;

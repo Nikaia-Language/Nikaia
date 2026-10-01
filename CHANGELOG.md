@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.307] — 2026-10-01
+
+**`fs` gains a directory walk** (ADR-195 D4, #124 step 1). `fs::walk(path,
+root) -> Vec[String]` hands back every file under a directory, as names
+relative to it with `/` between the parts, sorted. Directories are not listed
+and each is visited once, so a link back up the tree ends the walk. Under
+`fs::Root::Dir` the root holds for every name found, not only the one asked
+for: a symlink that points out of it is left out rather than failing the walk.
+It throws where the directory cannot be read and where a name is not UTF-8.
+This is what `nikaia describe` needs to read a crate's sources from `.nika`.
+
 ## [0.0.306] — 2026-10-01
 
 **A pattern looks inside a part that holds its own type** (ADR-246 D5 item 1,

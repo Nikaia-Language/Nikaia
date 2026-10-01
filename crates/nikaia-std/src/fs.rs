@@ -470,6 +470,84 @@ pub async fn create(path: impl AsRef<Path>, root: &Root) -> Result<Writer, crate
     }))
 }
 
+/// **Every file under a directory**, as names relative to it, `/` between the
+/// parts, in sorted order ([ADR-195](../../../docs/specification/adr/adr-195.md)
+/// D4).
+///
+/// What a tool that reads a tree needs, and the shape `nikaia describe` reads a
+/// crate's sources in: the files themselves, recursively, with the directories
+/// left out, because a directory is never what a caller then reads. Sorted, so
+/// two runs over the same tree hand back the same list — an order the operating
+/// system happens to keep is not one a program may rest on.
+///
+/// **The root holds for every name the walk finds, and not only for the one it
+/// was asked for** ([ADR-108](../../../docs/specification/adr/adr-108.md) D3).
+/// A symlink inside the directory may point out of it; under `Root::Dir` such an
+/// entry is *not listed*, rather than failing the walk, because the program did
+/// not ask for that name and a tree with one stray link in it is still a tree
+/// worth reading. `Root::Anywhere` follows it, as it follows everything.
+///
+/// **A directory is visited once**, by its resolved name, so a link that points
+/// back up the tree ends the walk instead of looping it.
+///
+/// It fails where the directory itself cannot be read, and where a name under it
+/// is not UTF-8 — text in this language is one type, and a name handed back
+/// changed would be a name that opens a different file.
+///
+/// `async` with nothing awaited, for the reason [`map`] gives: the ledger says
+/// it does I/O and may pause.
+pub async fn walk(path: impl AsRef<Path>, root: &Root) -> Result<Vec<String>, crate::io::IoError> {
+    let asked = path.as_ref().display().to_string();
+    let start = resolve(path.as_ref(), root)?;
+    let base = match root {
+        Root::Dir(dir) => Some(
+            std::fs::canonicalize(Path::new(dir))
+                .map_err(|_| crate::io::IoError::Outside(asked.clone()))?,
+        ),
+        Root::Anywhere => None,
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut found = Vec::new();
+    // The directory asked for has to be readable; one under it that is not is
+    // left out, as a name outside the root is.
+    std::fs::read_dir(&start).map_err(|e| crate::io::IoError::of(e, &asked))?;
+    let mut pending = vec![(start, String::new())];
+    while let Some((dir, prefix)) = pending.pop() {
+        let Ok(real) = std::fs::canonicalize(&dir) else {
+            continue;
+        };
+        if !seen.insert(real) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return Err(crate::io::IoError::NotText(format!(
+                    "{asked}/{prefix}{}",
+                    name.to_string_lossy()
+                )));
+            };
+            let at = entry.path();
+            let Ok(real) = std::fs::canonicalize(&at) else {
+                continue;
+            };
+            if base.as_ref().is_some_and(|base| !real.starts_with(base)) {
+                continue;
+            }
+            let relative = format!("{prefix}{name}");
+            match real.is_dir() {
+                true => pending.push((at, format!("{relative}/"))),
+                false => found.push(relative),
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
 #[cfg(test)]
 mod writer {
     use super::*;
@@ -861,6 +939,58 @@ mod tests {
             assert!(super::read("../outside.txt", &root).await.is_err());
         });
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod walking {
+    use super::*;
+
+    /// **Files only, recursively, relative and sorted** — and a link out of a
+    /// `Root::Dir` is not listed, while a link back up the tree ends the walk.
+    #[test]
+    fn a_walk_lists_the_files_under_a_directory_and_stays_inside_its_root() {
+        let dir = std::env::temp_dir().join(format!("nikaia-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tree = dir.join("tree");
+        std::fs::create_dir_all(tree.join("src/deep")).expect("scratch");
+        std::fs::create_dir_all(dir.join("away")).expect("scratch");
+        std::fs::write(tree.join("b.rs"), "").expect("write");
+        std::fs::write(tree.join("src/a.rs"), "").expect("write");
+        std::fs::write(tree.join("src/deep/c.txt"), "").expect("write");
+        std::fs::write(dir.join("away/secret"), "").expect("write");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("away"), tree.join("out")).expect("link");
+            std::os::unix::fs::symlink(&tree, tree.join("src/up")).expect("link");
+        }
+
+        let inside = Root::Dir(tree.display().to_string());
+        let found = crate::rt::exec::block_on(walk(".", &inside)).expect("walked");
+        assert_eq!(found, ["b.rs", "src/a.rs", "src/deep/c.txt"]);
+
+        // From `src`, the link up reaches the rest of the tree once, and its
+        // way back into `src` is a directory already seen.
+        #[cfg(unix)]
+        {
+            let under = crate::rt::exec::block_on(walk("src", &inside)).expect("walked");
+            assert_eq!(under, ["a.rs", "deep/c.txt", "up/b.rs"]);
+        }
+
+        #[cfg(unix)]
+        {
+            let anywhere = crate::rt::exec::block_on(walk(&tree, &Root::Anywhere)).expect("walked");
+            assert_eq!(
+                anywhere,
+                ["b.rs", "out/secret", "src/a.rs", "src/deep/c.txt"]
+            );
+        }
+
+        let refused = crate::rt::exec::block_on(walk("..", &inside));
+        assert!(matches!(refused, Err(crate::io::IoError::Outside(_))));
+        let missing = crate::rt::exec::block_on(walk("nope", &inside));
+        assert!(matches!(missing, Err(crate::io::IoError::NotFound(_))));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
