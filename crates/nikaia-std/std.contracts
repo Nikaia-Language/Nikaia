@@ -298,6 +298,21 @@ throws = ["io::IoError"]
 provenance = "trusted"
 signature = "(path: ?, root: ref fs::Root) -> String"
 
+# Every file under a directory, as names relative to it with `/` between the
+# parts, in sorted order. Directories are not listed, and each is visited once.
+#
+# Under `fs::Root::Dir` a name the walk finds that leads out of the root - a
+# symlink pointing away - is left out rather than failing the walk. It fails
+# where the directory itself cannot be read, and where a name under it is not
+# UTF-8. The names came from the program's own machine, so they are **trusted**
+# (ADR-195 D4).
+[fn."fs::walk"]
+pub = true
+touches = ["file(path) read"]
+throws = ["io::IoError"]
+provenance = "trusted"
+signature = "(path: ?, root: ref fs::Root) -> Vec[String]"
+
 # **A test's own directory, as a root** (ADR-247 D5). `sync`: making one
 # directory is one system call, the same size of blocking as `cli::args`'s read.
 # A fresh, empty directory, as an `fs::Root::Dir`.
