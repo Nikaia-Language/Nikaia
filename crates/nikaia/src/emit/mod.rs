@@ -710,7 +710,7 @@ impl Out {
 }
 
 pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    let trust = crate::contracts::trust::analyse(parsed, std_ledger());
     Emitter::new(parsed, build, trust.provenance).program()
 }
 
@@ -723,7 +723,7 @@ pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
 /// lifetime on it. Every caller that has nothing to say passes
 /// [`assets::Reads::none`], which is D1.
 pub fn emit_program_reading(parsed: &Parsed, build: Build, reads: &Reads) -> Result<Lowered> {
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    let trust = crate::contracts::trust::analyse(parsed, std_ledger());
     Emitter::new_reading(parsed, build, trust.provenance, reads).program()
 }
 
@@ -749,7 +749,7 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
-    let own = crate::contracts::Ledger::infer_package(&[parsed], &std_ledger());
+    let own = crate::contracts::Ledger::infer_package(&[parsed], std_ledger());
     emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::blank())
 }
 
@@ -2375,7 +2375,7 @@ impl<'p> Emitter<'p> {
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
-            carries_input: crate::views::carried(parsed, &own_contracts, &library),
+            carries_input: crate::views::carried(parsed, &own_contracts, library),
             grammars,
             structs,
             methods,
@@ -2438,7 +2438,7 @@ impl<'p> Emitter<'p> {
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             owned_texts: propagation.owned_texts,
-            keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, &library)
+            keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, library)
                 .into_iter()
                 .map(|plan| (plan.key.clone(), plan))
                 .collect(),
@@ -3912,7 +3912,7 @@ impl<'p> Emitter<'p> {
                 // handed over is one lifetime, which the elision names.
                 let lent = |at: usize| {
                     self.own_contracts.functions.get(&key).is_some_and(|c| {
-                        crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
+                        crate::contracts::keeps::lends_in(c, at, &[self.library, &self.described])
                             && !c
                                 .signature
                                 .as_ref()
@@ -4008,7 +4008,7 @@ impl<'p> Emitter<'p> {
             let reference = if changes {
                 "&mut "
             } else if lent.is_some_and(|c| {
-                crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
+                crate::contracts::keeps::lends_in(c, at, &[self.library, &self.described])
             }) && !written_as_a_view
             {
                 "&"
@@ -11781,7 +11781,7 @@ impl<'p> Emitter<'p> {
     /// lending the inner value out hands no handle on.
     fn takes_a_handle(&self, callee: &str) -> Vec<bool> {
         let suffix = format!("::{callee}");
-        let contract = [&self.own_contracts, &self.library]
+        let contract = [&self.own_contracts, self.library]
             .into_iter()
             .find_map(|ledger| {
                 ledger.functions.get(callee).or_else(|| {

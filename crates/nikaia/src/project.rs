@@ -1629,7 +1629,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                 crate::contracts::order::overlap_report(
                     &unit.parsed,
                     &program.contracts,
-                    &library,
+                    library,
                     &crate::emit::branch_starts_first(
                         &unit.parsed,
                         settings.build,
@@ -1644,7 +1644,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                 crate::contracts::sharing::report(
                     &unit.parsed,
                     &program.contracts,
-                    &library,
+                    library,
                     settings.build.user_parallelism == crate::emit::UserParallelism::Yes,
                 )
             );
@@ -1663,7 +1663,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                     &unit.source,
                     &unit.path.display().to_string(),
                     &program.contracts,
-                    &library,
+                    library,
                 )
             );
         }
@@ -1671,7 +1671,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
             print!(
                 "{}",
                 crate::contracts::trust::render(
-                    &crate::contracts::trust::analyse(&unit.parsed, &library),
+                    &crate::contracts::trust::analyse(&unit.parsed, library),
                     &unit.path.display().to_string(),
                     &unit.source,
                 )
