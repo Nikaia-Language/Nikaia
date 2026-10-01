@@ -17,7 +17,7 @@
 
 mod common;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -38,7 +38,7 @@ fn lowered(source: &str) -> String {
 
 fn throws_of(source: &str, of: &str) -> Vec<String> {
     let parsed = parse_to_ast(source).expect("the source parses");
-    Ledger::infer(&parsed).functions[of].throws.clone()
+    Ledger::infer(&parsed).functions[of].fails_with.clone()
 }
 
 /// Lower it, compile it, run it, and hand back what it printed — which is the
@@ -474,7 +474,7 @@ fn a_variant_of_a_librarys_type_names_the_type() {
                   }\n\
                   fn main() { }\n";
     let parsed = parse_to_ast(source).expect("the source parses");
-    let throws = Ledger::infer(&parsed).functions["boom"].throws.clone();
+    let throws = Ledger::infer(&parsed).functions["boom"].fails_with.clone();
     assert_eq!(throws, vec!["io::IoError".to_string()], "{throws:#?}");
 }
 
@@ -524,4 +524,38 @@ fn a_joined_failure_survives_a_caller_that_propagates_it() {
     );
     assert_eq!(printed.matches("and then:").count(), 2, "{printed}");
     assert_eq!(printed.matches("missing-two.txt").count(), 2, "{printed}");
+}
+
+/// **What a handler catches and does not pass on is not the function's**
+/// (Part I 7.1, 0.0.297): the call in the guarded half fails into the handler
+/// and nowhere else, so `load` throws what its handler throws - not that and
+/// the guarded call's error as a sum of two. A handler that writes `throw
+/// error` passes the caught error on, and then it is in the set
+/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+#[test]
+fn a_handler_that_does_not_pass_on_keeps_what_it_caught() {
+    let net = "enum NetError { Down }\n\
+               impl Error for NetError {\n\
+               \x20   fn message(ref self) -> String { return \"down\" }\n\
+               }\n\
+               fn fetch() -> i64 throws { throw NetError::Down }\n";
+    let kept = format!(
+        "{CONFIG_ERROR}{net}fn load() -> i64 throws {{\n\
+         \x20   let n = fetch() catch {{ throw ConfigError::NotFound(\"etc\") }}\n\
+         \x20   return n\n\
+         }}\n\
+         fn main() {{ }}\n"
+    );
+    assert_eq!(throws_of(&kept, "load"), vec!["ConfigError"]);
+    let passed = format!(
+        "{CONFIG_ERROR}{net}fn load(strict: bool) -> i64 throws {{\n\
+         \x20   let n = fetch() catch {{\n\
+         \x20       if strict {{ throw error }}\n\
+         \x20       throw ConfigError::NotFound(\"etc\")\n\
+         \x20   }}\n\
+         \x20   return n\n\
+         }}\n\
+         fn main() {{ }}\n"
+    );
+    assert_eq!(throws_of(&passed, "load"), vec!["ConfigError", "NetError"]);
 }

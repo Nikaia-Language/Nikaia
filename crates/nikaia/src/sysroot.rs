@@ -26,6 +26,7 @@
 //! compiler answers from inside the compiler makes that pairing impossible
 //! rather than merely discouraged.
 
+use crate::contracts::LedgerOps;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,13 @@ const TOOLS: &str = "tools";
 
 /// The compiler's syntax tree, which a tool module reads beside itself.
 const TREE: &str = "ast.nika";
+
+/// The ledger's records (ADR-257 D1), and the tool modules that read them
+/// beside themselves as every tool reads the tree. A list and not every tool,
+/// because the records' names (`State`, `Shape`) are words other tools use
+/// for their own things, and a package is one namespace (ADR-047 D1).
+const RECORDS: &str = "ty.nika";
+const READS_THE_RECORDS: &[&str] = &["ledger.nika"];
 
 /// What the Rust a tool module reads says it does (ADR-252 D4.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
@@ -259,8 +267,7 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     // is compiled against anyway, and the checks that need a project — a
     // manifest's boundary, an allowlist, a package's other units — have nothing
     // to say about a file that is one unit and depends on nothing.
-    let mut library =
-        crate::contracts::Ledger::parse(crate::contracts::STD).context("std's shipped ledger")?;
+    let mut library = crate::contracts::std_library();
     // **A tool reads the Rust it is handed, described** (ADR-252 D4.3): the
     // compiler's tree names are `winnow_grammar::Symbol`s, and a module that
     // reads the tree has to know that one copies and compares. `std`'s own
@@ -270,7 +277,7 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     {
         crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?
     } else {
-        crate::contracts::Ledger::default()
+        crate::contracts::Ledger::blank()
     };
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());
@@ -278,20 +285,30 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     // tree is the one Nikaia module every other tool may name, as the files of
     // a package name one another (Part I 9.1). In Rust each tool is a module
     // of its own, and `nikaia-std`'s `lib.rs` writes the `use super::ast::*`.
-    let tree = match path.file_name() == Some(std::ffi::OsStr::new(TREE)) {
-        true => None,
-        false => match path.with_file_name(TREE) {
-            beside if described.types.is_empty() || !beside.exists() => None,
-            beside => {
-                let text = std::fs::read_to_string(&beside)
-                    .with_context(|| format!("reading {}", beside.display()))?;
-                Some(
-                    crate::parser::parse_to_ast(&text)
-                        .map_err(|e| anyhow::anyhow!("{}: {e}", beside.display()))?,
-                )
-            }
-        },
-    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let mut shared: Vec<&str> = Vec::new();
+    if name != TREE && !described.types.is_empty() {
+        shared.push(TREE);
+    }
+    if READS_THE_RECORDS.contains(&name) {
+        shared.push(RECORDS);
+    }
+    let mut tree: Vec<crate::parser::Parsed> = Vec::new();
+    for module in shared {
+        let beside = path.with_file_name(module);
+        if !beside.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&beside)
+            .with_context(|| format!("reading {}", beside.display()))?;
+        tree.push(
+            crate::parser::parse_to_ast(&text)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", beside.display()))?,
+        );
+    }
     let beside: Vec<&crate::parser::Parsed> = tree.iter().collect();
     let units: Vec<&crate::parser::Parsed> = std::iter::once(&parsed)
         .chain(beside.iter().copied())

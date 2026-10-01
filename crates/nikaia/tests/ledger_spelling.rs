@@ -6,7 +6,7 @@
 //! again to the same bytes - and `std`'s hand-written ledger, which moved to
 //! this spelling at 0.0.254, is read by the same reader.
 
-use nikaia::contracts::{Ledger, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn written(source: &str) -> (Ledger, String) {
@@ -87,7 +87,7 @@ fn stds_ledger_is_written_in_nikaias_spelling() {
     let map = std
         .functions
         .iter()
-        .find(|(_, c)| matches!(c.sync, Sync::From(_)))
+        .find(|(_, c)| matches!(c.sync_claim, Sync::From(_)))
         .expect("std has a function whose lambda decides");
     assert!(
         nikaia::contracts::STD.contains(&format!("[fn.\"{}\"]", map.0)),

@@ -45,7 +45,6 @@ use anyhow::{Result, anyhow};
 
 use crate::ast::Item;
 use crate::contracts::ty::TyOps;
-use crate::contracts::{sharing::ClassOps, tether::HeldOps, touch::TouchOps};
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
 
@@ -54,7 +53,8 @@ use crate::parser::Parsed;
 /// `nikaia-std/src/tools/ty.nika`, beside the type language their fields
 /// hold. Re-exported here so that every reader keeps its path.
 pub use nikaia_std::tools::ty::{
-    ConfigContract, Crosses, FieldContract, Lock, Provenance, Sync, Threads, VariantContract,
+    ConfigContract, Crosses, FieldContract, FnContract, Ledger, Lock, Notes, Provenance, Signature,
+    Sync, Threads, TypeContract, VariantContract,
 };
 
 /// What stays Rust of [`Sync`]: the name a `sync` was taken from.
@@ -100,286 +100,6 @@ pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing
 /// may say more than it knows how to use.
 pub const VERSION: u32 = 3;
 
-/// What a caller needs to know about one function.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FnContract {
-    /// Callable from outside the unit that declares it. A library's consumers
-    /// see only these; the unit's own checks use all of them.
-    pub public: bool,
-    /// Part II, 12.1: pure computation, cannot pause, cannot do I/O.
-    ///
-    /// **Absent means not `sync`.** That is the whole of what makes this file
-    /// worth shipping: a caller that finds no `sync` here knows the callee may
-    /// pause, where a caller that finds no *entry* knows nothing at all.
-    ///
-    /// Present, it says which of the two kinds it is - see [`Sync`].
-    pub sync: Sync,
-    /// Kap 7.1: it may fail, and **with what** - the error types that can leave
-    /// it, inferred over the call graph ([ADR-023](../../../../docs/specification/adr/adr-023.md) D1).
-    ///
-    /// Empty means it cannot fail, which is why nothing is written for it: the
-    /// file says only what is true. A `"?"` among the names is the absence of a
-    /// claim in ADR-024 D1's sense - this function fails with something the
-    /// compiler cannot name, today because `std`'s failures are Rust's and have
-    /// no Nikaia type. A caller reads `["?"]` as "it fails" and gets exactly
-    /// what the old boolean gave, which is what makes the change additive.
-    ///
-    /// Sorted, because 13.5 makes the file a pure function of (source,
-    /// toolchain) and `--locked` compares it byte for byte.
-    pub throws: Vec<String>,
-    /// Which resources it reaches, and whether it changes them (ADR-033).
-    ///
-    /// **Empty means it touches everything**, which is the opposite of how
-    /// `throws` above reads an empty list and is deliberate: an unknown effect
-    /// has to order against everything, or a missing contract would make a
-    /// program wrong rather than merely slow. [`touches_known`] is the bit that
-    /// tells "nobody said" from "it says it touches nothing".
-    pub touches: Vec<touch::Touch>,
-    /// Whether the `touches` above is an answer at all.
-    ///
-    /// A function that genuinely reaches nothing writes `touches = []`, and
-    /// that is a *claim* - it may overlap with anything. A function nobody
-    /// described has no key, and that is the absence of one.
-    pub touches_known: bool,
-    /// This function is a **source**: its result is bytes that entered the
-    /// program from outside, and this is who chose them (ADR-010 D2).
-    ///
-    /// `None` is not "trusted" - it is "this is not a source", which is what
-    /// almost every function is.
-    pub provenance: Option<Provenance>,
-    /// The signature, as the source writes it: `(path: &str) -> String`.
-    ///
-    /// One key rather than two, because that is how a person reads a function
-    /// and because the parameters and the result are one fact. A `self`
-    /// receiver is in it where there is one, so a method's arguments are the
-    /// parameters after the first.
-    ///
-    /// This is what makes a *type* checker possible across a boundary it cannot
-    /// see the body of - which ADR-020 predicted would be an extension of this
-    /// file rather than a new one.
-    pub signature: Option<Signature>,
-    /// The parameters the result may point into, in declaration order.
-    ///
-    /// Empty when the result holds no view. Stage 0 has one input lifetime, so
-    /// a result that is a view may point into *any* view it was given -
-    /// `borrows(a | b)`, which is the spec's own spelling and is the widest
-    /// contract the signature can support.
-    pub borrows: Vec<String>,
-    /// The parameters this body **keeps** rather than reads
-    /// ([ADR-094](../../../../docs/specification/adr/adr-094.md) D2), sorted.
-    ///
-    /// *Keeps* means: stores it into something that outlives the call, hands it
-    /// back by value, gives it to a task, or passes it to a callee whose own
-    /// parameter keeps it. A parameter that is not in here is one the caller
-    /// may lend, which is what lets the compiler write the `&` at the call
-    /// instead of asking every caller to.
-    ///
-    /// **Absent means it keeps nothing**, the way an absent `sync` means *not*
-    /// `sync` — and, like that one, only for an entry that is *present*. A
-    /// function no ledger describes is unknown, and the inference counts an
-    /// unresolved use as keeping (D2's fail-closed): the wrong answer that way
-    /// is a caller refused in this compiler's words, and the wrong answer the
-    /// other way is a `&T` parameter whose body moves the value, which is
-    /// `rustc`'s error about a file nobody wrote.
-    ///
-    /// Sorted, because 13.5 makes the file a pure function of (source,
-    /// toolchain) and `--locked` compares it byte for byte.
-    pub keeps: Vec<String>,
-    /// Whether this function **changes its receiver in place** — its receiver
-    /// is `&mut self` ([ADR-094](../../../../docs/specification/adr/adr-094.md)
-    /// D3).
-    ///
-    /// The ledger's type language spells a view `&T` and has no second
-    /// spelling for a mutable one, so `Vec::push` and `Vec::len` write the same
-    /// receiver type. That was harmless while nothing read it; it stopped being
-    /// harmless the moment D1 began writing a `&` off `keeps`, because a
-    /// parameter handed to `push` would have been lent and `rustc` would have
-    /// answered *cannot borrow as mutable* about a file nobody wrote
-    /// ([Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)).
-    ///
-    /// **Absent means it does not**, which is `keeps`' convention and `sync`'s
-    /// before it — and, like both, only for an entry that is *present*. A
-    /// method no ledger describes is unknown, and `keeps`' walk already counts
-    /// an unresolved receiver as kept.
-    ///
-    /// For a function this compiler reads the body of, it is not inferred at
-    /// all: it is the **declaration**, `&mut self`, which is the one thing D3
-    /// says mutation is written in.
-    pub mutates: bool,
-    /// Whether this function **touches a lock**
-    /// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3): it opens
-    /// one of D10's doors, or calls something that does.
-    ///
-    /// The second derived property propagated over the call graph `sync` uses,
-    /// and with the **opposite** lattice — a least fixpoint, so nobody has it
-    /// until something gives it to them, where `sync` starts from everyone
-    /// having the claim and takes it away. `keeps` is the same polarity for the
-    /// same reason: a restriction is added on doubt.
-    ///
-    /// **Coarse on purpose** (D4): it says *a lock*, not *which lock*. The
-    /// precise version needs alias analysis, and the cost of that is not
-    /// compile time — whether a program compiles would depend on whether two
-    /// handles are *provably* distinct, so an unrelated line elsewhere could
-    /// decide it.
-    ///
-    /// **Absent means it does not**, which is `keeps`' convention and `sync`'s
-    /// before it. An unresolvable call sets it, which is D3's own sentence: the
-    /// same doubt that takes the `sync` claim away gives this one, so one
-    /// polarity decision serves both.
-    pub touches_a_lock: Lock,
-    /// Whether this call may put what it is given on a **thread of its own**
-    /// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
-    ///
-    /// Three values and hand-written — see [`Threads`]. It is the one column
-    /// here about a body the compiler cannot read *at all*: a Rust dependency
-    /// may bring its own runtime, and `NK2502` has been asking every
-    /// **undescribed** call that question since ADR-038 D7. A described call
-    /// was never asked, which is that record's own wording, so a crate that
-    /// answered every other question honestly turned the check off by being
-    /// described. This is the word that turns it back on, and D2 makes it fire
-    /// on the **claim** and never on its absence.
-    pub threads: Threads,
-    /// Which of Part I 6.6's states each view in this signature is in
-    /// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D7's first
-    /// half: *recorded per function: the state of every view in its
-    /// signature*).
-    ///
-    /// Empty where the signature holds no view, which is most of them. Written
-    /// by `tether::infer` and read by nothing yet: a state is a
-    /// **representation** and only one of the three is built, so this column is
-    /// the analysis standing on its own until the other two are.
-    ///
-    /// **`views` and not `tethers` in the file**, because `tethered` above is a
-    /// different question one line up — *which fields hold a view* — and two
-    /// columns a reader has to tell apart by a suffix is one column too many.
-    pub views: Vec<tether::Held>,
-    /// Which of its `Shared` positions are one allocation, and which reference
-    /// count each of those classes gets
-    /// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
-    ///
-    /// The **fifth** derived column, beside `sync`, `throws`, `touches` and
-    /// `borrows`, and a column rather than a mechanism: the ledger already
-    /// ships facts read off bodies (ADR-020 D1, D2), and this is one more of
-    /// them. ADR-037 D7 is where the shape comes from - the
-    /// summary that **composes** is "which parameters and result are one class,
-    /// and whether any of them crosses inside", and the union-find that decides
-    /// a count computes it already.
-    ///
-    /// **Empty means the function has no `Shared` position**, which is almost
-    /// every function, and is why nothing is written for it (ADR-020 D4). It is
-    /// not "nobody said": a function with a `Shared` parameter always gets an
-    /// entry, and the floor means the worst that entry can say is `atomic`.
-    ///
-    /// Only **caller-visible** positions are in it. A local's count is nobody's
-    /// business but its own function's, and putting one here would churn the
-    /// file on a rename.
-    pub sharing: Vec<sharing::Class>,
-    /// **The result is walked from the back only where the length of what
-    /// went in is known** ([ADR-212](../../../../docs/specification/adr/adr-212.md)
-    /// D2).
-    ///
-    /// A sequence entry's result passes `ends` through from what it was handed,
-    /// and for most entries that is all: a `map` or a `filter` walked from the
-    /// back is its input walked from the back. A `take`, a `zip`, a `skip` and
-    /// a `step_by` have to know **where** the back is, which is the
-    /// length - the language below asks `ExactSizeIterator` of their input for
-    /// it. One column for that, because the signature's words say what a type
-    /// *is* and this says how two of them depend on each other.
-    pub ends_by_length: bool,
-}
-
-/// Written out because [`Sync`], [`Lock`], [`Threads`] and [`Crosses`] are
-/// Nikaia's, which names a value rather than deriving a `Default`
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.4): these are the
-/// values the derive meant.
-impl Default for FnContract {
-    fn default() -> Self {
-        FnContract {
-            public: false,
-            sync: Sync::No,
-            throws: Default::default(),
-            touches: Default::default(),
-            touches_known: false,
-            provenance: Default::default(),
-            signature: Default::default(),
-            borrows: Default::default(),
-            keeps: Default::default(),
-            mutates: false,
-            touches_a_lock: Lock::No,
-            threads: Threads::Undecided,
-            views: Default::default(),
-            sharing: Default::default(),
-            ends_by_length: false,
-        }
-    }
-}
-
-/// **What a describer saw and did not claim**
-/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3, D5).
-///
-/// Rendered as comments into `contracts/<crate>.contracts` and never parsed
-/// back. The distinction the record rests on: [ADR-123](../../../../docs/specification/adr/adr-123.md)
-/// D2 lets the describer *fill* `crosses` because a field holding an `Rc`
-/// **entails** not sendable; nothing a signature can show entails *threads*, so
-/// what it saw is a sentence and the column stays a person's.
-#[derive(Debug, Clone, Default)]
-pub struct Notes {
-    /// About the crate: the `unsafe impl Send`/`Sync` items it contains (D5).
-    pub about_the_crate: Vec<String>,
-    /// About one entry, by the key it is written under (D3).
-    pub about_a_function: BTreeMap<String, Vec<String>>,
-}
-
-/// A function's parameters and result.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Signature {
-    /// The **type parameters and what each of them must implement**, in
-    /// declaration order ([ADR-205](../../../docs/specification/adr/adr-205.md)
-    /// D1): the `[H: handler::Handler]` of
-    /// `[H: handler::Handler](h: $H) -> String`.
-    ///
-    /// **Inside the signature and not a key beside it**, because the signature
-    /// already carries the type parameter as `$H`
-    /// ([ADR-074](../../../docs/specification/adr/adr-074.md) D2: *a generic
-    /// parameter is recorded as a variable, so a caller binds it from what it
-    /// passes and reads the result off the same signature*). A bound is the rest
-    /// of that sentence, and a second key that has to agree with the first is a
-    /// second source of truth for one fact.
-    ///
-    /// Empty for almost every entry: a parameter with no bound is written `[T]`
-    /// nowhere at all, because the signature's `$T` already says it exists.
-    pub bounds: Vec<(String, Vec<String>)>,
-    /// Name and type, in order. A `self` receiver is the first of them where
-    /// there is one, named `self`.
-    pub params: Vec<(String, ty::Ty)>,
-    /// The parameters written **`mut`**: the callee changes them in place and
-    /// the caller's value is what changes
-    /// ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3). They
-    /// lower to `&mut T`.
-    ///
-    /// A list beside `params` rather than a third column inside it, for the
-    /// reason `borrows` and `keeps` are lists of names: almost no parameter is
-    /// one, and a pair is what every reader of `params` already destructures.
-    /// It is written *into* the signature text — `(mut out: Vec[i64])` — because
-    /// that is the one key a caller across a package boundary reads a
-    /// parameter's kind off.
-    ///
-    /// In declaration order, which is `params`' order and not sorted: the
-    /// signature text is rendered from the two together, so a different order
-    /// would render a different signature.
-    pub mutable: Vec<String>,
-    /// Kap 5.1: what stands after the `;` - options, named at the call.
-    ///
-    /// A caller needs all three parts: the name, so it can be written; the
-    /// type, so it can be checked; and the **default**, because a call that
-    /// leaves an option out still passes a value, and only the declaration
-    /// knows which. That is what makes this a ledger key rather than something
-    /// a caller could work out.
-    pub config: Vec<ConfigContract>,
-    /// What it hands back. `None` where it hands back nothing.
-    pub result: Option<ty::Ty>,
-}
-
 /// What stays Rust of a variant's entry until its text moves (ADR-257 step
 /// (c)): reading one back. The declaration and `text` are `tools/ty.nika`'s.
 pub trait VariantOps {
@@ -388,483 +108,73 @@ pub trait VariantOps {
 
 impl VariantOps for VariantContract {
     fn parse(text: &str) -> VariantContract {
-        let text = text.trim();
-        if let Some((name, rest)) = text.split_once('(') {
-            let inside = rest.trim_end().trim_end_matches(')');
-            return VariantContract {
-                name: name.trim().to_string(),
-                holds: ty::split_args(inside)
-                    .iter()
-                    .enumerate()
-                    .map(|(at, part)| FieldContract {
-                        name: at.to_string(),
-                        ty: ty::Ty::parse(part),
-                        public: true,
-                    })
-                    .collect(),
-                positional: true,
-            };
-        }
-        if let Some((name, rest)) = text.split_once('{') {
-            let inside = rest.trim_end().trim_end_matches('}');
-            return VariantContract {
-                name: name.trim().to_string(),
-                holds: ty::split_args(inside)
-                    .iter()
-                    .filter_map(|part| {
-                        let (name, ty) = part.split_once(':')?;
-                        Some(FieldContract {
-                            name: name.trim().to_string(),
-                            ty: ty::Ty::parse(ty),
-                            public: true,
-                        })
-                    })
-                    .collect(),
-                positional: false,
-            };
-        }
-        VariantContract {
-            name: text.to_string(),
-            holds: Vec::new(),
-            positional: false,
-        }
+        nikaia_std::tools::ledger::variant_of(text)
     }
 }
 
-impl Signature {
-    /// Whether the first parameter is the receiver, which is what makes an
-    /// argument's position differ from its position in the contract.
-    pub fn takes_a_receiver(&self) -> bool {
-        matches!(self.params.first(), Some((name, _)) if name == "self")
-    }
+/// What stays Rust of a [`Signature`] (ADR-257 step (b)): the parameters
+/// after the receiver, as a slice of the entry's own, and reading one back.
+/// The declaration, `text` and the rest are `tools/ty.nika`'s.
+pub trait SignatureOps: Sized {
+    fn arguments(&self) -> &[(String, ty::Ty)];
+    fn parse(text: &str) -> Result<Self>;
+}
 
+impl SignatureOps for Signature {
     /// The arguments a *call* passes, which is the parameters after a receiver.
-    pub fn arguments(&self) -> &[(String, ty::Ty)] {
+    fn arguments(&self) -> &[(String, ty::Ty)] {
         match self.params.first() {
             Some((name, _)) if name == "self" => &self.params[1..],
             _ => &self.params,
         }
     }
 
-    /// What a call to it hands back.
-    ///
-    /// A function with no `->` hands back nothing, and nothing is a type: the
-    /// empty tuple, which is what makes `let n: i32 = print(x)` a mistake the
-    /// checker can see rather than one only `rustc` finds.
-    pub fn result_or_unit(&self) -> ty::Ty {
-        self.result.clone().unwrap_or(ty::Ty::Tuple(Vec::new()))
-    }
-
-    pub fn text(&self) -> String {
-        let mut params: Vec<String> = self
-            .params
-            .iter()
-            .map(|(name, ty)| {
-                if name == "self" {
-                    ty.text()
-                } else {
-                    let mutable = match self.mutable.iter().any(|m| m == name) {
-                        true => "mut ",
-                        false => "",
-                    };
-                    format!("{mutable}{name}: {}", ty.text())
-                }
-            })
-            .collect();
-        let mut inside = params.join(", ");
-        if !self.config.is_empty() {
-            let config: Vec<String> = self
-                .config
-                .iter()
-                .map(|c| format!("{}: {} = {}", c.name, c.ty.text(), c.default))
-                .collect();
-            inside = format!("{inside}; {}", config.join(", "));
-        }
-        params.clear();
-        // **In front, where the declaration writes them** (ADR-205 D1).
-        let before = match self.bounds.is_empty() {
-            true => String::new(),
-            false => format!(
-                "[{}]",
-                self.bounds
-                    .iter()
-                    .map(|(name, traits)| match traits.is_empty() {
-                        true => name.clone(),
-                        false => format!("{name}: {}", traits.join(" + ")),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        };
-        match &self.result {
-            Some(result) => format!("{before}({inside}) -> {}", result.text()),
-            None => format!("{before}({inside})"),
-        }
-    }
-
     /// Read one back from the text above.
-    pub fn parse(text: &str) -> Result<Signature> {
-        let text = text.trim();
-        // **The bound list, where there is one** (ADR-205 D1). It stands before
-        // the `(`, so it is taken off first and everything below is the grammar
-        // that was always there — which is what makes a ledger written before
-        // this key existed parse unchanged.
-        let (bounds, text) = match text.strip_prefix('[') {
-            Some(rest) => {
-                let close = rest
-                    .find(']')
-                    .ok_or_else(|| anyhow!("a bound list is `[T: Trait]`, found `{text}`"))?;
-                let (inside, after) = rest.split_at(close);
-                (bounds_of(inside), after[1..].trim())
-            }
-            None => (Vec::new(), text),
-        };
-        let inside = text
-            .strip_prefix('(')
-            .ok_or_else(|| anyhow!("a signature starts with `(`, found `{text}`"))?;
-        // **The `)` that closes the *first* `(`, counted rather than searched
-        // for from the end.**
-        //
-        // `rfind(')')` was here and was wrong the day a result had parentheses
-        // in it: `(capacity: i64) -> (Sender[$T], Receiver[$T])` ends with the
-        // **result's** close, so the parameter list became
-        // `capacity: i64) -> (Sender[$T], Receiver[$T]` and the whole signature
-        // was nonsense — silently, because a parameter list of one garbage part
-        // still parses into a type nobody can name. What it cost was every
-        // argument to that call being lent, since a parameter whose type is not
-        // known is one that moves ([ADR-094](../../../docs/specification/adr/adr-094.md)
-        // D1). Found by [ADR-149](../../../docs/specification/adr/adr-149.md),
-        // whose `channel::bounded` is the first entry to hand back a tuple.
-        let close = matching_close(inside)
-            .ok_or_else(|| anyhow!("a signature is `(…) -> T`, found `{text}`"))?;
-        let (inside, after) = inside.split_at(close);
-
-        // Kap 5.1: the `;` divides the subjects from the options.
-        let (positional, options) = match split_config(inside) {
-            (positional, Some(options)) => (positional, options),
-            (positional, None) => (positional, ""),
-        };
-
-        let mut mutable: Vec<String> = Vec::new();
-        let params = ty::split_args(positional)
-            .iter()
-            .map(|part| match split_at_the_name(part) {
-                Some((name, ty)) => {
-                    // **`mut` is part of the parameter and not of its type**
-                    // (ADR-094 D3): it says who changes the value, which is
-                    // what `&mut T` says below and what no type in this
-                    // language's own grammar can.
-                    let name = name.trim();
-                    let name = match name.strip_prefix("mut ") {
-                        Some(rest) => {
-                            let rest = rest.trim().to_string();
-                            mutable.push(rest.clone());
-                            rest
-                        }
-                        None => name.to_string(),
-                    };
-                    (name, ty::Ty::parse(ty))
-                }
-                // A bare type is the receiver, which is what `&mut self` is.
-                None => ("self".to_string(), ty::Ty::parse(part)),
-            })
-            .collect();
-
-        let config = ty::split_args(options)
-            .iter()
-            .map(|part| {
-                let (name, rest) = part
-                    .split_once(':')
-                    .ok_or_else(|| anyhow!("an option is `name: T = value`, found `{part}`"))?;
-                let (ty, default) = rest.split_once('=').ok_or_else(|| {
-                    anyhow!("an option needs a default: `{}: T = value`", name.trim())
-                })?;
-                Ok(ConfigContract {
-                    name: name.trim().to_string(),
-                    ty: ty::Ty::parse(ty),
-                    default: default.trim().to_string(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let result = after[1..].trim().strip_prefix("->").map(ty::Ty::parse);
-
-        Ok(Signature {
-            bounds,
-            params,
-            mutable,
-            config,
-            result,
-        })
+    fn parse(text: &str) -> Result<Signature> {
+        nikaia_std::tools::ledger::signature_of(text).map_err(|refusal| anyhow!("{refusal}"))
     }
 }
 
-/// `H: handler::Handler, T` read back into the pairs [`Signature::bounds`] holds.
-///
-/// **Nothing here fails.** A parameter with no `:` has no bound, and a shape this
-/// does not recognise is one too: the list says which parameters exist, and a
-/// bound it could not read is a bound the checker does not claim about, which is
-/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md)'s direction.
-fn bounds_of(inside: &str) -> Vec<(String, Vec<String>)> {
-    ty::split_args(inside)
-        .iter()
-        .filter_map(|part| {
-            let part = part.trim();
-            if part.is_empty() {
-                return None;
-            }
-            // **The colon that is not part of a `::`**, for the reason a
-            // parameter's own split needs the same care: `H: handler::Handler`
-            // has three of them and only the first divides.
-            let at = split_at_the_name(part);
-            Some(match at {
-                Some((name, traits)) => (
-                    name.trim().to_string(),
-                    traits
-                        .split('+')
-                        .map(|one| one.trim().to_string())
-                        .filter(|one| !one.is_empty())
-                        .collect(),
-                ),
-                None => (part.to_string(), Vec::new()),
-            })
-        })
-        .collect()
+/// What the compiler does with a ledger: infer, absorb, render and read it
+/// back. The record is `tools/ty.nika`'s (ADR-257 D1); these stay Rust until
+/// step (c) and (d) move them.
+pub trait LedgerOps: Sized {
+    fn empty() -> Self;
+    fn infer(parsed: &Parsed) -> Self;
+    fn infer_package(units: &[&Parsed], library: &Ledger) -> Self;
+    fn published(&self, foreign: &BTreeSet<String>) -> Ledger;
+    fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String>;
+    fn absorb(&mut self, module: Option<&str>, other: Ledger);
+    fn absorb_renaming(
+        &mut self,
+        module: Option<&str>,
+        renames: &std::collections::BTreeMap<String, String>,
+        other: Ledger,
+    );
+    fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked);
+    fn infer_package_checked(
+        units: &[&Parsed],
+        library: &Ledger,
+    ) -> (Self, Vec<crate::check::Checked>);
+    fn function(
+        &self,
+        parsed: &Parsed,
+        item: &Item,
+        target: Option<&str>,
+        outer: &BTreeSet<String>,
+    ) -> (String, FnContract);
+    fn lookup(&self, name: &str) -> Option<(String, &FnContract)>;
+    fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)>;
+    fn render(&self) -> String;
+    fn render_derived(&self) -> String;
+    fn read_beside(path: &std::path::Path) -> Option<Ledger>;
+    fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String;
+    fn render_from(&self, out: &mut String);
+    fn render_from_with(&self, out: &mut String, notes: &Notes);
+    fn parse(text: &str) -> Result<Self>;
 }
 
-/// A parameter's `name: T`, split at the colon that is **not** part of a `::`.
-///
-/// `split_once(':')` was here, and `collections::HashMap` is what broke it
-/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3 put a `std` type in
-/// a module): the receiver `&collections::HashMap[$K, $V]` was read as a
-/// parameter **named** `collections` whose type was `:HashMap[$K, $V]`, so
-/// every call on a map met `NK1101` about an argument count nobody wrote.
-fn split_at_the_name(part: &str) -> Option<(&str, &str)> {
-    let bytes = part.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b':' {
-            if bytes.get(at + 1) == Some(&b':') {
-                at += 2;
-                continue;
-            }
-            return Some((&part[..at], &part[at + 1..]));
-        }
-        at += 1;
-    }
-    None
-}
-
-/// The byte of the `)` that closes the `(` this text is already inside.
-///
-/// `None` where it never closes, which is a signature the caller refuses.
-fn matching_close(inside: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    for (at, byte) in inside.bytes().enumerate() {
-        match byte {
-            b'(' => depth += 1,
-            b')' if depth == 0 => return Some(at),
-            b')' => depth -= 1,
-            _ => {}
-        }
-    }
-    None
-}
-
-/// What a caller needs to know about one type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeContract {
-    pub public: bool,
-    /// Every field, with its type - what a checker needs to say that `r.nmae`
-    /// is not a field of `Row`.
-    pub fields: Vec<FieldContract>,
-    /// Every variant of an `enum`, with whatever it holds.
-    ///
-    /// **Empty for a `struct`**, and the two are told apart by that: a `struct`
-    /// has `fields` and an `enum` has these, and neither has the other's.
-    ///
-    /// What a consumer needs it for is the one thing Part I 3.4 promises: *a
-    /// `match` handles every possible case*. Without the list, a `match` over a
-    /// dependency's `enum` could not be shown total, so `NK1151` asked for an
-    /// `else` on a `match` that had covered everything — a correct program
-    /// refused ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)),
-    /// with a way out that makes *a type gaining a variant* silent forever
-    /// after.
-    ///
-    /// It is the same fact for the other shape of type, in the same table, which
-    /// is why it is a column here rather than a record of its own
-    /// ([ADR-106](../../../../docs/specification/adr/adr-106.md) D3's table).
-    pub variants: Vec<VariantContract>,
-    /// Whether a value of this type **may cross a thread** (ADR-005 §1 Group B),
-    /// and *may not* is one of the three things it can say
-    /// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
-    ///
-    /// Written by hand and never inferred, because it only ever answers for a
-    /// type whose parts this compiler cannot see: a Nikaia `struct` records its
-    /// `fields`, and `contracts::send` walks those - structurally, which is what
-    /// Group B asks for and what cannot be wrong. A Rust type has no fields
-    /// here, so without this key it is *undecided*, which is not permission
-    /// (ADR-010 D1): the compiler will not put it on a thread of its own
-    /// choosing.
-    ///
-    /// So this is the same kind of line as `sync = true` on a Rust function - a
-    /// promise about a body this compiler does not read, written in the file
-    /// that ships and reviewed like code. Its absence is never "it may not"; it
-    /// is "nobody said", and the two differ in who is to blame. **What says *it
-    /// may not* is the line itself**, `crosses = false`, which is the answer the
-    /// destination's refusals are for.
-    pub crosses: Crosses,
-    /// Iterating a value of this type can **fail** (ADR-025 D6).
-    ///
-    /// A `for` over one is a place the enclosing function can fail from, and
-    /// the compiler makes that function declare `throws` (D1). It is recorded
-    /// here rather than inferred because the types that have it are `std`'s and
-    /// their bodies are Rust - which is the whole reason this file exists.
-    pub iterates_fallibly: bool,
-    /// Whether two values of this type may be compared with `==`
-    /// ([ADR-204](../../../../docs/specification/adr/adr-204.md) D2).
-    ///
-    /// **Written by hand and never inferred**, for the reason `crosses` is: it
-    /// only ever answers for a type whose parts this compiler cannot see. A
-    /// Nikaia `struct` records its `fields` and a Nikaia `enum` its `variants`,
-    /// and the walk reads those — structurally, which is what cannot be wrong.
-    ///
-    /// **Absence is not permission.** A type nobody wrote this for does not
-    /// compare, and `NK1188` says so on the author's line rather than letting
-    /// `rustc` say it about a generated file
-    /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1's polarity,
-    /// and [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)).
-    pub compares: bool,
-    /// Whether a value of this type is **copied rather than moved**
-    /// ([ADR-252](../../../../docs/specification/adr/adr-252.md) D4.3): a
-    /// declared type whose every part copies may itself derive `Copy`, and one
-    /// holding a Rust type needs the Rust type to say so.
-    ///
-    /// `nikaia describe` writes it from the type's `#[derive(Copy, …)]`, as it
-    /// writes `compares` from `PartialEq`, and the reviewer reads it like any
-    /// other line. Absence is *does not copy*, which only ever costs a move.
-    pub copies: bool,
-    /// What **reading a value of this type touches**
-    /// ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1), in
-    /// [ADR-033](../../../../docs/specification/adr/adr-033.md)'s own
-    /// vocabulary of resource kinds.
-    ///
-    /// A column on the **type** rather than on a function, for the same reason
-    /// `iterates_fallibly` is one: the operation it describes is not a call a
-    /// program writes. `fs::Mapped` is a file held as memory, so `mapped[i]` is
-    /// a **page fault** — a disk read with no call in the source to hang a
-    /// `touches` on, and one that neither suspends nor takes a lock, so neither
-    /// `NK2202` nor `NK2203` has anything to say about it.
-    ///
-    /// Written by hand and never inferred, like `crosses`: it answers for a
-    /// type whose body is Rust, which is the whole reason this file exists.
-    /// Empty is *nothing recorded*, which for this question is also *nothing
-    /// claimed* — the refusal it feeds fires on what is written, never on a
-    /// silence (ADR-010 D1 cuts the other way here, because refusing on doubt
-    /// would refuse correct programs, [Part III C.4](../../../30-nikaia-tooling.md)).
-    pub touches: Vec<String>,
-    /// The fields that hold a view, directly or through another type that
-    /// does. A struct with none of these is free of the input; one with any is
-    /// tied to it for as long as it lives (Part II, 10.6).
-    pub tethered: Vec<String>,
-}
-
-/// Written out because [`Sync`], [`Lock`], [`Threads`] and [`Crosses`] are
-/// Nikaia's, which names a value rather than deriving a `Default`
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.4): these are the
-/// values the derive meant.
-impl Default for TypeContract {
-    fn default() -> Self {
-        TypeContract {
-            public: false,
-            fields: Default::default(),
-            variants: Default::default(),
-            crosses: Crosses::Undecided,
-            iterates_fallibly: false,
-            compares: false,
-            copies: false,
-            touches: Default::default(),
-            tethered: Default::default(),
-        }
-    }
-}
-
-/// One compilation unit's contracts.
-///
-/// Ordered maps throughout, because the file is a **pure function of (source,
-/// toolchain)** (13.5) and a hash map's iteration order is not. The
-/// determinism is the feature: `--locked` compares bytes, so it needs no
-/// tolerance and no semantic comparison.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Ledger {
-    pub version: u32,
-    pub toolchain: String,
-    pub inference: String,
-    /// The sources these entries were derived from: one unit of the package by
-    /// file name, and the SHA-256 of its bytes
-    /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3).
-    ///
-    /// **What it is for is telling a stale ledger from a believed one.** A
-    /// consumer reads a dependency's ledger rather than deriving it (D1), and
-    /// the only thing that makes believing safe is that a ledger is never
-    /// believed against its own sources: where a hash does not match, that
-    /// package is derived again. So this is not a checksum of the file — it is
-    /// the record of what the file is an answer *about*.
-    ///
-    /// **The file name and not a path**, because a package is one directory of
-    /// `.nika` files (`modules::collect`) and a path would put the machine that
-    /// built it into a file Part III 13.5 makes a pure function of the source
-    /// tree.
-    ///
-    /// Empty where nothing knows the sources — a ledger inferred from one
-    /// `Parsed` that never came from a file, and `std`'s own, whose Rust half
-    /// has no `.nika` to hash ([ADR-020](../../../docs/specification/adr/adr-020.md)
-    /// D5). An empty table renders nothing, so no existing ledger changes.
-    pub sources: BTreeMap<String, String>,
-    pub functions: BTreeMap<String, FnContract>,
-    pub types: BTreeMap<String, TypeContract>,
-    /// **Whether the code stored in a function field touches a lock**, by
-    /// `Type.field` ([ADR-230](../../../docs/specification/adr/adr-230.md) D1):
-    /// over everything this package stores there. The package's own answer and
-    /// not written to the ledger file - a published field is stored into by
-    /// packages that do not exist yet, so the file has nothing to say about it.
-    pub code_locks: BTreeMap<String, Lock>,
-    /// Kap 4.7: every `trait` declared here, with the names of its methods.
-    ///
-    /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
-    /// is where a bound looks one up. This map answers the other question a
-    /// bound asks first: *is `Summarize` a trait at all*
-    /// ([ADR-078](../../../docs/specification/adr/adr-078.md) D3). A name that
-    /// is not in here names no trait, and a bound on it is refused rather than
-    /// quietly believed.
-    ///
-    /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
-    /// it ([ADR-106](../../../docs/specification/adr/adr-106.md) D3): they are
-    /// the `fn` entries beside it, under `Handler::handle`, and the set is
-    /// filled from those once the whole file is parsed.
-    /// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left *a trait a
-    /// package publishes* as a question about modules; D1 and D3 of that later
-    /// record answered it, and a bound has taken a path since 0.0.171.
-    pub traits: BTreeMap<String, BTreeSet<String>>,
-    /// **Who answers for what**: a trait's name to the types that `impl` it
-    /// ([ADR-174](../../../docs/specification/adr/adr-174.md) D1).
-    ///
-    /// The other half of a bound, and the reason it is here rather than in the
-    /// checker: `impl Speaks for Dog` may stand in a **different file** from
-    /// the `fn tell[T: Speaks]` that needs the answer, and one file's walk sees
-    /// one file. A program's ledger is absorbed from its units', so the union
-    /// over the files is a thing this map already knows how to be.
-    ///
-    /// **Written to the ledger file** as `[impl."Handler for Static"]`
-    /// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4), one line per
-    /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
-    /// the trait's package, in the type's, or in a consumer for its own type —
-    /// so the answer at a call is the union over every ledger the program reads
-    /// plus its own, and no ledger claims completeness.
-    pub implementations: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl Ledger {
+impl LedgerOps for Ledger {
     /// The contracts of a parsed program.
     ///
     /// Two passes, because the second needs the first to have finished. The
@@ -883,16 +193,16 @@ impl Ledger {
     /// `std` alone.
     /// A ledger with a header and nothing in it - what a program of several
     /// files starts from before it absorbs its modules.
-    pub fn empty() -> Self {
+    fn empty() -> Self {
         Ledger {
             version: VERSION,
             toolchain: toolchain(),
             inference: INFERENCE.to_string(),
-            ..Default::default()
+            ..Ledger::blank()
         }
     }
 
-    pub fn infer(parsed: &Parsed) -> Self {
+    fn infer(parsed: &Parsed) -> Self {
         Self::infer_checked(parsed).0
     }
 
@@ -920,7 +230,7 @@ impl Ledger {
     /// answered from it; what is in neither it nor the package's own entries is
     /// code no ledger describes, and *that* is what fails closed
     /// ([ADR-027](../../../docs/specification/adr/adr-027.md)).
-    pub fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
+    fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
         Self::infer_package_checked(units, library).0
     }
 
@@ -938,7 +248,7 @@ impl Ledger {
     ///
     /// `foreign` is the depending build's record of what words this package
     /// uses for packages of its own (`modules::Dependency::reachable`).
-    pub fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
+    fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
         let theirs = |key: &str| {
             key.split_once("::")
                 .is_some_and(|(first, _)| foreign.contains(first))
@@ -981,7 +291,7 @@ impl Ledger {
     /// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1). A package
     /// with a ledger and **no sources** is the third row of D3's table and is
     /// not this function's question: nothing calls it with an empty `sources`.
-    pub fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
+    fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
         let mut moved: BTreeSet<String> = BTreeSet::new();
         for (unit, hash) in sources {
             if self.sources.get(unit) != Some(hash) {
@@ -1018,7 +328,7 @@ impl Ledger {
     /// the two were different types, and the help line asked for what was already
     /// written. They are one type with two spellings, and this is the only place
     /// that knows both the module and what it declares.
-    pub fn absorb(&mut self, module: Option<&str>, other: Ledger) {
+    fn absorb(&mut self, module: Option<&str>, other: Ledger) {
         self.absorb_renaming(module, &std::collections::BTreeMap::new(), other)
     }
 
@@ -1037,7 +347,7 @@ impl Ledger {
     /// Applied **after** qualifying and not instead of it: a name the package
     /// declares itself is its own and is never renamed, because `qualify` has
     /// already put this package's word in front of it.
-    pub fn absorb_renaming(
+    fn absorb_renaming(
         &mut self,
         module: Option<&str>,
         renames: &std::collections::BTreeMap<String, String>,
@@ -1168,7 +478,7 @@ impl Ledger {
     /// wants it too - it carries the findings and the fallible loops - and
     /// running the checker twice per build to get one of them would be waste,
     /// not caution.
-    pub fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
+    fn infer_checked(parsed: &Parsed) -> (Self, crate::check::Checked) {
         let (ledger, mut checked) = Self::infer_package_checked(&[parsed], std_ledger());
         (ledger, checked.remove(0))
     }
@@ -1182,7 +492,7 @@ impl Ledger {
     /// merged - and merging it is sound for the reason the package is one graph
     /// in the first place: one namespace, so one function per name
     /// (`modules::collect` refuses the second).
-    pub fn infer_package_checked(
+    fn infer_package_checked(
         units: &[&Parsed],
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>) {
@@ -1190,7 +500,7 @@ impl Ledger {
             version: VERSION,
             toolchain: toolchain(),
             inference: INFERENCE.to_string(),
-            ..Default::default()
+            ..Ledger::blank()
         };
 
         // **The package's types and not the file's.** `impl_parameters` asks
@@ -1268,8 +578,8 @@ impl Ledger {
                         for declaration in declarations {
                             let (_, mut contract) =
                                 trait_method(parsed, "", &declaration.node, false);
-                            contract.sync = Sync::Asserted;
-                            contract.throws = Vec::new();
+                            contract.sync_claim = Sync::Asserted;
+                            contract.fails_with = Vec::new();
                             ledger
                                 .functions
                                 .insert(parsed.text(declaration.node.name).to_string(), contract);
@@ -1445,7 +755,7 @@ impl Ledger {
                                 key,
                                 FnContract {
                                     public: true,
-                                    throws: vec![PARSE_ERROR.to_string()],
+                                    fails_with: vec![PARSE_ERROR.to_string()],
                                     // **An action may not pause**
                                     // ([ADR-142](../../../docs/specification/adr/adr-142.md)
                                     // D1), so every entry is `sync` — asserted
@@ -1460,7 +770,7 @@ impl Ledger {
                                     // D3) had spread through every parsing
                                     // program: a caller reads this column, and
                                     // before it there was nothing in it.
-                                    sync: Sync::Asserted,
+                                    sync_claim: Sync::Asserted,
                                     signature: Some(Signature {
                                         // A grammar's rule takes no type
                                         // parameter, so it declares no bound.
@@ -1478,7 +788,7 @@ impl Ledger {
                                             .as_ref()
                                             .map(|t| ty::Ty::from_ast(parsed, t)),
                                     }),
-                                    ..Default::default()
+                                    ..FnContract::empty()
                                 },
                             );
                         }
@@ -1663,7 +973,7 @@ impl Ledger {
                 // may make it pause ([ADR-244](../../../docs/specification/adr/adr-244.md)
                 // D4) - the entry `std` has written by hand as `from(f)` since
                 // ADR-029 D3.
-                sync: match (*is_sync, sync_by.is_empty()) {
+                sync_claim: match (*is_sync, sync_by.is_empty()) {
                     (true, _) => Sync::Asserted,
                     (false, false) => Sync::From(
                         sync_by
@@ -1687,7 +997,7 @@ impl Ledger {
                 // is a question about the body and about everything the body
                 // reaches, so `throws::infer` answers it afterwards - the same
                 // arrangement `sync` has since ADR-027.
-                throws: if *throws {
+                fails_with: if *throws {
                     vec![UNNAMED_ERROR.to_string()]
                 } else {
                     Vec::new()
@@ -1803,7 +1113,7 @@ impl Ledger {
     /// `io::read` in a unit that does not carry the ledger of the package
     /// beside it, and the `throws` column then spoke for a callee nobody had
     /// resolved.
-    pub fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
+    fn lookup(&self, name: &str) -> Option<(String, &FnContract)> {
         self.functions
             .get(name)
             .map(|contract| (name.to_string(), contract))
@@ -1825,7 +1135,7 @@ impl Ledger {
     /// a lent `self` reads, to [`keeps`], as one that takes its receiver whole
     /// (found moving the ledger's reader to Nikaia, 0.0.258). An entry with no
     /// signature is still a candidate - what it takes is unknown.
-    pub fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
+    fn candidates(&self, method: &str) -> Vec<(&str, &FnContract)> {
         let suffix = format!("::{method}");
         self.functions
             .iter()
@@ -1845,7 +1155,7 @@ impl Ledger {
     /// Only what is *true* is recorded: a `sync = false` on every entry would
     /// treble the file and say nothing, and a diff should show a promise being
     /// made or withdrawn rather than a column of falses.
-    pub fn render(&self) -> String {
+    fn render(&self) -> String {
         let mut out = String::new();
         out.push_str("# AUTO-GENERATED by `nikaia`. Commit this file like a lockfile.\n");
         out.push_str("# Do not edit by hand - it is regenerated on every build.\n");
@@ -1868,7 +1178,7 @@ impl Ledger {
     /// decides whether a consumer may believe the contract
     /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D3) and never
     /// what the contract says, which is why it is a file of its own.
-    pub fn render_derived(&self) -> String {
+    fn render_derived(&self) -> String {
         let mut out = String::new();
         out.push_str("# AUTO-GENERATED by `nikaia`, beside the contract it describes.\n");
         out.push_str("# What that contract was derived from: the compiler, the inference and\n");
@@ -1893,7 +1203,7 @@ impl Ledger {
     /// **A contract with no record beside it has no sources**, which every
     /// reader of `sources` already takes for *nothing recorded*, the
     /// fail-closed answer (ADR-100 D3).
-    pub fn read_beside(path: &std::path::Path) -> Option<Ledger> {
+    fn read_beside(path: &std::path::Path) -> Option<Ledger> {
         let mut ledger = Ledger::parse(&std::fs::read_to_string(path).ok()?).ok()?;
         if let Some(derived) = std::fs::read_to_string(derived_path(path))
             .ok()
@@ -1916,7 +1226,7 @@ impl Ledger {
     /// not say what a field does — D5 expects the edit rather than tolerating
     /// it, and a file that told its reader not to make one would be telling
     /// them not to do the thing the record asks of them.
-    pub fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String {
+    fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "# The boundary of `{crate_name}`, described before it is called\n"
@@ -1957,7 +1267,7 @@ impl Ledger {
 
     /// The header line and everything after it, shared by both renderings.
     fn render_from(&self, out: &mut String) {
-        self.render_from_with(out, &Notes::default());
+        self.render_from_with(out, &Notes::empty());
     }
 
     /// The same, with the describer's notes spliced above the entries they are
@@ -1991,7 +1301,7 @@ impl Ledger {
             // `true` is the promise the source made, `"inferred"` the one the
             // body implies. Absent is still "not `sync`", so a reader that only
             // asks `is_sync` reads this file exactly as it did before.
-            match &contract.sync {
+            match &contract.sync_claim {
                 Sync::Asserted => out.push_str("sync = true\n"),
                 Sync::Inferred => out.push_str("sync = \"inferred\"\n"),
                 // **The source's own word** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
@@ -1999,8 +1309,8 @@ impl Ledger {
                 Sync::From(name) => out.push_str(&format!("sync = \"sync({name})\"\n")),
                 Sync::No => {}
             }
-            if !contract.throws.is_empty() {
-                out.push_str(&format!("throws = {}\n", throws_text(&contract.throws)));
+            if !contract.fails_with.is_empty() {
+                out.push_str(&format!("throws = {}\n", throws_text(&contract.fails_with)));
             }
             // **In Nikaia's spelling** (ADR-251 D4): what the result points
             // into is written `ref(a | b)` in the signature's result, and the
@@ -2221,300 +1531,24 @@ impl Ledger {
     /// than a TOML parser: the file is generated, so the shapes it can take are
     /// the shapes written above, and a dependency to read one's own output back
     /// is a dependency to keep in step.
-    pub fn parse(text: &str) -> Result<Self> {
-        /// Which table the lines being read belong to.
-        ///
-        /// An enum rather than the pair it used to be, because
-        /// [ADR-100](../../../docs/specification/adr/adr-100.md) D3 adds a third
-        /// table whose keys are neither a function nor a type, and a `bool`
-        /// that had to mean one of three things is how a reader stops being
-        /// able to tell which.
-        enum In {
-            Fn(String),
-            Type(String),
-            Sources,
-            /// A table whose whole content is its name: `[trait."X"]` and
-            /// `[impl."A for T"]`. A key inside one is a mistake and says so,
-            /// rather than being filed under whatever section came before it.
-            Nothing,
-        }
-
-        use nikaia_std::tools::ledger::Line;
-
-        let mut ledger = Ledger::default();
-        let mut section: Option<In> = None;
-
-        // **The file's shape is read in Nikaia** (`tools/ledger.nika`, 0.0.258,
-        // ADR-250): which lines say something, which open a table, where a key
-        // ends. What each table and key *means* is read here.
-        let lines =
-            nikaia_std::tools::ledger::lines(text).map_err(|refusal| anyhow!("{refusal}"))?;
-        for read in &lines {
-            let at = || usize::try_from(read.at).unwrap_or(0);
-            let (key, value) = match &read.line {
-                Line::Table { kind, name } => {
-                    let name = name.clone();
-                    match kind.as_str() {
-                        "fn" => {
-                            ledger.functions.entry(name.clone()).or_default();
-                            section = Some(In::Fn(name));
-                        }
-                        "type" => {
-                            ledger.types.entry(name.clone()).or_default();
-                            section = Some(In::Type(name));
-                        }
-                        // **A trait's methods are not read here**, because they
-                        // are the `fn` entries of this same file and reading
-                        // them twice would let the two disagree. The set is
-                        // filled from `functions` once the whole file is
-                        // parsed, below.
-                        "trait" => {
-                            ledger.traits.entry(name).or_default();
-                            section = Some(In::Nothing);
-                        }
-                        _ => {
-                            let (trait_name, ty) = name.split_once(" for ").ok_or_else(|| {
-                                anyhow!("line {}: an `impl` entry is `A for T`: {name}", at())
-                            })?;
-                            ledger
-                                .implementations
-                                .entry(trait_name.trim().to_string())
-                                .or_default()
-                                .insert(ty.trim().to_string());
-                            section = Some(In::Nothing);
-                        }
-                    }
-                    continue;
-                }
-                Line::Sources => {
-                    section = Some(In::Sources);
-                    continue;
-                }
-                Line::Pair { key, value } => (key.as_str(), value.as_str()),
-            };
-
-            match (&section, key) {
-                (None, "version") => ledger.version = value.parse()?,
-                (None, "toolchain") => ledger.toolchain = unquote(value, at())?,
-                (None, "inference") => ledger.inference = unquote(value, at())?,
-                (None, _) => return Err(anyhow!("line {}: unknown header key `{key}`", at())),
-
-                // A unit and its hash, and the **key** is quoted here where
-                // every other table quotes the section name instead: a file
-                // name holds a `.`, which in this format's ancestor would have
-                // made two keys out of one.
-                (Some(In::Sources), _) => {
-                    let unit = unquote(key, at())?;
-                    ledger.sources.insert(unit, unquote(value, at())?);
-                }
-
-                (Some(In::Fn(name)), _) => {
-                    let entry = ledger.functions.entry(name.clone()).or_default();
-                    match key {
-                        "pub" => entry.public = value == "true",
-                        "sync" => entry.sync = sync_of(value, at())?,
-                        "throws" => entry.throws = throws_of(value, at())?,
-                        "returns" => entry.borrows = borrows_of(&unquote(value, at())?, at())?,
-                        // **Read back from Nikaia's spelling** (ADR-251 D4):
-                        // the receiver says whether the call changes it, and
-                        // a `ref(a | b)` in the result where it points.
-                        "signature" => {
-                            let read = spelling::unspell(&unquote(value, at())?, name);
-                            if read.mutates {
-                                entry.mutates = true;
-                            }
-                            if !read.borrows.is_empty() {
-                                entry.borrows = read.borrows;
-                            }
-                            entry.signature = Some(Signature::parse(&read.text)?);
-                        }
-                        "keeps" => entry.keeps = string_list(value, at())?,
-                        "mutates" => entry.mutates = value == "true",
-                        "locks" => {
-                            entry.touches_a_lock = match value.trim() {
-                                "true" => Lock::Holds,
-                                "\"?\"" => Lock::Undecided,
-                                _ => Lock::No,
-                            }
-                        }
-                        "threads" => {
-                            entry.threads = match value.trim() {
-                                "true" => Threads::May,
-                                "false" => Threads::MayNot,
-                                other => {
-                                    return Err(anyhow::anyhow!(
-                                        "line {}: `threads` is `true` or `false`, not \
-                                         `{other}`. (Leave it out if nobody knows.)",
-                                        at()
-                                    ));
-                                }
-                            }
-                        }
-                        "touches" => {
-                            entry.touches = string_list(value, at())?
-                                .iter()
-                                .map(|t| touch::Touch::parse(t))
-                                .collect::<Result<Vec<_>>>()?;
-                            entry.touches_known = true;
-                        }
-                        "provenance" => {
-                            entry.provenance = Some(provenance_of(&unquote(value, at())?, at())?)
-                        }
-                        "views" => {
-                            entry.views = string_list(value, at())?
-                                .iter()
-                                .map(|held| {
-                                    tether::Held::parse(held).ok_or_else(|| {
-                                        anyhow!(
-                                            "line {}: a tether state is `name: borrowed` \
-                                             or `name: tethered`, not `{held}`",
-                                            at()
-                                        )
-                                    })
-                                })
-                                .collect::<Result<Vec<_>>>()?;
-                        }
-                        "sharing" => {
-                            entry.sharing = string_list(value, at())?
-                                .iter()
-                                .map(|class| {
-                                    sharing::Class::parse(class).ok_or_else(|| {
-                                        anyhow!(
-                                            "line {}: a sharing class is \
-                                             `a | b: plain` or `a | b: atomic`, not `{class}`",
-                                            at()
-                                        )
-                                    })
-                                })
-                                .collect::<Result<Vec<_>>>()?
-                        }
-                        "ends_by_length" => entry.ends_by_length = value == "true",
-                        _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
-                    }
-                }
-                (Some(In::Type(name)), _) => {
-                    let entry = ledger.types.entry(name.clone()).or_default();
-                    match key {
-                        "pub" => entry.public = value == "true",
-                        // Refused rather than guessed at, for `iterates`'
-                        // reason: a third spelling is a claim somebody meant to
-                        // make, and reading it as either of the two would put a
-                        // promise or a restriction in the file that nobody wrote.
-                        "crosses" => {
-                            entry.crosses = match value {
-                                "true" => Crosses::May,
-                                "false" => Crosses::MayNot,
-                                _ => {
-                                    return Err(anyhow!(
-                                        "line {}: `crosses` is `true` or `false`, not `{value}` \
-                                         - and leaving the line out is the third answer",
-                                        at()
-                                    ));
-                                }
-                            }
-                        }
-                        "compares" => entry.compares = value.trim() == "true",
-                        "copies" => entry.copies = value.trim() == "true",
-                        "tethered" => entry.tethered = string_list(value, at())?,
-                        "touches" => entry.touches = string_list(value, at())?,
-                        "iterates" => {
-                            let value = unquote(value, at())?;
-                            if value != "throws" {
-                                return Err(anyhow!(
-                                    "line {}: `iterates` is `throws` and nothing else, \
-                                     not `{value}` - a step that cannot fail says nothing",
-                                    at()
-                                ));
-                            }
-                            entry.iterates_fallibly = true;
-                        }
-                        "variants" => {
-                            entry.variants = string_list(value, at())?
-                                .iter()
-                                .map(|line| VariantContract::parse(line))
-                                .collect()
-                        }
-                        "fields" => {
-                            entry.fields = string_list(value, at())?
-                                .iter()
-                                .map(|field| {
-                                    // `pub ` is optional on the way in, so a
-                                    // ledger written before the word existed
-                                    // still parses - as a type with no public
-                                    // fields, which is the fail-closed reading
-                                    // (ADR-010 D1) and the one a stale file
-                                    // should get.
-                                    let (public, field) = match field.trim().strip_prefix("pub ") {
-                                        Some(rest) => (true, rest.trim()),
-                                        None => (false, field.trim()),
-                                    };
-                                    match field.split_once(':') {
-                                        Some((name, ty)) => FieldContract {
-                                            name: name.trim().to_string(),
-                                            ty: ty::Ty::parse(ty),
-                                            public,
-                                        },
-                                        None => FieldContract {
-                                            name: field.to_string(),
-                                            ty: ty::Ty::Unknown,
-                                            public,
-                                        },
-                                    }
-                                })
-                                .collect()
-                        }
-                        _ => return Err(anyhow!("line {}: unknown key `{key}` on a type", at())),
-                    }
-                }
-                (Some(In::Nothing), _) => {
-                    return Err(anyhow!(
-                        "line {}: a `trait` or an `impl` table has no keys, and this has `{key}`",
-                        at()
-                    ));
-                }
-            }
-        }
-
-        // **A trait's methods are the `fn` entries this file already carries**
-        // ([ADR-106](../../../../docs/specification/adr/adr-106.md) D3: *a
-        // trait's methods are ordinary `fn` entries*), filled here rather than
-        // read from a second place — the two could then disagree, and `NK1130`
-        // compares an `impl` against exactly these.
-        //
-        // After the whole file, because a `[trait.…]` table may stand before the
-        // entries it owns.
-        let methods: Vec<(String, String)> = ledger
-            .traits
-            .keys()
-            .flat_map(|name| {
-                let prefix = format!("{name}::");
-                ledger
-                    .functions
-                    .keys()
-                    .filter_map(move |key| {
-                        key.strip_prefix(&prefix)
-                            .filter(|rest| !rest.contains("::"))
-                            .map(|rest| (prefix.clone(), rest.to_string()))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        for (prefix, method) in methods {
-            let name = prefix.trim_end_matches("::").to_string();
-            ledger.traits.entry(name).or_default().insert(method);
-        }
-
-        Ok(ledger)
+    /// **Read in Nikaia** (`tools/ledger.nika`, ADR-257 step (c)): the file's
+    /// shape, what each table and key means, and a signature back from the
+    /// file's spelling.
+    fn parse(text: &str) -> Result<Self> {
+        nikaia_std::tools::ledger::read(text).map_err(|refusal| anyhow!("{refusal}"))
     }
 }
 
 /// `std`'s ledger, parsed once.
 ///
 /// Embedded at build time and parsed on first use rather than on every
-/// inference. It failing to parse is a broken compiler, not a broken program:
+/// inference. **Every reader of `std`'s ledger reads this one** (0.0.296):
+/// seven places parsed `STD` again for themselves, which was 83 M of the 93 M
+/// instructions an empty program cost. A reader that only reads borrows it; one
+/// that adds a package's own entries takes [`std_library`], a copy. It failing to parse is a broken compiler, not a broken program:
 /// `crates/nikaia/tests/contracts.rs` reads the same bytes and would have said
 /// so long before a user got here.
-fn std_ledger() -> &'static Ledger {
+pub(crate) fn std_ledger() -> &'static Ledger {
     static PARSED: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
     PARSED.get_or_init(|| Ledger::parse(STD).expect("std ships a ledger this compiler can read"))
 }
@@ -2586,11 +1620,11 @@ fn trait_method(
             public,
             // ADR-109 D1: the declaration's own word, and its absence is the
             // claim that it may pause.
-            sync: match method.is_sync {
+            sync_claim: match method.is_sync {
                 true => Sync::Asserted,
                 false => Sync::No,
             },
-            throws: if method.can_throw {
+            fails_with: if method.can_throw {
                 vec![UNNAMED_ERROR.to_string()]
             } else {
                 Vec::new()
@@ -2621,7 +1655,7 @@ fn trait_method(
                     .as_ref()
                     .map(|t| ty::Ty::from_ast(parsed, t)),
             }),
-            ..Default::default()
+            ..FnContract::empty()
         },
     )
 }
@@ -2685,36 +1719,6 @@ fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
     }
 }
 
-/// Split a parameter list on the `;` that is not inside a bracket.
-///
-/// A `;` cannot appear anywhere else in a signature, but a default can be a
-/// string, and a string can hold anything - so the depth is counted for the
-/// same reason `ty::split_args` counts it.
-fn split_config(text: &str) -> (&str, Option<&str>) {
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (at, c) in text.char_indices() {
-        if in_string {
-            match c {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_string = true,
-            '[' | '(' => depth += 1,
-            ']' | ')' => depth = depth.saturating_sub(1),
-            ';' if depth == 0 => return (&text[..at], Some(&text[at + 1..])),
-            _ => {}
-        }
-    }
-    (text, None)
-}
-
 /// A value that may itself hold a quote - which a signature does, the moment an
 /// option's default is a string: `method: &str = "GET"`.
 /// **And a `\n` becomes `\\n`**, which is
@@ -2727,67 +1731,6 @@ fn escape(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
-}
-
-/// What a quoted value holds, read in Nikaia (`tools/ledger.nika`).
-fn unquote(value: &str, at: usize) -> Result<String> {
-    nikaia_std::tools::ledger::unquote(value).map_err(|refusal| anyhow!("line {at}: {refusal}"))
-}
-
-fn borrows_of(value: &str, at: usize) -> Result<Vec<String>> {
-    // `ref(a | b)` is Nikaia's spelling (ADR-251 D4); `borrows(…)` the one
-    // before it, still read.
-    let inner = value
-        .strip_prefix("ref(")
-        .or_else(|| value.strip_prefix("borrows("))
-        .and_then(|v| v.strip_suffix(')'))
-        .ok_or_else(|| anyhow!("line {at}: expected `ref(…)`, found `{value}`"))?;
-    Ok(inner
-        .split('|')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect())
-}
-
-/// `sync = true` is a promise the source made, `sync = "inferred"` one the body
-/// implies.
-///
-/// `false` is accepted and means the same as leaving the key out - a ledger is
-/// generated and never writes it, but a file that says it should not be
-/// rejected for saying something true.
-fn sync_of(value: &str, at: usize) -> Result<Sync> {
-    match value {
-        "true" => Ok(Sync::Asserted),
-        "false" => Ok(Sync::No),
-        "\"inferred\"" => Ok(Sync::Inferred),
-        other => {
-            let named = other
-                .strip_prefix("\"sync(")
-                .or_else(|| other.strip_prefix("\"from("))
-                .and_then(|rest| rest.strip_suffix(")\""))
-                .map(str::trim)
-                .filter(|name| !name.is_empty());
-            match named {
-                Some(name) => Ok(Sync::From(name.to_string())),
-                None => Err(anyhow!(
-                    "line {at}: `sync` is `true` (the source says so), `\"inferred\"` \
-                     (the body implies it) or `\"sync(f)\"` (its lambda decides), \
-                     not `{other}`"
-                )),
-            }
-        }
-    }
-}
-
-fn provenance_of(value: &str, at: usize) -> Result<Provenance> {
-    match value {
-        "trusted" => Ok(Provenance::Trusted),
-        "untrusted" => Ok(Provenance::Untrusted),
-        other => Err(anyhow!(
-            "line {at}: a provenance is `trusted` or `untrusted`, not `{other}`"
-        )),
-    }
 }
 
 /// The name an error gets when the compiler cannot name it - ADR-024 D1's `?`,
@@ -2823,25 +1766,6 @@ pub fn throws_text(throws: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{names}]")
-}
-
-/// Kap 7.1: the errors that can leave a function.
-///
-/// A ledger written before [ADR-023](../../../../docs/specification/adr/adr-023.md)
-/// D1 spells this `true`, and reading that as "it does not fail" would be the
-/// worst of the three possible mistakes - so it is read as `["?"]`, which is
-/// what `true` always meant: it fails, with something this file does not name.
-fn throws_of(value: &str, at: usize) -> Result<Vec<String>> {
-    if value == "true" {
-        return Ok(vec![UNNAMED_ERROR.to_string()]);
-    }
-    string_list(value, at)
-}
-
-/// A list's entries, unquoted, read in Nikaia (`tools/ledger.nika`): split
-/// where a comma stands **outside** quotes, so `"Pair(i64, i64)"` is one entry.
-fn string_list(value: &str, at: usize) -> Result<Vec<String>> {
-    nikaia_std::tools::ledger::list(value).map_err(|refusal| anyhow!("line {at}: {refusal}"))
 }
 
 /// The types Part I 2.2 offers, by name.

@@ -21,7 +21,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::emit::Build;
 use nikaia::modules::Program;
 
@@ -235,9 +235,9 @@ fn sync_is_inferred_across_the_files_of_a_package() {
         ],
     );
 
-    assert_eq!(ledger.functions["calls_plain"].sync, Sync::Inferred);
-    assert_eq!(ledger.functions["calls_reader"].sync, Sync::No);
-    assert_eq!(ledger.functions["reads"].sync, Sync::No);
+    assert_eq!(ledger.functions["calls_plain"].sync_claim, Sync::Inferred);
+    assert_eq!(ledger.functions["calls_reader"].sync_claim, Sync::No);
+    assert_eq!(ledger.functions["reads"].sync_claim, Sync::No);
 }
 
 /// **The same correction reaches `throws`**, which ADR-100 §3 names and nothing
@@ -269,8 +269,8 @@ fn a_throwing_neighbour_is_named_rather_than_unknown() {
         ],
     );
 
-    assert_eq!(ledger.functions["pruefe"].throws, ["LeereZeile"]);
-    assert_eq!(ledger.functions["sortiere"].throws, ["LeereZeile"]);
+    assert_eq!(ledger.functions["pruefe"].fails_with, ["LeereZeile"]);
+    assert_eq!(ledger.functions["sortiere"].fails_with, ["LeereZeile"]);
 }
 
 /// **And `touches`**, where the polarity runs the other way round and is
@@ -341,6 +341,6 @@ fn the_ledger_does_not_depend_on_the_order_the_units_arrive_in() {
     // here runs `calls_across` → `twice` → `plain`, across the boundary in both
     // directions, and every step of it is `sync`.
     let ledger = Ledger::infer_package(&[&a, &b], &library);
-    assert_eq!(ledger.functions["calls_across"].sync, Sync::Inferred);
-    assert_eq!(ledger.functions["twice"].sync, Sync::Inferred);
+    assert_eq!(ledger.functions["calls_across"].sync_claim, Sync::Inferred);
+    assert_eq!(ledger.functions["twice"].sync_claim, Sync::Inferred);
 }

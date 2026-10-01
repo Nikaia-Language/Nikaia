@@ -18,7 +18,7 @@ mod common;
 
 use std::process::Command;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -81,8 +81,8 @@ fn a_declaration_is_sync_and_cannot_throw() {
         .functions
         .get("getpid")
         .unwrap_or_else(|| panic!("{:#?}", ledger.functions.keys().collect::<Vec<_>>()));
-    assert!(entry.sync.is_sync(), "{:?}", entry.sync);
-    assert!(entry.throws.is_empty(), "{:?}", entry.throws);
+    assert!(entry.sync_claim.is_sync(), "{:?}", entry.sync_claim);
+    assert!(entry.fails_with.is_empty(), "{:?}", entry.fails_with);
     assert_eq!(
         entry.signature.as_ref().expect("a signature").text(),
         "() -> i32"

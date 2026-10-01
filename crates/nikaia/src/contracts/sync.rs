@@ -33,6 +33,7 @@
 // **assertion you write where you want it held**, checked against the body,
 // rather than a mode you have to enter.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Span, Stmt};
@@ -339,7 +340,7 @@ pub fn infer(
             continue;
         }
         if let Some(contract) = ledger.functions.get_mut(name)
-            && contract.sync == Sync::No
+            && contract.sync_claim == Sync::No
         {
             // **`from(f)` where a code parameter is what decides**
             // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
@@ -348,7 +349,7 @@ pub fn infer(
             // call adds no pausing of its own* — and the difference is that
             // `from` says **whose** answer it is, which is what a reader of
             // the ledger and a second build of the same package need.
-            contract.sync = match graph.get(name).and_then(|reach| reach.runs.clone()) {
+            contract.sync_claim = match graph.get(name).and_then(|reach| reach.runs.clone()) {
                 Some(parameter) => Sync::From(parameter),
                 None => Sync::Inferred,
             };
@@ -415,7 +416,7 @@ fn reach_of(
             } else if !library
                 .functions
                 .get(callee)
-                .is_some_and(|contract| contract.sync.is_sync())
+                .is_some_and(|contract| contract.sync_claim.is_sync())
             {
                 // A library method that can pause, or one that resolved to a
                 // name this ledger does not carry after all.
@@ -691,7 +692,7 @@ pub(crate) fn reached(
         if let Some((key, contract)) = library.lookup(&written) {
             return Some(Reached::Library {
                 key,
-                sync: contract.sync.is_sync(),
+                sync: contract.sync_claim.is_sync(),
             });
         }
     }
@@ -748,7 +749,7 @@ fn called(parsed: &Parsed, expr: &Expr, own: &Ledger, library: &Ledger) -> Optio
     match reached(parsed, expr, own, library)? {
         Reached::Own(name) => {
             let contract = own.functions.get(&name)?;
-            (!contract.sync.is_sync()).then_some((name, false))
+            (!contract.sync_claim.is_sync()).then_some((name, false))
         }
         Reached::Library { key, sync } => (!sync).then_some((key, true)),
         // A method call the check deliberately does not resolve, and the reason

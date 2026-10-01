@@ -47,6 +47,7 @@
 // destination whose type this walk cannot read is taken to hold a view, and a
 // refusal is only ever raised where the type says so.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Span, Stmt, Type};

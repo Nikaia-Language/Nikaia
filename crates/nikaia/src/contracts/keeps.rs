@@ -27,6 +27,7 @@
 // purpose: the answer can be diffed against the corpus before one call site
 // changes.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Stmt};

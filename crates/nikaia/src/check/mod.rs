@@ -25,11 +25,13 @@
 // expression-level spans are open work in the parser, and a caret on the right
 // line is worth more than none at all.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
+use crate::contracts::SignatureOps;
 use crate::contracts::ty::TyOps;
 use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
@@ -419,6 +421,10 @@ pub struct Checked {
     /// the same thing, so nothing the program can see changes. The `for`'s
     /// half of what `copied_bindings` is for a `match` arm.
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// **A `for` binding lent a view is the view** (0.0.297): an element of a
+    /// `Vec[ref String]` is a `&&str` below, so it is read out with a `*` once
+    /// where the body opens, as a number is with `num::value`.
+    pub copied_view_bindings: BTreeSet<(usize, String)>,
     /// **An integer literal whose place is an unsigned type**, by the byte the
     /// statement starts at and the value, and the type
     /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). The emitter
@@ -1200,16 +1206,23 @@ fn walked<'a>(
                 _ => None,
             })
             .collect(),
+        // The distinct prefixes first and the tests after, because there are a
+        // few dozen modules and some thousand keys: the test per key built a
+        // `format!` and an owned prefix for every one of them.
         std_modules: library
             .functions
             .keys()
             .chain(library.types.keys())
-            .filter_map(|key| key.split_once("::").map(|(prefix, _)| prefix.to_string()))
+            .filter_map(|key| key.split_once("::").map(|(prefix, _)| prefix))
+            .collect::<BTreeSet<&str>>()
+            .into_iter()
             .filter(|prefix| {
-                !library.types.contains_key(prefix)
+                !library.types.contains_key(*prefix)
                     && !library.functions.contains_key(&format!("{prefix}::new"))
             })
+            .map(str::to_string)
             .collect(),
+        fields_by_base: std::cell::OnceCell::new(),
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -1660,6 +1673,8 @@ pub struct Propagation {
     pub owned_loops: BTreeSet<usize>,
     /// [`Checked::copied_loop_bindings`].
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_view_bindings`].
+    pub copied_view_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::unsigned_literals`].
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
     /// [`Checked::number_lets`].
@@ -1894,9 +1909,7 @@ pub fn propagation_against(
     described: &Ledger,
     reads: &Reads,
 ) -> Propagation {
-    let Ok(mut library) = Ledger::parse(crate::contracts::STD) else {
-        return Propagation::default();
-    };
+    let mut library = crate::contracts::std_library();
     // **And the described crates' boundary**, as the check that refused had it
     // (`project::Foreign::library`, `std` winning a collision): what a call
     // into `hyper_shim` keeps decides how its argument is written, and a walk
@@ -1937,6 +1950,7 @@ pub fn propagation_against(
         pausing_loops: checked.pausing_loops,
         owned_loops: checked.owned_loops,
         copied_loop_bindings: checked.copied_loop_bindings,
+        copied_view_bindings: checked.copied_view_bindings,
         unsigned_literals: checked.unsigned_literals,
         number_lets: checked.number_lets,
         changed_elements: checked.changed_elements,
@@ -3001,6 +3015,13 @@ struct Checker<'a> {
     /// needs no edit in this file. `fs::Mapped` is a **type in** a module, so
     /// `fs` is one of these and `HashMap` is not.
     std_modules: BTreeSet<String>,
+    /// **The fields of every type in `own` and `library`, by the type's own
+    /// name** ([`ty::base`]): what a cleanup or a teardown a type holds is
+    /// asked through. Built the first time it is asked, once per walk, rather
+    /// than by a scan of both ledgers per question - which was most of what
+    /// checking a small program cost. `own`'s before `library`'s and each in
+    /// key order, which is the order the scan visited them in.
+    fields_by_base: std::cell::OnceCell<std::collections::HashMap<String, Vec<Ty>>>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -4341,10 +4362,18 @@ impl<'a> Checker<'a> {
     fn bindings_of(&self, pattern: &ast::Pattern, out: &mut Vec<Local>) {
         match pattern {
             ast::Pattern::Bind { name, pat } => {
-                out.push(Local::free(
-                    self.parsed.text(*name).to_string(),
-                    Ty::Unknown,
-                ));
+                // **What `x?` binds may be absent**, whatever `x` is: put into
+                // a nullable field it is already the field's shape, and the
+                // `.into()` an unknown value gets there converted an `Option`
+                // into itself (found moving the ledger's reader onto grammars).
+                let ty = match &pat.node {
+                    ast::Pattern::Repeat {
+                        rep: ast::Repeat::Optional,
+                        ..
+                    } => Ty::Nullable(Box::new(Ty::Unknown)),
+                    _ => Ty::Unknown,
+                };
+                out.push(Local::free(self.parsed.text(*name).to_string(), ty));
                 self.bindings_of(&pat.node, out);
             }
             ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
@@ -6147,7 +6176,7 @@ impl<'a> Checker<'a> {
             .own
             .functions
             .get(key)
-            .is_some_and(|c| !c.throws.is_empty());
+            .is_some_and(|c| !c.fails_with.is_empty());
         if fallible && let Some(guarded) = &mut self.guarded {
             guarded.fallible = true;
         }
@@ -6638,6 +6667,25 @@ impl<'a> Checker<'a> {
         self.cleanup_within(ty, &mut BTreeSet::new())
     }
 
+    /// The fields of every type called `base` in either ledger
+    /// ([`Checker::fields_by_base`]).
+    fn fields_of_base(&self, base: &str) -> &[Ty] {
+        let index = self.fields_by_base.get_or_init(|| {
+            let mut index: std::collections::HashMap<String, Vec<Ty>> = Default::default();
+            for (key, contract) in [self.own, self.library]
+                .into_iter()
+                .flat_map(|ledger| ledger.types.iter())
+            {
+                index
+                    .entry(crate::contracts::ty::base(key).to_string())
+                    .or_default()
+                    .extend(contract.fields.iter().map(|f| f.ty.clone()));
+            }
+            index
+        });
+        index.get(base).map_or(&[], Vec::as_slice)
+    }
+
     fn cleanup_within(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> Option<(String, bool)> {
         let held: Vec<Ty> = match ty.unseen() {
             Ty::Named {
@@ -6662,17 +6710,11 @@ impl<'a> Checker<'a> {
                         ledger
                             .functions
                             .get(&format!("{owner}::cleanup"))
-                            .is_some_and(|contract| !contract.throws.is_empty())
+                            .is_some_and(|contract| !contract.fails_with.is_empty())
                     });
                     return Some((owner, fails));
                 }
-                let fields = [self.own, self.library].into_iter().flat_map(|ledger| {
-                    ledger
-                        .types
-                        .iter()
-                        .filter(|(key, _)| crate::contracts::ty::base(key) == base)
-                        .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
-                });
+                let fields = self.fields_of_base(&base).iter().cloned();
                 args.into_iter().chain(fields).collect()
             }
             Ty::Nullable(inner) => vec![*inner],
@@ -7293,6 +7335,32 @@ impl<'a> Checker<'a> {
             }
             _ => None,
         });
+        // **A copy of a type this program declares is the derived one**: it
+        // does not pause, cannot fail, and hands back the type itself, owned.
+        // No ledger describes it because nothing has to - and answered as
+        // *nothing describes this method*, `r.clone()` on a declared `struct`
+        // made the function around it `async`, found moving the ledger's
+        // records into Nikaia (ADR-257), where `Signature::text` became a
+        // future.
+        if found.is_none()
+            && entry == "clone"
+            && args.is_empty()
+            && (self.structs.contains_key(name)
+                || self.enums.contains_key(name)
+                // ...or another unit of the package declares, which is where
+                // a tool module's records stand (`ledger.nika` beside
+                // `ty.nika`).
+                || self.own.types.contains_key(name))
+        {
+            return match &on {
+                Ty::Named { name, args, .. } => Ty::Named {
+                    name: name.clone(),
+                    args: args.clone(),
+                    view: false,
+                },
+                other => other.clone(),
+            };
+        }
         let Some((key, contract)) = found else {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
@@ -7364,7 +7432,7 @@ impl<'a> Checker<'a> {
         self.method_options(method, contract, span);
         self.method_propagates(
             method,
-            !contract.throws.is_empty() || self.walks_a_failing_sequence(&on, contract),
+            !contract.fails_with.is_empty() || self.walks_a_failing_sequence(&on, contract),
             span,
         );
         // ADR-055 D2, the method half. Either ledger since §6 step 3
@@ -7386,7 +7454,7 @@ impl<'a> Checker<'a> {
             matches!(&on, Ty::Seq { pauses: true, .. }) && walks_by_value(contract) && !chained;
         self.method_pauses(
             method,
-            !contract.sync.is_sync() || walks_a_pausing_step,
+            !contract.sync_claim.is_sync() || walks_a_pausing_step,
             span,
         );
         // …and a **lazy** walk of one is another such sequence, as an adapter
@@ -7431,7 +7499,7 @@ impl<'a> Checker<'a> {
         self.a_pausing_method_in_a_sync_body(&key, contract, span);
         self.a_call_that_may_pause(
             self.parsed.text(method),
-            !contract.sync.is_sync() || walks_a_pausing_step,
+            !contract.sync_claim.is_sync() || walks_a_pausing_step,
             span,
         );
         self.a_pausing_call_in_an_action(self.parsed.text(method), contract, span);
@@ -9145,6 +9213,13 @@ impl<'a> Checker<'a> {
                             .copied_loop_bindings
                             .insert((span.at(), name.clone()));
                     }
+                    // A view is copied as a number is: it is a pointer.
+                    let a_view = lent && name != "_" && !copied && element.is_a_view();
+                    if a_view {
+                        self.checked
+                            .copied_view_bindings
+                            .insert((span.at(), name.clone()));
+                    }
                     // **A binding lent something that does not copy is a
                     // view of it**, and typed as one: what keeps it needs its
                     // own, and says so where the view would be kept (`NK1105`
@@ -9155,7 +9230,7 @@ impl<'a> Checker<'a> {
                         false => element,
                     };
                     frame.push(Local {
-                        lent: lent && !copied,
+                        lent: lent && !copied && !a_view,
                         ..Local::free(name, element)
                     });
                 }
@@ -9574,10 +9649,15 @@ impl<'a> Checker<'a> {
                     // `Expr::Num(n) => n` handed back a reference where the
                     // function says `i64` - `rustc`'s *mismatched types*
                     // about a file nobody wrote.
+                    // **And so is a part declared as a view**, `kind: ref
+                    // String` in `Line::Table`: a view copies, and bound
+                    // through a lent value it was a view of a view - `kind ==
+                    // "fn"` compared a `&&str` with a `str` (found moving the
+                    // ledger's reader onto a grammar).
                     if typed.is_a_view() {
                         let at = &arm.pattern as *const MatchPattern as usize;
                         for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
-                            if self.copied(&ty) && !ty.is_a_view() {
+                            if self.copied(&ty) || ty.is_a_view() {
                                 self.checked.copied_bindings.insert((at, name));
                             }
                         }
@@ -9725,6 +9805,15 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **A receiver the method only reads is lent** (ADR-259 D1):
+                // `(name ?? "guest").len()` asks the answer and keeps nothing
+                // of it, where every candidate for the method takes its
+                // receiver as a view and changes nothing.
+                if matches!(receiver.as_ref(), Expr::Coalesce { .. })
+                    && self.only_reads_its_receiver(self.parsed.text(*method))
+                {
+                    self.a_pending_coalesce_is_lent(receiver, span);
+                }
                 // **The tier pass's own conversion**
                 // ([ADR-224](../../docs/specification/adr/adr-224.md) D2):
                 // `value.into_either()` is written into the program where a
@@ -10955,7 +11044,23 @@ impl<'a> Checker<'a> {
                         Ty::named("bool")
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
-                        self.a_type_that_does_not_compare(&left, &right, at);
+                        // **A comparison only reads its sides** (ADR-259 D1):
+                        // a `??` of text on either side lends its left side.
+                        // Text alone, because the language below compares a
+                        // view of text with text and with a view, and a view of
+                        // anything else with nothing but a view.
+                        for side in [lhs, rhs] {
+                            self.a_pending_coalesce_of_text_is_lent(side, span);
+                        }
+                        // **`x == null` asks whether there is one**, and the
+                        // emitter writes it `x.is_none()` (0.0.250): nothing
+                        // of what `x` holds is compared, so a type that does
+                        // not compare is no reason to refuse it.
+                        let asks_for_null = matches!(lhs.as_ref(), Expr::LitNull)
+                            || matches!(rhs.as_ref(), Expr::LitNull);
+                        if !asks_for_null {
+                            self.a_type_that_does_not_compare(&left, &right, at);
+                        }
                         self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }
@@ -11186,6 +11291,28 @@ impl<'a> Checker<'a> {
                 // **An index of a mapping is a page fault**
                 // ([ADR-169](../../docs/specification/adr/adr-169.md) D2).
                 self.io_inside_a_door(&on, "this index", span);
+                // **A view of a run is indexed as the run is** (ADR-179 D1,
+                // ADR-215 D3): `xs[i]` for an `xs: ref Array[T]` is a `T`, and a
+                // range in the brackets is a run of it again. It was `?`, so a
+                // method called on an element was one no ledger describes, and
+                // the function around it became a future (found moving `Ty::fits`
+                // into Nikaia, ADR-257).
+                if let Ty::Pointed {
+                    item,
+                    slice: true,
+                    mutable,
+                } = &on
+                {
+                    if matches!(&**index, Expr::Range { .. }) {
+                        return Ty::Pointed {
+                            item: item.clone(),
+                            slice: true,
+                            mutable: *mutable,
+                        };
+                    }
+                    self.number_asked(index, &Ty::named("i64"), span, false);
+                    return (**item).clone();
+                }
                 let Ty::Named { name, args, .. } = &on else {
                     return Ty::Unknown;
                 };
@@ -12165,6 +12292,11 @@ impl<'a> Checker<'a> {
                 _ => self.hole.clone(),
             };
             let held = self.expr(&hole, span);
+            // **A hole is formatted by reference** (ADR-259 D1): a `??` that
+            // is the hole lends its left side, as a print call's argument does.
+            if matches!(literal, Expr::LitInterpolated(_)) {
+                self.a_pending_coalesce_is_lent(&hole, span);
+            }
             self.hole = outer;
             self.scope.pop();
             if let Some(spec) = specs.get(index) {
@@ -12790,7 +12922,7 @@ impl<'a> Checker<'a> {
             );
         }
         self.may_fail_here(&key, contract, span);
-        self.a_call_that_may_pause(&name, !contract.sync.is_sync(), span);
+        self.a_call_that_may_pause(&name, !contract.sync_claim.is_sync(), span);
         self.a_pausing_call_in_an_action(&name, contract, span);
         // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
         // lowering names `Stats::new` - and which hands back the type it is on,
@@ -13595,7 +13727,7 @@ impl<'a> Checker<'a> {
         // `self.caught` is what sends this function home, and a call that
         // carries a `throws` is precisely what gives that `catch` something to
         // do ([ADR-091](../../../docs/specification/adr/adr-091.md)).
-        if !contract.throws.is_empty() {
+        if !contract.fails_with.is_empty() {
             if let Some(guarded) = &mut self.guarded {
                 guarded.fallible = true;
             }
@@ -13629,7 +13761,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        if contract.throws.is_empty() || self.throwing || self.caught {
+        if contract.fails_with.is_empty() || self.throwing || self.caught {
             return;
         }
         // A grammar action is not code inside a function, and its failure does
@@ -13661,7 +13793,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{key}` can fail with {}.",
                     contract
-                        .throws
+                        .fails_with
                         .iter()
                         .map(|error| format!("`{error}`"))
                         .collect::<Vec<_>>()
@@ -13838,17 +13970,7 @@ impl<'a> Checker<'a> {
                 return Some(format!("`impl {teardown} for {base}`"));
             }
         }
-        let fields: Vec<Ty> = [self.own, self.library]
-            .into_iter()
-            .flat_map(|ledger| {
-                ledger
-                    .types
-                    .iter()
-                    .filter(|(key, _)| crate::contracts::ty::base(key) == base)
-                    .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
-            })
-            .collect();
-        fields.iter().find_map(|field| {
+        self.fields_of_base(&base).iter().find_map(|field| {
             self.tears_down(field, seen)
                 .map(|how| format!("through its `{}` field, {how}", field.text()))
         })
@@ -14047,7 +14169,7 @@ impl<'a> Checker<'a> {
     /// Without it the emitter wrote `.await` inside the synchronous parser the
     /// `grammar!` macro generates, and the backend answered about it.
     fn a_pausing_call_in_an_action(&mut self, callee: &str, contract: &FnContract, span: &Span) {
-        if contract.sync.is_sync() {
+        if contract.sync_claim.is_sync() {
             return;
         }
         let Some(rule) = self.inside_an_action.clone() else {
@@ -14094,7 +14216,7 @@ impl<'a> Checker<'a> {
         contract: &FnContract,
         span: &Span,
     ) {
-        if contract.sync.is_sync() {
+        if contract.sync_claim.is_sync() {
             return;
         }
         let Some(caller) = self.inside_a_sync_function.clone() else {
@@ -14493,6 +14615,36 @@ impl<'a> Checker<'a> {
             .lent_coalesces
             .insert(pending.key, pending.opened);
         true
+    }
+
+    /// The same for a `??` of text, where the position is a comparison
+    /// (issue #98).
+    fn a_pending_coalesce_of_text_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
+        let key = (span.at(), argument_shape(given));
+        let of_text = self
+            .pending_coalesces
+            .iter()
+            .any(|p| p.key == key && p.opened == ".as_deref()");
+        of_text && self.a_pending_coalesce_is_lent(given, span)
+    }
+
+    /// Whether every method this name may be takes its receiver as a view and
+    /// changes nothing: a call that only reads what it is called on. A name
+    /// nothing describes is claimed nothing about (Part III C.4).
+    fn only_reads_its_receiver(&self, method: &str) -> bool {
+        let candidates: Vec<_> = self
+            .own
+            .candidates(method)
+            .into_iter()
+            .chain(self.library.candidates(method))
+            .collect();
+        !candidates.is_empty()
+            && candidates.iter().all(|(_, contract)| {
+                !contract.mutates
+                    && contract.signature.as_ref().is_some_and(|signature| {
+                        signature.takes_a_receiver() && signature.params[0].1.is_a_view()
+                    })
+            })
     }
 
     /// Every `??` of the statement just walked that no reading position lent
@@ -15489,7 +15641,7 @@ impl<'a> Checker<'a> {
                 .own
                 .functions
                 .get(&name)
-                .is_some_and(|c| !c.sync.is_sync()),
+                .is_some_and(|c| !c.sync_claim.is_sync()),
             Some(crate::contracts::sync::Reached::Library { sync, .. }) => !sync,
             // A call this compiler cannot name may do anything, pausing
             // included - which is the fail-closed direction for a question
@@ -15967,7 +16119,7 @@ impl<'a> Checker<'a> {
         self.own
             .functions
             .get(&key)
-            .is_some_and(|contract| contract.throws.len() > 1)
+            .is_some_and(|contract| contract.fails_with.len() > 1)
     }
 
     /// The **one** error type a guarded expression can fail with, where exactly
@@ -16001,7 +16153,7 @@ impl<'a> Checker<'a> {
             .functions
             .get(&key)
             .or_else(|| self.library.lookup(&key).map(|(_, c)| c).as_ref().copied())?;
-        match contract.throws.as_slice() {
+        match contract.fails_with.as_slice() {
             [one] if one != "?" => Some(Ty::Named {
                 name: one.clone(),
                 args: Vec::new(),
@@ -20787,8 +20939,67 @@ impl<'a> Checker<'a> {
             .map(|(name, _)| name.clone())
             .collect();
         if !lent.is_empty() {
+            self.a_lent_part_is_handed_on_as_it_is(body, &lent);
             let at = pattern as *const MatchPattern as usize;
             self.checked.lent_bindings.insert(at, lent);
+        }
+    }
+
+    /// **A part the arm binds `ref` is a view already** (issue #270):
+    /// a call that lends it hands it on as it is, where the reference the
+    /// compiler writes for a lent argument made it a view of a view - the same
+    /// code below, and a `&` the language below's lint points at.
+    ///
+    /// Decided here, after the arm, because whether a part is lent is known
+    /// only once the arm is walked; the arguments recorded meanwhile are the
+    /// arm's statements', by where they start. Only for an arm that is a
+    /// block, whose statements are its own, and only where nothing in it binds
+    /// the name again.
+    fn a_lent_part_is_handed_on_as_it_is(&mut self, body: &Expr, lent: &BTreeSet<String>) {
+        let Expr::Block(block) = body else {
+            return;
+        };
+        let (Some(first), Some(last)) = (block.stmts.first(), block.stmts.last()) else {
+            return;
+        };
+        let (from, to) = (first.span.start, last.span.end);
+        let mut shapes: BTreeSet<String> = BTreeSet::new();
+        let mut bound_again = false;
+        let holes: std::cell::RefCell<Vec<Expr>> = std::cell::RefCell::new(Vec::new());
+        let parsed = self.parsed;
+        let mut look = |expr: &Expr| match expr {
+            Expr::Variable(name) if lent.contains(parsed.text(*name)) => {
+                shapes.insert(argument_shape(expr));
+            }
+            Expr::Block(inner) => {
+                bound_again |= inner.stmts.iter().any(|stmt| {
+                    matches!(&stmt.node, Stmt::Let { names, .. }
+                        if names.iter().any(|n| lent.contains(parsed.text(*n))))
+                });
+            }
+            // An `f"…"` hole is read again from its text, with the names it
+            // shares with the arm, so its calls are the arm's too.
+            Expr::LitInterpolated(_) => holes.borrow_mut().extend(
+                crate::emit::literal_expressions_bound(parsed, expr)
+                    .into_iter()
+                    .map(|(hole, _)| hole),
+            ),
+            _ => {}
+        };
+        crate::emit::visit_expr(body, &mut look);
+        loop {
+            let Some(hole) = holes.borrow_mut().pop() else {
+                break;
+            };
+            crate::emit::visit_expr(&hole, &mut look);
+        }
+        if bound_again || shapes.is_empty() {
+            return;
+        }
+        for ((at, _, _), given) in self.checked.lent_args.iter_mut() {
+            if (from..to).contains(&(*at as u32)) {
+                given.retain(|shape| !shapes.contains(shape));
+            }
         }
     }
 
@@ -21803,10 +22014,10 @@ pub const ASSERT: &str = "assert";
 /// fail, touches something or changes a value. A `touches` nobody wrote is not
 /// an answer, and counts as touching.
 fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
-    if !contract.sync.is_sync() {
+    if !contract.sync_claim.is_sync() {
         return Some("can pause");
     }
-    if !contract.throws.is_empty() {
+    if !contract.fails_with.is_empty() {
         return Some("can fail");
     }
     if contract.mutates {

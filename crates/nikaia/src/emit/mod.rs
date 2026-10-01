@@ -21,6 +21,7 @@
 // It emits a [`SourceMap`] alongside the code, because a transpiler that only
 // emits code can only be told about errors in a file nobody wrote (ADR-012).
 
+use crate::contracts::LedgerOps;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
@@ -34,7 +35,7 @@ use crate::ast::{
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
 use crate::check::PausingEntry;
-use crate::contracts::ty::TyOps;
+use crate::contracts::SignatureOps;
 use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
 
@@ -709,7 +710,7 @@ impl Out {
 }
 
 pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    let trust = crate::contracts::trust::analyse(parsed, std_ledger());
     Emitter::new(parsed, build, trust.provenance).program()
 }
 
@@ -722,7 +723,7 @@ pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
 /// lifetime on it. Every caller that has nothing to say passes
 /// [`assets::Reads::none`], which is D1.
 pub fn emit_program_reading(parsed: &Parsed, build: Build, reads: &Reads) -> Result<Lowered> {
-    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    let trust = crate::contracts::trust::analyse(parsed, std_ledger());
     Emitter::new_reading(parsed, build, trust.provenance, reads).program()
 }
 
@@ -748,8 +749,8 @@ pub fn emit_program_with_trust(
 /// it is one program rather than a class - so it says so here rather than being
 /// detected.
 pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
-    let own = crate::contracts::Ledger::infer_package(&[parsed], &std_ledger());
-    emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::default())
+    let own = crate::contracts::Ledger::infer_package(&[parsed], std_ledger());
+    emit_std_against(parsed, &[], &own, &crate::contracts::Ledger::blank())
 }
 
 /// The same, for a module that reads Rust it was handed described: a tool of
@@ -767,7 +768,7 @@ pub fn emit_std_against(
         target: Target::X86_64Linux,
         ..Build::default()
     };
-    let mut library = std_ledger();
+    let mut library = std_ledger().clone();
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());
     let trust = crate::contracts::trust::analyse(parsed, &library);
@@ -805,7 +806,7 @@ pub fn emit_module_body(
         build,
         provenance,
         contracts,
-        &crate::contracts::Ledger::default(),
+        &crate::contracts::Ledger::blank(),
         false,
         &Reads::none(),
     )
@@ -1047,8 +1048,8 @@ fn foreign_traits(parsed: &Parsed) -> std::collections::BTreeSet<String> {
 /// program, and the tests read the same file - so failing to parse it here
 /// means treating the input as untrusted, which is the safe direction
 /// (ADR-010 D1) and never a silent upgrade.
-fn std_ledger() -> crate::contracts::Ledger {
-    crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default()
+fn std_ledger() -> &'static crate::contracts::Ledger {
+    crate::contracts::std_ledger()
 }
 
 /// The words the **language below** reserves and this one does not.
@@ -1171,6 +1172,8 @@ struct Emitter<'p> {
     /// The lent `for` bindings read by value at the body's head
     /// ([`check::Checked::copied_loop_bindings`]).
     copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// ([`check::Checked::copied_view_bindings`]).
+    copied_view_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
     unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
     /// [`check::Checked::number_lets`].
@@ -1551,7 +1554,7 @@ struct Emitter<'p> {
     /// This unit's own contracts, and `std`'s. A call's options come from the
     /// declaration, and a declaration is what a ledger records (Kap 5.1).
     own_contracts: crate::contracts::Ledger,
-    library: crate::contracts::Ledger,
+    library: &'static crate::contracts::Ledger,
     /// **The described crates' boundary**
     /// ([ADR-237](../../docs/specification/adr/adr-237.md) D1). Asked one
     /// question, whether a call into one can fail - and deliberately not
@@ -1965,6 +1968,12 @@ struct Flow<'a> {
     /// below's own and not a read. A read is what answers a `T?` on a map; a
     /// place has to stay a place or there is nothing to assign to.
     in_a_place: bool,
+    /// The `match` being emitted is a **statement**: its arms hand nothing
+    /// back, so a block arm's last statement keeps its semicolon, as an `if`
+    /// in statement position does. Without it `ledger.sources.insert(…)` at
+    /// the end of an arm was the arm's value (found moving the ledger's reader
+    /// into Nikaia, ADR-257).
+    arms_are_statements: bool,
     /// The byte the statement being emitted starts at.
     ///
     /// It is here because the checker's answer about method calls is keyed by
@@ -2115,6 +2124,7 @@ impl<'a> Flow<'a> {
         caught_sum: None,
         caught_member: None,
         in_a_place: false,
+        arms_are_statements: false,
         statement: usize::MAX,
         function: "",
         channel: "Box<dyn std::error::Error>",
@@ -2257,7 +2267,7 @@ impl<'p> Emitter<'p> {
             build,
             provenance,
             own,
-            &crate::contracts::Ledger::default(),
+            &crate::contracts::Ledger::blank(),
             reads,
         )
     }
@@ -2352,7 +2362,7 @@ impl<'p> Emitter<'p> {
         let shared = crate::contracts::sharing::analyse_program(
             parsed,
             &own_contracts,
-            &library,
+            library,
             build.user_parallelism == UserParallelism::Yes,
         )
         .counts;
@@ -2367,7 +2377,7 @@ impl<'p> Emitter<'p> {
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
-            carries_input: crate::views::carried(parsed, &own_contracts, &library),
+            carries_input: crate::views::carried(parsed, &own_contracts, library),
             grammars,
             structs,
             methods,
@@ -2380,6 +2390,7 @@ impl<'p> Emitter<'p> {
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
             copied_loop_bindings: propagation.copied_loop_bindings,
+            copied_view_bindings: propagation.copied_view_bindings,
             unsigned_literals: propagation.unsigned_literals,
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
@@ -2430,7 +2441,7 @@ impl<'p> Emitter<'p> {
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             owned_texts: propagation.owned_texts,
-            keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, &library)
+            keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, library)
                 .into_iter()
                 .map(|plan| (plan.key.clone(), plan))
                 .collect(),
@@ -3904,7 +3915,7 @@ impl<'p> Emitter<'p> {
                 // handed over is one lifetime, which the elision names.
                 let lent = |at: usize| {
                     self.own_contracts.functions.get(&key).is_some_and(|c| {
-                        crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
+                        crate::contracts::keeps::lends_in(c, at, &[self.library, &self.described])
                             && !c
                                 .signature
                                 .as_ref()
@@ -4000,7 +4011,7 @@ impl<'p> Emitter<'p> {
             let reference = if changes {
                 "&mut "
             } else if lent.is_some_and(|c| {
-                crate::contracts::keeps::lends_in(c, at, &[&self.library, &self.described])
+                crate::contracts::keeps::lends_in(c, at, &[self.library, &self.described])
             }) && !written_as_a_view
             {
                 "&"
@@ -4315,7 +4326,7 @@ impl<'p> Emitter<'p> {
                 self.own_contracts
                     .functions
                     .get(&key)
-                    .is_some_and(|c| !c.sync.is_sync())
+                    .is_some_and(|c| !c.sync_claim.is_sync())
             });
         // **A function written `sync(f)` is the `async fn` its body is**
         // ([ADR-244](../../docs/specification/adr/adr-244.md) D3, D4): `f` may
@@ -4420,6 +4431,7 @@ impl<'p> Emitter<'p> {
             caught_sum: None,
             caught_member: None,
             in_a_place: false,
+            arms_are_statements: false,
             statement: usize::MAX,
             function: key,
             channel,
@@ -5193,6 +5205,13 @@ impl<'p> Emitter<'p> {
                 if self.text(*name) == owner
                     && variants.iter().any(|v| self.text(v.name) == variant))
         })
+        // ...or another unit of the package declares (`ledger.nika` reading
+        // `ty.nika`'s `State`), which its entry in the package's ledger says.
+        || self
+            .own_contracts
+            .types
+            .get(owner)
+            .is_some_and(|entry| entry.variants.iter().any(|v| v.name == variant))
     }
 
     /// What `Shared(x)`, `SharedMut(x)` and `Locked(x)` allocate, outermost first
@@ -6514,6 +6533,18 @@ impl<'p> Emitter<'p> {
                         let name = self.name(*b);
                         format!("let {name} = nikaia_std::num::value({name});")
                     })
+                    .chain(
+                        bindings
+                            .iter()
+                            .filter(|b| {
+                                self.copied_view_bindings
+                                    .contains(&(span.at(), self.text(**b).to_string()))
+                            })
+                            .map(|b| {
+                                let name = self.name(*b);
+                                format!("let {name} = *{name};")
+                            }),
+                    )
                     .collect::<String>();
                 let opening = match (unwrap, copied.is_empty()) {
                     (unwrap, true) => unwrap,
@@ -6608,6 +6639,19 @@ impl<'p> Emitter<'p> {
                 flow,
                 tail,
             )?,
+            // A `match` in *statement* position, for the `if`'s reason above:
+            // its arms are not the block's value.
+            Stmt::Expr(expr @ Expr::Match { .. }) if tail == Tail::Statement => {
+                self.expr(
+                    out,
+                    expr,
+                    depth,
+                    Flow {
+                        arms_are_statements: true,
+                        ..flow
+                    },
+                )?;
+            }
             Stmt::Expr(expr) => {
                 // **A tail is a `return` written without the word**, so the `&`
                 // it may owe is the same one — `fn text(ref self) -> ref String
@@ -7196,6 +7240,11 @@ impl<'p> Emitter<'p> {
                     .cloned();
                 match held {
                     Some(name) => out.push(&name),
+                    // A map's read is not lent (0.0.246), so nothing follows
+                    // it and a `match` needs no parentheses around the `*`.
+                    None if lent.is_empty() && matches!(receiver.as_ref(), Expr::Index { .. }) => {
+                        self.expr(out, receiver, depth, flow)?
+                    }
                     None => self.postfix_base(out, receiver, depth, flow)?,
                 }
                 out.push(lent);
@@ -7339,7 +7388,24 @@ impl<'p> Emitter<'p> {
                 if boxed {
                     out.push("(*");
                 }
-                self.postfix_base(out, base, depth, flow)?;
+                // **A field of an element is read through the reference the
+                // read answers**, as a read of a read is (0.0.238): `xs[0].a`
+                // was `(*get(&xs, 0)).a`, a deref the language below does on
+                // its own and `clippy` refuses in a `std` written in Nikaia
+                // (`tools/ty.nika`, ADR-257).
+                match &**base {
+                    Expr::Index {
+                        base: inner,
+                        index: at,
+                    } if !flow.in_a_place
+                        && !self.slices(flow.statement, at)
+                        && self.map_key(flow.statement, at, false).is_none()
+                        && !self.reads_through_handle(flow, inner) =>
+                    {
+                        self.index_read(out, inner, at, depth, flow, false)?;
+                    }
+                    _ => self.postfix_base(out, base, depth, flow)?,
+                }
                 out.push(&format!(".{}", self.name(*name)));
                 if boxed {
                     out.push(")");
@@ -8018,11 +8084,48 @@ impl<'p> Emitter<'p> {
                 // conversion to the same type, which the language below's
                 // lint calls useless (found moving `Ty::parse` into Nikaia,
                 // ADR-257).
-                let a_declared_variant = matches!(&**fallback, Expr::Path(segments)
-                    if segments.len() == 2
-                        && self.is_variant(self.text(segments[0]), self.text(segments[1])));
+                let a_declared_variant = match &**fallback {
+                    Expr::Path(segments) => {
+                        segments.len() == 2
+                            && self.is_variant(self.text(segments[0]), self.text(segments[1]))
+                    }
+                    // ...and one built with its parts, `Ty::Tuple([])`.
+                    Expr::Call { func, .. } => matches!(&**func, Expr::Path(segments)
+                        if segments.len() == 2
+                            && self.is_variant(self.text(segments[0]), self.text(segments[1]))),
+                    _ => false,
+                };
+                // **And except for a constructor of a type this file
+                // declares**, `FnContract::empty()`: its entry says it hands
+                // back the type itself, so `.into()` is the same useless
+                // conversion (found moving the ledger's reader, ADR-257).
+                let a_declared_constructor = match &**fallback {
+                    Expr::Call { func, .. } => match &**func {
+                        Expr::Path(segments) if segments.len() == 2 => {
+                            let owner = self.text(segments[0]);
+                            let key = format!("{owner}::{}", self.text(segments[1]));
+                            self.own_contracts
+                                .functions
+                                .get(&key)
+                                .and_then(|contract| contract.signature.as_ref())
+                                .and_then(|signature| signature.result.as_ref())
+                                .is_some_and(|result| {
+                                    matches!(result, crate::contracts::ty::Ty::Named { name, args, view: false }
+                                        if name == owner && args.is_empty())
+                                })
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                // **And a struct written out**, `Held { … }`, or a `bool`: it
+                // is the type already, whatever the option holds.
+                let a_struct_written =
+                    matches!(&**fallback, Expr::StructLit { .. } | Expr::LitBool(_));
                 let bare = a_number(fallback)
                     || a_declared_variant
+                    || a_declared_constructor
+                    || a_struct_written
                     || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
@@ -9458,7 +9561,7 @@ impl<'p> Emitter<'p> {
     /// needs the generated sum that is not built, and a type another package
     /// declares is not this unit's to name in a signature.
     fn named_error(&self, key: &str) -> Option<Named<'_>> {
-        self.named_error_of(&self.own_contracts.functions.get(key)?.throws)
+        self.named_error_of(&self.own_contracts.functions.get(key)?.fails_with)
     }
 
     /// [`Emitter::named_error`] asked of the **set** rather than of a function.
@@ -9496,7 +9599,7 @@ impl<'p> Emitter<'p> {
     /// only write `'static` for it.
     fn error_channel(&self, key: &str, lifetimes: Lifetimes, borrows: bool) -> String {
         match self.own_contracts.functions.get(key) {
-            Some(contract) => self.channel_of(&contract.throws, lifetimes, borrows),
+            Some(contract) => self.channel_of(&contract.fails_with, lifetimes, borrows),
             None => "Box<dyn std::error::Error>".to_string(),
         }
     }
@@ -9572,7 +9675,7 @@ impl<'p> Emitter<'p> {
     fn error_sums(&self) -> std::collections::BTreeMap<Vec<String>, String> {
         let mut out = std::collections::BTreeMap::new();
         for contract in self.own_contracts.functions.values() {
-            let members = &contract.throws;
+            let members = &contract.fails_with;
             if members.len() < 2 {
                 continue;
             }
@@ -9872,7 +9975,7 @@ impl<'p> Emitter<'p> {
 
     fn sum_of(&self, key: &str) -> Option<&str> {
         let contract = self.own_contracts.functions.get(key)?;
-        self.sums.get(&contract.throws).map(String::as_str)
+        self.sums.get(&contract.fails_with).map(String::as_str)
     }
 
     /// Whose one error type a **member** of a set is, asked of the name alone.
@@ -9986,7 +10089,7 @@ impl<'p> Emitter<'p> {
                     .get(&name)
                     .or_else(|| self.library.functions.get(&name))
                 {
-                    Some(contract) => set.extend(contract.throws.iter().cloned()),
+                    Some(contract) => set.extend(contract.fails_with.iter().cloned()),
                     None => {
                         set.insert(crate::contracts::UNNAMED_ERROR.to_string());
                     }
@@ -10049,7 +10152,7 @@ impl<'p> Emitter<'p> {
         self.own_contracts
             .functions
             .get(key)
-            .is_some_and(|contract| !contract.sync.is_sync())
+            .is_some_and(|contract| !contract.sync_claim.is_sync())
     }
 
     /// Whether a call to a **library** entry pauses (ADR-055 §6 step 3), and
@@ -10076,7 +10179,7 @@ impl<'p> Emitter<'p> {
         self.library
             .functions
             .get(key)
-            .filter(|contract| !contract.sync.is_sync())
+            .filter(|contract| !contract.sync_claim.is_sync())
             .map(|_| key.to_string())
     }
 
@@ -10104,7 +10207,7 @@ impl<'p> Emitter<'p> {
         self.own_contracts
             .functions
             .get(key)
-            .is_some_and(|contract| matches!(contract.sync, crate::contracts::Sync::From(_)))
+            .is_some_and(|contract| matches!(contract.sync_claim, crate::contracts::Sync::From(_)))
     }
 
     /// Whether the function under `key` is lowered as an `async fn`.
@@ -10162,7 +10265,7 @@ impl<'p> Emitter<'p> {
                     .map(|contract| (constructor.clone(), contract))
             });
         match resolved {
-            Some((key, contract)) => (!contract.sync.is_sync()).then_some(key),
+            Some((key, contract)) => (!contract.sync_claim.is_sync()).then_some(key),
             None => self.library_pauses(&name),
         }
     }
@@ -10217,7 +10320,7 @@ impl<'p> Emitter<'p> {
             // owed here - without it the crate's `Result` reached the rest of
             // the line, and `rustc` said so about a file nobody wrote.
             .or_else(|| self.described.functions.get(&name))
-            .is_some_and(|contract| !contract.throws.is_empty())
+            .is_some_and(|contract| !contract.fails_with.is_empty())
     }
 
     /// Whether the checker said this conversion narrows, and which kind it is.
@@ -10428,8 +10531,46 @@ impl<'p> Emitter<'p> {
             .take_while(|(pattern, _)| *pattern == at)
             .map(|(_, name)| name)
             .collect();
+        // Only the arm's own block is a statement; what it holds is emitted
+        // as it would be anywhere.
+        let statements = flow.arms_are_statements;
+        let flow = Flow {
+            arms_are_statements: false,
+            ..flow
+        };
+        if statements
+            && let Expr::Block(block) = body
+            && opened.is_empty()
+            && copied.is_empty()
+        {
+            return self.block(out, block, depth, flow, Tail::Statement);
+        }
         if opened.is_empty() && copied.is_empty() {
             return self.expr(out, body, depth, flow);
+        }
+        // **A block arm opens with the names it binds**, inside its own
+        // braces: a second pair around it was `unused_braces` in every
+        // generated file with one (found moving `Ty::fits` into Nikaia).
+        if let Expr::Block(block) = body {
+            let mut opening = String::new();
+            for name in &opened {
+                opening.push_str(&format!("let {name} = nikaia_std::boxed::open({name}); "));
+            }
+            for name in &copied {
+                opening.push_str(&format!("let {name} = *{name}; "));
+            }
+            let tail = match statements {
+                true => Tail::Statement,
+                false => Tail::Value,
+            };
+            return self.block_opening_with(
+                out,
+                block,
+                depth,
+                flow,
+                tail,
+                Some(opening.trim_end()),
+            );
         }
         out.push("{ ");
         for name in &opened {
@@ -10626,6 +10767,30 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **`text.chars().collect()` is a list of characters asked for at its
+        // size** (`nikaia_std::list::chars`): the same list, without the
+        // growing a `collect` over `Chars` does. Only where nothing declares
+        // another thing to build.
+        if let Some(Expr::MethodCall {
+            receiver: text,
+            method: chars,
+            args: none,
+            ..
+        }) = receiver
+            && self.text(method) == "collect"
+            && args.is_empty()
+            && none.is_empty()
+            && self.text(*chars) == "chars"
+            && !self.collected_into.contains(&(
+                flow.statement,
+                crate::check::argument_shape(receiver.unwrap()),
+            ))
+        {
+            out.push("nikaia_std::list::chars(");
+            self.postfix_base(out, text, depth, flow)?;
+            out.push(".chars())");
+            return Ok(());
+        }
         // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
         // operation the name says. It is a name and not the operator
         // because keeping the low digits is said rather than assumed,
@@ -11631,7 +11796,7 @@ impl<'p> Emitter<'p> {
     /// lending the inner value out hands no handle on.
     fn takes_a_handle(&self, callee: &str) -> Vec<bool> {
         let suffix = format!("::{callee}");
-        let contract = [&self.own_contracts, &self.library]
+        let contract = [&self.own_contracts, self.library]
             .into_iter()
             .find_map(|ledger| {
                 ledger.functions.get(callee).or_else(|| {
@@ -11742,26 +11907,23 @@ impl<'p> Emitter<'p> {
             })?;
         let rule_name = self.text(rule.name);
 
-        let pad = "    ".repeat(depth + 1);
-        let close = "    ".repeat(depth);
-
-        // The input is bound before it is parsed, because it is needed twice:
-        // once to parse and once to say *where* a failure was. A `ParseError`
-        // knows the offset and not the text, so only `render` can turn "at
-        // 1042" into "at line 37, column 9" - and a program that reports a
-        // rejected file without saying which line is not much better than one
-        // that panics. `&*` because the parser takes the text: a mapping, an
-        // owned string and a view all reach it the same way, and none of them
-        // has to be named here.
+        // The input goes to `std` once, which needs it twice: once to parse
+        // and once to say *where* a failure was. A `ParseError` knows the
+        // offset and not the text, so only `render` can turn "at 1042" into
+        // "at line 37, column 9" - and a program that reports a rejected file
+        // without saying which line is not much better than one that panics.
+        // `&*` because the parser takes the text: a mapping, an owned string
+        // and a view all reach it the same way, and none of them has to be
+        // named here.
+        // Both are calls of `std`'s (`grammar::parse`, `grammar::parse_pieces`)
+        // and not blocks, so the call is an expression wherever it stands - a
+        // block of statements in a `match`'s scrutinee is refused by `clippy`.
         if par_fold_of(rule).is_some() {
-            out.push(&format!("{{\n{pad}let _source = &*"));
+            out.push("nikaia_std::grammar::parse_pieces(&*");
             self.expr(out, input, depth, flow)?;
             out.push(&format!(
-                ";\n\
-                 {pad}{name}::parse_{rule_name}_pieces(_source, \
-                 &ParseContext::<()>::default(), {})\n\
-                 {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
-                 {close}}}{question}",
+                ", |source| {name}::parse_{rule_name}_pieces(source, \
+                 &ParseContext::<()>::default(), {})){question}",
                 self.build.parallelism()
             ));
             return Ok(());
@@ -11769,21 +11931,9 @@ impl<'p> Emitter<'p> {
 
         // A sequential entry rule: no pieces to cut, so the parser is driven
         // over the whole input once.
-        out.push(&format!(
-            "{{\n{pad}use winnow::Parser;\n{pad}let _source = &*"
-        ));
+        out.push("nikaia_std::grammar::parse(&*");
         self.expr(out, input, depth, flow)?;
-        out.push(&format!(
-            ";\n\
-             {pad}let mut stream = winnow_grammar::ParseInput::<()> {{\n\
-             {pad}    state: winnow_grammar::ParseContext::<()>::default(),\n\
-             {pad}    input: winnow::stream::LocatingSlice::new(_source),\n\
-             {pad}}};\n\
-             {pad}{name}::parse_{rule_name}()\n\
-             {pad}    .parse_next(&mut stream)\n\
-             {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
-             {close}}}{question}"
-        ));
+        out.push(&format!(", {name}::parse_{rule_name}()){question}"));
         Ok(())
     }
 }
@@ -12298,7 +12448,7 @@ fn pausing_reach(
     let pausing: BTreeSet<&str> = contracts
         .functions
         .iter()
-        .filter(|(_, contract)| !contract.sync.is_sync())
+        .filter(|(_, contract)| !contract.sync_claim.is_sync())
         .map(|(name, _)| name.as_str())
         .collect();
     if pausing.is_empty() {
@@ -12418,7 +12568,7 @@ pub fn branch_starts_first<'p>(
         build,
         crate::contracts::Provenance::Trusted,
         contracts.clone(),
-        &crate::contracts::Ledger::default(),
+        &crate::contracts::Ledger::blank(),
         // This asks whether a branch pauses, which no file a build read can
         // change — so D1's default is the honest answer here.
         &Reads::none(),

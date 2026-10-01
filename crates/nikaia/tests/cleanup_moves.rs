@@ -13,7 +13,7 @@ use std::process::Command;
 
 use nikaia::assets::Reads;
 use nikaia::check::{self, Finding, Kept, Newly};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

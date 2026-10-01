@@ -17,7 +17,7 @@
 
 use nikaia::contracts::order::{self, Accounted};
 use nikaia::contracts::touch::TouchOps;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 /// The control this whole file needs: two reads of two files, which meet on

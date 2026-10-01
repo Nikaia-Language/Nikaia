@@ -9,7 +9,7 @@
 //! this decides is whose message it is — and Part I 3.4's own first sentence had
 //! been promising the rule the whole time.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn refusals(source: &str) -> Vec<nikaia::check::Finding> {

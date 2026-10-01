@@ -15,7 +15,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::emit::Build;
 use nikaia::modules::Program;
 

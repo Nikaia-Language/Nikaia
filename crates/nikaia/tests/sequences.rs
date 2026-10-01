@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use nikaia::contracts::ty::TyOps;
 use nikaia::contracts::ty::{self, Ty};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn library() -> Ledger {
@@ -300,8 +300,36 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            let own = Ledger::infer(&parsed);
-            let checked = nikaia::check::check(&parsed, &own, &library);
+            // **A tool that reads the ledger's records reads them beside
+            // itself** (`sysroot::READS_THE_RECORDS`), as `lower-std` checks
+            // it: read alone, `ledger.nika` names a `FnContract` nothing here
+            // declares, and every call on one is unanswered (0.0.292).
+            let records = match path.file_name().and_then(|name| name.to_str()) {
+                Some("ledger.nika") => {
+                    let text = std::fs::read_to_string(path.with_file_name("ty.nika"))
+                        .expect("ty.nika stands beside ledger.nika");
+                    Some(parse_to_ast(&text).expect("ty.nika parses"))
+                }
+                _ => None,
+            };
+            let beside: Vec<&nikaia::parser::Parsed> = records.iter().collect();
+            let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
+                .chain(beside.iter().copied())
+                .collect();
+            let own = match beside.is_empty() {
+                true => Ledger::infer(&parsed),
+                false => Ledger::infer_package(&units, &library),
+            };
+            let newly = nikaia::check::Newly::default();
+            let checked = nikaia::check::check_against(
+                &parsed,
+                &beside,
+                &own,
+                &library,
+                &BTreeSet::new(),
+                &newly,
+                &nikaia::assets::Reads::none(),
+            );
             files += 1;
             unanswered += checked
                 .methods

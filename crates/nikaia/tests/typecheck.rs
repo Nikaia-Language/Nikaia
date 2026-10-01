@@ -11,7 +11,7 @@ mod common;
 use std::path::PathBuf;
 
 use nikaia::check::{self, Finding, Severity};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {

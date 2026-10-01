@@ -8,6 +8,7 @@
 mod common;
 
 use nikaia::ast::{Expr, Item, MatchPattern, Stmt};
+use nikaia::contracts::LedgerOps;
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

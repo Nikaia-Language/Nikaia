@@ -52,6 +52,7 @@
 // ledger key needs the type checker, an argument that is not a literal, a
 // callee nobody described.
 
+use crate::contracts::LedgerOps;
 use std::collections::BTreeSet;
 
 use crate::ast::{BinaryOp, Expr, Item, Spanned, Stmt};
@@ -59,6 +60,7 @@ use crate::parser::Parsed;
 
 use super::Ledger;
 use super::touch::Reached;
+use crate::contracts::SignatureOps;
 use crate::contracts::touch::TouchOps;
 
 /// One statement, reduced to what deciding an order needs.
@@ -325,7 +327,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
         // a diverting handler is refused, and ADR-034 D2 in general (D5's "no
         // speculation" had this case too). Starting the next operation early
         // would perform work the program as written might never have performed.
-        if !caught && !contract.throws.is_empty() {
+        if !caught && !contract.fails_with.is_empty() {
             return Accounted::UncaughtFailure(key);
         }
 

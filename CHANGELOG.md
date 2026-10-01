@@ -4,6 +4,228 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.297] — 2026-10-01
+
+**The ledger is read by grammars** (ADR-257 §4.6), and what made them fast
+was built in `winnow-grammar`, where every grammar gains it. The reader in
+`tools/ledger.nika` walked the text a character at a time through `Vec[char]`;
+it is now `grammar LedgerText` for the lines, `grammar LedgerValue` for a list
+and `grammar SignatureText` for a signature, slicing views out of the text
+rather than copying it, and reads `std`'s ledger to the same records as before.
+Reading `std.contracts` went from 11.4 M instructions to 5.9 M.
+
+Measured on this compiler's own use, `winnow-grammar` now
+- remembers the last whitespace skip, which a PEG otherwise repeats at one
+  position for every alternative it tries (148 000 skips for 7 KB of source);
+- does not try, in the fast pass, an alternative that cannot begin with the
+  next byte - a name was checked against thirty keywords a call at a time;
+- lets a hand-written rule fail without building an error nobody reads
+  (`ParseError::from_input`, used by the number literal and `same_line`);
+- scans `until(a | b)` without allocating.
+
+| Lowered with `--no-cache` | 0.0.296 | 0.0.297 |
+|---|---|---|
+| an empty program | 22.8 M | 17.4 M (−24 %) |
+| `1brc` | 102.8 M | 73.8 M (−28 %) |
+| `n-body` | 94.5 M | 72.6 M (−23 %) |
+
+Parsing `1brc` alone went from 21.1 M to 12.4 M (−41 %). Diagnostics are the
+diagnosing pass's, which tries every alternative as before.
+
+- **A handler that does not pass on what it caught keeps it** (Part I 7.1):
+  `x = rule(t) catch { throw Mine }` made the function throw the guarded
+  call's error as well as `Mine`; a handler with `throw error` still passes
+  it on (ADR-157 D2).
+- **A view a `for` loop or a `match` arm binds is the view**: an element of a
+  `Vec[ref String]` and a variant's `ref String` part, reached through a lent
+  value, were a view of a view below, and `w == "fn"` did not compile.
+- **A grammar's entry is a call of `std`'s** (`grammar::parse`,
+  `grammar::parse_pieces`) rather than a block written in its place: behind
+  a `catch` the block was a `match` scrutinee with statements in it, which
+  `clippy` refuses.
+- **What `x?` binds in a grammar may be absent**: put into a nullable field it
+  is the field's shape already, and the `.into()` it got converted an
+  `Option` into itself.
+- A signature read on its own lists a type parameter without a bound
+  (`[H: One, U]` is two entries); a ledger's entry lists the bounded ones, as
+  it did.
+
+## [0.0.296] — 2026-10-01
+
+**`std`'s ledger is read once per run** (ADR-257 §4.6). Most of what the
+measurement called *reading `std.contracts`* was reading it again: seven
+places parsed `STD` for themselves - the emitter twice, the checker's
+propagation twice, `Program::emit_reading`, `Foreign::library` and the cache
+that was meant to be the only one. Every reader now borrows that one parse
+(`contracts::std_ledger`), and one that adds a package's own entries takes a
+copy (`std_library`).
+
+| Lowered with `--no-cache` | before | after |
+|---|---|---|
+| an empty program | 93.4 M | 22.8 M (−76 %) |
+| `1brc` | 186.8 M | 102.8 M (−45 %) |
+| `n-body` | 178.5 M | 94.5 M (−47 %) |
+
+- **A dependency's ledger was not read again**, measured on `hello-http`
+  building against `http`: it is read where it is absorbed (`read_beside`,
+  the ledger and its `.derived`) and by its own lowering, which compares it
+  with what it inferred (`newly`) - two readings with two purposes, 0.85 M
+  each.
+- The emitter holds `std`'s ledger by reference rather than as a copy of its
+  own.
+- Main's CI was red after 0.0.295 for a lint the local `clippy` did not
+  have yet (`collapsible_match`, 1.98); fixed in the lowered `ty.rs` (#87),
+  and the toolchain here is the one CI runs.
+
+## [0.0.295] — 2026-09-30
+
+**What the checker asks of a type is Nikaia** (ADR-257 step (d)), which
+finishes the record: `fits`, `erase`, `parameterise`, `as_a_view`,
+`is_seen`, `unseen`, `is_a_view` and `is_unknown` are `Ty`'s methods in
+`tools/ty.nika`, and `bind`, `substitute`, `qualify` and `renamed` its
+functions. The toolchain is 8.4 % Nikaia.
+
+- The compiler calls them as before: a type's own method is found before an
+  extension trait's, so `TyOps` keeps only the constructors from a name,
+  reading a type back and `from_ast`.
+- **Measured**, because `fits` is asked at every argument, assignment and
+  return: an empty program, `1brc`, `n-body` and `k-nucleotide` each lower
+  within 0.2 % of the instructions the Rust took.
+- **A defect the move found:** an element of a `ref Array[T]` was `?`, so a
+  method called on it was one no ledger describes, which may pause, and the
+  function around it became a future. It is the item now, and a range in the
+  brackets a run of it again (ADR-179 D1, ADR-215 D3).
+- **The lowering:** a `match` arm that binds a boxed or copied part and is a
+  block opens with those names inside its own braces, where it wrapped a
+  second pair around them (`unused_braces`); and a `bool` literal after `??`
+  carries no `.into()`.
+- Two more lints on the generated tools are allowed with their reason: a
+  copied binding handed straight back, and a `match` with one pattern beside
+  an empty `else`, which is how the language writes an `if let`.
+- `tests/reader_shapes.rs` runs a method on an element of a `ref Array[Row]`,
+  indexed and sliced.
+
+## [0.0.294] — 2026-09-30
+
+**`??` lends its left side at every position that only reads the answer**
+(ADR-259 §4, [#98](https://github.com/Nikaia-Language/Nikaia/issues/98)): an `f"…"` hole, a comparison of text and
+the receiver of a method that only reads it, beside a call's argument and the
+print calls. A name used again after such a line needs no `.clone()` now,
+where it was `NK2105`.
+
+- A comparison lends a `??` of text only: the language below compares a view
+  of text with text and with a view, and a view of anything else with a view
+  alone. Over a struct it takes, as before.
+- A receiver lends where every method the name may be takes its receiver as a
+  view and changes nothing, as `lent_reaches` asks for a `?.` (ADR-189 D2).
+- `tests/nullable.rs` runs the three with the name used again after each.
+
+## [0.0.293] — 2026-09-30
+
+**A part an arm binds as a view is handed on as it is** ([#270](https://github.com/Nikaia-Language/Nikaia/issues/270)). ADR-242 binds a `match` arm's names `ref` where the arm only reads
+them, and a call that lends such a name wrote `&key` all the same: a view of
+a view, the same code below, and the lint `nikaia-std` allowed on its tools
+for `ledger.nika`'s reader (0.0.292). The allowance is gone.
+
+- Decided in the checker, after the arm is walked, because only then is it
+  known which parts are lent: the references recorded for the arm's own
+  statements drop the names it binds `ref`, in its `f"…"` holes as well.
+  Only for an arm that is a block and binds none of the names again.
+- `tests/reader_shapes.rs` runs the shape: `Line::Pair { ref key, ref value }`
+  handed to a function that reads text, in a statement and in a hole.
+
+## [0.0.292] — 2026-09-30
+
+**Reading a ledger back is Nikaia** (ADR-257 step (c)), whole: the file's
+shape, what every table and key means, a signature back from the file's
+spelling, and each record's text. `Ledger::parse` is one call into
+`tools/ledger.nika`. The toolchain is 7.4 % Nikaia, from 5.5 %, and the
+compiler reads `std`'s ledger in fewer instructions than the Rust did.
+
+- `ledger.nika` reads `ty.nika`'s records beside itself, as every tool reads
+  the tree: `READS_THE_RECORDS` in `sysroot.rs` names it, and `lib.rs` writes
+  the `use super::ty::*`. A list rather than every tool, because the records'
+  names (`State`, `Shape`) are words other tools use for their own things.
+- `touch_of`, `held_of`, `class_of`, `variant_of`, `signature_of` and
+  `unspell` are Nikaia; the compiler's `TouchOps::parse` and its siblings
+  call them. Gone from Rust: `Ledger::parse`'s body, `spelling::unspell` and
+  its helpers, and the value readers (`sync_of`, `throws_of`, `borrows_of`,
+  `provenance_of`, `split_config`, `bounds_of`).
+- A `version` that is not a number says so by line
+  (*line 1: `version` is a whole number, not `x`*) where it was Rust's
+  *invalid digit found in string*.
+- **Measured** on an empty program: 95.7 M instructions before, 127.0 M with
+  the reader as first written, 93.1 M as shipped. Three things closed it,
+  none of them a special case of the reader: the lowering below, the entry's
+  records moved into the table instead of copied, and `unspell` answering a
+  signature that needs nothing turned back as it is.
+- **The lowering of `text.chars().collect()`** into a `Vec[char]` is
+  `nikaia_std::list::chars`, which asks for the room once. `collect` over
+  `Chars` asks for a quarter and grows; it was the largest single cost of the
+  reader, and every Nikaia module that lists a text's characters
+  (`Ty::parse` among them) is cheaper for it.
+- **Defects the move found:**
+  - **`x == null` on a type that does not compare was `NK1188`.** It asks
+    whether there is a value and is lowered to `x.is_none()`, which compares
+    nothing.
+  - **A `match` in statement position wrote its arms as values**: an arm
+    ending in `m.insert(k, v)` handed back the old value, and the arms
+    disagreed with an empty one. Its arms are statements now, as an `if`'s
+    in that position already were.
+  - **A copy of a type another unit of the package declares** was a method
+    nothing describes, and made the function around it `async`. The derived
+    copy of 0.0.290 covers the package's types now.
+  - **A `?.` on a map read, `m[k]?.clone()`, wrote its scrutinee in
+    parentheses**, which the language below warns about.
+  - **A `??` whose fallback is a constructor the file declares**
+    (`FnContract::empty()`) or a struct written out, or a variant of an enum
+    another unit declares, carried a useless `.into()`.
+- Seven lints on the generated tools say how the lowering writes rather than
+  what it does, and are allowed on `tools` with the reason beside them. One of
+  them, a `&` before an arm's binding that is bound `ref` already, was
+  [#270](https://github.com/Nikaia-Language/Nikaia/issues/270) and is gone in 0.0.293.
+
+## [0.0.291] — 2026-09-30
+
+**`Ledger` and `Notes` are Nikaia**, which finishes ADR-257 step (b): every
+record a ledger holds is declared in `tools/ty.nika`. The toolchain is 5.5 %
+Nikaia.
+
+- `Ledger` is declared with ordered `collections::BTreeMap` and `BTreeSet`
+  tables and a `blank()` constructor; `Notes` with `empty()`. What the
+  compiler does with a ledger (infer, absorb, render, read it back) stays Rust
+  behind `LedgerOps`, which a caller imports beside `Ledger`. No ledger byte
+  changes.
+- `Default` gave way where the language gives none: `Ledger::default()` is
+  `Ledger::blank()`, and `project::Foreign` writes its own `Default`.
+
+## [0.0.290] — 2026-09-30
+
+**`Signature`, `FnContract` and `TypeContract` are Nikaia** (ADR-257 step
+(b)), and two defects the move found are fixed. The toolchain is 5.4 %
+Nikaia.
+
+- `tools/ty.nika` declares the three records, with `Signature::text`,
+  `takes_a_receiver` and `result_or_unit`, and `empty()` for each where a
+  `Default` was. Reading a signature back and the slice of its arguments stay
+  Rust behind `SignatureOps`. Two fields are renamed because their words are
+  reserved: `FnContract.throws` is `fails_with`, `FnContract.sync` is
+  `sync_claim`; the ledger file's keys do not change.
+- **Defects the move found:**
+  - **A `clone` of a type the program declares made the function around it
+    `async`.** No ledger describes the derived copy, so `r.clone()` on a
+    declared `struct` was a method nothing describes, which may pause; the
+    function became a future, and `main` with it. It is the derived copy
+    now: it does not pause, cannot fail, and hands back the type, owned.
+    ADR-258 D3's zero overhead, for every program that copies its own types.
+  - **A field of an element was read through a deref**: `rows[1].a` was
+    `(*get(&rows, 1)).a`, which the language below does on its own and
+    `clippy` refuses in `std`. It is `get(&rows, 1).a`, as a read of a read
+    already was (0.0.238).
+- A `??` whose fallback is a declared variant built with its parts
+  (`Ty::Tuple([])`) is written without `.into()`, as a unit variant already
+  was.
+
 ## [0.0.289] — 2026-09-30
 
 **The ledger's small records are Nikaia** (ADR-257 step (b)), and a field on

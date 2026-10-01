@@ -12,7 +12,7 @@ mod common;
 
 use nikaia::check;
 use nikaia::contracts::ty::TyOps;
-use nikaia::contracts::{Ledger, STD, ty::Ty};
+use nikaia::contracts::{Ledger, LedgerOps, STD, ty::Ty};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -1607,4 +1607,61 @@ fn main() {
     );
     let found = findings(&kept);
     assert!(found.iter().any(|f| f.code == "NK2106"), "{found:#?}");
+}
+
+/// **The other positions that only read a `??`** (issue #98): an
+/// `f"…"` hole, a comparison of text and the receiver of a method that only
+/// reads it. Each lends the left side, so the name is used again after the
+/// line with no `.clone()` written - which was `NK2105` before.
+#[test]
+fn a_coalesce_lends_in_a_hole_a_comparison_and_a_receiver() {
+    let source = r#"struct Tag {
+    word: String,
+}
+
+impl Tag {
+    fn shown(ref self) -> String {
+        return f"<{self.word}>"
+    }
+}
+
+fn find(n: i64) -> String? {
+    if n > 0 {
+        return "found"
+    }
+    return null
+}
+
+fn tag(n: i64) -> Tag? {
+    if n > 0 {
+        return Tag { word: "b" }
+    }
+    return null
+}
+
+fn main() {
+    let name = find(1)
+    let none = find(0)
+    let fallback = Tag { word: "none" }
+    let t = tag(1)
+    let guest = "guest"
+    println(f"hole: {name ?? guest} {none ?? guest}")
+    if (name ?? "guest") == "found" {
+        println("compared")
+    }
+    let length = (name ?? "guest").len()
+    let shown = (t ?? fallback).shown()
+    println(f"{length} {shown}")
+    println(f"{name ?? guest} {none ?? guest}")
+    if t != null {
+        println("kept")
+    }
+}
+"#;
+    let rust = lowered(source);
+    assert!(rust.contains(".as_deref()"), "{rust}");
+    assert_eq!(
+        ran("coalesce-lends-more", source),
+        "hole: found guest\ncompared\n5 <b>\nfound guest\nkept\n"
+    );
 }

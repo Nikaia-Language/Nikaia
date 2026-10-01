@@ -998,7 +998,7 @@ impl<'a> BuildTime<'a> {
                 way_out: "write the work in Nikaia, in this file, and call that",
             });
         };
-        if !contract.sync.is_sync() {
+        if !contract.sync_claim.is_sync() {
             return Err(Refusal::NotAllowed {
                 callee: name.to_string(),
                 because: "It can pause, and nothing run at build time may pause.",

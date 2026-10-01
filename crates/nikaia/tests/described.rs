@@ -10,6 +10,7 @@
 
 mod common;
 
+use nikaia::contracts::LedgerOps;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 

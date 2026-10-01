@@ -19,7 +19,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{self, Build};
 use nikaia::parser::parse_to_ast;
 
@@ -49,7 +49,7 @@ fn a_grammar_entry_throws_a_named_error() {
          }}\n"
     ));
     assert_eq!(
-        ledger.functions["Tiny::number"].throws,
+        ledger.functions["Tiny::number"].fails_with,
         ["ParseError"],
         "the entry rule"
     );
@@ -66,7 +66,7 @@ fn what_a_parse_throws_reaches_its_caller() {
          \x20   return Tiny::number(data)\n\
          }}\n"
     ));
-    assert_eq!(ledger.functions["read"].throws, ["ParseError"]);
+    assert_eq!(ledger.functions["read"].fails_with, ["ParseError"]);
 }
 
 /// **A parse beside an `io::IoError` is a sum of two named members**
@@ -86,7 +86,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
     );
     let ledger = ledger_of(&source);
     assert_eq!(
-        ledger.functions["both"].throws,
+        ledger.functions["both"].fails_with,
         ["ParseError", "io::IoError"]
     );
 
@@ -95,10 +95,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
         rust.contains("enum __NikaiaThrows_ParseError__io_IoError"),
         "{rust}"
     );
-    assert!(
-        rust.contains("ParseError::of(error.render(_source))"),
-        "{rust}"
-    );
+    assert!(rust.contains("nikaia_std::grammar::parse(&*"), "{rust}");
 }
 
 /// **And it compiles**, which is the assertion this exists for.
@@ -155,7 +152,7 @@ fn only_a_program_with_a_grammar_changes() {
         let names = ledger
             .functions
             .values()
-            .any(|c| c.throws.iter().any(|e| e == "ParseError"));
+            .any(|c| c.fails_with.iter().any(|e| e == "ParseError"));
         if names {
             with_a_grammar += 1;
             assert!(

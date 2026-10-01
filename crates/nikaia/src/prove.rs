@@ -28,6 +28,7 @@
 // bindings this walk cannot see — a lambda's body, a `match` arm — starts with
 // no facts and no variables. Losing facts only costs proofs.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};

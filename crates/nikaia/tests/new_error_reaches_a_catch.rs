@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 
 use nikaia::assets::Reads;
 use nikaia::check::{self, Finding, Newly};
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str, newly: &[(&str, &[&str])]) -> Vec<Finding> {

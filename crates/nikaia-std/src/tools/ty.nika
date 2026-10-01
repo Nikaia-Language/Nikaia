@@ -17,6 +17,7 @@
 // `ledger.nika` reads a line: this language has no slice of a `String`.
 //
 use std::text
+use std::collections
 
 // The boxes are the compiler's (ADR-246): `Pointed`, `Nullable` and `Seq` hold
 // a `Ty` inline, and the lowering boxes them.
@@ -364,6 +365,17 @@ pub fn split_args(written: ref String) -> Vec[String] {
 /// and `&T`, the spelling it replaced. The word needs the space after it, so
 /// `reference` is not read as a view of `erence`.
 pub fn a_view_of(written: ref String) -> String? {
+    // **`ref(a | b) T`, where a signature's result says what it points
+    // into** (ADR-251 D4): a view of `T` like any other, and the names are the
+    // ledger's to read, beside the type.
+    if written.starts_with("ref(") {
+        let c: Vec[char] = written.chars().collect()
+        let close = closing(c, 4, ')')
+        if close >= 0 {
+            let rest = between(c, close + 1, c.len())
+            return rest.trim_start().clone()
+        }
+    }
     if written.starts_with("ref ") {
         let rest = cut(written, 4, 0)
         return rest.trim_start().clone()
@@ -935,4 +947,900 @@ pub struct ConfigContract {
     pub name: String,
     pub ty: Ty,
     pub default: String,
+}
+
+/// **What a function's parameters and result are**, as the ledger writes them:
+/// `[H: Handler](mut out: Vec[i64], text: ref String; limit: i64 = 10) -> T`.
+pub struct Signature {
+    /// The type parameters and what each must implement (ADR-205 D1).
+    pub bounds: Vec[(String, Vec[String])],
+    pub params: Vec[(String, Ty)],
+    /// The parameters written `mut` (ADR-094 D3).
+    pub mutable: Vec[String],
+    /// The options it takes by name (Part I 5.1).
+    pub config: Vec[ConfigContract],
+    pub result: Ty?,
+}
+
+impl Signature {
+    /// A signature that says nothing: no parameters and no result.
+    pub fn empty() -> Signature {
+        return Signature { bounds: [], params: [], mutable: [], config: [], result: null }
+    }
+
+    /// Whether the first parameter is the receiver.
+    pub fn takes_a_receiver(ref self) -> bool {
+        return self.params.len() > 0 && self.params[0].0 == "self"
+    }
+
+    /// The result, and the empty tuple where nothing is handed back.
+    pub fn result_or_unit(ref self) -> Ty {
+        return self.result?.clone() ?? Ty::Tuple([])
+    }
+
+    /// The ledger's spelling of it.
+    pub fn text(ref self) -> String {
+        let mut inside: String = ""
+        for (name, ty) in self.params {
+            if !inside.is_empty() {
+                inside.push_str(", ")
+            }
+            if name == "self" {
+                inside.push_str(ref ty.text())
+            } else {
+                if self.mutable.contains(name) {
+                    inside.push_str("mut ")
+                }
+                inside.push_str(ref f"{name}: {ty.text()}")
+            }
+        }
+        if self.config.len() > 0 {
+            inside.push_str("; ")
+            let mut first = true
+            for option in self.config {
+                if !first {
+                    inside.push_str(", ")
+                }
+                first = false
+                inside.push_str(ref f"{option.name}: {option.ty.text()} = {option.default}")
+            }
+        }
+        // **In front, where the declaration writes them** (ADR-205 D1).
+        let mut before: String = ""
+        if self.bounds.len() > 0 {
+            before.push('[')
+            let mut first = true
+            for (name, traits) in self.bounds {
+                if !first {
+                    before.push_str(", ")
+                }
+                first = false
+                before.push_str(name)
+                if traits.len() > 0 {
+                    before.push_str(": ")
+                    let mut one = true
+                    for bound in traits {
+                        if !one {
+                            before.push_str(" + ")
+                        }
+                        one = false
+                        before.push_str(bound)
+                    }
+                }
+            }
+            before.push(']')
+        }
+        if self.result == null {
+            return f"{before}({inside})"
+        }
+        return f"{before}({inside}) -> {self.result_or_unit().text()}"
+    }
+}
+
+/// **What a ledger says about one function**: whether others may call it,
+/// whether it is `sync`, what it may fail with, what it touches, where its
+/// bytes come from, its signature, and what the analyses found about its
+/// parameters.
+pub struct FnContract {
+    pub public: bool,
+    /// What the entry claims about `sync` (Part II 12.1). `sync` is a word
+    /// this language reserves, so it cannot name the field.
+    pub sync_claim: Sync,
+    /// What it may fail with: the error types that can leave it (Kap 7.1).
+    pub fails_with: Vec[String],
+    pub touches: Vec[Touch],
+    /// Whether `touches` is what somebody wrote rather than what was inferred.
+    pub touches_known: bool,
+    pub provenance: Provenance?,
+    pub signature: Signature?,
+    pub borrows: Vec[String],
+    pub keeps: Vec[String],
+    pub mutates: bool,
+    pub touches_a_lock: Lock,
+    pub threads: Threads,
+    pub views: Vec[Held],
+    pub sharing: Vec[Class],
+    pub ends_by_length: bool,
+}
+
+impl FnContract {
+    /// An entry that says nothing: not public, not `sync`, touching nothing
+    /// known, and undecided where a question has a third answer.
+    pub fn empty() -> FnContract {
+        return FnContract {
+            public: false,
+            sync_claim: Sync::No,
+            fails_with: [],
+            touches: [],
+            touches_known: false,
+            provenance: null,
+            signature: null,
+            borrows: [],
+            keeps: [],
+            mutates: false,
+            touches_a_lock: Lock::No,
+            threads: Threads::Undecided,
+            views: [],
+            sharing: [],
+            ends_by_length: false,
+        }
+    }
+}
+
+/// **What a ledger says about one type**: its fields or variants, and the
+/// questions the analyses ask of it.
+pub struct TypeContract {
+    pub public: bool,
+    pub fields: Vec[FieldContract],
+    pub variants: Vec[VariantContract],
+    pub crosses: Crosses,
+    pub iterates_fallibly: bool,
+    pub compares: bool,
+    pub copies: bool,
+    pub touches: Vec[String],
+    pub tethered: Vec[String],
+}
+
+impl TypeContract {
+    /// An entry that says nothing, and undecided about crossing a thread.
+    pub fn empty() -> TypeContract {
+        return TypeContract {
+            public: false,
+            fields: [],
+            variants: [],
+            crosses: Crosses::Undecided,
+            iterates_fallibly: false,
+            compares: false,
+            copies: false,
+            touches: [],
+            tethered: [],
+        }
+    }
+}
+
+/// **One compilation unit's contracts** (ADR-257 D1).
+///
+/// Ordered maps throughout, because the file is a **pure function of (source,
+/// toolchain)** (13.5) and a hash map's iteration order is not. The
+/// determinism is the feature: `--locked` compares bytes, so it needs no
+/// tolerance and no semantic comparison.
+pub struct Ledger {
+    pub version: u32,
+    pub toolchain: String,
+    pub inference: String,
+    /// The sources these entries were derived from: one unit of the package by
+    /// file name, and the SHA-256 of its bytes
+    /// (ADR-100 D3).
+    ///
+    /// **What it is for is telling a stale ledger from a believed one.** A
+    /// consumer reads a dependency's ledger rather than deriving it (D1), and
+    /// the only thing that makes believing safe is that a ledger is never
+    /// believed against its own sources: where a hash does not match, that
+    /// package is derived again. So this is not a checksum of the file — it is
+    /// the record of what the file is an answer *about*.
+    ///
+    /// **The file name and not a path**, because a package is one directory of
+    /// `.nika` files (`modules::collect`) and a path would put the machine that
+    /// built it into a file Part III 13.5 makes a pure function of the source
+    /// tree.
+    ///
+    /// Empty where nothing knows the sources — a ledger inferred from one
+    /// `Parsed` that never came from a file, and `std`'s own, whose Rust half
+    /// has no `.nika` to hash (ADR-020
+    /// D5). An empty table renders nothing, so no existing ledger changes.
+    pub sources: collections::BTreeMap[String, String],
+    pub functions: collections::BTreeMap[String, FnContract],
+    pub types: collections::BTreeMap[String, TypeContract],
+    /// **Whether the code stored in a function field touches a lock**, by
+    /// `Type.field` (ADR-230 D1):
+    /// over everything this package stores there. The package's own answer and
+    /// not written to the ledger file - a published field is stored into by
+    /// packages that do not exist yet, so the file has nothing to say about it.
+    pub code_locks: collections::BTreeMap[String, Lock],
+    /// Kap 4.7: every `trait` declared here, with the names of its methods.
+    ///
+    /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
+    /// is where a bound looks one up. This map answers the other question a
+    /// bound asks first: *is `Summarize` a trait at all*
+    /// (ADR-078 D3). A name that
+    /// is not in here names no trait, and a bound on it is refused rather than
+    /// quietly believed.
+    ///
+    /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
+    /// it (ADR-106 D3): they are
+    /// the `fn` entries beside it, under `Handler::handle`, and the set is
+    /// filled from those once the whole file is parsed.
+    /// ADR-078 §4 left *a trait a
+    /// package publishes* as a question about modules; D1 and D3 of that later
+    /// record answered it, and a bound has taken a path since 0.0.171.
+    pub traits: collections::BTreeMap[String, collections::BTreeSet[String]],
+    /// **Who answers for what**: a trait's name to the types that `impl` it
+    /// (ADR-174 D1).
+    ///
+    /// The other half of a bound, and the reason it is here rather than in the
+    /// checker: `impl Speaks for Dog` may stand in a **different file** from
+    /// the `fn tell[T: Speaks]` that needs the answer, and one file's walk sees
+    /// one file. A program's ledger is absorbed from its units', so the union
+    /// over the files is a thing this map already knows how to be.
+    ///
+    /// **Written to the ledger file** as `[impl."Handler for Static"]`
+    /// (ADR-106 D4), one line per
+    /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
+    /// the trait's package, in the type's, or in a consumer for its own type —
+    /// so the answer at a call is the union over every ledger the program reads
+    /// plus its own, and no ledger claims completeness.
+    pub implementations: collections::BTreeMap[String, collections::BTreeSet[String]],
+}
+
+impl Ledger {
+    /// A ledger with no header and nothing in it: what the compiler's `empty`
+    /// stamps a header onto, and what a reader fills.
+    pub fn blank() -> Ledger {
+        return Ledger {
+            version: 0,
+            toolchain: "",
+            inference: "",
+            sources: collections::BTreeMap(),
+            functions: collections::BTreeMap(),
+            types: collections::BTreeMap(),
+            code_locks: collections::BTreeMap(),
+            traits: collections::BTreeMap(),
+            implementations: collections::BTreeMap(),
+        }
+    }
+}
+
+/// **What a describer saw and did not claim** (ADR-193 D3, D5).
+///
+/// Rendered as comments into `contracts/<crate>.contracts` and never parsed
+/// back. The distinction the record rests on: ADR-123 D2 lets the describer
+/// *fill* `crosses` because a field holding an `Rc` **entails** not sendable;
+/// nothing a signature can show entails *threads*, so what it saw is a
+/// sentence and the column stays a person's.
+pub struct Notes {
+    /// About the crate: the `unsafe impl Send`/`Sync` items it contains (D5).
+    pub about_the_crate: Vec[String],
+    /// About one entry, by the key it is written under (D3).
+    pub about_a_function: collections::BTreeMap[String, Vec[String]],
+}
+
+impl Notes {
+    /// Nothing seen.
+    pub fn empty() -> Notes {
+        return Notes { about_the_crate: [], about_a_function: collections::BTreeMap() }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What the checker asks of a type (ADR-257 step (d))
+// ---------------------------------------------------------------------------
+
+/// The stamp a lock puts on what it hands out (ADR-111 D1).
+pub comptime SEEN: ref String = "Seen"
+
+impl Ty {
+    /// Whether this is `?`, the absence of a claim.
+    pub fn is_unknown(ref self) -> bool {
+        return match self {
+            Ty::Unknown => true,
+            else => false,
+        }
+    }
+
+    /// The same type, read as a **view** of it (ADR-191 D1): a view of
+    /// `String` is `str` (ADR-184 D2), a view of anything else is that name
+    /// with the word on it. A type this compiler cannot name has no view, and
+    /// neither does one that is already one.
+    pub fn as_a_view(ref self) -> Ty {
+        return match self {
+            Ty::Named { name, args, view } => viewed_name(name, args, view),
+            else => self.clone(),
+        }
+    }
+
+    /// Whether a lock handed this out (ADR-111 D1), at any depth a stamp can
+    /// be at: a nullable of a stamped value is stamped. A bare `Seen` is a
+    /// type the program declared.
+    pub fn is_seen(ref self) -> bool {
+        return match self {
+            Ty::Named { name, args, .. } => name == SEEN && args.len() == 1,
+            Ty::Nullable(inner) => inner.is_seen(),
+            else => false,
+        }
+    }
+
+    /// The type under the stamp, or this type where there is none. There is
+    /// no word for this in the language (ADR-111 D4): it is the emitter's,
+    /// which erases the stamp, and a fit's, which compares what is under it.
+    pub fn unseen(ref self) -> Ty {
+        match self {
+            Ty::Named { name, args, .. } => {
+                if name == SEEN && args.len() == 1 {
+                    return args[0].clone()
+                }
+            }
+            Ty::Nullable(inner) => {
+                return Ty::Nullable(inner.unseen())
+            }
+            else => {}
+        }
+        return self.clone()
+    }
+
+    /// Whether this type **is** a view: whether a second `&` would be written
+    /// in front of one (ADR-094 D1). A nullable of a view counts; `ref
+    /// Array[T]` is a view of a run (ADR-179 D1) and `ref mut Array[T]` is not,
+    /// because a position written through gains its `&mut` from its word.
+    pub fn is_a_view(ref self) -> bool {
+        return match self {
+            Ty::Named { view, .. } => view,
+            Ty::Var { view, .. } => view,
+            Ty::Nullable(inner) => inner.is_a_view(),
+            Ty::Pointed { slice, mutable, .. } => slice && !mutable,
+            else => false,
+        }
+    }
+
+    /// **Whether a value of this type may stand where `expected` is wanted.**
+    ///
+    /// Equality, plus the rule that makes the checker usable: anything
+    /// involving `?` fits. There is no subtyping and no implicit widening
+    /// (ADR-013 D7) beyond the one Part I 2.3 writes, a plain value into a
+    /// nullable slot. The cases, in the order they are asked:
+    ///
+    /// * a stamp passes through (ADR-111 D2);
+    /// * tuples part by part, a count only the same count (ADR-152 D4);
+    /// * what the C boundary lends fits the same shape (ADR-147 D1);
+    /// * an `Array[T, N]` fits an `Array[T]` and not back (ADR-184 D3);
+    /// * what a caller may hand to a boundary type (ADR-147 D1);
+    /// * a lambda that does less fits a type that allows more (ADR-102 D2);
+    /// * two sequences when their items do, read as a lambda's words are
+    ///   (ADR-105 D1, ADR-172 D1, ADR-212 D1);
+    /// * a variable that reaches a comparison was never bound, and fits;
+    /// * nullables, and a plain value into a nullable slot;
+    /// * two names written the same, with arguments that fit.
+    pub fn fits(ref self, expected: ref Ty) -> bool {
+        if self.is_unknown() || expected.is_unknown() {
+            return true
+        }
+        if self.is_seen() || expected.is_seen() {
+            return self.unseen().fits(ref expected.unseen())
+        }
+        match self {
+            Ty::Tuple(parts) => {
+                if a_tuple(expected) {
+                    return tuple_fits(parts, expected)
+                }
+            }
+            Ty::Count(n) => {
+                if a_count(expected) {
+                    return count_fits(n, expected)
+                }
+            }
+            Ty::Pointed { item, slice, mutable } => {
+                if a_pointed(expected) {
+                    return pointed_fits(item, slice, mutable, expected)
+                }
+            }
+            Ty::Named { name, args, view } => {
+                if !view && name == ARRAY && args.len() == 2 && an_array_of_any_length(expected) {
+                    return array_fits(args, expected)
+                }
+            }
+            else => {}
+        }
+        match expected {
+            Ty::Pointed { item, slice, .. } => {
+                if slice {
+                    return lends_a_run_of(self, item)
+                }
+                return self.fits(item)
+            }
+            else => {}
+        }
+        match self {
+            Ty::Fn { params, result, is_sync, can_throw } => {
+                if a_function_type(expected) {
+                    return function_fits(params, result, is_sync, can_throw, expected)
+                }
+            }
+            Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => {
+                if a_sequence_type(expected) {
+                    return sequence_fits(item, is_sync, pauses, can_throw, parallel, shape, expected)
+                }
+            }
+            Ty::Var { .. } => {
+                return true
+            }
+            else => {}
+        }
+        match expected {
+            Ty::Var { .. } => {
+                return true
+            }
+            Ty::Nullable(wanted) => {
+                return nullable_fits(self, wanted)
+            }
+            Ty::Named { name, args, view } => {
+                return named_fits(self, name, args, view)
+            }
+            else => {}
+        }
+        return false
+    }
+
+    /// The same type with every name in `parameters` replaced by `?`
+    /// (ADR-024 D4): a generic parameter stands for a type rather than being
+    /// one, so a generic function's parameters are checked for number and not
+    /// for type. A count is a number and no parameter stands for it (ADR-152
+    /// §4); a library's variable is not a Nikaia function's generic.
+    pub fn erase(ref self, parameters: ref collections::BTreeSet[String]) -> Ty {
+        return match self {
+            Ty::Pointed { item, slice, mutable } => Ty::Pointed { item: item.erase(parameters), slice: slice, mutable: mutable },
+            Ty::Tuple(parts) => Ty::Tuple(erased_each(parts, parameters)),
+            Ty::Fn { params, result, is_sync, can_throw } => Ty::Fn { params: erased_each(params, parameters), result: result?.erase(parameters), is_sync: is_sync, can_throw: can_throw },
+            Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => Ty::Seq { item: item.erase(parameters), is_sync: is_sync, pauses: pauses, can_throw: can_throw, parallel: parallel, shape: shape.clone() },
+            Ty::Nullable(inner) => Ty::Nullable(inner.erase(parameters)),
+            Ty::Named { name, args, view } => erased_name(name, args, view, parameters),
+            else => self.clone(),
+        }
+    }
+
+    /// The same type with every name in `parameters` turned into a variable a
+    /// call site binds (ADR-074): `erase`'s sibling, for a name that stands
+    /// for a type a caller passes. A variable is bound and replaced, or
+    /// becomes `?`, so it never reaches a comparison.
+    pub fn parameterise(ref self, parameters: ref collections::BTreeSet[String]) -> Ty {
+        return match self {
+            Ty::Pointed { item, slice, mutable } => Ty::Pointed { item: item.parameterise(parameters), slice: slice, mutable: mutable },
+            Ty::Tuple(parts) => Ty::Tuple(parameterised_each(parts, parameters)),
+            Ty::Fn { params, result, is_sync, can_throw } => Ty::Fn { params: parameterised_each(params, parameters), result: result?.parameterise(parameters), is_sync: is_sync, can_throw: can_throw },
+            Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => Ty::Seq { item: item.parameterise(parameters), is_sync: is_sync, pauses: pauses, can_throw: can_throw, parallel: parallel, shape: shape.clone() },
+            Ty::Nullable(inner) => Ty::Nullable(inner.parameterise(parameters)),
+            Ty::Named { name, args, view } => parameterised_name(name, args, view, parameters),
+            else => self.clone(),
+        }
+    }
+}
+
+// The same four walks as methods, so that a `?.` reaches them on a result
+// that may be absent.
+impl Ty {
+    fn fits_any(ref self, wanted: ref Ty?) -> bool {
+        return wanted?.fitted_by(self) ?? true
+    }
+
+    fn fitted_by(ref self, found: ref Ty) -> bool {
+        return found.fits(self)
+    }
+
+    fn substituted_in(ref self, bound: ref collections::BTreeMap[String, Ty]) -> Ty {
+        return substitute(self, bound)
+    }
+
+    fn qualified_in(ref self, module: ref String, declared: ref collections::BTreeSet[String]) -> Ty {
+        return qualify(self, module, declared)
+    }
+
+    fn renamed_by(ref self, renames: ref collections::BTreeMap[String, String]) -> Ty {
+        return renamed(self, renames)
+    }
+}
+
+// A view of a named type.
+fn viewed_name(name: ref String, args: ref Array[Ty], view: bool) -> Ty {
+    if view {
+        return Ty::Named { name: name.clone(), args: args.clone(), view: true }
+    }
+    if args.len() == 0 && (name == TEXT || name.ends_with("::String")) {
+        return Ty::Named { name: TEXT_VIEW.clone(), args: [], view: true }
+    }
+    return Ty::Named { name: name.clone(), args: args.clone(), view: true }
+}
+
+fn a_tuple(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Tuple(_) => true,
+        else => false,
+    }
+}
+
+fn a_count(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Count(_) => true,
+        else => false,
+    }
+}
+
+fn a_pointed(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Pointed { .. } => true,
+        else => false,
+    }
+}
+
+fn a_function_type(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Fn { .. } => true,
+        else => false,
+    }
+}
+
+fn a_sequence_type(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Seq { .. } => true,
+        else => false,
+    }
+}
+
+// Two lists of types that fit part by part.
+fn all_fit(found: ref Array[Ty], wanted: ref Array[Ty]) -> bool {
+    if found.len() != wanted.len() {
+        return false
+    }
+    for at in 0..<found.len() {
+        if !found[at].fits(ref wanted[at]) {
+            return false
+        }
+    }
+    return true
+}
+
+fn tuple_fits(parts: ref Array[Ty], expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Tuple(wanted) => all_fit(parts, wanted),
+        else => false,
+    }
+}
+
+fn count_fits(n: i64, expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Count(wanted) => n == wanted,
+        else => false,
+    }
+}
+
+// A `ref mut Array[u8]` is not a `ref Array[u8]`, which promises not to
+// write, and a run is not one element (ADR-147 D1).
+fn pointed_fits(found: ref Ty, run: bool, writes: bool, expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Pointed { item, slice, mutable } => found.fits(item) && run == slice && writes == mutable,
+        else => false,
+    }
+}
+
+// `Array[T]` with no length, which an `Array[T, N]` fits.
+fn an_array_of_any_length(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => !view && name == ARRAY && args.len() == 1,
+        else => false,
+    }
+}
+
+fn array_fits(given: ref Array[Ty], expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Named { args, .. } => given[0].fits(ref args[0]),
+        else => false,
+    }
+}
+
+// Whether a value of this type lends a **run** of `item` laid out in memory
+// (ADR-147 D1): a list, an array and - where the item is `u8` - text, which
+// is a run of bytes. A slice is a run already (ADR-215 D3).
+fn lends_a_run_of(found: ref Ty, item: ref Ty) -> bool {
+    return match found {
+        Ty::Unknown => true,
+        Ty::Named { name, args, .. } => a_run_named(name, args, item),
+        else => false,
+    }
+}
+
+fn a_run_named(name: ref String, args: ref Array[Ty], item: ref Ty) -> bool {
+    if (name == "Vec" || name == "List") && args.len() == 1 {
+        return args[0].fits(item)
+    }
+    if name == ARRAY && (args.len() == 1 || args.len() == 2) {
+        return args[0].fits(item)
+    }
+    if (name == "String" || name == "str") && args.len() == 0 {
+        return match item {
+            Ty::Named { name, .. } => name == "u8",
+            else => false,
+        }
+    }
+    return false
+}
+
+// A lambda that does less fits a type that allows more (ADR-102 D2): one that
+// never pauses goes where pausing is allowed, one that cannot fail where
+// failing is. A result nobody wrote is the absence of a claim.
+fn function_fits(found: ref Array[Ty], found_result: ref Ty?, never_pauses: bool, fails: bool, expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Fn { params, result, is_sync, can_throw } => all_fit(found, params) && results_fit(found_result, result) && (never_pauses || !is_sync) && (!fails || can_throw),
+        else => false,
+    }
+}
+
+fn results_fit(found: ref Ty?, wanted: ref Ty?) -> bool {
+    if found == null || wanted == null {
+        return true
+    }
+    return found?.fits_any(wanted) ?? true
+}
+
+// Two sequences fit when their items do (ADR-105 D1). `pauses` fits as
+// `throws` does and the other way round from `sync` (ADR-172 D1); `Par` fits
+// `Seq` and not back (D3); a demanded shape is met by the word (ADR-212 D1).
+fn sequence_fits(found: ref Ty, never_pauses: bool, may_pause: bool, fails: bool, at_once: bool, has: ref Shape, expected: ref Ty) -> bool {
+    return match expected {
+        Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => found.fits(item) && (never_pauses || !is_sync) && (!may_pause || pauses) && (!fails || can_throw) && (at_once || !parallel) && has.meets(shape),
+        else => false,
+    }
+}
+
+// Two nullables fit when what they may hold fits, and a plain value fits a
+// nullable slot - the one widening this checker has (Part I 2.3).
+fn nullable_fits(found: ref Ty, wanted: ref Ty) -> bool {
+    return match found {
+        Ty::Nullable(inner) => inner.fits(wanted),
+        else => found.fits(wanted),
+    }
+}
+
+// Two names fit when they are written the same, view and all, with arguments
+// that fit.
+fn named_fits(found: ref Ty, wanted: ref String, wanted_args: ref Array[Ty], wanted_view: bool) -> bool {
+    return match found {
+        Ty::Named { name, args, view } => name == wanted && view == wanted_view && all_fit(args, wanted_args),
+        else => false,
+    }
+}
+
+fn erased_each(parts: ref Array[Ty], parameters: ref collections::BTreeSet[String]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for part in parts {
+        out.push(part.erase(parameters))
+    }
+    return out
+}
+
+fn erased_name(name: ref String, args: ref Array[Ty], view: bool, parameters: ref collections::BTreeSet[String]) -> Ty {
+    if args.len() == 0 && parameters.contains(name) {
+        return Ty::Unknown
+    }
+    return Ty::Named { name: name.clone(), args: erased_each(args, parameters), view: view }
+}
+
+fn parameterised_each(parts: ref Array[Ty], parameters: ref collections::BTreeSet[String]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for part in parts {
+        out.push(part.parameterise(parameters))
+    }
+    return out
+}
+
+fn parameterised_name(name: ref String, args: ref Array[Ty], view: bool, parameters: ref collections::BTreeSet[String]) -> Ty {
+    if args.len() == 0 && parameters.contains(name) {
+        return Ty::Var { name: name.clone(), view: view }
+    }
+    return Ty::Named { name: name.clone(), args: parameterised_each(args, parameters), view: view }
+}
+
+/// **Bind a library signature's variables from the receiver's type**
+/// (ADR-031): one level and by position, and a mismatch binds nothing. The
+/// view flag is not compared, because a signature writes the receiver the way
+/// the method takes it and a caller holds it however it holds it. A sequence
+/// binds through its item (ADR-105 D1) and a lambda through its parameters and
+/// result (ADR-212 D5).
+pub fn bind(pattern: ref Ty, actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
+    match pattern {
+        Ty::Var { name, .. } => {
+            if !out.contains_key(name) {
+                out.insert(name.clone(), actual.clone())
+            }
+        }
+        Ty::Named { name, args, .. } => {
+            bind_named(name, args, actual, out)
+        }
+        Ty::Seq { item, .. } => {
+            bind_item(item, actual, out)
+        }
+        Ty::Fn { params, result, .. } => {
+            bind_code(params, result, actual, out)
+        }
+        else => {}
+    }
+}
+
+fn bind_named(pattern_name: ref String, pattern_args: ref Array[Ty], actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
+    match actual {
+        Ty::Named { name, args, .. } => {
+            bind_arguments(pattern_name, pattern_args, name, args, out)
+        }
+        else => {}
+    }
+}
+
+// Argument by argument, where the two are one name with as many arguments.
+fn bind_arguments(pattern_name: ref String, pattern_args: ref Array[Ty], name: ref String, args: ref Array[Ty], mut out: collections::BTreeMap[String, Ty]) {
+    if name != pattern_name || args.len() != pattern_args.len() {
+        return
+    }
+    for at in 0..<args.len() {
+        bind(pattern_args[at], args[at], out)
+    }
+}
+
+fn bind_item(pattern: ref Ty, actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
+    match actual {
+        Ty::Seq { item, .. } => {
+            bind(pattern, item, out)
+        }
+        else => {}
+    }
+}
+
+fn bind_code(pattern_params: ref Array[Ty], pattern_result: ref Ty?, actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
+    match actual {
+        Ty::Fn { params, result, .. } => {
+            let shorter = if params.len() < pattern_params.len() { params.len() } else { pattern_params.len() }
+            for at in 0..<shorter {
+                bind(pattern_params[at], params[at], out)
+            }
+            if pattern_result != null && result != null {
+                let pattern = pattern_result?.clone() ?? Ty::Unknown
+                let bound_from = result?.clone() ?? Ty::Unknown
+                bind(pattern, bound_from, out)
+            }
+        }
+        else => {}
+    }
+}
+
+/// **A signature's variables replaced by what they were bound to.** An
+/// unbound variable becomes `?`, never a name: that is the whole safety
+/// argument for `Var` (ADR-024 D4). `ref $V` bound to a named type is a view
+/// of it.
+pub fn substitute(ty: ref Ty, bound: ref collections::BTreeMap[String, Ty]) -> Ty {
+    return match ty {
+        Ty::Var { name, view } => substituted(name, view, bound),
+        Ty::Named { name, args, view } => Ty::Named { name: name.clone(), args: substituted_each(args, bound), view: view },
+        Ty::Tuple(parts) => Ty::Tuple(substituted_each(parts, bound)),
+        Ty::Pointed { item, slice, mutable } => Ty::Pointed { item: substitute(item, bound), slice: slice, mutable: mutable },
+        Ty::Fn { params, result, is_sync, can_throw } => Ty::Fn { params: substituted_each(params, bound), result: substituted_result(result, bound), is_sync: is_sync, can_throw: can_throw },
+        Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => Ty::Seq { item: substitute(item, bound), is_sync: is_sync, pauses: pauses, can_throw: can_throw, parallel: parallel, shape: shape.clone() },
+        Ty::Nullable(inner) => Ty::Nullable(substitute(inner, bound)),
+        else => ty.clone(),
+    }
+}
+
+fn substituted(name: ref String, view: bool, bound: ref collections::BTreeMap[String, Ty]) -> Ty {
+    if !bound.contains_key(name) {
+        return Ty::Unknown
+    }
+    let found = bound[name]?.clone() ?? Ty::Unknown
+    if view {
+        match found {
+            Ty::Named { name, args, .. } => {
+                return Ty::Named { name: name.clone(), args: args.clone(), view: true }
+            }
+            else => {}
+        }
+    }
+    return found.clone()
+}
+
+fn substituted_each(parts: ref Array[Ty], bound: ref collections::BTreeMap[String, Ty]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for part in parts {
+        out.push(substitute(part, bound))
+    }
+    return out
+}
+
+fn substituted_result(result: ref Ty?, bound: ref collections::BTreeMap[String, Ty]) -> Ty? {
+    return result?.substituted_in(bound)
+}
+
+/// **Every named type `declared` lists, written with `module::` in front**
+/// (ADR-011 D2): a module's own signature says `-> Conn`, and a caller writes
+/// `pool::Conn`. Made one where a unit is absorbed, the only place that knows
+/// both the module and what it declares.
+pub fn qualify(ty: ref Ty, module: ref String, declared: ref collections::BTreeSet[String]) -> Ty {
+    return match ty {
+        Ty::Named { name, args, view } => Ty::Named { name: qualified_name(name, module, declared), args: qualified_each(args, module, declared), view: view },
+        Ty::Tuple(parts) => Ty::Tuple(qualified_each(parts, module, declared)),
+        Ty::Fn { params, result, is_sync, can_throw } => Ty::Fn { params: qualified_each(params, module, declared), result: qualified_result(result, module, declared), is_sync: is_sync, can_throw: can_throw },
+        else => ty.clone(),
+    }
+}
+
+fn qualified_name(name: ref String, module: ref String, declared: ref collections::BTreeSet[String]) -> String {
+    if declared.contains(name) {
+        return f"{module}::{name}"
+    }
+    return name.clone()
+}
+
+fn qualified_each(parts: ref Array[Ty], module: ref String, declared: ref collections::BTreeSet[String]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for part in parts {
+        out.push(qualify(part, module, declared))
+    }
+    return out
+}
+
+fn qualified_result(result: ref Ty?, module: ref String, declared: ref collections::BTreeSet[String]) -> Ty? {
+    return result?.qualified_in(module, declared)
+}
+
+/// **A type named through one package's word for another, renamed to the
+/// word this build uses** (ADR-053 D2): only the prefix, and only where the
+/// map has it. A `&` in front is a view's spelling and stays where it was.
+pub fn renamed(ty: ref Ty, renames: ref collections::BTreeMap[String, String]) -> Ty {
+    return match ty {
+        Ty::Named { name, args, view } => Ty::Named { name: renamed_name(name, renames), args: renamed_each(args, renames), view: view },
+        Ty::Tuple(parts) => Ty::Tuple(renamed_each(parts, renames)),
+        Ty::Fn { params, result, is_sync, can_throw } => Ty::Fn { params: renamed_each(params, renames), result: renamed_result(result, renames), is_sync: is_sync, can_throw: can_throw },
+        Ty::Nullable(inner) => Ty::Nullable(renamed(inner, renames)),
+        else => ty.clone(),
+    }
+}
+
+fn renamed_name(name: ref String, renames: ref collections::BTreeMap[String, String]) -> String {
+    if name.starts_with("&") {
+        let rest = cut(name, 1, 0)
+        let path = renamed_path(rest, renames)
+        return f"&{path}"
+    }
+    return renamed_path(name, renames)
+}
+
+// The package before the first `::`, renamed where the map has it.
+fn renamed_path(name: ref String, renames: ref collections::BTreeMap[String, String]) -> String {
+    let c: Vec[char] = name.chars().collect()
+    for at in 0..<c.len() {
+        if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
+            let package = between(c, 0, at)
+            if renames.contains_key(package) {
+                let ours = renames[package] ?? ""
+                let rest = between(c, at, c.len())
+                return f"{ours}{rest}"
+            }
+            return name.clone()
+        }
+    }
+    return name.clone()
+}
+
+fn renamed_each(parts: ref Array[Ty], renames: ref collections::BTreeMap[String, String]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for part in parts {
+        out.push(renamed(part, renames))
+    }
+    return out
+}
+
+fn renamed_result(result: ref Ty?, renames: ref collections::BTreeMap[String, String]) -> Ty? {
+    return result?.renamed_by(renames)
 }

@@ -222,7 +222,7 @@ fn pausing(
         return Vec::new();
     };
     let mut found = Vec::new();
-    if declared.sync.is_sync() && !contract.sync.is_sync() {
+    if declared.sync_claim.is_sync() && !contract.sync_claim.is_sync() {
         found.push(Finding {
             severity: Severity::Error,
             span: *span,
@@ -243,7 +243,7 @@ fn pausing(
             labels: Vec::new(),
         });
     }
-    if declared.throws.is_empty() && !contract.throws.is_empty() {
+    if declared.fails_with.is_empty() && !contract.fails_with.is_empty() {
         found.push(Finding {
             severity: Severity::Error,
             span: *span,

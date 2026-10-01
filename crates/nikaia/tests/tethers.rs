@@ -12,7 +12,7 @@
 //! rather than a wrong program.
 
 use nikaia::contracts::tether::State;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::parser::parse_to_ast;
 
 fn ledger(source: &str) -> Ledger {

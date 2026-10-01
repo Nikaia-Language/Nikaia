@@ -103,6 +103,7 @@ use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
 use super::{Ledger, send, ty::Ty};
+use crate::contracts::SignatureOps;
 use crate::contracts::ty::TyOps;
 
 /// The type whose count this is about.
@@ -287,20 +288,7 @@ pub trait ClassOps: Sized {
 impl ClassOps for Class {
     /// Read one back from the ledger.
     fn parse(text: &str) -> Option<Self> {
-        let (members, count) = text.rsplit_once(':')?;
-        let members: Vec<String> = members
-            .split('|')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        match members.is_empty() {
-            true => None,
-            false => Some(Class {
-                members,
-                count: Count::parse(count)?,
-            }),
-        }
+        nikaia_std::tools::ledger::class_of(text)
     }
 }
 

@@ -5,8 +5,8 @@
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn distance(a: &str, b: &str) -> i64 {
-    let x: Vec<char> = a.chars().collect::<Vec<_>>();
-    let y: Vec<char> = b.chars().collect::<Vec<_>>();
+    let x: Vec<char> = nikaia_std::list::chars(a.chars());
+    let y: Vec<char> = nikaia_std::list::chars(b.chars());
     let rows = x.len() as i64 + 1;
     let cols = y.len() as i64 + 1;
     let mut d: Vec<Vec<i64>> = Vec::new();
@@ -33,8 +33,8 @@ pub fn distance(a: &str, b: &str) -> i64 {
 // this was written - see `contracts::sync`.
 pub fn one_edit_apart(a: &str, b: &str) -> bool {
     if a == b { return false; }
-    let x: Vec<char> = a.chars().collect::<Vec<_>>();
-    let y: Vec<char> = b.chars().collect::<Vec<_>>();
+    let x: Vec<char> = nikaia_std::list::chars(a.chars());
+    let y: Vec<char> = nikaia_std::list::chars(b.chars());
     if (x.len() as i64) == y.len() as i64 {
         let mut differ = 0;
         for i in 0..x.len() as i64 { if *nikaia_std::index::get(&x, nikaia_std::index::at(i)) != *nikaia_std::index::get(&y, nikaia_std::index::at(i)) { differ += 1; } }
@@ -48,7 +48,7 @@ pub fn one_edit_apart(a: &str, b: &str) -> bool {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 fn one_put_in(long: &str, short: &str) -> bool {
-    let kept: Vec<char> = short.chars().collect::<Vec<_>>();
+    let kept: Vec<char> = nikaia_std::list::chars(short.chars());
     let mut at: i64 = 0;
     let mut skipped = false;
     for c in long.chars() { if at < kept.len() as i64 && *nikaia_std::index::get(&kept, nikaia_std::index::at(at)) == c { at += 1; } else if skipped { return false; } else { skipped = true; } }

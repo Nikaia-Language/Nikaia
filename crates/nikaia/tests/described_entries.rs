@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use nikaia::check::{self, Finding};
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::parser::parse_to_ast;
 use nikaia::project::Foreign;
 

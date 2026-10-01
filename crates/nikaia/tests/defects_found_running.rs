@@ -8,7 +8,7 @@ mod common;
 
 use std::process::Command;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -582,5 +582,37 @@ fn a_root_under_a_directory_built_from_a_literal() {
             std::fs::create_dir_all(dir.join("site")).expect("the site directory");
             std::fs::write(dir.join("site/index.html"), "<p>hi\n").expect("the page");
         },
+    );
+}
+
+/// **A view a loop or an arm binds is the view** (0.0.297): an element of a
+/// `Vec[ref String]` and a variant's `ref String` part, reached through a lent
+/// value, were a view of a view below - `w == "fn"` compared a `&&str` with a
+/// `str` (found moving the ledger's reader onto a grammar).
+#[test]
+fn a_view_a_loop_or_an_arm_binds_is_the_view() {
+    runs(
+        "view-bindings",
+        "enum Line { Table { kind: ref String }, Blank }\n\
+         \n\
+         fn kind_of(line: ref Line) -> String {\n\
+         \x20   match line {\n\
+         \x20       Line::Table { kind } => {\n\
+         \x20           if kind == \"fn\" { return \"a function\" }\n\
+         \x20           return kind.clone()\n\
+         \x20       }\n\
+         \x20       Line::Blank => { return \"nothing\" }\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let words: Vec[ref String] = [\"fn\", \"let\"]\n\
+         \x20   for w in words {\n\
+         \x20       if w == \"fn\" { println(\"first\") }\n\
+         \x20       println(kind_of(Line::Table { kind: w }))\n\
+         \x20   }\n\
+         \x20   println(kind_of(Line::Blank))\n\
+         }\n",
+        "first\na function\nlet\nnothing\n",
     );
 }

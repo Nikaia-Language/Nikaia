@@ -8,8 +8,9 @@
 // and every reader of `Signature` reads that. What changes is the file: there
 // the receiver is `ref self` or `ref mut self`, a type variable is declared in
 // brackets before the parameters, and the result says where it points with
-// `ref(a | b)`. This module is the one place that turns one into the other, in
-// both directions, and nothing else knows the file's spelling.
+// `ref(a | b)`. This module writes the file's spelling; reading it back is
+// `tools/ledger.nika`'s `unspell` (0.0.292, ADR-257 step (c)), beside the rest
+// of the reader.
 //
 //     (ref Scan, c: char)                       mutates = true
 //     (ref mut self, c: char)
@@ -29,13 +30,6 @@ pub struct Spelled {
     pub text: String,
     pub borrows_said: bool,
     pub mutates_said: bool,
-}
-
-/// A signature read back from the file's spelling into the compiler's.
-pub struct Read {
-    pub text: String,
-    pub borrows: Vec<String>,
-    pub mutates: bool,
 }
 
 /// The compiler's signature text, `key`'s entry, into the file's spelling.
@@ -109,103 +103,6 @@ pub fn spell(text: &str, key: &str, borrows: &[String], mutates: bool) -> Spelle
     }
 }
 
-/// The file's spelling of `key`'s signature back into the compiler's.
-///
-/// **A signature in the spelling before it reads unchanged**: no bracket list
-/// of bare names, no `self`, no `ref(…)`, and `$T` already the compiler's.
-pub fn unspell(text: &str, key: &str) -> Read {
-    let Some(parts) = Parts::of(text) else {
-        return Read {
-            text: text.to_string(),
-            borrows: Vec::new(),
-            mutates: false,
-        };
-    };
-    let names: Vec<String> = parts
-        .bracket
-        .iter()
-        .map(|d| d.split(':').next().unwrap_or(d).trim().to_string())
-        .collect();
-    let bounded: Vec<String> = parts
-        .bracket
-        .iter()
-        .filter(|d| d.contains(':'))
-        .cloned()
-        .collect();
-
-    let (mut positional, options) = parts.positional_and_options();
-    let mut mutates = false;
-    let owner = owner_of(key).unwrap_or("?");
-    if let Some(first) = positional.first_mut() {
-        let written = first.trim().to_string();
-        let as_type = match written.as_str() {
-            "self" => Some(owner.to_string()),
-            "ref self" => Some(format!("ref {owner}")),
-            "ref mut self" => {
-                mutates = true;
-                Some(format!("ref {owner}"))
-            }
-            other => match (other.strip_prefix("mut self:"), other.strip_prefix("self:")) {
-                (Some(ty), _) => {
-                    mutates = true;
-                    Some(ty.trim().to_string())
-                }
-                (None, Some(ty)) => Some(ty.trim().to_string()),
-                (None, None) => None,
-            },
-        };
-        if let Some(ty) = as_type {
-            *first = ty;
-        }
-    }
-    let takes_self = positional
-        .first()
-        .is_some_and(|_| receiver_written(&parts.positional_and_options().0));
-
-    // Where the result points: every `ref(…)` in it, gathered in the order the
-    // parameters are declared.
-    let (result, pointed) = gather_refs(&parts.result);
-    let mut order: Vec<String> = Vec::new();
-    if takes_self {
-        order.push("self".to_string());
-    }
-    for part in &positional {
-        if let Some((name, _)) = part.split_once(':')
-            && is_named(part)
-        {
-            order.push(name.trim().trim_start_matches("mut ").trim().to_string());
-        }
-    }
-    let mut borrows: Vec<String> = order
-        .iter()
-        .filter(|p| pointed.contains(p))
-        .cloned()
-        .collect();
-    for name in &pointed {
-        if !borrows.contains(name) {
-            borrows.push(name.clone());
-        }
-    }
-
-    let mut body = positional.join(", ");
-    if let Some(options) = &options {
-        body = format!("{body}; {options}");
-    }
-    let before = match bounded.is_empty() {
-        true => String::new(),
-        false => format!("[{}]", bounded.join(", ")),
-    };
-    Read {
-        text: format!(
-            "{before}({}){}",
-            variables_marked(&body, &names),
-            variables_marked(&result, &names)
-        ),
-        borrows,
-        mutates,
-    }
-}
-
 /// A signature taken apart: the bracket list's entries, what is inside the
 /// parameter list, and everything after it (` -> T`, or nothing).
 struct Parts {
@@ -256,17 +153,6 @@ impl Parts {
             .collect();
         (parts, options)
     }
-}
-
-/// Whether the file's first parameter is a receiver, in either spelling.
-fn receiver_written(positional: &[String]) -> bool {
-    positional.first().is_some_and(|first| {
-        let first = first.trim();
-        matches!(first, "self" | "ref self" | "ref mut self")
-            || first.starts_with("self:")
-            || first.starts_with("mut self:")
-            || !is_named(first)
-    })
 }
 
 /// The type an entry's receiver is when it is written `self`: what stands
@@ -348,35 +234,6 @@ fn replace_ref(text: &str, with: &str) -> String {
     out
 }
 
-/// Every `ref(a | b)` in `text` written `ref`, and the names they held.
-fn gather_refs(text: &str) -> (String, Vec<String>) {
-    let mut out = String::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut rest = text;
-    while let Some(at) = rest.find("ref(") {
-        let before = rest[..at].chars().next_back();
-        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-            out.push_str(&rest[..at + 4]);
-            rest = &rest[at + 4..];
-            continue;
-        }
-        let Some(close) = rest[at + 4..].find(')') else {
-            break;
-        };
-        for name in rest[at + 4..at + 4 + close].split('|') {
-            let name = name.trim().to_string();
-            if !name.is_empty() && !names.contains(&name) {
-                names.push(name);
-            }
-        }
-        out.push_str(&rest[..at]);
-        out.push_str("ref");
-        rest = &rest[at + 4 + close + 1..];
-    }
-    out.push_str(rest);
-    (out, names)
-}
-
 /// Every `$T` in `text`, by name, in the order each first appears.
 fn variables(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -391,38 +248,6 @@ fn variables(text: &str) -> Vec<String> {
         if !name.is_empty() && !out.contains(&name) {
             out.push(name);
         }
-    }
-    out
-}
-
-/// `text` with every word that is one of `names` written `$name` - not a
-/// segment of a path (`a::T`), and not one already marked.
-fn variables_marked(text: &str, names: &[String]) -> String {
-    if names.is_empty() {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    let bytes: Vec<char> = text.chars().collect();
-    let mut at = 0;
-    while at < bytes.len() {
-        let c = bytes[at];
-        if c.is_ascii_alphabetic() || c == '_' {
-            let start = at;
-            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == '_') {
-                at += 1;
-            }
-            let word: String = bytes[start..at].iter().collect();
-            let before = start.checked_sub(1).map(|b| bytes[b]);
-            let path_before = start >= 2 && bytes[start - 1] == ':' && bytes[start - 2] == ':';
-            let path_after = at + 1 < bytes.len() && bytes[at] == ':' && bytes[at + 1] == ':';
-            if names.contains(&word) && before != Some('$') && !path_before && !path_after {
-                out.push('$');
-            }
-            out.push_str(&word);
-            continue;
-        }
-        out.push(c);
-        at += 1;
     }
     out
 }

@@ -9,7 +9,7 @@
 //! The type side was already decided — [ADR-093](../../../docs/specification/adr/adr-093.md)
 //! gives the never type — so what this needed was the grammar and one ruling.
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

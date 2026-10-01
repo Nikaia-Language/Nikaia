@@ -118,10 +118,33 @@ pub mod text {
 /// nor a `?` works inside the closure `.map` takes. Where the method does
 /// neither, the `match` is the same thing written longer, which is what the
 /// lint says (`ty.nika`'s `result?.text()`, ADR-257).
+///
+/// **And eight that say how the lowering writes, not what it does**
+/// (`ledger.nika`'s reader, ADR-257 step (c)): a written `return` at a
+/// function's end, `Ok(f()?)` where a failure passes through unchanged, a
+/// closure around a constructor for `??`'s fallback, a `match` over a
+/// reach that a `?` would say shorter, and a `ref Vec[T]` parameter that
+/// `Vec::contains` is described on, and `c >= 'a' && c <= 'z'`, which is how
+/// the language writes a range test, a copied binding handed straight back
+/// (`Ty::Named { view, .. } => view` is `let view = *view; view`), and a
+/// `match` with one pattern beside an empty `else`, which is how the language
+/// writes what Rust calls `if let` (`ty.nika`'s walks, ADR-257 step (d)). Each
+/// is the same machine code as the shorter spelling. So is `&*value` where the
+/// grammar's input is already a view (`grammar::parse`, 0.0.297): the
+/// lowering writes one form for owned text, a mapping and a view alike.
 #[allow(
+    clippy::borrow_deref_ref,
     clippy::explicit_counter_loop,
     clippy::clone_on_copy,
-    clippy::manual_map
+    clippy::manual_map,
+    clippy::needless_return,
+    clippy::needless_question_mark,
+    clippy::redundant_closure,
+    clippy::question_mark,
+    clippy::ptr_arg,
+    clippy::manual_range_contains,
+    clippy::let_and_return,
+    clippy::single_match
 )]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
@@ -165,6 +188,8 @@ pub mod tools {
     /// it (ADR-250, 0.0.258). The compiler's `Ledger::parse` calls it and keeps
     /// what each key means.
     pub mod ledger {
+        use super::ty::*;
+
         include!("tools/ledger.rs");
     }
 

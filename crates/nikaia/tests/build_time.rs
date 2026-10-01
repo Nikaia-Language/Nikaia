@@ -13,7 +13,7 @@
 
 mod common;
 
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -444,7 +444,7 @@ fn an_array_has_a_length_in_the_ledger() {
         .functions
         .get("Array::len")
         .expect("`Array::len` is described");
-    assert!(entry.sync.is_sync() && entry.touches_known && entry.touches.is_empty());
+    assert!(entry.sync_claim.is_sync() && entry.touches_known && entry.touches.is_empty());
     assert!(library.functions.contains_key("Array::is_empty"));
 }
 

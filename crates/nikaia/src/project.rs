@@ -20,6 +20,7 @@
 //! line. What is here is Nikaia's half - which file is the entry, which
 //! switches were chosen, and what the lowering does.
 
+use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,7 +33,8 @@ use orchestrator::project::{
     write_if_changed,
 };
 
-use crate::contracts::{Ledger, STD, sync};
+use crate::contracts::SignatureOps;
+use crate::contracts::{Ledger, sync};
 use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
@@ -863,7 +865,7 @@ pub const DERIVED: &str = "derived";
 /// asked for it. Measured on a three-line project, where a description saying
 /// `() -> i64` left the call's result untyped and `n.no_such_method()` went
 /// through.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Foreign {
     /// `[dependencies]` with `type = "rust"`, under the name a program writes
     /// (`manifest::foreign_crates`).
@@ -893,6 +895,17 @@ pub struct Foreign {
     /// Two descriptions cannot disagree about a name without disagreeing about
     /// whose it is.
     pub descriptions: Ledger,
+}
+
+impl Default for Foreign {
+    fn default() -> Self {
+        Foreign {
+            declared: BTreeSet::new(),
+            described: BTreeSet::new(),
+            moved: BTreeMap::new(),
+            descriptions: Ledger::blank(),
+        }
+    }
 }
 
 impl Foreign {
@@ -943,7 +956,7 @@ impl Foreign {
     /// The day one does, that is a refusal to write and not a silence to keep —
     /// issue #100 carries it.
     pub fn library(&self) -> Result<Ledger> {
-        let mut library = Ledger::parse(STD).context("std's shipped ledger")?;
+        let mut library = crate::contracts::std_library();
         for (name, contract) in &self.descriptions.functions {
             library
                 .functions
@@ -1411,9 +1424,9 @@ fn newly(root: &Path, inferred: &Ledger) -> check::Newly {
         .filter_map(|(name, contract)| {
             let before = committed.functions.get(name)?;
             let gained: Vec<String> = contract
-                .throws
+                .fails_with
                 .iter()
-                .filter(|error| !before.throws.contains(error))
+                .filter(|error| !before.fails_with.contains(error))
                 .cloned()
                 .collect();
             (!gained.is_empty()).then(|| (name.clone(), gained))
@@ -1580,7 +1593,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     if !want.asked() {
         return Ok(());
     }
-    let library = Ledger::parse(STD).context("std's shipped ledger")?;
+    let library = crate::contracts::std_ledger();
     let several = program.units.len() > 1;
 
     // **Once for the program and not once per file**
@@ -1616,7 +1629,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                 crate::contracts::order::overlap_report(
                     &unit.parsed,
                     &program.contracts,
-                    &library,
+                    library,
                     &crate::emit::branch_starts_first(
                         &unit.parsed,
                         settings.build,
@@ -1631,7 +1644,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                 crate::contracts::sharing::report(
                     &unit.parsed,
                     &program.contracts,
-                    &library,
+                    library,
                     settings.build.user_parallelism == crate::emit::UserParallelism::Yes,
                 )
             );
@@ -1650,7 +1663,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                     &unit.source,
                     &unit.path.display().to_string(),
                     &program.contracts,
-                    &library,
+                    library,
                 )
             );
         }
@@ -1658,7 +1671,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
             print!(
                 "{}",
                 crate::contracts::trust::render(
-                    &crate::contracts::trust::analyse(&unit.parsed, &library),
+                    &crate::contracts::trust::analyse(&unit.parsed, library),
                     &unit.path.display().to_string(),
                     &unit.source,
                 )

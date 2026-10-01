@@ -140,7 +140,7 @@ fn a_type_that_is_dropped_is_not_a_copy() {
 #[test]
 fn a_described_type_that_copies_is_a_part_that_copies() {
     use nikaia::check::check_program;
-    use nikaia::contracts::Ledger;
+    use nikaia::contracts::{Ledger, LedgerOps};
 
     let library = |copies: &str| {
         Ledger::parse(&format!(

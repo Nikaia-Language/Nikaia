@@ -7,6 +7,7 @@
 //! C.1](../../../docs/specification/30-nikaia-tooling.md)'s class, and the one
 //! `NK1117` was built to report rather than hand to `rustc`.
 
+use nikaia::contracts::LedgerOps;
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 

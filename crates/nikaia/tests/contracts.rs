@@ -9,8 +9,9 @@ mod common;
 
 use std::path::PathBuf;
 
+use nikaia::contracts::SignatureOps;
 use nikaia::contracts::SyncOps;
-use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::contracts::{Ledger, LedgerOps, STD, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -32,8 +33,8 @@ fn a_declaration_is_recorded_as_it_was_written() {
     );
 
     let pure = &l.functions["pure"];
-    assert!(pure.public && pure.throws.is_empty());
-    assert_eq!(pure.sync, Sync::Asserted, "the source wrote the word");
+    assert!(pure.public && pure.fails_with.is_empty());
+    assert_eq!(pure.sync_claim, Sync::Asserted, "the source wrote the word");
 
     // Neither of these says `sync`, and neither of them calls anything, so
     // neither of them can pause. Before ADR-027 the ledger recorded that as
@@ -41,12 +42,12 @@ fn a_declaration_is_recorded_as_it_was_written() {
     // about. `throws` and `sync` are orthogonal: a function may fail without
     // pausing, and `risky` is one.
     let risky = &l.functions["risky"];
-    assert!(!risky.public && !risky.throws.is_empty());
-    assert_eq!(risky.sync, Sync::Inferred);
+    assert!(!risky.public && !risky.fails_with.is_empty());
+    assert_eq!(risky.sync_claim, Sync::Inferred);
 
     let plain = &l.functions["plain"];
-    assert!(!plain.public && plain.throws.is_empty());
-    assert_eq!(plain.sync, Sync::Inferred);
+    assert!(!plain.public && plain.fails_with.is_empty());
+    assert_eq!(plain.sync_claim, Sync::Inferred);
 }
 
 /// The inference claims `sync` only where it can prove it, and a call it cannot
@@ -66,12 +67,12 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
          fn calls_reader() -> String throws { return reads() }",
     );
 
-    assert_eq!(l.functions["pure"].sync, Sync::Inferred);
+    assert_eq!(l.functions["pure"].sync_claim, Sync::Inferred);
     // `std`'s ledger says `io::read_to_string` can pause.
-    assert_eq!(l.functions["reads"].sync, Sync::No);
+    assert_eq!(l.functions["reads"].sync_claim, Sync::No);
     // Transitive, in both directions.
-    assert_eq!(l.functions["calls_pure"].sync, Sync::Inferred);
-    assert_eq!(l.functions["calls_reader"].sync, Sync::No);
+    assert_eq!(l.functions["calls_pure"].sync_claim, Sync::Inferred);
+    assert_eq!(l.functions["calls_reader"].sync_claim, Sync::No);
 }
 
 /// A method call is resolved by the **type checker**, and the inference uses
@@ -95,10 +96,10 @@ fn a_method_call_is_resolved_through_the_receiver() {
     ));
 
     // `String::len` is in `std`'s ledger and says `sync`.
-    assert_eq!(l.functions["counted"].sync, Sync::Inferred);
+    assert_eq!(l.functions["counted"].sync_claim, Sync::Inferred);
     // The other is not, and an absent entry is the absence of an answer rather
     // than permission to assume one.
-    assert_eq!(l.functions["mutated"].sync, Sync::No);
+    assert_eq!(l.functions["mutated"].sync_claim, Sync::No);
 }
 
 /// A higher-order method hands on whatever its lambda does (ADR-029).
@@ -117,8 +118,8 @@ fn a_higher_order_method_hands_on_what_its_lambda_does() {
          fn pausing(m: collections::HashMap[ref String, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
     );
 
-    assert_eq!(l.functions["pure"].sync, Sync::Inferred);
-    assert_eq!(l.functions["pausing"].sync, Sync::No);
+    assert_eq!(l.functions["pure"].sync_claim, Sync::Inferred);
+    assert_eq!(l.functions["pausing"].sync_claim, Sync::No);
 }
 
 /// … and the check agrees, on a function that wrote `sync` by hand.
@@ -183,14 +184,14 @@ fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
          }",
     );
 
-    assert_eq!(l.functions["pruefe"].throws, ["LeereZeile"]);
-    assert_eq!(l.functions["sortiere"].throws, ["LeereZeile"]);
+    assert_eq!(l.functions["pruefe"].fails_with, ["LeereZeile"]);
+    assert_eq!(l.functions["sortiere"].fails_with, ["LeereZeile"]);
     // The same call over a lambda that cannot fail contributes nothing at all,
     // so `LeereZeile` above came from the lambda's body and from nowhere else.
     // The entry stays `["?"]` because the *declaration* is a promise a caller
     // already relies on and the inference is here to say more than it, never
     // less (ADR-027 D4's polarity, in `throws`).
-    assert_eq!(l.functions["ohne_lambda"].throws, ["?"]);
+    assert_eq!(l.functions["ohne_lambda"].fails_with, ["?"]);
 }
 
 /// A `while` body is part of the function around it.
@@ -207,8 +208,8 @@ fn a_while_body_is_walked_like_any_other() {
          fn counts(n: i64) -> i64 { let mut i = 0 while i < n { i += 1 } return i }",
     );
 
-    assert_eq!(l.functions["reads"].sync, Sync::No);
-    assert_eq!(l.functions["counts"].sync, Sync::Inferred);
+    assert_eq!(l.functions["reads"].sync_claim, Sync::No);
+    assert_eq!(l.functions["counts"].sync_claim, Sync::Inferred);
 }
 
 /// An asserted `sync` may not survive a call nothing can resolve.
@@ -274,7 +275,7 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
     let source = "fn ordne(xs: Vec[i64]) -> i64 { xs.sort_by_key fn { a } return 1 }\n\
                   fn im_lock(xs: Vec[i64]) -> i64 sync { return ordne(xs) }";
 
-    assert_eq!(ledger(source).functions["ordne"].sync, Sync::Inferred);
+    assert_eq!(ledger(source).functions["ordne"].sync_claim, Sync::Inferred);
     let found = violations(source);
     assert!(found.is_empty(), "{found:?}");
 }
@@ -308,7 +309,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
          }",
     );
 
-    assert_eq!(l.functions["Summary::record"].sync, Sync::Inferred);
+    assert_eq!(l.functions["Summary::record"].sync_claim, Sync::Inferred);
 }
 
 /// A variable in an **argument** would reject correct programs, so there is
@@ -344,7 +345,7 @@ fn an_unknown_element_type_does_not_become_a_claim() {
 
     // `a.whatever()` cannot be resolved, so the claim is refused - and refused
     // for the right reason rather than by an error about `$V`.
-    assert_eq!(l.functions["build"].sync, Sync::No);
+    assert_eq!(l.functions["build"].sync_claim, Sync::No);
 }
 
 /// **`from` is only sound for a lambda that runs before the call returns.**
@@ -368,7 +369,7 @@ fn a_detached_lambda_may_not_use_from() {
 
     let mut checked = 0;
     for (name, contract) in &shipped.functions {
-        let Some(parameter) = contract.sync.from() else {
+        let Some(parameter) = contract.sync_claim.from() else {
             continue;
         };
         // **The doors over several locks are the compiler's to type**
@@ -445,7 +446,7 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
         finished
             .functions
             .values()
-            .any(|c| c.sync == Sync::Inferred),
+            .any(|c| c.sync_claim == Sync::Inferred),
         "nothing was inferred, so there is no difference to be insensitive to"
     );
 
@@ -498,8 +499,8 @@ fn mutual_recursion_between_pure_functions_stays_sync() {
          fn odd(n: i32) -> bool { if n == 0 { return false } return even(n - 1) }",
     );
 
-    assert_eq!(l.functions["even"].sync, Sync::Inferred);
-    assert_eq!(l.functions["odd"].sync, Sync::Inferred);
+    assert_eq!(l.functions["even"].sync_claim, Sync::Inferred);
+    assert_eq!(l.functions["odd"].sync_claim, Sync::Inferred);
 }
 
 /// … and mutual recursion that reaches I/O loses it, on both sides.
@@ -511,8 +512,8 @@ fn mutual_recursion_that_reaches_io_is_not_sync() {
          fn pong(n: i32) -> i32 throws { return ping(n - 1) }",
     );
 
-    assert_eq!(l.functions["ping"].sync, Sync::No);
-    assert_eq!(l.functions["pong"].sync, Sync::No);
+    assert_eq!(l.functions["ping"].sync_claim, Sync::No);
+    assert_eq!(l.functions["pong"].sync_claim, Sync::No);
 }
 
 /// The answer does not depend on the order the source declared things in.
@@ -533,7 +534,11 @@ fn the_inference_does_not_depend_on_declaration_order() {
     for source in [forwards, backwards] {
         let l = ledger(source);
         for name in ["a", "b", "c"] {
-            assert_eq!(l.functions[name].sync, Sync::Inferred, "{name} in {source}");
+            assert_eq!(
+                l.functions[name].sync_claim,
+                Sync::Inferred,
+                "{name} in {source}"
+            );
         }
     }
 }
@@ -544,7 +549,7 @@ fn the_inference_does_not_depend_on_declaration_order() {
 fn starting_a_task_is_not_pure_computation() {
     // Part I 8.2's one form, which the parser now takes: `spawn fn { … }`.
     let l = ledger("fn go(n: i32) { spawn fn { n + 1 } }");
-    assert_eq!(l.functions["go"].sync, Sync::No);
+    assert_eq!(l.functions["go"].sync_claim, Sync::No);
 }
 
 /// The borrow contract, in the spec's own spelling: a result that is a view may
@@ -602,7 +607,7 @@ fn a_method_is_named_the_way_it_is_called() {
     );
 
     assert!(l.functions.contains_key("Stats::new"), "{:?}", l.functions);
-    assert_eq!(l.functions["Stats::add"].sync, Sync::Asserted);
+    assert_eq!(l.functions["Stats::add"].sync_claim, Sync::Asserted);
 }
 
 /// The file is a pure function of source and toolchain, which is what lets
@@ -1166,15 +1171,15 @@ fn a_pausing_call_inside_a_hole_costs_the_sync_claim() {
     );
 
     assert!(
-        !l.functions["hidden"].sync.is_sync(),
+        !l.functions["hidden"].sync_claim.is_sync(),
         "a call inside a hole was invisible to the inference"
     );
     // The same call written outside a hole, for comparison - the two spellings
     // have to give the same answer, which is the whole point.
-    assert!(!l.functions["plain"].sync.is_sync());
+    assert!(!l.functions["plain"].sync_claim.is_sync());
     // …and a hole with nothing in it that can pause still earns the claim, so
     // this is not a blanket refusal of anything holding a `{`.
-    assert!(l.functions["pure"].sync.is_sync());
+    assert!(l.functions["pure"].sync_claim.is_sync());
 }
 
 /// The **check** sees into a hole too, so an asserted `sync` is held to it.

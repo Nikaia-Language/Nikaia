@@ -25,7 +25,7 @@
 //! `tests/shared.rs`, which compiles and runs.
 
 use nikaia::contracts::sharing::{self, Count, Fallback};
-use nikaia::contracts::{Ledger, STD, TypeContract};
+use nikaia::contracts::{Ledger, LedgerOps, STD, TypeContract};
 use nikaia::parser::parse_to_ast;
 
 /// A parsed program with the two ledgers every analysis here needs.
@@ -307,7 +307,7 @@ fn a_type_whose_fields_are_rust_hides_what_it_holds() {
         "Opaque".to_string(),
         TypeContract {
             fields: Vec::new(),
-            ..TypeContract::default()
+            ..TypeContract::empty()
         },
     );
     let source = "fn zaehle(o: Opaque) {\n\

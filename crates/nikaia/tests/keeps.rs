@@ -14,7 +14,7 @@
 //! nothing in the column itself says which of the two it is; only a test that a
 //! read stays a read does.
 
-use nikaia::contracts::Ledger;
+use nikaia::contracts::{Ledger, LedgerOps};
 use nikaia::parser::parse_to_ast;
 
 /// What the ledger says one function keeps, after the inference.

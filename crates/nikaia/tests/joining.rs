@@ -22,7 +22,7 @@
 mod common;
 
 use nikaia::check;
-use nikaia::contracts::{Ledger, STD};
+use nikaia::contracts::{Ledger, LedgerOps, STD};
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
@@ -44,7 +44,7 @@ fn violations(source: &str) -> Vec<nikaia::contracts::sync::Violation> {
 /// What the ledger derives for one function's `sync` column.
 fn is_sync(source: &str, of: &str) -> bool {
     let parsed = parse_to_ast(source).expect("the source parses");
-    Ledger::infer(&parsed).functions[of].sync.is_sync()
+    Ledger::infer(&parsed).functions[of].sync_claim.is_sync()
 }
 
 /// Lower it, compile it, run it, hand back what it printed — which is the only
