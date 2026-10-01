@@ -135,8 +135,10 @@ impl Interpreter {
 
     fn builtin_println(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr { text: s, .. } | Expr::LitInterpolated { text: s, .. } = arg {
+            if let Expr::LitStr { text: s, .. } = arg {
                 println!("{}", s);
+            } else if let Expr::LitInterpolated { parts } = arg {
+                println!("{}", crate::emit::format_of(parts));
             } else {
                 println!("<expression>");
             }
@@ -145,8 +147,10 @@ impl Interpreter {
 
     fn builtin_log(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr { text: s, .. } | Expr::LitInterpolated { text: s, .. } = arg {
+            if let Expr::LitStr { text: s, .. } = arg {
                 println!("[LOG] {}", s);
+            } else if let Expr::LitInterpolated { parts } = arg {
+                println!("[LOG] {}", crate::emit::format_of(parts));
             }
         }
     }

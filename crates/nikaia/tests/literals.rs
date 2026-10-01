@@ -520,7 +520,8 @@ fn the_way_out_runs_and_what_prints_is_untouched() {
 
 /// **The grammar parses a hole** ([ADR-262](../../../docs/specification/adr/adr-262.md)
 /// D1, D2): the literal's parts are text runs and holes, and a hole is an
-/// expression of the tree - with its format, where one follows the `:`.
+/// expression of the tree - with its format, where one follows the `:` - and
+/// the emitter builds the format string from them (D5).
 #[test]
 fn the_tree_holds_the_parts_of_an_interpolation() {
     use nikaia::ast::{Expr, FPart, Item, Stmt};
@@ -534,17 +535,19 @@ fn the_tree_holds_the_parts_of_an_interpolation() {
     let Stmt::Expr(Expr::Call { args, .. }) = &body.stmts[1].node else {
         panic!("a call: {:?}", body.stmts[1].node);
     };
-    let Expr::LitInterpolated { text, parts } = &args[0] else {
+    let Expr::LitInterpolated { parts } = &args[0] else {
         panic!("an interpolation: {:?}", args[0]);
     };
-    assert_eq!(text, "a {n:>4} b {g(\"x\")} {{c}}");
     let holes: Vec<_> = parts
         .iter()
         .filter_map(|p| match p {
-            FPart::Hole { expr, spec } => Some((expr, spec.as_deref())),
+            FPart::Hole { expr, spec, at } => Some((expr, spec.as_deref(), *at)),
             FPart::Text(_) => None,
         })
         .collect();
+    // Each hole is found again by the byte its `{` stands at (D2).
+    assert_eq!((holes[0].2, holes[1].2), (34, 43), "{holes:?}");
+    let holes: Vec<_> = holes.into_iter().map(|(e, s, _)| (e, s)).collect();
     assert_eq!(holes.len(), 2, "{parts:?}");
     assert!(
         matches!(holes[0], (Expr::Variable(_), Some(">4"))),
@@ -562,6 +565,12 @@ fn the_tree_holds_the_parts_of_an_interpolation() {
             .any(|p| matches!(p, FPart::Text(t) if t == " {{c}}")),
         "{parts:?}"
     );
+    // **And the emitter builds the format string from them** (D5).
+    let emitted = emit(
+        "fn g(s: ref String) -> String { return s.clone() }\n\
+         fn main() { let n = 3 println(f\"a {n:>4} b {g(\"x\")} {{c}}\") }",
+    );
+    assert!(emitted.contains(r#"a {:>4} b {} {{c}}"#), "{emitted}");
 }
 
 /// **A broken hole is the parser's**, said where it is (ADR-262 D3, D4): a

@@ -9599,12 +9599,15 @@ impl<'a> Checker<'a> {
             // Nikaia source written inside a literal, and until that walk
             // existed it was source no analysis could see - the same mistake
             // was caught outside a hole and silently passed inside one.
-            Expr::LitInterpolated { text, .. } => {
-                // **The whole literal, holes and all**, because an escape
-                // belongs to the *literal* and not to the hole: `f"{f(\"a\")}"`
-                // writes `\"` twice inside a hole and the outer quotes are what
-                // they escape.
-                self.an_escape_nothing_names(text, span);
+            Expr::LitInterpolated { parts } => {
+                // **The literal's own text runs**: a hole is code, and a
+                // string inside one is a literal of its own, asked when the
+                // hole is walked (ADR-262 D3).
+                for part in parts {
+                    if let crate::ast::FPart::Text(text) = part {
+                        self.an_escape_nothing_names(text, span);
+                    }
+                }
                 self.holes(expr, span);
                 Ty::named("String")
             }
@@ -22627,7 +22630,19 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
         Expr::LitBool(b) => b.to_string(),
         Expr::LitChar(c) => format!("'{c}'"),
         Expr::LitStr { text, .. } => format!("\"{text}\""),
-        Expr::LitInterpolated { text, .. } => format!("f\"{text}\""),
+        Expr::LitInterpolated { parts } => {
+            let body: String = parts
+                .iter()
+                .map(|part| match part {
+                    ast::FPart::Text(text) => text.clone(),
+                    ast::FPart::Hole { expr, spec, .. } => match spec {
+                        Some(spec) => format!("{{{}:{spec}}}", w(expr)),
+                        None => format!("{{{}}}", w(expr)),
+                    },
+                })
+                .collect();
+            format!("f\"{body}\"")
+        }
         Expr::LitNull => "null".to_string(),
         Expr::Variable(name) => parsed.text(*name).to_string(),
         Expr::Path(segments) => segments
@@ -23388,7 +23403,7 @@ fn is_text(ty: &Ty) -> bool {
 /// Every `{…}` group in a string, by the text between the braces.
 ///
 /// An escape is skipped whole, so the `{` of a `\u{0041}` does not start one -
-/// the same rule the emitter's `interpolation` follows, and for the same
+/// the same rule the grammar's `F_TEXT_CHAR` follows, and for the same
 /// reason: a string keeps its escapes as written, so a scanner that does not
 /// know that reads `"\u{0041}"` as a hole named `0041`.
 fn brace_groups(text: &str) -> Vec<String> {

@@ -8948,15 +8948,9 @@ impl<'p> Emitter<'p> {
             // piece by piece - a pretty-printer, a progress line - cannot be
             // written with the newline attached.
             if matches!(text, "println" | "eprintln" | "print" | "eprint") {
-                if let [
-                    Expr::LitInterpolated {
-                        text: literal,
-                        parts,
-                    },
-                ] = args
-                {
+                if let [Expr::LitInterpolated { parts }] = args {
                     out.push(&format!("{text}!("));
-                    self.format_string(out, literal, parts, depth, flow)?;
+                    self.format_string(out, parts, depth, flow)?;
                     out.push(")");
                     return Ok(());
                 }
@@ -10620,20 +10614,15 @@ impl<'p> Emitter<'p> {
             // because the checker says it is and the two have to agree. With no
             // hole there is nothing to format, and `format!("x")` is a
             // roundabout way of writing what `.to_string()` says plainly.
-            Expr::LitInterpolated {
-                text: literal,
-                parts,
-            } => {
-                // **A malformed literal is refused on its own line**
-                // ([ADR-171](../../docs/specification/adr/adr-171.md) D1):
-                // `interpolation` has the text and not the place, and the place
-                // is what a reader needs.
-                if at_the_statement(flow, interpolation(literal))?.1.is_empty() {
-                    out.push(&format!("\"{literal}\".to_string()"));
+            Expr::LitInterpolated { parts } => {
+                // A malformed literal never gets here: the grammar refuses it
+                // at its place (ADR-262 D4).
+                if interpolated_holes(parts).is_empty() {
+                    out.push(&format!("\"{}\".to_string()", format_of(parts)));
                     return Ok(());
                 }
                 out.push("format!(");
-                self.format_string(out, literal, parts, depth, flow)?;
+                self.format_string(out, parts, depth, flow)?;
                 out.push(")");
                 Ok(())
             }
@@ -10658,16 +10647,16 @@ impl<'p> Emitter<'p> {
     fn format_string(
         &self,
         out: &mut Out,
-        literal: &str,
         parts: &[crate::ast::FPart],
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (format, _) = at_the_statement(flow, interpolation(literal))?;
-        out.push(&format!("\"{format}\""));
+        // **Built from the parts** (ADR-262 D5): the grammar has read the
+        // literal, so there is nothing left to scan.
+        out.push(&format!("\"{}\"", format_of(parts)));
 
-        // **The holes the grammar parsed** (ADR-262 D2), each beside its text.
-        for (hole, expr) in interpolated_holes(literal, parts) {
+        // **The holes the grammar parsed** (ADR-262 D2), each by its place.
+        for (hole, expr) in interpolated_holes(parts) {
             let mut expr = expr.clone();
             // What the tier pass hands over inside it (ADR-229 D1), as every
             // other reader of a hole sees it (`literal_expressions`).
@@ -13073,26 +13062,39 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
 }
 
 /// **An `f"…"`'s holes as the grammar parsed them**
-/// ([ADR-262](../../docs/specification/adr/adr-262.md) D2), each beside its
-/// text as written - the key the tier pass's wraps are recorded by
-/// ([ADR-229](../../docs/specification/adr/adr-229.md) D1). The text is found
-/// by place among the literal's holes, so nothing is parsed to find it.
-pub(crate) fn interpolated_holes<'e>(
-    text: &str,
-    parts: &'e [crate::ast::FPart],
-) -> Vec<(String, &'e Expr)> {
-    let written = interpolation(text)
-        .map(|(_, holes)| holes)
-        .unwrap_or_default();
+/// ([ADR-262](../../docs/specification/adr/adr-262.md) D2), each beside the
+/// byte its `{` stands at - the key the tier pass's wraps are recorded by
+/// ([ADR-229](../../docs/specification/adr/adr-229.md) D1).
+pub(crate) fn interpolated_holes(parts: &[crate::ast::FPart]) -> Vec<(u32, &Expr)> {
     parts
         .iter()
         .filter_map(|part| match part {
-            crate::ast::FPart::Hole { expr, .. } => Some(expr),
+            crate::ast::FPart::Hole { expr, at, .. } => Some((*at, expr)),
             crate::ast::FPart::Text(_) => None,
         })
-        .enumerate()
-        .map(|(at, hole)| (written.get(at).cloned().unwrap_or_default(), hole))
         .collect()
+}
+
+/// **An `f"…"` as the format string the language below reads**
+/// ([ADR-262](../../docs/specification/adr/adr-262.md) D5): each run of text
+/// as written - an escape and a doubled brace mean there what they mean here
+/// - and each hole as `{}`, or `{:spec}` where a format follows its `:`.
+pub(crate) fn format_of(parts: &[crate::ast::FPart]) -> String {
+    let mut format = String::new();
+    for part in parts {
+        match part {
+            crate::ast::FPart::Text(text) => format.push_str(text),
+            crate::ast::FPart::Hole {
+                spec: Some(spec), ..
+            } => {
+                format.push_str("{:");
+                format.push_str(spec);
+                format.push('}');
+            }
+            crate::ast::FPart::Hole { spec: None, .. } => format.push_str("{}"),
+        }
+    }
+    format
 }
 
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
@@ -13102,11 +13104,11 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
         // Each with what the tier pass hands over inside it (ADR-229 D1),
         // which is keyed by the hole's text - the hole at the same place among
         // the text's holes, so nothing is parsed to find it.
-        Expr::LitInterpolated { text, parts } => interpolated_holes(text, parts)
+        Expr::LitInterpolated { parts } => interpolated_holes(parts)
             .into_iter()
-            .map(|(written, hole)| {
+            .map(|(at, hole)| {
                 let mut expr = hole.clone();
-                if let Some(wraps) = parsed.hole_wraps.get(&written) {
+                if let Some(wraps) = parsed.hole_wraps.get(&at) {
                     crate::text_tiers::wrap_hole(&mut expr, wraps);
                 }
                 expr
@@ -13192,7 +13194,7 @@ fn walk_template_holes(
 /// An escape is copied whole, `\u{0041}` included: Rust's lexer turns that into
 /// a character before the macro ever sees a brace, so doubling the braces
 /// inside one would hand `println!` a `\u` with nothing after it. The same rule
-/// `interpolation` follows, for the same reason.
+/// the grammar's `F_TEXT_CHAR` follows for an `f"…"`, for the same reason.
 fn rust_format_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
@@ -13234,136 +13236,6 @@ fn at_the_statement<T>(flow: Flow<'_>, result: Result<T>) -> Result<T> {
         },
     )
 }
-
-pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
-    interpolation_with_specs(literal).map(|(format, holes, _)| (format, holes))
-}
-
-/// [`interpolation`], and beside each hole what follows its `:`, where one
-/// does: the checker asks whether a hole says *how* to write its value.
-#[allow(clippy::type_complexity)]
-pub(crate) fn interpolation_with_specs(
-    literal: &str,
-) -> Result<(String, Vec<String>, Vec<Option<String>>)> {
-    let mut format = String::new();
-    let mut holes = Vec::new();
-    let mut specs = Vec::new();
-    let mut chars = literal.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            // An escape is copied whole, and the `{` inside `\u{…}` is part of
-            // one. The body arrives here as it was written - the parser keeps a
-            // string's escapes rather than decoding them - so a scanner that
-            // does not know that reads `"\u{0041}"` as a hole named `0041`.
-            '\\' => {
-                format.push('\\');
-                let Some(escape) = chars.next() else {
-                    return Err(refused!(
-                        "This string ends in a `\\`, which escapes nothing: \"{literal}\""
-                    ));
-                };
-                format.push(escape);
-                if escape == 'u' && chars.peek() == Some(&'{') {
-                    for c in chars.by_ref() {
-                        format.push(c);
-                        if c == '}' {
-                            break;
-                        }
-                    }
-                }
-            }
-            '{' if chars.peek() == Some(&'{') => {
-                chars.next();
-                format.push_str("{{");
-            }
-            '}' if chars.peek() == Some(&'}') => {
-                chars.next();
-                format.push_str("}}");
-            }
-            '{' => {
-                let mut hole = String::new();
-                let mut spec: Option<String> = None;
-                let mut depth = 1;
-                let mut nesting = 0;
-
-                while let Some(c) = chars.next() {
-                    // **A hole is code as written** ([ADR-262](../../docs/specification/adr/adr-262.md)
-                    // D3): the grammar has parsed it already, and a string
-                    // inside it is written with plain quotes, so nothing here is
-                    // undone. A `\"` the enclosing literal used to need is
-                    // refused by the grammar before this runs.
-                    match c {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        '(' | '[' => nesting += 1,
-                        ')' | ']' => nesting -= 1,
-                        // `::` is a path, not a format specifier. A hole is
-                        // Nikaia source, and Nikaia source names things across
-                        // modules (Part I, 9.1) - `"{utils::double(21)}"` was
-                        // read as the expression `utils` written with the
-                        // specifier `:double(21)`, which is a format string
-                        // nobody wrote and a program nobody meant.
-                        ':' if chars.peek() == Some(&':') => {
-                            let second = chars.next().expect("peeked");
-                            match &mut spec {
-                                Some(spec) => {
-                                    spec.push(c);
-                                    spec.push(second);
-                                }
-                                None => {
-                                    hole.push(c);
-                                    hole.push(second);
-                                }
-                            }
-                            continue;
-                        }
-                        // The first colon that is not inside a call or an index
-                        // separates the expression from how it is to be
-                        // written, exactly as a format string does elsewhere.
-                        // `Stats(min: 1)` keeps its colon, being inside parens.
-                        ':' if nesting == 0 && spec.is_none() => {
-                            spec = Some(String::new());
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    match &mut spec {
-                        Some(spec) => spec.push(c),
-                        None => hole.push(c),
-                    }
-                }
-                if depth != 0 {
-                    return Err(refused!(
-                        "A `{{` in this string is never closed: \"{literal}\""
-                    ));
-                }
-
-                holes.push(hole);
-                match &spec {
-                    Some(spec) => format.push_str(&format!("{{:{spec}}}")),
-                    None => format.push_str("{}"),
-                }
-                specs.push(spec);
-            }
-            '}' => {
-                return Err(refused!(
-                    "This string has a `}}` with no `{{` before it: \"{literal}\". Write \
-                     `}}}}` for a literal brace."
-                ));
-            }
-            _ => format.push(c),
-        }
-    }
-
-    Ok((format, holes, specs))
-}
-
 // ---------------------------------------------------------------------------
 // The tether: where a buffer lives, written out
 // ([ADR-209](../../docs/specification/adr/adr-209.md))

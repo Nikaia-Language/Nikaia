@@ -53,28 +53,9 @@ pub struct Trivia {
     /// `doc_reaches`, which is a fact about the input rather than a flag a
     /// losing branch can spoil.
     doc_live: bool,
-    /// **The input itself**, for the one rule that keeps the text it matched
-    /// beside what it parsed: an `f"…"` keeps its body as written until the
-    /// emitter builds from the parts ([ADR-262](../../../docs/specification/adr/adr-262.md)
-    /// D2). Shared, so the state's clone before a diagnosing replay is a count.
-    source: std::sync::Arc<str>,
 }
 
 impl Trivia {
-    /// The state a parse of `input` starts with.
-    fn over(input: &str) -> Trivia {
-        Trivia {
-            source: input.into(),
-            ..Trivia::default()
-        }
-    }
-
-    /// The input between two byte offsets, as written; empty where the parse
-    /// was not given its input ([`stops_at`] asks only where a parse stops).
-    fn source_between(&self, from: usize, to: usize) -> String {
-        self.source.get(from..to).unwrap_or_default().to_string()
-    }
-
     /// Record a run of trivia.
     ///
     /// A comment that a line break ran straight into **carries** the flag, so
@@ -388,13 +369,13 @@ pub struct Parsed {
     /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D5).
     pub text_tiers: Vec<String>,
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
-    /// hole's text: the shape of each value and the method it is handed over
+    /// hole's place - the byte its `{` stands at: the shape of each value and the method it is handed over
     /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
     /// `f"…"`'s holes are the grammar's ([ADR-262](../../../docs/specification/adr/adr-262.md)),
     /// and each reader takes a copy of one, so the wrap is applied where the
     /// copy is taken - [`crate::emit::literal_expressions`] - and every reader
     /// sees it.
-    pub hole_wraps: std::collections::BTreeMap<String, Vec<(String, winnow_grammar::Symbol)>>,
+    pub hole_wraps: std::collections::BTreeMap<u32, Vec<(String, winnow_grammar::Symbol)>>,
     /// **Every hole this file's readers parsed, by its text**: what
     /// [`Parsed::hole`] answered before. Each analysis walks every literal and
     /// parses its holes again, which was a fifth of lowering a program with a
@@ -585,7 +566,6 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
     fits(input.len())?;
     let context = ParseContext::<Trivia> {
         interner: interner.clone(),
-        user_state: Trivia::over(input),
         ..Default::default()
     };
 
@@ -1186,10 +1166,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     // spans, `ParseContext` carries the shared parser state including the
     // interner. Cloning the interner out shares it (it is an `Arc` inside), so
     // the handles in the AST stay resolvable after parsing.
-    let context = ParseContext::<Trivia> {
-        user_state: Trivia::over(input),
-        ..Default::default()
-    };
+    let context = ParseContext::<Trivia>::default();
     let interner = context.interner.clone();
 
     let mut stream = ParseInput::<Trivia> {
@@ -4369,16 +4346,10 @@ grammar! {
         //
         // **And the holes are parsed here** ([ADR-262](../../../docs/specification/adr/adr-262.md)
         // D1): the body is text and holes, and a hole's expression is the
-        // ordinary `expr`, so every walk sees it as a child of the literal. The
-        // body as written is kept beside the parts until the emitter builds
-        // from them (D2, D5).
-        rule F_STRING -> Expr @=
-            "f\"" parts:F_PART* "\"" -> {
-                Expr::LitInterpolated {
-                    text: _state.user().source_between(_span.start + 2, _span.end - 1),
-                    parts,
-                }
-            }
+        // ordinary `expr`, so every walk sees it as a child of the literal, and
+        // the emitter builds the format string from the parts (D5).
+        rule F_STRING -> Expr =
+            "f\"" parts:F_PART* "\"" -> { Expr::LitInterpolated { parts } }
 
         rule F_PART -> crate::ast::FPart =
             t:F_TEXT -> { crate::ast::FPart::Text(t) }
@@ -4403,9 +4374,13 @@ grammar! {
         // skips its own. The `:` is the first one the expression does not
         // take, which is Part I 2.5's *first colon not inside a call or an
         // index* said by the grammar.
-        rule F_HOLE -> crate::ast::FPart =
+        rule F_HOLE -> crate::ast::FPart @=
             "{" e:expr WS spec:F_SPEC? "}" -> {
-                crate::ast::FPart::Hole { expr: e, spec: spec.map(str::to_string) }
+                crate::ast::FPart::Hole {
+                    expr: e,
+                    spec: spec.map(str::to_string),
+                    at: crate::ast::offset(_span.start),
+                }
             }
           // **A hole is code** (D3): a string inside one is written with plain
           // quotes. The `\"` a hole used to need is not code, and is named.

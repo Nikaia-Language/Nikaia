@@ -353,10 +353,7 @@ impl<'a> BuildTime<'a> {
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a
             // value somebody could have written down.
-            Expr::LitInterpolated {
-                text: literal,
-                parts,
-            } => self.interpolated(literal, parts, frame),
+            Expr::LitInterpolated { parts } => self.interpolated(parts, frame),
             // **A variant that carries nothing**: `Shade::Odd`, which is a
             // value and not a call. The path arm below a call, one shape out.
             Expr::Path(path) => {
@@ -718,26 +715,20 @@ impl<'a> BuildTime<'a> {
     /// shape this evaluator does not know, not a rule it breaks.
     fn interpolated(
         &mut self,
-        literal: &str,
         parts: &[crate::ast::FPart],
         frame: &BTreeMap<String, Value>,
     ) -> Result<Value, Refusal> {
-        let (format, _) = crate::emit::interpolation(literal).map_err(|_| {
-            // A malformed literal is the lowering's refusal and it names the
-            // line; saying anything else here would be a second sentence about
-            // one mistake.
-            Refusal::Unevaluable
-        })?;
-        // The holes the grammar parsed (ADR-262 D2).
-        let holes = crate::emit::interpolated_holes(literal, parts);
+        // Built from the parts the grammar parsed (ADR-262 D2, D5).
+        let format = crate::emit::format_of(parts);
+        let holes = crate::emit::interpolated_holes(parts);
         let mut values = Vec::with_capacity(holes.len());
         for (_, expr) in &holes {
             values.push(self.expr(expr, frame)?);
         }
 
-        // **The literal parts are still *written*.** `interpolation` splits
-        // the text and does not decode it — a `\` and the character after it
-        // are copied through, `\u{…}` braces included — so a chunk is read by
+        // **The literal parts are still *written*.** The grammar keeps a run
+        // of text as written (ADR-262 D1) — a `\` and the character after it,
+        // `\u{…}` braces included — so a chunk is read by
         // [`decoded`] exactly as a plain literal is, and a hole's value is
         // already decoded.
         let mut out = String::new();
@@ -761,7 +752,7 @@ impl<'a> BuildTime<'a> {
                         Some(escape) => {
                             chunk.push(escape);
                             // `\u{…}` carries its braces, and they are not the
-                            // format's — `interpolation` copies them through
+                            // format's — the grammar keeps them in the text run
                             // for exactly this reason.
                             if escape == 'u' && chars.peek() == Some(&'{') {
                                 for c in chars.by_ref() {
