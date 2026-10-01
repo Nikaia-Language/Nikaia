@@ -164,7 +164,7 @@ where
 {
     let at = i.current_token_start();
     match StateOf::<Trivia>::state(&mut i.state.user_state).began_a_line(at) {
-        true => Err(ParseError::from_stream(i)),
+        true => Err(ParseError::from_input(i)),
         false => Ok(()),
     }
 }
@@ -237,7 +237,7 @@ where
     let bytes = match signed {
         true => match bytes {
             [b'-', rest @ ..] if rest.first().is_some_and(|c| c.is_ascii_digit()) => rest,
-            _ => return Err(ParseError::from_stream(i).add_expected("digits")),
+            _ => return Err(ParseError::from_input(i).add_expected("digits")),
         },
         false => bytes,
     };
@@ -280,7 +280,7 @@ where
             // else; no digits at all is simply not a number here, and the
             // alternative that wanted one says so in the ordinary way.
             if prefix == 0 {
-                return Err(ParseError::from_stream(i).add_expected("digits"));
+                return Err(ParseError::from_input(i).add_expected("digits"));
             }
             wrong = Some("a number needs at least one digit after its prefix");
         } else if after_separator {
@@ -304,7 +304,7 @@ where
     // first time this ran. Refusing hands the `-` back to the unary operator
     // and the number to whichever rule it belongs to.
     if signed && radix == 10 && matches!(bytes.get(at), Some(b'.' | b'e' | b'E')) {
-        return Err(ParseError::from_stream(i).add_expected("digits"));
+        return Err(ParseError::from_input(i).add_expected("digits"));
     }
     // **The sign goes into the text the radix parser reads**, rather than being
     // applied afterwards: `-9223372036854775808` parses and `-(9223372036854775808)`
@@ -333,7 +333,7 @@ where
     // help at all to a reader.
     let _ = winnow::stream::Stream::next_slice(i, at + usize::from(signed));
     match wrong {
-        Some(message) => Err(ParseError::from_stream(i)
+        Some(message) => Err(ParseError::from_input(i)
             .with_message(message)
             .with_priority(winnow_grammar::error::PRIO_STRUCTURAL)),
         None => Ok(number),

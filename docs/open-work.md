@@ -816,7 +816,9 @@ The measurement also found three costs that are not `Ty`'s (ADR-257 §4.6):
   cache hit. A dependency's ledger is read once where it is absorbed
   (`read_beside`, the ledger and its `.derived`) and once more by its own
   lowering, which compares it with what it inferred (`newly`) - two readings
-  with two purposes.
+  with two purposes. **Since 0.0.297** that one parse is 5.9 M: the reader
+  is grammars, and `winnow-grammar` lost what it cost per alternative tried
+  (an empty program 17.4 M, `1brc` 73.8 M).
 * Resolving an interned name (`lasso`'s `DashMap` with SipHash) is 572 M of
   2 918 M on `n-body` copied 32 times. The recommendation is a faster hasher
   first, measured on ADR-257's corpus, before a resolver without a map.

@@ -4,6 +4,52 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.297] — 2026-10-01
+
+**The ledger is read by grammars** (ADR-257 §4.6), and what made them fast
+was built in `winnow-grammar`, where every grammar gains it. The reader in
+`tools/ledger.nika` walked the text a character at a time through `Vec[char]`;
+it is now `grammar LedgerText` for the lines, `grammar LedgerValue` for a list
+and `grammar SignatureText` for a signature, slicing views out of the text
+rather than copying it, and reads `std`'s ledger to the same records as before.
+Reading `std.contracts` went from 11.4 M instructions to 5.9 M.
+
+Measured on this compiler's own use, `winnow-grammar` now
+- remembers the last whitespace skip, which a PEG otherwise repeats at one
+  position for every alternative it tries (148 000 skips for 7 KB of source);
+- does not try, in the fast pass, an alternative that cannot begin with the
+  next byte - a name was checked against thirty keywords a call at a time;
+- lets a hand-written rule fail without building an error nobody reads
+  (`ParseError::from_input`, used by the number literal and `same_line`);
+- scans `until(a | b)` without allocating.
+
+| Lowered with `--no-cache` | 0.0.296 | 0.0.297 |
+|---|---|---|
+| an empty program | 22.8 M | 17.4 M (−24 %) |
+| `1brc` | 102.8 M | 73.8 M (−28 %) |
+| `n-body` | 94.5 M | 72.6 M (−23 %) |
+
+Parsing `1brc` alone went from 21.1 M to 12.4 M (−41 %). Diagnostics are the
+diagnosing pass's, which tries every alternative as before.
+
+- **A handler that does not pass on what it caught keeps it** (Part I 7.1):
+  `x = rule(t) catch { throw Mine }` made the function throw the guarded
+  call's error as well as `Mine`; a handler with `throw error` still passes
+  it on (ADR-157 D2).
+- **A view a `for` loop or a `match` arm binds is the view**: an element of a
+  `Vec[ref String]` and a variant's `ref String` part, reached through a lent
+  value, were a view of a view below, and `w == "fn"` did not compile.
+- **A grammar's entry is a call of `std`'s** (`grammar::parse`,
+  `grammar::parse_pieces`) rather than a block written in its place: behind
+  a `catch` the block was a `match` scrutinee with statements in it, which
+  `clippy` refuses.
+- **What `x?` binds in a grammar may be absent**: put into a nullable field it
+  is the field's shape already, and the `.into()` it got converted an
+  `Option` into itself.
+- A signature read on its own lists a type parameter without a bound
+  (`[H: One, U]` is two entries); a ledger's entry lists the bounded ones, as
+  it did.
+
 ## [0.0.296] — 2026-10-01
 
 **`std`'s ledger is read once per run** (ADR-257 §4.6). Most of what the
