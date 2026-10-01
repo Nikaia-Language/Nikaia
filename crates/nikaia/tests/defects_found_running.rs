@@ -63,7 +63,7 @@ fn runs_in(purpose: &str, source: &str, expected: &str, prepare: fn(&std::path::
     }
 }
 
-/// **§1.23: a `sync` function calls a parameter whose type says `sync`.** The
+/// **issue #166: a `sync` function calls a parameter whose type says `sync`.** The
 /// caller is held to the word (`NK2206`), so the call keeps the promise; it was
 /// refused as a call to something no ledger knows. A parameter *without* the
 /// word is still refused.
@@ -101,7 +101,7 @@ fn a_sync_function_calls_a_sync_parameter() {
     );
 }
 
-/// **§1.24: a `Shared` written into a variant takes the variant's count.** The
+/// **issue #158: a `Shared` written into a variant takes the variant's count.** The
 /// part was declared with the atomic floor and the value built with the count
 /// its position got, and `rustc` said *expected `Shared[E]`, found
 /// `Shared[E]`*.
@@ -125,7 +125,7 @@ fn a_shared_value_in_a_variant_has_the_parts_count() {
     );
 }
 
-/// **§1.25: a `?.` chain through two nullable fields of a lent value.** The
+/// **issue #167: a `?.` chain through two nullable fields of a lent value.** The
 /// first step took `a.b` out of a lent `a`; a member that comes out as a view
 /// needs its receiver lent, as one that copies did.
 #[test]

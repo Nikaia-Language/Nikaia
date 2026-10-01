@@ -504,7 +504,7 @@ fn uses_of(
         walk.hand_over(value);
     }
     // **A receiver the author wrote `ref` is not kept** (issue #173
-    // §1.29, found at 0.0.254 in the ledger `template.nika` lowers to), **nor
+    // issue #173, found at 0.0.254 in the ledger `template.nika` lowers to), **nor
     // an argument written `mut`** (found at 0.0.258 in `ledger.nika`'s, where
     // `entries.push(…)` kept the list it pushes to). Each is a reference by
     // the author's word, which no walk here widens - a use that would need it

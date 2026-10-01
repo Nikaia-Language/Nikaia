@@ -1501,7 +1501,7 @@ struct Emitter<'p> {
     boxed_args: std::cell::RefCell<Option<Vec<bool>>>,
     /// **The count each part of a variant was given**, set around one call by
     /// `call` and read by `args` as `boxed_args` is (0.0.244, issue #158
-    /// §1.24): a `Shared(…)` written straight into a part takes the part's
+    /// issue #158): a `Shared(…)` written straight into a part takes the part's
     /// count, or the two would be an `Rc` and an `Arc` of one value.
     variant_counts: std::cell::RefCell<Option<Vec<crate::contracts::sharing::Count>>>,
     /// The count the next hull written takes, where its position decided it.
@@ -7377,7 +7377,7 @@ impl<'p> Emitter<'p> {
                     .copied_reaches
                     .contains(&(flow.statement, field.clone()));
                 // **And where it comes out as a view** (0.0.244, issue #167
-                // §1.25): a view of the member is a view *into* the receiver,
+                // issue #167): a view of the member is a view *into* the receiver,
                 // so the receiver has to be lent for it as well. `a.b?.c?.v`
                 // took `a.b` out of a lent `a` - *cannot move out of `a.b`* -
                 // and handed back a view of the value it had just moved.
@@ -11419,7 +11419,7 @@ impl<'p> Emitter<'p> {
             // a Rust reference in front of it would be the wrong address —
             // `&FILE` is `FILE**` where C wants `FILE*`.
             // **A nullable view is lent inside its option** (issue #171
-            // §1.31): a `ref String?` parameter is an `Option<&str>` (Part I
+            // issue #171): a `ref String?` parameter is an `Option<&str>` (Part I
             // 2.3), and what reaches it from a `String?` is `x.as_deref()` -
             // `&x` was an `&Option<String>`. A `null` is `None` as it is.
             let inside_the_option = lend

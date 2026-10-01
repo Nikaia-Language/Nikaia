@@ -244,7 +244,7 @@ found are this compiler's now.
 - A literal in a branch takes the unsigned type the `let` wrote:
   `let l: u64 = match … { … => if n { 2147483648 } else { 1 } }` is `u64`
   throughout, where the `if` wrote `2147483648i64`.
-- §1.31 keeps three: a nullable view's call and clone, a safe-navigation
+- [#171](https://github.com/Nikaia-Language/Nikaia/issues/171) keeps three: a nullable view's call and clone, a safe-navigation
   clone that moves a field, and a recursive cycle inferred to pause.
 
 ## [0.0.278] — 2026-09-30
@@ -717,7 +717,7 @@ program can now write it.
   `crosses`, `threads`, `provenance`, `compares`, `iterates`, `sharing`, `Seq`,
   `Par`, `Seen`, `?` - and Part III 13.5 says so.
 - Recorded: `keeps` names a `ref` receiver a body only reads ([#173](https://github.com/Nikaia-Language/Nikaia/issues/173)
-  §1.29), fail-closed and not yet precise.
+  [#173](https://github.com/Nikaia-Language/Nikaia/issues/173)), fail-closed and not yet precise.
 
 ## [0.0.253] — 2026-09-29
 
@@ -832,7 +832,7 @@ fourth piece of the compiler moved by ADR-196's route.
 - **`_` in a `for` binding**: `for (_, bucket) in order`, `for _ in 0..<n`.
 - Recorded, not fixed: an `i32` sum that overflows inside an `f"…"` hole
   ([#176](https://github.com/Nikaia-Language/Nikaia/issues/176)), and an untyped index into an element a call changes
-  (§1.28).
+  ([#177](https://github.com/Nikaia-Language/Nikaia/issues/177)).
 
 ## [0.0.249] — 2026-09-28
 
@@ -982,11 +982,11 @@ running something and each kept, as the program that found it, in
   ([#166](https://github.com/Nikaia-Language/Nikaia/issues/166)). The caller is held to the word (`NK2206`), so the
   body may take it at it; it was refused with `NK2202`. A parameter without
   the word still is.
-- **A `Shared` written into a variant takes the variant's count** (§1.24). The
+- **A `Shared` written into a variant takes the variant's count** ([#158](https://github.com/Nikaia-Language/Nikaia/issues/158)). The
   part was declared with one count and the value built with another, and
   `rustc` said *expected `Shared[E]`, found `Shared[E]`*. A variant's part now
   has a place of its own in the sharing count, as a field has.
-- **A `?.` chain through two nullable fields of a lent value** (§1.25) lends
+- **A `?.` chain through two nullable fields of a lent value** ([#167](https://github.com/Nikaia-Language/Nikaia/issues/167)) lends
   the first step when the member it reaches comes out as a view, as it did
   when the member copies.
 - **A function called by its bare name that nothing declares is `NK1117`**,
@@ -1323,15 +1323,15 @@ far self-hosting is.
 ## [0.0.230] — 2026-09-27
 
 **Four defects found while checking the examples** — closing [#160](https://github.com/Nikaia-Language/Nikaia/issues/160), [#154](https://github.com/Nikaia-Language/Nikaia/issues/154), [#155](https://github.com/Nikaia-Language/Nikaia/issues/155) and [#163](https://github.com/Nikaia-Language/Nikaia/issues/163)
-§1.17–1.20.
+[#160](https://github.com/Nikaia-Language/Nikaia/issues/160)–1.20.
 
-- **§1.17: a pausing step in a `par_fold` is refused.** A fold's step lambda
+- **[#160](https://github.com/Nikaia-Language/Nikaia/issues/160): a pausing step in a `par_fold` is refused.** A fold's step lambda
   had untyped parameters, so `acc.record(m)` resolved to nothing and a pausing
   `record` compiled into a future the fold dropped: the parse printed `{}`. The
   accumulator is now typed from `init` (a type's name is its constructor) and
   the item from the folded rule, so the call meets `NK2209` like any action's.
   A `merge` or `init` written as a function's name is asked the same question.
-- **§1.18: a field read on a map lookup without `??` is `NK1125`.** A `catch`
+- **[#154](https://github.com/Nikaia-Language/Nikaia/issues/154): a field read on a map lookup without `??` is `NK1125`.** A `catch`
   expression typed as nothing, so everything bound from one did too:
   `let report = Log::file(data) catch { … return }` left `report.paths[path]`
   a lookup on an unknown map, and `counts.hits` reached `rustc`. The `catch` is
@@ -1345,7 +1345,7 @@ far self-hosting is.
     assignment does.
   - `lent_arguments.rs` used a bare `catch` as its value of unknown type; it
     uses an `if` whose branches the checker does not unify instead.
-- **§1.19: `examples/foreign-runtime/serve` builds and runs.** A text literal
+- **[#155](https://github.com/Nikaia-Language/Nikaia/issues/155): `examples/foreign-runtime/serve` builds and runs.** A text literal
   handed to a Rust crate's generic parameter (`across_a_thread<T: Describe>`,
   `Describe` for `String` only) lowered as `&str`. A kept, by-value `$T` that
   only this argument decides now takes the literal's own type, `String`. The
@@ -1353,7 +1353,7 @@ far self-hosting is.
   never resolved the callee, so it now reads the described crates' ledger too.
   A test with a dependency-free crate covers it on every run, since the hyper
   test fetches from crates.io and is ignored.
-- **§1.20: no `cfg` `trace` warning on a program with a `grammar`.** The
+- **[#163](https://github.com/Nikaia-Language/Nikaia/issues/163): no `cfg` `trace` warning on a program with a `grammar`.** The
   `grammar!` expansion tests `feature = "trace"` in the crate that invokes it,
   so the generated manifest now declares `trace = ["winnow-grammar/trace"]`
   wherever it depends on `winnow-grammar`, as `nikaia` and `nikaia-std` do.
@@ -1414,7 +1414,7 @@ far self-hosting is.
 
 **An error keeps its site when it hops into the box** —
 [ADR-240](docs/specification/adr/adr-240.md), closing what [#199](https://github.com/Nikaia-Language/Nikaia/issues/199)
-§2.25 named as the box's remaining cost.
+[#199](https://github.com/Nikaia-Language/Nikaia/issues/199) named as the box's remaining cost.
 
 - `Thrown<E>` is no longer an `Error`; `std` writes
   `From<Thrown<E>> for Box<dyn Error>`, which makes a `Raised` with the same
@@ -1453,7 +1453,7 @@ far self-hosting is.
 **Ownership says when a value dies, and the compiler settles its cleanup
 there** — [ADR-239](docs/specification/adr/adr-239.md), refining and building
 [ADR-006](docs/specification/adr/adr-006.md), closing [#188](https://github.com/Nikaia-Language/Nikaia/issues/188) and
-the call half of §2.25's cleanup attachment.
+the call half of [#199](https://github.com/Nikaia-Language/Nikaia/issues/199)'s cleanup attachment.
 
 - `impl Cleanup for T` is the one method `fn cleanup(ref mut self)`, `throws`
   where it can fail; the synchronous fallback is the type's own `impl Drop`.
@@ -1504,7 +1504,7 @@ compare-and-swap** — [ADR-238](docs/specification/adr/adr-238.md), closing
 **A cleanup point that moves is narrated, and a described call that fails
 compiles** — [ADR-236](docs/specification/adr/adr-236.md) and
 [ADR-237](docs/specification/adr/adr-237.md), closing [#186](https://github.com/Nikaia-Language/Nikaia/issues/186)
-and §2.11.
+and [#194](https://github.com/Nikaia-Language/Nikaia/issues/194).
 
 - `NK2403` (warning): a parameter whose `keeps` changed since the committed
   ledger, on a type with `impl Drop` or `impl Cleanup` (directly or through a
@@ -1667,7 +1667,7 @@ view to a `pub` function.
 [#201](https://github.com/Nikaia-Language/Nikaia/issues/201).
 
 - `the_target_info_probe_ignores_what_is_on_standard_input` was `#[ignore]`d
-  because it flaked inside a fully parallel `-p nikaia` run, and §3.1 also
+  because it flaked inside a fully parallel `-p nikaia` run, and [#201](https://github.com/Nikaia-Language/Nikaia/issues/201) also
   recorded Cargo's package-cache lock showing up in two project tests' output.
   Measured again: the test passed in two full parallel `-p nikaia` sweeps, in
   the first run after a rebuild, and three times beside `one_name`; the lock
@@ -2015,7 +2015,7 @@ not chosen.
 
 the former backlog file loses the history of why it is laid out as it is: the
 header, and the openings of §1 to §3, are the rules and the current order and
-nothing else. §2.14 (the kept lowering of a function value) closed with 0.0.195
+nothing else. [#181](https://github.com/Nikaia-Language/Nikaia/issues/181) (the kept lowering of a function value) closed with 0.0.195
 and is deleted. The question ADR-217 left — whether a container of structs
 holding views that drops entries in a loop should be held rather than refused
 (`NK2304`) — is on `docs/open-decisions.md`, with three options and a
@@ -2575,7 +2575,7 @@ the `$T` already says it exists.
 
 **Additive.** The list stands before the `(`, so a signature written before this
 key existed parses unchanged — and no ledger in this tree changed a byte, because
-nothing in it publishes a generic function with a bound. That is what §1.10 meant
+nothing in it publishes a generic function with a bound. That is what [#162](https://github.com/Nikaia-Language/Nikaia/issues/162) meant
 by *the first package to use it is the one that meets this*.
 
 ### And the trait is qualified on the way in
@@ -2968,8 +2968,8 @@ Both `rustc` about a generated file ([Part III C.1](docs/specification/30-nikaia
 
 ### And two it could not fix, each with its reproduction
 
-- **§1.12: a method cannot hand back a view of a field it owns.** Four lines, two refusals, and the accessor a program most often writes has no spelling. A field that already *is* a view hands back fine. What is missing is the `&` at a `return`, which is D1's *the compiler writes the reference* in a third position, beside the declaration and the call — and `returns = "borrows(self)"` is the column that already records it.
-- **§1.13: a view parameter handed to a call cannot be shown not to escape through its result.** `views::analyse` takes **no ledger**, so it cannot read that `http1::Head::query` **borrows its receiver** and never its argument. Fail-closed, which is the right polarity for an analysis that cannot see — and the answer is written down one file away. The way around is not open either: an owned `String` parameter refuses every caller's **literal**, which is [ADR-107](docs/specification/adr/adr-107.md)'s *text is one type*, unbuilt.
+- **[#151](https://github.com/Nikaia-Language/Nikaia/issues/151): a method cannot hand back a view of a field it owns.** Four lines, two refusals, and the accessor a program most often writes has no spelling. A field that already *is* a view hands back fine. What is missing is the `&` at a `return`, which is D1's *the compiler writes the reference* in a third position, beside the declaration and the call — and `returns = "borrows(self)"` is the column that already records it.
+- **[#152](https://github.com/Nikaia-Language/Nikaia/issues/152): a view parameter handed to a call cannot be shown not to escape through its result.** `views::analyse` takes **no ledger**, so it cannot read that `http1::Head::query` **borrows its receiver** and never its argument. Fail-closed, which is the right polarity for an analysis that cannot see — and the answer is written down one file away. The way around is not open either: an owned `String` parameter refuses every caller's **literal**, which is [ADR-107](docs/specification/adr/adr-107.md)'s *text is one type*, unbuilt.
 
 ### Two numbers moved
 
@@ -2989,7 +2989,7 @@ third was written two versions ago.
 
 the former backlog file's head says it outright: *an entry that names
 a question elsewhere is not finished until the link resolves*, and it says the
-failure was found twice before, at 0.0.150, by following its own links. **§1.10
+failure was found twice before, at 0.0.150, by following its own links. **[#162](https://github.com/Nikaia-Language/Nikaia/issues/162)
 made it a third time.** It said the ledger has no column for a bound and that
 *whether that is a new key or a widening of the `signature` language is ADR-106
 D3's table to extend, and no record does it* — naming a decision and writing it
@@ -3002,8 +3002,8 @@ nowhere.
 
 ### And two sentences that had stopped being true
 
-- **§2.5** said `fn tell[T: greet::Speaks](x: T)` *waits on a module question nobody has decided*. [ADR-078](docs/specification/adr/adr-078.md) §4 did leave it open and [ADR-106](docs/specification/adr/adr-106.md) answered it; the door opened at 0.0.171.
-- **§3.1** said *what has not been decided is what that sharing costs*. A cost is **measured**, not decided ([ADR-009](docs/specification/adr/adr-009.md) D4), so it stays where work stays.
+- **[#105](https://github.com/Nikaia-Language/Nikaia/issues/105)** said `fn tell[T: greet::Speaks](x: T)` *waits on a module question nobody has decided*. [ADR-078](docs/specification/adr/adr-078.md) §4 did leave it open and [ADR-106](docs/specification/adr/adr-106.md) answered it; the door opened at 0.0.171.
+- **[#201](https://github.com/Nikaia-Language/Nikaia/issues/201)** said *what has not been decided is what that sharing costs*. A cost is **measured**, not decided ([ADR-009](docs/specification/adr/adr-009.md) D4), so it stays where work stays.
 
 Nothing in the compiler changed. [`open-decisions.md`](docs/open-decisions.md) holds three questions, and every question the former backlog file names now resolves to one of them.
 
@@ -3040,12 +3040,12 @@ about a file the author never opened — [Part III C.1](docs/specification/30-ni
 
 ### Where §1 stands
 
-One entry: **§1.10**, a call into a *dependency's* generic function not checked against its bound, which needs a ledger column no record decides. The five before it were each found by running something, and the last three by running what the package before them had just made possible — which is what this section's method produces.
+One entry: **[#162](https://github.com/Nikaia-Language/Nikaia/issues/162)**, a call into a *dependency's* generic function not checked against its bound, which needs a ledger column no record decides. The five before it were each found by running something, and the last three by running what the package before them had just made possible — which is what this section's method produces.
 
 ## [0.0.172] — 2026-09-23
 
 **A dependency's unit is checked in its own namespace** — [[#159](https://github.com/Nikaia-Language/Nikaia/issues/159)](https://github.com/Nikaia-Language/Nikaia/issues)
-§1.9 closed, one package after the one that found it.
+[#159](https://github.com/Nikaia-Language/Nikaia/issues/159) closed, one package after the one that found it.
 
 ### The defect
 
@@ -3066,8 +3066,8 @@ correct program refused, which is [Part III C.4](docs/specification/30-nikaia-to
 
 ### And two the fix revealed rather than made
 
-- **§1.10: a call into a *dependency's* generic function is not checked against its bound.** `handler::dispatch(Bare { n: 1 })` comes back as `` the trait bound `Bare: Handler` is not satisfied `` — `rustc`'s words on the author's line, naming `Handler` without the path the program must write and `Static`, a name the program never mentions. `Checker::declared_bounds` is built from the AST of the unit being checked, under the key a call resolves to (`dispatch`), and the call writes `handler::dispatch`. **The ledger has no column for a bound**, and whether that is a new key or a widening of the `signature` language is [ADR-106](docs/specification/adr/adr-106.md) D3's table to extend — a decision, not a patch.
-- **§1.11: a field handed back out of a lent parameter is `rustc`'s to refuse.** `pub fn say(answer: Answer) -> String { return answer.text }` lowers to `&Answer` and *cannot move out of `answer.text` which is behind a shared reference*. It is `NK1131` one position over: that refusal says this exact sentence about a `ref self` subject and asks it of `self` alone, because until [ADR-094](docs/specification/adr/adr-094.md) D1 nothing else was lent without the word. **The answer is not a refusal** — the program is correct — but a widening of the `keeps` inference: `hand_over` reads a bare name, so `return answer` keeps and `return answer.text` does not.
+- **[#162](https://github.com/Nikaia-Language/Nikaia/issues/162): a call into a *dependency's* generic function is not checked against its bound.** `handler::dispatch(Bare { n: 1 })` comes back as `` the trait bound `Bare: Handler` is not satisfied `` — `rustc`'s words on the author's line, naming `Handler` without the path the program must write and `Static`, a name the program never mentions. `Checker::declared_bounds` is built from the AST of the unit being checked, under the key a call resolves to (`dispatch`), and the call writes `handler::dispatch`. **The ledger has no column for a bound**, and whether that is a new key or a widening of the `signature` language is [ADR-106](docs/specification/adr/adr-106.md) D3's table to extend — a decision, not a patch.
+- **[#156](https://github.com/Nikaia-Language/Nikaia/issues/156): a field handed back out of a lent parameter is `rustc`'s to refuse.** `pub fn say(answer: Answer) -> String { return answer.text }` lowers to `&Answer` and *cannot move out of `answer.text` which is behind a shared reference*. It is `NK1131` one position over: that refusal says this exact sentence about a `ref self` subject and asks it of `self` alone, because until [ADR-094](docs/specification/adr/adr-094.md) D1 nothing else was lent without the word. **The answer is not a refusal** — the program is correct — but a widening of the `keeps` inference: `hand_over` reads a bare name, so `return answer` keeps and `return answer.text` does not.
 
 Both were found by building what the package before this one had just made writable, and then by writing a fixture for it. §1 holds two entries and §2 holds 33.
 
@@ -3096,7 +3096,7 @@ Three tests in `crates/nikaia/tests/project.rs`, each two packages, because insi
 
 ### And one defect, found by building the shape from the other side
 
-**§1.9: a package's own bound is refused when the package is a dependency.** `pub fn dispatch[H: Handler](h: H)` in a package compiles on its own and is `NK1126` — *nothing says it has a method* — when a program depends on it, **without the program calling it**. A dependency's unit is checked against the *program's* ledger, whose keys were qualified while it was absorbed, and the dependency's own file writes the name unqualified as its author must.
+**[#159](https://github.com/Nikaia-Language/Nikaia/issues/159): a package's own bound is refused when the package is a dependency.** `pub fn dispatch[H: Handler](h: H)` in a package compiles on its own and is `NK1126` — *nothing says it has a method* — when a program depends on it, **without the program calling it**. A dependency's unit is checked against the *program's* ledger, whose keys were qualified while it was absorbed, and the dependency's own file writes the name unqualified as its author must.
 
 Reproduced with this package's change **stashed**, so it is pre-existing and not the path's. The cheap fix is the wrong one: giving `traits` both spellings would make a program's own `[T: Handler]` resolve to a dependency's trait, which is a second spelling of a name [ADR-046](docs/specification/adr/adr-046.md) D2 says must carry its path. What the case wants is a dependency's unit checked in its own namespace, and that is a question about how the units are walked.
 
@@ -3110,17 +3110,17 @@ own right, because a reader cannot tell a plan from a promise.
 
 ### Closed
 
-- **§2.31, *a described foreign call is not asked whether it threads*.** Its own body ended *the question is answered, and it is §2.44 now* — and §2.44's first step landed at 0.0.160. A described call whose `threads` says `true` is `NK2502` in this language's vocabulary, and the test that asserted the silence has not existed since. Deleted; the number stays where it was, because this file is cited by number.
+- **[#195](https://github.com/Nikaia-Language/Nikaia/issues/195), *a described foreign call is not asked whether it threads*.** Its own body ended *the question is answered, and it is [#124](https://github.com/Nikaia-Language/Nikaia/issues/124) now* — and [#124](https://github.com/Nikaia-Language/Nikaia/issues/124)'s first step landed at 0.0.160. A described call whose `threads` says `true` is `NK2502` in this language's vocabulary, and the test that asserted the silence has not existed since. Deleted; the number stays where it was, because this file is cited by number.
 
 ### Corrected
 
-- **§2.44 said *Nothing of it is built* over five steps that said **built***, which is the shape of the defect this section is meant to catch. [ADR-193](docs/specification/adr/adr-193.md) is built — the column, the described call being asked, the signature scan, the `unsafe impl Send` flag, the call graph and the `use` table — and so is the parser under it ([ADR-195](docs/specification/adr/adr-195.md) D3, [ADR-196](docs/specification/adr/adr-196.md) D1). The entry is now what is actually left, which is not that record's: `cargo metadata`, and the `fs` directory walk and `std` subprocess it runs through ([ADR-195](docs/specification/adr/adr-195.md) D4). Its number is kept because two records cite it by one.
-- **§2.18 said the path in a bound *waits on … which nobody has decided*.** [ADR-078](docs/specification/adr/adr-078.md) §4 did leave *a trait a package publishes* as a question about modules, and [ADR-106](docs/specification/adr/adr-106.md) answered it: **D1** gives a bound a path, **D3** gives the ledger a `[trait."http::Handler"]` table whose methods are ordinary `fn` entries. So it is work and not a ruling — which is the whole distinction between this file and [`open-decisions.md`](docs/open-decisions.md). The same stale reasoning sat in the doc comment on `Ledger::traits` and is corrected there too.
-- **§2.38 was most of a record that closed.** `else if` parses and lowers and the entry was still narrating it. What is left is that there is **no formatter**, with one rule already written down for the day there is; the entry says that and nothing else now.
+- **[#124](https://github.com/Nikaia-Language/Nikaia/issues/124) said *Nothing of it is built* over five steps that said **built***, which is the shape of the defect this section is meant to catch. [ADR-193](docs/specification/adr/adr-193.md) is built — the column, the described call being asked, the signature scan, the `unsafe impl Send` flag, the call graph and the `use` table — and so is the parser under it ([ADR-195](docs/specification/adr/adr-195.md) D3, [ADR-196](docs/specification/adr/adr-196.md) D1). The entry is now what is actually left, which is not that record's: `cargo metadata`, and the `fs` directory walk and `std` subprocess it runs through ([ADR-195](docs/specification/adr/adr-195.md) D4). Its number is kept because two records cite it by one.
+- **[#193](https://github.com/Nikaia-Language/Nikaia/issues/193) said the path in a bound *waits on … which nobody has decided*.** [ADR-078](docs/specification/adr/adr-078.md) §4 did leave *a trait a package publishes* as a question about modules, and [ADR-106](docs/specification/adr/adr-106.md) answered it: **D1** gives a bound a path, **D3** gives the ledger a `[trait."http::Handler"]` table whose methods are ordinary `fn` entries. So it is work and not a ruling — which is the whole distinction between this file and [`open-decisions.md`](docs/open-decisions.md). The same stale reasoning sat in the doc comment on `Ledger::traits` and is corrected there too.
+- **[#101](https://github.com/Nikaia-Language/Nikaia/issues/101) was most of a record that closed.** `else if` parses and lowers and the entry was still narrating it. What is left is that there is **no formatter**, with one rule already written down for the day there is; the entry says that and nothing else now.
 
 ### Where this leaves the list
 
-**§1 is empty** and §2 holds 34 entries. Three closed in the last three packages — `use std::<anything>` (§1.7), the grammar action block (§2.29), and the described call's `threads` (§2.31) — and this one is the pass that makes the rest say what is true.
+**§1 is empty** and §2 holds 34 entries. Three closed in the last three packages — `use std::<anything>` ([#146](https://github.com/Nikaia-Language/Nikaia/issues/146)), the grammar action block ([#202](https://github.com/Nikaia-Language/Nikaia/issues/202)), and the described call's `threads` ([#195](https://github.com/Nikaia-Language/Nikaia/issues/195)) — and this one is the pass that makes the rest say what is true.
 
 ## [0.0.169] — 2026-09-23
 
@@ -3280,7 +3280,7 @@ said it was**.
 
 ### The measurement moved the design
 
-[ADR-009](docs/specification/adr/adr-009.md) D4 asks for a number before a shape is chosen. §2.6 called this step *keep registrations*:
+[ADR-009](docs/specification/adr/adr-009.md) D4 asks for a number before a shape is chosen. [#90](https://github.com/Nikaia-Language/Nikaia/issues/90) called this step *keep registrations*:
 
 | | per wait |
 | :--- | ---: |
@@ -3728,7 +3728,7 @@ The socket is the only thing missing.
 question is asked** — the owner's *HTTP from the command line, like Python's*.
 No code changes.
 
-### §2.6 said the head of the list was blocked on the runtime. It is not.
+### [#90](https://github.com/Nikaia-Language/Nikaia/issues/90) said the head of the list was blocked on the runtime. It is not.
 
 - **It read:** *`rt::io::wait` — the readiness half this would rest on — **cannot be awaited**, only blocked on … nothing here can be an `async fn` that actually pauses until it is answered*, and pointed at a question [`open-decisions.md`](docs/open-decisions.md) has never held.
 - **[ADR-121](docs/specification/adr/adr-121.md) answered it and is built.** D1 puts an always-armed `eventfd` on the ring so a worker's reply completes a ring job and the park returns; D4 says *the same is true of `rt::io::wait`, which is what the server's socket layer awaits*; and its §3 names this entry's own need outright: ***`rt::io::wait` is awaitable, which is the first thing the HTTP server's socket layer needs.*** `rt::io::waiting` is the future beside it.
@@ -3765,16 +3765,16 @@ next?*; no code changes.
 
 ### Two questions were named in the entry they block and never asked
 
-- **§2.6, the *head* of §2's order.** *`rt::io::wait` cannot be awaited … That is the entry in `open-decisions.md`.* That page has held no entry about `rt::io::wait` **in its whole history** — checked against every heading it has ever carried. So the first item in the list rests on a question nobody put in the shape that page asks for.
-- **§2.5.** *That is **how does a package receive a handler** on `open-decisions.md`.* Never there either.
+- **[#90](https://github.com/Nikaia-Language/Nikaia/issues/90), the *head* of §2's order.** *`rt::io::wait` cannot be awaited … That is the entry in `open-decisions.md`.* That page has held no entry about `rt::io::wait` **in its whole history** — checked against every heading it has ever carried. So the first item in the list rests on a question nobody put in the shape that page asks for.
+- **[#105](https://github.com/Nikaia-Language/Nikaia/issues/105).** *That is **how does a package receive a handler** on `open-decisions.md`.* Never there either.
 - **It reads like the rule was followed and it is the rule skipped.** Naming a question in the entry it blocks is the cheap half; putting it where it can be answered is the half that costs an afternoon. The head of the file says so now: **an entry that names a question elsewhere is not finished until the link resolves.**
 
 ### And two were answered and not written back
 
-- **§2.1** cited *the question that record left on `open-decisions.md`* about a pausing code parameter's shape — answered by [ADR-192](docs/specification/adr/adr-192.md) D1 at 0.0.144, six versions ago.
-- **§2.16** cited *`open-decisions.md`'s question about a described foreign function and a thread* — answered by [ADR-193](docs/specification/adr/adr-193.md) at 0.0.149, one version ago.
+- **[#187](https://github.com/Nikaia-Language/Nikaia/issues/187)** cited *the question that record left on `open-decisions.md`* about a pausing code parameter's shape — answered by [ADR-192](docs/specification/adr/adr-192.md) D1 at 0.0.144, six versions ago.
+- **[#100](https://github.com/Nikaia-Language/Nikaia/issues/100)** cited *`open-decisions.md`'s question about a described foreign function and a thread* — answered by [ADR-193](docs/specification/adr/adr-193.md) at 0.0.149, one version ago.
 
-### §2.5 was stale about the language as well
+### [#105](https://github.com/Nikaia-Language/Nikaia/issues/105) was stale about the language as well
 
 - **Measured:** `fn apply(f: fn() -> String) -> String { return f() }` **parses and lowers**. The entry said it was a parse error, which it was when the entry was written ([ADR-102](docs/specification/adr/adr-102.md) D1 opened it, [ADR-192](docs/specification/adr/adr-192.md) D1 decides its shape).
 - **The other door is still shut**, also measured: `fn tell[T: greet::Speaks](x: T)` is a parse error at the `:`, which is the bound-takes-a-path entry and waits on a module question nobody has decided.
@@ -3782,9 +3782,9 @@ next?*; no code changes.
 
 ### Why this came out of a question about the tether
 
-- **The tether is not next**, and §2.42's own measurement is why: the analysis half is built and swept the tree, every view in `examples/`, `benches/` and `tests/` solves to **Borrowed**, and the entry says outright that *the piece that was going to decide whether the rest is worth starting has answered: nothing in the tree needs Tethered.* It is also the most expensive thing in the file — at least four change packages, of which the representation is the expensive half.
+- **The tether is not next**, and [#196](https://github.com/Nikaia-Language/Nikaia/issues/196)'s own measurement is why: the analysis half is built and swept the tree, every view in `examples/`, `benches/` and `tests/` solves to **Borrowed**, and the entry says outright that *the piece that was going to decide whether the rest is worth starting has answered: nothing in the tree needs Tethered.* It is also the most expensive thing in the file — at least four change packages, of which the representation is the expensive half.
 - **That is this project's own gate**, applied twice in the last week: [`lock-free.md`](docs/lock-free.md) §6's *the question is not how much would it save but does a real program need it*, and [`staging-candidates.md`](docs/history/staging-candidates.md)'s *without a measured crossover the complexity is certain and the gain is not*.
-- **What would make it next is a program that escapes** — a parser handing its rows past the buffer's scope. §2.42 names the server as the likeliest source, and the server is already #1 in the order.
+- **What would make it next is a program that escapes** — a parser handing its rows past the buffer's scope. [#196](https://github.com/Nikaia-Language/Nikaia/issues/196) names the server as the likeliest source, and the server is already #1 in the order.
 
 ## [0.0.149] — 2026-09-22
 
@@ -3813,7 +3813,7 @@ the ruling and the task, not the build.
 ### And two pages got shorter
 
 - **[`open-decisions.md`](docs/open-decisions.md) has nothing open.** It says so as a statement about what has been **asked** rather than about what is settled: every entry it has held was put there because something was blocked and somebody noticed, so an empty page means nothing written down is blocked.
-- **§2.42's *what rests on it* lost its last stale name.** The head-of-list paragraph still cited `open-decisions.md`'s `Bytes` as resting on the tether; that question was answered by [ADR-179](docs/specification/adr/adr-179.md) at 0.0.127 and has not been in the file since — the third citation in that one sentence to turn out not to rest on the tether, after the grammar entry's `keeps` at 0.0.137 and the third of `?.` at 0.0.141.
+- **[#196](https://github.com/Nikaia-Language/Nikaia/issues/196)'s *what rests on it* lost its last stale name.** The head-of-list paragraph still cited `open-decisions.md`'s `Bytes` as resting on the tether; that question was answered by [ADR-179](docs/specification/adr/adr-179.md) at 0.0.127 and has not been in the file since — the third citation in that one sentence to turn out not to rest on the tether, after the grammar entry's `keeps` at 0.0.137 and the third of `?.` at 0.0.141.
 
 ## [0.0.148] — 2026-09-22
 
@@ -4051,7 +4051,7 @@ it** — [ADR-190](docs/specification/adr/adr-190.md), correcting the reason
 ### The method it cost
 
 - **[ADR-189](docs/specification/adr/adr-189.md) reasoned from D2's wording — *a view of the receiver* — to D2's state, without asking which state.** The lattice has three and the cheap one is the default, so *a view of X* says nothing about which; only **escaping the buffer's owning scope** does. A shape's state is a measurement — which is the rule [ADR-187](docs/specification/adr/adr-187.md) had been written about one day earlier, met from the other side.
-- **§2.42's *what rests on it* has now lost two entries**, both found by reading it against the code rather than following it: the grammar entry's `keeps` at 0.0.137, and this at 0.0.141. The entry now carries the distinction that keeps it from growing wrong a third time.
+- **[#196](https://github.com/Nikaia-Language/Nikaia/issues/196)'s *what rests on it* has now lost two entries**, both found by reading it against the code rather than following it: the grammar entry's `keeps` at 0.0.137, and this at 0.0.141. The entry now carries the distinction that keeps it from growing wrong a third time.
 
 ## [0.0.140] — 2026-09-22
 
@@ -4084,8 +4084,8 @@ two thirds of [ADR-113](docs/specification/adr/adr-113.md) and narrowing
 
 ### Upkeep found while reading
 
-- **§2.42's *what rests on it* had been stale for three versions.** It named *the `keeps` column of a grammar's entry, in §1* — closed at 0.0.137 ([ADR-186](docs/specification/adr/adr-186.md)) without the tether, because a parse keeps its `input` by its **declared result type** and not by a state. The entry now says so, which is the file's own rule: *read against the code before it is followed*.
-- **§2.34 and §2.10 look like low-hanging fruit and are not**, which is the same rule met twice more: *the symbol prefix is one line in the build* has no `artifact` key and no `#[no_mangle]` emitter to prefix, and *the cleanup point the ledger should narrate* needs `NK2401`, which is not built.
+- **[#196](https://github.com/Nikaia-Language/Nikaia/issues/196)'s *what rests on it* had been stale for three versions.** It named *the `keeps` column of a grammar's entry, in §1* — closed at 0.0.137 ([ADR-186](docs/specification/adr/adr-186.md)) without the tether, because a parse keeps its `input` by its **declared result type** and not by a state. The entry now says so, which is the file's own rule: *read against the code before it is followed*.
+- **[#109](https://github.com/Nikaia-Language/Nikaia/issues/109) and [#186](https://github.com/Nikaia-Language/Nikaia/issues/186) look like low-hanging fruit and are not**, which is the same rule met twice more: *the symbol prefix is one line in the build* has no `artifact` key and no `#[no_mangle]` emitter to prefix, and *the cleanup point the ledger should narrate* needs `NK2401`, which is not built.
 
 ## [0.0.139] — 2026-09-22
 
@@ -4168,7 +4168,7 @@ file carried is closed.
 ### The column was not being withheld — it was answering the wrong way
 
 - **[#140](https://github.com/Nikaia-Language/Nikaia/issues/140) said absence was the safe reading**: *absent means nobody said, so the caller does not lend*. The code says otherwise. `keeps_its` reads **an absent `keeps` on a present entry as *keeps nothing*** — `std.contracts`' own convention for `sync`, said once more for a second column — and a `pub` rule **is** a present entry ([ADR-082](docs/specification/adr/adr-082.md) D1).
-- **So every parse in the corpus was answering *lends***, for text it hands back views into. `Stock::file -> Vec[Entry]` where `Entry` holds a `ref String` is the corpus' own instance, and `read`, whose body is one `Stock::file(data)`, is §1.1's reproduction: it lost `keeps = ["data"]` the day [ADR-140](docs/specification/adr/adr-140.md) D3 made the entry a call by name, and nothing put it back.
+- **So every parse in the corpus was answering *lends***, for text it hands back views into. `Stock::file -> Vec[Entry]` where `Entry` holds a `ref String` is the corpus' own instance, and `read`, whose body is one `Stock::file(data)`, is [#140](https://github.com/Nikaia-Language/Nikaia/issues/140)'s reproduction: it lost `keeps = ["data"]` the day [ADR-140](docs/specification/adr/adr-140.md) D3 made the entry a call by name, and nothing put it back.
 - **[ADR-010](docs/specification/adr/adr-010.md) D1's polarity, found backwards.** An entry that is *absent* is unknown and unknown keeps; an entry that is *there with the column empty* is a claim. The two are one line apart in `keeps.rs` and the note in [#140](https://github.com/Nikaia-Language/Nikaia/issues/140) read the first where the ledger had the second.
 
 ### And it needed no mechanism
@@ -5080,7 +5080,7 @@ which had gone stale.
 ### Fixed
 
 - **the former backlog file's order was wrong in three ways at once**, and the order is the one part of that file which goes stale without any entry changing. It opened with *the refusals around tasks*, pointing at an entry called *a task that may not cross a thread* — which **did not exist**; the work it described has since been done from the other end; and the two items that stood in front of *a server to bind to* were both built out from under it.
-- The list now opens with the server, and says why: three entries say outright that they wait on a **program** rather than on work — a route handler for §2.1's pausing lambda, a caller for `par_iter`, the same shape for §2.2's lazy walk — and a server is the program they wait for. What is left of the lock's rules is D7's stored lambda and nothing else.
+- The list now opens with the server, and says why: three entries say outright that they wait on a **program** rather than on work — a route handler for [#187](https://github.com/Nikaia-Language/Nikaia/issues/187)'s pausing lambda, a caller for `par_iter`, the same shape for [#182](https://github.com/Nikaia-Language/Nikaia/issues/182)'s lazy walk — and a server is the program they wait for. What is left of the lock's rules is D7's stored lambda and nothing else.
 - What left the head of the list says so with its measurement, and what is *still* open there is named exactly: the case this compiler cannot decide, where `rustc`'s own `Send` bound refuses against the right `.nika` line through [ADR-005](docs/specification/adr/adr-005.md) D7's translation — the position kept, the words `rustc`'s, which that record carries as its own open half.
 
 ## [0.0.100] — 2026-09-20
@@ -5290,7 +5290,7 @@ Two questions asked, and six more refusals given their line.
 ### Asked
 
 - **Does a `for` iterate something whose step can pause?** [#182](https://github.com/Nikaia-Language/Nikaia/issues/182) says outright that what is left of it *waits on a ruling about the `for`, not work*, and [`docs/open-decisions.md`](docs/open-decisions.md) carries it now with the lowering measured: `for line in io::lines()` becomes `for line in io::lines().await` — the **call** awaits and the **step** does not, because `Lines::next` is a `BufRead` read that blocks the thread it is on. At `user_parallelism = yes` that is a thread the pool could have had.
-- **Does a *described* foreign function say whether it puts its argument on a thread?** §2.31's last paragraph says a column for it *is a question and belongs there when somebody asks it*. `NK2502` asks only of a call **nothing** describes ([ADR-038](docs/specification/adr/adr-038.md) D7's wording), and a test holds that silence on purpose. What refuses the described case is `rustc`'s `Send` bound — on the right `.nika` line, which is [C.1](docs/specification/30-nikaia-tooling.md)'s rule kept, with `rustc`'s words, which [ADR-005](docs/specification/adr/adr-005.md) D7 recorded as the open half.
+- **Does a *described* foreign function say whether it puts its argument on a thread?** [#195](https://github.com/Nikaia-Language/Nikaia/issues/195)'s last paragraph says a column for it *is a question and belongs there when somebody asks it*. `NK2502` asks only of a call **nothing** describes ([ADR-038](docs/specification/adr/adr-038.md) D7's wording), and a test holds that silence on purpose. What refuses the described case is `rustc`'s `Send` bound — on the right `.nika` line, which is [C.1](docs/specification/30-nikaia-tooling.md)'s rule kept, with `rustc`'s words, which [ADR-005](docs/specification/adr/adr-005.md) D7 recorded as the open half.
 - Both entries carry what each answer costs if it is wrong, which is what that page is for. The second's recommendation carries a **shape** as well as an answer: three values and not two, because the absence of the word must stay *nobody said* rather than *it does not* ([ADR-010](docs/specification/adr/adr-010.md) D1).
 
 ### Added
@@ -5343,7 +5343,7 @@ D1 and D2, built by [ADR-170](docs/specification/adr/adr-170.md)) — and
 ### What this leaves
 
 - [#199](https://github.com/Nikaia-Language/Nikaia/issues/199) is now the **cleanup half**: D3's attachment, D4's `error.secondary` as a value a program reads (which needs a Nikaia type for *a list of errors* before it is work), and whether the list survives a hop to a caller with a bare channel of its own.
-- **A test written as a tripwire was turned over.** [ADR-163](docs/specification/adr/adr-163.md)'s package asserted that a second failing branch is **nowhere**, calling it *the line that changes the day §2.25 is built*. This is that day, and it now asserts the second failure is printed under the first.
+- **A test written as a tripwire was turned over.** [ADR-163](docs/specification/adr/adr-163.md)'s package asserted that a second failing branch is **nowhere**, calling it *the line that changes the day [#199](https://github.com/Nikaia-Language/Nikaia/issues/199) is built*. This is that day, and it now asserts the second failure is printed under the first.
 
 ## [0.0.88] — 2026-09-20
 
@@ -5445,7 +5445,7 @@ reach.
 
 **Cargo's target-info probe is given an empty standard input**
 ([ADR-166](docs/specification/adr/adr-166.md)) — half of [#201](https://github.com/Nikaia-Language/Nikaia/issues/201)
-§3.1, an entry that had been open for months and had already recorded its own
+[#201](https://github.com/Nikaia-Language/Nikaia/issues/201), an entry that had been open for months and had already recorded its own
 best hypothesis as **refuted**. The hypothesis was right; the measurement that
 refuted it was measuring the wrong stream.
 
@@ -5456,7 +5456,7 @@ refuted it was measuring the wrong stream.
 
 ### Why it took months
 
-- The contaminant is never the same thing twice, so the failure looked like a race. §3.1 recorded *the wrapper's stdin is the suspect*, then recorded it **refuted**: `cargo test … < /dev/null` failed identically, three runs out of three. That measurement was right about what it measured and wrong about what it concluded — closing the **outer** command's standard input does not close the **test binary's**, and the nested build inherits from the harness.
+- The contaminant is never the same thing twice, so the failure looked like a race. [#201](https://github.com/Nikaia-Language/Nikaia/issues/201) recorded *the wrapper's stdin is the suspect*, then recorded it **refuted**: `cargo test … < /dev/null` failed identically, three runs out of three. That measurement was right about what it measured and wrong about what it concluded — closing the **outer** command's standard input does not close the **test binary's**, and the nested build inherits from the harness.
 - A build that fails because of what was in the terminal's input is not reproducible, and a toolchain that is reproducible only when invoked carefully is not reproducible. The probe has one correct standard input, and the process that knows that is the one holding the argument list.
 
 ### Added
@@ -5465,7 +5465,7 @@ refuted it was measuring the wrong stream.
 
 ### What this leaves
 
-- **§3.1 is narrowed rather than closed**, and the distinction is the honest one. `cargo test -p nikaia --test project` now passes on its own, repeatedly. Two things still show in a parallel sweep, and the entry carries both: the new end-to-end test fails inside a fully parallel `-p nikaia` run with **its own contaminant file** reaching `rustc` although the wrapper hands that invocation `/dev/null` — a smaller and much stranger claim than the entry ever made, and why that test is `#[ignore]`d rather than left to flake in CI; and `--test project --test one_name` together fail on *Blocking waiting for file lock on package cache*, which is contention over the one Cargo package cache those tests share on purpose.
+- **[#201](https://github.com/Nikaia-Language/Nikaia/issues/201) is narrowed rather than closed**, and the distinction is the honest one. `cargo test -p nikaia --test project` now passes on its own, repeatedly. Two things still show in a parallel sweep, and the entry carries both: the new end-to-end test fails inside a fully parallel `-p nikaia` run with **its own contaminant file** reaching `rustc` although the wrapper hands that invocation `/dev/null` — a smaller and much stranger claim than the entry ever made, and why that test is `#[ignore]`d rather than left to flake in CI; and `--test project --test one_name` together fail on *Blocking waiting for file lock on package cache*, which is contention over the one Cargo package cache those tests share on purpose.
 
 ## [0.0.83] — 2026-09-20
 
@@ -5538,8 +5538,8 @@ correct programs `rustc` refused, in files nobody wrote.
 
 ### What this leaves
 
-- **`overlap { … } catch { … }` does not lower**, and that is [ADR-115](docs/specification/adr/adr-115.md) D4's own written example. It is named as a defect ([#136](https://github.com/Nikaia-Language/Nikaia/issues/136)) rather than fixed, because the shape that fixes it is that record's own first step: handling at the block means looking at **every** outcome instead of returning at the first `Err`, which is exactly what its `secondary` list is. §2.25 now opens there.
-- `crates/nikaia/tests/joining.rs` is seven tests, five of which **compile and run** the result — the only shape that holds [Part III C.1](docs/specification/30-nikaia-tooling.md) closed. One of them asserts that a second failing branch is **nowhere**, which is the line that changes the day §2.25 is built.
+- **`overlap { … } catch { … }` does not lower**, and that is [ADR-115](docs/specification/adr/adr-115.md) D4's own written example. It is named as a defect ([#136](https://github.com/Nikaia-Language/Nikaia/issues/136)) rather than fixed, because the shape that fixes it is that record's own first step: handling at the block means looking at **every** outcome instead of returning at the first `Err`, which is exactly what its `secondary` list is. [#199](https://github.com/Nikaia-Language/Nikaia/issues/199) now opens there.
+- `crates/nikaia/tests/joining.rs` is seven tests, five of which **compile and run** the result — the only shape that holds [Part III C.1](docs/specification/30-nikaia-tooling.md) closed. One of them asserts that a second failing branch is **nowhere**, which is the line that changes the day [#199](https://github.com/Nikaia-Language/Nikaia/issues/199) is built.
 
 ## [0.0.80] — 2026-09-20
 
@@ -5820,7 +5820,7 @@ written down and read by nothing.
 
 - **The representation**, which is the expensive half: three layouts per struct, chosen per construction site, with the container holding the handle (D3, D4). And **D7's second half** — the solved state per *struct* and the buffer-table shape — which is a fact about that representation and belongs with it.
 - **One shape the analysis does not decide**: a buffer built element by element into a list whose element type the ledger does not name. No program in the tree writes one.
-- **A grammar rule's `input`** is a position the analysis does not reach, because a `pub` rule's entry is written by the ledger rather than declared as a function. That is §1.1's remaining column, read from the other end.
+- **A grammar rule's `input`** is a position the analysis does not reach, because a `pub` rule's entry is written by the ledger rather than declared as a function. That is [#140](https://github.com/Nikaia-Language/Nikaia/issues/140)'s remaining column, read from the other end.
 
 ## [0.0.69] — 2026-09-20
 
@@ -6190,7 +6190,7 @@ the former backlog file holds only what is open.
 - **A closed entry is deleted, not kept**, and the page's head now says so for all three of its sections. What an entry was and what closed it is in this file, which is the record; the list is for what is still open, and an entry that has been answered only makes it longer to read. The rule applies to the part of an entry that has been answered while the rest stands, which is where most of the length had gone.
 - **Four entries left because their subject is false.** *The crossing refusals are built and nothing can reach them* — `NK2501` and `NK2502` are in the list of codes the compiler emits, `send.rs` asserts one firing, and the question the entry pointed at in `open-decisions.md` was answered by [ADR-123](docs/specification/adr/adr-123.md). *The ring's park hears the bell* was built except for a remainder that is another entry's. *A C declaration cannot name a pointer* is [ADR-147](docs/specification/adr/adr-147.md)'s, answered two packages ago. And *the ring's `block_on` test flakes* named contention as the mechanism; the real one was four instances of one mistake and was fixed in 0.0.43, since when the test has been green in every run.
 - **Two more left because they were done**: *eight citations named an entry by its number* (all eight fixed), and §1's long narrative of every defect this project has closed.
-- **Six entries were 70 per cent retrospective and are now what is left of them** — the lock's rules, the build-time evaluator, the cleanup point, the function-typed parameter, the lambda `std` refuses, and §3.1's account of what upkeep used to hold. What was cut is the measurement and the history of finished work; what stays is every open item, every constraint a future change has to respect, and the two numbers a refusal has to be read against (the `locks` column's 0/24/35, and the lending column's 6 of 39).
+- **Six entries were 70 per cent retrospective and are now what is left of them** — the lock's rules, the build-time evaluator, the cleanup point, the function-typed parameter, the lambda `std` refuses, and [#201](https://github.com/Nikaia-Language/Nikaia/issues/201)'s account of what upkeep used to hold. What was cut is the measurement and the history of finished work; what stays is every open item, every constraint a future change has to respect, and the two numbers a refusal has to be read against (the `locks` column's 0/24/35, and the lending column's 6 of 39).
 - **2040 lines to 1350.** §1 holds two entries, §2 forty-five, §3 two.
 
 ### Fixed
@@ -6451,7 +6451,7 @@ spelling keeps parsing.
 
 ### What is still open
 
-- **The six pattern shapes** (D1) are not built: a tuple, an or-pattern, a range, a guard, a nested pattern and `..` for a struct's rest. The range **pattern** is why the spelling went first and out of the record's own order — a pattern range is inclusive, so it could not be written while `..` meant the other thing. [#196](https://github.com/Nikaia-Language/Nikaia/issues/196) carries the rest.
+- **The six pattern shapes** (D1) are not built: a tuple, an or-pattern, a range, a guard, a nested pattern and `..` for a struct's rest. The range **pattern** is why the spelling went first and out of the record's own order — a pattern range is inclusive, so it could not be written while `..` meant the other thing. [#218](https://github.com/Nikaia-Language/Nikaia/issues/218) carries the rest.
 
 ## [0.0.36] — 2026-09-19
 
@@ -6780,7 +6780,7 @@ specification's own slips corrected on the pages that write them.
 
 - **Every new rule is on its page with a Status note under it**, because [`docs/README.md`](docs/README.md) §1 makes a stale one a defect in its own right: Part I 2.2 for the number literal, 3.3 for `..<`, 3.4 for the six patterns, 4.2 for the brace literal and the anonymous constructor, 4.5 for the list literal, 5.1 for the options-only call now that D1 frees it, 7.1 for the jumps and for `throws` after the type, 9.1 for `use std::…`, chapter 2 for the doc comment, and Part II 10.2 for `::`.
 - **The examples stay as they are**, and Part I 3.3's range example says so in a comment. Rewriting every range on every page before the parser takes `..<` would take each of those blocks out of the lowering floor for nothing, and the rule is what a reader needs from the page meanwhile. The migration is one change with the corpus in it, because the old spelling keeps parsing and changes meaning.
-- **`docs/open-decisions.md` is empty**, for the first time since it was written, and says so. Ten entries left it: the nine that were open and the one the building of [ADR-133](docs/specification/adr/adr-133.md) had added. the former backlog file gains ten entries in their place — one per unbuilt record and one per ADR-140 migration — and §2.42 is rewritten as waiting on a migration rather than on a ruling.
+- **`docs/open-decisions.md` is empty**, for the first time since it was written, and says so. Ten entries left it: the nine that were open and the one the building of [ADR-133](docs/specification/adr/adr-133.md) had added. the former backlog file gains ten entries in their place — one per unbuilt record and one per ADR-140 migration — and [#218](https://github.com/Nikaia-Language/Nikaia/issues/218) is rewritten as waiting on a migration rather than on a ruling.
 
 ## [0.0.17] — 2026-09-19
 
@@ -7345,7 +7345,7 @@ package: **a library for other languages, and the ignore pattern.**
 - **The test is two halves, and the second is [ADR-084](docs/specification/adr/adr-084.md)'s**: the literal `true`, **and** no `break` bound to this loop. This entry's own earlier version had argued the work was small *because* `break` and `continue` did not exist — *"the analysis other languages need for this question is, here, one test on the condition"*. That was true and is not, which is the kind of sentence that stays quoted long after its premise leaves.
 - **The walk over-approximates *a jump leaves this loop*, on purpose.** It descends into a lambda, where a `break` is not bound to this loop at all. The two failure modes are not symmetric: a false *"a jump leaves it"* asks for the unreachable `return` this record removes, which is where every program already is, while a false *"nothing leaves it"* lets a body fall off its end and hands `rustc` a file nobody wrote.
 - **Four programs in `crates/nikaia/tests/never_ends.rs`**, including the emitted `loop` handed to `rustc` and **run** — which is what makes the claim safe rather than merely quiet. The two shapes that look like it and are not — a condition that is a name, and a `while true` a `break` leaves — still answer for their declared type.
-- **Seven citations moved with it.** the former backlog file's numbers renumber when an entry closes, and `§2.12` ([#183](https://github.com/Nikaia-Language/Nikaia/issues/183)) was named by two ADRs, two index rows, a notes page and an emitter comment. All seven now cite [ADR-093](docs/specification/adr/adr-093.md), which does not move.
+- **Seven citations moved with it.** the former backlog file's numbers renumber when an entry closes, and `[#183](https://github.com/Nikaia-Language/Nikaia/issues/183)` ([#183](https://github.com/Nikaia-Language/Nikaia/issues/183)) was named by two ADRs, two index rows, a notes page and an emitter comment. All seven now cite [ADR-093](docs/specification/adr/adr-093.md), which does not move.
 
 ### Fixed (a trait a package publishes is implemented and then callable)
 
@@ -7366,7 +7366,7 @@ package: **a library for other languages, and the ignore pattern.**
 - **`dsl … from …` is superseded and the replacement is unbuilt** ([ADR-082](docs/specification/adr/adr-082.md) D1: `Json.value(input)`), which is why the checker still knows only the old form — asked about, and worth writing down rather than leaving as a surprise in a comment. [ADR-091](docs/specification/adr/adr-091.md) D4's line now says it is **on borrowed time**: when the entry is a call it is answered from a contract like every other call, and the line is *deleted* rather than edited. The thing that has to travel with the migration is named: **a generated entry rule must carry a `throws`**, or `NK1134` refuses all eight programs that write `catch` beside an entry.
 - **ADR-082 rested on a fact that had stopped being true.** Its §5 gave *"no program in the tree writes it"* as the reason to **remove** the old form rather than deprecate it. Counted while the new refusal ran over the corpus: **eight programs write it on nine lines** — `1brc`, `access-log`, `calc`, `config`, `inventory/stock`, `json`, `k-nucleotide`, `report` — plus Part II 10.2 and three test files. The record now carries the count; whether removal is still right is a decision and is now `open-decisions.md`'s third entry, with both answers costed — remove-and-migrate-together is unseparable, deprecate-then-remove leaves a window with two spellings for one thing, which is the defect ADR-082 §1 names.
 - **And it had no entry on the work list at all**, only a subordinate clause in the build-time-evaluator entry — which is the exact pattern that entry itself was written about, one round earlier. It has one now, carrying the defect it closes: the emitter picks a grammar's entry rule by source order with a `par_fold` one winning, so **a grammar with two `pub` rules gets one of them silently**.
-- **Two more stale citations, found by adding an entry rather than closing one.** Inserting the new §2.14 moved everything below it, and the two sentences pointing into that range turned out to have been wrong *before* the insertion — `adr-077.md` said §2.14 for the item form, `adr/README.md` said §2.13 for what a `const` waits on. The renumber is only what made anybody look. Both now name their subject, and [#250](https://github.com/Nikaia-Language/Nikaia/issues/250)'s upkeep entry counts eight.
+- **Two more stale citations, found by adding an entry rather than closing one.** Inserting the new [#249](https://github.com/Nikaia-Language/Nikaia/issues/249) moved everything below it, and the two sentences pointing into that range turned out to have been wrong *before* the insertion — `adr-077.md` said §2.14 for the item form, `adr/README.md` said §2.13 for what a `const` waits on. The renumber is only what made anybody look. Both now name their subject, and [#250](https://github.com/Nikaia-Language/Nikaia/issues/250)'s upkeep entry counts eight.
 - **Three of this round's own records had decisions nothing could cite.** `check-adr-refs.py` reads a decision from a `### Dn` heading; ADR-090, 091 and 092 wrote theirs as bold paragraphs, so every `Dn` in them was dangling and nothing said so until a sentence cited one. All fourteen are headings now, and the first citation of `ADR-091 D4` is what surfaced it — the gate works, it just cannot fire until somebody points at the hole.
 
 ### Fixed (a grammar fold's `init`, `step` and `merge` are code)
@@ -7402,7 +7402,7 @@ package: **a library for other languages, and the ignore pattern.**
 
 ### Fixed (six citations named an entry by its number and meant another one)
 
-- **Found by reading, in the same round.** the former backlog file's head says to cite an entry by its **subject** because the numbers move when something closes. Six live sentences cited a number: three said *"§1.1"* about a generic function lowering without its `<T>` (which it has done since [ADR-074](docs/specification/adr/adr-074.md)), one said it about a trait whose method pauses (`NK1129` since [ADR-080](docs/specification/adr/adr-080.md)), one said the qualified constructor path is a parse error (`http::Response(status: 400)` parses and lowers), and one pointed at a `§3.7` that does not exist.
+- **Found by reading, in the same round.** the former backlog file's head says to cite an entry by its **subject** because the numbers move when something closes. Six live sentences cited a number: three said *"[#226](https://github.com/Nikaia-Language/Nikaia/issues/226)"* about a generic function lowering without its `<T>` (which it has done since [ADR-074](docs/specification/adr/adr-074.md)), one said it about a trait whose method pauses (`NK1129` since [ADR-080](docs/specification/adr/adr-080.md)), one said the qualified constructor path is a parse error (`http::Response(status: 400)` parses and lowers), and one pointed at a `§3.7` that does not exist.
 - **Two of the six were not merely misnumbered but false**, and nothing could have caught them: a citation into a notes page is the one kind that cannot be checked mechanically, because the entry it points at exists — it is simply a different entry. `check-adr-refs.py` covers ADR numbers and has nothing to say here, and the guard for this shape was [measured and not built](docs/specification/adr/README.md#reserved-numbers) because it produces a fifth false alarm.
 - **All six now name a record or a subject**, and [#250](https://github.com/Nikaia-Language/Nikaia/issues/250) carries the list as its own entry, so the next reader finds the evidence that the rule has to be applied rather than merely written.
 
@@ -7410,9 +7410,9 @@ package: **a library for other languages, and the ignore pattern.**
 
 - **Three records were waiting on a piece of work that [#174](https://github.com/Nikaia-Language/Nikaia/issues/174) did not mention.** [ADR-073](docs/specification/adr/adr-073.md) D5 wants a **call** in a `comptime` initialiser, [ADR-079](docs/specification/adr/adr-079.md) §3 wants a **loop and `push`** to build a table, and [ADR-088](docs/specification/adr/adr-088.md) D1 wants a **loop over a type's fields**. Each named it in a subordinate clause; none of them is the list people read to find something to do. [#174](https://github.com/Nikaia-Language/Nikaia/issues/174) now is.
 - **What exists today, counted:** `comptime`'s evaluator is `fold.rs`, **124 lines**, and it knows an integer literal, a name that already folded, a negation, and `+ - * / %`. No call, no loop, no text, no aggregate. What bounds the work is already decided — [ADR-075](docs/specification/adr/adr-075.md) D1 and D2 — so this is an interpreter for a **restricted** language and what it must refuse is written down rather than invented on the way.
-- **And it is two entries, not one, because conflating them makes it look like re-implementing `winnow-grammar`.** §2.15 is the other half and the reason is not effort: running a grammar at build time by **interpreting** it would be a second implementation of the same semantics, and Part II 10.2 promises that one grammar means the same thing at both stages. With two implementations that stops being a property and becomes a hope — and the disagreements would land in implicit whitespace, repetition bounds, the commit point, frames, interning and spans, presenting as *"this file parsed while the program was built and fails while it runs"*, for the same file and the same grammar.
+- **And it is two entries, not one, because conflating them makes it look like re-implementing `winnow-grammar`.** [#178](https://github.com/Nikaia-Language/Nikaia/issues/178) is the other half and the reason is not effort: running a grammar at build time by **interpreting** it would be a second implementation of the same semantics, and Part II 10.2 promises that one grammar means the same thing at both stages. With two implementations that stops being a property and becomes a hope — and the disagreements would land in implicit whitespace, repetition bounds, the commit point, frames, interning and spans, presenting as *"this file parsed while the program was built and fails while it runs"*, for the same file and the same grammar.
 - **There is nothing to borrow, either.** `winnow-grammar` is a code *generator*: its model crate parses, validates and analyses the grammar language and hands the result to a macro that writes a parser — *"intended to be used by procedural macros that generate parsers"*. It contains no interpreter.
-- **So §2.15 is compile-and-run, not interpretation**: build the *generated* parser during the build and run it, so the agreement between the two stages is a tautology rather than a claim. The second compilation is the cost [ADR-026](docs/specification/adr/adr-026.md) Q4 named, and [ADR-021](docs/specification/adr/adr-021.md)'s cache turns it from *every build* into *when the grammar changes*. No new security model: a grammar's actions are Nikaia, and [ADR-075](docs/specification/adr/adr-075.md) already covers what a build-time body may do.
+- **So [#178](https://github.com/Nikaia-Language/Nikaia/issues/178) is compile-and-run, not interpretation**: build the *generated* parser during the build and run it, so the agreement between the two stages is a tautology rather than a claim. The second compilation is the cost [ADR-026](docs/specification/adr/adr-026.md) Q4 named, and [ADR-021](docs/specification/adr/adr-021.md)'s cache turns it from *every build* into *when the grammar changes*. No new security model: a grammar's actions are Nikaia, and [ADR-075](docs/specification/adr/adr-075.md) already covers what a build-time body may do.
 
 ### Fixed (a `??`'s fallback is one value, or an expression in brackets)
 
@@ -8378,7 +8378,7 @@ package: **a library for other languages, and the ignore pattern.**
 
 - **A qualified type name resolved to a different type from the one the call handed back** ([#229](https://github.com/Nikaia-Language/Nikaia/issues/229)). `let c: pool::Conn = pool::make()` was `NK1103`, with a help line asking for exactly what was already written — a module could hand out behaviour and not data, which is most of the reason to split a program. One spelling was missing: the ledger keys a type `pool::Conn`, while a module's own signature says `-> Conn` because that is how the file declaring it writes the name. `Ledger::absorb` now qualifies the types **inside** an entry as well as its key — it is the only place that knows both the module and what that module declares — so the two spellings are one name before anything compares them.
 - **And a struct from another file could not be built at all**: `pool::Conn(id: 1)` was a parse error, because the literal's name was parsed as `NAME` where a type's is `type_name`. Both are `type_name` now, and a foreign struct's fields are read from the program's own ledger by the **exact** key — never by suffix, which is how `std` is matched: two modules may each declare a `Conn`, and a suffix match would answer with whichever came first. A wrong field name, a wrong field type and a wrong annotation are now all refused by their qualified names.
-- **A `Shared` in a field another file declares kept two different counts** (§1.6), and fixing the above is what uncovered it: the analysis runs once per file, so `pool.nika` saw the field and not the value while `main.nika` saw the value and not the field. Measured, in one generated file: `pub db: std::sync::Arc<Conn>` beside `let c: std::rc::Rc<pool::Conn>`, which `rustc` refused — about a file nobody wrote. The answer is the polarity this analysis already runs on rather than a new rule: where it cannot prove that nothing crosses, it does not lower. Such a field keeps the atomic floor as `Fallback::ForeignField`, a seventh row in the enumeration `--sharing` prints, because a fallback nobody can ask about is not a fallback this design allows.
+- **A `Shared` in a field another file declares kept two different counts** ([#143](https://github.com/Nikaia-Language/Nikaia/issues/143)), and fixing the above is what uncovered it: the analysis runs once per file, so `pool.nika` saw the field and not the value while `main.nika` saw the value and not the field. Measured, in one generated file: `pub db: std::sync::Arc<Conn>` beside `let c: std::rc::Rc<pool::Conn>`, which `rustc` refused — about a file nobody wrote. The answer is the polarity this analysis already runs on rather than a new rule: where it cannot prove that nothing crosses, it does not lower. Such a field keeps the atomic floor as `Fallback::ForeignField`, a seventh row in the enumeration `--sharing` prints, because a fallback nobody can ask about is not a fallback this design allows.
 - **Forced in one place**, after the walk and before the classes are read off, rather than at each of the three sites that create a field slot: a rule that has to be remembered at three sites is one that will be forgotten at the fourth. The declaring file forces the same field where it is public, so the two runs agree by both refusing to lower; where it does not, the other file cannot name the type either and the caution costs nothing.
 
 ### Fixed (a word this language does not know, and what leaves the compiler when a program is wrong)

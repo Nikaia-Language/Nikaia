@@ -7742,7 +7742,7 @@ impl<'a> Checker<'a> {
             // `handler::dispatch` resolves to a key no unit's AST produced, and
             // what the bound was came back as `rustc`'s words about the type
             // this program picked (issue #162
-            // §1.10).
+            // issue #162).
             None => match self.bounds_in_a_signature(key) {
                 Some(wanted) => wanted,
                 None => return,
@@ -14304,7 +14304,7 @@ impl<'a> Checker<'a> {
         // a view, it is the map's key; a view or a key of no known type goes
         // through `at` as before, which is the path every map of views takes.
         // **A map whose key type nothing pinned** (0.0.235, issue #169
-        // §1.21). `collections::HashMap()` with no annotation has `?` keys,
+        // issue #169). `collections::HashMap()` with no annotation has `?` keys,
         // and the brackets went through `at`, which is for a **position**: it
         // made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the
         // language below refused. A key is not a position, and the receiver is

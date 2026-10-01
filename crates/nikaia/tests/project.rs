@@ -2362,7 +2362,7 @@ fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
         "pub struct Answer {\n         \x20   pub text: String,\n         }\n         \n         pub trait Handler {\n         \x20   fn handle(ref self) -> Answer\n         }\n         \n         pub fn dispatch[H: Handler](h: H) -> String {\n         \x20   return h.handle().text\n         }\n",
     );
 
-    // **The type that implements nothing**, which is the shape §1.10 recorded.
+    // **The type that implements nothing**, which is the shape issue #162 recorded.
     let refused = a_program_and_a_package(
         "package-bound-refused",
         "handler",

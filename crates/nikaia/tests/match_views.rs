@@ -1,6 +1,6 @@
 //! **A `match` over a place reads its parts and leaves it whole**
 //! ([ADR-242](../../../docs/specification/adr/adr-242.md), issue #168
-//! §1.16, Part I 6.5). An arm that bound a part of a name
+//! issue #168, Part I 6.5). An arm that bound a part of a name
 //! took the part by value; the name was gone afterwards, and a second read of
 //! it was `rustc`'s *use of moved value*. A part that does not copy and that
 //! the arm only reads is now bound as a view; one the arm keeps, returns or

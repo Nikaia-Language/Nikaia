@@ -480,7 +480,7 @@ fn a_variant_of_a_librarys_type_names_the_type() {
 
 /// **The list survives a hop to a caller that only propagates**
 /// ([ADR-241](../../../docs/specification/adr/adr-241.md), issue #199
-/// §2.25): `pair` joins two failing reads, and `relay` hands its failure on.
+/// issue #199): `pair` joins two failing reads, and `relay` hands its failure on.
 /// `relay`'s channel was a bare `io::IoError`, which nothing converts an
 /// envelope into, and `rustc` refused the file; now it is the envelope, and
 /// the handler reads both failures, in each of the two places.

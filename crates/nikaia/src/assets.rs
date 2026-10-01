@@ -119,7 +119,7 @@ pub struct Reads {
     list: Option<Allowlist>,
     /// **Where this build compiles the parsers it runs**
     /// ([`crate::grammar_run`], issue #178
-    /// §2.9).
+    /// issue #178).
     ///
     /// Here rather than threaded a second time through the same six
     /// signatures, and it belongs with the reads for the reason they belong
