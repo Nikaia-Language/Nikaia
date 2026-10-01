@@ -1,5 +1,5 @@
 //! **A `match` over a place reads its parts and leaves it whole**
-//! ([ADR-242](../../../docs/specification/adr/adr-242.md), `open-work.md`
+//! ([ADR-242](../../../docs/specification/adr/adr-242.md), the issue tracker
 //! §1.16, Part I 6.5). An arm that bound a part of a name
 //! took the part by value; the name was gone afterwards, and a second read of
 //! it was `rustc`'s *use of moved value*. A part that does not copy and that

@@ -1,5 +1,5 @@
 # What an envelope costs a library's error
-# (open-work.md §2.25, ADR-241). It depends on `nikaia-std` because the two
+# ([#199](https://github.com/Nikaia-Language/Nikaia/issues/199), ADR-241). It depends on `nikaia-std` because the two
 # channels measured are the two a generated program gets: `io::IoError` bare,
 # and `nikaia_std::error::Thrown<io::IoError>`.
 [package]

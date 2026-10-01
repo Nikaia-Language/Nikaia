@@ -361,7 +361,7 @@ fn the_column_renders_and_parses_back() {
 
 /// **`return answer.text` keeps `answer`**
 /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1,
-/// [`open-work.md`](../../../docs/open-work.md) §1.11).
+/// issue #156).
 ///
 /// It did not, and four lines were enough to see it: the parameter stayed
 /// **lent**, the declaration was written `&Answer`, and the body took a piece
@@ -451,7 +451,7 @@ fn a_parameter_bound_again_and_only_read_is_not_kept() {
     );
 }
 
-/// **A receiver the author lent is not kept** (`open-work.md` §1.29, found in
+/// **A receiver the author lent is not kept** (issue #173, found in
 /// the ledger `tools/template.nika` lowers to). A `match` on it, a method that
 /// changes it and a call of itself are what a `ref mut self` is written for;
 /// each was recorded `keeps = ["self"]`, and a reader of the contract saw the

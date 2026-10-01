@@ -4,7 +4,7 @@
 //! handed to, the value it is put beside, the index it is, the numbers it is
 //! given later - and the type is written into the generated `let`, so nothing
 //! is left to the language below's inference. And a constant operation that
-//! overflows is `NK1116` wherever it stands (`open-work.md` §1.27, closed).
+//! overflows is `NK1116` wherever it stands (issue #176, closed).
 
 mod common;
 
@@ -65,7 +65,7 @@ fn runs(purpose: &str, source: &str, expected: &str) -> String {
 }
 
 /// **An index is a use** (D2): `v[i].push(x)` over a bare `let i = 0` was
-/// `rustc`'s *type annotations needed* (`open-work.md` §1.28), because
+/// `rustc`'s *type annotations needed* (issue #177), because
 /// `index::at` takes any integer and nothing else said which.
 #[test]
 fn an_index_makes_a_bare_number_an_i64() {
@@ -174,7 +174,7 @@ fn two_uses_that_disagree_are_refused_in_this_languages_words() {
     );
 }
 
-/// **An operation that overflows is refused where it stands** (`open-work.md`
+/// **An operation that overflows is refused where it stands** (the issue tracker
 /// §1.27): in an `f"…"` hole, a condition, a list and a receiver, each once,
 /// where only a `let`, a `return` and an argument were asked before.
 #[test]

@@ -1700,7 +1700,7 @@ impl Ledger {
                     // against it. Before this the bound lived only in the AST of
                     // the unit that declared the function, so a call from another
                     // package was answered by `rustc` about the type it picked
-                    // ([`open-work.md`](../../../docs/open-work.md) §1.10).
+                    // (issue #162).
                     // **Only a parameter with a bound**: one with none is
                     // declared by its use in the signature (ADR-251 D4 writes
                     // every one in brackets), and every reader of this list

@@ -2,7 +2,7 @@
 //!
 //! **The section's own example did not parse.** A trailing `?` on a type was a
 //! parse error and `null` was read as an ordinary name, so neither line of it
-//! was accepted — which is what `docs/open-work.md` carried. These are the
+//! was accepted — which is what the issue tracker carried. These are the
 //! programs that page names, compiled rather than only compared as text:
 //! whether the `Some(…)` lands in the right places is settled by the language
 //! below, and reading the emitted string would only say that this compiler
@@ -1260,7 +1260,7 @@ fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
 }
 
 /// **What a `match` over a call binds has the variant's type**
-/// (`open-work.md` §1.31, found moving `fold` into Nikaia): `let a = match
+/// (issue #171, found moving `fold` into Nikaia): `let a = match
 /// make(n) { R::Value(c) => c, other => return other }` left `a` untyped, so
 /// `a.name?.clone()` moved the field out where `a` was read again, and a
 /// method on `a` made the function look as if it paused.
@@ -1299,7 +1299,7 @@ fn a_part_of_a_matched_call_is_typed_and_read_in_place() {
 }
 
 /// **A nullable view is lent inside its option, and a copy of it is text of
-/// its own** (`open-work.md` §1.31, found moving `fold` into Nikaia): a
+/// its own** (issue #171, found moving `fold` into Nikaia): a
 /// `ref String?` parameter is an `Option<&str>` (Part I 2.3), its caller hands
 /// `x.as_deref()` and `None` for `null`, and `b?.clone()` in the body is
 /// `to_owned()` of the `&str` reached.
@@ -1363,7 +1363,7 @@ fn a_plain_arm_beside_a_null_is_the_value() {
     assert_eq!(printed.trim(), "1 7 2");
 }
 
-/// **`NK1205`: a variant matched on a `T?`** (`open-work.md` §1.33): the
+/// **`NK1205`: a variant matched on a `T?`** (issue #180): the
 /// pattern says nothing about `null`, and the lowering was a `match` over an
 /// `Option<W>` with `W::B` as its pattern. The way out, `??` first, compiles.
 #[test]

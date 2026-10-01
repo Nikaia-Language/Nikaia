@@ -127,7 +127,7 @@ fn a_set_with_a_question_mark_keeps_the_box() {
 
 /// **A set with two members is the generated sum**
 /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D1), which is what
-/// this record left open and what `docs/open-work.md` §2.13 carried: until it
+/// this record left open and what issue #179 carried: until it
 /// was built, a channel named after one of two error types would have been a
 /// lie, so the opaque one was the honest answer.
 #[test]
@@ -356,7 +356,7 @@ fn a_handler_that_ignores_the_error_is_untouched() {
 /// **A channel may be named after a type a *ledger* describes** (D1). Before
 /// this, `named` meant *declared by this unit*, so a function that read a file
 /// had a set of exactly one named member and still travelled in the box —
-/// which is the shape `docs/open-work.md` carried as a measurement.
+/// which is the shape the issue tracker carried as a measurement.
 #[test]
 fn a_librarys_error_type_is_a_channel() {
     let rust = lowered(
@@ -479,7 +479,7 @@ fn a_variant_of_a_librarys_type_names_the_type() {
 }
 
 /// **The list survives a hop to a caller that only propagates**
-/// ([ADR-241](../../../docs/specification/adr/adr-241.md), `open-work.md`
+/// ([ADR-241](../../../docs/specification/adr/adr-241.md), the issue tracker
 /// §2.25): `pair` joins two failing reads, and `relay` hands its failure on.
 /// `relay`'s channel was a bare `io::IoError`, which nothing converts an
 /// envelope into, and `rustc` refused the file; now it is the envelope, and

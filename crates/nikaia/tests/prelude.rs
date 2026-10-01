@@ -48,7 +48,7 @@ fn the_list() -> Vec<String> {
 /// not watched, and the one the drift happened in.
 ///
 /// The other direction cannot be asserted yet: the list names `assert`, which
-/// does not exist (`docs/open-work.md`). A name on the list that is missing is
+/// does not exist (the issue tracker). A name on the list that is missing is
 /// the one a program meets; a name that is reachable and unlisted is the one
 /// **nobody** meets, which is why it needs a test rather than a program.
 #[test]

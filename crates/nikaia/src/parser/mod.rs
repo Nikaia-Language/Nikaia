@@ -1114,7 +1114,7 @@ fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, 
 /// has since long before this form existed (`let _ = f()` lowers today), so
 /// refusing it here would narrow something already accepted and would say
 /// nothing about the single-name spelling beside it. What it *means* - Rust's
-/// wildcard rather than a binding - is on `open-work.md` as its own finding.
+/// wildcard rather than a binding - is on the issue tracker as its own finding.
 ///
 /// Recognised from the rendering rather than from the grammar, for the reason
 /// [`coalesce_fallback_note`] has: the failure happens after `(` has already
@@ -4119,7 +4119,7 @@ grammar! {
         // ordinary name, which is how `let _ = f()` compiled and lowered to Rust's
         // own `_` - a value *discarded* where the source said *bound*, and for a
         // file handle or a lock guard that is a different program
-        // (`open-work.md` found it and the record answered it).
+        // (the issue tracker found it and the record answered it).
         //
         // `_name`, `_0` and the `_000` of `1_000` stay names, which is what the
         // two lookaheads buy: a bare `_` is one not followed by an identifier or

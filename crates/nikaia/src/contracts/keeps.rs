@@ -427,7 +427,7 @@ fn uses_of(
     // D3). Each is a reference in the Rust whatever this walk decides, so a
     // `match` over one already matches through a reference - the
     // over-approximation in [`classify`]'s `match` arm is not for them
-    // (`open-work.md` §1.29, found at 0.0.254).
+    // (issue #173, found at 0.0.254).
     let mut lent: BTreeSet<String> = args
         .iter()
         .filter(|a| a.ty.is_view || a.mutable)
@@ -503,7 +503,7 @@ fn uses_of(
     {
         walk.hand_over(value);
     }
-    // **A receiver the author wrote `ref` is not kept** (`open-work.md`
+    // **A receiver the author wrote `ref` is not kept** (the issue tracker
     // §1.29, found at 0.0.254 in the ledger `template.nika` lowers to), **nor
     // an argument written `mut`** (found at 0.0.258 in `ledger.nika`'s, where
     // `entries.push(…)` kept the list it pushes to). Each is a reference by
@@ -773,7 +773,7 @@ fn classify(
         // **A parameter the author lent is not this arm's**: it is a reference
         // in the Rust whatever this column says, so keeping it bought nothing
         // and told a caller the receiver of `Position::escapable(ref self)`
-        // was taken (`open-work.md` §1.29).
+        // was taken (issue #173).
         Expr::Match { value, .. } => {
             if let Some(name) = parameter_named(parsed, parameters, value)
                 && !lent.contains(&name)
@@ -883,7 +883,7 @@ fn classify(
                         // **A receiver taken by value that copies is not moved
                         // out of**: `c.to_ascii_lowercase()` on a `char` leaves
                         // `c` where it was, as `n.abs()` leaves an `i64`
-                        // (`open-work.md` §1.29).
+                        // (issue #173).
                         contract.mutates
                             || !contract
                                 .signature

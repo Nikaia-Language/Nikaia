@@ -258,7 +258,7 @@ fn collect(
             // call there already contributed. Read as a value this compiler
             // cannot name, it added `"?"` and the function's sum fell back to
             // the unnamed error - found the day a `match` arm that is not a
-            // block was walked at all (`open-work.md` §1.31).
+            // block was walked at all (issue #171).
             if in_a_handler
                 && let Expr::Throw(thrown) = expr
                 && matches!(&**thrown, Expr::Variable(name) if parsed.text(*name) == "error")

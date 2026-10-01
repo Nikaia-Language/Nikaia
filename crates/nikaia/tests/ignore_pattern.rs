@@ -10,7 +10,7 @@
 //! `_` parsed as an ordinary name, so `let _ = f()` compiled and lowered to
 //! Rust's own `let _ =` — which **discards** the value where the source said
 //! *bound*. For a file handle or a lock guard those are different programs.
-//! `open-work.md` found it; D2 refuses it.
+//! the issue tracker found it; D2 refuses it.
 
 mod common;
 
@@ -230,7 +230,7 @@ fn an_ignored_argument_earns_no_warning_from_rustc() {
 
 /// **No program in the repository is broken by `_` ceasing to be a name.**
 ///
-/// `open-work.md` recorded that nothing in `examples/`, `tests/samples/` or
+/// the issue tracker recorded that nothing in `examples/`, `tests/samples/` or
 /// `crates/nikaia-std/src/` writes one, which is what made this free to decide.
 /// This is that claim, kept.
 #[test]

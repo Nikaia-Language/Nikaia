@@ -1,6 +1,6 @@
 //! **Programs that reached `rustc` as a file nobody wrote, or were refused
 //! though correct**, each found by running something and kept as the program
-//! that found it: 0.0.244's four (`open-work.md` §1.23, §1.24, §1.25, and a
+//! that found it: 0.0.244's four (issue #166 and #158 and #167, and a
 //! bare call nothing declares) and 0.0.245's loops, keys and lists of
 //! functions. Every program is run, at both settings of `user_parallelism`.
 
@@ -482,7 +482,7 @@ fn a_graph_over_a_map_of_lists() {
 }
 
 /// **`list(item, sep)` is a rule the backend is given** (Part II 10.8,
-/// `open-work.md` §1.26, 0.0.249): the backend has no such element and read
+/// issue #165, 0.0.249): the backend has no such element and read
 /// `list` as a rule of the grammar's own, so the macro said *expected ident*
 /// about the generated file. An empty item between two separators is an item,
 /// and an empty input is an empty list.

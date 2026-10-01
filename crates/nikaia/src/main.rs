@@ -330,7 +330,7 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
     // one that lowering was built with.
     //
     // Through `project::explain`, which is the same function `nikaia build` uses
-    // (`docs/open-work.md`, the explain modes): a report that said one thing here and another
+    // (the issue tracker, the explain modes): a report that said one thing here and another
     // there would be worse than one that only existed in one place.
     project::explain(
         &nikaia::modules::Program::read_one(input)?,

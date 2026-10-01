@@ -527,7 +527,7 @@ fn main() { println("x") }
 }
 
 /// **A `mut` parameter given away whole is the same shape**
-/// (`open-work.md` §1.30): it is passed as `ref mut`, so the function borrows
+/// (issue #161): it is passed as `ref mut`, so the function borrows
 /// it as a method borrows `ref self`. `Box { items: out }` and `return out`
 /// were `rustc`'s *mismatched types* about a file nobody wrote.
 #[test]

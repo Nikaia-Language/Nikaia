@@ -168,7 +168,7 @@ fn a_tuple_part_is_untouched() {
 }
 
 /// **The most negative `i64` has a spelling** — the completeness item
-/// `docs/open-work.md` §1.2 carried.
+/// issue #135 carried.
 ///
 /// `-9223372036854775808` is `i64::MIN` and is in the type. As a **negation of
 /// a positive literal** its digits are `9223372036854775808`, which no `i64`
@@ -253,7 +253,7 @@ fn a_negative_number_may_be_written_in_any_radix() {
     assert!(rust.contains("let n = -255;"), "{rust}");
 }
 
-/// **A literal in a branch is of the type the `let` wrote** (`open-work.md`
+/// **A literal in a branch is of the type the `let` wrote** (the issue tracker
 /// §1.31, found moving `fold` into Nikaia): `2147483648` in an `if` inside a
 /// `match` arm was written `2147483648i64` under a `let l: u64`, because the
 /// type stopped at the `match`.

@@ -211,7 +211,7 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
     // action may not pause (ADR-142 D1), because the generated parser is an
     // ordinary function. The probe used to reach the pause through a method on
     // what a **`match` arm** bound, which resolved to nothing while a pattern
-    // binding had no type; since `open-work.md` §1.16 such a binding is typed
+    // binding had no type; since issue #168 such a binding is typed
     // from its variant and resolves, so `flat` pauses where it says it does.
     let module = src.join("probe.nika");
     std::fs::write(

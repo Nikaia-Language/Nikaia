@@ -218,7 +218,7 @@ fn the_comparisons_run() {
 }
 
 /// **A view compared with a value is read, whatever the type**
-/// (`open-work.md` §1.31, found moving `fold` into Nikaia): `op == Op::Neg`
+/// (issue #171, found moving `fold` into Nikaia): `op == Op::Neg`
 /// for an `op: ref Op` compared a `&Op` with an `Op` below. And two
 /// comparisons of one name in one statement are told apart - only the one
 /// against a value reads it.

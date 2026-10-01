@@ -171,7 +171,7 @@ fn ran(purpose: &str, source: &str) -> String {
 #[test]
 fn the_other_three_collections_are_built() {
     // Text for the lookups: a key that is not already a view is passed by
-    // value, which is `open-work.md` §1's *a method's key of a number type*.
+    // value, which is the issue tracker's *a method's key of a number type*.
     let source = "use std::collections\n\
                   \n\
                   fn main() {\n\

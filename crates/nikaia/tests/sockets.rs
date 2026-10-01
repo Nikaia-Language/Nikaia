@@ -1,6 +1,6 @@
 //! **A Nikaia program binds a socket and talks over it**
 //! ([ADR-194](../../../docs/specification/adr/adr-194.md) D1), which is the
-//! step [`open-work.md`](../../../docs/open-work.md) §2.6 calls the blocker:
+//! step issue #90 calls the blocker:
 //! [ADR-018](../../../docs/specification/adr/adr-018.md) entire,
 //! [ADR-058](../../../docs/specification/adr/adr-058.md), and the roadmap's
 //! route hashing all wait on something for a handler to run *for*.

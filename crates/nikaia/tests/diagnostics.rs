@@ -315,7 +315,7 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
 }
 
 /// **A name this compiler substituted on the way out is put back on the way in**
-/// (`docs/open-work.md`, the relayed type name).
+/// (the issue tracker, the relayed type name).
 ///
 /// The emitter writes a trusted input's map as `TrustedMap`, which is
 /// `HashMap<K, V, BuildHasherDefault<FxHasher>>` (ADR-010 D5). Measured before
