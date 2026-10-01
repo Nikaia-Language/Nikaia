@@ -9,6 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "getrandom",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -280,6 +281,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "getrandom"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi",
+ "wasip2",
+]
+
+[[package]]
 name = "handler-bench"
 version = "0.0.0"
 dependencies = [
@@ -547,6 +560,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "r-efi"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -787,6 +806,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "which"
 version = "6.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -908,8 +936,9 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 [[package]]
 name = "winnow-grammar"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=2e7101287399e8b8260e490c49d30d427d2cf9ef#2e7101287399e8b8260e490c49d30d427d2cf9ef"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c#27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c"
 dependencies = [
+ "ahash",
  "lasso",
  "paste",
  "proc-macro2",
@@ -922,7 +951,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-macros"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=2e7101287399e8b8260e490c49d30d427d2cf9ef#2e7101287399e8b8260e490c49d30d427d2cf9ef"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c#27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -933,7 +962,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-model"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=2e7101287399e8b8260e490c49d30d427d2cf9ef#2e7101287399e8b8260e490c49d30d427d2cf9ef"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c#27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -945,6 +974,12 @@ name = "winsafe"
 version = "0.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
+
+[[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "zerocopy"
