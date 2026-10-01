@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.316] — 2026-10-01
+
+**`nikaia describe` writes its entries and notes in Nikaia** (ADR-104 D3,
+ADR-193 D3-D5, #124). A function's entry from its signature is
+`signature::contract`; a type's entry from its fields and derives is
+`crossing::type_entry`; the notes on the crate's promises and on a function
+that reaches a thread are `crossing::promise_lines` and
+`crossing::thread_lines`. `describe.rs` keeps the driving: the manifest, the
+files, the grammar into the surface, and the file it writes. A draft says
+what it said before, word for word.
+
 ## [0.0.315] — 2026-10-01
 
 **`nikaia describe` reads what a crate offers in Nikaia** (ADR-104 D2-D4,

@@ -168,3 +168,52 @@ fn slice(c: &[char], from: i64, to: i64) -> String {
     out
 }
 
+pub fn promise_lines(promises: &Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    if promises.is_empty() { return out; }
+    out.push(String::from("**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool"));
+    out.push(String::from("can see that the promise was made; it cannot see whether it is true - which is"));
+    out.push(String::from("the line between a rule the toolchain enforces and one it inherits:"));
+    for promise in promises.iter() { out.push(format!("  {}", promise)); }
+    out
+}
+
+pub fn thread_lines(name: &str, bound: &Vec<String>, way: Option<Vec<String>>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    if !bound.is_empty() {
+        let listed = a_list(bound, "the parameter", "the parameters");
+        out.push(format!("`{}`: {} is bound `Send`.", name, listed));
+        out.push(String::from("  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**"));
+        out.push(String::from("  send it, which is usually `spawn` and is sometimes an API keeping a door open."));
+    }
+    if way.is_some() {
+        let steps = nikaia_std::index::or(way, || vec![].into());
+        let sink = nikaia_std::index::get(&steps, nikaia_std::index::at(steps.len() as i64 - 1));
+        if (steps.len() as i64) == 1 { out.push(format!("`{}`: calls `{}`.", name, sink)); } else {
+            let mut through: String = String::from("");
+            for at in 0..steps.len() as i64 - 1 {
+                if at > 0 { through.push_str(" -> "); }
+                let step = nikaia_std::index::get(&steps, nikaia_std::index::at(at));
+                let quoted = format!("`{}`", step);
+                through.push_str(&quoted);
+            }
+            out.push(format!("`{}`: reaches `{}` through {}.", name, sink, through));
+        }
+        out.push(String::from("  A sink reached through a call says *this function threads something*,"));
+        out.push(String::from("  never *this function threads your argument* (ADR-193 D4) - connecting"));
+        out.push(String::from("  those is dataflow through a closure capture and is not built."));
+    }
+    if out.is_empty() { return out; }
+    out.push(String::from("  Does this put it on a thread?  -> threads = true | false"));
+    out
+}
+
+pub fn type_entry(fields: &Vec<String>, derives: &collections::BTreeSet<String>) -> TypeContract {
+    let mut entry = TypeContract::empty();
+    entry.public = true;
+    entry.crosses = crosses(fields);
+    entry.compares = derives.contains("PartialEq");
+    entry.copies = derives.contains("Copy");
+    entry
+}
+
