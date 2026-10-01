@@ -349,7 +349,22 @@ the hand-off at all - the zeroed buffer and the eager error text - and cost the 
 the read is made; [ADR-263](../specification/adr/adr-263.md) D3 removes them first, so that what
 D1 of that record saves is measured on its own.
 
-### 7.3 How to run it again
+### 7.3 After the normal path stopped doing what it need not
+
+[ADR-263](../specification/adr/adr-263.md) D3, measured with the same harness on the same tree
+(October 1, 2026): the ring's read buffer is offered to the kernel as capacity rather than zeroed
+first, and `fs` writes a path into the text of an error only when there is an error.
+
+| `user_parallelism` | reads | blocking | async (as lowered) | for being async, a read | before (§7) |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `no` | 1,000 | 2,402,439 | 5,016,835 (+108.8 %) | **2,614** | 3,531 |
+| `yes` | 1,000 | 2,663,838 | 5,156,686 (+93.6 %) | **2,492** | 3,115 |
+
+About 900 instructions a read, a quarter of what a program that never overlaps paid, gone without
+changing what any operation does. What is left is the ring, the executor and the copy out of the
+buffer - the hand-off itself, which is what D1 of that record is measured against.
+
+### 7.4 How to run it again
 
 ```sh
 cargo test -p nikaia --release --test measure what_an_await -- --ignored --nocapture

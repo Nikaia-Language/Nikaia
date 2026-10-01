@@ -550,7 +550,12 @@ impl Ring {
             // `drive` is what decides where the file ends. One extra byte
             // makes an exactly-`size` file take one more turn and report EOF,
             // rather than being silently truncated at the hint.
-            Kind::Read => vec![0u8; size + 1],
+            //
+            // **Capacity, not zeroes** (Nikaia ADR-263 D3): the kernel writes
+            // into the spare capacity and `reap` grows the length by what it
+            // wrote. Zeroing the buffer first was a `memset` of the whole file
+            // the kernel then overwrote.
+            Kind::Read => Vec::with_capacity(size + 1),
             Kind::Write => bytes,
         };
         Ok(self.take_slot(Job {
@@ -613,8 +618,10 @@ impl Ring {
             _ => return false,
         };
 
-        if job.kind == Kind::Read && job.at == job.buf.len() {
-            job.buf.resize(job.at + GROW, 0);
+        // A read's buffer is filled up to its length and offered up to its
+        // capacity; when the kernel has filled all of it, it grows.
+        if job.kind == Kind::Read && job.at == job.buf.capacity() {
+            job.buf.reserve(GROW);
         }
         if job.kind == Kind::Write && job.at == job.buf.len() {
             job.outcome = Some(Ok(()));
@@ -623,13 +630,18 @@ impl Ring {
 
         let fd = types::Fd(job.file.as_raw_fd());
         let at = job.at;
-        let rest = (job.buf.len() - at) as u32;
+        let rest = match job.kind {
+            Kind::Read => job.buf.capacity() - at,
+            Kind::Write => job.buf.len() - at,
+        } as u32;
         // SAFETY: the pointer is into `job.buf`, which lives in `self.jobs`
         // and is released only by `finish` once `outstanding` reaches zero -
         // so the kernel's view of it outlives every submission made for it.
         // The slice is disjoint from every other in-flight submission because
         // each slot has its own buffer and each submission covers `at..len`
-        // of exactly one slot.
+        // of exactly one slot - `at..capacity` for a read, which is the
+        // buffer's own allocation, and is not reallocated while a submission
+        // is out (`reserve` runs only when `outstanding` is zero, above).
         let entry = unsafe {
             match job.kind {
                 Kind::Read => opcode::Read::new(fd, job.buf.as_mut_ptr().add(at), rest)
@@ -740,8 +752,16 @@ impl Ring {
                 }
                 n => {
                     job.at += n as usize;
-                    if job.kind == Kind::Write && job.at == job.buf.len() {
-                        job.outcome.get_or_insert(Ok(()));
+                    match job.kind {
+                        // SAFETY: the kernel reported `n` bytes written into
+                        // `at..at + n` of this buffer's spare capacity, which
+                        // the submission offered and no more (`rest`), so the
+                        // first `at` bytes are initialised and within capacity.
+                        Kind::Read => unsafe { job.buf.set_len(job.at) },
+                        Kind::Write if job.at == job.buf.len() => {
+                            job.outcome.get_or_insert(Ok(()));
+                        }
+                        Kind::Write => {}
                     }
                 }
             }

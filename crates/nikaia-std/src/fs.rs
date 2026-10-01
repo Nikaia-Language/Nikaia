@@ -59,8 +59,8 @@ fn resolve(path: &Path, root: &Root) -> Result<std::path::PathBuf, crate::io::Io
     let Root::Dir(dir) = root else {
         return Ok(path.to_path_buf());
     };
-    let asked = path.display().to_string();
-    let outside = || crate::io::IoError::Outside(asked.clone());
+    // The name is written out only for the refusal (ADR-263 D3).
+    let outside = || crate::io::IoError::Outside(path.display().to_string());
 
     // The root itself has to resolve. One that does not is not a directory a
     // name may be used under, and answering `Outside` for it is the fail-closed
@@ -183,10 +183,10 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
     // [ADR-023](../../../docs/specification/adr/adr-023.md) D3 names. What is
     // *held* is what the caller asked for and what is *used* is what the root
     // resolved it to, so a refusal names the name the program wrote.
-    let asked = path.as_ref().display().to_string();
-    let path = resolve(path.as_ref(), root)?;
-    let path = path.as_path();
-    let named = |e| crate::io::IoError::of(e, &asked);
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let path = resolved.as_path();
+    let named = |e| crate::io::IoError::of(e, &asked.display().to_string());
     let file = std::fs::File::open(path).map_err(named)?;
     if file.metadata().map_err(named)?.len() == 0 {
         return Ok(Mapped {
@@ -200,7 +200,8 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
         Ok(pages) => pages,
         Err(at) => {
             return Err(crate::io::IoError::NotText(format!(
-                "{asked} (at byte {at})"
+                "{} (at byte {at})",
+                asked.display()
             )));
         }
     };
@@ -235,12 +236,15 @@ pub async fn read_to_string(
     path: impl AsRef<Path>,
     root: &Root,
 ) -> Result<String, crate::io::IoError> {
-    let what = path.as_ref().display().to_string();
-    let path = resolve(path.as_ref(), root)?;
-    let bytes = crate::rt::io::reading(&path)
+    // **The name is written out only for a failure** (ADR-263 D3): building
+    // it on every call was ~425 instructions a read spent on a message no
+    // successful read reports.
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    let bytes = crate::rt::io::reading(&resolved)
         .await
-        .map_err(|e| crate::io::IoError::of(e, &what))?;
-    text(bytes, &what)
+        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))?;
+    text_named(bytes, || asked.display().to_string())
 }
 
 /// Bytes as text, or the failure `read_to_string` reports for bytes that are
@@ -252,12 +256,18 @@ pub async fn read_to_string(
 /// than by a second copy of it. One place, for the reason ADR-033 §8.4 gives
 /// about the vehicle: the next change belongs in `std`.
 pub(crate) fn text(bytes: Vec<u8>, what: &str) -> Result<String, crate::io::IoError> {
+    text_named(bytes, || what.to_string())
+}
+
+/// [`text`], with the name asked for only when the bytes are not text.
+fn text_named(bytes: Vec<u8>, what: impl FnOnce() -> String) -> Result<String, crate::io::IoError> {
     // The same check `map` makes, and the same reason: a parser handed bytes
     // that are not text would find that out one view at a time.
     match checked_text::CheckedText::check(bytes) {
         Ok(text) => Ok(text.into_string()),
         Err(at) => Err(crate::io::IoError::NotText(format!(
-            "{what} (at byte {at})"
+            "{} (at byte {at})",
+            what()
         ))),
     }
 }
@@ -308,12 +318,12 @@ pub async fn read(
     path: impl AsRef<Path>,
     root: &Root,
 ) -> Result<crate::bytes::Bytes, crate::io::IoError> {
-    let asked = path.as_ref().display().to_string();
-    let path = resolve(path.as_ref(), root)?;
-    crate::rt::io::reading(&path)
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    crate::rt::io::reading(&resolved)
         .await
         .map(crate::bytes::Bytes::from)
-        .map_err(|e| crate::io::IoError::of(e, &asked))
+        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
 }
 
 /// A whole file, written.
@@ -360,12 +370,12 @@ pub async fn write(
     // borrowed slice and the runtime owns the copy only where the *kernel*
     // needs one to outlive the submission - which is the completion path, and
     // is `rt::uring`'s soundness rule rather than a convenience.
-    let asked = path.as_ref().display().to_string();
-    let path = resolve(path.as_ref(), root)?;
-    crate::rt::io::writing(&path, data.as_ref(), append, create)
+    let asked = path.as_ref();
+    let resolved = resolve(asked, root)?;
+    crate::rt::io::writing(&resolved, data.as_ref(), append, create)
         .await
         .map(|_| ())
-        .map_err(|e| crate::io::IoError::of(e, &asked))
+        .map_err(|e| crate::io::IoError::of(e, &asked.display().to_string()))
 }
 
 /// Where `nikaia test` puts a test's own directory, for [`scratch`]
