@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.329] — 2026-10-01
+
+**A file read stops doing work nobody asked for** (#320, ADR-263 D3). The
+ring's read buffer is offered to the kernel as capacity instead of being zeroed
+first - a `memset` of the whole file the kernel then overwrote - and its length
+grows by what each completion reports (`file-ring`'s README lists the one
+`set_len` that takes). `fs::read_to_string`, `read`, `write`, `map` and the root
+check write a path into an error's text only when there is an error, where
+every call used to. A program that never overlaps pays about **2,500-2,600
+instructions a read** for the runtime's I/O, down from 3,100-3,500
+(`docs/history/runtime-cost.md` §7.3). What is left is the hand-off itself,
+which ADR-263 D1 is measured against next.
+
 ## [0.0.328] — 2026-10-01
 
 **Two decisions, recorded.**

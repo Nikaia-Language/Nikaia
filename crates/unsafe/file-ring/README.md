@@ -23,6 +23,7 @@ it; the crate documentation lists them:
 | `Ring::open` | `OwnedFd::from_raw_fd` | a descriptor `eventfd` just made, which nothing else holds |
 | `arm_bell` | submission of a poll | a poll borrows no buffer; the bell's descriptor is owned by the ring and outlives the poll |
 | `submit` (read/write) | building and pushing the entry | the buffer lives in the slot and is released only after its completion is reaped (the rule above); each submission covers a disjoint range of exactly one slot's buffer |
+| `reap` (read) | `Vec::set_len` after a completion | a read's buffer is offered to the kernel from its length to its capacity, unzeroed; the completion says how many bytes the kernel wrote there, and the length grows by exactly that many, so every byte below it is initialised |
 
 Ringing and draining the bell are ordinary `std` reads and writes on a
 `File`, and take no `unsafe`.
