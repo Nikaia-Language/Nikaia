@@ -2160,6 +2160,25 @@ impl Project {
             .map(|r| r.expect("every member is lowered"))
             .collect();
 
+        // **The generated Rust, before Cargo starts** (#280). The wrapper
+        // writes the same file while `rustc` runs, and Cargo dates the
+        // dependency file to when the invocation *started*: a source written
+        // after that looks edited during the build, so a new project was
+        // compiled again on its second build with nothing changed. Written
+        // here, the wrapper's write finds the bytes already there and touches
+        // nothing. The path is the wrapper's: the generated directory, then
+        // the crate's name as Cargo passes it, `-` made `_`.
+        for (member, rust) in members.iter().zip(&rust) {
+            let crate_name = member.name.replace('-', "_");
+            write_if_changed(
+                &self
+                    .gen_dir()
+                    .join(&crate_name)
+                    .join(format!("{crate_name}.rs")),
+                rust,
+            )?;
+        }
+
         // **Before `cargo`**, and written only when it differs, so an
         // unchanged switch does not dirty the package every build. What is in
         // it is what the cache keys on, so the two cannot disagree about which
@@ -2243,6 +2262,25 @@ impl Project {
         let (mut code, messages) = cargo.messages("build", &target_args)?;
         self.report(&messages, allowlist)?;
         let binary = executable_in(&messages);
+
+        // Cargo has resolved by now, and only now: the versions do not exist
+        // before it ran. A build that failed resolved nothing worth recording.
+        //
+        // **Before the program starts**, because `run` hands this process over
+        // to it (#281) and nothing after that point runs. What is recorded is
+        // what the *build* resolved, so the program's own exit status was never
+        // the right condition for it.
+        if code == 0
+            && let Err(error) = self.record_resolved_dependencies(no_cache)
+        {
+            // D12: the record costs the *next* reader some information. It
+            // never costs this build, which has already succeeded.
+            eprintln!(
+                "warning: the resolved dependency versions could not be recorded \
+                     in nikaia.lock: {error:#}"
+            );
+        }
+
         if code == 0 && subcommand == "run" {
             // **The built program is run directly, and that is Part III C.1
             // rather than a shortcut.** `cargo run` is a second invocation that
@@ -2266,19 +2304,6 @@ impl Project {
                 Some(binary) => run_directly(&binary, program_args)?,
                 None => cargo.run("run", &target_args, program_args)?,
             };
-        }
-
-        // Cargo has resolved by now, and only now: the versions do not exist
-        // before it ran. A build that failed resolved nothing worth recording.
-        if code == 0
-            && let Err(error) = self.record_resolved_dependencies(no_cache)
-        {
-            // D12: the record costs the *next* reader some information. It
-            // never costs this build, which has already succeeded.
-            eprintln!(
-                "warning: the resolved dependency versions could not be recorded \
-                     in nikaia.lock: {error:#}"
-            );
         }
         Ok((code, binary))
     }
@@ -2988,6 +3013,25 @@ fn shown_path(path: &Path, root: &Path) -> String {
 /// Nothing is captured and nothing is translated: what a running program writes
 /// is the program's, and the last thing a compiler should do is stand between
 /// the two.
+///
+/// **On Unix this process becomes the program** (#281). Started as a child, it
+/// outlived a `nikaia run` that was killed - by a supervisor, by `timeout`, by
+/// this repository's own tests - and kept its port. Replaced, it has this
+/// process's id, its signals and its exit status, and there is nothing left
+/// behind to orphan. What this compiler wrote is flushed first, since nothing
+/// of this process runs afterwards to do it.
+#[cfg(unix)]
+fn run_directly(binary: &std::path::Path, args: &[String]) -> Result<i32> {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+    std::io::stdout().flush().ok();
+    std::io::stderr().flush().ok();
+    // `exec` returns only when it failed to replace this process.
+    let error = std::process::Command::new(binary).args(args).exec();
+    Err(error).with_context(|| format!("running {}", binary.display()))
+}
+
+#[cfg(not(unix))]
 fn run_directly(binary: &std::path::Path, args: &[String]) -> Result<i32> {
     let status = std::process::Command::new(binary)
         .args(args)

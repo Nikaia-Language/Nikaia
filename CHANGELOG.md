@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.301] — 2026-10-01
+
+- **`nikaia run` becomes the program it built** (#281). It started the
+  program as a child and waited, so a `nikaia run` that was killed - by a
+  supervisor, by `timeout`, by this repository's own HTTP test - left the
+  program running and holding its port. On Unix the process is now replaced by
+  the program, which has its id, its signals and its exit status; elsewhere it
+  is still waited on. The record of resolved dependency versions in
+  `nikaia.lock` is written before the program starts, since nothing of
+  `nikaia` runs after it.
+- **A new project is not compiled again on its second build** (#280). The
+  wrapper wrote the generated Rust while `rustc` ran, and Cargo dates a
+  dependency file to when the invocation started, so the source looked edited
+  mid-build. The driver, which lowers every member before Cargo runs anyway,
+  now writes it first.
+
 ## [0.0.300] — 2026-10-01
 
 **`nikaia run f.nika` compiles and runs one file** (ADR-260 D4, #132). A file
