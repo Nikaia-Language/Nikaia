@@ -12170,7 +12170,7 @@ impl<'a> Checker<'a> {
         }
 
         for hole in brace_groups(text) {
-            let Ok(parsed) = crate::parser::parse_expression(&self.parsed.interner, &hole) else {
+            let Ok(parsed) = self.parsed.hole(&hole) else {
                 continue;
             };
             if !self.names_something_here(&parsed) {
@@ -12267,9 +12267,7 @@ impl<'a> Checker<'a> {
                     holes
                         .iter()
                         .zip(specs)
-                        .filter(|(hole, _)| {
-                            crate::parser::parse_expression(&self.parsed.interner, hole).is_ok()
-                        })
+                        .filter(|(hole, _)| self.parsed.hole(hole).is_ok())
                         .map(|(_, spec)| spec)
                         .collect()
                 })

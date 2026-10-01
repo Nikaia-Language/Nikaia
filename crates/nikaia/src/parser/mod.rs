@@ -374,9 +374,32 @@ pub struct Parsed {
     /// is parsed again by every reader, so the wrap is applied where it is
     /// parsed - [`crate::emit::literal_expressions`] - and every reader sees it.
     pub hole_wraps: std::collections::BTreeMap<String, Vec<(String, winnow_grammar::Symbol)>>,
+    /// **Every hole this file's readers parsed, by its text**: what
+    /// [`Parsed::hole`] answered before. Each analysis walks every literal and
+    /// parses its holes again, which was a fifth of lowering a program with a
+    /// few dozen `f"…"`s - as much as parsing the file. A hole parses to the
+    /// same tree into the same interner every time, so the second answer is
+    /// the first one copied. Only what parsed is kept; a hole that does not is
+    /// said by whoever asks, in their own words, every time.
+    holes: std::sync::Mutex<std::collections::HashMap<String, ast::Expr>>,
 }
 
 impl Parsed {
+    /// One hole of an interpolated string or a template, parsed into this
+    /// file's interner ([`parse_expression`]), once per text
+    /// ([`Parsed::holes`]).
+    pub fn hole(&self, text: &str) -> Result<ast::Expr> {
+        if let Some(expr) = self.holes.lock().expect("a hole parse panicked").get(text) {
+            return Ok(expr.clone());
+        }
+        let expr = parse_expression(&self.interner, text)?;
+        self.holes
+            .lock()
+            .expect("a hole parse panicked")
+            .insert(text.to_string(), expr.clone());
+        Ok(expr)
+    }
+
     /// The same file with only the items `keep` says yes to.
     ///
     /// **The interner travels with them**, which is the whole reason this is a
@@ -400,6 +423,7 @@ impl Parsed {
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
             hole_wraps: self.hole_wraps.clone(),
+            holes: Default::default(),
         }
     }
 
@@ -473,6 +497,7 @@ impl Parsed {
             aliases: self.aliases.clone(),
             text_tiers: self.text_tiers.clone(),
             hole_wraps: self.hole_wraps.clone(),
+            holes: Default::default(),
         }
     }
 
@@ -1184,6 +1209,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         aliases,
         text_tiers: Vec::new(),
         hole_wraps: std::collections::BTreeMap::new(),
+        holes: Default::default(),
     };
     // **What a `String` field or result is below is decided here, once**
     // ([ADR-222](../../../../docs/specification/adr/adr-222.md)): by what flows

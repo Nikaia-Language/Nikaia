@@ -726,8 +726,7 @@ impl<'a> BuildTime<'a> {
         })?;
         let mut values = Vec::with_capacity(holes.len());
         for hole in &holes {
-            let expr = crate::parser::parse_expression(&self.parsed.interner, hole)
-                .map_err(|_| Refusal::Unevaluable)?;
+            let expr = self.parsed.hole(hole).map_err(|_| Refusal::Unevaluable)?;
             values.push(self.expr(&expr, frame)?);
         }
 

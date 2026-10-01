@@ -985,9 +985,7 @@ impl Walk<'_, '_> {
                     .map(|(_, holes)| holes)
                     .unwrap_or_default();
                 for text in holes {
-                    let Ok(hole) =
-                        crate::parser::parse_expression(&self.declared.parsed.interner, &text)
-                    else {
+                    let Ok(hole) = self.declared.parsed.hole(&text) else {
                         continue;
                     };
                     let held = self.hole_text.replace(text);
