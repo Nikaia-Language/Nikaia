@@ -41,11 +41,16 @@ struct Run {
 
 /// Lower a `.nika` benchmark to Rust.
 fn lower(file: &str) -> String {
+    lower_with(file, Build::default())
+}
+
+/// [`lower`], at a setting of `user_parallelism` of the caller's choosing.
+fn lower_with(file: &str, how: Build) -> String {
     let path = repo_root().join("benches").join(file);
     let source =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let parsed = parse_to_ast(&source).unwrap_or_else(|e| panic!("{file} does not parse:\n{e}"));
-    emit_program(&parsed, Build::default())
+    emit_program(&parsed, how)
         .unwrap_or_else(|e| panic!("{file} does not lower:\n{e}"))
         .rust
 }
@@ -276,4 +281,79 @@ fn what_a_jump_saves_against_the_shape_that_replaces_it() {
             report(what, &format!("n = {n}"), &runs);
         }
     }
+}
+
+/// **What being `async` costs a program that never overlaps** (#106).
+///
+/// The emitted Rust is `async` ([ADR-055](../../../docs/specification/adr/adr-055.md))
+/// at both settings of `user_parallelism`, and nothing had been measured
+/// against the blocking lowering it replaced. `benches/awaits.nika` reads one
+/// small file `n` times, one read after the other, each three `.await`s deep.
+/// The A/B is one tree and one emitter: the "blocking" variant is the emitted
+/// Rust with `async` and `.await` taken out, `block_on` around `main` taken
+/// out, and the read made `std::fs::read_to_string` - what the lowering wrote
+/// before the waiting moved into the executor. Both start the runtime, so what
+/// differs is the state machines, the executor's polling and the hand-off of
+/// each read to the I/O worker.
+///
+/// It asserts nothing: the number is the answer, and `docs/history/runtime-cost.md`
+/// quotes it.
+#[test]
+#[ignore = "shells out to valgrind; run with --ignored"]
+fn what_an_await_costs_a_program_that_never_overlaps() {
+    let file = repo_root().join("benches/awaits.nika");
+    let file = file.to_str().expect("utf-8 path");
+    for (setting, how) in [("no", Build::default()), ("yes", Build::parallel())] {
+        let awaited = lower_with("awaits.nika", how);
+        let blocking = without_the_executor(&awaited);
+        // **And the two halves apart**: `async` and the executor kept, only
+        // the read made blocking - what the futures cost, without the hand-off
+        // of the read to the runtime's I/O.
+        let futures_only = with_a_blocking_read(&awaited);
+        for reads in ["100", "1000"] {
+            let runs = [
+                instructions("blocking", &blocking, &[reads, file]),
+                instructions("async, the read blocking", &futures_only, &[reads, file]),
+                instructions("async (as lowered)", &awaited, &[reads, file]),
+            ];
+            report(
+                "a program that never overlaps",
+                &format!("{reads} reads, user_parallelism = {setting}"),
+                &runs,
+            );
+            let n: u64 = reads.parse().expect("a count");
+            let futures = runs[1].instructions.saturating_sub(runs[0].instructions) / n;
+            let each = runs[2].instructions.saturating_sub(runs[0].instructions) / n;
+            println!(
+                "  per read, for being async: {} instructions, {} of them the futures",
+                thousands(each),
+                thousands(futures)
+            );
+        }
+    }
+}
+
+/// The emitted Rust as the blocking lowering wrote it: no `async`, no
+/// `.await`, no `block_on`, and the read a blocking one.
+fn without_the_executor(rust: &str) -> String {
+    with_a_blocking_read(rust)
+        .replace("async fn ", "fn ")
+        .replace(".await", "")
+        .replace(
+            "nikaia_std::rt::exec::block_on(__nikaia_main())",
+            "__nikaia_main()",
+        )
+}
+
+/// The emitted Rust with the one read made `std::fs::read_to_string`, as an
+/// `async fn` that never pauses where it is still awaited.
+fn with_a_blocking_read(rust: &str) -> String {
+    let read = "fs::read_to_string(&path, &fs::Root::Anywhere).await";
+    assert!(rust.contains(read), "the read is not where it was:\n{rust}");
+    let mut out = rust.replace(read, "blocking_read(&path).await");
+    out.push_str(
+        "\nasync fn blocking_read(path: &str) -> Result<String, io::IoError> {\n    \
+         std::fs::read_to_string(path).map_err(|e| io::IoError::of(e, path))\n}\n",
+    );
+    out
 }

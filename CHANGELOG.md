@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.327] — 2026-10-01
+
+**What being `async` costs a program that never overlaps is measured** (#106).
+`benches/awaits.nika` reads a small file `n` times, one read after the other,
+three `.await`s deep, and `measure.rs` holds it against the blocking lowering
+ADR-055 replaced and against the futures alone
+(`docs/history/runtime-cost.md` §7). An `.await` costs nothing measurable - 3
+to 25 instructions a read at `user_parallelism = no`. The read's road through
+the runtime's I/O costs about 3,100 to 3,500 instructions a read more than a
+`read(2)` on the caller's thread, at both settings. Whether a read with nothing
+else in flight should take the caller's thread is left open, with its number.
+
 ## [0.0.326] — 2026-10-01
 
 **The emitted code writes no `unsafe` for a view** (#84, ADR-218 D4's last
