@@ -316,6 +316,19 @@ pub mod tools {
         include!("tools/trust.rs");
     }
 
+    /// **The files `nikaia describe` reads a crate from**:
+    /// `src/tools/sources.nika`, every `.rs` under a crate's `src` by
+    /// `fs::walk`, lowered to `src/tools/sources.rs` and committed beside it
+    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D4). The
+    /// compiler's `describe` drives it to its end.
+    pub mod sources {
+        /// What the lowered `throws` names: `std`'s own `io`, which a tool
+        /// has no prelude to bring in.
+        use crate::io;
+
+        include!("tools/sources.rs");
+    }
+
     /// **The type language the checker reasons in and the ledger records**:
     /// `src/tools/ty.nika`, `Ty` and `Shape` and the text a type is written
     /// as, lowered to `src/tools/ty.rs` and committed beside it (ADR-257 D1).
