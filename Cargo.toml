@@ -23,8 +23,10 @@ nikaia-std = { path = "crates/nikaia-std" }
 # pool. It is the runtime of every generated program, and it is set here rather
 # than on `nikaia-std` alone so that one build never holds two differently
 # featured copies of the crate - the tests link the emitted Rust against
-# whatever is in the deps directory, and it has to be the same one.
-winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", branch = "main", version = "0.1.0", features = ["rayon"] }
+# whatever is in the deps directory, and it has to be the same one. Pinned to a
+# commit rather than following `main`, so that a build is the build that was
+# measured and a parser change arrives as a reviewed bump.
+winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", rev = "2e7101287399e8b8260e490c49d30d427d2cf9ef", version = "0.1.0", features = ["rayon"] }
 winnow = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
