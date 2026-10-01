@@ -682,3 +682,25 @@ fn a_chain_of_fallbacks_that_ends_in_a_jump() {
         "5\n7\n12\n",
     );
 }
+
+/// **A list with a `null` in it holds its other elements as `Some`** (#312,
+/// 0.0.323): `[null, null, 7]` as a `Vec[i64?]` reached `rustc` as
+/// `vec![None, None, 7]`. And `x ?? -1` over an element a loop binds - a
+/// view of an `i64?` - reads the copy, where no `Or` took the view.
+#[test]
+fn a_list_of_optional_elements_and_a_fallback_on_each() {
+    runs(
+        "optional-elements",
+        "struct P { x: i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let xs: Vec[i64?] = [null, null, 7]\n\
+         \x20   for x in xs {\n\
+         \x20       println(x ?? -1)\n\
+         \x20   }\n\
+         \x20   let ps: Vec[P?] = [P { x: 3 }, null]\n\
+         \x20   println(ps.len())\n\
+         }\n",
+        "-1\n-1\n7\n2\n",
+    );
+}

@@ -17193,6 +17193,23 @@ impl<'a> Checker<'a> {
         for (item, ty) in items.iter().zip(&founds) {
             self.hands_over(item, ty, "put into a list", span);
         }
+        // **A list with a `null` in it is a list of `T?`**, met as the arms of
+        // a choice meet (`arms_meet_at_null`): `[null, 7]` holds `Some(7)`
+        // below, where the `7` reached `rustc` bare beside a `None` (#312).
+        if items.iter().any(|item| matches!(item, Expr::LitNull)) {
+            let arms: Vec<(Option<&Expr>, Ty)> = items
+                .iter()
+                .zip(&founds)
+                .map(|(item, ty)| (Some(item), ty.clone()))
+                .collect();
+            if let Some(element) = self.arms_meet_at_null(&arms) {
+                return Ty::Named {
+                    name: "Vec".to_string(),
+                    args: vec![element],
+                    view: false,
+                };
+            }
+        }
         // **A text literal takes its neighbours' text** (ADR-207 D2): where
         // the list already holds text of its own, `["a", f"c"]` is a list of
         // `String` and the literal is constructed as one. A list holds one

@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.323] — 2026-10-01
+
+**A list with a `null` in it is a list of `T?`** (#312). `let xs: Vec[i64?] =
+[null, null, 7]` passed the checker and reached `rustc` as `vec![None, None,
+7]`; the elements beside a `null` meet it as the arms of a choice do, and the
+`7` is `Some(7)` below. And `x ?? -1` over an element a loop binds - a view of
+an `i64?` - reads the copy, as a view of any copy value does: no `Or` below
+took a `&Option<i64>`. A text literal beside a `null` where the list is
+declared `Vec[String?]` is still a view where text of its own is wanted, as it
+is in the arms of an `if`.
+
 ## [0.0.322] — 2026-10-01
 
 **Which functions can open a lock is settled in Nikaia** (#125).

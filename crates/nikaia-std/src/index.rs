@@ -440,6 +440,15 @@ impl<T: Copy> Or<T> for Option<&T> {
     }
 }
 
+/// **A view of an optional copy value** is read as the copy, as a view of a
+/// copy value is: `for x in xs { x ?? -1 }` over a `Vec[i64?]` binds each `x`
+/// as `&Option<i64>`, which no `Or` took - `rustc` refused the file (#312).
+impl<T: Copy> Or<T> for &Option<T> {
+    fn or(self, fallback: impl FnOnce() -> T) -> T {
+        (*self).unwrap_or_else(fallback)
+    }
+}
+
 /// **A map's text, read, with a literal after `??`**
 /// ([ADR-213](../../../docs/specification/adr/adr-213.md) D2): the map hands
 /// out its `String` by reference and the literal is a `&str`, so what the two
