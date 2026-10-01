@@ -337,6 +337,45 @@ fn task() {
     runs("task", TASK, "25 bytes of values");
 }
 
+/// **A task takes a map of views** (#84): the packed value is a `Holding` over
+/// the task's keep, built by `Rebase` - which has to reach every shape a
+/// task can take, the map and its counts included, or the generated file is
+/// one `rustc` refuses.
+#[test]
+fn a_task_takes_a_map_of_views() {
+    runs(
+        "task-map",
+        r##"use std::fs
+use std::collections
+
+fn counts(path: String) -> collections::HashMap[ref String, i64] throws {
+    let text = fs::read_to_string(path, fs::Root::Anywhere)
+    let mut seen: collections::HashMap[ref String, i64] = collections::HashMap()
+    for line in text.lines() {
+        let parts: Vec[ref String] = line.split("=").collect()
+        if parts.len() == 2 {
+            let key = parts[0].trim()
+            let now = seen.get(key) ?? 0
+            seen.insert(key, now + 1)
+        }
+    }
+    return seen
+}
+
+fn main() throws {
+    let seen = counts("app.conf")
+    let worker = spawn fn {
+        let mut n = 0
+        for (_, v) in seen { n = n + v }
+        n
+    }
+    println(f"{worker.join()} settings")
+}
+"##,
+        "3 settings",
+    );
+}
+
 /// A map that drops entries while the loop keeps reading holds each view with a handle of its own - one keep for the loop would keep every buffer it read.
 #[test]
 fn cache() {
@@ -366,7 +405,9 @@ fn each_representation_is_the_one_the_plan_chose() {
         "{loader}"
     );
     assert!(loader.contains("Vec<Setting<'k>>"), "{loader}");
-    assert!(loader.contains("__keep.put("), "{loader}");
+    // `put_viewed`: a keep handed in may be a task's, whose `Holding` finds
+    // the views again in it rather than copying them (ADR-218 D4).
+    assert!(loader.contains("__keep.put_viewed("), "{loader}");
     assert!(
         !loader.contains("Arc"),
         "a frame keep costs no count: {loader}"
@@ -377,11 +418,15 @@ fn each_representation_is_the_one_the_plan_chose() {
         task.contains("let __keep_task = std::sync::Arc::new("),
         "{task}"
     );
+    // **Held by the task's keep, and no `unsafe`** (ADR-218 D4, #84): the
+    // packed value is a `Holding` that finds each view again in the keep.
     assert!(
-        task.contains("_keep: std::sync::Arc::clone(&__keep_task)"),
+        task.contains("::new([std::sync::Arc::clone(&__keep_task)]"),
         "{task}"
     );
     assert!(task.contains("settings.get()"), "{task}");
+    assert!(!task.contains("unsafe"), "{task}");
+    assert!(task.contains("__keep.put_viewed("), "{task}");
 
     let cache = lowered(CACHE, Build::default());
     assert!(

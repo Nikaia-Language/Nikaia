@@ -424,6 +424,17 @@ impl Lifetimes {
         reference: "&'s ",
         params: "'s",
     };
+    /// What a `Views` type's `shorten` is handed: the value over the longer
+    /// of its two lifetimes ([ADR-218](../../../docs/specification/adr/adr-218.md) D4).
+    const LONG: Lifetimes = Lifetimes {
+        reference: "&'long ",
+        params: "'long",
+    };
+    /// What a `Views` type is over any lifetime, `Of<'a>`.
+    const ANY: Lifetimes = Lifetimes {
+        reference: "&'a ",
+        params: "'a",
+    };
 
     /// The same, with the reference named: a view **of the input buffer** and
     /// not of whatever the caller lends for the call.
@@ -6163,22 +6174,31 @@ impl<'p> Emitter<'p> {
                              its type written out: `let {bound}: … = …`."
                         ));
                     };
+                    // **Held by the task's keep** (ADR-218 D4): the value is
+                    // built first, and every view in it is found again in the
+                    // keep - which is where the buffers it was cut from were
+                    // put - over a lifetime the `Holding` alone decides.
                     let wrapper = self.tether_wrapper(&held);
                     out.push(&format!(
-                        "let {mutable}{} = {wrapper} {{ value: nikaia_std::tether::Dangling::new(",
+                        "let {mutable}{} = {{ let __packed = ",
                         escaped(bound)
                     ));
                     self.expr(out, value, depth, flow)?;
                     out.push(&format!(
-                        "), _keep: std::sync::Arc::clone(&{KEEP_TASK}) }};"
+                        "; nikaia_std::tether::Holding::<{wrapper}, 1>::new([std::sync::Arc::clone(&{KEEP_TASK})], \
+                         move |keeps| nikaia_std::tether::Rebase::rebase(__packed, &keeps)) }};"
                     ));
                     return Ok(());
                 }
                 if let Some(keep) = put {
                     // A buffer whose views are held one by one is one they
-                    // are found in again (ADR-221 D1).
+                    // are found in again (ADR-221 D1) - and so is one a task's
+                    // `Holding` finds them in, whether the task's keep is this
+                    // function's or a caller's handed in (ADR-218 D4).
                     let put = match keep {
-                        crate::contracts::keep::KeepAt::Element(_) => "put_viewed",
+                        crate::contracts::keep::KeepAt::Element(_)
+                        | crate::contracts::keep::KeepAt::Task
+                        | crate::contracts::keep::KeepAt::Param => "put_viewed",
                         _ => "put",
                     };
                     out.push(&format!(
@@ -6384,7 +6404,9 @@ impl<'p> Emitter<'p> {
                     .copied();
                 if let Some(keep) = reput {
                     let put = match keep {
-                        crate::contracts::keep::KeepAt::Element(_) => "put_viewed",
+                        crate::contracts::keep::KeepAt::Element(_)
+                        | crate::contracts::keep::KeepAt::Task
+                        | crate::contracts::keep::KeepAt::Param => "put_viewed",
                         _ => "put",
                     };
                     out.push(&format!("{}.{put}(", Self::keep_expr(keep, false)));
@@ -13360,10 +13382,10 @@ impl Emitter<'_> {
                 true => format!("&__keep_{at}"),
                 false => format!("__keep_{at}"),
             },
-            // SAFETY is the function's own shape: `__keep_task` is declared
-            // first, so it outlives every local derived from it, and whatever
-            // leaves with a task is packed beside a clone of it (D3).
-            KeepAt::Task => format!("unsafe {{ nikaia_std::tether::forever(&{KEEP_TASK}) }}"),
+            // **The task's keep, borrowed here** (ADR-218 D4): what is cut
+            // from it lives as long as this function's handle, and what leaves
+            // with a task is found in it again by its `Holding`.
+            KeepAt::Task => format!("(&*{KEEP_TASK})"),
         }
     }
 
@@ -13492,31 +13514,32 @@ impl Emitter<'_> {
             })
     }
 
-    /// The handle type one tethered binding is packed in (D3), declared once
-    /// per type: the value with its views stretched to `'static`, the keep
-    /// beside it, and `get` shortening them again for as long as it is
-    /// borrowed - which `rustc` only accepts where the type is covariant, so
-    /// the shortening is checked rather than trusted.
+    /// The `Views` type one tethered binding is held by (D3, and
+    /// [ADR-218](../../docs/specification/adr/adr-218.md) D4), declared once
+    /// per type: the value over any lifetime, and `shorten`, which `rustc`
+    /// only accepts where the type is covariant - so the shortening is checked
+    /// rather than trusted. The binding is a `Holding` over the task's keep,
+    /// and nothing about it is `unsafe`.
     fn tether_wrapper(&self, ty: &Type) -> String {
-        let stretched = self.ty(ty, Lifetimes::STATIC);
+        let any = self.ty(ty, Lifetimes::ANY);
+        let long = self.ty(ty, Lifetimes::LONG);
         let shortened = self.ty(ty, Lifetimes::SHORTENED);
         let mut wrappers = self.wrappers.borrow_mut();
-        let position = wrappers.iter().position(|w| {
-            w.contains(&format!(
-                "value: nikaia_std::tether::Dangling<{stretched}>,"
-            ))
-        });
+        let position = wrappers
+            .iter()
+            .position(|w| w.contains(&format!("type Of<'a> = {any};")));
         let n = match position {
             Some(n) => n,
             None => {
                 let n = wrappers.len();
                 wrappers.push(format!(
                     "/// A value that carries the keep its views point into \
-                     (ADR-209 D3): its views are `'static` only while it is\n\
-                     /// packed, and `get` hands them out for as long as it is borrowed.\n\
+                     (ADR-209 D3), as a `Holding` over it.\n\
                      #[allow(non_camel_case_types)]\n\
-                     struct __Tethered{n} {{\n    value: nikaia_std::tether::Dangling<{stretched}>,\n    _keep: std::sync::Arc<nikaia_std::tether::Keep>,\n}}\n\n\
-                     impl __Tethered{n} {{\n    fn get<'s>(&'s self) -> &'s {shortened} {{\n        self.value.get()\n    }}\n}}\n"
+                     enum __Tethered{n} {{}}\n\n\
+                     impl nikaia_std::tether::Views for __Tethered{n} {{\n    \
+                     type Of<'a> = {any};\n    \
+                     fn shorten<'long: 's, 's>(x: &'s {long}) -> &'s {shortened} {{\n        x\n    }}\n}}\n"
                 ));
                 n
             }
@@ -13596,7 +13619,7 @@ impl Emitter<'_> {
         if self
             .keep_plans
             .values()
-            .all(|p| p.element_keepers.is_empty())
+            .all(|p| p.element_keepers.is_empty() && !p.task_keep)
         {
             return;
         }

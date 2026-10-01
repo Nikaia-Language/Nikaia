@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.326] — 2026-10-01
+
+**The emitted code writes no `unsafe` for a view** (#84, ADR-218 D4's last
+step). A value a task takes with it was packed beside a clone of the task's
+keep, its views stretched to `'static` through `tether::forever` inside
+`unsafe { … }` on the promise that nothing derived outlived the handle. It is a
+`Holding` over the task's keep now: built first, then carried in by `Rebase`,
+which finds every view again in the keep by its address - so the promise is
+checked rather than trusted. A buffer that may end in a task's keep, or in a
+keep a caller hands in, is put with `put_viewed`, so the views are found rather
+than copied. `tether::forever` is gone; the emitted code writes `unsafe` only
+around a call into foreign code (ADR-124 D3).
+
+`Rebase` reaches every shape a task takes: a map, a set, a tuple, a `Box`, and
+a number, a `bool` or owned text as they are. A task that took a
+`HashMap[ref String, i64]` would otherwise be a file `rustc` refused.
+
 ## [0.0.325] — 2026-10-01
 
 **What a call resolves to is answered in Nikaia** (#125). `tools/calls.nika`
