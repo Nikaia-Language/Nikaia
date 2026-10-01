@@ -9277,6 +9277,7 @@ impl<'a> Checker<'a> {
             } => {
                 self.the_caller_writes_no_reference(iter, span, "a `for` lends what it iterates");
                 let over = self.expr(iter, span);
+                self.a_loop_over_a_nullable(&over, iter, span);
                 self.fallible_step(&over, bindings.len(), span);
                 self.pausing_step(&over, span);
                 // **A `for` walks a produced sequence, and that consumes it**
@@ -16380,6 +16381,37 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "Say what `null` stands for first: `let value = {written} ?? …`, and \
                  `match value`."
+            )),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **`NK1206`: a `for` over a `T?`**. `for word in pick(1)` for a `pick`
+    /// that hands back a `Vec[String]?` was checked as a walk over the list's
+    /// elements and lowered as a walk over the option - once, with the whole
+    /// list as `word` - so `word.len()` counted the list and the program
+    /// printed a number nobody asked for, with nothing refused anywhere. A
+    /// map read is a `T?` too (Part I 4.5), so `for x in m[k]` was the same.
+    /// The way out is to say what `null` loops over.
+    fn a_loop_over_a_nullable(&mut self, over: &Ty, iter: &Expr, span: &Span) {
+        let Ty::Nullable(inner) = over else {
+            return;
+        };
+        let written = written(self.parsed, iter);
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1206",
+            message: format!("`{written}` may be `null`, so a `for` can't walk it directly."),
+            notes: vec![format!(
+                "`{written}` is a `{}`: a `{}` or nothing, and a `for` walks a list, not \
+                 the maybe of one.",
+                over.text(),
+                inner.text()
+            )],
+            help: Some(format!(
+                "Say what `null` walks first: `for … in {written} ?? [] {{ … }}`, or check \
+                 it for `null` before the loop."
             )),
             labels: Vec::new(),
         });

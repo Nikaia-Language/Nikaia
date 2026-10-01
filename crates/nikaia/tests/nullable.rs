@@ -1665,3 +1665,52 @@ fn main() {
         "hole: found guest\ncompared\n5 <b>\nfound guest\nkept\n"
     );
 }
+
+/// **`NK1206`: a `for` over a `T?`**. It was checked as a walk over the
+/// list's elements and lowered as a walk over the option - once, with the
+/// whole list as the binding - so `word.len()` counted the list: the program
+/// printed `2` for `["xy", "z"]` and nothing was refused. A map read is a `T?`
+/// too, so `for x in m[k]` is the same refusal. The way out compiles and
+/// counts the letters.
+#[test]
+fn a_loop_over_a_nullable_is_refused() {
+    let source = |iter: &str| {
+        format!(
+            "use std::collections\n\
+             fn pick(n: i64) -> Vec[String]? {{\n\
+             \x20   if n > 0 {{ return [\"xy\", \"z\"] }}\n\
+             \x20   return null\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()\n\
+             \x20   m.insert(\"a\", [\"xyz\"])\n\
+             \x20   let mut total = 0\n\
+             \x20   for word in {iter} {{\n\
+             \x20       total += word.len()\n\
+             \x20   }}\n\
+             \x20   println(f\"{{total}}\")\n\
+             }}\n"
+        )
+    };
+    for iter in ["pick(1)", "m[\"a\"]"] {
+        let found = findings(&source(iter));
+        let it = found
+            .iter()
+            .find(|f| f.code == "NK1206")
+            .unwrap_or_else(|| panic!("no NK1206 for {iter}: {found:#?}"));
+        assert!(it.message.contains(iter), "{it:#?}");
+        assert!(
+            it.help.as_deref().is_some_and(|h| h.contains("?? []")),
+            "{it:#?}"
+        );
+    }
+
+    assert_eq!(
+        ran("loop-after-fallback", &source("pick(1) ?? []")).trim(),
+        "3"
+    );
+    assert_eq!(
+        ran("loop-over-a-copy", &source("m[\"a\"]?.clone() ?? []")).trim(),
+        "3"
+    );
+}
