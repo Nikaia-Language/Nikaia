@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.305] — 2026-10-01
+
+**A build warns where a `pub` function lost the `sync` it had** (ADR-244 D5,
+#129), and with it ADR-244 is built (#92). Where the committed ledger says a
+`pub` function could not pause and the build finds that it now can, the build
+says so - `NK2211`, a warning - at the statement that made it, with the calls
+that lead there:
+
+```text
+warning[NK2211]: `parse` could not pause before, and now it can.
+  --> src/main.nika:4:5
+ 4 |     time::sleep(1.millis())
+   = note: `parse` calls `read_section`, which pauses here.
+```
+
+The author learns it at the change, rather than a consumer at an upgrade.
+Committing the ledger the build wrote acknowledges it, and it is not said
+again. The `sync` inference keeps, per function, the first statement that
+pauses it and finds the shortest way to one through the package's calls.
+
 ## [0.0.304] — 2026-10-01
 
 **A build names what its `pub` functions could promise and do not** (ADR-244

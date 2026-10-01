@@ -155,6 +155,13 @@ struct Reach {
     /// *only* pausing is its lambdas' can be named as one that could promise
     /// `sync(f)`.
     through_code: BTreeSet<String>,
+    /// **Where it first pauses itself**, if a call or a construct in its own
+    /// body is why ([ADR-244](../../../docs/specification/adr/adr-244.md) D5):
+    /// the statement and what in it pauses. `None` where the pause is a method
+    /// call the type checker resolved, or a function of the package it calls.
+    site: Option<(Span, String)>,
+    /// The unit the function is written in, by its place in the walk's list.
+    unit: usize,
 }
 
 /// Give every function in the ledger the `sync` its body earns.
@@ -188,16 +195,17 @@ pub fn infer(
     units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
-) -> BTreeMap<String, Vec<String>> {
+) -> Noted {
     let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
 
-    for parsed in units.iter().copied() {
+    for (unit, parsed) in units.iter().copied().enumerate() {
         for item in &parsed.program.items {
             match &item.node {
                 Item::Fn { .. } => {
-                    if let Some((name, reach)) =
+                    if let Some((name, mut reach)) =
                         reach_of(parsed, &item.node, None, ledger, library, resolved)
                     {
+                        reach.unit = unit;
                         graph.insert(name, reach);
                     }
                 }
@@ -257,6 +265,7 @@ pub fn infer(
                                     reach.calls.insert(declared);
                                 }
                             }
+                            reach.unit = unit;
                             graph.insert(name, reach);
                         }
                     }
@@ -289,6 +298,8 @@ pub fn infer(
                                 calls: BTreeSet::new(),
                                 runs: None,
                                 through_code: BTreeSet::new(),
+                                site: None,
+                                unit: 0,
                             },
                         );
                     }
@@ -315,6 +326,8 @@ pub fn infer(
                                 calls: BTreeSet::new(),
                                 runs: None,
                                 through_code: BTreeSet::new(),
+                                site: None,
+                                unit: 0,
                             },
                         );
                     }
@@ -376,7 +389,7 @@ pub fn infer(
         .map(|(name, reach)| (name.clone(), reach.through_code.iter().cloned().collect()))
         .collect();
 
-    for (name, holds) in holds {
+    for (name, holds) in holds.clone() {
         if !holds {
             continue;
         }
@@ -396,7 +409,73 @@ pub fn infer(
             };
         }
     }
-    by_code
+
+    // **Why each function that does not hold pauses** (ADR-244 D5): the
+    // shortest way through the package's calls to a statement that pauses
+    // itself. Breadth-first and over the map's order, so the answer is the same
+    // on every build.
+    let mut why: BTreeMap<String, Pause> = BTreeMap::new();
+    for start in graph.keys().filter(|name| !holds[name.as_str()]) {
+        let mut came_from: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut queue = std::collections::VecDeque::from([start.as_str()]);
+        let mut seen = BTreeSet::from([start.as_str()]);
+        while let Some(at) = queue.pop_front() {
+            let reach = &graph[at];
+            if reach.site.is_some() || reach.blocked {
+                let mut chain = vec![at.to_string()];
+                let mut back = at;
+                while let Some(previous) = came_from.get(back) {
+                    chain.push(previous.to_string());
+                    back = previous;
+                }
+                chain.reverse();
+                why.insert(
+                    start.clone(),
+                    Pause {
+                        chain,
+                        unit: reach.unit,
+                        site: reach.site.clone(),
+                    },
+                );
+                break;
+            }
+            for callee in &reach.calls {
+                if graph.contains_key(callee)
+                    && !holds[callee.as_str()]
+                    && seen.insert(callee.as_str())
+                {
+                    came_from.insert(callee.as_str(), at);
+                    queue.push_back(callee.as_str());
+                }
+            }
+        }
+    }
+    Noted { by_code, why }
+}
+
+/// What [`infer`] learns besides the ledger's own column, for the build to say
+/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2, D5).
+#[derive(Debug, Default)]
+pub struct Noted {
+    /// The functions that pause only where their lambdas do, with the code
+    /// parameters that decide (D2).
+    pub by_code: BTreeMap<String, Vec<String>>,
+    /// Why each function that can pause does (D5).
+    pub why: BTreeMap<String, Pause>,
+}
+
+/// **The way from a function to the statement that makes it pause**.
+#[derive(Debug, Clone)]
+pub struct Pause {
+    /// The function, the ones of its package it calls on the way, and last the
+    /// one that pauses itself.
+    pub chain: Vec<String>,
+    /// The unit the last one is written in, by its place in the list
+    /// [`infer`] was handed.
+    pub unit: usize,
+    /// The statement and what in it pauses; `None` where it is a method call
+    /// only the type checker resolved.
+    pub site: Option<(Span, String)>,
 }
 
 /// One function's calls, split into what settles the question now and what
@@ -479,6 +558,7 @@ fn collect_reach(
     reach: &mut Reach,
 ) {
     for stmt in &block.stmts {
+        let span = stmt.span;
         visit_stmt(
             parsed,
             &stmt.node,
@@ -488,7 +568,12 @@ fn collect_reach(
                 // and it is not a call, so `reached` says nothing about it.
                 // Asked first, because `reached` answers `None` for one and
                 // `None` is what this walk reads as *adds nothing*.
-                _ if joins_on_the_executor(expr).is_some() => reach.blocked = true,
+                _ if let Some(construct) = joins_on_the_executor(expr) => {
+                    reach.blocked = true;
+                    reach
+                        .site
+                        .get_or_insert((span, format!("an `{construct}` block")));
+                }
                 Some(Reached::Own(name)) => {
                     reach.calls.insert(name);
                 }
@@ -505,11 +590,23 @@ fn collect_reach(
                 // its call adds nothing.
                 Some(Reached::Opaque(Some(name))) if code.contains_key(&name) => {
                     if code[&name] {
+                        reach.site.get_or_insert((span, format!("`{name}`")));
                         reach.through_code.insert(name);
                     }
                 }
-                Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque(_)) => {
-                    reach.blocked = true
+                Some(Reached::Library { sync: false, key }) => {
+                    reach.blocked = true;
+                    reach.site.get_or_insert((span, format!("`{key}`")));
+                }
+                Some(Reached::Opaque(name)) => {
+                    reach.blocked = true;
+                    reach.site.get_or_insert((
+                        span,
+                        name.map_or(
+                            "something this compiler cannot see the end of".to_string(),
+                            |n| format!("`{n}`"),
+                        ),
+                    ));
                 }
                 // Answered per function by the type checker, and merged in by
                 // `reach_of` once this walk is done.

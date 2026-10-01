@@ -503,31 +503,31 @@ fn package_ledger(
     package_ledger_noted(units, dependency, library).0
 }
 
-/// [`package_ledger`], and the functions of the package that pause only where
-/// their lambdas do (ADR-244 D2) - none for a shipped ledger, which was
-/// inferred by the package's own build and is read rather than derived.
+/// [`package_ledger`], and what the `sync` inference learned for the build to
+/// say (ADR-244 D2, D5) - nothing for a shipped ledger, which was inferred by
+/// the package's own build and is read rather than derived.
 fn package_ledger_noted(
     units: &[Unit],
     dependency: Option<&Dependency>,
     library: &crate::contracts::Ledger,
-) -> (crate::contracts::Ledger, BTreeMap<String, Vec<String>>) {
+) -> (crate::contracts::Ledger, crate::contracts::sync::Noted) {
     let sources = sources_of(units);
 
     if let Some(dependency) = dependency
         && let Some(shipped) = shipped_ledger(&dependency.root)
         && shipped.stale_against(&sources).is_empty()
     {
-        return (shipped.published(&dependency.reachable), BTreeMap::new());
+        return (shipped.published(&dependency.reachable), Default::default());
     }
 
     let parsed: Vec<&Parsed> = units.iter().map(|u| &u.parsed).collect();
-    let (mut own, _, by_code) = crate::contracts::Ledger::infer_package_noted(&parsed, library);
+    let (mut own, _, noted) = crate::contracts::Ledger::infer_package_noted(&parsed, library);
     // **What these entries are an answer about** (D3), recorded here because
     // this is the only place that has both the answer and the files it came
     // from - and recorded for every package, so that the ledger a dependency's
     // own build writes says what it was derived from.
     own.sources = sources;
-    (own, by_code)
+    (own, noted)
 }
 
 /// **What another package may rely on about pausing**
@@ -607,6 +607,11 @@ pub struct Program {
     /// the code parameters that decide: each could promise `sync(f)`. Read by
     /// [`Program::could_promise`].
     pub paused_by_code: BTreeMap<String, Vec<String>>,
+    /// **Why each of the program's own functions that can pause does**
+    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D5): the calls
+    /// that lead to a statement that pauses, its unit an index into
+    /// [`Program::units`].
+    pub pauses: BTreeMap<String, crate::contracts::sync::Pause>,
 }
 
 /// One `test "…" { … }` of the program, as `nikaia test` names it.
@@ -750,13 +755,18 @@ impl Program {
         }
 
         let mut paused_by_code = BTreeMap::new();
+        let mut pauses = BTreeMap::new();
         for group in groups(&units) {
             if units[group.start].package.is_some() {
                 continue;
             }
             let renames = units[group.start].renames.clone();
-            let (own, by_code) = package_ledger_noted(&units[group.clone()], None, &library);
-            paused_by_code.extend(by_code);
+            let (own, noted) = package_ledger_noted(&units[group.clone()], None, &library);
+            paused_by_code.extend(noted.by_code);
+            pauses.extend(noted.why.into_iter().map(|(name, mut pause)| {
+                pause.unit += group.start;
+                (name, pause)
+            }));
             contracts.sources = own.sources.clone();
             contracts.absorb_renaming(None, &renames, own);
         }
@@ -768,6 +778,7 @@ impl Program {
             as_its_own,
             tests: Vec::new(),
             paused_by_code,
+            pauses,
         })
     }
 
@@ -859,6 +870,86 @@ impl Program {
                 if through.len() == 1 { "es" } else { "" },
                 through.join(", ")
             ));
+        }
+        out
+    }
+
+    /// **[ADR-244](../../../docs/specification/adr/adr-244.md) D5's warning**:
+    /// every `pub` function of the program's own that the committed ledger says
+    /// could not pause (`"inferred"`) and that now can, at the statement that
+    /// made it, with the calls that lead there - empty where none has.
+    ///
+    /// Under D1 no consumer is refused by this, since none relied on the
+    /// inference; what the author loses is the promise D2 offered, and the
+    /// property the package's own callers may count on. The committed ledger is
+    /// the acknowledgement: once the new entry is committed it is not said
+    /// again. A written `sync` needs no warning, because a body that breaks it
+    /// is refused (`NK2202`).
+    pub fn lost_sync(&self, committed: &crate::contracts::Ledger) -> String {
+        let mut out = String::new();
+        for (key, now) in &self.contracts.functions {
+            let mine = !key
+                .split_once("::")
+                .is_some_and(|(package, _)| self.as_its_own.contains_key(package));
+            let was_inferred = committed
+                .functions
+                .get(key)
+                .is_some_and(|before| before.sync_claim == crate::contracts::Sync::Inferred);
+            if !mine || !now.public || !was_inferred || now.sync_claim.is_sync() {
+                continue;
+            }
+            let pause = self.pauses.get(key);
+            let path = |chain: &[String]| -> String {
+                chain
+                    .windows(2)
+                    .map(|pair| format!("`{}` calls `{}`", pair[0], pair[1]))
+                    .collect::<Vec<_>>()
+                    .join(", which ")
+            };
+            let mut notes = Vec::new();
+            if let Some(pause) = pause
+                && pause.chain.len() > 1
+            {
+                notes.push(format!("{}, which pauses here.", path(&pause.chain)));
+            }
+            let what = pause
+                .and_then(|pause| pause.site.as_ref())
+                .map(|(_, what)| what.clone());
+            if let Some(what) = &what {
+                notes.push(format!("{what} can pause."));
+            }
+            let finding = crate::check::Finding {
+                severity: crate::check::Severity::Warning,
+                span: pause
+                    .and_then(|pause| pause.site.as_ref())
+                    .map_or(crate::ast::Span { start: 0, end: 0 }, |(span, _)| *span),
+                code: "NK2211",
+                message: format!("`{key}` could not pause before, and now it can."),
+                notes,
+                help: Some(format!(
+                    "If `{key}` should not pause, move this out of it; if it may, commit \
+                     `nikaia.contracts`, and this is not said again."
+                )),
+                labels: Vec::new(),
+            };
+            match pause.and_then(|pause| pause.site.as_ref().map(|_| pause.unit)) {
+                Some(unit) => out.push_str(&crate::diagnostics::render_finding(
+                    &finding,
+                    &self.units[unit].path.display().to_string(),
+                    &self.units[unit].source,
+                )),
+                // A method call only the type checker resolved: there is no
+                // statement this walk can point at, and the warning says so
+                // without one rather than not at all.
+                None => {
+                    out.push_str(&format!(
+                        "warning[NK2211]: {}\n   = note: a method call it makes, or one of \
+                         the calls it leads to, can pause.\n   = help: {}\n",
+                        finding.message,
+                        finding.help.as_deref().unwrap_or_default()
+                    ));
+                }
+            }
         }
         out
     }

@@ -3255,3 +3255,56 @@ fn a_build_names_what_its_pub_functions_could_promise() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **The author is warned when a `pub` function loses the `sync` it had**
+/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D5): the committed
+/// ledger says `parse` could not pause, a line two calls down now pauses, and
+/// the build says so at that line with the calls that lead there. Committed,
+/// it is not said again.
+#[test]
+fn a_build_warns_when_a_pub_function_loses_its_sync() {
+    const PURE: &str = "use std::time\n\n\
+        fn read_section(x: i64) -> i64 {\n    return x * 2\n}\n\n\
+        pub fn parse(x: i64) -> i64 {\n    return read_section(x) + 1\n}\n\n\
+        fn main() {\n    println(parse(1))\n}\n";
+    let dir = a_project("loses-sync", "[package]\nname = \"p\"\n", PURE);
+    let first = nikaia(&["build"], &dir);
+    assert!(first.status.success(), "{}", said(&first));
+    assert!(!String::from_utf8_lossy(&first.stderr).contains("NK2211"));
+
+    std::fs::write(
+        dir.join("src/main.nika"),
+        PURE.replace(
+            "    return x * 2",
+            "    time::sleep(1.millis())\n    return x * 2",
+        ),
+    )
+    .expect("a pause two calls down");
+    let lost = nikaia(&["build"], &dir);
+    assert!(
+        lost.status.success(),
+        "a warning stops nothing: {}",
+        said(&lost)
+    );
+    let told = String::from_utf8_lossy(&lost.stderr);
+    assert!(
+        told.contains("warning[NK2211]: `parse` could not pause before, and now it can."),
+        "{}",
+        said(&lost)
+    );
+    assert!(told.contains("src/main.nika:4:5"), "{}", said(&lost));
+    assert!(
+        told.contains("`parse` calls `read_section`, which pauses here."),
+        "{}",
+        said(&lost)
+    );
+
+    let committed = nikaia(&["build"], &dir);
+    assert!(committed.status.success(), "{}", said(&committed));
+    assert!(
+        !String::from_utf8_lossy(&committed.stderr).contains("NK2211"),
+        "the ledger written is the acknowledgement: {}",
+        said(&committed)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

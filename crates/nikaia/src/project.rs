@@ -821,7 +821,18 @@ pub fn lower_reading(
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
     // Read off the program, which every lowering builds - a cache hit too - so
     // the note is the same whether the emitter ran or not.
-    let notes = program.could_promise();
+    let mut notes = program.could_promise();
+    // **What a `pub` function lost since the ledger was committed** (ADR-244
+    // D5), against the project's committed file, which this lowering has not
+    // written yet. Outside a project there is no committed ledger to have lost
+    // anything against.
+    if layout.in_project
+        && let Some(committed) = std::fs::read_to_string(layout.root.join("nikaia.contracts"))
+            .ok()
+            .and_then(|text| Ledger::parse(&text).ok())
+    {
+        notes.insert_str(0, &program.lost_sync(&committed));
+    }
 
     // An entry that predates an artifact this build needs is a miss, not a
     // gap: adding an output stays a safe change.
