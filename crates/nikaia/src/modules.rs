@@ -175,11 +175,23 @@ fn package_at(
     // A library needs no `main.nika`: what a package offers is its public
     // surface, and an entry point is what a *program* has.
     let mut units = match entry.is_file() {
-        true => vec![read_unit(entry, package, reachable, renames)?],
+        true => vec![read_unit(
+            entry,
+            package,
+            reachable,
+            renames,
+            Standing::InProject,
+        )?],
         false => Vec::new(),
     };
     for path in beside {
-        units.push(read_unit(&path, package, reachable, renames)?);
+        units.push(read_unit(
+            &path,
+            package,
+            reachable,
+            renames,
+            Standing::InProject,
+        )?);
     }
     one_namespace(&units)?;
     Ok(units)
@@ -202,7 +214,19 @@ pub fn collect_one(entry: &Path) -> Result<Vec<Unit>> {
         None,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        Standing::Alone,
     )?])
+}
+
+/// **Whether a file has a project to declare its dependencies in**
+/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D2): what a `use` of
+/// a package nobody declares is told depends on it. A file of a project is
+/// missing a line in its `nikaia.toml`; a file outside one has no `nikaia.toml`
+/// for the line to be missing from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    InProject,
+    Alone,
 }
 
 fn read_unit(
@@ -210,6 +234,7 @@ fn read_unit(
     package: Option<&str>,
     reachable: &BTreeSet<String>,
     renames: &BTreeMap<String, String>,
+    standing: Standing,
 ) -> Result<Unit> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -233,7 +258,7 @@ fn read_unit(
                 None => error.context(path.display().to_string()),
             },
         )?;
-    check_imports(&parsed, path, reachable)?;
+    check_imports(&parsed, path, reachable, standing)?;
     Ok(Unit {
         package: package.map(str::to_string),
         renames: renames.clone(),
@@ -325,7 +350,12 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
 /// at the brace and the star, so D2's sentence about them is not reachable from
 /// here; that is [ADR-046](../../../docs/specification/adr/adr-046.md) §5's
 /// remaining piece and it belongs in the grammar.
-fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Result<()> {
+fn check_imports(
+    parsed: &Parsed,
+    at: &Path,
+    reachable: &BTreeSet<String>,
+    standing: Standing,
+) -> Result<()> {
     let here = at.display();
 
     // What each `use` names, and what this file calls it. The two differ exactly
@@ -380,12 +410,23 @@ fn check_imports(parsed: &Parsed, at: &Path, reachable: &BTreeSet<String>) -> Re
             .parent()
             .map(|dir| dir.join(format!("{package}.nika")))
             .is_some_and(|path| path.is_file());
-        return Err(crate::diagnostics::refuse(match beside {
-            true => format!(
+        return Err(crate::diagnostics::refuse(match (standing, beside) {
+            // **Before the file beside it**: outside a project nothing beside
+            // a file is read, so the advice that the files of a package see
+            // each other would be about a package this file is not part of.
+            (Standing::Alone, _) => format!(
+                "`use {package}` in {here}: a single file outside a project has no \
+                 dependencies, so there's no `{package}` to use.\n\
+                 Dependencies are declared in a project's `nikaia.toml`. Put this file in \
+                 a project whose `nikaia.toml` declares it:\n\
+                 \x20   [dependencies]\n\
+                 \x20   {package} = {{ path = \"../{package}\" }}"
+            ),
+            (Standing::InProject, true) => format!(
                 "`use {package}` in {here}: the files of a package already see each other, \
                  so there's nothing to bring in. Remove the line and use the name directly."
             ),
-            false => format!(
+            (Standing::InProject, false) => format!(
                 "`use {package}` in {here}: there's no dependency called `{package}`.\n\
                  Add it to the project's `[dependencies]` under that name:\n\
                  \x20   [dependencies]\n\

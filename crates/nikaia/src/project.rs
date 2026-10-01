@@ -633,6 +633,26 @@ fn reads_for(layout: &Layout, allowlist: Option<&Path>) -> Result<assets::Reads>
 ///
 /// `None` is D1, and D1 is what every caller that does not pass the flag gets:
 /// a build given no list reads nothing while it builds.
+/// **A file and the project it belongs to, read as `nikaia build` reads it**
+/// ([ADR-260](../../docs/specification/adr/adr-260.md) D1, D2).
+///
+/// Inside a project the file is a file of that project: its package is the
+/// directory it sits in and its dependencies are the ones the manifest
+/// declares, resolved by [`packages_of`] exactly as a build resolves them.
+/// Outside one it is standalone and has none - which is what its `use` lines
+/// are then told (`modules::collect_one`).
+pub fn read_file(input: &Path) -> Result<(modules::Program, Vec<modules::Dependency>)> {
+    let layout = Layout::resolve(input);
+    if !layout.in_project {
+        return Ok((modules::Program::read_one(input)?, Vec::new()));
+    }
+    let manifest = Manifest::read(&layout.root.join("nikaia.toml"))?;
+    // Not announced: `Manifest::find` already read this manifest for the
+    // settings, and a note said twice is noise.
+    let packages = packages_of(&manifest, &layout.root, false)?;
+    Ok((modules::Program::read_with(input, &packages)?, packages))
+}
+
 pub fn lower_reading(
     input: &Path,
     settings: &Settings,

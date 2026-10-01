@@ -332,8 +332,12 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
     // Through `project::explain`, which is the same function `nikaia build` uses
     // (issue #210, the explain modes): a report that said one thing here and another
     // there would be worse than one that only existed in one place.
+    // **The file as its project reads it** (ADR-260 D1): its package and the
+    // dependencies the manifest declares, or - outside a project - the file
+    // alone, with none (D2).
+    let (program, packages) = project::read_file(input)?;
     project::explain(
-        &nikaia::modules::Program::read_one(input)?,
+        &program,
         settings,
         project::Explain {
             overlaps: args.overlaps,
@@ -345,13 +349,13 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
         },
     )?;
 
-    // No packages: `--input` is one file outside a project (ADR-047 D1), and a
-    // dependency is declared in a manifest there is none of.
+    // The cache key gains the dependencies with them: their units are part of
+    // the program, and the key is made of the program's sources and paths.
     let lowered = project::lower_reading(
         input,
         settings,
         args.no_cache,
-        &[],
+        &packages,
         args.allow_read_from_list.as_deref(),
     )?;
     std::fs::write(&output_path, &lowered.rust)?;
