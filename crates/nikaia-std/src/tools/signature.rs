@@ -78,7 +78,9 @@ pub fn sent_across(names: &Vec<String>, types: &Vec<String>, bounds: &str) -> Ve
     for at in 0..names.len() as i64 {
         let ty = (*nikaia_std::index::get(&types, nikaia_std::index::at(at))).trim();
         let named = unreferenced(ty);
-        if bounds_send(ty) || sent.contains(&named.to_owned()) { out.push((*nikaia_std::index::get(&names, nikaia_std::index::at(at))).to_owned()); }
+        let mut reached = bounds_send(ty);
+        for one in sent.iter() { if *one == named { reached = true; } }
+        if reached { out.push((*nikaia_std::index::get(&names, nikaia_std::index::at(at))).to_owned()); }
     }
     out
 }

@@ -121,7 +121,7 @@ pub fn resolve(mut surface: Surface) {
     let mut exports: Vec[Export] = []
     for export in surface.exports {
         if offered(surface, joined(export.at, "x")) {
-            exports.push(Export { at: export.at.clone(), prefix: export.prefix.clone(), name: export.name?.clone() })
+            exports.push(export.clone())
         }
     }
     for _ in 0..<8 {

@@ -125,22 +125,19 @@ pub fn bases(export: &Export) -> Vec<String> {
 }
 
 pub fn split_top_level(text: &str) -> Vec<String> {
-    let __keep_frame = nikaia_std::tether::Keep::new();
-    let c: Vec<char> = nikaia_std::list::chars(text.chars());
     let mut out: Vec<String> = vec![];
     let mut depth = 0;
-    let mut start: i64 = 0;
-    for at in 0..c.len() as i64 {
-        let one = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
-        if one == '<' || one == '(' || one == '[' { depth += 1; } else if one == '>' || one == ')' || one == ']' { depth -= 1; } else if one == ',' && depth == 0 {
-            let piece = __keep_frame.put(slice(&c, start, at));
-            out.push(piece.trim().to_owned());
-            start = at + 1;
+    let mut current: String = String::from("");
+    for c in text.chars() {
+        if c == '<' || c == '(' || c == '[' { depth += 1; } else if c == '>' || c == ')' || c == ']' { depth -= 1; } else if c == ',' && depth == 0 {
+            out.push(current.trim().to_owned());
+            current = String::from("");
+            continue;
         }
+        current.push(c);
     }
-    let last = __keep_frame.put(slice(&c, start, c.len() as i64));
-    let rest = last.trim();
-    if !rest.is_empty() { out.push(rest.to_owned()); }
+    let last = current.trim();
+    if !last.is_empty() { out.push(last.to_owned()); }
     out
 }
 
