@@ -298,7 +298,7 @@ fn reach(source: &str) -> (Stage, BTreeSet<String>) {
     };
     let own = crate::contracts::Ledger::infer(&parsed);
     let library = crate::contracts::std_ledger();
-    let found = crate::check::check(&parsed, &own, &library);
+    let found = crate::check::check(&parsed, &own, library);
     let codes: BTreeSet<String> = found.findings.iter().map(|f| f.code.to_string()).collect();
     // A warning is not a refusal, but it is worth recording: `NK1111` on a page
     // is a plain string holding what looks like a hole, which is exactly the

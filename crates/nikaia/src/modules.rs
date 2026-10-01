@@ -746,7 +746,7 @@ impl Program {
     ) -> Result<crate::emit::Lowered> {
         use crate::emit::{Lowered, Needs, SourceMap};
 
-        let trust = crate::contracts::trust::analyse(&self.units[0].parsed, &std_ledger());
+        let trust = crate::contracts::trust::analyse(&self.units[0].parsed, std_ledger());
         let needs = self.units.iter().fold(Needs::default(), |acc, u| {
             acc.join(Needs::of(&u.parsed, build))
         });
