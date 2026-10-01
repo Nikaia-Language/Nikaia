@@ -1203,6 +1203,9 @@ struct Emitter<'p> {
     /// **The names a `match` arm binds as a view**, by the arm's pattern
     /// (ADR-242): written `ref name`, so the scrutinee stays whole.
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
+    /// **A guard that reads names bound inside a boxed part**, by the arm's
+    /// pattern, and which of them copy (ADR-246 D5 item 2).
+    guards_inside_boxes: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
     /// `collect()` into a declared map, set or text (ADR-227 D1).
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
@@ -2402,6 +2405,7 @@ impl<'p> Emitter<'p> {
             lent_coalesces: propagation.lent_coalesces,
             counted: propagation.counted,
             lent_bindings: propagation.lent_bindings,
+            guards_inside_boxes: propagation.guards_inside_boxes,
             collected_into: propagation.collected_into,
             copied_walks: propagation.copied_walks,
             filter_patterns: propagation.filter_patterns,
@@ -7358,6 +7362,54 @@ impl<'p> Emitter<'p> {
                         depth + 1,
                         flow,
                     )?;
+                    // **A guard that reads a name bound in there** (ADR-246
+                    // D5 item 2): the shape is asked by a `match` through the
+                    // box that binds the names - by reference, and a number
+                    // copied out - and answers the guard where it fits and
+                    // `false` where it does not.
+                    let reads_inside = self
+                        .guards_inside_boxes
+                        .get(&(&arm.pattern as *const MatchPattern as usize));
+                    if let (Some(copied), Some(guard)) = (reads_inside, &arm.guard)
+                        && !nests.is_empty()
+                    {
+                        out.push(" if ");
+                        for (at, nest) in nests.iter().enumerate() {
+                            out.push(&format!(
+                                "match nikaia_std::boxed::peek(&__nikaia_box{at}) {{ "
+                            ));
+                            self.pattern_written(
+                                out,
+                                nest,
+                                Names::Bind(None),
+                                &mut None,
+                                depth + 1,
+                                flow,
+                            )?;
+                            out.push(" => ");
+                        }
+                        out.push("{ ");
+                        for name in copied {
+                            let name = escaped(name);
+                            out.push(&format!("let {name} = *{name}; "));
+                        }
+                        self.guard_written(out, &arm.pattern, guard, depth + 1, flow)?;
+                        out.push(" }");
+                        for _ in &nests {
+                            out.push(", _ => false }");
+                        }
+                        out.push(" => ");
+                        self.arm_body_opening(
+                            out,
+                            &arm.pattern,
+                            &nests,
+                            &arm.body,
+                            depth + 1,
+                            flow,
+                        )?;
+                        out.push(",\n");
+                        continue;
+                    }
                     for (at, nest) in nests.iter().enumerate() {
                         out.push(match at {
                             0 => " if ",
@@ -7379,11 +7431,11 @@ impl<'p> Emitter<'p> {
                         match nests.is_empty() {
                             true => {
                                 out.push(" if ");
-                                self.expr(out, guard, depth + 1, flow)?;
+                                self.guard_written(out, &arm.pattern, guard, depth + 1, flow)?;
                             }
                             false => {
                                 out.push(" && (");
-                                self.expr(out, guard, depth + 1, flow)?;
+                                self.guard_written(out, &arm.pattern, guard, depth + 1, flow)?;
                                 out.push(")");
                             }
                         }
@@ -10679,6 +10731,46 @@ impl<'p> Emitter<'p> {
     }
 
     /// The names a pattern binds out of a boxed part.
+    /// **The boxed parts a guard reads, read through the box** (ADR-246 D5
+    /// item 2): the guard runs before the arm opens them, so each name it
+    /// reads is bound again to a view of what its box holds.
+    fn guard_reopening(&self, pattern: &MatchPattern, guard: &Expr) -> String {
+        let mut boxed = Vec::new();
+        self.boxed_bindings(pattern, &mut boxed);
+        let mut read: Vec<String> = Vec::new();
+        crate::contracts::sync::visit_expr(self.parsed, guard, &mut |expr| {
+            if let Expr::Variable(name) = expr {
+                let name = self.name(*name).to_string();
+                if boxed.contains(&name) && !read.contains(&name) {
+                    read.push(name);
+                }
+            }
+        });
+        read.iter()
+            .map(|name| format!("let {name} = nikaia_std::boxed::peek(&{name}); "))
+            .collect()
+    }
+
+    /// The guard, with the boxed parts it reads opened for it.
+    fn guard_written(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        guard: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let reopening = self.guard_reopening(pattern, guard);
+        if reopening.is_empty() {
+            return self.expr(out, guard, depth, flow);
+        }
+        out.push("{ ");
+        out.push(&reopening);
+        self.expr(out, guard, depth, flow)?;
+        out.push(" }");
+        Ok(())
+    }
+
     fn boxed_bindings(&self, pattern: &MatchPattern, out: &mut Vec<String>) {
         let owner_of = |path: &[Symbol]| -> Option<(String, Option<String>)> {
             match path {

@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.317] — 2026-10-01
+
+**A guard reads what a box holds** (ADR-246 D5 item 2, #97). The arm opens a
+part that holds its own type at its head, and a guard runs before that:
+
+* `Expr::Add(a, b) if a == Expr::Num(1)` compared a `&Box<Expr>` with an
+  `Expr` below - `rustc` about a file nobody wrote. Each boxed name the guard
+  reads is bound again, for the guard, to a view of the part, and compared as
+  one.
+* `Expr::Add(Expr::Num(n), b) if n == 0` was `NK1193`. The shape is asked by a
+  `match` through the box that binds `n` - copied out, as a number is - and
+  answers the guard where it fits.
+* And over a value the `match` was lent, `Expr::Add(Expr::Num(n), b) => n`
+  handed back a `&i64` where the function said `i64`; a number taken out of the
+  box is copied out at the head of the arm, as one bound outside a box was.
+
+`NK1193` is left for a pattern that looks inside a box inside a boxed part,
+and for one that does so in one alternative of an `|`.
+
 ## [0.0.316] — 2026-10-01
 
 **`nikaia describe` writes its entries and notes in Nikaia** (ADR-104 D3,

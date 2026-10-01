@@ -271,7 +271,8 @@ fn an_arm_that_looks_inside_a_box_does_not_cover_its_variant() {
 
 /// **What the lowering does not reach is refused by name** (D4, D5): a
 /// pattern that looks inside a box inside a boxed part, and one that looks
-/// inside a box in one alternative of an `|`.
+/// inside a box in one alternative of an `|`. (A guard that reads a name bound
+/// in there is no longer one of them: D5 item 2, below.)
 #[test]
 fn a_pattern_too_deep_inside_a_box_is_refused_with_the_way_that_works() {
     for (arm, why) in [
@@ -282,10 +283,6 @@ fn a_pattern_too_deep_inside_a_box_is_refused_with_the_way_that_works() {
         (
             "Expr::Add(Expr::Num(a), b) | Expr::Add(b, Expr::Num(a)) => a,",
             "in one alternative of an `|` pattern",
-        ),
-        (
-            "Expr::Add(Expr::Num(a), b) if a > 0 => a,",
-            "This guard reads `a`",
         ),
     ] {
         let source = format!(
@@ -314,6 +311,91 @@ fn a_pattern_too_deep_inside_a_box_is_refused_with_the_way_that_works() {
             "the way that works is named: {found:#?}"
         );
     }
+}
+
+/// **A guard reads a name bound inside a boxed part** (D5 item 2, #97). The
+/// guard runs before the arm takes the part apart, so the lowering binds the
+/// names a second time inside the guard, through the box: a number is copied
+/// out, text stays a view of the part. Where the guard says no, the next arm is
+/// tried - and the arm that is taken still takes the part apart. Over a value
+/// the function owns, and over one it was lent.
+#[test]
+fn a_guard_reads_a_name_bound_inside_a_box() {
+    let source = "enum Expr {\n\
+                  \x20   Num(i64),\n\
+                  \x20   Name(String),\n\
+                  \x20   Add(Expr, Expr),\n\
+                  }\n\
+                  \n\
+                  fn owned(e: Expr) -> String {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Add(Expr::Num(n), b) if n == 0 => \"zero\",\n\
+                  \x20       Expr::Add(Expr::Name(s), b) if s == \"x\" || s.len() > 3 => f\"named {s}\",\n\
+                  \x20       Expr::Add(a, b) => \"add\",\n\
+                  \x20       else => \"leaf\",\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn lent(e: ref Expr) -> i64 {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Add(Expr::Num(n), b) if n > 1 => n,\n\
+                  \x20       else => -1,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(owned(Expr::Add(Expr::Num(0), Expr::Num(1))))\n\
+                  \x20   println(owned(Expr::Add(Expr::Num(2), Expr::Num(1))))\n\
+                  \x20   println(owned(Expr::Add(Expr::Name(\"x\"), Expr::Num(1))))\n\
+                  \x20   println(owned(Expr::Add(Expr::Name(\"long\"), Expr::Num(1))))\n\
+                  \x20   println(owned(Expr::Add(Expr::Name(\"y\"), Expr::Num(1))))\n\
+                  \x20   let big = Expr::Add(Expr::Num(5), Expr::Num(1))\n\
+                  \x20   let small = Expr::Add(Expr::Num(1), Expr::Num(1))\n\
+                  \x20   println(f\"{lent(big)} {lent(small)}\")\n\
+                  }\n";
+    let found = findings(source);
+    assert!(!found.iter().any(|f| f.code == "NK1193"), "{found:#?}");
+    runs(
+        "guard-inside-a-box",
+        source,
+        "zero\nadd\nnamed x\nnamed long\nadd\n5 -1\n",
+    );
+}
+
+/// **A guard reads a part bound whole out of a box as the part** (D5 item 2,
+/// #97). The arm opens the box at its head, and a guard runs before that, so
+/// the guard reads it through the box: a call that is lent it works as before,
+/// and a comparison with a value of the part's type - `&Box<Expr>` against an
+/// `Expr` below - now reads the part.
+#[test]
+fn a_guard_reads_a_boxed_part_as_the_part() {
+    let source = "enum Expr {\n\
+                  \x20   Num(i64),\n\
+                  \x20   Add(Expr, Expr),\n\
+                  }\n\
+                  \n\
+                  fn is_zero(e: ref Expr) -> bool {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Num(n) => n == 0,\n\
+                  \x20       else => false,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn simplify(e: Expr) -> String {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Add(a, b) if is_zero(a) => \"left zero\",\n\
+                  \x20       Expr::Add(a, b) if a == Expr::Num(1) && b != Expr::Num(1) => \"left one\",\n\
+                  \x20       Expr::Add(a, b) => \"add\",\n\
+                  \x20       Expr::Num(n) => f\"{n}\",\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(0), Expr::Num(1))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(1), Expr::Num(2))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(1), Expr::Num(1))))\n\
+                  }\n";
+    runs("guard-reads-a-box", source, "left zero\nleft one\nadd\n");
 }
 
 /// **The two defects a syntax tree meets first**, in a type that holds nothing
