@@ -421,6 +421,10 @@ pub struct Checked {
     /// the same thing, so nothing the program can see changes. The `for`'s
     /// half of what `copied_bindings` is for a `match` arm.
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// **A `for` binding lent a view is the view** (0.0.297): an element of a
+    /// `Vec[ref String]` is a `&&str` below, so it is read out with a `*` once
+    /// where the body opens, as a number is with `num::value`.
+    pub copied_view_bindings: BTreeSet<(usize, String)>,
     /// **An integer literal whose place is an unsigned type**, by the byte the
     /// statement starts at and the value, and the type
     /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). The emitter
@@ -1662,6 +1666,8 @@ pub struct Propagation {
     pub owned_loops: BTreeSet<usize>,
     /// [`Checked::copied_loop_bindings`].
     pub copied_loop_bindings: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_view_bindings`].
+    pub copied_view_bindings: BTreeSet<(usize, String)>,
     /// [`Checked::unsigned_literals`].
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
     /// [`Checked::number_lets`].
@@ -1937,6 +1943,7 @@ pub fn propagation_against(
         pausing_loops: checked.pausing_loops,
         owned_loops: checked.owned_loops,
         copied_loop_bindings: checked.copied_loop_bindings,
+        copied_view_bindings: checked.copied_view_bindings,
         unsigned_literals: checked.unsigned_literals,
         number_lets: checked.number_lets,
         changed_elements: checked.changed_elements,
@@ -9171,6 +9178,13 @@ impl<'a> Checker<'a> {
                             .copied_loop_bindings
                             .insert((span.at(), name.clone()));
                     }
+                    // A view is copied as a number is: it is a pointer.
+                    let a_view = lent && name != "_" && !copied && element.is_a_view();
+                    if a_view {
+                        self.checked
+                            .copied_view_bindings
+                            .insert((span.at(), name.clone()));
+                    }
                     // **A binding lent something that does not copy is a
                     // view of it**, and typed as one: what keeps it needs its
                     // own, and says so where the view would be kept (`NK1105`
@@ -9181,7 +9195,7 @@ impl<'a> Checker<'a> {
                         false => element,
                     };
                     frame.push(Local {
-                        lent: lent && !copied,
+                        lent: lent && !copied && !a_view,
                         ..Local::free(name, element)
                     });
                 }
@@ -9600,10 +9614,15 @@ impl<'a> Checker<'a> {
                     // `Expr::Num(n) => n` handed back a reference where the
                     // function says `i64` - `rustc`'s *mismatched types*
                     // about a file nobody wrote.
+                    // **And so is a part declared as a view**, `kind: ref
+                    // String` in `Line::Table`: a view copies, and bound
+                    // through a lent value it was a view of a view - `kind ==
+                    // "fn"` compared a `&&str` with a `str` (found moving the
+                    // ledger's reader onto a grammar).
                     if typed.is_a_view() {
                         let at = &arm.pattern as *const MatchPattern as usize;
                         for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
-                            if self.copied(&ty) && !ty.is_a_view() {
+                            if self.copied(&ty) || ty.is_a_view() {
                                 self.checked.copied_bindings.insert((at, name));
                             }
                         }

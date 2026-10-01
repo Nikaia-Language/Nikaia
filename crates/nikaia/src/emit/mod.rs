@@ -1172,6 +1172,8 @@ struct Emitter<'p> {
     /// The lent `for` bindings read by value at the body's head
     /// ([`check::Checked::copied_loop_bindings`]).
     copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// ([`check::Checked::copied_view_bindings`]).
+    copied_view_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
     unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
     /// [`check::Checked::number_lets`].
@@ -2388,6 +2390,7 @@ impl<'p> Emitter<'p> {
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
             copied_loop_bindings: propagation.copied_loop_bindings,
+            copied_view_bindings: propagation.copied_view_bindings,
             unsigned_literals: propagation.unsigned_literals,
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
@@ -6530,6 +6533,18 @@ impl<'p> Emitter<'p> {
                         let name = self.name(*b);
                         format!("let {name} = nikaia_std::num::value({name});")
                     })
+                    .chain(
+                        bindings
+                            .iter()
+                            .filter(|b| {
+                                self.copied_view_bindings
+                                    .contains(&(span.at(), self.text(**b).to_string()))
+                            })
+                            .map(|b| {
+                                let name = self.name(*b);
+                                format!("let {name} = *{name};")
+                            }),
+                    )
                     .collect::<String>();
                 let opening = match (unwrap, copied.is_empty()) {
                     (unwrap, true) => unwrap,

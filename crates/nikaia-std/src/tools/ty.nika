@@ -365,6 +365,17 @@ pub fn split_args(written: ref String) -> Vec[String] {
 /// and `&T`, the spelling it replaced. The word needs the space after it, so
 /// `reference` is not read as a view of `erence`.
 pub fn a_view_of(written: ref String) -> String? {
+    // **`ref(a | b) T`, where a signature's result says what it points
+    // into** (ADR-251 D4): a view of `T` like any other, and the names are the
+    // ledger's to read, beside the type.
+    if written.starts_with("ref(") {
+        let c: Vec[char] = written.chars().collect()
+        let close = closing(c, 4, ')')
+        if close >= 0 {
+            let rest = between(c, close + 1, c.len())
+            return rest.trim_start().clone()
+        }
+    }
     if written.starts_with("ref ") {
         let rest = cut(written, 4, 0)
         return rest.trim_start().clone()

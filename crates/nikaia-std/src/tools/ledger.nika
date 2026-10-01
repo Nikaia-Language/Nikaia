@@ -29,21 +29,22 @@
 use std::collections
 use std::text
 
-/// One line of a ledger that says something.
+/// One line of a ledger, as a view of the text it stands in: nothing is
+/// copied until a value goes into the ledger.
 pub enum Line {
     /// `[fn."…"]`, `[type."…"]`, `[trait."…"]` or `[impl."…"]`: which kind
     /// of table, and the name between its quotes, as written.
-    Table { kind: String, name: String },
+    Table { kind: ref String, name: ref String },
     /// `[sources]`, the one table whose name is not quoted.
     Sources,
     /// `key = value`, each trimmed, the value exactly as it stands.
-    Pair { key: String, value: String },
-}
-
-/// A line, and the line number a message about it names.
-pub struct Read {
-    pub at: i64,
-    pub line: Line,
+    Pair { key: ref String, value: ref String },
+    /// A blank line or a `#` comment, which says nothing.
+    Nothing,
+    /// A table header that opens and does not close.
+    Unterminated,
+    /// A line that is none of these.
+    Bad(ref String),
 }
 
 /// Why a ledger is refused, in the words the compiler reports.
@@ -59,80 +60,71 @@ impl Error for Refused {
     }
 }
 
-/// The lines of a ledger that say something, in order: a blank line and a `#`
-/// comment say nothing.
-pub fn lines(text: ref String) -> Vec[Read] throws {
-    let mut read: Vec[Read] = []
-    let mut n = 0
-    for raw in text.lines() {
-        n += 1
-        let line = raw.trim()
-        if line.len() == 0 || line.starts_with("#") {
-            continue
+// **The file's shape, read by a grammar** (0.0.297): every line, so that its
+// place in the list is its number, and each one a view of the text. A
+// `nikaia.contracts` is generated, so the shapes are the ones `render`
+// writes; what is not one of them is a line the reader refuses by number.
+grammar LedgerText {
+
+    // Nothing is skipped: a line is read character by character.
+    rule WS = "" { }
+
+    pub rule file -> Vec[Line] =
+        ls:line* last:BODY eof {
+            let mut all = Vec()
+            for l in ls.drain() { all.push(l) }
+            all.push(last)
+            all
         }
-        if line == "[sources]" {
-            read.push(Read { at: n, line: Line::Sources })
-            continue
-        }
-        let kind = table_kind(line)
-        if kind.len() > 0 {
-            read.push(Read { at: n, line: Line::Table { kind: kind.clone(), name: table_name(line, kind, n) } })
-            continue
-        }
-        read.push(Read { at: n, line: pair(line, n) })
-    }
-    return read
+
+    rule line -> Line = l:BODY line_ending { l }
+
+    // The spaces in front once, and then what the first character says the
+    // line is: one choice per line rather than one per kind of line.
+    rule BODY -> Line = SP l:AFTER { l }
+
+    rule AFTER -> Line =
+          "#" REST { Line::Nothing }
+        | "[" t:TABLE { t }
+        | peek(END) { Line::Nothing }
+        | k:text(KEY) "=" v:text(REST) { Line::Pair { key: k.trim(), value: v.trim() } }
+        | r:text(REST) { Line::Bad(r.trim()) }
+
+    rule TABLE -> Line =
+          "sources]" SP peek(END) { Line::Sources }
+        | k:KIND ".\"" n:text(NAME) CLOSE { Line::Table { kind: k, name: n } }
+        | KIND ".\"" REST { Line::Unterminated }
+
+    rule KIND -> ref String =
+          "fn" { "fn" }
+        | "type" { "type" }
+        | "trait" { "trait" }
+        | "impl" { "impl" }
+
+    rule SP = SPACE* { }
+    rule SPACE = " " { } | "\t" { }
+    rule END = line_ending { } | eof { }
+    // The rest of a line, found in one scan to its end rather than a
+    // character at a time: most of a ledger is comments (10.7).
+    rule REST = until(line_ending | eof) { }
+    rule CLOSE = "\"]" SP peek(END) { }
+    // A table's name and a key, each in one scan to what ends it.
+    rule NAME = until("\"]" | line_ending | eof) { }
+    rule KEY = until("=" | line_ending | eof) { }
 }
 
-// The kind of table a line opens, or nothing where it opens none.
-fn table_kind(line: ref String) -> ref String sync {
-    if line.starts_with("[fn.\"") {
-        return "fn"
-    }
-    if line.starts_with("[type.\"") {
-        return "type"
-    }
-    if line.starts_with("[trait.\"") {
-        return "trait"
-    }
-    if line.starts_with("[impl.\"") {
-        return "impl"
-    }
-    return ""
-}
+// **A value's two shapes**, a quoted string and a list of them, each entry a
+// view of the text between its quotes. A comma inside quotes is the entry's,
+// and a `\` before a character keeps it from ending one.
+grammar LedgerValue {
 
-// What stands between `[kind."` and `"]`.
-fn table_name(line: ref String, kind: ref String, n: i64) -> String throws {
-    let c: Vec[char] = line.chars().collect()
-    let start = kind.len() + 3
-    if !line.ends_with("\"]") || c.len() < start + 2 {
-        throw Refused::Because(f"line {n}: unterminated section header")
-    }
-    let mut name: String = ""
-    for k in start..<c.len() - 2 {
-        name.push(c[k])
-    }
-    return name
-}
+    pub rule list -> Vec[ref String] = "[" items:list(QUOTED, ",") TRAILING "]" eof { items }
 
-// `key = value`, split at the first `=`.
-fn pair(line: ref String, n: i64) -> Line throws {
-    let mut key: String = ""
-    let mut value: String = ""
-    let mut seen = false
-    for c in line.chars() {
-        if seen {
-            value.push(c)
-        } else if c == '=' {
-            seen = true
-        } else {
-            key.push(c)
-        }
-    }
-    if !seen {
-        throw Refused::Because(f"line {n}: not a key and a value: {line}")
-    }
-    return Line::Pair { key: key.trim().clone(), value: value.trim().clone() }
+    rule TRAILING = "," { } | empty { }
+    rule QUOTED -> ref String = "\"" s:text(INSIDE) "\"" { s }
+    rule INSIDE = PIECE* { }
+    rule PIECE = ESCAPED { } | not("\"") not("\\") any { }
+    rule ESCAPED = "\\" any { }
 }
 
 /// What a quoted string holds: `\n` is a line break, and a `\` before any
@@ -143,30 +135,12 @@ pub fn unquote(value: ref String) -> String throws {
 
 // `unquote`, with what a refusal starts with: the line, where it is known.
 fn unquote_at(value: ref String, at: ref String) -> String throws {
-    let c: Vec[char] = value.chars().collect()
-    if c.len() < 2 || c[0] != '"' || c[c.len() - 1] != '"' {
+    // The quotes are one byte each, so what is between them is a view of the
+    // value itself: no grammar is entered for a value this short.
+    if value.len() < 2 || !value.starts_with("\"") || !value.ends_with("\"") {
         throw Refused::Because(f"{at}expected a quoted string, found `{value}`")
     }
-    let mut out: String = ""
-    let mut escaped = false
-    for k in 1..<c.len() - 1 {
-        if escaped {
-            if c[k] == 'n' {
-                out.push('\n')
-            } else {
-                out.push(c[k])
-            }
-            escaped = false
-        } else if c[k] == '\\' {
-            escaped = true
-        } else {
-            out.push(c[k])
-        }
-    }
-    if escaped {
-        throw Refused::Because(f"{at}a `\\` at the end of `{value}`")
-    }
-    return out
+    return unescaped(value[1..<value.len() - 1])
 }
 
 /// The entries of `["a", "b"]`, each unquoted, split where a comma stands
@@ -177,46 +151,43 @@ pub fn list(value: ref String) -> Vec[String] throws {
 
 // `list`, with what a refusal starts with.
 fn list_at(value: ref String, at: ref String) -> Vec[String] throws {
-    let c: Vec[char] = value.chars().collect()
-    if c.len() < 2 || c[0] != '[' || c[c.len() - 1] != ']' {
+    // `[]` is most lists a ledger writes, and says nothing to read.
+    if value == "[]" {
+        return []
+    }
+    let entries = LedgerValue::list(value) catch {
         throw Refused::Because(f"{at}expected a list, found `{value}`")
     }
-    let mut entries: Vec[String] = []
-    let mut entry: String = ""
-    let mut quoted = false
-    let mut escaped = false
-    for k in 1..<c.len() - 1 {
-        let here = c[k]
-        if quoted {
-            if escaped {
-                escaped = false
-            } else if here == '\\' {
-                escaped = true
-            } else if here == '"' {
-                quoted = false
-            }
-            entry.push(here)
-        } else if here == ',' {
-            take(entry, entries, at)
-            entry = ""
-        } else {
-            if here == '"' {
-                quoted = true
-            }
-            entry.push(here)
-        }
+    let mut out: Vec[String] = []
+    for entry in entries {
+        out.push(unescaped(entry))
     }
-    take(entry, entries, at)
-    return entries
+    return out
 }
 
-// One entry of a list, unquoted, where it is not empty: `[]` and a trailing
-// comma leave nothing to read.
-fn take(entry: ref String, mut entries: Vec[String], at: ref String) throws {
-    let written = entry.trim()
-    if written.len() > 0 {
-        entries.push(unquote_at(written, at))
+// A quoted string's text as it means it: most have no `\` and are copied as
+// they stand.
+fn unescaped(inside: ref String) -> String {
+    if !inside.contains("\\") {
+        return inside.clone()
     }
+    let mut out: String = ""
+    let mut escaped = false
+    for c in inside.chars() {
+        if escaped {
+            if c == 'n' {
+                out.push('\n')
+            } else {
+                out.push(c)
+            }
+            escaped = false
+        } else if c == '\\' {
+            escaped = true
+        } else {
+            out.push(c)
+        }
+    }
+    return out
 }
 
 /// Which table the lines being read belong to. `[sources]` (ADR-100 D3) is
@@ -244,9 +215,15 @@ pub fn read(written: ref String) -> Ledger throws {
     let mut traits: Vec[String] = []
     let mut functions: Vec[String] = []
     let mut answers: Vec[(String, String)] = []
-    for one in lines(written) {
-        let n = one.at
-        match one.line {
+    // A file this grammar cannot read at all says where, in the parse's own
+    // words; every line it can read is refused below by number.
+    let lines = LedgerText::file(written) catch {
+        throw Refused::Because(f"{error}")
+    }
+    let mut n = 0
+    for one in lines {
+        n += 1
+        match one {
             Line::Table { kind, name } => {
                 if section == Section::Function {
                     ledger.functions.insert(current.clone(), function)
@@ -309,6 +286,13 @@ pub fn read(written: ref String) -> Ledger throws {
                     throw Refused::Because(f"line {n}: a `trait` or an `impl` table has no keys, and this has `{key}`")
                 }
             }
+            Line::Unterminated => {
+                throw Refused::Because(f"line {n}: unterminated section header")
+            }
+            Line::Bad(text) => {
+                throw Refused::Because(f"line {n}: not a key and a value: {text}")
+            }
+            Line::Nothing => {}
         }
     }
     if section == Section::Function {
@@ -397,14 +381,14 @@ fn function_key(mut entry: FnContract, name: ref String, key: ref String, value:
         // **Read back from Nikaia's spelling** (ADR-251 D4): the receiver says
         // whether the call changes it, and a `ref(a | b)` in the result where
         // it points.
-        let spelled = unspell(unquoted(value, n), name)
+        let spelled = spelled_signature(unquoted(value, n), name)
         if spelled.mutates {
             entry.mutates = true
         }
         if spelled.borrows.len() > 0 {
             entry.borrows = spelled.borrows.clone()
         }
-        entry.signature = signature_of(spelled.text)
+        entry.signature = spelled.signature
     } else if key == "keeps" {
         entry.keeps = entries(value, n)
     } else if key == "mutates" {
@@ -725,383 +709,260 @@ fn field_of(written: ref String) -> FieldContract {
 }
 
 /// **A signature read back from the compiler's text**: `[T: Trait](a: A, mut
-/// b: B; option: C = 1) -> R`.
+/// b: B; option: C = 1) -> R`, which is the file's spelling with the receiver
+/// a type and the variables written `$T`.
 pub fn signature_of(written: ref String) -> Signature throws {
-    let mut whole: String = written.trim().clone()
-    let mut bounds: Vec[(String, Vec[String])] = []
-    // **The bound list, where there is one** (ADR-205 D1), taken off first so
-    // that what follows is the grammar that was always there.
-    if whole.starts_with("[") {
-        let b: Vec[char] = whole.chars().collect()
-        let close = find(b, 1, ']')
-        if close < 0 {
-            throw Refused::Because(f"a bound list is `[T: Trait]`, found `{whole}`")
-        }
-        bounds = bounds_of(slice(b, 1, close))
-        let rest = slice(b, close + 1, b.len())
-        whole = rest.trim().clone()
-    }
-    if !whole.starts_with("(") {
-        throw Refused::Because(f"a signature starts with `(`, found `{whole}`")
-    }
-    let c: Vec[char] = whole.chars().collect()
-    // **The `)` that closes the first `(`, counted**: a result may hold
-    // parentheses of its own, `(capacity: i64) -> (Sender[$T], Receiver[$T])`.
-    let close = paren_closing(c, 1)
-    if close < 0 {
-        throw Refused::Because(f"a signature is `(…) -> T`, found `{whole}`")
-    }
-    let inside = slice(c, 1, close)
-    let after = slice(c, close + 1, c.len())
-    // Kap 5.1: the `;` divides the subjects from the options.
-    let i: Vec[char] = inside.chars().collect()
-    let semicolon = config_starts(i)
-    let mut positional: String = inside.clone()
-    let mut options: String = ""
-    if semicolon >= 0 {
-        positional = slice(i, 0, semicolon)
-        options = slice(i, semicolon + 1, i.len())
-    }
-    let mut mutable: Vec[String] = []
-    let mut params: Vec[(String, Ty)] = []
-    for part in split_args(positional) {
-        let p: Vec[char] = part.chars().collect()
-        let at = name_ends(p)
-        if at < 0 {
-            // A bare type is the receiver, which is what `ref mut self` is.
-            params.push(a_param("self", part))
-        } else {
-            // **`mut` is part of the parameter and not of its type** (ADR-094
-            // D3): it says who changes the value.
-            let mut name = trimmed(slice(p, 0, at))
-            if name.starts_with("mut ") {
-                name = trimmed(from_char(name, 4))
-                mutable.push(name.clone())
-            }
-            params.push(a_param(name, slice(p, at + 1, p.len())))
-        }
-    }
-    let mut config: Vec[ConfigContract] = []
-    for part in split_args(options) {
-        let p: Vec[char] = part.chars().collect()
-        let colon = find(p, 0, ':')
-        if colon < 0 {
-            throw Refused::Because(f"an option is `name: T = value`, found `{part}`")
-        }
-        let named = slice(p, 0, colon)
-        let name = named.trim()
-        let equals = find(p, colon + 1, '=')
-        if equals < 0 {
-            throw Refused::Because(f"an option needs a default: `{name}: T = value`")
-        }
-        let given = slice(p, equals + 1, p.len())
-        config.push(ConfigContract { name: name.clone(), ty: parse(slice(p, colon + 1, equals)), default: given.trim().clone() })
-    }
-    let mut result: Ty? = null
-    let tail = after.trim()
-    if tail.starts_with("->") {
-        result = parse(from_char(tail, 2))
-    }
-    return Signature { bounds: bounds, params: params, mutable: mutable, config: config, result: result }
+    let spelled = spelled_signature(written, "")
+    return spelled.signature
 }
 
-// `H: handler::Handler + Send, T` back into its pairs. Nothing here refuses: a
-// bound this does not read is a bound the checker does not claim about.
-fn bounds_of(inside: ref String) -> Vec[(String, Vec[String])] {
-    let mut bounds: Vec[(String, Vec[String])] = []
-    for part in split_args(inside) {
-        if part.len() == 0 {
-            continue
-        }
-        let p: Vec[char] = part.chars().collect()
-        let at = name_ends(p)
-        let mut traits: Vec[String] = []
-        if at < 0 {
-            bounds.push((part.clone(), traits))
-        } else {
-            let listed = slice(p, at + 1, p.len())
-            for one in listed.split("+") {
-                let named = one.trim()
-                if named.len() > 0 {
-                    traits.push(named.clone())
-                }
-            }
-            let name = slice(p, 0, at)
-            bounds.push((name.trim().clone(), traits))
-        }
-    }
-    return bounds
-}
-
-// Where a parameter's name ends: the first `:` that is not half of a `::`,
-// because `collections::HashMap` is a type and not a parameter named
-// `collections` (ADR-154 D3). -1 where there is none.
-fn name_ends(c: ref Array[char]) -> i64 {
-    let mut at = 0
-    while at < c.len() {
-        if c[at] == ':' {
-            if at + 1 < c.len() && c[at + 1] == ':' {
-                at += 2
-                continue
-            }
-            return at
-        }
-        at += 1
-    }
-    return -1
-}
-
-// The `)` that closes the `(` this text is already inside, from `from`.
-fn paren_closing(c: ref Array[char], from: i64) -> i64 {
-    let mut depth = 0
-    for at in from..<c.len() {
-        if c[at] == '(' {
-            depth += 1
-        } else if c[at] == ')' {
-            if depth == 0 {
-                return at
-            }
-            depth -= 1
-        }
-    }
-    return -1
-}
-
-// Where the options start: a `;` outside brackets and outside a quoted
-// default. -1 where there is none.
-fn config_starts(c: ref Array[char]) -> i64 {
-    let mut depth = 0
-    let mut quoted = false
-    let mut escaped = false
-    for at in 0..<c.len() {
-        let here = c[at]
-        if quoted {
-            if escaped {
-                escaped = false
-            } else if here == '\\' {
-                escaped = true
-            } else if here == '"' {
-                quoted = false
-            }
-        } else if here == '"' {
-            quoted = true
-        } else if here == '[' || here == '(' {
-            depth += 1
-        } else if here == ']' || here == ')' {
-            if depth > 0 {
-                depth -= 1
-            }
-        } else if here == ';' && depth == 0 {
-            return at
-        }
-    }
-    return -1
-}
-
-/// A signature read back from the file's spelling (ADR-251 D4) into the
-/// compiler's: the receiver as its type, a type variable as `$T`, and where
-/// the result points as a list beside it.
-pub struct Unspelled {
-    pub text: String,
+/// A signature read back, and the two facts its spelling carries beside it.
+pub struct Spelling {
+    pub signature: Signature,
+    /// Where the result points, from its `ref(a | b)`, in the order the
+    /// parameters are declared.
     pub borrows: Vec[String],
+    /// Whether the receiver is written `ref mut self` or `mut self: T`.
     pub mutates: bool,
 }
 
-// A signature taken apart: the bracket list's entries, what stands inside the
-// parameter list, and everything after it.
-struct Parts {
-    bracket: Vec[String],
-    inside: String,
-    result: String,
+/// One part of a parameter list, as it is written.
+enum Part {
+    /// `self`, `ref self`, `ref mut self`: the type the entry is on.
+    Owner { view: bool, mutates: bool },
+    /// `self: T`, `mut self: T`, or a bare type, which is the receiver in the
+    /// spelling before ADR-251.
+    Typed { ty: ref String, mutates: bool },
+    /// `name: T` or `mut name: T`.
+    Named { name: ref String, ty: ref String, mutable: bool },
 }
 
-/// **The file's spelling of `key`'s signature back into the compiler's.** A
-/// signature in the spelling before it reads unchanged: no bracket list of
-/// bare names, no `self`, no `ref(…)`, and `$T` already the compiler's.
-pub fn unspell(written: ref String, key: ref String) -> Unspelled {
-    // **Most entries need nothing turned back**: a function with no type
-    // variable, no receiver and no `ref(…)` in its result reads the same in
-    // both spellings, and what reads it next trims and splits it anyway.
-    if !written.starts_with("[") && !written.contains("self") && !written.contains("ref(") {
-        return Unspelled { text: written.clone(), borrows: [], mutates: false }
-    }
-    let found = parts_of(written)
-    if found == null {
-        return Unspelled { text: written.clone(), borrows: [], mutates: false }
-    }
-    let parts = found ?? Parts { bracket: [], inside: "", result: "" }
-    let mut names: Vec[String] = []
-    let mut bounded: Vec[String] = []
-    for declared in parts.bracket {
-        let d: Vec[char] = declared.chars().collect()
-        let colon = find(d, 0, ':')
-        if colon < 0 {
-            names.push(declared.trim().clone())
-        } else {
-            let name = slice(d, 0, colon)
-            names.push(name.trim().clone())
-            bounded.push(declared.clone())
-        }
-    }
-    let inside: Vec[char] = parts.inside.chars().collect()
-    let semicolon = semicolon_at(inside)
-    let original = positional_of(parts.inside, inside, semicolon)
-    let options = options_of(inside, semicolon)
-    let mut positional: Vec[String] = original.clone()
-    let mut mutates = false
-    let owner = owner_of(key) ?? "?"
-    if positional.len() > 0 {
-        let first = positional[0].trim().clone()
-        let mut as_type: String? = null
-        if first == "self" {
-            as_type = owner.clone()
-        } else if first == "ref self" {
-            as_type = f"ref {owner}"
-        } else if first == "ref mut self" {
-            mutates = true
-            as_type = f"ref {owner}"
-        } else if first.starts_with("mut self:") {
-            mutates = true
-            let rest = from_char(first, 9)
-            as_type = rest.trim().clone()
-        } else if first.starts_with("self:") {
-            let rest = from_char(first, 5)
-            as_type = rest.trim().clone()
-        }
-        if as_type != null {
-            positional[0] = as_type ?? ""
-        }
-    }
-    let takes_self = positional.len() > 0 && receiver_written(original)
+/// One entry of the bracket list: a type variable, and its bounds.
+struct Declared {
+    name: ref String,
+    traits: Vec[ref String],
+}
 
-    // Where the result points: every `ref(…)` in it, gathered in the order the
-    // parameters are declared.
-    let gathered = refs_gathered(parts.result)
-    let mut order: Vec[String] = []
-    if takes_self {
-        let receiver: String = "self"
-        order.push(receiver)
+/// An option after the `;` (Kap 5.1): `name: T = value`.
+struct Setting {
+    name: ref String,
+    ty: ref String,
+    default: ref String,
+}
+
+/// A signature taken apart, every piece a view of its text.
+struct Written {
+    declared: Vec[Declared],
+    parts: Vec[Part],
+    settings: Vec[Setting],
+    result: ref String?,
+}
+
+// **A signature, read by a grammar** (0.0.297): the file's spelling
+// (ADR-251 D4) and the compiler's, in one pass, each piece a view. A type is
+// the text up to what ends it, with its own brackets and strings inside, and
+// `Ty`'s reader reads it.
+grammar SignatureText {
+
+    pub rule signature -> Written =
+        d:bracket "(" ps:list(part, ",") TRAILING ss:settings ")" r:result? eof {
+            Written { declared: d, parts: ps, settings: ss, result: r }
+        }
+
+    rule bracket -> Vec[Declared] = "[" ds:list(declared, ",") "]" { ds } | empty { Vec() }
+
+    rule declared -> Declared =
+          n:raw_ident COLON ts:list(BOUND, "+") { Declared { name: n, traits: ts } }
+        | n:raw_ident { Declared { name: n, traits: Vec() } }
+
+    rule part -> Part =
+          REF MUT SELF { Part::Owner { view: true, mutates: true } }
+        | REF SELF { Part::Owner { view: true, mutates: false } }
+        | MUT SELF COLON t:TYPE { Part::Typed { ty: t, mutates: true } }
+        | SELF COLON t:TYPE { Part::Typed { ty: t, mutates: false } }
+        | SELF { Part::Owner { view: false, mutates: false } }
+        | MUT n:raw_ident COLON t:TYPE { Part::Named { name: n, ty: t, mutable: true } }
+        | n:raw_ident COLON t:TYPE { Part::Named { name: n, ty: t, mutable: false } }
+        | t:TYPE { Part::Typed { ty: t, mutates: false } }
+
+    rule settings -> Vec[Setting] = ";" ss:list(setting, ",") TRAILING { ss } | empty { Vec() }
+
+    rule setting -> Setting =
+        n:raw_ident COLON t:SETTING_TYPE "=" d:DEFAULT { Setting { name: n, ty: t, default: d } }
+
+    rule result -> ref String = "->" t:REST { t }
+
+    // The names a result points into: every `ref(a | b)` in it, and a word
+    // that only ends in `ref` is not one.
+    pub rule pointed -> Vec[Vec[ref String]] = ps:POINTING* eof { ps }
+
+    rule POINTING -> Vec[ref String] =
+          "ref(" ns:list(POINTED_NAME, "|") ")" { ns }
+        | WORD_CHARS { Vec() }
+        | any { Vec() }
+
+    rule POINTED_NAME -> ref String = WS0 n:raw_ident WS0 { n }
+    rule WS0 = " "* { }
+    rule WORD_CHARS = WORD_CHAR+ { }
+    rule WORD_CHAR = alpha1 { } | digit { } | "_" { } | "$" { }
+
+    rule REF = "ref" not(WORD_CHAR) { }
+    rule MUT = "mut" not(WORD_CHAR) { }
+    rule SELF = "self" not(WORD_CHAR) { }
+    rule COLON = ":" not(":") { }
+    rule TRAILING = "," { } | empty { }
+
+    rule BOUND -> ref String = t:text(BOUND_RUN) { t.trim() }
+    rule BOUND_RUN = BOUND_PIECE+ { }
+    rule BOUND_PIECE = not("+") not(",") not("]") SPAN { }
+
+    rule TYPE -> ref String = t:text(TYPE_RUN) { t.trim() }
+    rule TYPE_RUN = TYPE_PIECE+ { }
+    rule TYPE_PIECE = not(",") not(")") not(";") SPAN { }
+
+    rule SETTING_TYPE -> ref String = t:text(SETTING_RUN) { t.trim() }
+    rule SETTING_RUN = SETTING_PIECE+ { }
+    rule SETTING_PIECE = not("=") not(",") not(")") SPAN { }
+
+    rule DEFAULT -> ref String = t:text(DEFAULT_RUN) { t.trim() }
+    rule DEFAULT_RUN = DEFAULT_PIECE+ { }
+    rule DEFAULT_PIECE = not(",") not(")") SPAN { }
+
+    rule REST -> ref String = t:text(REST_RUN) { t.trim() }
+    rule REST_RUN = until(eof) { }
+
+    // One unit of a type: a bracket group with what is inside it, a quoted
+    // string, or one character.
+    rule SPAN = PARENS { } | BRACKETS { } | STRING { } | any { }
+    rule PARENS = "(" IN_PARENS* ")" { }
+    rule IN_PARENS = not(")") SPAN { }
+    rule BRACKETS = "[" IN_BRACKETS* "]" { }
+    rule IN_BRACKETS = not("]") SPAN { }
+    rule STRING = "\"" STRING_PIECE* "\"" { }
+    rule STRING_PIECE = "\\" any { } | not("\"") any { }
+}
+
+/// **A signature read back from either spelling**, with what the file's
+/// spelling says beside it: the receiver as the type `key` is on, a bracket
+/// list's names as variables, and where the result points.
+pub fn spelled_signature(written: ref String, key: ref String) -> Spelling throws {
+    let parts = SignatureText::signature(written) catch {
+        throw Refused::Because(f"a signature is `[T](a: A; o: O = v) -> R`, found `{written}`")
     }
-    for part in positional {
-        let p: Vec[char] = part.chars().collect()
-        let colon = find(p, 0, ':')
-        if colon >= 0 && is_named(part) {
-            let named = slice(p, 0, colon)
-            let mut name: String = named.trim().clone()
-            while name.starts_with("mut ") {
-                name = from_char(name, 4)
+    let mut variables: collections::BTreeSet[String] = collections::BTreeSet()
+    let mut bounds: Vec[(String, Vec[String])] = []
+    for declared in parts.declared {
+        variables.insert(declared.name.clone())
+        if declared.traits.len() > 0 {
+            let mut traits: Vec[String] = []
+            for one in declared.traits {
+                traits.push(one.clone())
             }
-            order.push(name.trim().clone())
+            bounds.push(a_bound(declared.name, traits))
+        }
+    }
+    let mut params: Vec[(String, Ty)] = []
+    let mut changed: Vec[String] = []
+    let mut order: Vec[String] = []
+    let mut receiver_changes = false
+    let mut first = true
+    for part in parts.parts {
+        match part {
+            Part::Owner { view, mutates } => {
+                let owner = owner_of(key) ?? "?"
+                let written_type = if view { f"ref {owner}" } else { owner.clone() }
+                params.push(a_param("self", typed(written_type, variables)))
+                if mutates {
+                    receiver_changes = true
+                }
+                if first {
+                    order.push(a_receiver())
+                }
+            }
+            Part::Typed { ty, mutates } => {
+                params.push(a_param("self", typed(ty, variables)))
+                if mutates {
+                    receiver_changes = true
+                }
+                if first {
+                    order.push(a_receiver())
+                }
+            }
+            Part::Named { name, ty, mutable } => {
+                params.push(a_param(name, typed(ty, variables)))
+                if mutable {
+                    changed.push(name.clone())
+                }
+                order.push(name.clone())
+            }
+        }
+        first = false
+    }
+    let mut config: Vec[ConfigContract] = []
+    for setting in parts.settings {
+        config.push(ConfigContract { name: setting.name.clone(), ty: typed(setting.ty, variables), default: setting.default.clone() })
+    }
+    let mut result: Ty? = null
+    let mut borrows: Vec[String] = []
+    let result_text = parts.result ?? ""
+    if parts.result != null {
+        result = typed(result_text, variables)
+        borrows = pointed_into(result_text, order)
+    }
+    return Spelling {
+        signature: Signature { bounds: bounds, params: params, mutable: changed, config: config, result: result },
+        borrows: borrows,
+        mutates: receiver_changes,
+    }
+}
+
+// A type read back, with the bracket list's names as variables.
+fn typed(written: ref String, variables: ref collections::BTreeSet[String]) -> Ty {
+    let ty = parse(written)
+    if variables.len() == 0 {
+        return ty
+    }
+    return ty.parameterise(variables)
+}
+
+// The names every `ref(…)` in a result holds, in the order the parameters are
+// declared, then any the list does not name.
+fn pointed_into(result: ref String, order: ref Vec[String]) -> Vec[String] {
+    if !result.contains("ref(") {
+        return []
+    }
+    let groups = SignatureText::pointed(result) catch {
+        return []
+    }
+    let mut named: Vec[String] = []
+    for group in groups {
+        for name in group {
+            if !named.contains(ref name.clone()) {
+                named.push(name.clone())
+            }
         }
     }
     let mut borrows: Vec[String] = []
     for name in order {
-        if gathered.names.contains(name) {
+        if named.contains(name) {
             borrows.push(name.clone())
         }
     }
-    for name in gathered.names {
+    for name in named {
         if !borrows.contains(name) {
             borrows.push(name.clone())
         }
     }
-
-    let mut body = joined(positional)
-    if options != null {
-        let chosen = options ?? ""
-        body = f"{body}; {chosen}"
-    }
-    let mut before: String = ""
-    if bounded.len() > 0 {
-        let listed = joined(bounded)
-        before = f"[{listed}]"
-    }
-    let marked_body = variables_marked(body, names)
-    let marked_result = variables_marked(gathered.text, names)
-    return Unspelled { text: f"{before}({marked_body}){marked_result}", borrows: borrows, mutates: mutates }
+    return borrows
 }
 
-fn parts_of(written: ref String) -> Parts? {
-    let whole = written.trim()
-    let c: Vec[char] = whole.chars().collect()
-    let mut bracket: Vec[String] = []
-    let mut start = 0
-    if whole.starts_with("[") {
-        let close = bracket_closing(c, 1, '[', ']')
-        if close < 0 {
-            return null
-        }
-        for declared in split_args(slice(c, 1, close)) {
-            if declared.trim().len() > 0 {
-                bracket.push(declared.trim().clone())
-            }
-        }
-        start = close + 1
-        while start < c.len() && c[start].is_whitespace() {
-            start += 1
-        }
-    }
-    if start >= c.len() || c[start] != '(' {
-        return null
-    }
-    let close = bracket_closing(c, start + 1, '(', ')')
-    if close < 0 {
-        return null
-    }
-    return Parts { bracket: bracket, inside: slice(c, start + 1, close), result: slice(c, close + 1, c.len()) }
+fn a_bound(name: ref String, traits: Vec[String]) -> (String, Vec[String]) {
+    return (name.clone(), traits)
 }
 
-// The positional parameters, each trimmed.
-fn positional_of(inside: ref String, c: ref Vec[char], at: i64) -> Vec[String] {
-    let mut parts: Vec[String] = []
-    if at < 0 {
-        for part in split_args(inside) {
-            if part.len() > 0 {
-                parts.push(part)
-            }
-        }
-        return parts
-    }
-    for part in split_args(slice(c, 0, at)) {
-        if part.len() > 0 {
-            parts.push(part)
-        }
-    }
-    return parts
-}
-
-// The options after a `;`, trimmed, or nothing.
-fn options_of(c: ref Vec[char], at: i64) -> String? {
-    if at < 0 {
-        return null
-    }
-    return trimmed(slice(c, at + 1, c.len()))
-}
-
-fn semicolon_at(c: ref Array[char]) -> i64 {
-    let mut depth = 0
-    for at in 0..<c.len() {
-        let here = c[at]
-        if here == '[' || here == '(' {
-            depth += 1
-        } else if here == ']' || here == ')' {
-            if depth > 0 {
-                depth -= 1
-            }
-        } else if here == ';' && depth == 0 {
-            return at
-        }
-    }
-    return -1
-}
-
-// Whether the file's first parameter is a receiver, in either spelling.
-fn receiver_written(positional: ref Vec[String]) -> bool {
-    if positional.len() == 0 {
-        return false
-    }
-    let first = positional[0].trim()
-    return first == "self" || first == "ref self" || first == "ref mut self" || first.starts_with("self:") || first.starts_with("mut self:") || !is_named(first)
+fn a_receiver() -> String {
+    let receiver: String = "self"
+    return receiver
 }
 
 // The type an entry's receiver is when it is written `self`: what stands
@@ -1118,124 +979,6 @@ fn owner_of(key: ref String) -> String? {
         return null
     }
     return slice(c, 0, last)
-}
-
-// `name: T` or `mut name: T`, and not a bare type, which may hold a `::`.
-fn is_named(part: ref String) -> bool {
-    let c: Vec[char] = part.chars().collect()
-    let mut at = 0
-    while at < c.len() && c[at].is_whitespace() {
-        at += 1
-    }
-    // Every `mut ` in front, as `trim_start_matches` takes them.
-    while at + 3 < c.len() && c[at] == 'm' && c[at + 1] == 'u' && c[at + 2] == 't' && c[at + 3] == ' ' {
-        at += 4
-    }
-    if at >= c.len() || !(c[at] == '_' || (c[at] >= 'a' && c[at] <= 'z')) {
-        return false
-    }
-    while at < c.len() && a_word_char(c[at]) {
-        at += 1
-    }
-    while at < c.len() && c[at].is_whitespace() {
-        at += 1
-    }
-    return at < c.len() && c[at] == ':' && !(at + 1 < c.len() && c[at + 1] == ':')
-}
-
-// Where the bracket opened just before `from` closes, counting only its own
-// kind. -1 where it never does.
-fn bracket_closing(c: ref Array[char], from: i64, open: char, close: char) -> i64 {
-    let mut depth = 0
-    for at in from..<c.len() {
-        if c[at] == open {
-            depth += 1
-        } else if c[at] == close {
-            if depth == 0 {
-                return at
-            }
-            depth -= 1
-        }
-    }
-    return -1
-}
-
-// Every `ref(a | b)` in a result written `ref`, and the names they held.
-struct Gathered {
-    text: String,
-    names: Vec[String],
-}
-
-fn refs_gathered(written: ref String) -> Gathered {
-    let c: Vec[char] = written.chars().collect()
-    let mut out: String = ""
-    let mut names: Vec[String] = []
-    let mut from = 0
-    let mut going = true
-    while going {
-        let at = find_text(c, from, "ref(")
-        if at < 0 {
-            going = false
-        } else if at > from && a_word_char(c[at - 1]) {
-            out.push_str(ref slice(c, from, at + 4))
-            from = at + 4
-        } else {
-            let close = find(c, at + 4, ')')
-            if close < 0 {
-                going = false
-            } else {
-                let inside = slice(c, at + 4, close)
-                for part in inside.split("|") {
-                    let name = trimmed(part)
-                    if name.len() > 0 && !names.contains(ref name) {
-                        names.push(name)
-                    }
-                }
-                out.push_str(ref slice(c, from, at))
-                out.push_str("ref")
-                from = close + 1
-            }
-        }
-    }
-    out.push_str(ref slice(c, from, c.len()))
-    return Gathered { text: out, names: names }
-}
-
-// `text` with every word that is one of `names` written `$name`: not a segment
-// of a path (`a::T`), and not one already marked.
-fn variables_marked(written: ref String, names: ref Vec[String]) -> String {
-    if names.len() == 0 {
-        return written.clone()
-    }
-    let c: Vec[char] = written.chars().collect()
-    let mut out: String = ""
-    let mut at = 0
-    while at < c.len() {
-        let here = c[at]
-        if here == '_' || (here >= 'a' && here <= 'z') || (here >= 'A' && here <= 'Z') {
-            let start = at
-            while at < c.len() && a_word_char(c[at]) {
-                at += 1
-            }
-            let word = slice(c, start, at)
-            let marked = start >= 1 && c[start - 1] == '$'
-            let path_before = start >= 2 && c[start - 1] == ':' && c[start - 2] == ':'
-            let path_after = at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':'
-            if names.contains(ref word) && !marked && !path_before && !path_after {
-                out.push('$')
-            }
-            out.push_str(ref word)
-            continue
-        }
-        out.push(here)
-        at += 1
-    }
-    return out
-}
-
-// A letter, a digit or `_`.
-fn a_word_char(c: char) -> bool {
-    return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // Where `target` first stands at or after `from`, or -1.
@@ -1314,8 +1057,8 @@ fn without_last(written: ref String, last: char) -> String {
 }
 
 // A parameter and its type, read.
-fn a_param(name: ref String, written: ref String) -> (String, Ty) {
-    return (name.clone(), parse(written))
+fn a_param(name: ref String, ty: Ty) -> (String, Ty) {
+    return (name.clone(), ty)
 }
 
 // `written` trimmed, as text of its own.
@@ -1323,14 +1066,3 @@ fn trimmed(written: ref String) -> String {
     return written.trim().clone()
 }
 
-// Entries joined by `, `.
-fn joined(parts: ref Array[String]) -> String {
-    let mut out: String = ""
-    for part in parts {
-        if !out.is_empty() {
-            out.push_str(", ")
-        }
-        out.push_str(part)
-    }
-    return out
-}
