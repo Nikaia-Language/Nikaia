@@ -276,6 +276,13 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// 64 with the accessor. So the rise is a line the corpus writes differently and
 /// not a receiver that stopped being typed — which is the one thing this ceiling
 /// exists to tell apart, and the reason it is raised with a sentence.
+///
+/// **50 at 0.0.315**, a fall, and two things answered it. Every tool is read
+/// with what `lower-std` reads beside it (`sysroot::modules_beside`), not only
+/// `ledger.nika`: `crossing.nika` and `signature.nika` call methods on the
+/// ledger's records, and `surface.nika` on the Rust grammar's items. And a
+/// `for` over a set binds its element (#302), which answers two more -
+/// measured: 52 without it, 50 with.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -300,18 +307,22 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            // **A tool that reads the ledger's records reads them beside
-            // itself** (`sysroot::READS_THE_RECORDS`), as `lower-std` checks
-            // it: read alone, `ledger.nika` names a `FnContract` nothing here
-            // declares, and every call on one is unanswered (0.0.292).
-            let records = match path.file_name().and_then(|name| name.to_str()) {
-                Some("ledger.nika") => {
-                    let text = std::fs::read_to_string(path.with_file_name("ty.nika"))
-                        .expect("ty.nika stands beside ledger.nika");
-                    Some(parse_to_ast(&text).expect("ty.nika parses"))
-                }
-                _ => None,
-            };
+            // **A tool reads what `lower-std` reads beside it**
+            // (`sysroot::modules_beside`): read alone, `ledger.nika` names a
+            // `FnContract` nothing here declares, and every call on one is
+            // unanswered (0.0.292); `surface.nika` the grammar's `Item`.
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            let records: Vec<nikaia::parser::Parsed> = nikaia::sysroot::modules_beside(name)
+                .iter()
+                .map(|module| {
+                    let text = std::fs::read_to_string(path.with_file_name(module))
+                        .expect("a module a tool reads stands beside it");
+                    parse_to_ast(&text).expect("it parses")
+                })
+                .collect();
             let beside: Vec<&nikaia::parser::Parsed> = records.iter().collect();
             let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
                 .chain(beside.iter().copied())
@@ -340,8 +351,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 64,
-        "{unanswered} unanswered method calls in {files} programs, and 64 is the \
+        unanswered <= 50,
+        "{unanswered} unanswered method calls in {files} programs, and 50 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

@@ -95,6 +95,37 @@ fn asking_a_view_whether_it_is_empty_does_not_pause() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **Walking a set does not pause** (#302). A `for` over a
+/// `collections::BTreeSet[String]` bound a name of unknown type, its `.clone()`
+/// resolved to nothing, and an unresolved call reads as one that may pause -
+/// so the function, and every caller of it, became `async`.
+#[test]
+fn walking_a_set_does_not_pause() {
+    let dir = common::scratch_dir("pausing-set");
+    let rust = lower(
+        &dir,
+        "use std::collections\n\
+         \n\
+         fn copied(names: ref collections::BTreeSet[String]) -> Vec[String] {\n\
+         \x20   let mut out: Vec[String] = []\n\
+         \x20   for name in names {\n\
+         \x20       out.push(name.clone())\n\
+         \x20   }\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut s: collections::BTreeSet[String] = collections::BTreeSet()\n\
+         \x20   s.insert(\"a\")\n\
+         \x20   let v = copied(s)\n\
+         \x20   println(f\"{v.len()}\")\n\
+         }",
+    );
+    assert!(rust.contains("fn copied("), "{rust}");
+    assert!(!rust.contains("async fn copied"), "{rust}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// D2: the `.await` goes **before** the `?`, and the order is not a choice.
 ///
 /// The future is what can fail, so it has to be driven before there is a

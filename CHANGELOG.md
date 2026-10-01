@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.315] — 2026-10-01
+
+**`nikaia describe` reads what a crate offers in Nikaia** (ADR-104 D2-D4,
+ADR-193 D3-D5, #124). `tools/surface.nika` holds the crate's table: every
+`fn` by the path it is defined at, which modules are `pub`, what a `pub use`
+carries out of a private one - a glob too - every `pub` type with its fields
+and derives, and every `unsafe impl`. It reads the Rust grammar's items and
+the path work beside it. `describe.rs` keeps driving: the manifest, the
+files, and turning the table into a draft. A draft says what it said before,
+and a glob re-export has a test of its own now.
+
+**Which tool reads which module beside it is one table** (`sysroot.rs`'s
+`BESIDE`): a tool named there reads exactly its list, and every other tool
+reads the tree, because a package is one namespace and the grammar's `Item` is
+not the tree's.
+
+**Walking a set does not pause** (#302). A `for` over a
+`collections::BTreeSet[String]` or a `HashSet` bound a name of unknown type;
+its `.clone()` resolved to nothing and read as a call that may pause, and the
+function and every caller of it became `async`. A set's element is its one
+argument now, and every check on the binding sees it.
+
 ## [0.0.314] — 2026-10-01
 
 **`nikaia describe` reads a Rust signature in Nikaia** (ADR-104 D3-D4,

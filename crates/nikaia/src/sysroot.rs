@@ -56,12 +56,31 @@ const TOOLS: &str = "tools";
 /// The compiler's syntax tree, which a tool module reads beside itself.
 const TREE: &str = "ast.nika";
 
-/// The ledger's records (ADR-257 D1), and the tool modules that read them
-/// beside themselves as every tool reads the tree. A list and not every tool,
-/// because the records' names (`State`, `Shape`) are words other tools use
-/// for their own things, and a package is one namespace (ADR-047 D1).
-const RECORDS: &str = "ty.nika";
-const READS_THE_RECORDS: &[&str] = &["crossing.nika", "ledger.nika", "signature.nika"];
+/// **The tool modules that read others beside themselves**, and which: the
+/// ledger's records (ADR-257 D1), the Rust grammar's items, the path work. A
+/// tool named here reads **exactly** its list, and one that is not reads the
+/// tree. A list and not every tool, because a package is one namespace
+/// (ADR-047 D1) and the modules' names collide: the records' `State` and
+/// `Shape` are words other tools use for their own things, and the grammar's
+/// `Item` is not the tree's. In Rust each tool is a module of its own, and
+/// `nikaia-std`'s `lib.rs` writes the matching `use super::…::*`.
+const BESIDE: &[(&str, &[&str])] = &[
+    ("crossing.nika", &["ty.nika"]),
+    ("ledger.nika", &["ty.nika"]),
+    ("signature.nika", &["ty.nika"]),
+    ("surface.nika", &["rust.nika", "paths.nika"]),
+];
+
+/// The modules a tool module of `std` reads beside itself, by its file name:
+/// what [`BESIDE`] lists for it, and nothing for a tool it does not name.
+/// For a reader outside `lower-std` that checks a tool as `lower-std` does.
+pub fn modules_beside(tool: &str) -> &'static [&'static str] {
+    BESIDE
+        .iter()
+        .find(|(name, _)| *name == tool)
+        .map(|(_, modules)| *modules)
+        .unwrap_or(&[])
+}
 
 /// What the Rust a tool module reads says it does (ADR-252 D4.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
@@ -289,13 +308,11 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    let mut shared: Vec<&str> = Vec::new();
-    if name != TREE && !described.types.is_empty() {
-        shared.push(TREE);
-    }
-    if READS_THE_RECORDS.contains(&name) {
-        shared.push(RECORDS);
-    }
+    let shared: Vec<&str> = match BESIDE.iter().find(|(tool, _)| *tool == name) {
+        Some((_, modules)) => modules.to_vec(),
+        None if name != TREE && !described.types.is_empty() => vec![TREE],
+        None => Vec::new(),
+    };
     let mut tree: Vec<crate::parser::Parsed> = Vec::new();
     for module in shared {
         let beside = path.with_file_name(module);
