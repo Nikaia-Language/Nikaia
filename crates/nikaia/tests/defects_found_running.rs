@@ -606,8 +606,7 @@ fn a_view_a_loop_or_an_arm_binds_is_the_view() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   let text = \"fn let\"\n\
-         \x20   let words: Vec[ref String] = text.split(\" \")\n\
+         \x20   let words: Vec[ref String] = [\"fn\", \"let\"]\n\
          \x20   for w in words {\n\
          \x20       if w == \"fn\" { println(\"first\") }\n\
          \x20       println(kind_of(Line::Table { kind: w }))\n\
