@@ -7357,13 +7357,19 @@ impl<'p> Emitter<'p> {
                     // D2), written with the same word, so this is a
                     // transcription like everything else about a pattern.
                     if let Some(guard) = &arm.guard {
+                        // In parentheses only beside the conditions above,
+                        // where an `||` in it would otherwise bind wider.
                         match nests.is_empty() {
-                            true => out.push(" if "),
-                            false => out.push(" && "),
+                            true => {
+                                out.push(" if ");
+                                self.expr(out, guard, depth + 1, flow)?;
+                            }
+                            false => {
+                                out.push(" && (");
+                                self.expr(out, guard, depth + 1, flow)?;
+                                out.push(")");
+                            }
                         }
-                        out.push("(");
-                        self.expr(out, guard, depth + 1, flow)?;
-                        out.push(")");
                     }
                     out.push(" => ");
                     self.arm_body_opening(out, &arm.pattern, &nests, &arm.body, depth + 1, flow)?;
