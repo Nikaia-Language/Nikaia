@@ -215,12 +215,18 @@ pub enum Command {
         #[arg(long)]
         project: Option<PathBuf>,
     },
-    /// Compile the project and run it.
+    /// Compile the project and run it, or compile and run one `.nika` file.
     ///
-    /// Everything after `--` is the program's own arguments.
+    /// Everything after `--` is the program's own arguments. A file outside any
+    /// project is built as a project of its own, kept in the user's cache
+    /// directory (ADR-260 D4); a file inside one has to be that project's
+    /// entry point.
     Run {
         #[arg(long)]
         project: Option<PathBuf>,
+        /// One `.nika` file to compile and run instead of the project here.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -518,7 +524,29 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
 fn project_command(args: &Cli, command: &Command) -> Result<i32> {
     let (subcommand, directory, program_args) = match command {
         Command::Build { project } => ("build", project.clone(), Vec::new()),
-        Command::Run { project, args } => ("run", project.clone(), args.clone()),
+        Command::Run {
+            project: None,
+            file: Some(file),
+            args: program_args,
+        } => {
+            let project = project::project_for_file(
+                file,
+                args.target.as_deref(),
+                args.user_parallelism.as_deref(),
+                args.no_cache,
+                args.allow_read_from_list.as_deref(),
+            )?;
+            return drive(args, &project, "run", program_args);
+        }
+        Command::Run {
+            project: Some(_),
+            file: Some(_),
+            ..
+        } => refuse!(
+            "`nikaia run` takes a file or `--project`, not both: the file decides its \
+             project (ADR-260 D1)."
+        ),
+        Command::Run { project, args, .. } => ("run", project.clone(), args.clone()),
         Command::Test {
             project,
             both_settings,
@@ -544,9 +572,14 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
     )?;
+    drive(args, &project, subcommand, &program_args)
+}
+
+/// A project's `build` or `run`, with the switches this command line set.
+fn drive(args: &Cli, project: &Project, subcommand: &str, program_args: &[String]) -> Result<i32> {
     project.drive(
         subcommand,
-        &program_args,
+        program_args,
         args.no_cache,
         args.locked,
         project::Explain {

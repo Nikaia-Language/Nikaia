@@ -2957,3 +2957,111 @@ fn a_file_outside_a_project_is_told_it_has_no_dependencies() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `nikaia run <file>`, through the cache this suite shares, so the compiled
+/// `std` is the one the other project tests built.
+fn run_file(file: &Path, cwd: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .arg("run")
+        .arg(file)
+        .current_dir(cwd)
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+        .env_remove("CARGO_TARGET_DIR")
+        .output()
+        .expect("the nikaia binary runs")
+}
+
+/// **A file outside any project runs as a program of its own**
+/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D4): built through
+/// the same Cargo workspace `nikaia build` makes, in a project kept for it in
+/// the cache, and started - not interpreted. Run again unchanged, nothing is
+/// compiled: the kept copy is rewritten only when the file is. (A new project
+/// is compiled once more on its second build, #280, so freshness is asked of
+/// the third.)
+#[test]
+fn a_file_outside_a_project_runs_as_a_program_of_its_own() {
+    let dir = common::scratch_dir("run-a-file");
+    let file = dir.join("hallo.nika");
+    std::fs::write(&file, HELLO).expect("source");
+
+    let first = run_file(&file, &dir);
+    assert!(first.status.success(), "{}", said(&first));
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout).trim(),
+        "Hallo Welt, Nikaia!",
+        "{}",
+        said(&first)
+    );
+
+    let settled = run_file(&file, &dir);
+    assert!(settled.status.success(), "{}", said(&settled));
+    let again = run_file(&file, &dir);
+    assert!(again.status.success(), "{}", said(&again));
+    assert!(
+        !String::from_utf8_lossy(&again.stderr).contains("Compiling"),
+        "an unchanged file is not compiled again: {}",
+        said(&again)
+    );
+
+    std::fs::write(&file, "fn main() {\n    println(\"zweiter Versuch\")\n}\n").expect("edit");
+    let edited = run_file(&file, &dir);
+    assert_eq!(
+        String::from_utf8_lossy(&edited.stdout).trim(),
+        "zweiter Versuch",
+        "and an edited one is: {}",
+        said(&edited)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A refusal names the file the user wrote**, not the copy the kept project
+/// holds: the file is checked where it is before anything is copied.
+#[test]
+fn running_a_file_that_is_refused_names_that_file() {
+    let dir = common::scratch_dir("run-a-refused-file");
+    let file = dir.join("kaputt.nika");
+    std::fs::write(&file, "fn main() {\n    let x: i32 = \"nein\"\n}\n").expect("source");
+
+    let run = run_file(Path::new("kaputt.nika"), &dir);
+    assert!(!run.status.success(), "{}", said(&run));
+    let told = String::from_utf8_lossy(&run.stderr);
+    assert!(told.contains("NK1103"), "{}", said(&run));
+    assert!(told.contains("kaputt.nika:2:5"), "{}", said(&run));
+    assert!(
+        !told.contains("src/main.nika"),
+        "not the kept copy's path: {}",
+        said(&run)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **Inside a project, the file has to be the program's entry** (D4): a
+/// project has one program, and running another of its files would be running
+/// something the project does not build. The refusal names the entry and both
+/// ways out.
+#[test]
+fn a_file_of_a_project_runs_only_as_its_entry() {
+    let dir = a_project("run-a-project-file", "[package]\nname = \"p\"\n", HELLO);
+    std::fs::create_dir_all(dir.join("tools")).expect("tools");
+    std::fs::write(dir.join("tools/x.nika"), HELLO).expect("another file");
+
+    let other = run_file(Path::new("tools/x.nika"), &dir);
+    assert!(!other.status.success(), "{}", said(&other));
+    let told = String::from_utf8_lossy(&other.stderr);
+    assert!(
+        told.contains("is not the entry point") && told.contains("src/main.nika"),
+        "{}",
+        said(&other)
+    );
+    assert!(told.contains("nikaia run --project"), "{}", said(&other));
+
+    let entry = run_file(Path::new("src/main.nika"), &dir);
+    assert!(entry.status.success(), "{}", said(&entry));
+    assert_eq!(
+        String::from_utf8_lossy(&entry.stdout).trim(),
+        "Hallo Welt, Nikaia!",
+        "{}",
+        said(&entry)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.300] — 2026-10-01
+
+**`nikaia run f.nika` compiles and runs one file** (ADR-260 D4, #132). A file
+outside any project is built as a project of its own, kept in the user's cache
+directory under a name made from the file's path, through the same Cargo
+workspace `nikaia build` makes; then the program starts. The interpreter is
+not what `run` uses: it handles a part of the language, and a program means
+one thing (Part I 1.2). The file is lowered where it is before anything is
+copied, so a refusal names the file the user wrote and not the kept copy, and
+the copy is rewritten only when the file changed. A file inside a project has
+to be that project's entry point, or is refused with the entry and both ways
+out named. `nikaia run` without a file is unchanged; a file and `--project`
+together are refused.
+
+Found on the way, and filed: a new project is compiled again on its second
+build although nothing changed (#280), and killing `nikaia run` leaves the
+program it started running (#281).
+
 ## [0.0.299] — 2026-10-01
 
 **The single-file commands are verbs** (ADR-260 D3 and D5, #131).

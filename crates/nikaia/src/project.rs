@@ -653,6 +653,93 @@ pub fn read_file(input: &Path) -> Result<(modules::Program, Vec<modules::Depende
     Ok((modules::Program::read_with(input, &packages)?, packages))
 }
 
+/// **The project `nikaia run <file>` builds** ([ADR-260](../../docs/specification/adr/adr-260.md) D4).
+///
+/// With a `nikaia.toml` above the file it is that project, and the file has to
+/// be the binary's entry: a project has one, `src/main.nika`, and running a
+/// different file of it would be running something the project does not build.
+///
+/// With none it is a project kept for the file alone, in the user's cache
+/// directory and keyed on the file's path, built through the same Cargo
+/// workspace `nikaia build` makes - so a single file behaves as a program and
+/// not as a lowering. The interpreter is not used: it handles a part of the
+/// language, and a program means one thing (Part I 1.2).
+///
+/// **The file is checked where it is first.** The kept project holds a copy,
+/// and a refusal about the copy would name a path the user never wrote; so the
+/// file is lowered under its own name, standalone (D2), and only a file that
+/// lowers is copied and built. The copy is rewritten only when its bytes
+/// changed, so Cargo's freshness keeps working.
+pub fn project_for_file(
+    file: &Path,
+    target: Option<&str>,
+    user_parallelism: Option<&str>,
+    no_cache: bool,
+    allowlist: Option<&Path>,
+) -> Result<Project> {
+    if !file.is_file() {
+        refuse!("{} is not there.", file.display());
+    }
+    let layout = Layout::resolve(file);
+    if layout.in_project {
+        let project = Project::open(&layout.root, target, user_parallelism)?;
+        if canonical(file) != canonical(&project.entry()) {
+            refuse!(
+                "{} is not the entry point of the project at {}.\n\
+                 `nikaia run` with a file runs the program whose entry it is, and this \
+                 project's program starts at `{ENTRY}`. Run `nikaia run --project {}`, or \
+                 `nikaia lower {}` to lower the file to Rust.",
+                file.display(),
+                project.root.display(),
+                project.root.display(),
+                file.display()
+            );
+        }
+        return Ok(project);
+    }
+
+    let settings = Settings::resolve(&Manifest::find(file)?, target, user_parallelism)?;
+    lower_reading(file, &settings, no_cache, &[], allowlist)?;
+
+    let canonical_file = canonical(file);
+    let key = orchestrator::cache::sha256_hex(canonical_file.to_string_lossy().as_bytes());
+    let stem = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    // Cargo's package names are letters, digits, `-` and `_`, starting with a
+    // letter; the binary is called what the package is.
+    let name = match stem.chars().next() {
+        Some(first)
+            if first.is_ascii_alphabetic()
+                && stem
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+        {
+            stem
+        }
+        _ => "program".to_string(),
+    };
+    let root = Layout::user_cache_dir()
+        .join("run")
+        .join(format!("{name}-{}", &key[..16]));
+    write_if_changed(
+        &root.join("nikaia.toml"),
+        &format!(
+            "# Kept by `nikaia run` for {} (ADR-260 D4): a file outside any project\n\
+             # is built as one of its own. Rewritten from that file on every run.\n\
+             [package]\nname = \"{name}\"\nversion = \"0.0.0\"\n",
+            canonical_file.display()
+        ),
+    )?;
+    write_if_changed(
+        &root.join(ENTRY),
+        &std::fs::read_to_string(file)
+            .with_context(|| format!("cannot read {}", file.display()))?,
+    )?;
+    Project::open(&root, target, user_parallelism)
+}
+
 pub fn lower_reading(
     input: &Path,
     settings: &Settings,
