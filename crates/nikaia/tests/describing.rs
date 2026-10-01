@@ -159,6 +159,33 @@ fn an_item_that_is_only_text_is_not_described_and_a_re_export_is() {
     assert!(text.contains("[fn.\"fremd::rescued\"]"), "{text}");
 }
 
+/// **A glob re-export offers what stands directly under its module**: `pub use
+/// private::*;` carries `private`'s own functions to the crate root, and not
+/// what a module inside it holds - `::*` is a module's own items.
+#[test]
+fn a_glob_re_export_offers_the_modules_own_items() {
+    let root = project(
+        "globbed",
+        "mod private {\n\
+         pub fn carried(x: i32) -> i32 { x }\n\
+         pub mod inner {\n\
+         pub fn deeper() {}\n\
+         }\n\
+         }\n\
+         \n\
+         pub use private::*;\n",
+        "fn main() {\n\
+         let a = fremd::carried(1)\n\
+         let b = fremd::deeper()\n\
+         println(f\"{a}{b}\")\n\
+         }\n",
+    );
+
+    let text = entries(&root);
+    assert!(text.contains("[fn.\"fremd::carried\"]"), "{text}");
+    assert!(!text.contains("[fn.\"fremd::deeper\"]"), "{text}");
+}
+
 /// **What module a file is**, which takes the `mod foo;` in its parent to say.
 ///
 /// The scanner read every `.rs` under `src/` as the crate's own, so `seen` and

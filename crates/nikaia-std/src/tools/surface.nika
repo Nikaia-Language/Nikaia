@@ -1,0 +1,391 @@
+// crates/nikaia-std/src/tools/surface.nika
+//
+// **What a Rust crate offers a caller** (ADR-104 D2-D4, ADR-193 D3-D5): every
+// `fn` by the path it is defined at, which modules are `pub`, what a `pub use`
+// carries out of a private one, every `pub` type with its fields and derives,
+// and every `unsafe impl` the crate promises.
+//
+// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// by `nikaia lower-std` to `surface.rs` beside it, `include!`d as
+// `nikaia_std::tools::surface`, and called from `describe`. It reads the Rust
+// grammar's items (`rust.nika`) and the path work (`paths.nika`) beside it.
+//
+// **Fail-closed where the source is silent**: a module nothing declares is not
+// offered, and a path no `pub use` resolves is not offered either - the name
+// reaches a reviewer as a `?` rather than as a claim nobody made.
+
+use std::collections
+
+/// One parameter of a `fn`, as written: its name and its type's text.
+pub struct Arg {
+    pub name: String,
+    pub ty: String,
+}
+
+/// One `fn`, as its signature reads. **No name**: an entry is keyed by the
+/// path a caller writes, which the surface holds and a signature does not.
+pub struct Function {
+    /// The crate's own type parameters, which the ledger spells `$T`.
+    pub parameters: Vec[String],
+    /// The parameters a caller writes, in order: the receiver is not one.
+    pub args: Vec[Arg],
+    /// The text after `->`, empty where there is none.
+    pub result: String,
+    /// The `<…>` list and the `where` clause, joined: read for whether a
+    /// parameter is bound `Send` (ADR-193 D4).
+    pub bounds: String,
+    /// Every path the body calls, with the file's `use` items applied.
+    pub calls: Vec[String],
+    /// `async fn` - a plain `fn` is `sync` (ADR-104 D3).
+    pub pauses: bool,
+}
+
+/// What a crate offers, read file by file and then resolved.
+pub struct Surface {
+    /// Every `fn`, by the path it is **defined** at - a private module's too,
+    /// because a `pub use` may reach one and the call graph goes through it.
+    pub functions: collections::BTreeMap[String, Function],
+    /// The subset of `functions` the crate writes `pub`.
+    pub offers: collections::BTreeSet[String],
+    /// Every `pub struct`'s field types, by the path the type is defined at.
+    /// A `pub enum` has no entry: *nobody looked*, not *it holds nothing*.
+    pub fields: collections::BTreeMap[String, Vec[String]],
+    /// Every `pub struct` and `pub enum`, by the path it is defined at.
+    pub types: collections::BTreeSet[String],
+    /// What each of those derives, by the trait's last segment.
+    pub derives: collections::BTreeMap[String, collections::BTreeSet[String]],
+    /// Every `mod` declaration found, and whether it was written `pub`.
+    pub modules: collections::BTreeMap[String, bool],
+    /// A path a **caller** may write, and the path it resolves to.
+    pub reachable: collections::BTreeMap[String, String],
+    /// `pub use` items, kept until every file has been read.
+    pub exports: Vec[Export],
+    /// Every `unsafe impl Trait for Type`, as the sentence a reader wants
+    /// (ADR-193 D5), whatever the type's visibility.
+    pub promises: Vec[String],
+}
+
+/// A surface with nothing read into it yet.
+pub fn empty() -> Surface {
+    return Surface {
+        functions: collections::BTreeMap(),
+        offers: collections::BTreeSet(),
+        fields: collections::BTreeMap(),
+        types: collections::BTreeSet(),
+        derives: collections::BTreeMap(),
+        modules: collections::BTreeMap(),
+        reachable: collections::BTreeMap(),
+        exports: [],
+        promises: [],
+    }
+}
+
+/// Read one file's items into the surface, under the module the **file** is.
+/// A binary's file is not a module of the library and adds nothing.
+///
+/// The file's `use` items are read first, because a call is resolved against
+/// them and one may stand below the function that needs it (ADR-193 D4).
+pub fn read(mut surface: Surface, relative: ref String, items: ref Vec[Item]) {
+    let found = module_of(relative)
+    if found == null {
+        return
+    }
+    let at = found ?? ""
+    let mut imports: collections::BTreeMap[String, String] = collections::BTreeMap()
+    imported(items, imports)
+    walk(surface, items, at, imports)
+}
+
+/// Follow the `pub use` items until nothing new becomes reachable. A
+/// re-export may name a re-export, so this runs to a fixed point - bounded,
+/// because a crate that re-exports in a cycle does not compile.
+pub fn resolve(mut surface: Surface) {
+    // Every item in a module chain that is `pub` all the way, under its own
+    // path.
+    let mut direct: Vec[String] = []
+    for path in surface.offers {
+        if offered(surface, path) {
+            direct.push(path.clone())
+        }
+    }
+    for path in surface.types {
+        if offered(surface, path) {
+            direct.push(path.clone())
+        }
+    }
+    for path in direct {
+        surface.reachable.insert(path.clone(), path.clone())
+    }
+    // A `pub use` written in a module nobody outside can reach offers nothing
+    // to anybody outside.
+    let mut exports: Vec[Export] = []
+    for export in surface.exports {
+        if offered(surface, joined(export.at, "x")) {
+            exports.push(Export { at: export.at.clone(), prefix: export.prefix.clone(), name: export.name?.clone() })
+        }
+    }
+    for _ in 0..<8 {
+        let mut added = false
+        for export in exports {
+            if export.name != null {
+                let named = export.name?.clone() ?? Named { name: "", alias: "" }
+                let offered_as = joined(export.at, named.alias)
+                for candidate in candidates(export, named.name) {
+                    if surface.functions.contains_key(ref candidate) || surface.types.contains(ref candidate) {
+                        if !surface.reachable.contains_key(ref offered_as) {
+                            surface.reachable.insert(offered_as.clone(), candidate.clone())
+                            added = true
+                        }
+                        break
+                    }
+                }
+            } else {
+                // A glob offers everything **directly** under the prefix: a
+                // module's own items and not its submodules'.
+                for base in bases(export) {
+                    let under = f"{base}::"
+                    let mut names: Vec[String] = []
+                    for path in surface.offers {
+                        let rest = directly_under(path, under)
+                        if rest != null {
+                            names.push(rest ?? "")
+                        }
+                    }
+                    for path in surface.types {
+                        let rest = directly_under(path, under)
+                        if rest != null {
+                            names.push(rest ?? "")
+                        }
+                    }
+                    for name in names {
+                        let offered_as = joined(export.at, name)
+                        if !surface.reachable.contains_key(ref offered_as) {
+                            surface.reachable.insert(offered_as.clone(), f"{base}::{name}")
+                            added = true
+                        }
+                    }
+                }
+            }
+        }
+        if !added {
+            break
+        }
+    }
+    surface.exports = exports
+}
+
+/// Whether a caller outside the crate may write this path: every module on
+/// the way to it was declared `pub`.
+pub fn offered(surface: ref Surface, path: ref String) -> bool {
+    let mut parts: Vec[String] = []
+    for part in path.split("::") {
+        parts.push(part.clone())
+    }
+    let mut at: String = ""
+    for k in 0..<parts.len() - 1 {
+        at = joined(at, parts[k])
+        let public = surface.modules.get(ref at) ?? false
+        if !public {
+            return false
+        }
+    }
+    return true
+}
+
+/// Where a `use` path could resolve, most specific first: each base `bases`
+/// gives, with the name after it.
+pub fn candidates(export: ref Export, name: ref String) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for base in bases(export) {
+        if base.is_empty() {
+            out.push(name.clone())
+        } else {
+            out.push(f"{base}::{name}")
+        }
+    }
+    return out
+}
+
+/// **What a name in one file means**, from its `use` items (ADR-193 D4):
+/// `use tokio::spawn;` makes `spawn` and `tokio::spawn` one function written
+/// two ways. **Flat over the file** rather than per module: a `use` inside a
+/// `mod` block treated as the file's can only make a name resolve where it
+/// would not have, which for a *note* is a wrong sentence and not a wrong
+/// claim.
+pub fn imported(items: ref Vec[Item], mut out: collections::BTreeMap[String, String]) {
+    for item in items {
+        match item {
+            // A `pub use` is an import here too: it brings the name into this
+            // file exactly as a plain one does, and offers it onward besides.
+            Item::Used(text) => imports_of(text, out),
+            Item::Export(text) => imports_of(text, out),
+            Item::Group(g) => imported(g.items, out),
+            else => {}
+        }
+    }
+}
+
+// The names one `use` brings in, by what the file calls them.
+fn imports_of(text: ref String, mut out: collections::BTreeMap[String, String]) {
+    for one in exported("", text) {
+        if one.name == null {
+            continue
+        }
+        let named = one.name?.clone() ?? Named { name: "", alias: "" }
+        if one.prefix.is_empty() {
+            out.insert(named.alias.clone(), named.name.clone())
+        } else {
+            out.insert(named.alias.clone(), f"{one.prefix}::{named.name}")
+        }
+    }
+}
+
+// One file's items, under the module `at`.
+fn walk(mut surface: Surface, items: ref Vec[Item], at: ref String, imports: ref collections::BTreeMap[String, String]) {
+    for item in items {
+        match item {
+            Item::Fun(f) => {
+                let path = joined(at, f.name)
+                surface.offers.insert(path.clone())
+                surface.functions.insert(path, function_of(f, imports))
+            }
+            // **On the way to an entry rather than one** (ADR-193 D4): nothing
+            // outside the crate can call it, and the call graph goes through
+            // it.
+            Item::Hidden(f) => {
+                surface.functions.insert(joined(at, f.name), function_of(f, imports))
+            }
+            Item::Rec(r) => {
+                let path = joined(at, r.name)
+                if r.what == "struct" {
+                    let mut types: Vec[String] = []
+                    for part in r.parts {
+                        types.push(part.ty.clone())
+                    }
+                    surface.fields.insert(path.clone(), types)
+                }
+                let mut derived: collections::BTreeSet[String] = collections::BTreeSet()
+                for list in r.derives {
+                    for written in list.split(",") {
+                        let name = last_segment(written.trim())
+                        if !name.is_empty() {
+                            derived.insert(name)
+                        }
+                    }
+                }
+                surface.derives.insert(path.clone(), derived)
+                surface.types.insert(path)
+            }
+            Item::Export(text) => {
+                for one in exported(at, text) {
+                    surface.exports.push(one)
+                }
+            }
+            // Read before this walk, into the table every call was resolved
+            // against.
+            Item::Used(_) => {}
+            Item::Group(g) => {
+                if g.what == "mod" {
+                    let path = joined(at, g.name)
+                    surface.modules.insert(path.clone(), g.visible)
+                    walk(surface, g.items, path, imports)
+                } else if g.what == "unsafe impl" && !g.via.is_empty() {
+                    // **An `unsafe impl` is a promise the toolchain cannot
+                    // check** (ADR-193 D5), and one syntactic pattern is all it
+                    // takes to see that it was made.
+                    surface.promises.push(f"unsafe impl {g.via} for {g.name}")
+                }
+                // Every other `impl` and every `trait`: what a method is at a
+                // foreign boundary is ADR-104 D4's own question, not asked
+                // here.
+            }
+        }
+    }
+}
+
+// One `fn` as the grammar read it. The text splits left here are lists and
+// not syntax: the grammar hands over what was written.
+fn function_of(f: ref Fun, imports: ref collections::BTreeMap[String, String]) -> Function {
+    let mut parameters: Vec[String] = []
+    for written in split_top_level(f.generics) {
+        // A lifetime is not a type parameter, and a bound written inline
+        // (`T: Send`) names the parameter before the colon.
+        if written.starts_with("'") {
+            continue
+        }
+        let name = before_colon(written)
+        if !name.is_empty() {
+            parameters.push(name)
+        }
+    }
+    let mut args: Vec[Arg] = []
+    for part in f.parts {
+        // The receiver is not an argument a caller writes.
+        if part.name != "self" {
+            args.push(Arg { name: part.name.clone(), ty: part.ty.clone() })
+        }
+    }
+    let mut calls: Vec[String] = []
+    for call in f.calls {
+        let full = imports.get(call)
+        if full == null {
+            calls.push(call.clone())
+        } else {
+            calls.push((full ?? "").clone())
+        }
+    }
+    return Function {
+        parameters: parameters,
+        args: args,
+        result: f.result.clone(),
+        bounds: f"{f.generics}, {f.wheres}",
+        calls: calls,
+        pauses: f.pauses,
+    }
+}
+
+// What stands after `under` in `path`, where nothing deeper does.
+fn directly_under(path: ref String, under: ref String) -> String? {
+    if !path.starts_with(under) {
+        return null
+    }
+    let c: Vec[char] = path.chars().collect()
+    let u: Vec[char] = under.chars().collect()
+    let rest = between(c, u.len(), c.len())
+    if rest.contains("::") {
+        return null
+    }
+    return rest
+}
+
+// The text before the first `:`, trimmed.
+fn before_colon(written: ref String) -> String {
+    let c: Vec[char] = written.chars().collect()
+    let mut end = c.len()
+    for at in 0..<c.len() {
+        if c[at] == ':' && end == c.len() {
+            end = at
+        }
+    }
+    let head = between(c, 0, end)
+    return head.trim().clone()
+}
+
+// The last `::` segment of a path.
+fn last_segment(written: ref String) -> String {
+    let mut last: String = ""
+    for part in written.split("::") {
+        last = part.clone()
+    }
+    return last
+}
+
+// The characters from `from` up to `to`. Its own name, because `paths.nika`
+// beside it has a `slice` of its own and a package is one namespace.
+fn between(c: ref Array[char], from: i64, to: i64) -> String {
+    let mut out: String = ""
+    for k in from..<to {
+        out.push(c[k])
+    }
+    return out
+}

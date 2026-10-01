@@ -21537,10 +21537,17 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
         // the binding is a view below either way (`Local::lent`). Answering
         // `Unknown` for the view left every such binding unchecked, and a
         // comparison of it with a value reached `rustc` as `char == &char`.
-        Ty::Named { name, args, .. } if bindings == 1 && args.len() == 1 => match name.as_str() {
-            "Vec" | "List" => args[0].clone(),
-            _ => Ty::Unknown,
-        },
+        // **And a set's element is its one argument** (#302): `for name in
+        // names` over a `collections::BTreeSet[String]` bound a name of
+        // unknown type, so its `.clone()` resolved to nothing - which the
+        // `sync` walk reads as a call that may pause, and every function
+        // walking a set became `async`.
+        Ty::Named { name, args, .. } if bindings == 1 && args.len() == 1 => {
+            match name.rsplit("::").next().unwrap_or_default() {
+                "Vec" | "List" | "BTreeSet" | "HashSet" => args[0].clone(),
+                _ => Ty::Unknown,
+            }
+        }
         // **An array's element is its first argument**
         // ([ADR-152](../../docs/specification/adr/adr-152.md) D4), and the
         // second is the length, which is why the arm above does not reach it:

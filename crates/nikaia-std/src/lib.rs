@@ -146,7 +146,9 @@ pub mod text {
     clippy::let_and_return,
     clippy::single_match,
     clippy::useless_conversion,
-    clippy::for_kv_map
+    clippy::for_kv_map,
+    clippy::needless_borrow,
+    clippy::needless_option_as_deref
 )]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
@@ -492,6 +494,19 @@ pub mod tools {
                 assert_eq!(the_crates_own("helper", &calls), None);
             }
         }
+    }
+
+    /// **What a Rust crate offers a caller**: `src/tools/surface.nika`, every
+    /// `fn` by the path it is defined at, which modules are `pub`, what a
+    /// `pub use` carries, the `pub` types and the `unsafe impl`s, lowered to
+    /// `src/tools/surface.rs` and committed beside it
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D2-D4). It reads
+    /// the Rust grammar's items and the path work beside it.
+    pub mod surface {
+        use super::paths::*;
+        use super::rust::*;
+
+        include!("tools/surface.rs");
     }
 
     /// **A Rust signature in the ledger's words**:
