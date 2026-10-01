@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.322] — 2026-10-01
+
+**Which functions can open a lock is settled in Nikaia** (#125).
+`tools/locks.nika` holds the least fixpoint of `contracts::locks`, as
+`throws.nika` holds `throws`': a function that reaches a holder holds, a variant
+is a value and opens no door, a callee no ledger describes is the doubt it is,
+and a published function field stays undecided because packages that do not
+exist yet store into it (ADR-230 D1). The walk stays Rust with `sync`'s.
+Nothing a program is told changed.
+
+Moving it found two things the compiler wrote wrong, each fixed in the compiler
+(ADR-250 D3):
+
+- **A `??` chain that ends in a jump** - `a ?? b ?? continue` - wrote the inner
+  fallback inside the outer one's closure, so the `continue` stood in a closure:
+  `rustc`'s E0267. The whole chain is a `match` now, and the jump leaves the
+  function it was written in.
+- **A list written into a `for`** - `for key in [a, b]` - is walked as an array;
+  `vec![..]` there was an allocation `clippy` refuses in generated code.
+
+Writing the test found a third, filed as #312: a list of optional elements,
+`[null, 7]` as `Vec[i64?]`, writes `7` unwrapped.
+
 ## [0.0.321] — 2026-10-01
 
 **Which errors leave a function is settled in Nikaia** (#125).

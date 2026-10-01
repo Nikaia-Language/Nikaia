@@ -222,9 +222,16 @@ pub fn infer(
         }
     }
 
-    let mut touches: BTreeMap<String, Lock> = graph
+    // **The fixpoint is Nikaia** (`tools/locks.nika`, #125): it gives the
+    // property to whoever reaches a holder until nothing changes, and answers
+    // each function's `touches_a_lock` and each function field's.
+    let itself: BTreeMap<String, Lock> = graph
         .iter()
         .map(|(name, reaches)| (name.clone(), reaches.itself))
+        .collect();
+    let callees: BTreeMap<String, BTreeSet<String>> = graph
+        .into_iter()
+        .map(|(name, reaches)| (name, reaches.callees))
         .collect();
 
     // **A variant is a value, not a callee** - the rule `sync::reached` states
@@ -249,80 +256,13 @@ pub fn infer(
         .chain(ledger.types.keys().cloned())
         .chain(library.types.keys().cloned())
         .collect();
-    // `Type::new` is the constructor, never a variant: a constructor no ledger
-    // describes stays the doubt it is, which is the safe direction here - a
-    // lock this walk does not see is a deadlock nothing refuses.
-    let is_a_variant = |callee: &str| {
-        callee
-            .rsplit_once("::")
-            .is_some_and(|(owner, last)| last != "new" && declared.contains(owner))
-    };
-
-    // The least fixpoint: give the property to whoever reaches a holder, until
-    // nothing changes. `BTreeMap`s throughout, so the answer does not depend on
-    // the order the source declared things in - Part III 13.5 makes this file a
-    // pure function of (source, toolchain) and `--locked` compares it byte for
-    // byte.
-    loop {
-        let mut changed = false;
-        for (name, reaches) in &graph {
-            if touches[name].holds() {
-                continue;
-            }
-            let reached = reaches.callees.iter().fold(Lock::No, |so_far, callee| {
-                // **By the rule `sync::reached` resolves a call with**, so the
-                // two analyses agree on what a call is: the name as written,
-                // then the anonymous constructor's key (`Stats(t)` is
-                // `Stats::new`, `HashMap()` is `collections::HashMap::new`,
-                // Part I 4.2, ADR-140 D2), in this package before the library.
-                let constructed = format!("{callee}::new");
-                let theirs = [callee.as_str(), constructed.as_str()]
-                    .iter()
-                    .find_map(|key| {
-                        touches.get(*key).copied().or_else(|| {
-                            library
-                                .functions
-                                .get(*key)
-                                .map(|contract| contract.touches_a_lock)
-                        })
-                    })
-                    .unwrap_or_else(|| match is_a_variant(callee) {
-                        true => Lock::No,
-                        // A callee no ledger describes is the same doubt an
-                        // unresolvable method is, reached from the other side.
-                        false => Lock::Undecided,
-                    });
-                so_far.or(theirs)
-            });
-            let grown = touches[name].or(reached);
-            if grown != touches[name] {
-                touches.insert(name.clone(), grown);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    for (name, holds) in touches {
-        if let Some(field) = name.strip_prefix(FIELD) {
-            // **A published field is stored into by packages that do not exist
-            // yet** (ADR-230 D1), so what this one stores is not all there is.
-            let published = field.split_once('.').is_some_and(|(owner, field)| {
-                ledger.types.get(owner).is_some_and(|t| {
-                    t.public && t.fields.iter().any(|f| f.name == field && f.public)
-                })
-            });
-            let holds = match published {
-                true => holds.or(Lock::Undecided),
-                false => holds,
-            };
-            ledger.code_locks.insert(field.to_string(), holds);
-        } else if let Some(contract) = ledger.functions.get_mut(&name) {
+    let answer = nikaia_std::tools::locks::locking(&itself, &callees, &declared, library, ledger);
+    for (name, holds) in answer.functions {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
             contract.touches_a_lock = holds;
         }
     }
+    ledger.code_locks.extend(answer.fields);
 }
 
 /// What one function's body reaches, and the key the ledger records it under.

@@ -1,0 +1,124 @@
+// crates/nikaia-std/src/tools/locks.nika
+//
+// Kap 9.4: **which functions can open a lock** - the lattice of the compiler's
+// `contracts::locks`, moved from Rust (ADR-250, #125), as `throws.nika` holds
+// `contracts::throws`'.
+//
+// **What moved is the fixpoint and what it writes back.** What stays Rust is
+// the walk that finds, per function, the door it opens itself and whom it
+// calls: it reads `sync`'s visitors and the checker's resolved calls, and it
+// moves with them. The compiler hands this module the graph the walk builds -
+// a function field's stored code a node of its own, keyed `field:Type.field`
+// (ADR-230 D1) - and writes back what it answers.
+
+use std::collections
+
+/// What the fixpoint answers: each function's `touches_a_lock`, and each
+/// function field's, by the keys the ledger records them under.
+pub struct Locking {
+    pub functions: collections::BTreeMap[String, Lock],
+    pub fields: collections::BTreeMap[String, Lock],
+}
+
+/// The least fixpoint: give the property to whoever reaches a holder, until
+/// nothing changes. `itself` is what each node says on its own - a door it
+/// opens, or the doubt an unresolvable call leaves - and `callees` whom it
+/// calls. `declared` is every type this package or a library declares, so a
+/// variant reads as the value it is. Maps throughout, so the answer does not
+/// depend on the order the source declared things in: Part III 13.5 makes the
+/// ledger a pure function of (source, toolchain), and `--locked` compares it
+/// byte for byte.
+pub fn locking(itself: ref collections::BTreeMap[String, Lock], callees: ref collections::BTreeMap[String, collections::BTreeSet[String]], declared: ref collections::BTreeSet[String], library: ref Ledger, own: ref Ledger) -> Locking {
+    let mut touches = itself.clone()
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, called) in callees {
+            let before = touches[name]?.clone() ?? Lock::No
+            if before.holds() {
+                continue
+            }
+            let mut reached = Lock::No
+            for callee in called {
+                reached = reached.or(theirs_of(touches, library, declared, callee))
+            }
+            let grown = before.or(reached)
+            if grown != before {
+                touches.insert(name.clone(), grown)
+                changed = true
+            }
+        }
+    }
+    let mut answer = Locking { functions: collections::BTreeMap(), fields: collections::BTreeMap() }
+    for (name, holds) in touches {
+        if name.starts_with("field:") {
+            let c: Vec[char] = name.chars().collect()
+            let field = slice(c, 6, c.len())
+            // **A published field is stored into by packages that do not exist
+            // yet** (ADR-230 D1), so what this one stores is not all there is.
+            let settled = if published(own, field) { holds.clone().or(Lock::Undecided) } else { holds.clone() }
+            answer.fields.insert(field, settled)
+        } else if own.functions.contains_key(name) {
+            answer.functions.insert(name.clone(), holds.clone())
+        }
+    }
+    return answer
+}
+
+/// What a callee brings, **by the rule `sync::reached` resolves a call with**,
+/// so the two analyses agree on what a call is: the name as written, then the
+/// anonymous constructor's key (`Stats(t)` is `Stats::new`, Part I 4.2,
+/// ADR-140 D2), in this package before the library. A variant is a value and
+/// opens no door; a callee no ledger describes is the doubt an unresolvable
+/// method is, reached from the other side.
+fn theirs_of(touches: ref collections::BTreeMap[String, Lock], library: ref Ledger, declared: ref collections::BTreeSet[String], callee: ref String) -> Lock {
+    let constructed = f"{callee}::new"
+    for key in [callee.clone(), constructed] {
+        let found = touches[key]?.clone() ?? described(library, key) ?? continue
+        return found
+    }
+    return if is_a_variant(declared, callee) { Lock::No } else { Lock::Undecided }
+}
+
+/// What a library's ledger says a function does about locks, where it says.
+fn described(library: ref Ledger, key: ref String) -> Lock? {
+    let contract = library.functions[key] ?? return null
+    return contract.touches_a_lock.clone()
+}
+
+/// **A variant is a value, not a callee**: `Json::Array(items)` builds a value
+/// and runs no body. The type is everything but the last segment, and one this
+/// package or a library declares. `Type::new` is the constructor, never a
+/// variant: a constructor no ledger describes stays the doubt it is, the safe
+/// direction - a lock this walk does not see is a deadlock nothing refuses.
+fn is_a_variant(declared: ref collections::BTreeSet[String], callee: ref String) -> bool {
+    let mut parts: Vec[String] = []
+    for part in callee.split("::") {
+        parts.push(part.clone())
+    }
+    if parts.len() < 2 || parts[parts.len() - 1] == "new" {
+        return false
+    }
+    return declared.contains(struct_type(callee))
+}
+
+/// Whether `Type.field` is a public field of a public type.
+fn published(own: ref Ledger, field: ref String) -> bool {
+    let c: Vec[char] = field.chars().collect()
+    let dot = find_text(c, 0, ".")
+    if dot < 0 {
+        return false
+    }
+    let owner = slice(c, 0, dot)
+    let name = slice(c, dot + 1, c.len())
+    let contract = own.types[owner] ?? return false
+    if !contract.public {
+        return false
+    }
+    for one in contract.fields {
+        if one.name == name && one.public {
+            return true
+        }
+    }
+    return false
+}
