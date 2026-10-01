@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.321] — 2026-10-01
+
+**Which errors leave a function is settled in Nikaia** (#125).
+`tools/throws.nika` holds the least fixpoint of `contracts::throws` - every
+function starts with what it throws itself and grows by what its callees throw,
+a callee the walk did not see still bringing the set the ledger gives it
+(ADR-173 D3) - and what a `throw` names: `io::IoError::NotFound` is
+`io::IoError`, `ConfigError::BadSyntax { line }` is `ConfigError`. The walk that
+finds what each function throws and whom it calls stays Rust: it is `sync`'s
+walk (ADR-028), and it moves with it. Nothing a program is told changed, and the
+`throws` tests are unchanged. The move compiled as written - the first ring that
+found nothing in the compiler.
+
 ## [0.0.320] — 2026-10-01
 
 **The trait check is Nikaia** (#125). What `traits.rs` checked - a method of

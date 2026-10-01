@@ -1,0 +1,130 @@
+// crates/nikaia-std/src/tools/throws.nika
+//
+// Kap 7.1: **which errors can leave a function** - the lattice of the
+// compiler's `contracts::throws`, moved from Rust (ADR-250, #125).
+//
+// **What moved is the fixpoint and what a `throw` names.** What stays Rust is
+// the walk that finds, per function, what it throws itself and whom it calls:
+// it is `sync`'s walk (ADR-028's single resolution), and it moves with it. The
+// compiler hands this module the two maps the walk builds and the ledger, and
+// writes back what it answers.
+//
+// An error set is a **least** fixpoint, `sync`'s walk with the lattice turned
+// around: everyone starts with what they throw themselves and grows by what
+// their callees throw, until nothing changes. Mutual recursion ends because
+// the sets only grow, and there are finitely many names to grow by.
+
+use std::collections
+
+/// What every `throws` function of the ledger fails with, by name: `direct`
+/// is what each throws itself (`"?"` where it cannot be named) and `calls`
+/// whom in this package it calls. A function the ledger does not carry, or
+/// carries as one that cannot fail, has no entry - a function that cannot
+/// fail cannot propagate. A declared `throws` whose body names nothing keeps
+/// `["?"]`: the declaration is a promise a caller already relies on, and this
+/// is here to say more than it, never less.
+pub fn error_sets(direct: ref collections::BTreeMap[String, collections::BTreeSet[String]], calls: ref collections::BTreeMap[String, collections::BTreeSet[String]], own: ref Ledger) -> collections::BTreeMap[String, Vec[String]] {
+    let mut sets = direct.clone()
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, callees) in calls {
+            let before = sets[name]?.clone() ?? collections::BTreeSet()
+            let mut grown = before.clone()
+            for callee in callees {
+                for error in theirs(sets, own, callee) {
+                    grown.insert(error)
+                }
+            }
+            if grown.len() != before.len() {
+                sets.insert(name.clone(), grown)
+                changed = true
+            }
+        }
+    }
+    let mut settled: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for (name, set) in sets {
+        let contract = own.functions[name] ?? continue
+        if contract.fails_with.len() == 0 {
+            continue
+        }
+        let mut errors: Vec[String] = []
+        for error in set {
+            errors.push(error.clone())
+        }
+        if errors.len() == 0 {
+            errors.push("?")
+        }
+        settled.insert(name.clone(), errors)
+    }
+    return settled
+}
+
+/// What a callee fails with. **One the walk did not see still has a set**
+/// (ADR-173 D3): a grammar's entry rule is not an `Item::Fn`, and its contract
+/// is written straight into the ledger (ADR-082 D1). Read as nothing, what a
+/// parse throws reached no caller, and the caller's channel was inferred
+/// without it - a file `rustc` refused.
+fn theirs(sets: ref collections::BTreeMap[String, collections::BTreeSet[String]], own: ref Ledger, callee: ref String) -> Vec[String] {
+    let mut errors: Vec[String] = []
+    if sets.contains_key(callee) {
+        let set = sets[callee] ?? return errors
+        for error in set {
+            errors.push(error.clone())
+        }
+        return errors
+    }
+    let contract = own.functions[callee] ?? return errors
+    for error in contract.fails_with {
+        errors.push(error.clone())
+    }
+    return errors
+}
+
+/// The type a `throw` raises. `ConfigError::NotFound(p)` and
+/// `ConfigError::NotFound` are both `ConfigError`: a variant is written under
+/// the type that declares it (Part I, 3.4), so **everything but the last
+/// segment** is the type - `io::IoError::NotFound` is `io::IoError`, a type
+/// keyed with its module (ADR-154 D3). A variant with named fields is a
+/// struct literal, `ConfigError::BadSyntax { line }`, and records the type and
+/// not the variant too (ADR-023 D1, ADR-157 D1).
+pub fn error_type(names: ref winnow_grammar::InternerContext, thrown: ref Expr) -> String? {
+    return match thrown {
+        Expr::Path(segments) => if segments.len() > 1 { all_but_the_last(names, segments) } else { null },
+        Expr::Call { func, .. } => error_type(names, func),
+        Expr::StructLit { name, .. } => struct_type(names.resolve(name)),
+        else => null,
+    }
+}
+
+/// `io::IoError::NotFound` read as the path of its type.
+fn all_but_the_last(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol]) -> String {
+    let mut written: String = ""
+    for k in 0..<segments.len() - 1 {
+        if k > 0 {
+            written = f"{written}::"
+        }
+        let segment = names.resolve(segments[k])
+        written = f"{written}{segment}"
+    }
+    return written
+}
+
+/// `ConfigError::BadSyntax` is `ConfigError`; a struct with no `::` is itself.
+fn struct_type(written: ref String) -> String {
+    let mut parts: Vec[String] = []
+    for part in written.split("::") {
+        parts.push(part.clone())
+    }
+    if parts.len() < 2 {
+        return written.clone()
+    }
+    let mut ty: String = ""
+    for k in 0..<parts.len() - 1 {
+        if k > 0 {
+            ty = f"{ty}::"
+        }
+        ty = f"{ty}{parts[k]}"
+    }
+    return ty
+}

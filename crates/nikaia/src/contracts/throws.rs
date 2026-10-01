@@ -101,69 +101,20 @@ pub fn infer(
         }
     }
 
-    // Start with what each one throws itself, then grow by what it reaches.
-    let mut sets: BTreeMap<String, BTreeSet<String>> = graph
+    // **The fixpoint is Nikaia** (`tools/throws.nika`, #125): it starts with
+    // what each one throws itself, grows by what it reaches - a callee the
+    // graph does not hold still has the set the ledger gives it (ADR-173 D3) -
+    // and answers what every `throws` function fails with.
+    let direct: BTreeMap<String, BTreeSet<String>> = graph
         .iter()
         .map(|(name, c)| (name.clone(), c.direct.clone()))
         .collect();
-
-    loop {
-        let mut changed = false;
-        for (name, contrib) in &graph {
-            let mut grown = sets[name].clone();
-            for callee in &contrib.calls {
-                // **A callee the graph does not hold still has a set**
-                // ([ADR-173](../../../docs/specification/adr/adr-173.md) D3).
-                // The graph is built from `Item::Fn`, and a **grammar's entry
-                // rule** is not one: its contract is written straight into the
-                // ledger ([ADR-082](../../../docs/specification/adr/adr-082.md)
-                // D1), so the lookup found nothing and what a parse throws
-                // reached no caller at all.
-                //
-                // *That was a miscompilation and not a missing note.* The
-                // caller's channel was inferred without the parse's member in
-                // it — `Result<i64, io::IoError>` for a body whose `?` yields a
-                // parse failure — and `rustc` refused the generated file, which
-                // is the one thing [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)
-                // says may not happen. It was invisible while the entry threw
-                // `"?"`, because a set of one `"?"` is the boxed channel and a
-                // box takes anything.
-                let theirs = sets
-                    .get(callee)
-                    .cloned()
-                    .or_else(|| {
-                        ledger
-                            .functions
-                            .get(callee)
-                            .map(|c| c.fails_with.iter().cloned().collect())
-                    })
-                    .unwrap_or_default();
-                for error in theirs {
-                    grown.insert(error);
-                }
-            }
-            if grown != sets[name] {
-                sets.insert(name.clone(), grown);
-                changed = true;
-            }
+    let calls: BTreeMap<String, BTreeSet<String>> =
+        graph.into_iter().map(|(name, c)| (name, c.calls)).collect();
+    for (name, errors) in nikaia_std::tools::throws::error_sets(&direct, &calls, ledger) {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
+            contract.fails_with = errors;
         }
-        if !changed {
-            break;
-        }
-    }
-
-    for (name, set) in sets {
-        let Some(contract) = ledger.functions.get_mut(&name) else {
-            continue;
-        };
-        if contract.fails_with.is_empty() {
-            continue;
-        }
-        contract.fails_with = if set.is_empty() {
-            vec![UNNAMED_ERROR.to_string()]
-        } else {
-            set.into_iter().collect()
-        };
     }
 }
 
@@ -356,44 +307,7 @@ fn passes_on(parsed: &Parsed, handler: &Block) -> bool {
     found
 }
 
-/// The type a `throw` raises. `ConfigError::NotFound(p)` and
-/// `ConfigError::NotFound` are both `ConfigError` - a variant is written under
-/// the enum that declares it (Part I, 3.4), so the first segment is the type.
+/// The type a `throw` raises: `tools/throws.nika` answers it (#125).
 pub(crate) fn error_type(parsed: &Parsed, thrown: &Expr) -> Option<String> {
-    match thrown {
-        // **Everything but the last segment**, which is the variant.
-        // `ConfigError::NotFound` is `ConfigError` and
-        // `io::IoError::NotFound` is `io::IoError` — a type keyed with its
-        // module ([ADR-154](../../../../docs/specification/adr/adr-154.md) D3)
-        // is still one type. Taking the **first** segment was right for exactly
-        // as long as no error type lived in a module, and it recorded `io` —
-        // the module — the day one did
-        // ([ADR-158](../../../../docs/specification/adr/adr-158.md)).
-        Expr::Path(segments) if segments.len() > 1 => Some(
-            segments[..segments.len() - 1]
-                .iter()
-                .map(|s| parsed.text(*s))
-                .collect::<Vec<_>>()
-                .join("::"),
-        ),
-        Expr::Call { func, .. } => error_type(parsed, func),
-        // **The type and not the variant.**
-        // [ADR-023](../../../../docs/specification/adr/adr-023.md) D1 records a
-        // set of error **types**, and D4 puts the variants on the other axis:
-        // the set of types arriving at a `catch` is open, the variants within
-        // one type are closed. A variant with **named** fields is written as a
-        // struct literal — `ConfigError::BadSyntax { line, expected }` — and its
-        // name carries the path, so the column read `ConfigError::BadSyntax`
-        // where the tuple form one line up read `ConfigError`. One error type,
-        // two entries, and a set of two is a set nothing can be named after
-        // ([ADR-157](../../../../docs/specification/adr/adr-157.md) D1).
-        Expr::StructLit { name, .. } => {
-            let written = parsed.text(*name);
-            Some(match written.rsplit_once("::") {
-                Some((ty, _variant)) => ty.to_string(),
-                None => written.to_string(),
-            })
-        }
-        _ => None,
-    }
+    nikaia_std::tools::throws::error_type(&parsed.interner, thrown)
 }
