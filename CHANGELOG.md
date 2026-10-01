@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.313] — 2026-10-01
+
+**An `Array` written without its length is told the length** (`NK1166`).
+`comptime WORDS: Array[ref String] = ["a", "b"]` was answered with *make it
+an `Array[ref String]`* - the type it already said. It says now that the
+`Array` has no length, which a `comptime` needs, and hands over
+`Array[ref String, 2]`, the length the build computed.
+
 ## [0.0.312] — 2026-10-01
 
 **A `for` over a `T?` is refused** (`NK1206`, #296). `for word in pick(1)`
