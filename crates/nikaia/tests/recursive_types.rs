@@ -199,33 +199,121 @@ fn a_ring_through_another_type_is_boxed_on_both_edges() {
     assert!(rust.contains("Nested(Block)"), "{rust}");
 }
 
-/// **A pattern that looks inside a boxed part is refused by name** (D4), with
-/// the way that works today; the lowering that rewrites it is the next step.
+/// **A pattern looks inside a boxed part** (D5, item 1): the lowering binds
+/// the part to a name, asks the question in the arm's guard - so the next arm
+/// is tried where the part has another shape - and takes the part apart in the
+/// arm. Over a lent value and an owned one, a part on either side, two parts
+/// at once, and a guard of the program's own beside it.
 #[test]
-fn a_pattern_inside_a_box_is_refused_with_the_way_that_works() {
+fn a_pattern_looks_inside_a_boxed_part() {
+    let source = "enum Expr {\n\
+                  \x20   Num(i64),\n\
+                  \x20   Add(Expr, Expr),\n\
+                  \x20   Neg { inner: Expr },\n\
+                  }\n\
+                  \n\
+                  fn simplify(e: ref Expr) -> i64 {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Add(Expr::Num(0), b) => simplify(b),\n\
+                  \x20       Expr::Add(a, Expr::Num(0)) => simplify(a),\n\
+                  \x20       Expr::Add(Expr::Num(x), Expr::Num(y)) => x + y,\n\
+                  \x20       Expr::Add(Expr::Neg { inner }, b) if simplify(b) > 100 => 100 - simplify(inner),\n\
+                  \x20       Expr::Add(a, b) => simplify(a) + simplify(b),\n\
+                  \x20       Expr::Num(n) => n,\n\
+                  \x20       Expr::Neg { inner } => 0 - simplify(inner),\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn first(e: Expr) -> i64 {\n\
+                  \x20   return match e {\n\
+                  \x20       Expr::Add(Expr::Num(n), _) => n,\n\
+                  \x20       else => -1,\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(0), Expr::Num(5))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(7), Expr::Num(0))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Num(2), Expr::Num(3))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Neg { inner: Expr::Num(1) }, Expr::Num(500))))\n\
+                  \x20   println(simplify(Expr::Add(Expr::Neg { inner: Expr::Num(1) }, Expr::Num(5))))\n\
+                  \x20   println(first(Expr::Add(Expr::Num(9), Expr::Num(1))))\n\
+                  \x20   println(first(Expr::Num(3)))\n\
+                  }\n";
+    runs("nested", source, "5\n7\n5\n99\n4\n9\n-1\n");
+}
+
+/// **An arm that looks inside a box covers no variant on its own** (D5):
+/// `Expr::Add(Expr::Num(n), b)` is not every `Add`, so a `match` whose only
+/// `Add` arm is one is missing a case - said here, rather than by `rustc`
+/// about the guard the lowering writes.
+#[test]
+fn an_arm_that_looks_inside_a_box_does_not_cover_its_variant() {
     let source = "enum Expr { Num(i64), Add(Expr, Expr) }\n\
                   \n\
                   fn f(e: ref Expr) -> i64 {\n\
                   \x20   return match e {\n\
                   \x20       Expr::Add(Expr::Num(a), b) => a,\n\
-                  \x20       else => 0,\n\
+                  \x20       Expr::Num(n) => n,\n\
                   \x20   }\n\
                   }\n\
                   \n\
                   fn main() { println(f\"{f(Expr::Num(1))}\") }\n";
-    let found: Vec<_> = findings(source)
-        .into_iter()
-        .filter(|f| f.code == "NK1193")
-        .collect();
-    assert_eq!(found.len(), 1, "{:#?}", findings(source));
+    let found = findings(source);
     assert!(
-        found[0].message.contains("part 0 of `Expr::Add`"),
+        found
+            .iter()
+            .any(|f| f.code == "NK1151" && f.message.contains("Expr::Add")),
         "{found:#?}"
     );
-    assert_eq!(
-        found[0].help.as_deref(),
-        Some("Bind the part to a name here, and `match` on that name inside the arm.")
-    );
+    assert!(!found.iter().any(|f| f.code == "NK1193"), "{found:#?}");
+}
+
+/// **What the lowering does not reach is refused by name** (D4, D5): a
+/// pattern that looks inside a box inside a boxed part, and one that looks
+/// inside a box in one alternative of an `|`.
+#[test]
+fn a_pattern_too_deep_inside_a_box_is_refused_with_the_way_that_works() {
+    for (arm, why) in [
+        (
+            "Expr::Add(Expr::Add(Expr::Num(a), c), b) => a,",
+            "inside a part that is itself behind a pointer",
+        ),
+        (
+            "Expr::Add(Expr::Num(a), b) | Expr::Add(b, Expr::Num(a)) => a,",
+            "in one alternative of an `|` pattern",
+        ),
+        (
+            "Expr::Add(Expr::Num(a), b) if a > 0 => a,",
+            "This guard reads `a`",
+        ),
+    ] {
+        let source = format!(
+            "enum Expr {{ Num(i64), Add(Expr, Expr) }}\n\
+             \n\
+             fn f(e: ref Expr) -> i64 {{\n\
+             \x20   return match e {{\n\
+             \x20       {arm}\n\
+             \x20       else => 0,\n\
+             \x20   }}\n\
+             }}\n\
+             \n\
+             fn main() {{ println(f\"{{f(Expr::Num(1))}}\") }}\n"
+        );
+        let found: Vec<_> = findings(&source)
+            .into_iter()
+            .filter(|f| f.code == "NK1193")
+            .collect();
+        assert!(!found.is_empty(), "{arm}: {:#?}", findings(&source));
+        assert!(found[0].message.contains(why), "{found:#?}");
+        assert!(
+            found[0]
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains("`match` on")),
+            "the way that works is named: {found:#?}"
+        );
+    }
 }
 
 /// **The two defects a syntax tree meets first**, in a type that holds nothing

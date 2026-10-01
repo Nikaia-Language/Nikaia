@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.306] — 2026-10-01
+
+**A pattern looks inside a part that holds its own type** (ADR-246 D5 item 1,
+#97). `Expr::Add(Expr::Num(0), b) => simplify(b)` was `NK1193`, with the advice
+to bind the part and `match` on it in the arm; it is written as it reads now.
+The lowering binds the part to a name, asks in the arm's guard whether it has
+the shape - so the next arm is tried where it does not, as for any pattern -
+and takes it apart in the arm. Such an arm covers no variant on its own: a
+`match` whose only `Add` arm looks inside its box is missing a case
+(`NK1151`), said here rather than by `rustc` about the guard. Still refused by
+name: a pattern that looks inside a box inside that part, one that does so in
+one alternative of an `|`, and a guard that reads a name bound in there.
+
 ## [0.0.305] — 2026-10-01
 
 **A build warns where a `pub` function lost the `sync` it had** (ADR-244 D5,

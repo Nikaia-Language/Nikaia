@@ -5359,66 +5359,161 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **`NK1193`: a pattern that looks inside a part the compiler boxed**
-    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D4).
+    /// **`NK1193`: a pattern that looks inside a part the compiler boxed,
+    /// further than the lowering reaches**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D4, D5).
     ///
     /// `Expr::Add(Expr::Num(n), b)` asks the part inside a box a question, and
-    /// the language below matches no pattern through one: a name binds the
-    /// part and the arm reads it, but a pattern there has nothing to stand
-    /// on. Refused by name until the lowering rewrites it into a second
-    /// `match` in the arm; a nested `match` says the same today.
+    /// the language below matches no pattern through one. Since D5 the
+    /// lowering binds such a part to a name, asks the question in the arm's
+    /// guard and takes the part apart in the arm - one level deep, and outside
+    /// an `|`. A pattern that looks inside a box *inside* that part, or does
+    /// so in one alternative of several, is still refused by name.
     fn a_pattern_inside_a_box(&mut self, pattern: &MatchPattern, span: &Span) {
+        self.a_pattern_inside_a_box_at(pattern, span, Depth::Arm);
+    }
+
+    fn a_pattern_inside_a_box_at(&mut self, pattern: &MatchPattern, span: &Span, at: Depth) {
         match pattern {
             MatchPattern::Tuple { path, parts } => {
                 let written: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
-                let boxed: Vec<bool> = (0..parts.len())
-                    .map(|at| {
-                        let [.., owner, variant] = written.as_slice() else {
-                            return false;
-                        };
-                        self.checked
-                            .boxed_members
-                            .get(*owner)
-                            .is_some_and(|members| {
-                                members.contains(&boxed_member(variant, Some(at), None))
-                            })
-                    })
-                    .collect();
-                for (at, part) in parts.iter().enumerate() {
-                    let binds = matches!(part, MatchPattern::Path(one) if one.len() == 1)
-                        || matches!(part, MatchPattern::Otherwise);
-                    if boxed[at] && !binds {
-                        let owner = written.join("::");
-                        self.checked.findings.push(Finding {
-                            severity: Severity::Error,
-                            span: *span,
-                            code: "NK1193",
-                            message: format!(
-                                "This pattern looks inside part {at} of `{owner}`, which holds \
-                                 its own type, and patterns can't look inside such a part yet."
-                            ),
-                            notes: vec![
-                                "A part that holds its own type is stored behind a pointer, and a \
-                                 pattern can only bind it to a name."
-                                    .to_string(),
-                            ],
-                            help: Some(
-                                "Bind the part to a name here, and `match` on that name inside the arm."
-                                    .to_string(),
-                            ),
-                            labels: Vec::new(),
-                        });
+                for (index, part) in parts.iter().enumerate() {
+                    if !self.boxed_part(path, index) || binds_a_part(part) {
+                        self.a_pattern_inside_a_box_at(part, span, at);
                         continue;
                     }
-                    self.a_pattern_inside_a_box(part, span);
+                    let why = match at {
+                        Depth::Arm => {
+                            // One level is lowered; what is inside that part
+                            // has to bind its own boxed parts by name.
+                            self.a_pattern_inside_a_box_at(part, span, Depth::InsideABox);
+                            continue;
+                        }
+                        Depth::InsideABox => "inside a part that is itself behind a pointer",
+                        Depth::InAlternative => "in one alternative of an `|` pattern",
+                    };
+                    let owner = written.join("::");
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: *span,
+                        code: "NK1193",
+                        message: format!(
+                            "This pattern looks inside part {index} of `{owner}`, which holds \
+                             its own type, {why}, and patterns can't look that far yet."
+                        ),
+                        notes: vec![
+                            "A part that holds its own type is stored behind a pointer. A \
+                             pattern can look inside one such part per arm, outside an `|`."
+                                .to_string(),
+                        ],
+                        help: Some(
+                            "Bind the part to a name here, and `match` on that name inside the arm."
+                                .to_string(),
+                        ),
+                        labels: Vec::new(),
+                    });
                 }
             }
             MatchPattern::Or(alternatives) => {
                 for alternative in alternatives {
-                    self.a_pattern_inside_a_box(alternative, span);
+                    self.a_pattern_inside_a_box_at(alternative, span, Depth::InAlternative);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// **`NK1193` for a guard that reads a name bound inside a boxed part**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D5). The guard is
+    /// what asks whether the part has the shape, so it runs before the arm
+    /// takes the part apart, and the names in there are not bound yet.
+    fn a_guard_reading_inside_a_box(&mut self, pattern: &MatchPattern, guard: &Expr, span: &Span) {
+        let mut inside = Vec::new();
+        self.names_inside_boxes(pattern, &mut inside);
+        if inside.is_empty() {
+            return;
+        }
+        let mut read: Option<String> = None;
+        crate::contracts::sync::visit_expr(self.parsed, guard, &mut |expr| {
+            if let Expr::Variable(name) = expr
+                && read.is_none()
+            {
+                let name = self.parsed.text(*name);
+                if inside.iter().any(|bound| bound == name) {
+                    read = Some(name.to_string());
+                }
+            }
+        });
+        let Some(name) = read else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1193",
+            message: format!(
+                "This guard reads `{name}`, which the pattern binds inside a part that holds its \
+                 own type, and a guard can't read such a name yet."
+            ),
+            notes: vec![
+                "A part that holds its own type is stored behind a pointer. The guard decides \
+                 whether the arm is taken before the part is taken apart, so `{name}` isn't \
+                 bound yet when it runs."
+                    .replace("{name}", &name),
+            ],
+            help: Some(format!(
+                "Read `{name}` inside the arm, with an `if` there, or bind the part to a name \
+                 and `match` on it inside the arm."
+            )),
+            labels: Vec::new(),
+        });
+    }
+
+    /// The names a pattern binds inside the boxed parts it looks into.
+    fn names_inside_boxes(&self, pattern: &MatchPattern, out: &mut Vec<String>) {
+        match pattern {
+            MatchPattern::Tuple { path, parts } => {
+                for (at, part) in parts.iter().enumerate() {
+                    match self.boxed_part(path, at) && !binds_a_part(part) {
+                        true => out.extend(self.pattern_names(part)),
+                        false => self.names_inside_boxes(part, out),
+                    }
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.names_inside_boxes(alternative, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// **Whether part `at` of a variant's tuple is behind a box**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D1).
+    fn boxed_part(&self, path: &[winnow_grammar::Symbol], at: usize) -> bool {
+        let written: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+        let [.., owner, variant] = written.as_slice() else {
+            return false;
+        };
+        self.checked
+            .boxed_members
+            .get(*owner)
+            .is_some_and(|members| members.contains(&boxed_member(variant, Some(at), None)))
+    }
+
+    /// **Whether an arm's pattern looks inside a boxed part**: such an arm is
+    /// lowered with a guard (ADR-246 D5), and like any guarded arm it covers
+    /// no variant on its own (`NK1151`).
+    fn looks_inside_a_box(&self, pattern: &MatchPattern) -> bool {
+        match pattern {
+            MatchPattern::Tuple { path, parts } => parts.iter().enumerate().any(|(at, part)| {
+                (self.boxed_part(path, at) && !binds_a_part(part)) || self.looks_inside_a_box(part)
+            }),
+            MatchPattern::Or(alternatives) => {
+                alternatives.iter().any(|a| self.looks_inside_a_box(a))
+            }
+            _ => false,
         }
     }
 
@@ -9615,6 +9710,9 @@ impl<'a> Checker<'a> {
                     // `else` arm beside it, nothing at all.
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
                     self.a_pattern_inside_a_box(&arm.pattern, span);
+                    if let Some(guard) = &arm.guard {
+                        self.a_guard_reading_inside_a_box(&arm.pattern, guard, span);
+                    }
                     // **Over a place this function owns, a part is lent**
                     // (ADR-242): the bindings are typed from the
                     // variant, so that what the arm keeps is seen as kept.
@@ -16343,7 +16441,15 @@ impl<'a> Checker<'a> {
         // covered by one arm. A **guarded** arm names none, for the reason
         // above.
         let mut named: BTreeSet<String> = BTreeSet::new();
-        for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+        //
+        // **Nor does one that looks inside a boxed part**
+        // ([ADR-246](../../docs/specification/adr/adr-246.md) D5): it is
+        // lowered with a guard, and `Expr::Add(Expr::Num(n), b)` is not every
+        // `Add`.
+        for arm in arms
+            .iter()
+            .filter(|arm| arm.guard.is_none() && !self.looks_inside_a_box(&arm.pattern))
+        {
             self.variants_named(&arm.pattern, &mut named);
         }
         let missing: Vec<String> = variants
@@ -22945,4 +23051,23 @@ struct Pause {
     unpromised: Option<String>,
     before_walk: String,
     before_door: String,
+}
+
+/// Where a pattern stands, for what the lowering of a boxed part reaches
+/// (ADR-246 D5).
+#[derive(Clone, Copy)]
+enum Depth {
+    /// The arm's own pattern.
+    Arm,
+    /// Inside a boxed part the arm looks into.
+    InsideABox,
+    /// One alternative of an `|`.
+    InAlternative,
+}
+
+/// Whether a pattern at a part binds it whole - a name, or `_` - rather than
+/// asking it a question.
+fn binds_a_part(part: &MatchPattern) -> bool {
+    matches!(part, MatchPattern::Path(one) if one.len() == 1)
+        || matches!(part, MatchPattern::Otherwise)
 }

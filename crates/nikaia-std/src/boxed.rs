@@ -43,6 +43,42 @@ pub fn open<B: Open>(boxed: B) -> B::Out {
     boxed.open()
 }
 
+/// **What a box holds, looked at and not taken** ([ADR-246](../../../docs/specification/adr/adr-246.md)
+/// D5): the guard of an arm whose pattern looks inside a boxed part asks
+/// whether the part has that shape before the arm opens it. A guard sees a
+/// binding by reference, so this takes `&B` and hands back `&T` for a `Box<T>`
+/// bound by value and for one bound by reference alike.
+pub trait Peek {
+    type Inside;
+    fn peek(&self) -> &Self::Inside;
+}
+
+impl<T> Peek for Box<T> {
+    type Inside = T;
+    fn peek(&self) -> &T {
+        self
+    }
+}
+
+impl<T> Peek for &Box<T> {
+    type Inside = T;
+    fn peek(&self) -> &T {
+        self
+    }
+}
+
+impl<T> Peek for &mut Box<T> {
+    type Inside = T;
+    fn peek(&self) -> &T {
+        self
+    }
+}
+
+#[inline]
+pub fn peek<B: Peek>(boxed: &B) -> &B::Inside {
+    boxed.peek()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +93,13 @@ mod tests {
         let mut changed = Box::new(1);
         *open(&mut changed) += 1;
         assert_eq!(*changed, 2);
+    }
+
+    #[test]
+    fn a_box_is_looked_into_whether_it_was_taken_or_lent() {
+        let owned: Box<i64> = Box::new(4);
+        assert!(matches!(peek(&owned), 4));
+        let lent = &owned;
+        assert!(matches!(peek(&lent), 4));
     }
 }

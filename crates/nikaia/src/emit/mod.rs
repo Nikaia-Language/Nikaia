@@ -7297,7 +7297,9 @@ impl<'p> Emitter<'p> {
                 // `matches!`** (0.0.249): the arms that say one answer, and
                 // `else` the other. The long form is what `clippy` refuses in
                 // `std`, so a `.nika` file there wrote around it.
-                if let Some(answer) = a_yes_or_no(arms) {
+                if let Some(answer) = a_yes_or_no(arms)
+                    && !arms.iter().any(|arm| self.looks_inside_a_box(&arm.pattern))
+                {
                     if !answer {
                         out.push("!");
                     }
@@ -7320,17 +7322,51 @@ impl<'p> Emitter<'p> {
                 out.push(" {\n");
                 for arm in arms {
                     out.push(&pad);
-                    self.match_pattern(out, &arm.pattern, depth + 1, flow)?;
+                    // **A part looked into through its box**
+                    // ([ADR-246](../../docs/specification/adr/adr-246.md) D5):
+                    // the language below matches no pattern through a box, so
+                    // the part is bound to a fresh name, the guard asks
+                    // whether it has the shape (the next arm is tried where it
+                    // does not, as for any pattern), and the arm takes it
+                    // apart before anything else.
+                    let lent = self
+                        .lent_bindings
+                        .get(&(&arm.pattern as *const MatchPattern as usize));
+                    let mut nests: Vec<&MatchPattern> = Vec::new();
+                    self.pattern_written(
+                        out,
+                        &arm.pattern,
+                        Names::Bind(lent),
+                        &mut Some(&mut nests),
+                        depth + 1,
+                        flow,
+                    )?;
+                    for (at, nest) in nests.iter().enumerate() {
+                        out.push(match at {
+                            0 => " if ",
+                            _ => " && ",
+                        });
+                        out.push(&format!(
+                            "matches!(nikaia_std::boxed::peek(&__nikaia_box{at}), "
+                        ));
+                        self.pattern_written(out, nest, Names::Wild, &mut None, depth + 1, flow)?;
+                        out.push(")");
+                    }
                     // **The guard is Rust's own**
                     // ([ADR-137](../../../docs/specification/adr/adr-137.md)
                     // D2), written with the same word, so this is a
                     // transcription like everything else about a pattern.
                     if let Some(guard) = &arm.guard {
-                        out.push(" if ");
+                        match nests.is_empty() {
+                            true => out.push(" if "),
+                            false => out.push(" && "),
+                        }
+                        out.push("(");
                         self.expr(out, guard, depth + 1, flow)?;
+                        out.push(")");
                     }
                     out.push(" => ");
-                    self.arm_body(out, &arm.pattern, &arm.body, depth + 1, flow)?;
+                    self.arm_body_opening(out, &arm.pattern, &nests, &arm.body, depth + 1, flow)?;
                     out.push(",\n");
                 }
                 out.push(&format!("{close}}}"));
@@ -10520,6 +10556,39 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        self.arm_body_opening(out, pattern, &[], body, depth, flow)
+    }
+
+    /// [`Self::arm_body`], first taking apart each boxed part the pattern
+    /// looked inside ([ADR-246](../../docs/specification/adr/adr-246.md) D5):
+    /// the guard has already said it has the shape, so the `else` is never
+    /// taken.
+    fn arm_body_opening(
+        &self,
+        out: &mut Out,
+        pattern: &MatchPattern,
+        nests: &[&MatchPattern],
+        body: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let mut taken_apart = String::new();
+        for (at, nest) in nests.iter().enumerate() {
+            let mut written = Out::default();
+            self.pattern_written(
+                &mut written,
+                nest,
+                Names::Bind(None),
+                &mut None,
+                depth,
+                flow,
+            )?;
+            taken_apart.push_str(&format!(
+                "let __nikaia_box{at} = nikaia_std::boxed::open(__nikaia_box{at}); \
+                 let {} = __nikaia_box{at} else {{ unreachable!(\"the guard matched it\") }}; ",
+                written.buf
+            ));
+        }
         let mut opened = Vec::new();
         self.boxed_bindings(pattern, &mut opened);
         // **And a number bound out of a lent value is copied out** (0.0.236,
@@ -10542,17 +10611,18 @@ impl<'p> Emitter<'p> {
             && let Expr::Block(block) = body
             && opened.is_empty()
             && copied.is_empty()
+            && nests.is_empty()
         {
             return self.block(out, block, depth, flow, Tail::Statement);
         }
-        if opened.is_empty() && copied.is_empty() {
+        if opened.is_empty() && copied.is_empty() && nests.is_empty() {
             return self.expr(out, body, depth, flow);
         }
         // **A block arm opens with the names it binds**, inside its own
         // braces: a second pair around it was `unused_braces` in every
         // generated file with one (found moving `Ty::fits` into Nikaia).
         if let Expr::Block(block) = body {
-            let mut opening = String::new();
+            let mut opening = taken_apart.clone();
             for name in &opened {
                 opening.push_str(&format!("let {name} = nikaia_std::boxed::open({name}); "));
             }
@@ -10573,6 +10643,7 @@ impl<'p> Emitter<'p> {
             );
         }
         out.push("{ ");
+        out.push(&taken_apart);
         for name in &opened {
             out.push(&format!("let {name} = nikaia_std::boxed::open({name}); "));
         }
@@ -10669,11 +10740,58 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        self.pattern_written(out, pattern, Names::Bind(lent), &mut None, depth, flow)
+    }
+
+    /// **A boxed part this pattern looks inside**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D5): the part of a
+    /// variant's tuple at `at` is behind a box, and what the pattern writes
+    /// there is not a name.
+    fn boxed_part(&self, path: &[Symbol], at: usize) -> bool {
+        let [.., owner, variant] = path else {
+            return false;
+        };
+        self.boxed_members.contains_key(self.text(*owner))
+            && self.is_boxed(
+                self.text(*owner),
+                &crate::check::boxed_member(self.text(*variant), Some(at), None),
+            )
+    }
+
+    /// Whether any arm's pattern looks inside a boxed part, at any depth the
+    /// lowering reaches.
+    fn looks_inside_a_box(&self, pattern: &MatchPattern) -> bool {
+        match pattern {
+            MatchPattern::Tuple { path, parts } => parts.iter().enumerate().any(|(at, part)| {
+                (self.boxed_part(path, at) && !binds_a_part(part)) || self.looks_inside_a_box(part)
+            }),
+            MatchPattern::Or(alternatives) => {
+                alternatives.iter().any(|a| self.looks_inside_a_box(a))
+            }
+            _ => false,
+        }
+    }
+
+    /// The pattern as written, in one of two modes, collecting into `nests` -
+    /// where it is given - each boxed part it looks inside and writing a fresh
+    /// name there instead (`__nikaia_box0`, …, in the order they are met).
+    fn pattern_written<'m>(
+        &self,
+        out: &mut Out,
+        pattern: &'m MatchPattern,
+        names_as: Names<'_>,
+        nests: &mut Option<&mut Vec<&'m MatchPattern>>,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
         let bound = |s: &Symbol| {
             let name = self.text(*s);
-            match lent.is_some_and(|lent| lent.contains(name)) {
-                true => format!("ref {name}"),
-                false => name.to_string(),
+            match names_as {
+                Names::Wild => "_".to_string(),
+                Names::Bind(lent) => match lent.is_some_and(|lent| lent.contains(name)) {
+                    true => format!("ref {name}"),
+                    false => name.to_string(),
+                },
             }
         };
         let path = |p: &[Symbol]| {
@@ -10703,7 +10821,15 @@ impl<'p> Emitter<'p> {
                     if i > 0 {
                         out.push(", ");
                     }
-                    self.pattern_lending(out, part, lent, depth, flow)?;
+                    if let Some(nests) = nests.as_mut()
+                        && self.boxed_part(p, i)
+                        && !binds_a_part(part)
+                    {
+                        out.push(&format!("__nikaia_box{}", nests.len()));
+                        nests.push(part);
+                        continue;
+                    }
+                    self.pattern_written(out, part, names_as, nests, depth, flow)?;
                 }
                 out.push(")");
             }
@@ -10712,10 +10838,10 @@ impl<'p> Emitter<'p> {
                 bindings,
                 rest,
             } => {
-                let inside = match (bindings.is_empty(), rest) {
-                    (true, _) => "..".to_string(),
-                    (false, true) => format!("{}, ..", names(bindings)),
-                    (false, false) => names(bindings),
+                let inside = match (bindings.is_empty(), rest, names_as) {
+                    (true, _, _) | (_, _, Names::Wild) => "..".to_string(),
+                    (false, true, _) => format!("{}, ..", names(bindings)),
+                    (false, false, _) => names(bindings),
                 };
                 out.push(&format!("{} {{ {inside} }}", path(p)));
             }
@@ -10724,7 +10850,7 @@ impl<'p> Emitter<'p> {
                     if i > 0 {
                         out.push(" | ");
                     }
-                    self.pattern_lending(out, alternative, lent, depth, flow)?;
+                    self.pattern_written(out, alternative, names_as, nests, depth, flow)?;
                 }
             }
             // **`..=`, because a pattern's range includes both ends** (D3) and
@@ -13325,4 +13451,19 @@ impl Emitter<'_> {
             ));
         }
     }
+}
+
+/// **How a pattern's names are written** (ADR-246 D5): bound, some of them by
+/// reference, or as `_`, for a guard that only asks about a shape.
+#[derive(Clone, Copy)]
+enum Names<'a> {
+    Bind(Option<&'a std::collections::BTreeSet<String>>),
+    Wild,
+}
+
+/// Whether a pattern at a part binds it whole - a name, or `_` - rather than
+/// asking it a question.
+fn binds_a_part(part: &MatchPattern) -> bool {
+    matches!(part, MatchPattern::Path(one) if one.len() == 1)
+        || matches!(part, MatchPattern::Otherwise)
 }
