@@ -72,6 +72,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::contracts::ty::TyOps;
 use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract, ty::Ty};
+use nikaia_std::tools::paths::{self, Export};
 
 /// What a run of the command did, for the line it prints.
 #[derive(Debug)]
@@ -586,16 +587,6 @@ struct Surface {
     promises: Vec<String>,
 }
 
-/// One name a `pub use` offers, or a whole module where it is a glob.
-struct Export {
-    /// The module the `use` was written in.
-    at: String,
-    /// What stands before the name, as it was written.
-    prefix: String,
-    /// The name and what it is offered as, or `None` for `::*`.
-    name: Option<(String, String)>,
-}
-
 impl Surface {
     /// Read one file's items into this, under the module the **file** is.
     ///
@@ -608,7 +599,7 @@ impl Surface {
     /// `mod foo;` in the parent, which may be in another file, so it is
     /// [`Surface::resolve`]'s.
     fn read(&mut self, relative: &str, text: &str) -> Result<()> {
-        let Some(at) = module_of(relative) else {
+        let Some(at) = paths::module_of(relative) else {
             return Ok(());
         };
         let items = nikaia_std::tools::rust::file(text)
@@ -632,7 +623,7 @@ impl Surface {
         for item in items {
             match item {
                 Item::Fun(f) => {
-                    let path = joined(at, f.name);
+                    let path = paths::joined(at, f.name);
                     self.offers.insert(path.clone());
                     self.functions.insert(path, Function::of(f, imports));
                 }
@@ -642,10 +633,10 @@ impl Surface {
                 // goes through it.
                 Item::Hidden(f) => {
                     self.functions
-                        .insert(joined(at, f.name), Function::of(f, imports));
+                        .insert(paths::joined(at, f.name), Function::of(f, imports));
                 }
                 Item::Rec(r) => {
-                    let path = joined(at, r.name);
+                    let path = paths::joined(at, r.name);
                     if r.what == "struct" {
                         self.fields.insert(
                             path.clone(),
@@ -662,12 +653,12 @@ impl Surface {
                     self.derives.insert(path.clone(), derived);
                     self.types.insert(path);
                 }
-                Item::Export(text) => self.exports.extend(exported(at, text)),
+                Item::Export(text) => self.exports.extend(paths::exported(at, text)),
                 // Read before this walk, into the table every call above was
                 // resolved against.
                 Item::Used(_) => {}
                 Item::Group(g) if g.what == "mod" => {
-                    let path = joined(at, g.name);
+                    let path = paths::joined(at, g.name);
                     self.modules.insert(path.clone(), g.visible);
                     self.walk(&g.items, &path, imports);
                 }
@@ -696,7 +687,7 @@ impl Surface {
         let mut parts: Vec<&str> = path.split("::").collect();
         parts.pop();
         for part in parts {
-            at = joined(&at, part);
+            at = paths::joined(&at, part);
             if self.modules.get(&at) != Some(&true) {
                 return false;
             }
@@ -726,15 +717,15 @@ impl Surface {
         // A `pub use` written in a module nobody outside can reach offers
         // nothing to anybody outside.
         let mut exports = std::mem::take(&mut self.exports);
-        exports.retain(|export| self.offered(&joined(&export.at, "x")));
+        exports.retain(|export| self.offered(&paths::joined(&export.at, "x")));
         self.exports = exports;
         for _ in 0..8 {
             let mut added = false;
             let exports = std::mem::take(&mut self.exports);
             for export in &exports {
                 match &export.name {
-                    Some((name, alias)) => {
-                        let offered = joined(&export.at, alias);
+                    Some(paths::Named { name, alias }) => {
+                        let offered = paths::joined(&export.at, alias);
                         for candidate in self.candidates(export, name) {
                             // **`self.functions` and not `self.offers`**: a
                             // `pub use` may carry a function that is not `pub`
@@ -754,7 +745,7 @@ impl Surface {
                     // which is what `::*` means: a module's own items and not
                     // its submodules'.
                     None => {
-                        for base in self.bases(export) {
+                        for base in paths::bases(export) {
                             let under = format!("{base}::");
                             let names: Vec<String> = self
                                 .offers
@@ -765,7 +756,7 @@ impl Surface {
                                 .map(str::to_string)
                                 .collect();
                             for name in names {
-                                let offered = joined(&export.at, &name);
+                                let offered = paths::joined(&export.at, &name);
                                 let target = format!("{base}::{name}");
                                 added |= self.reachable.insert(offered, target).is_none();
                             }
@@ -789,135 +780,13 @@ impl Surface {
     /// absence of a claim ([ADR-104](../../docs/specification/adr/adr-104.md)
     /// D4) and reaches the draft as a `?` for a reviewer.
     fn candidates(&self, export: &Export, name: &str) -> Vec<String> {
-        self.bases(export)
+        paths::bases(export)
             .into_iter()
             .map(|base| match base.is_empty() {
                 true => name.to_string(),
                 false => format!("{base}::{name}"),
             })
             .collect()
-    }
-
-    fn bases(&self, export: &Export) -> Vec<String> {
-        let prefix = export.prefix.trim();
-        // The three words a `use` path may start from, each answered from
-        // where the `use` was written.
-        if let Some(rest) = after(prefix, "crate") {
-            return vec![rest.to_string()];
-        }
-        if let Some(rest) = after(prefix, "self") {
-            return vec![joined(&export.at, rest)];
-        }
-        if let Some(rest) = after(prefix, "super") {
-            let parent = match export.at.rsplit_once("::") {
-                Some((up, _)) => up.to_string(),
-                None => String::new(),
-            };
-            return vec![joined(&parent, rest)];
-        }
-        // Uniform paths: relative to where it was written, or from the root.
-        let here = joined(&export.at, prefix);
-        let root = prefix.to_string();
-        match here == root {
-            true => vec![root],
-            false => vec![here, root],
-        }
-    }
-}
-
-/// What follows one of a `use` path's leading words, where it starts with it.
-///
-/// `"crate"` alone and `"crate::a"` are both that word; `"crated"` is not, and
-/// the `::` is what says so.
-fn after<'a>(path: &'a str, word: &str) -> Option<&'a str> {
-    if path == word {
-        return Some("");
-    }
-    path.strip_prefix(word)?.strip_prefix("::")
-}
-
-/// The module a file **is**, or `None` where it is not one of the library's.
-///
-/// `src/main.rs` and `src/bin/*.rs` are a binary's, which a program that calls
-/// into this crate cannot reach; `build.rs` is not under `src/` and never
-/// arrives here.
-fn module_of(relative: &str) -> Option<String> {
-    let inside = relative.strip_prefix("src/")?.strip_suffix(".rs")?;
-    if inside == "lib.rs" || inside == "lib" {
-        return Some(String::new());
-    }
-    if inside == "main" || inside.starts_with("bin/") {
-        return None;
-    }
-    let path = inside.strip_suffix("/mod").unwrap_or(inside);
-    match path.is_empty() {
-        true => Some(String::new()),
-        false => Some(path.replace('/', "::")),
-    }
-}
-
-/// `a::b` from `a` and `b`, and either alone where the other is empty.
-fn joined(at: &str, name: &str) -> String {
-    match (at.is_empty(), name.is_empty()) {
-        (true, _) => name.to_string(),
-        (_, true) => at.to_string(),
-        _ => format!("{at}::{name}"),
-    }
-}
-
-/// What one `pub use` offers, from the text between the keyword and the `;`.
-///
-/// **The grammar hands the text over rather than splitting it**, because
-/// splitting a path is string work and not parsing work — its own header says
-/// so. This is where the pieces are taken.
-fn exported(at: &str, text: &str) -> Vec<Export> {
-    let text = text.trim();
-    // A brace group is the only place several names stand, and the `::` before
-    // it is the last one outside it.
-    if let Some(open) = text.find("::{")
-        && text.ends_with('}')
-    {
-        let prefix = text[..open].to_string();
-        let inside = &text[open + 3..text.len() - 1];
-        return split_top_level(inside)
-            .into_iter()
-            .filter(|one| !one.is_empty())
-            .map(|one| Export {
-                at: at.to_string(),
-                prefix: prefix.clone(),
-                name: named(&one),
-            })
-            .collect();
-    }
-    if let Some(prefix) = text.strip_suffix("::*") {
-        return vec![Export {
-            at: at.to_string(),
-            prefix: prefix.to_string(),
-            name: None,
-        }];
-    }
-    let (path, alias) = match text.split_once(" as ") {
-        Some((path, alias)) => (path.trim(), Some(alias.trim().to_string())),
-        None => (text, None),
-    };
-    let (prefix, name) = match path.rsplit_once("::") {
-        Some((prefix, name)) => (prefix.to_string(), name.trim().to_string()),
-        None => (String::new(), path.to_string()),
-    };
-    let alias = alias.unwrap_or_else(|| name.clone());
-    vec![Export {
-        at: at.to_string(),
-        prefix,
-        name: Some((name, alias)),
-    }]
-}
-
-/// One entry of a `use` list: `name`, or `name as other`.
-fn named(one: &str) -> Option<(String, String)> {
-    let one = one.trim();
-    match one.split_once(" as ") {
-        Some((name, alias)) => Some((name.trim().to_string(), alias.trim().to_string())),
-        None => Some((one.to_string(), one.to_string())),
     }
 }
 
@@ -941,8 +810,8 @@ fn imported(items: &[nikaia_std::tools::rust::Item<'_>], out: &mut BTreeMap<Stri
             // A `pub use` is an import here too: it brings the name into this
             // file exactly as a plain one does, and offers it onward besides.
             Item::Used(text) | Item::Export(text) => {
-                for one in exported("", text) {
-                    let Some((name, alias)) = &one.name else {
+                for one in paths::exported("", text) {
+                    let Some(paths::Named { name, alias }) = &one.name else {
                         continue;
                     };
                     let full = match one.prefix.is_empty() {
@@ -1124,7 +993,7 @@ impl Function {
     /// division `Item::Export` is read under and for the same reason.
     fn of(f: &nikaia_std::tools::rust::Fun<'_>, imports: &BTreeMap<String, String>) -> Function {
         Function {
-            parameters: split_top_level(f.generics)
+            parameters: paths::split_top_level(f.generics)
                 .into_iter()
                 // A lifetime is not a type parameter, and a bound written
                 // inline (`T: Send`) names the parameter before the colon.
@@ -1179,7 +1048,7 @@ impl Function {
 
     /// The type parameters this signature binds `Send`.
     fn sends(&self) -> BTreeSet<String> {
-        split_top_level(&self.bounds)
+        paths::split_top_level(&self.bounds)
             .into_iter()
             .filter_map(|one| {
                 let (name, bound) = one.split_once(':')?;
@@ -1243,7 +1112,7 @@ impl Function {
         mentioned: &mut BTreeSet<String>,
     ) -> (Ty, Option<String>) {
         if let Some(inner) = generic_of(text, "Result") {
-            let parts = split_top_level(&inner);
+            let parts = paths::split_top_level(&inner);
             let ok = parts.first().cloned().unwrap_or_default();
             let error = parts.get(1).cloned();
             let (ty, _) = self.translate(&ok, crate_word, types, mentioned);
@@ -1375,7 +1244,7 @@ fn plainly_sendable(ty: &str) -> bool {
     }
     for wrapper in PASSES_THROUGH {
         if let Some(inner) = generic_of(ty, wrapper.trim_end_matches('<')) {
-            return split_top_level(&inner)
+            return paths::split_top_level(&inner)
                 .iter()
                 .all(|part| plainly_sendable(part));
         }
@@ -1410,28 +1279,4 @@ fn generic_of(text: &str, name: &str) -> Option<String> {
     let rest = rest.strip_prefix('<')?;
     let inner = rest.strip_suffix('>')?;
     Some(inner.to_string())
-}
-
-/// Split on commas that are not inside brackets.
-fn split_top_level(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0_i32;
-    let mut current = String::new();
-    for c in text.chars() {
-        match c {
-            '<' | '(' | '[' => depth += 1,
-            '>' | ')' | ']' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push(current.trim().to_string());
-                current.clear();
-                continue;
-            }
-            _ => {}
-        }
-        current.push(c);
-    }
-    if !current.trim().is_empty() {
-        out.push(current.trim().to_string());
-    }
-    out
 }

@@ -1948,6 +1948,15 @@ sync = true
 touches = []
 signature = "(self: ref String) -> i64"
 
+# Whether the text has no bytes at all. The same question as `String::is_empty`,
+# asked of a view - a `ref String` parameter, a field, a literal - which had no
+# entry, so the call read as one that could pause and made its caller `async`.
+[fn."str::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String) -> bool"
+
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
 # (ADR-054 D2). The conversion is emitted at the call and a negative count
 # aborts saying so - the parameter direction of ADR-048 D1, which that record

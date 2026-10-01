@@ -1,0 +1,261 @@
+// crates/nikaia-std/src/tools/paths.nika
+//
+// **How `nikaia describe` spells a Rust crate's names** (ADR-195 D4, ADR-196
+// D4): the module a file is, a path joined from its parts, and what one
+// `pub use` offers and where its path could resolve.
+//
+// Moved from the compiler's `describe.rs` by ADR-196's route: lowered by
+// `nikaia lower-std` to `paths.rs` beside it, `include!`d as
+// `nikaia_std::tools::paths`, and called from `describe`. What stays Rust is
+// the table these answers fill - which modules are `pub`, which items are
+// reachable - until that moves too (#124).
+//
+// **This is string work and not parsing work**, which is why the grammar in
+// `rust.nika` hands a `use` over as the text between the keyword and the `;`
+// and this takes the pieces.
+
+/// One name a `pub use` offers, or a whole module where it is a glob.
+pub struct Export {
+    /// The module the `use` was written in.
+    pub at: String,
+    /// What stands before the name, as it was written.
+    pub prefix: String,
+    /// The name and what it is offered as, or `null` for `::*`.
+    pub name: Named?,
+}
+
+/// One entry of a `use` list: the name, and what it is offered as.
+pub struct Named {
+    pub name: String,
+    pub alias: String,
+}
+
+/// What follows one of a `use` path's leading words, where it starts with it.
+///
+/// `"crate"` alone and `"crate::a"` are both that word; `"crated"` is not, and
+/// the `::` is what says so.
+pub fn after(path: ref String, word: ref String) -> String? {
+    if path == word {
+        return ""
+    }
+    let lead = f"{word}::"
+    if !path.starts_with(ref lead) {
+        return null
+    }
+    let c: Vec[char] = path.chars().collect()
+    let w: Vec[char] = lead.chars().collect()
+    return slice(c, w.len(), c.len())
+}
+
+/// The module a file **is**, or `null` where it is not one of the library's.
+///
+/// `src/main.rs` and `src/bin/*.rs` are a binary's, which a program that calls
+/// into this crate cannot reach; `build.rs` is not under `src/` and never
+/// arrives here.
+pub fn module_of(relative: ref String) -> String? {
+    if !relative.starts_with("src/") || !relative.ends_with(".rs") {
+        return null
+    }
+    let c: Vec[char] = relative.chars().collect()
+    let inside = slice(c, 4, c.len() - 3)
+    if inside == "lib" {
+        return ""
+    }
+    if inside == "main" || inside.starts_with("bin/") {
+        return null
+    }
+    let mut path = inside.clone()
+    if inside == "mod" {
+        path = ""
+    } else if inside.ends_with("/mod") {
+        let i: Vec[char] = inside.chars().collect()
+        path = slice(i, 0, i.len() - 4)
+    }
+    let mut out: String = ""
+    for part in path.split("/") {
+        out = joined(out, part)
+    }
+    return out
+}
+
+/// `a::b` from `a` and `b`, and either alone where the other is empty.
+pub fn joined(at: ref String, name: ref String) -> String {
+    if at.is_empty() {
+        return name.clone()
+    }
+    if name.is_empty() {
+        return at.clone()
+    }
+    return f"{at}::{name}"
+}
+
+/// What one `pub use` offers, from the text between the keyword and the `;`.
+pub fn exported(at: ref String, text: ref String) -> Vec[Export] {
+    let whole = text.trim()
+    let c: Vec[char] = whole.chars().collect()
+    let mut out: Vec[Export] = []
+    // A brace group is the only place several names stand, and the `::` before
+    // it is the last one outside it.
+    let open = find_text(c, 0, "::{")
+    if open >= 0 && whole.ends_with("}") {
+        let prefix = slice(c, 0, open)
+        let inside = slice(c, open + 3, c.len() - 1)
+        for one in split_top_level(inside) {
+            if !one.is_empty() {
+                out.push(Export { at: at.clone(), prefix: prefix.clone(), name: named(one) })
+            }
+        }
+        return out
+    }
+    if whole.ends_with("::*") {
+        out.push(Export { at: at.clone(), prefix: slice(c, 0, c.len() - 3), name: null })
+        return out
+    }
+    let mut path = whole.clone()
+    let mut alias: String? = null
+    let space = find_text(c, 0, " as ")
+    if space >= 0 {
+        let before = slice(c, 0, space)
+        let after_it = slice(c, space + 4, c.len())
+        path = before.trim().clone()
+        alias = after_it.trim().clone()
+    }
+    let p: Vec[char] = path.chars().collect()
+    let cut = find_last_text(p, "::")
+    let mut prefix: String = ""
+    let mut name = path.clone()
+    if cut >= 0 {
+        prefix = slice(p, 0, cut)
+        let rest = slice(p, cut + 2, p.len())
+        name = rest.trim().clone()
+    }
+    let offered = alias ?? name.clone()
+    out.push(Export { at: at.clone(), prefix: prefix, name: Named { name: name, alias: offered } })
+    return out
+}
+
+/// One entry of a `use` list: `name`, or `name as other`.
+pub fn named(written: ref String) -> Named {
+    let one = written.trim()
+    let c: Vec[char] = one.chars().collect()
+    let space = find_text(c, 0, " as ")
+    if space < 0 {
+        return Named { name: one.clone(), alias: one.clone() }
+    }
+    let before = slice(c, 0, space)
+    let after_it = slice(c, space + 4, c.len())
+    return Named { name: before.trim().clone(), alias: after_it.trim().clone() }
+}
+
+/// Where a `use` path could resolve, most specific first.
+///
+/// The three words a `use` path may start from are each answered from where
+/// the `use` was written. Otherwise Rust 2018's uniform paths mean a bare
+/// first segment is a name in scope there *or* at the crate root, and this
+/// cannot tell which without a name table - so it answers both.
+pub fn bases(export: ref Export) -> Vec[String] {
+    let prefix = export.prefix.trim()
+    let mut out: Vec[String] = []
+    let from_root = after(prefix, "crate")
+    if from_root != null {
+        out.push(from_root ?? "")
+        return out
+    }
+    let from_here = after(prefix, "self")
+    if from_here != null {
+        out.push(joined(export.at, from_here ?? ""))
+        return out
+    }
+    let from_up = after(prefix, "super")
+    if from_up != null {
+        let a: Vec[char] = export.at.chars().collect()
+        let cut = find_last_text(a, "::")
+        let mut parent: String = ""
+        if cut >= 0 {
+            parent = slice(a, 0, cut)
+        }
+        out.push(joined(parent, from_up ?? ""))
+        return out
+    }
+    let here = joined(export.at, prefix)
+    let root = prefix.clone()
+    if here != root {
+        out.push(here)
+    }
+    out.push(root)
+    return out
+}
+
+/// Split on commas that are not inside brackets.
+pub fn split_top_level(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: Vec[String] = []
+    let mut depth = 0
+    let mut start = 0
+    for at in 0..<c.len() {
+        let one = c[at]
+        if one == '<' || one == '(' || one == '[' {
+            depth += 1
+        } else if one == '>' || one == ')' || one == ']' {
+            depth -= 1
+        } else if one == ',' && depth == 0 {
+            let piece = slice(c, start, at)
+            out.push(piece.trim().clone())
+            start = at + 1
+        }
+    }
+    let last = slice(c, start, c.len())
+    let rest = last.trim()
+    if !rest.is_empty() {
+        out.push(rest.clone())
+    }
+    return out
+}
+
+// Where `word` first stands at or after `from`, or -1.
+fn find_text(c: ref Array[char], from: i64, word: ref String) -> i64 {
+    let w: Vec[char] = word.chars().collect()
+    if w.is_empty() || c.len() < w.len() {
+        return -1
+    }
+    for at in from..<c.len() - w.len() + 1 {
+        if stands_at(c, at, w) {
+            return at
+        }
+    }
+    return -1
+}
+
+// Where `word` last stands, or -1.
+fn find_last_text(c: ref Array[char], word: ref String) -> i64 {
+    let w: Vec[char] = word.chars().collect()
+    let mut found = -1
+    if w.is_empty() || c.len() < w.len() {
+        return found
+    }
+    for at in 0..<c.len() - w.len() + 1 {
+        if stands_at(c, at, w) {
+            found = at
+        }
+    }
+    return found
+}
+
+// Whether `w` stands in `c` at `at`.
+fn stands_at(c: ref Array[char], at: i64, w: ref Array[char]) -> bool {
+    for k in 0..<w.len() {
+        if c[at + k] != w[k] {
+            return false
+        }
+    }
+    return true
+}
+
+// The characters from `from` up to `to`.
+fn slice(c: ref Array[char], from: i64, to: i64) -> String {
+    let mut out: String = ""
+    for k in from..<to {
+        out.push(c[k])
+    }
+    return out
+}
