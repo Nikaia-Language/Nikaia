@@ -5804,8 +5804,15 @@ impl<'a> Checker<'a> {
             matches!(ty, Ty::Named { name, view: true, .. }
                 if !matches!(ty::base(name), "String" | "str"))
         };
+        // **And a lent `String`**: `for one in words` over a `Vec[String]`
+        // binds a `&String` below, and `&String == String` has no impl there,
+        // where `&str == String` does - so the view of owned text is read as
+        // well (found moving `describe`'s signature reading into Nikaia, #124).
+        let owned_text = |ty: &Ty| matches!(ty, Ty::Named { name, .. } if matches!(ty::base(name), "String" | "str"));
         let is_view = |side: &Expr, ty: &Ty| {
-            copies_as_a_view(ty) || a_view_of_a_type(ty) || (lent(side) && copied(ty))
+            copies_as_a_view(ty)
+                || a_view_of_a_type(ty)
+                || (lent(side) && (copied(ty) || owned_text(ty)))
         };
         let is_value = |side: &Expr, ty: &Ty| !ty.is_unknown() && !ty.is_a_view() && !lent(side);
         let read_left = is_view(lhs, left) && is_value(rhs, right);
