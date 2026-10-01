@@ -6325,9 +6325,26 @@ impl<'p> Emitter<'p> {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
                     None => out.push(" = "),
                 }
+                // **A kept buffer assigned again goes into its keep too**
+                // (#293): the binding is a place in the keep, and the views of
+                // the old value still point into the old one.
+                let reput = self
+                    .keep_plan(flow.function)
+                    .and_then(|p| p.reputs.get(&span.at()))
+                    .copied();
+                if let Some(keep) = reput {
+                    let put = match keep {
+                        crate::contracts::keep::KeepAt::Element(_) => "put_viewed",
+                        _ => "put",
+                    };
+                    out.push(&format!("{}.{put}(", Self::keep_expr(keep, false)));
+                }
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
+                if reput.is_some() {
+                    out.push(")");
+                }
                 out.push(";");
             }
             // Kap 3.3. Name for name (ADR-011 D2): the language below spells
