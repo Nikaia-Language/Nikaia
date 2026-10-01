@@ -826,6 +826,14 @@ pub struct Checked {
     /// is `Some(1)` below. A conversion around the whole choice was a `1`
     /// beside a `None` in the language below.
     pub some_tails: BTreeSet<usize>,
+    /// **A plain value put into a nullable slot, by its own address**
+    /// (Part I 2.3): what a `return` written as an expression hands back -
+    /// `let h = half(k) ?? return 0` in an `i64?` function is `return
+    /// Some(0)`, where a wrap keyed by the statement landed on the `let`'s
+    /// value - and a part handed to a variant that holds a `T?`,
+    /// `Callee::Opaque(name)`, which was not wrapped at all (both found moving
+    /// `sync::reached` into Nikaia).
+    pub wrapped: BTreeMap<usize, Wrap>,
     /// **A comparison's side that is a view, where the other side is the
     /// value** (0.0.238, any named type but text since 0.0.279), by the
     /// operator's span and `"lhs"` or `"rhs"`: the language below compares a
@@ -1826,6 +1834,8 @@ pub struct Propagation {
     /// is `Some(1)` below. A conversion around the whole choice was a `1`
     /// beside a `None` in the language below.
     pub some_tails: BTreeSet<usize>,
+    /// [`Checked::wrapped`].
+    pub wrapped: BTreeMap<usize, Wrap>,
     /// [`Checked::compared_views`].
     pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
@@ -2032,6 +2042,7 @@ pub fn propagation_against(
         boxed_reads: checked.boxed_reads,
         copied_bindings: checked.copied_bindings,
         some_tails: checked.some_tails,
+        wrapped: checked.wrapped,
         compared_views: checked.compared_views,
         claims: checked.claims,
         mut_args: checked.mut_args,
@@ -9515,7 +9526,7 @@ impl<'a> Checker<'a> {
             }
 
             Stmt::Return(value) => {
-                self.returns(value.as_ref(), span);
+                self.returns(value.as_ref(), span, false);
                 Ty::Unknown
             }
 
@@ -11514,7 +11525,7 @@ impl<'a> Checker<'a> {
             // statement form asks — the answer to *what is a `return` worth* is
             // the same wherever it is written.
             Expr::Return(value) => {
-                self.returns((**value).as_ref(), span);
+                self.returns((**value).as_ref(), span, true);
                 Ty::Unknown
             }
             Expr::Break | Expr::Continue => {
@@ -13107,6 +13118,13 @@ impl<'a> Checker<'a> {
             for ((arg, want), ty) in args.iter().zip(&parts).zip(&found) {
                 if self.text_literal(want, arg, true).is_none() {
                     self.hands_over(arg, ty, "put into a variant", span);
+                }
+                // **A part that holds a `T?` takes a plain value as `Some`**,
+                // as a parameter does (Part I 2.3).
+                if let Some(how) = wrap_for(ty, want, is_literal(arg)) {
+                    self.checked
+                        .wrapped
+                        .insert(arg as *const Expr as usize, how);
                 }
             }
             let owner = name
@@ -21083,7 +21101,7 @@ impl<'a> Checker<'a> {
     /// ([ADR-138](../../docs/specification/adr/adr-138.md) D2): the statement
     /// and the expression are the same `return`, so they ask the same
     /// questions in the same order rather than in two places that drift.
-    fn returns(&mut self, value: Option<&Expr>, span: &Span) {
+    fn returns(&mut self, value: Option<&Expr>, span: &Span, in_an_expression: bool) {
         // **The `&` at a `return`** ([ADR-094](../../docs/specification/adr/adr-094.md)
         // D1's third position), asked before the refusal it takes the place of:
         // a place inside a borrowed subject, handed back where the function
@@ -21116,7 +21134,16 @@ impl<'a> Checker<'a> {
         let mut found = found;
         if let Some(value) = value {
             self.constant_fits(value, Some(&expected), span);
-            self.wraps_into_nullable(&found, &expected, value, span);
+            match in_an_expression {
+                false => self.wraps_into_nullable(&found, &expected, value, span),
+                true => {
+                    if let Some(how) = wrap_for(&found, &expected, is_literal(value)) {
+                        self.checked
+                            .wrapped
+                            .insert(value as *const Expr as usize, how);
+                    }
+                }
+            }
             // **The declared result is a use** (ADR-152 D4).
             found = self
                 .literal_by_use(&found, &expected, value, span)

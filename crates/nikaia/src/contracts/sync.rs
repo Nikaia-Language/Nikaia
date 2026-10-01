@@ -33,7 +33,6 @@
 // **assertion you write where you want it held**, checked against the body,
 // rather than a mode you have to enter.
 
-use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Block, Expr, Item, Span, Stmt};
@@ -781,106 +780,31 @@ pub(crate) enum Reached {
     Opaque(Option<String>),
 }
 
-/// What a call resolves to, by the same rule for both analyses.
+/// What a call resolves to, by the same rule for every analysis:
+/// `tools/calls.nika`'s `callee_of` (#125). This compiler's walk hands it each
+/// expression and reads the answer back as its own enum.
 ///
-/// `None` means the expression is not a call at all, which is the one case
-/// neither analysis has anything to say about.
+/// `None` means the expression is not a call at all - or a variant of a type,
+/// which builds a value and runs no body - the one case no analysis has
+/// anything to say about.
 pub(crate) fn reached(
     parsed: &Parsed,
     expr: &Expr,
     own: &Ledger,
     library: &Ledger,
 ) -> Option<Reached> {
-    let name = match expr {
-        Expr::Call { func, .. } => match &**func {
-            Expr::Variable(name) => parsed.text(*name).to_string(),
-            Expr::Path(segments) => segments
-                .iter()
-                .map(|s| parsed.text(*s))
-                .collect::<Vec<_>>()
-                .join("::"),
-            // A call through anything else is a target we cannot name.
-            _ => return Some(Reached::Opaque(None)),
-        },
-        // Answered by the type checker rather than here (ADR-028).
-        Expr::MethodCall { .. } | Expr::SafeMethod { .. } => return Some(Reached::Method),
-        // Starts a task, or runs a grammar whose actions are arbitrary Nikaia.
-        // Neither is pure computation this compiler can see the end of.
-        Expr::Spawn { .. } | Expr::Dsl { .. } => return Some(Reached::Opaque(None)),
-        _ => return None,
-    };
-
-    // This unit first: a program's own functions are what it mostly calls, and
-    // a local name shadows nothing in a library.
-    if own.functions.contains_key(&name) {
-        return Some(Reached::Own(name));
-    }
-
-    // `Stats(first)` is the anonymous constructor of Kap 4.2, which the
-    // lowering names `Stats::new` and the ledger records under that name. A
-    // constructor is a function like any other and makes the same promise or
-    // does not.
-    let constructed = format!("{name}::new");
-    if own.functions.contains_key(&constructed) {
-        return Some(Reached::Own(constructed));
-    }
-
-    // Then the library, by the name the caller wrote or the one the prelude
-    // makes available unqualified — **and by the constructor's key**, because
-    // `std`'s own types are constructed the same way
-    // ([ADR-140](../../../docs/specification/adr/adr-140.md) D2): `HashMap()`
-    // is the call, `HashMap::new` is what the ledger and the lowering write.
-    // Without the second lookup a `sync` function that built one was refused
-    // against a callee nothing described.
-    for written in [name.clone(), constructed] {
-        if let Some((key, contract)) = library.lookup(&written) {
-            return Some(Reached::Library {
+    use nikaia_std::tools::calls::{Callee, callee_of};
+    Some(
+        match callee_of(&parsed.interner, expr, own, library, &parsed.program.items)? {
+            Callee::Own(name) => Reached::Own(name),
+            Callee::Library { key, never_pauses } => Reached::Library {
                 key,
-                sync: contract.sync_claim.is_sync(),
-            });
-        }
-    }
-
-    // **A variant of a type this file declares is a constructor, not a call.**
-    // `ConfigError::NotFound(path)` builds a value; it runs no body, so it can
-    // neither pause nor fail nor reach anything — and reading it as a callee
-    // nothing describes made every function that throws one `async`.
-    //
-    // Found the day `visit_expr` learned to walk a `throw`'s expression: the
-    // hole had been hiding this one. Answered off the **declarations** rather
-    // than off `own.types`, because an enum gets no `TypeContract` — and the
-    // walk is over items, on the path where a call resolved to nothing, which
-    // is the rare one.
-    //
-    // **The type is everything but the last segment**, which is the variant.
-    // `ConfigError::NotFound` names `ConfigError`, and
-    // `io::IoError::NotFound` names `io::IoError` — a type keyed with its
-    // module ([ADR-154](../../../../docs/specification/adr/adr-154.md) D3) is
-    // still one type. Reading the **first** segment was right for exactly as
-    // long as no error type lived in a module, and the day one did
-    // ([ADR-158](../../../../docs/specification/adr/adr-158.md)) it looked for
-    // a type called `io`, found none, and called the constructor a callee
-    // nothing describes.
-    //
-    // **And a ledger's types count**, not only this file's declarations: an
-    // enum of this program gets no `TypeContract`, which is what the
-    // declaration walk is for, but `io::IoError` is a library's and the
-    // library says so.
-    if let Some((declared, _variant)) = name.rsplit_once("::") {
-        let is_a_type = library.types.contains_key(declared)
-            || own.types.contains_key(declared)
-            || parsed.program.items.iter().any(|item| {
-                matches!(
-                    &item.node,
-                    Item::Enum { name, .. } | Item::Struct { name, .. } if parsed.text(*name) == declared
-                )
-            });
-        if is_a_type && !own.functions.contains_key(&name) {
-            return None;
-        }
-    }
-
-    Some(Reached::Opaque(Some(name)))
+                sync: never_pauses,
+            },
+            Callee::Method => Reached::Method,
+            Callee::Opaque(name) => Reached::Opaque(name),
+        },
+    )
 }
 
 /// The name a call resolves to, when a ledger says it can pause.

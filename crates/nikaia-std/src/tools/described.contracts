@@ -14,6 +14,13 @@ crosses = true
 compares = true
 copies = true
 
+# A copy of the handle, which is the handle (0.0.325).
+[fn."winnow_grammar::Symbol::clone"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref winnow_grammar::Symbol) -> winnow_grammar::Symbol"
+
 # What a `Symbol` was interned from.
 [type."winnow_grammar::InternerContext"]
 pub = true
