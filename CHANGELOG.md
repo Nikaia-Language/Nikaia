@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.325] — 2026-10-01
+
+**What a call resolves to is answered in Nikaia** (#125). `tools/calls.nika`
+holds `sync::reached`, the one rule `sync`, `throws` and `touches` resolve a
+call by (ADR-028): this package's functions first, then the anonymous
+constructor's key, then the library by both names; a variant of a type a ledger
+knows or this file declares builds a value and is no call; anything else is a
+call nobody can name. The walk that hands it each expression stays Rust: it
+reads the holes of a text literal, which only the parser can.
+
+Moving it found three things the compiler did wrong, each fixed in the compiler
+(ADR-250 D3):
+
+- **A `return` written as an expression in a `T?` function** handed back a
+  bare value, and the wrap it was owed landed on the statement around it:
+  `let h = half(k) ?? return 0` was `let h = Some(match … { None => return 0 })`.
+  A plain value in a nullable slot is now wrapped by its own address, where it
+  stands.
+- **A part handed to a variant that holds a `T?`** was not wrapped at all:
+  `Callee::Opaque(name)` with a `name: String` reached `rustc` as a `String`
+  where an `Option<String>` goes.
+- **A `Symbol`'s `clone`** was a call nothing described, so a function that
+  copied one out of a tree was inferred to pause. `described.contracts`
+  describes it.
+
 ## [0.0.324] — 2026-10-01
 
 **What an operation reaches is decided in Nikaia** (#125).

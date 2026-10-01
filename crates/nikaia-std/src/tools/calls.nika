@@ -1,0 +1,119 @@
+// crates/nikaia-std/src/tools/calls.nika
+//
+// **What a call resolves to, by one rule for every analysis** - the compiler's
+// `contracts::sync::reached`, moved from Rust (ADR-250, #125). `sync`,
+// `throws` and `touches` each walk a body and ask this of every expression;
+// ADR-028 recorded what two answers would cost - two analyses that have to
+// agree about what `stats.add(5)` goes to, and eventually do not.
+//
+// What stays Rust is the walk that hands it each expression: it reads the
+// holes of a text literal, which only the parser can (`emit::literal_expressions`),
+// and it moves when they do.
+
+use std::collections
+
+/// Where a call goes.
+pub enum Callee {
+    /// A function this package declares, by the name the ledger records it
+    /// under.
+    Own(String),
+    /// A function in a library, and whether that library's ledger promises it
+    /// never pauses.
+    Library { key: String, never_pauses: bool },
+    /// A method call: `stats.add(5)` names `add` and says nothing about what
+    /// `stats` is. Not "unknown" but **asked elsewhere** - the type checker
+    /// resolves the receiver (ADR-028), and each analysis merges its answer.
+    Method,
+    /// A call nobody can name: a name no ledger knows (`null` where there is
+    /// no name at all), or a construct that runs something - `spawn`, a `dsl`
+    /// - which is not the pure computation Part II 12.1 describes, whatever it
+    /// turns out to do.
+    Opaque(String?),
+}
+
+/// What `expr` calls, or `null` where it is not a call at all.
+pub fn callee_of(names: ref winnow_grammar::InternerContext, expr: ref Expr, own: ref Ledger, library: ref Ledger, items: ref Vec[Spanned[Item]]) -> Callee? {
+    let name = match expr {
+        Expr::Call { func, .. } => called_name(names, func) ?? return Callee::Opaque(null),
+        Expr::MethodCall { .. } => return Callee::Method,
+        Expr::SafeMethod { .. } => return Callee::Method,
+        Expr::Spawn { .. } => return Callee::Opaque(null),
+        Expr::Dsl { .. } => return Callee::Opaque(null),
+        else => return null,
+    }
+    // This package first: a program's own functions are what it mostly
+    // calls, and a local name shadows nothing in a library.
+    if own.functions.contains_key(name) {
+        return Callee::Own(name)
+    }
+    // `Stats(first)` is the anonymous constructor of Kap 4.2, recorded as
+    // `Stats::new`; and `std`'s types are constructed the same way (ADR-140
+    // D2), so the library is asked by both names too.
+    let constructed = f"{name}::new"
+    if own.functions.contains_key(constructed) {
+        return Callee::Own(constructed)
+    }
+    for written in [name.clone(), constructed] {
+        let contract = library.functions[written] ?? continue
+        return Callee::Library { key: written.clone(), never_pauses: contract.sync_claim.is_sync() }
+    }
+    // **A variant of a type is a constructor, not a call**:
+    // `ConfigError::NotFound(path)` builds a value and runs no body, so it can
+    // neither pause nor fail nor reach anything. The type is everything but
+    // the last segment (`io::IoError::NotFound` is `io::IoError`, ADR-154 D3),
+    // and it is one a ledger knows or this file declares - an enum of this
+    // program gets no `TypeContract`, which is what the declarations are for.
+    if names_a_variant(names, name, own, library, items) {
+        return null
+    }
+    return Callee::Opaque(name)
+}
+
+/// The name a call's target is written as, where it is a name.
+fn called_name(names: ref winnow_grammar::InternerContext, func: ref Expr) -> String? {
+    return match func {
+        Expr::Variable(symbol) => names.resolve(symbol).clone(),
+        Expr::Path(segments) => written_path(names, segments),
+        else => null,
+    }
+}
+
+/// `a::b::c`, every segment.
+fn written_path(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol]) -> String {
+    let mut written: String = ""
+    for k in 0..<segments.len() {
+        if k > 0 {
+            written = f"{written}::"
+        }
+        let segment = names.resolve(segments[k])
+        written = f"{written}{segment}"
+    }
+    return written
+}
+
+/// Whether `name` is `Type::Variant` of a type a ledger knows or this file
+/// declares, and not a function of this package.
+fn names_a_variant(names: ref winnow_grammar::InternerContext, name: ref String, own: ref Ledger, library: ref Ledger, items: ref Vec[Spanned[Item]]) -> bool {
+    let mut parts: Vec[String] = []
+    for part in name.split("::") {
+        parts.push(part.clone())
+    }
+    if parts.len() < 2 || own.functions.contains_key(name) {
+        return false
+    }
+    let declared = struct_type(name)
+    if library.types.contains_key(declared) || own.types.contains_key(declared) {
+        return true
+    }
+    for item in items {
+        let symbol = match item.node {
+            Item::Enum { name, .. } => name.clone(),
+            Item::Struct { name, .. } => name.clone(),
+            else => continue,
+        }
+        if names.resolve(symbol) == declared {
+            return true
+        }
+    }
+    return false
+}

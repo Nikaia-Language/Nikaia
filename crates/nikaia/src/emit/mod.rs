@@ -1531,6 +1531,8 @@ struct Emitter<'p> {
     copied_bindings: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::some_tails`: a plain arm beside a `null`, by address.
     some_tails: std::collections::BTreeSet<usize>,
+    /// `check::Checked::wrapped`: a plain value in a nullable slot, by address.
+    wrapped: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
@@ -2521,6 +2523,7 @@ impl<'p> Emitter<'p> {
             boxed_reads: propagation.boxed_reads,
             copied_bindings: propagation.copied_bindings,
             some_tails: propagation.some_tails,
+            wrapped: propagation.wrapped,
             compared_views: propagation.compared_views,
             claims: propagation.claims,
             boxed_args: std::cell::RefCell::new(None),
@@ -6887,28 +6890,6 @@ impl<'p> Emitter<'p> {
             })
     }
 
-    /// An expression, with Part I 2.3's `Some(…)` around it where the checker
-    /// says a plain value stands in a nullable slot.
-    ///
-    /// A `return` needs this and a `let` writes it inline, because a `let` has
-    /// the shared-value constructor to nest inside as well and the order of the
-    /// two parentheses is that statement's business. A `return` reaches it
-    /// through [`Emitter::handed_back`], which is this and the `&` it may owe.
-    fn nullable(
-        &self,
-        out: &mut Out,
-        value: &Expr,
-        span: &Span,
-        depth: usize,
-        flow: Flow<'_>,
-    ) -> Result<()> {
-        let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
-        out.push(before);
-        self.expr(out, value, depth, flow)?;
-        out.push(after);
-        Ok(())
-    }
-
     /// Whether what stands in the brackets is a **run**: a range written there,
     /// or one the checker says is kept in a name (ADR-215 D3).
     fn slices(&self, statement: usize, index: &Expr) -> bool {
@@ -6995,6 +6976,14 @@ impl<'p> Emitter<'p> {
             out.push("Some(");
             self.expr_as_written(out, expr, depth, flow)?;
             out.push(")");
+            return Ok(());
+        }
+        // **And a plain value in a nullable slot** (`check::Checked::wrapped`).
+        if let Some(how) = self.wrapped.get(&(expr as *const Expr as usize)) {
+            let (before, after) = Self::around(Some(*how));
+            out.push(before);
+            self.expr_as_written(out, expr, depth, flow)?;
+            out.push(after);
             return Ok(());
         }
         self.expr_as_written(out, expr, depth, flow)
@@ -8425,15 +8414,19 @@ impl<'p> Emitter<'p> {
             // is `!` there too, so an arm that returns beside an arm that hands
             // back a value is a `match` of that value's type by the backend's
             // own rule and not by a coercion this had to write.
+            // **What it hands back is wrapped by its own address**
+            // (`check::Checked::wrapped`, read in [`Emitter::expr`]): the
+            // statement it stands in is a `let`'s or a call's, and that
+            // statement's wrap is theirs.
             Expr::Return(value) => match (&**value, flow.throws) {
                 (Some(value), true) => {
                     out.push("return Ok(");
-                    self.nullable(out, value, &Span::nowhere(), depth, flow)?;
+                    self.expr(out, value, depth, flow)?;
                     out.push(")");
                 }
                 (Some(value), false) => {
                     out.push("return ");
-                    self.nullable(out, value, &Span::nowhere(), depth, flow)?;
+                    self.expr(out, value, depth, flow)?;
                 }
                 (None, true) => out.push("return Ok(())"),
                 (None, false) => out.push("return"),

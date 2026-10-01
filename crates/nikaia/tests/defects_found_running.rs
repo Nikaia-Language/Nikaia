@@ -704,3 +704,48 @@ fn a_list_of_optional_elements_and_a_fallback_on_each() {
         "-1\n-1\n7\n2\n",
     );
 }
+
+/// **A plain value in a nullable slot is wrapped where it stands** (0.0.325):
+/// `let h = half(k) ?? return 0` in an `i64?` function hands back `Some(0)` -
+/// the wrap was keyed by the statement, so it landed on the `let`'s value and
+/// the `return` handed back a bare `0` - and a part handed to a variant that
+/// holds a `T?` is `Some` too, where it was not wrapped at all (both found
+/// moving `sync::reached` into Nikaia).
+#[test]
+fn a_return_in_a_fallback_and_a_variant_part_are_wrapped() {
+    runs(
+        "wrapped-where-it-stands",
+        "enum C {\n\
+         \x20   Op(String?),\n\
+         \x20   Two(i64, i64?),\n\
+         }\n\
+         \n\
+         fn show(c: ref C) -> String {\n\
+         \x20   return match c {\n\
+         \x20       C::Op(text) => text?.clone() ?? \"nothing\",\n\
+         \x20       C::Two(a, b) => f\"{a} {b ?? -1}\",\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn half(k: i64) -> i64? {\n\
+         \x20   if k % 2 == 0 { return k / 2 }\n\
+         \x20   return null\n\
+         }\n\
+         \n\
+         fn quarter(k: i64) -> i64? {\n\
+         \x20   let h = half(k) ?? return 0\n\
+         \x20   return half(h)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let s: String = \"named\"\n\
+         \x20   println(show(C::Op(s)))\n\
+         \x20   println(show(C::Op(null)))\n\
+         \x20   println(show(C::Two(1, 2)))\n\
+         \x20   println(show(C::Two(1, null)))\n\
+         \x20   println(quarter(8) ?? -1)\n\
+         \x20   println(quarter(3) ?? -1)\n\
+         }\n",
+        "named\nnothing\n1 2\n1 -1\n2\n0\n",
+    );
+}

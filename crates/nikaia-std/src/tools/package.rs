@@ -374,6 +374,72 @@ pub enum ConfigZone {
 }
 
 
+// --- calls.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Callee {
+    Own(String),
+    Library { key: String, never_pauses: bool },
+    Method,
+    Opaque(Option<String>),
+}
+
+pub fn callee_of(names: &winnow_grammar::InternerContext, expr: &Expr, own: &Ledger, library: &Ledger, items: &Vec<Spanned<Item>>) -> Option<Callee> {
+    let name = match expr {
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); match called_name(names, func) { Some(__nikaia_value) => __nikaia_value, None => return Some(Callee::Opaque(None)) } },
+        Expr::MethodCall { .. } => return Some(Callee::Method),
+        Expr::SafeMethod { .. } => return Some(Callee::Method),
+        Expr::Spawn { .. } => return Some(Callee::Opaque(None)),
+        Expr::Dsl { .. } => return Some(Callee::Opaque(None)),
+        _ => return None,
+    };
+    if own.functions.contains_key(&name) { return Some(Callee::Own(name)); }
+    let constructed = format!("{}::new", name);
+    if own.functions.contains_key(&constructed) { return Some(Callee::Own(constructed)); }
+    for written in [name.to_owned(), constructed] {
+        let contract = match *nikaia_std::index::get(&library.functions, &written) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        return Some(Callee::Library { key: written.to_owned(), never_pauses: contract.sync_claim.is_sync() });
+    }
+    if names_a_variant(names, &name, own, library, items) { return None; }
+    Some(Callee::Opaque(Some(name)))
+}
+
+fn called_name(names: &winnow_grammar::InternerContext, func: &Expr) -> Option<String> {
+    match func {
+        Expr::Variable(symbol) => { let symbol = *symbol; Some(names.resolve(symbol).to_owned()) },
+        Expr::Path(segments) => Some(written_path(names, segments)),
+        _ => None,
+    }
+}
+
+fn written_path(names: &winnow_grammar::InternerContext, segments: &Vec<winnow_grammar::Symbol>) -> String {
+    let mut written: String = String::from("");
+    for k in 0..segments.len() as i64 {
+        if k > 0 { written = format!("{}::", written); }
+        let segment = names.resolve(*nikaia_std::index::get(&segments, nikaia_std::index::at(k)));
+        written = format!("{}{}", written, segment);
+    }
+    written
+}
+
+fn names_a_variant(names: &winnow_grammar::InternerContext, name: &str, own: &Ledger, library: &Ledger, items: &Vec<Spanned<Item>>) -> bool {
+    let mut parts: Vec<String> = vec![];
+    for part in name.split("::") { parts.push(part.to_owned()); }
+    if (parts.len() as i64) < 2 || own.functions.contains_key(name) { return false; }
+    let declared = struct_type(name);
+    if library.types.contains_key(&declared) || own.types.contains_key(&declared) { return true; }
+    for item in items.iter() {
+        let symbol = match &item.node {
+            Item::Enum { name, .. } => { let name = *name; name.to_owned() },
+            Item::Struct { name, .. } => { let name = *name; name.to_owned() },
+            _ => continue,
+        };
+        if names.resolve(symbol) == declared { return true; }
+    }
+    false
+}
+
+
 // --- crossing.nika ---
 
 const NOT_SENDABLE: [&str; 5] = ["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"];
@@ -5204,6 +5270,10 @@ fn renamed_result(result: Option<&Ty>, renames: &collections::BTreeMap<String, S
 pub mod ast {
     #[allow(unused_imports)]
     pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
+}
+pub mod calls {
+    #[allow(unused_imports)]
+    pub use super::{Callee, callee_of};
 }
 pub mod crossing {
     #[allow(unused_imports)]

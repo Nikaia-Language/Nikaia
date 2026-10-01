@@ -48,6 +48,7 @@ COMPILER_NIKA = {
     "throws.nika": "contracts::throws: the error sets' fixpoint, what a `throw` names (0.0.321)",
     "locks.nika": "contracts::locks: which functions can open a lock, the fixpoint (0.0.322)",
     "touch.nika": "contracts::touch: when two resources force an order, the touches fixpoint (0.0.324)",
+    "calls.nika": "contracts::sync::reached: what a call resolves to, for every analysis (0.0.325)",
 }
 
 
