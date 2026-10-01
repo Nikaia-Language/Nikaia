@@ -1172,6 +1172,8 @@ struct Emitter<'p> {
     /// The lent `for` bindings read by value at the body's head
     /// ([`check::Checked::copied_loop_bindings`]).
     copied_loop_bindings: std::collections::BTreeSet<(usize, String)>,
+    /// ([`check::Checked::copied_view_bindings`]).
+    copied_view_bindings: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::unsigned_literals`].
     unsigned_literals: std::collections::BTreeMap<(usize, i128), String>,
     /// [`check::Checked::number_lets`].
@@ -2388,6 +2390,7 @@ impl<'p> Emitter<'p> {
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
             copied_loop_bindings: propagation.copied_loop_bindings,
+            copied_view_bindings: propagation.copied_view_bindings,
             unsigned_literals: propagation.unsigned_literals,
             number_lets: propagation.number_lets,
             changed_elements: propagation.changed_elements,
@@ -6530,6 +6533,18 @@ impl<'p> Emitter<'p> {
                         let name = self.name(*b);
                         format!("let {name} = nikaia_std::num::value({name});")
                     })
+                    .chain(
+                        bindings
+                            .iter()
+                            .filter(|b| {
+                                self.copied_view_bindings
+                                    .contains(&(span.at(), self.text(**b).to_string()))
+                            })
+                            .map(|b| {
+                                let name = self.name(*b);
+                                format!("let {name} = *{name};")
+                            }),
+                    )
                     .collect::<String>();
                 let opening = match (unwrap, copied.is_empty()) {
                     (unwrap, true) => unwrap,
@@ -11892,26 +11907,23 @@ impl<'p> Emitter<'p> {
             })?;
         let rule_name = self.text(rule.name);
 
-        let pad = "    ".repeat(depth + 1);
-        let close = "    ".repeat(depth);
-
-        // The input is bound before it is parsed, because it is needed twice:
-        // once to parse and once to say *where* a failure was. A `ParseError`
-        // knows the offset and not the text, so only `render` can turn "at
-        // 1042" into "at line 37, column 9" - and a program that reports a
-        // rejected file without saying which line is not much better than one
-        // that panics. `&*` because the parser takes the text: a mapping, an
-        // owned string and a view all reach it the same way, and none of them
-        // has to be named here.
+        // The input goes to `std` once, which needs it twice: once to parse
+        // and once to say *where* a failure was. A `ParseError` knows the
+        // offset and not the text, so only `render` can turn "at 1042" into
+        // "at line 37, column 9" - and a program that reports a rejected file
+        // without saying which line is not much better than one that panics.
+        // `&*` because the parser takes the text: a mapping, an owned string
+        // and a view all reach it the same way, and none of them has to be
+        // named here.
+        // Both are calls of `std`'s (`grammar::parse`, `grammar::parse_pieces`)
+        // and not blocks, so the call is an expression wherever it stands - a
+        // block of statements in a `match`'s scrutinee is refused by `clippy`.
         if par_fold_of(rule).is_some() {
-            out.push(&format!("{{\n{pad}let _source = &*"));
+            out.push("nikaia_std::grammar::parse_pieces(&*");
             self.expr(out, input, depth, flow)?;
             out.push(&format!(
-                ";\n\
-                 {pad}{name}::parse_{rule_name}_pieces(_source, \
-                 &ParseContext::<()>::default(), {})\n\
-                 {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
-                 {close}}}{question}",
+                ", |source| {name}::parse_{rule_name}_pieces(source, \
+                 &ParseContext::<()>::default(), {})){question}",
                 self.build.parallelism()
             ));
             return Ok(());
@@ -11919,21 +11931,9 @@ impl<'p> Emitter<'p> {
 
         // A sequential entry rule: no pieces to cut, so the parser is driven
         // over the whole input once.
-        out.push(&format!(
-            "{{\n{pad}use winnow::Parser;\n{pad}let _source = &*"
-        ));
+        out.push("nikaia_std::grammar::parse(&*");
         self.expr(out, input, depth, flow)?;
-        out.push(&format!(
-            ";\n\
-             {pad}let mut stream = winnow_grammar::ParseInput::<()> {{\n\
-             {pad}    state: winnow_grammar::ParseContext::<()>::default(),\n\
-             {pad}    input: winnow::stream::LocatingSlice::new(_source),\n\
-             {pad}}};\n\
-             {pad}{name}::parse_{rule_name}()\n\
-             {pad}    .parse_next(&mut stream)\n\
-             {pad}    .map_err(|error| ParseError::of(error.render(_source)))\n\
-             {close}}}{question}"
-        ));
+        out.push(&format!(", {name}::parse_{rule_name}()){question}"));
         Ok(())
     }
 }

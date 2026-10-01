@@ -24,12 +24,6 @@ fn emit(source: &str, build: Build) -> String {
         .rust
 }
 
-/// Compare emitted code by its tokens rather than its indentation, for the one
-/// place where the same code is written at two different depths.
-fn squashed(code: &str) -> String {
-    code.chars().filter(|c| !c.is_whitespace()).collect()
-}
-
 // --- What the emitter produced, compiled ---
 
 mod measurements {
@@ -93,18 +87,9 @@ mod digits {
     // keeps it and clippy is told why.
     #[allow(clippy::borrow_deref_ref)]
     pub fn sequential_driver(data: &str) -> Result<Pair, String> {
-        use winnow::Parser;
-        let _source = &*data;
-        let mut stream = winnow_grammar::ParseInput::<()> {
-            state: winnow_grammar::ParseContext::<()>::default(),
-            input: winnow::stream::LocatingSlice::new(_source),
-        };
-        // The emitted form is this block followed by `?`, in a `throws`
-        // function; here it is the return value, which is the same code with
-        // one fewer wrapper - clippy objects to `Ok(…?)` and is right.
-        Digits::parse_pair()
-            .parse_next(&mut stream)
-            .map_err(|error| error.render(_source))
+        // The emitted form is this call followed by `?`, in a `throws`
+        // function; here it is the return value, with the error as its text.
+        nikaia_std::grammar::parse(&*data, Digits::parse_pair()).map_err(|error| error.to_string())
     }
 }
 
@@ -213,13 +198,13 @@ fn user_parallelism_chooses_the_parallelism_and_nothing_else() {
 
     assert!(
         parallel.contains(
-            "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Auto)"
+            "nikaia_std::grammar::parse_pieces(&*data, |source| Measurements::parse_file_pieces(source, &ParseContext::<()>::default(), Parallelism::Auto))"
         ),
         "{parallel}"
     );
     assert!(
         sequential.contains(
-            "Measurements::parse_file_pieces(_source, &ParseContext::<()>::default(), Parallelism::Off)"
+            "nikaia_std::grammar::parse_pieces(&*data, |source| Measurements::parse_file_pieces(source, &ParseContext::<()>::default(), Parallelism::Off))"
         ),
         "{sequential}"
     );
@@ -256,19 +241,7 @@ fn a_sequential_entry_rule_gets_no_piece_driver() {
 
     assert!(!emitted.contains("_pieces("), "{emitted}");
     assert!(
-        squashed(&emitted).contains(&squashed(
-            r#"{
-                use winnow::Parser;
-                let _source = &*data;
-                let mut stream = winnow_grammar::ParseInput::<()> {
-                    state: winnow_grammar::ParseContext::<()>::default(),
-                    input: winnow::stream::LocatingSlice::new(_source),
-                };
-                Digits::parse_pair()
-                    .parse_next(&mut stream)
-                    .map_err(|error| ParseError::of(error.render(_source)))
-            }?"#
-        )),
+        emitted.contains("nikaia_std::grammar::parse(&*data, Digits::parse_pair())?"),
         "the emitted driver and the one `digits::sequential_driver` compiles \
          have drifted:\n{emitted}"
     );
@@ -311,8 +284,15 @@ fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
 fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
     let emitted = emit(WITH_DSL, Build::default());
     assert!(
-        emitted.contains(".map_err(|error| ParseError::of(error.render(_source)))"),
+        emitted.contains("nikaia_std::grammar::parse_pieces(&*data, |source| "),
         "{emitted}"
+    );
+    // `std` renders it against the text it was handed (0.0.297): the line and
+    // the column, not an offset.
+    let refused = digits::sequential_driver("12;30").expect_err("a `;` is not a `,`");
+    assert!(
+        refused.contains("1:3") || refused.contains("line 1"),
+        "{refused}"
     );
 }
 

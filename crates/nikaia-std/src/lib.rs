@@ -129,8 +129,11 @@ pub mod text {
 /// (`Ty::Named { view, .. } => view` is `let view = *view; view`), and a
 /// `match` with one pattern beside an empty `else`, which is how the language
 /// writes what Rust calls `if let` (`ty.nika`'s walks, ADR-257 step (d)). Each
-/// is the same machine code as the shorter spelling.
+/// is the same machine code as the shorter spelling. So is `&*value` where the
+/// grammar's input is already a view (`grammar::parse`, 0.0.297): the
+/// lowering writes one form for owned text, a mapping and a view alike.
 #[allow(
+    clippy::borrow_deref_ref,
     clippy::explicit_counter_loop,
     clippy::clone_on_copy,
     clippy::manual_map,

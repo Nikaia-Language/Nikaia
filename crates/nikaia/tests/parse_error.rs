@@ -95,10 +95,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
         rust.contains("enum __NikaiaThrows_ParseError__io_IoError"),
         "{rust}"
     );
-    assert!(
-        rust.contains("ParseError::of(error.render(_source))"),
-        "{rust}"
-    );
+    assert!(rust.contains("nikaia_std::grammar::parse(&*"), "{rust}");
 }
 
 /// **And it compiles**, which is the assertion this exists for.
