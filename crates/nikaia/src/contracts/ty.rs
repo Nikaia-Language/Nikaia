@@ -66,10 +66,15 @@ pub const VARIANT: &str = "$Variant";
 /// last segment is the type, so every rule here that names a type by hand — the
 /// copy list, the crossing analysis's containers, the hash a map gets — asks
 /// this rather than the written name.
+///
+/// Asked for every key of every ledger in some walks, so the last `:` is found
+/// by its byte rather than by a searcher for `"::"` built per call; a `:` that
+/// is not half of a `::` - which no key writes - takes the general search.
 pub fn base(name: &str) -> &str {
-    match name.rsplit_once("::") {
-        Some((_, last)) => last,
+    match name.rfind(':') {
         None => name,
+        Some(at) if at > 0 && name.as_bytes()[at - 1] == b':' => &name[at + 1..],
+        Some(_) => name.rsplit_once("::").map_or(name, |(_, last)| last),
     }
 }
 

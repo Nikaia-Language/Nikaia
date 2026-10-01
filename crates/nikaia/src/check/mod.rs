@@ -1206,16 +1206,23 @@ fn walked<'a>(
                 _ => None,
             })
             .collect(),
+        // The distinct prefixes first and the tests after, because there are a
+        // few dozen modules and some thousand keys: the test per key built a
+        // `format!` and an owned prefix for every one of them.
         std_modules: library
             .functions
             .keys()
             .chain(library.types.keys())
-            .filter_map(|key| key.split_once("::").map(|(prefix, _)| prefix.to_string()))
+            .filter_map(|key| key.split_once("::").map(|(prefix, _)| prefix))
+            .collect::<BTreeSet<&str>>()
+            .into_iter()
             .filter(|prefix| {
-                !library.types.contains_key(prefix)
+                !library.types.contains_key(*prefix)
                     && !library.functions.contains_key(&format!("{prefix}::new"))
             })
+            .map(str::to_string)
             .collect(),
+        fields_by_base: std::cell::OnceCell::new(),
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
@@ -3008,6 +3015,13 @@ struct Checker<'a> {
     /// needs no edit in this file. `fs::Mapped` is a **type in** a module, so
     /// `fs` is one of these and `HashMap` is not.
     std_modules: BTreeSet<String>,
+    /// **The fields of every type in `own` and `library`, by the type's own
+    /// name** ([`ty::base`]): what a cleanup or a teardown a type holds is
+    /// asked through. Built the first time it is asked, once per walk, rather
+    /// than by a scan of both ledgers per question - which was most of what
+    /// checking a small program cost. `own`'s before `library`'s and each in
+    /// key order, which is the order the scan visited them in.
+    fields_by_base: std::cell::OnceCell<std::collections::HashMap<String, Vec<Ty>>>,
     /// The bindings `NK1138` and `NK1139` have already been said about, by the
     /// byte each declaration starts at.
     ///
@@ -6653,6 +6667,25 @@ impl<'a> Checker<'a> {
         self.cleanup_within(ty, &mut BTreeSet::new())
     }
 
+    /// The fields of every type called `base` in either ledger
+    /// ([`Checker::fields_by_base`]).
+    fn fields_of_base(&self, base: &str) -> &[Ty] {
+        let index = self.fields_by_base.get_or_init(|| {
+            let mut index: std::collections::HashMap<String, Vec<Ty>> = Default::default();
+            for (key, contract) in [self.own, self.library]
+                .into_iter()
+                .flat_map(|ledger| ledger.types.iter())
+            {
+                index
+                    .entry(crate::contracts::ty::base(key).to_string())
+                    .or_default()
+                    .extend(contract.fields.iter().map(|f| f.ty.clone()));
+            }
+            index
+        });
+        index.get(base).map_or(&[], Vec::as_slice)
+    }
+
     fn cleanup_within(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> Option<(String, bool)> {
         let held: Vec<Ty> = match ty.unseen() {
             Ty::Named {
@@ -6681,13 +6714,7 @@ impl<'a> Checker<'a> {
                     });
                     return Some((owner, fails));
                 }
-                let fields = [self.own, self.library].into_iter().flat_map(|ledger| {
-                    ledger
-                        .types
-                        .iter()
-                        .filter(|(key, _)| crate::contracts::ty::base(key) == base)
-                        .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
-                });
+                let fields = self.fields_of_base(&base).iter().cloned();
                 args.into_iter().chain(fields).collect()
             }
             Ty::Nullable(inner) => vec![*inner],
@@ -13943,17 +13970,7 @@ impl<'a> Checker<'a> {
                 return Some(format!("`impl {teardown} for {base}`"));
             }
         }
-        let fields: Vec<Ty> = [self.own, self.library]
-            .into_iter()
-            .flat_map(|ledger| {
-                ledger
-                    .types
-                    .iter()
-                    .filter(|(key, _)| crate::contracts::ty::base(key) == base)
-                    .flat_map(|(_, contract)| contract.fields.iter().map(|f| f.ty.clone()))
-            })
-            .collect();
-        fields.iter().find_map(|field| {
+        self.fields_of_base(&base).iter().find_map(|field| {
             self.tears_down(field, seen)
                 .map(|how| format!("through its `{}` field, {how}", field.text()))
         })
