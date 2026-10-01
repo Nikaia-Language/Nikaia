@@ -5,8 +5,6 @@
 //!
 //! * [`Keep`] — an append-only home for buffers; every buffer in it stays at
 //!   its address until the `Keep` is dropped.
-//! * [`forever`] — a `Keep` behind an `Arc`, borrowed for as long as a clone of
-//!   the `Arc` travels beside what is derived from it.
 //! * [`Held`] — one view of text carrying its own handle on the buffer, for a
 //!   container that drops entries while it keeps reading.
 //! * [`Holding`] — a whole struct of views carrying a handle on each buffer it
@@ -38,8 +36,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 ///
 /// Safe in itself: it stores a value and hands it back by reference. It is
 /// what a value holding stretched views has to be stored in, beside the handle
-/// that keeps their buffer - as [`Held`] and [`Holding`] do, and as code that
-/// uses [`forever`] must.
+/// that keeps their buffer - as [`Held`] and [`Holding`] do.
 pub struct Dangling<T>(std::mem::MaybeUninit<T>);
 
 impl<T> Dangling<T> {
@@ -196,22 +193,6 @@ impl Default for Keep {
     fn default() -> Keep {
         Keep::new()
     }
-}
-
-/// The `Keep` behind a handle, borrowed for as long as the program runs.
-///
-/// # Safety
-///
-/// Everything derived from the reference must be dropped before the last
-/// clone of `keep` is, which generated code guarantees in exactly two shapes:
-/// the handle is a local declared first in the function, so every other local
-/// is dropped before it; or what is derived is packed into a value that holds a
-/// clone of the handle beside it, declared *after* it so it is dropped first
-/// .
-pub unsafe fn forever(keep: &Arc<Keep>) -> &'static Keep {
-    // SAFETY: the `Keep` lives on the heap behind the `Arc`, so its address is
-    // stable; the caller keeps a clone alive for as long as the reference is.
-    unsafe { &*Arc::as_ptr(keep) }
 }
 
 /// `text`, where its bytes lie inside `whole`: the same bytes, borrowed from
@@ -451,6 +432,126 @@ impl<'a, T: Rebase<'a>> Rebase<'a> for Vec<T> {
     }
 }
 
+/// **A value with no view in it is carried in as it is**: a number, a
+/// `bool`, a `char`, owned text. What a task takes with it is often a map
+/// from views to counts, and the counts have nowhere to point.
+macro_rules! rebased_as_they_are {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl<'a> Rebase<'a> for $ty {
+                type At = $ty;
+                fn rebase<const N: usize>(self, _keeps: &Keeps<'a, N>) -> $ty {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+rebased_as_they_are!(
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    f32,
+    f64,
+    bool,
+    char,
+    String,
+    ()
+);
+
+impl<'a, T: Rebase<'a>> Rebase<'a> for Box<T> {
+    type At = Box<T::At>;
+    fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Box<T::At> {
+        Box::new((*self).rebase(keeps))
+    }
+}
+
+impl<'a, K, V, S> Rebase<'a> for std::collections::HashMap<K, V, S>
+where
+    K: Rebase<'a>,
+    K::At: Eq + std::hash::Hash,
+    V: Rebase<'a>,
+    S: std::hash::BuildHasher + Default,
+{
+    type At = std::collections::HashMap<K::At, V::At, S>;
+    fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Self::At {
+        self.into_iter()
+            .map(|(key, value)| (key.rebase(keeps), value.rebase(keeps)))
+            .collect()
+    }
+}
+
+impl<'a, K, V> Rebase<'a> for std::collections::BTreeMap<K, V>
+where
+    K: Rebase<'a>,
+    K::At: Ord,
+    V: Rebase<'a>,
+{
+    type At = std::collections::BTreeMap<K::At, V::At>;
+    fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Self::At {
+        self.into_iter()
+            .map(|(key, value)| (key.rebase(keeps), value.rebase(keeps)))
+            .collect()
+    }
+}
+
+impl<'a, T, S> Rebase<'a> for std::collections::HashSet<T, S>
+where
+    T: Rebase<'a>,
+    T::At: Eq + std::hash::Hash,
+    S: std::hash::BuildHasher + Default,
+{
+    type At = std::collections::HashSet<T::At, S>;
+    fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Self::At {
+        self.into_iter().map(|value| value.rebase(keeps)).collect()
+    }
+}
+
+impl<'a, T> Rebase<'a> for std::collections::BTreeSet<T>
+where
+    T: Rebase<'a>,
+    T::At: Ord,
+{
+    type At = std::collections::BTreeSet<T::At>;
+    fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Self::At {
+        self.into_iter().map(|value| value.rebase(keeps)).collect()
+    }
+}
+
+macro_rules! rebased_tuples {
+    ($(($($name:ident),+)),* $(,)?) => {
+        $(
+            #[allow(non_snake_case)]
+            impl<'a, $($name: Rebase<'a>),+> Rebase<'a> for ($($name,)+) {
+                type At = ($($name::At,)+);
+                fn rebase<const N: usize>(self, keeps: &Keeps<'a, N>) -> Self::At {
+                    let ($($name,)+) = self;
+                    ($($name.rebase(keeps),)+)
+                }
+            }
+        )*
+    };
+}
+
+rebased_tuples!(
+    (A),
+    (A, B),
+    (A, B, C),
+    (A, B, C, D),
+    (A, B, C, D, E),
+    (A, B, C, D, E, F)
+);
+
 /// **A value put into a container that drops entries**, held by the keeps
 /// of the buffers it points into: a view of text becomes a [`Held`], a
 /// struct of views a [`Holding`].
@@ -659,8 +760,7 @@ mod tests {
     }
 
     /// The case `Dangling` exists for: the last owner of a buffer handed by
-    /// value into a function that drops it there - for `Held`, `Holding`, and
-    /// a value derived through `forever` packed beside its handle.
+    /// value into a function that drops it there - for `Held` and `Holding`.
     #[test]
     fn the_last_owner_is_dropped_inside_a_call() {
         fn consume_held(held: Held) -> usize {
@@ -687,24 +787,38 @@ mod tests {
         .hold([Arc::clone(&keep)]);
         drop(keep);
         assert_eq!(consume_holding(holding), 3);
-        struct Packed {
-            value: Dangling<&'static str>,
-            _keep: Arc<Keep>,
-        }
-        fn consume_packed(packed: Packed) -> usize {
-            let n = packed.value.get().len();
-            drop(packed);
-            n
+    }
+
+    /// **A map from views to counts is carried in whole**: each key found
+    /// again in the keep by address, each count as it is - what a task takes
+    /// with it most often (Nikaia's #84).
+    #[test]
+    fn a_map_of_views_is_rebased_without_a_copy() {
+        enum CountViews {}
+        impl Views for CountViews {
+            type Of<'a> = std::collections::HashMap<&'a str, (i64, Vec<&'a str>)>;
+            fn shorten<'long: 's, 's>(
+                x: &'s std::collections::HashMap<&'long str, (i64, Vec<&'long str>)>,
+            ) -> &'s std::collections::HashMap<&'s str, (i64, Vec<&'s str>)> {
+                x
+            }
         }
         let keep = Arc::new(Keep::new());
-        // SAFETY: `packed` holds a clone of `keep` beside what is derived.
-        let text: &'static String = unsafe { forever(&keep) }.put("a=b".to_string());
-        let packed = Packed {
-            value: Dangling::new(&text[2..]),
-            _keep: Arc::clone(&keep),
-        };
+        let text = keep.put_viewed("a b a".to_string());
+        let mut counts: std::collections::HashMap<&str, (i64, Vec<&str>)> =
+            std::collections::HashMap::new();
+        for word in text.split(' ') {
+            let entry = counts.entry(word).or_insert((0, Vec::new()));
+            entry.0 += 1;
+            entry.1.push(word);
+        }
+        let held: Holding<CountViews> =
+            Holding::new([Arc::clone(&keep)], move |keeps| counts.rebase(&keeps));
+        // Found, not copied: the keep holds the one buffer it was given.
+        assert_eq!(keep.len(), 1);
         drop(keep);
-        assert_eq!(consume_packed(packed), 1);
+        assert_eq!(held.get()["a"].0, 2);
+        assert_eq!(held.get()["b"].1, ["b"]);
     }
 
     #[test]
@@ -842,25 +956,6 @@ mod tests {
         }
         assert_eq!(seen.len(), 1);
         assert!(seen.contains("Hamburg"));
-    }
-
-    #[test]
-    fn a_handle_crosses_a_thread() {
-        let keep = Arc::new(Keep::new());
-        let text: &'static String = unsafe { forever(&keep) }.put("a=b".to_string());
-        struct Packed {
-            value: &'static str,
-            _keep: Arc<Keep>,
-        }
-        let packed = Packed {
-            value: &text[2..],
-            _keep: Arc::clone(&keep),
-        };
-        drop(keep);
-        let got = std::thread::spawn(move || packed.value.to_string())
-            .join()
-            .unwrap();
-        assert_eq!(got, "b");
     }
 }
 

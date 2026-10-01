@@ -5,12 +5,11 @@ Views that outlive the scope that read their buffer, without copying the text.
 | type | what it is |
 | :--- | :--- |
 | `Keep` | an append-only home for buffers; a buffer stays at its address until the `Keep` is dropped |
-| `forever` | a `Keep` behind an `Arc`, borrowed as long as the program runs — for a handle that travels beside what is derived from it |
 | `Keep::put_viewed` / `Keep::view` | a buffer views of text are cut from (`Viewed`), and a view found again in it **by address** — or, where it points into no buffer of the keep, a copy the keep owns |
 | `Held` | one view of text carrying its own handle on its buffer; compared, hashed and printed as the text; a **safe** constructor |
 | `Holding<V, N>` / `Views` | a struct of views beside the `N` keeps it points into, with a **safe** constructor |
 | `Keeps` / `Rebase` / `Hold` | how a value made *outside* the constructor is carried in: each view found again in its keep |
-| `Dangling<T>` | storage for a value whose views are stretched, beside the handle that keeps their buffer — what anything derived through `forever` must be kept in |
+| `Dangling<T>` | storage for a value whose views are stretched, beside the handle that keeps their buffer — what `Held` and `Holding` keep it in |
 
 ```rust
 use std::sync::Arc;
@@ -45,7 +44,6 @@ anything that needs the same.
 | `Keep::put`, `Keep::put_viewed` | `&*at` from `Arc::as_ptr` | the `Arc` is pushed and never removed until the `Keep` is dropped, so the buffer stays alive and in place; the reference is tied to the borrow of the `Keep` |
 | `Keep::find` | `&*Arc::as_ptr` of a stored buffer, beyond the lock | the same argument as `put`: the `Arc` stays until the `Keep` is dropped, so the buffer may be borrowed for as long as the `Keep` is rather than the lock |
 | `within` (inside `find`) | `str::from_utf8_unchecked` | the bytes are found **by address**: they are the very bytes the `&str` asked about is made of, so they are UTF-8 |
-| `forever` (an `unsafe fn`) | `&*Arc::as_ptr(keep)` as `'static` | the caller's contract: everything derived is dropped before the last clone of the `Arc` |
 | `Held::new` | `&str` → `&'static str` | the view came from `Keep::find` or `Keep::view`, which hand back nothing but a view of that keep's own buffers, and the clone of the keep stored beside it keeps them alive |
 | `Holding::new`, `Holding::clone` | `transmute_copy` of `V::Of<'_>` to `V::Of<'static>` | the closure must work for every lifetime and is handed only the keeps, so the struct can point only into them or at `'static` data; it is private, dropped before the keeps, and handed out only through `get`, which shortens it back |
 
@@ -59,15 +57,17 @@ anything that needs the same.
   view made outside comes in only through `Keeps::view`, which checks where it
   points.
 
-**What is no longer here: `hold`.** An `unsafe fn` whose caller promised the
-view pointed into the keep. `Held::new` asks the keep instead, so the promise is
-checked rather than trusted, and generated code writes no `unsafe` for a held
-view.
+**What is no longer here: `hold` and `forever`.** Two `unsafe fn`s whose
+caller promised what a view pointed into: `hold`, that it pointed into the
+keep, and `forever`, that everything derived from a `Keep` stretched to
+`'static` was dropped before the last clone of its `Arc`. `Held::new` and
+`Holding::new` ask the keep instead, so the promise is checked rather than
+trusted, and generated code writes no `unsafe` for a held view or for a value a
+task takes with it (Nikaia's ADR-218 D4, #84).
 
 **Why `Dangling`.** A struct holding a `&'static str` promises that the text is
 valid wherever the struct goes; passed by value into a function, the reference
-is taken to be valid for the whole call. `Held`, `Holding` and a value packed
-beside a `forever` handle drop their value *before* the buffer, possibly inside
+is taken to be valid for the whole call. `Held` and `Holding` drop their value *before* the buffer, possibly inside
 such a call, so the promise must not be made: the value lives in a
 `MaybeUninit`, which makes none. Miri found both this and the `Box` in
 `Keep::put` (moving a `Box` invalidates references into it; an `Arc` does not).

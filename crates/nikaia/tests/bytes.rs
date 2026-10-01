@@ -134,7 +134,7 @@ fn a_view_of_a_local_buffer_is_tethered() {
     assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
     assert!(tethers_its_result(source, "header"));
     let rust = lowered(source);
-    assert!(rust.contains("__keep.put("), "{rust}");
+    assert!(rust.contains("__keep.put_viewed("), "{rust}");
 }
 
 /// **A `Bytes` is the same answer**, and it is the buffer the mechanism is
