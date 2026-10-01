@@ -210,20 +210,6 @@ pub fn split_top_level(text: ref String) -> Vec[String] {
     return out
 }
 
-// Where `word` first stands at or after `from`, or -1.
-fn find_text(c: ref Array[char], from: i64, word: ref String) -> i64 {
-    let w: Vec[char] = word.chars().collect()
-    if w.is_empty() || c.len() < w.len() {
-        return -1
-    }
-    for at in from..<c.len() - w.len() + 1 {
-        if stands_at(c, at, w) {
-            return at
-        }
-    }
-    return -1
-}
-
 // Where `word` last stands, or -1.
 fn find_last_text(c: ref Array[char], word: ref String) -> i64 {
     let w: Vec[char] = word.chars().collect()
@@ -249,11 +235,3 @@ fn stands_at(c: ref Array[char], at: i64, w: ref Array[char]) -> bool {
     return true
 }
 
-// The characters from `from` up to `to`.
-fn slice(c: ref Array[char], from: i64, to: i64) -> String {
-    let mut out: String = ""
-    for k in from..<to {
-        out.push(c[k])
-    }
-    return out
-}

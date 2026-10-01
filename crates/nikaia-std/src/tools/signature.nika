@@ -138,7 +138,7 @@ pub fn sends(bounds: ref String) -> Vec[String] {
     let mut out: Vec[String] = []
     for one in split_top_level(bounds) {
         let c: Vec[char] = one.chars().collect()
-        let colon = find(c, ':')
+        let colon = find(c, 0, ':')
         if colon < 0 {
             continue
         }
@@ -170,98 +170,10 @@ fn unreferenced(ty: ref String) -> String {
     return trimmed.clone()
 }
 
-// The scalar names that travel unchanged, plus `str`.
-fn is_plain(name: ref String) -> bool {
-    for plain in ["bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"] {
-        if name == plain {
-            return true
-        }
-    }
-    return false
-}
-
-// Whether a bound list names `Send` as a word.
-fn bounds_send(text: ref String) -> bool {
-    let c: Vec[char] = text.chars().collect()
-    let mut start = 0
-    for at in 0..<c.len() + 1 {
-        let ends = at == c.len() || !(c[at].is_alphanumeric() || c[at] == '_')
-        if ends {
-            if slice(c, start, at) == "Send" {
-                return true
-            }
-            start = at + 1
-        }
-    }
-    return false
-}
-
-// `Name<inner>` unwrapped, where the text is exactly that.
-fn generic_of(written: ref String, name: ref String) -> String? {
-    let text = written.trim()
-    if !text.starts_with(name) {
-        return null
-    }
-    let c: Vec[char] = text.chars().collect()
-    let n: Vec[char] = name.chars().collect()
-    let after = slice(c, n.len(), c.len())
-    let rest = after.trim_start()
-    if !rest.starts_with("<") || !rest.ends_with(">") {
-        return null
-    }
-    let r: Vec[char] = rest.chars().collect()
-    return slice(r, 1, r.len() - 1)
-}
-
-// Split on commas that are not inside brackets.
-fn split_top_level(text: ref String) -> Vec[String] {
-    let c: Vec[char] = text.chars().collect()
-    let mut out: Vec[String] = []
-    let mut depth = 0
-    let mut start = 0
-    for at in 0..<c.len() {
-        let one = c[at]
-        if one == '<' || one == '(' || one == '[' {
-            depth += 1
-        } else if one == '>' || one == ')' || one == ']' {
-            depth -= 1
-        } else if one == ',' && depth == 0 {
-            let piece = slice(c, start, at)
-            out.push(piece.trim().clone())
-            start = at + 1
-        }
-    }
-    let last = slice(c, start, c.len())
-    let rest = last.trim()
-    if !rest.is_empty() {
-        out.push(rest.clone())
-    }
-    return out
-}
-
-// Where `target` first stands, or -1.
-fn find(c: ref Array[char], target: char) -> i64 {
-    for at in 0..<c.len() {
-        if c[at] == target {
-            return at
-        }
-    }
-    return -1
-}
-
-// The characters from `from` up to `to`.
-fn slice(c: ref Array[char], from: i64, to: i64) -> String {
-    let mut out: String = ""
-    for k in from..<to {
-        out.push(c[k])
-    }
-    return out
-}
-
 /// **One `fn` as it was written**: its parameters' names and written types,
 /// in order, its result's text (empty where there is none), whether it is an
 /// `async fn`, and its own type parameters.
-pub struct Written {
+pub struct WrittenFn {
     pub names: Vec[String],
     pub types: Vec[String],
     pub result: String,
@@ -274,7 +186,7 @@ pub struct Written {
 /// a `Result` throws, and `sync` as the source says it - a plain `fn` cannot
 /// pause and an `async fn` can, nothing between them. The crate types the
 /// signature names go into `mentioned`.
-pub fn contract(written: ref Written, crate_word: ref String, types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> FnContract {
+pub fn contract(written: ref WrittenFn, crate_word: ref String, types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> FnContract {
     let mut keeps: Vec[String] = []
     let mut params: Vec[(String, Ty)] = []
     for at in 0..<written.names.len() {

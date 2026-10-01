@@ -184,7 +184,7 @@ pub fn text(ty: ref Ty) -> String {
         Ty::Var { name, view } => if view { f"ref ${name}" } else { f"${name}" },
         // `T?` and never `Option[T]`: the program cannot write the second.
         Ty::Nullable(inner) => f"{text(inner)}?",
-        Ty::Named { name, args, view } => named(name, args, view),
+        Ty::Named { name, args, view } => named_text(name, args, view),
         Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => sequence(item, is_sync, pauses, can_throw, parallel, shape),
     }
 }
@@ -239,7 +239,7 @@ fn code(params: ref Array[Ty], result: ref Ty?, is_sync: bool, can_throw: bool) 
 
 /// `ref Vec[Row]`. **`str` is the compiler's noun and `String` is the
 /// language's** (ADR-184 D2): a view of text prints as `ref String`.
-fn named(name: ref String, args: ref Array[Ty], view: bool) -> String {
+fn named_text(name: ref String, args: ref Array[Ty], view: bool) -> String {
     let mut out: String = if view { "ref " } else { "" }
     if view && name == TEXT_VIEW {
         out.push_str(TEXT)
@@ -635,9 +635,9 @@ fn a_name(rest: ref String, view: bool) -> Ty {
         }
     }
     if open >= 0 {
-        let named = between(c, 0, open)
+        let named_text = between(c, 0, open)
         return Ty::Named {
-            name: named.trim().clone(),
+            name: named_text.trim().clone(),
             args: each(split_args(between(c, open + 1, c.len() - 1))),
             view: view,
         }
@@ -787,8 +787,8 @@ fn touched(kind: ref String, parameter: ref String?, write: bool) -> String {
     if parameter == null {
         return f"{kind} {access}"
     }
-    let named = parameter ?? ""
-    return f"{kind}({named}) {access}"
+    let named_text = parameter ?? ""
+    return f"{kind}({named_text}) {access}"
 }
 
 /// **How a view is held** (ADR-008 D2): borrowed for the call, or tethered to

@@ -53,34 +53,22 @@ const NIKA: &str = "nika";
 /// ([`Sysroot::tool_modules`]).
 const TOOLS: &str = "tools";
 
-/// The compiler's syntax tree, which a tool module reads beside itself.
-const TREE: &str = "ast.nika";
+/// **The toolchain's Nikaia is one package** (ADR-261): every `.nika` in
+/// `src/tools` shares one namespace, as the files of a package do (Part I 9.1,
+/// ADR-047 D1), and is lowered into this one file beside them. A name declared
+/// in any of them is written as it is in any other, and a helper exists once.
+const TOOLS_PACKAGE: &str = "package.rs";
 
-/// **The tool modules that read others beside themselves**, and which: the
-/// ledger's records (ADR-257 D1), the Rust grammar's items, the path work. A
-/// tool named here reads **exactly** its list, and one that is not reads the
-/// tree. A list and not every tool, because a package is one namespace
-/// (ADR-047 D1) and the modules' names collide: the records' `State` and
-/// `Shape` are words other tools use for their own things, and the grammar's
-/// `Item` is not the tree's. In Rust each tool is a module of its own, and
-/// `nikaia-std`'s `lib.rs` writes the matching `use super::…::*`.
-const BESIDE: &[(&str, &[&str])] = &[
-    ("crossing.nika", &["ty.nika"]),
-    ("ledger.nika", &["ty.nika"]),
-    ("signature.nika", &["ty.nika"]),
-    ("surface.nika", &["rust.nika", "paths.nika"]),
+/// **What `lib.rs` writes by hand beside the package, by the file it serves**:
+/// the names a Rust caller reaches through that file's path, which are Rust
+/// because Nikaia cannot say them - a `Span`'s `usize` doors, and the one call
+/// that turns a generated parser into a result. The per-file modules
+/// [`lower_tools`] writes list them with the file's own names.
+const HAND_WRITTEN: &[(&str, &[&str])] = &[
+    ("ast.nika", &["LONGEST_SOURCE", "offset"]),
+    ("http1.nika", &["written"]),
+    ("rust.nika", &["file"]),
 ];
-
-/// The modules a tool module of `std` reads beside itself, by its file name:
-/// what [`BESIDE`] lists for it, and nothing for a tool it does not name.
-/// For a reader outside `lower-std` that checks a tool as `lower-std` does.
-pub fn modules_beside(tool: &str) -> &'static [&'static str] {
-    BESIDE
-        .iter()
-        .find(|(name, _)| *name == tool)
-        .map(|(_, modules)| *modules)
-        .unwrap_or(&[])
-}
 
 /// What the Rust a tool module reads says it does (ADR-252 D4.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
@@ -147,6 +135,11 @@ impl Sysroot {
     /// `lib.rs` means something**: that `std` offers it, and that
     /// `std.contracts` has to say so. This one is not offered and must not be
     /// in that file.
+    /// The directory of the toolchain's Nikaia package.
+    pub fn tools_dir(&self) -> PathBuf {
+        self.std_dir().join("src").join(TOOLS)
+    }
+
     pub fn tool_modules(&self) -> Result<Vec<PathBuf>> {
         let dir = self.std_dir().join("src").join(TOOLS);
         match dir.is_dir() {
@@ -286,50 +279,9 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     // is compiled against anyway, and the checks that need a project — a
     // manifest's boundary, an allowlist, a package's other units — have nothing
     // to say about a file that is one unit and depends on nothing.
-    let mut library = crate::contracts::std_library();
-    // **A tool reads the Rust it is handed, described** (ADR-252 D4.3): the
-    // compiler's tree names are `winnow_grammar::Symbol`s, and a module that
-    // reads the tree has to know that one copies and compares. `std`'s own
-    // modules are checked against `std` alone, as a program's `std` is.
-    let described = if path.parent().and_then(|dir| dir.file_name())
-        == Some(std::ffi::OsStr::new(TOOLS))
-    {
-        crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?
-    } else {
-        crate::contracts::Ledger::blank()
-    };
-    library.types.extend(described.types.clone());
-    library.functions.extend(described.functions.clone());
-    // **A tool that reads the tree reads its declaration** (ADR-252 D1): the
-    // tree is the one Nikaia module every other tool may name, as the files of
-    // a package name one another (Part I 9.1). In Rust each tool is a module
-    // of its own, and `nikaia-std`'s `lib.rs` writes the `use super::ast::*`.
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    let shared: Vec<&str> = match BESIDE.iter().find(|(tool, _)| *tool == name) {
-        Some((_, modules)) => modules.to_vec(),
-        None if name != TREE && !described.types.is_empty() => vec![TREE],
-        None => Vec::new(),
-    };
-    let mut tree: Vec<crate::parser::Parsed> = Vec::new();
-    for module in shared {
-        let beside = path.with_file_name(module);
-        if !beside.exists() {
-            continue;
-        }
-        let text = std::fs::read_to_string(&beside)
-            .with_context(|| format!("reading {}", beside.display()))?;
-        tree.push(
-            crate::parser::parse_to_ast(&text)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", beside.display()))?,
-        );
-    }
-    let beside: Vec<&crate::parser::Parsed> = tree.iter().collect();
-    let units: Vec<&crate::parser::Parsed> = std::iter::once(&parsed)
-        .chain(beside.iter().copied())
-        .collect();
+    let library = crate::contracts::std_library();
+    let beside: Vec<&crate::parser::Parsed> = Vec::new();
+    let units: Vec<&crate::parser::Parsed> = vec![&parsed];
     let own = crate::contracts::Ledger::infer_package(&units, &library);
     let checked = crate::check::check_against(
         &parsed,
@@ -357,14 +309,197 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
             }
         );
     }
-    let lowered = crate::emit::emit_std_against(&parsed, &beside, &own, &described)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let lowered =
+        crate::emit::emit_std_against(&parsed, &beside, &own, &crate::contracts::Ledger::blank())
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)
+}
+
+/// **The toolchain's Nikaia, lowered as the one package it is** (ADR-261).
+///
+/// Every `.nika` in `dir` is checked with the others beside it and against
+/// `std`'s ledger and the tools' described one (ADR-252 D4.3), as the files of
+/// a program's package are, and lowered into one Rust file: one preamble, then
+/// each file's items, then one module per file that names what that file
+/// offers - `tools::ty::Ty`, `tools::ledger::read` - so a Rust caller still
+/// says which file a name is in, and the name is one name underneath.
+pub fn lower_tools(dir: &Path) -> Result<String> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|e| e == NIKA))
+        .collect();
+    paths.sort();
+    let mut parsed: Vec<crate::parser::Parsed> = Vec::new();
+    for path in &paths {
+        let source =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        parsed.push(
+            crate::parser::parse_to_ast(&source)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
+        );
+    }
+    let described =
+        crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?;
+    let mut library = crate::contracts::std_library();
+    library.types.extend(described.types.clone());
+    library.functions.extend(described.functions.clone());
+    let units: Vec<&crate::parser::Parsed> = parsed.iter().collect();
+    let own = crate::contracts::Ledger::infer_package(&units, &library);
+
+    let mut imports: Vec<String> = Vec::new();
+    let mut bodies = String::new();
+    let mut facades = String::new();
+    let mut grammar = false;
+    for (at, (path, unit)) in paths.iter().zip(&parsed).enumerate() {
+        let beside: Vec<&crate::parser::Parsed> = parsed
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != at)
+            .map(|(_, other)| other)
+            .collect();
+        // **Checked before it is lowered** (Part III C.1), with the package
+        // beside it.
+        let checked = crate::check::check_against(
+            unit,
+            &beside,
+            &own,
+            &library,
+            &std::collections::BTreeSet::new(),
+            &crate::check::Newly::default(),
+            &crate::assets::Reads::none(),
+        );
+        let refusals: Vec<&crate::check::Finding> = checked
+            .findings
+            .iter()
+            .filter(|finding| matches!(finding.severity, crate::check::Severity::Error))
+            .collect();
+        if let Some(first) = refusals.first() {
+            anyhow::bail!(
+                "{}: {} {}{}",
+                path.display(),
+                first.code,
+                first.message,
+                match refusals.len() {
+                    1 => String::new(),
+                    more => format!(" (and {} more)", more - 1),
+                }
+            );
+        }
+        let lowered = crate::emit::emit_std_items_against(unit, &beside, &own, &described)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        // **One preamble for the package**: a `use std::…` is the file's
+        // import of a `std` module, and one namespace imports it once.
+        let mut body = String::new();
+        let mut lines = lowered.rust.lines().peekable();
+        while let Some(line) = lines.next() {
+            if line == "#[allow(unused_imports)]"
+                && let Some(next) = lines.peek()
+                && next.starts_with("use nikaia_std::")
+            {
+                let import = next.to_string();
+                lines.next();
+                if !imports.contains(&import) {
+                    imports.push(import);
+                }
+                continue;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        grammar |= unit
+            .program
+            .items
+            .iter()
+            .any(|item| matches!(item.node, crate::ast::Item::Grammar(_)));
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        bodies.push_str(&format!("// --- {name} ---\n\n"));
+        bodies.push_str(body.trim_start_matches('\n'));
+        bodies.push('\n');
+        facades.push_str(&facade(name, unit));
+    }
+
+    let mut rust = String::new();
+    rust.push_str("// Generated by the Nikaia bootstrap compiler (Stage 0).\n");
+    rust.push_str("// Edit the .nika sources in this directory, not this file.\n\n");
+    if grammar {
+        rust.push_str("use winnow_grammar::grammar;\n");
+    }
+    rust.push_str("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
+    imports.sort();
+    for import in imports {
+        rust.push_str("#[allow(unused_imports)]\n");
+        rust.push_str(&import);
+        rust.push('\n');
+    }
+    rust.push('\n');
+    rust.push_str(&bodies);
+    rust.push_str(&facades);
+    Ok(rust)
+}
+
+/// **One file's names, as a path into the package**: `pub mod ty { pub use
+/// super::{Ty, …}; }`. What the file declares `pub`, its grammars, and what
+/// `lib.rs` writes for it by hand ([`HAND_WRITTEN`]).
+fn facade(file: &str, unit: &crate::parser::Parsed) -> String {
+    use crate::ast::Item;
+    let mut names: Vec<String> = Vec::new();
+    for item in &unit.program.items {
+        let name = match &item.node {
+            Item::Fn {
+                name: Some(name),
+                is_public: true,
+                receiver: None,
+                ..
+            }
+            | Item::Enum {
+                name,
+                is_public: true,
+                ..
+            }
+            | Item::Struct {
+                name,
+                is_public: true,
+                ..
+            }
+            | Item::Trait {
+                name,
+                is_public: true,
+                ..
+            }
+            | Item::Comptime {
+                name, public: true, ..
+            } => unit.text(*name),
+            Item::Grammar(grammar) => unit.text(grammar.name),
+            _ => continue,
+        };
+        names.push(crate::emit::escaped(name).to_string());
+    }
+    if let Some((_, extra)) = HAND_WRITTEN.iter().find(|(name, _)| *name == file) {
+        names.extend(extra.iter().map(|name| name.to_string()));
+    }
+    let module = file.trim_end_matches(".nika");
+    match names.is_empty() {
+        true => format!("pub mod {module} {{}}\n"),
+        false => format!(
+            "pub mod {module} {{\n    #[allow(unused_imports)]\n    pub use super::{{{}}};\n}}\n",
+            names.join(", ")
+        ),
+    }
 }
 
 /// Where `lower_std_module`'s result is committed: beside the source, same stem.
 pub fn lowered_path(nika: &Path) -> PathBuf {
     nika.with_extension("rs")
+}
+
+/// Where [`lower_tools`]'s result is committed: in the directory, beside the
+/// sources it is lowered from.
+pub fn tools_lowered_path(dir: &Path) -> PathBuf {
+    dir.join(TOOLS_PACKAGE)
 }
 
 /// Re-lower every Nikaia module in the sysroot's `std`, writing the `.rs` beside
@@ -377,11 +512,15 @@ pub fn lowered_path(nika: &Path) -> PathBuf {
 /// what built the compiler a second time inside every project's `target/`.
 pub fn lower_std(sysroot: &Sysroot) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
-    let mut sources = sysroot.std_modules()?;
-    sources.extend(sysroot.tool_modules()?);
-    for nika in sources {
-        let rust = lower_std_module(&nika)?;
-        let rs = lowered_path(&nika);
+    let mut lowered: Vec<(PathBuf, String)> = Vec::new();
+    for nika in sysroot.std_modules()? {
+        lowered.push((lowered_path(&nika), lower_std_module(&nika)?));
+    }
+    let tools = sysroot.tools_dir();
+    if tools.is_dir() {
+        lowered.push((tools_lowered_path(&tools), lower_tools(&tools)?));
+    }
+    for (rs, rust) in lowered {
         let current = std::fs::read_to_string(&rs).ok();
         if current.as_deref() != Some(rust.as_str()) {
             std::fs::write(&rs, &rust).with_context(|| format!("writing {}", rs.display()))?;

@@ -31,7 +31,7 @@ use std::text
 
 /// One line of a ledger, as a view of the text it stands in: nothing is
 /// copied until a value goes into the ledger.
-pub enum Line {
+pub enum LedgerLine {
     /// `[fn."…"]`, `[type."…"]`, `[trait."…"]` or `[impl."…"]`: which kind
     /// of table, and the name between its quotes, as written.
     Table { kind: ref String, name: ref String },
@@ -69,7 +69,7 @@ grammar LedgerText {
     // Nothing is skipped: a line is read character by character.
     rule WS = "" { }
 
-    pub rule file -> Vec[Line] =
+    pub rule file -> Vec[LedgerLine] =
         ls:line* last:BODY eof {
             let mut all = Vec()
             for l in ls.drain() { all.push(l) }
@@ -77,23 +77,23 @@ grammar LedgerText {
             all
         }
 
-    rule line -> Line = l:BODY line_ending { l }
+    rule line -> LedgerLine = l:BODY line_ending { l }
 
     // The spaces in front once, and then what the first character says the
     // line is: one choice per line rather than one per kind of line.
-    rule BODY -> Line = SP l:AFTER { l }
+    rule BODY -> LedgerLine = SP l:AFTER { l }
 
-    rule AFTER -> Line =
-          "#" REST { Line::Nothing }
+    rule AFTER -> LedgerLine =
+          "#" REST { LedgerLine::Nothing }
         | "[" t:TABLE { t }
-        | peek(END) { Line::Nothing }
-        | k:text(KEY) "=" v:text(REST) { Line::Pair { key: k.trim(), value: v.trim() } }
-        | r:text(REST) { Line::Bad(r.trim()) }
+        | peek(END) { LedgerLine::Nothing }
+        | k:text(KEY) "=" v:text(REST) { LedgerLine::Pair { key: k.trim(), value: v.trim() } }
+        | r:text(REST) { LedgerLine::Bad(r.trim()) }
 
-    rule TABLE -> Line =
-          "sources]" SP peek(END) { Line::Sources }
-        | k:KIND ".\"" n:text(NAME) CLOSE { Line::Table { kind: k, name: n } }
-        | KIND ".\"" REST { Line::Unterminated }
+    rule TABLE -> LedgerLine =
+          "sources]" SP peek(END) { LedgerLine::Sources }
+        | k:KIND ".\"" n:text(NAME) CLOSE { LedgerLine::Table { kind: k, name: n } }
+        | KIND ".\"" REST { LedgerLine::Unterminated }
 
     rule KIND -> ref String =
           "fn" { "fn" }
@@ -224,7 +224,7 @@ pub fn read(written: ref String) -> Ledger throws {
     for one in lines {
         n += 1
         match one {
-            Line::Table { kind, name } => {
+            LedgerLine::Table { kind, name } => {
                 if section == Section::Function {
                     ledger.functions.insert(current.clone(), function)
                     function = FnContract::empty()
@@ -259,7 +259,7 @@ pub fn read(written: ref String) -> Ledger throws {
                     section = Section::Nothing
                 }
             }
-            Line::Sources => {
+            LedgerLine::Sources => {
                 if section == Section::Function {
                     ledger.functions.insert(current.clone(), function)
                     function = FnContract::empty()
@@ -270,7 +270,7 @@ pub fn read(written: ref String) -> Ledger throws {
                 }
                 section = Section::Sources
             }
-            Line::Pair { key, value } => {
+            LedgerLine::Pair { key, value } => {
                 if section == Section::Header {
                     header(ledger, key, value, n)
                 } else if section == Section::Sources {
@@ -286,13 +286,13 @@ pub fn read(written: ref String) -> Ledger throws {
                     throw Refused::Because(f"line {n}: a `trait` or an `impl` table has no keys, and this has `{key}`")
                 }
             }
-            Line::Unterminated => {
+            LedgerLine::Unterminated => {
                 throw Refused::Because(f"line {n}: unterminated section header")
             }
-            Line::Bad(text) => {
+            LedgerLine::Bad(text) => {
                 throw Refused::Because(f"line {n}: not a key and a value: {text}")
             }
-            Line::Nothing => {}
+            LedgerLine::Nothing => {}
         }
     }
     if section == Section::Function {
@@ -308,7 +308,7 @@ pub fn read(written: ref String) -> Ledger throws {
         let prefix = f"{name}::"
         let mut methods: collections::BTreeSet[String] = collections::BTreeSet()
         for entry in functions {
-            let method = after(entry, prefix)
+            let method = after_prefix(entry, prefix)
             if method != null {
                 let rest = method ?? ""
                 if !rest.contains("::") {
@@ -727,7 +727,7 @@ pub struct Spelling {
 }
 
 /// One part of a parameter list, as it is written.
-enum Part {
+enum Piece {
     /// `self`, `ref self`, `ref mut self`: the type the entry is on.
     Owner { view: bool, mutates: bool },
     /// `self: T`, `mut self: T`, or a bare type, which is the receiver in the
@@ -751,9 +751,9 @@ struct Setting {
 }
 
 /// A signature taken apart, every piece a view of its text.
-struct Written {
+struct Signed {
     declared: Vec[Declared],
-    parts: Vec[Part],
+    parts: Vec[Piece],
     settings: Vec[Setting],
     result: ref String?,
 }
@@ -764,9 +764,9 @@ struct Written {
 // `Ty`'s reader reads it.
 grammar SignatureText {
 
-    pub rule signature -> Written =
+    pub rule signature -> Signed =
         d:bracket "(" ps:list(part, ",") TRAILING ss:settings ")" r:result? eof {
-            Written { declared: d, parts: ps, settings: ss, result: r }
+            Signed { declared: d, parts: ps, settings: ss, result: r }
         }
 
     rule bracket -> Vec[Declared] = "[" ds:list(declared, ",") "]" { ds } | empty { Vec() }
@@ -775,15 +775,15 @@ grammar SignatureText {
           n:raw_ident COLON ts:list(BOUND, "+") { Declared { name: n, traits: ts } }
         | n:raw_ident { Declared { name: n, traits: Vec() } }
 
-    rule part -> Part =
-          REF MUT SELF { Part::Owner { view: true, mutates: true } }
-        | REF SELF { Part::Owner { view: true, mutates: false } }
-        | MUT SELF COLON t:TYPE { Part::Typed { ty: t, mutates: true } }
-        | SELF COLON t:TYPE { Part::Typed { ty: t, mutates: false } }
-        | SELF { Part::Owner { view: false, mutates: false } }
-        | MUT n:raw_ident COLON t:TYPE { Part::Named { name: n, ty: t, mutable: true } }
-        | n:raw_ident COLON t:TYPE { Part::Named { name: n, ty: t, mutable: false } }
-        | t:TYPE { Part::Typed { ty: t, mutates: false } }
+    rule part -> Piece =
+          REF MUT SELF { Piece::Owner { view: true, mutates: true } }
+        | REF SELF { Piece::Owner { view: true, mutates: false } }
+        | MUT SELF COLON t:TYPE { Piece::Typed { ty: t, mutates: true } }
+        | SELF COLON t:TYPE { Piece::Typed { ty: t, mutates: false } }
+        | SELF { Piece::Owner { view: false, mutates: false } }
+        | MUT n:raw_ident COLON t:TYPE { Piece::Named { name: n, ty: t, mutable: true } }
+        | n:raw_ident COLON t:TYPE { Piece::Named { name: n, ty: t, mutable: false } }
+        | t:TYPE { Piece::Typed { ty: t, mutates: false } }
 
     rule settings -> Vec[Setting] = ";" ss:list(setting, ",") TRAILING { ss } | empty { Vec() }
 
@@ -871,7 +871,7 @@ pub fn spelled_signature(written: ref String, key: ref String) -> Spelling throw
     let mut first = true
     for part in parts.parts {
         match part {
-            Part::Owner { view, mutates } => {
+            Piece::Owner { view, mutates } => {
                 let owner = owner_of(key) ?? "?"
                 let written_type = if view { f"ref {owner}" } else { owner.clone() }
                 params.push(a_param("self", typed(written_type, variables)))
@@ -882,7 +882,7 @@ pub fn spelled_signature(written: ref String, key: ref String) -> Spelling throw
                     order.push(a_receiver())
                 }
             }
-            Part::Typed { ty, mutates } => {
+            Piece::Typed { ty, mutates } => {
                 params.push(a_param("self", typed(ty, variables)))
                 if mutates {
                     receiver_changes = true
@@ -891,7 +891,7 @@ pub fn spelled_signature(written: ref String, key: ref String) -> Spelling throw
                     order.push(a_receiver())
                 }
             }
-            Part::Named { name, ty, mutable } => {
+            Piece::Named { name, ty, mutable } => {
                 params.push(a_param(name, typed(ty, variables)))
                 if mutable {
                     changed.push(name.clone())
@@ -1041,7 +1041,7 @@ fn from_char(written: ref String, front: i64) -> String {
 }
 
 // `written` after `prefix`, or nothing where it does not start with it.
-fn after(written: ref String, prefix: ref String) -> String? {
+fn after_prefix(written: ref String, prefix: ref String) -> String? {
     if !written.starts_with(prefix) {
         return null
     }

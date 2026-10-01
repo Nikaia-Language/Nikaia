@@ -115,7 +115,7 @@ fn fields(lines: Vec[Line]) -> Vec[Field] {
 /// `Transfer-Encoding` - [ADR-194](../../../../docs/specification/adr/adr-194.md)
 /// D5's protocol. Asked in the order the Rust it replaced asked it, so a head
 /// that is wrong twice is refused for the same reason it was.
-pub fn read(written: Written) -> Read sync {
+pub fn read_head(written: Written) -> Read sync {
     if written.words.len() < 3 {
         return refused("400 a request line that is not three words")
     }

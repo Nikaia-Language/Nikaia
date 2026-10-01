@@ -97,19 +97,6 @@ pub enum Segment {
     For { binding: String, collection: String, body: Vec[Segment] },
 }
 
-/// Why a template is refused, in the words the compiler reports.
-pub enum Refused {
-    Because(String),
-}
-
-impl Error for Refused {
-    fn message(ref self) -> String {
-        return match self {
-            Refused::Because(why) => why.clone()
-        }
-    }
-}
-
 /// The literal bytes a template writes, whatever its holes turn out to be.
 ///
 /// A **floor** on the result's length: every hole and every turn of a `<for>`
@@ -144,7 +131,7 @@ pub fn split(body: ref String) -> Vec[Segment] throws {
     let mut splitter = Splitter {
         c: body.chars().collect(),
         at: 0,
-        scan: Scan { state: State::Text, tail: [], attribute: "" },
+        scan: Scan { state: ScanState::Text, tail: [], attribute: "" },
     }
     let segments = splitter.until(false)
     if splitter.at < splitter.c.len() {
@@ -320,7 +307,7 @@ impl Splitter {
 
 // The HTML state machine, over literal text.
 struct Scan {
-    state: State,
+    state: ScanState,
     // The last nine characters, lower-cased, for the markers that are longer
     // than one.
     tail: Vec[char],
@@ -328,7 +315,7 @@ struct Scan {
     attribute: String,
 }
 
-enum State {
+enum ScanState {
     Text,
     Tag,
     // After `=` in a tag, before the value starts.
@@ -343,11 +330,11 @@ enum State {
 impl Scan {
     fn position(ref self) -> Position sync {
         return match self.state {
-            State::Text => Position::Text
-            State::Script => Position::Script
-            State::Style => Position::Style
-            State::Comment => Position::Comment
-            State::Quoted(_) => quoted(self.attribute)
+            ScanState::Text => Position::Text
+            ScanState::Script => Position::Script
+            ScanState::Style => Position::Style
+            ScanState::Comment => Position::Comment
+            ScanState::Quoted(_) => quoted(self.attribute)
             else => Position::UnquotedAttribute
         }
     }
@@ -374,33 +361,33 @@ impl Scan {
             self.tail = kept
         }
         match self.state {
-            State::Text => {
+            ScanState::Text => {
                 if self.ended_with("<!--") {
-                    self.state = State::Comment
+                    self.state = ScanState::Comment
                 } else if c == '<' {
-                    self.state = State::Tag
+                    self.state = ScanState::Tag
                     self.attribute = ""
                 }
             }
-            State::Comment => {
+            ScanState::Comment => {
                 if self.ended_with("-->") {
-                    self.state = State::Text
+                    self.state = ScanState::Text
                 }
             }
-            State::Quoted(quote) => {
+            ScanState::Quoted(quote) => {
                 if c == quote {
-                    self.state = State::Tag
+                    self.state = ScanState::Tag
                     self.attribute = ""
                 }
             }
-            State::Script => {
+            ScanState::Script => {
                 if self.ended_with("</script") {
-                    self.state = State::Tag
+                    self.state = ScanState::Tag
                 }
             }
-            State::Style => {
+            ScanState::Style => {
                 if self.ended_with("</style") {
-                    self.state = State::Tag
+                    self.state = ScanState::Tag
                 }
             }
             else => self.in_a_tag(c)
@@ -410,44 +397,44 @@ impl Scan {
     // `Tag`, `Equals` and `Unquoted`: inside a tag, outside quotes.
     fn in_a_tag(ref mut self, c: char) sync {
         let tag = match self.state {
-            State::Tag => true
+            ScanState::Tag => true
             else => false
         }
         let equals = match self.state {
-            State::Equals => true
+            ScanState::Equals => true
             else => false
         }
         let unquoted = match self.state {
-            State::Unquoted => true
+            ScanState::Unquoted => true
             else => false
         }
         // `<!--` looks like the start of a tag until its fourth character, so
         // the comment is recognised from in here rather than by looking ahead
         // from the `<`.
         if self.ended_with("<!--") {
-            self.state = State::Comment
+            self.state = ScanState::Comment
             self.attribute = ""
         } else if c == '>' {
             // Which element was opened decides whether what follows is markup
             // or a foreign language.
             if self.saw("<script") {
-                self.state = State::Script
+                self.state = ScanState::Script
             } else if self.saw("<style") {
-                self.state = State::Style
+                self.state = ScanState::Style
             } else {
-                self.state = State::Text
+                self.state = ScanState::Text
             }
             self.attribute = ""
         } else if c == '=' && tag {
-            self.state = State::Equals
+            self.state = ScanState::Equals
         } else if equals {
             if c == '"' || c == '\'' {
-                self.state = State::Quoted(c)
+                self.state = ScanState::Quoted(c)
             } else if !blank(c) {
-                self.state = State::Unquoted
+                self.state = ScanState::Unquoted
             }
         } else if unquoted && blank(c) {
-            self.state = State::Tag
+            self.state = ScanState::Tag
             self.attribute = ""
         } else if tag {
             // An attribute name is what runs up to the `=`.

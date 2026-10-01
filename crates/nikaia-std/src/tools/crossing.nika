@@ -76,7 +76,7 @@ pub fn plainly_sendable(written: ref String) -> bool {
     for wrapper in PASSES_THROUGH {
         let inner = generic_of(ty, wrapper)
         if inner != null {
-            for part in paths_split(inner ?? "") {
+            for part in split_top_level(inner ?? "") {
                 if !plainly_sendable(part) {
                     return false
                 }
@@ -226,42 +226,6 @@ fn is_a_sink(call: ref String) -> bool {
         }
     }
     return false
-}
-
-// Split on commas that are not inside brackets - `paths::split_top_level`,
-// which a tool cannot name from here.
-fn paths_split(text: ref String) -> Vec[String] {
-    let c: Vec[char] = text.chars().collect()
-    let mut out: Vec[String] = []
-    let mut depth = 0
-    let mut start = 0
-    for at in 0..<c.len() {
-        let one = c[at]
-        if one == '<' || one == '(' || one == '[' {
-            depth += 1
-        } else if one == '>' || one == ')' || one == ']' {
-            depth -= 1
-        } else if one == ',' && depth == 0 {
-            let piece = slice(c, start, at)
-            out.push(piece.trim().clone())
-            start = at + 1
-        }
-    }
-    let last = slice(c, start, c.len())
-    let rest = last.trim()
-    if !rest.is_empty() {
-        out.push(rest.clone())
-    }
-    return out
-}
-
-// The characters from `from` up to `to`.
-fn slice(c: ref Array[char], from: i64, to: i64) -> String {
-    let mut out: String = ""
-    for k in from..<to {
-        out.push(c[k])
-    }
-    return out
 }
 
 /// **What the describer saw of the crate's promises and did not claim**
