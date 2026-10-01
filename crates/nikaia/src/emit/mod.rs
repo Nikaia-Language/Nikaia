@@ -1320,6 +1320,8 @@ struct Emitter<'p> {
     keep_plans: HashMap<String, crate::contracts::keep::Plan>,
     /// `check::Checked::view_fallbacks`.
     view_fallbacks: std::collections::BTreeSet<usize>,
+    /// `check::Checked::view_coalesces`.
+    view_coalesces: std::collections::BTreeSet<(usize, String)>,
     /// The f-string hole being written, whose literals are keyed by
     /// `check::text_key`.
     hole: std::cell::RefCell<Option<(usize, String)>>,
@@ -2488,6 +2490,7 @@ impl<'p> Emitter<'p> {
                 .collect(),
             preluded: std::cell::RefCell::new(HashSet::new()),
             view_fallbacks: propagation.view_fallbacks,
+            view_coalesces: propagation.view_coalesces,
             hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
             holding: std::cell::RefCell::new(None),
@@ -8274,7 +8277,10 @@ impl<'p> Emitter<'p> {
                     || a_declared_variant
                     || a_declared_constructor
                     || a_struct_written
-                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)));
+                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at as usize)))
+                    || self
+                        .view_coalesces
+                        .contains(&(flow.statement, crate::check::argument_shape(expr)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");

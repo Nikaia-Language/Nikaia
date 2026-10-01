@@ -469,6 +469,10 @@ pub struct Checked {
     /// shape, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// **A `??` over a map's text whose fallback is a view of text** (#297),
+    /// by statement and shape: the answer is a view, and the fallback is
+    /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
+    pub view_coalesces: BTreeSet<(usize, String)>,
     /// **`count()` calls that are `std`'s count of a sequence**, by statement
     /// and receiver shape: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
@@ -1287,6 +1291,7 @@ fn walked<'a>(
         changed: Vec::new(),
         writing_index: false,
         read_a_map: false,
+        map_views: BTreeSet::new(),
         hole: None,
         run_code: BTreeSet::new(),
         last_resolved: None,
@@ -1698,6 +1703,8 @@ pub struct Propagation {
     pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::lent_coalesces`].
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
+    /// [`Checked::view_coalesces`].
+    pub view_coalesces: BTreeSet<(usize, String)>,
     /// [`Checked::counted`].
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
@@ -1967,6 +1974,7 @@ pub fn propagation_against(
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
+        view_coalesces: checked.view_coalesces,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
         guards_inside_boxes: checked.guards_inside_boxes,
@@ -2871,6 +2879,11 @@ struct Checker<'a> {
     /// Set where an `Index` read a **map**, for the `??` around it: a map read
     /// hands out a view of the value, whatever the value's type (ADR-213 D2).
     read_a_map: bool,
+    /// **The bindings a `let` made of a map read** (#297), by
+    /// [`Local::id`]: `let found = calls.get(key)` is a view of what the map
+    /// holds, as the read itself is, and a `??` on the name is the `??` on
+    /// the read.
+    map_views: BTreeSet<usize>,
     /// The statement and the text of the f-string hole being walked, for
     /// `text_at`.
     hole: Option<(usize, String)>,
@@ -8903,7 +8916,12 @@ impl<'a> Checker<'a> {
             } => {
                 self.a_field_of_a_borrowed_subject(value, span, "bound");
                 self.a_mut_parameter_given_away(value, span, "bound");
+                let outer_read = std::mem::replace(&mut self.read_a_map, false);
                 let found = self.expr(value, span);
+                // **A name bound to a map read is a view of the map** (#297):
+                // the read itself, not one somewhere inside the value.
+                let of_a_map = std::mem::replace(&mut self.read_a_map, outer_read)
+                    && matches!(value, Expr::Index { .. } | Expr::MethodCall { .. });
                 // **A value with a cleanup, bound here, dies where this block
                 // ends** (ADR-239 D2).
                 if let [single] = names.as_slice() {
@@ -9089,8 +9107,21 @@ impl<'a> Checker<'a> {
                 if let Some(task) = self.task_bindings.last_mut() {
                     task.push((name.clone(), bound.clone(), span.at()));
                 }
+                let id = a_new_binding();
+                // **And typed as one**: a `V?` read out of a map is an option
+                // of a view of the `V` the map keeps, which is what a `ref V?`
+                // is - so `found?.clone()` copies the value and not the view.
+                let bound = match (of_a_map, bound) {
+                    (true, Ty::Nullable(inner)) if !inner.is_a_view() => {
+                        Ty::Nullable(Box::new(view_of(&inner)))
+                    }
+                    (_, bound) => bound,
+                };
+                if of_a_map {
+                    self.map_views.insert(id);
+                }
                 self.bind_local(Local {
-                    id: a_new_binding(),
+                    id,
                     name,
                     ty: bound,
                     constant,
@@ -9997,6 +10028,14 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **`m.get(k)` reads the map as `m[k]` does** (#297): what it
+                // hands back is a view of the value the map keeps.
+                let reads_a_map = self.parsed.text(*method) == "get"
+                    && matches!(&on, Ty::Named { name, .. }
+                        if matches!(crate::contracts::ty::base(name), "HashMap" | "Map" | "BTreeMap"));
+                if reads_a_map {
+                    self.read_a_map = true;
+                }
                 // **A receiver the method only reads is lent** (ADR-259 D1):
                 // `(name ?? "guest").len()` asks the answer and keeps nothing
                 // of it, where every candidate for the method takes its
@@ -11389,8 +11428,16 @@ impl<'a> Checker<'a> {
             Expr::Coalesce { value, fallback } => {
                 let outer = std::mem::replace(&mut self.read_a_map, false);
                 let left = self.expr(value, span);
-                let from_a_map = std::mem::replace(&mut self.read_a_map, outer)
-                    && matches!(&**value, Expr::Index { .. });
+                let read_now = std::mem::replace(&mut self.read_a_map, outer);
+                // **A map read, or a name a `let` bound to one** (#297): the
+                // left side is a view of what the map keeps either way.
+                let from_a_map = match &**value {
+                    Expr::Index { .. } | Expr::MethodCall { .. } => read_now,
+                    Expr::Variable(name) => self
+                        .binding(self.parsed.text(*name))
+                        .is_some_and(|local| self.map_views.contains(&local.id)),
+                    _ => false,
+                };
                 let other = self.expr(fallback, span);
                 // **A name on the left of `??` is taken where the answer is
                 // kept and lent where it is only read** (ADR-259 D1), which is
@@ -11438,12 +11485,52 @@ impl<'a> Checker<'a> {
                         return Ty::view("str");
                     }
                 }
+                // **And a name that is a view of text beside it** (#297):
+                // `imports.get(call) ?? call` for a `call: ref String` is a
+                // view whichever side answers, written as it is.
+                if let Ty::Nullable(inner) = &left
+                    && **inner == Ty::named("String")
+                    && from_a_map
+                    && other.is_a_view()
+                    && matches!(&**fallback, Expr::Variable(_) | Expr::Field { .. })
+                    && matches!(&other, Ty::Named { name, .. }
+                        if matches!(crate::contracts::ty::base(name), "String" | "str"))
+                {
+                    self.checked
+                        .view_coalesces
+                        .insert((span.at(), argument_shape(expr)));
+                    return Ty::view("str");
+                }
                 if let Ty::Nullable(inner) = &left {
-                    self.a_fallback_that_owns_what_the_left_side_views(
-                        inner, &other, fallback, span,
-                    );
-                    if from_a_map {
-                        self.a_fallback_beside_what_a_map_holds(value, inner, &other, span);
+                    match from_a_map {
+                        // **What a map holds has its own sentence**, whether
+                        // the read is written here or a name holds it (#297).
+                        true => {
+                            // A view of text is `str` to this checker and
+                            // `String` to the language (ADR-184 D2).
+                            let held = match inner.as_ref() {
+                                Ty::Named { name, .. } if name == "str" => {
+                                    Ty::named(crate::contracts::ty::TEXT)
+                                }
+                                Ty::Named { name, args, .. } => Ty::Named {
+                                    name: name.clone(),
+                                    args: args.clone(),
+                                    view: false,
+                                },
+                                other => other.clone(),
+                            };
+                            self.a_fallback_beside_what_a_map_holds(value, &held, &other, span);
+                            // Text has its own answer, a view beside a view;
+                            // a name holding the read is one already.
+                            if held == Ty::named(crate::contracts::ty::TEXT) {
+                                self.a_fallback_that_owns_what_the_left_side_views(
+                                    inner, &other, fallback, span,
+                                );
+                            }
+                        }
+                        false => self.a_fallback_that_owns_what_the_left_side_views(
+                            inner, &other, fallback, span,
+                        ),
                     }
                 }
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
