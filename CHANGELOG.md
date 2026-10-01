@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.304] — 2026-10-01
+
+**A build names what its `pub` functions could promise and do not** (ADR-244
+D2, #128). Since 0.0.303 another package counts only on a written `sync`, so
+the author is told where one could be written: `nikaia build`, `run`, `test`
+and `lower` end with a note listing the package's own `pub` functions that
+never pause and do not say `sync`, and those that pause only where the lambdas
+they are given do and do not say `sync(f)`, each with the word to write. The
+`sync` inference keeps a call to a pausing lambda apart from every other pause
+to find the second list; it still writes no promise itself. Only the entry
+package is named, once per build and the same on a cache hit.
+
 ## [0.0.303] — 2026-10-01
 
 **Another package's function is `sync` where its source says so** (ADR-244 D1

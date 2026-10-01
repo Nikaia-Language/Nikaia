@@ -377,6 +377,7 @@ fn lower_to_rust(
         args.allow_read_from_list.as_deref(),
     )?;
     std::fs::write(&output_path, &lowered.rust)?;
+    eprint!("{}", lowered.notes);
 
     // The ledger goes beside the output, because that is where a build puts
     // what it produced. Part III 13.5 says the project root, which is where

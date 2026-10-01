@@ -226,6 +226,12 @@ pub struct Lowered {
     pub sources: Vec<PathBuf>,
     /// Whether the build cache answered instead of the emitter.
     pub reused: bool,
+    /// **What the author could promise and has not**
+    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D2): the note
+    /// [`modules::Program::could_promise`] writes, empty where there is none.
+    /// Handed back rather than printed, because the `rustc` wrapper lowers too
+    /// and only the command a person ran should say it - once.
+    pub notes: String,
 }
 
 /// Stage 0: parse, check, lower, infer - or serve all four from the cache.
@@ -813,6 +819,9 @@ pub fn lower_reading(
             .join("\n"),
     );
     let sources: Vec<PathBuf> = program.units.iter().map(|unit| unit.path.clone()).collect();
+    // Read off the program, which every lowering builds - a cache hit too - so
+    // the note is the same whether the emitter ran or not.
+    let notes = program.could_promise();
 
     // An entry that predates an artifact this build needs is a miss, not a
     // gap: adding an output stays a safe change.
@@ -938,6 +947,7 @@ pub fn lower_reading(
         derived,
         sources,
         reused,
+        notes,
     })
 }
 
@@ -2156,6 +2166,11 @@ impl Project {
                 &lowered.derived,
                 locked,
             )?;
+            // **The note is the entry's** (ADR-244 D2): what a dependency's
+            // author could promise is theirs to hear, in their own build.
+            if at == 0 {
+                eprint!("{}", lowered.notes);
+            }
             rust[at] = Some(lowered.rust);
         }
         // Back into `members_of`'s own order, which is what the generated

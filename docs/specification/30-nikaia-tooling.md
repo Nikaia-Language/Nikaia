@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.303 (Draft)
+**Version:** 0.0.304 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -312,6 +312,15 @@ Only what is true is written. **An absent `sync` on an entry means not `sync`.**
 **Inside a package a caller does not distinguish the two forms.** Both mean *this cannot pause*, and both satisfy the `sync` half of what `access` and `par_iter` require.
 
 **A caller in another package reads only the promise** ([ADR-244](adr/adr-244.md) D1). Across a package boundary, `"inferred"` means *may pause*: a change inside the body may withdraw it, and nobody promised it. A `sync` function, a lock's `update` or `access`, a `par_iter` lambda or a grammar's action that calls such a function is refused, and the message names the word to write in the other package (`sync`, or `sync(f)`). Only the check reads it so. The call is lowered by what the body is, and a function that cannot pause is not awaited (D3). A caller whose only pausing call is such a function may pause itself, to its own consumers.
+
+**A build names what its author could promise** ([ADR-244](adr/adr-244.md) D2). `nikaia build`, `run`, `test` and `lower` end with a note listing the package's own `pub` functions that never pause and do not say `sync`, and those that pause only where the lambdas they are given do and do not say `sync(f)`, each with the word to write:
+
+```text
+note: 2 pub functions never pause and do not promise it: `parse`, `total`
+  help: write `sync` after the result, and callers in other packages can rely on it
+```
+
+A dependency's functions are not named in its consumer's build.
 
 A diff distinguishes the two forms: the narration of a withdrawn asserted `sync` differs from that of a lost inferred one.
 

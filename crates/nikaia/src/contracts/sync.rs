@@ -149,6 +149,12 @@ struct Reach {
     /// one parameter and no `std` entry or written signature has ever had two;
     /// a second would want a spelling before it wants an inference.
     runs: Option<String>,
+    /// **The parameters that are code and may pause, which it calls**
+    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2). Each takes
+    /// the claim away as `blocked` does; kept apart so that a function whose
+    /// *only* pausing is its lambdas' can be named as one that could promise
+    /// `sync(f)`.
+    through_code: BTreeSet<String>,
 }
 
 /// Give every function in the ledger the `sync` its body earns.
@@ -170,12 +176,19 @@ struct Reach {
 /// ask: what a method call goes to (ADR-028). Handing it in rather than
 /// computing it here keeps one type checker in the compiler; the alternative
 /// was a second, worse one living in this file.
+///
+/// **Hands back the functions that pause only where their lambdas do**
+/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2): by key, the code
+/// parameters that may pause and that each one calls. Nothing else it reaches
+/// can pause, so `sync(those)` is a promise its body would keep. The ledger is
+/// not told - the inference never writes `sync(f)`, because a promise is the
+/// source's to make (§4) - and the build says so in a note instead.
 pub fn infer(
     ledger: &mut Ledger,
     units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
-) {
+) -> BTreeMap<String, Vec<String>> {
     let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
 
     for parsed in units.iter().copied() {
@@ -275,6 +288,7 @@ pub fn infer(
                                 blocked: !method.node.is_sync,
                                 calls: BTreeSet::new(),
                                 runs: None,
+                                through_code: BTreeSet::new(),
                             },
                         );
                     }
@@ -300,6 +314,7 @@ pub fn infer(
                                 blocked: false,
                                 calls: BTreeSet::new(),
                                 runs: None,
+                                through_code: BTreeSet::new(),
                             },
                         );
                     }
@@ -312,7 +327,12 @@ pub fn infer(
     // Start optimistic, then take the claim away until nothing changes.
     let mut holds: BTreeMap<&str, bool> = graph
         .iter()
-        .map(|(name, reach)| (name.as_str(), !reach.blocked))
+        .map(|(name, reach)| {
+            (
+                name.as_str(),
+                !reach.blocked && reach.through_code.is_empty(),
+            )
+        })
         .collect();
 
     loop {
@@ -339,6 +359,23 @@ pub fn infer(
         }
     }
 
+    // **Only its lambdas stand in the way**: nothing it reaches blocks, every
+    // function of the package it calls holds, and it calls a code parameter
+    // that may pause.
+    let by_code: BTreeMap<String, Vec<String>> = graph
+        .iter()
+        .filter(|(name, reach)| {
+            !holds[name.as_str()]
+                && !reach.blocked
+                && !reach.through_code.is_empty()
+                && reach
+                    .calls
+                    .iter()
+                    .all(|callee| holds.get(callee.as_str()).copied().unwrap_or(false))
+        })
+        .map(|(name, reach)| (name.clone(), reach.through_code.iter().cloned().collect()))
+        .collect();
+
     for (name, holds) in holds {
         if !holds {
             continue;
@@ -359,6 +396,7 @@ pub fn infer(
             };
         }
     }
+    by_code
 }
 
 /// One function's calls, split into what settles the question now and what
@@ -466,7 +504,9 @@ fn collect_reach(
                 // out of this pass. One that says `sync` is a plain closure and
                 // its call adds nothing.
                 Some(Reached::Opaque(Some(name))) if code.contains_key(&name) => {
-                    reach.blocked |= code[&name];
+                    if code[&name] {
+                        reach.through_code.insert(name);
+                    }
                 }
                 Some(Reached::Library { sync: false, .. }) | Some(Reached::Opaque(_)) => {
                     reach.blocked = true
