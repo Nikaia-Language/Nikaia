@@ -15,19 +15,6 @@
 // machines a `[build.<target>]` table may name and what it may carry, and which
 // of the three shapes a dependency is.
 
-/// Why a manifest is refused, in the words the compiler reports.
-pub enum Refused {
-    Because(String),
-}
-
-impl Error for Refused {
-    fn message(ref self) -> String {
-        return match self {
-            Refused::Because(why) => why.clone()
-        }
-    }
-}
-
 /// What a `[build]` key does with its value.
 pub enum Switch {
     /// Carried to the parser that owns the setting, as written.
@@ -74,7 +61,7 @@ pub fn build_key(key: ref String) -> Switch throws {
         throw Refused::Because(f"`{key}` in `[build]` is no longer supported: {gone}")
     }
     if !contains(known(), key) {
-        let expected = joined(known())
+        let expected = choices(known())
         throw Refused::Because(f"`[build]` has no key called `{key}`. The keys are: {expected}.")
     }
     let went = moved(key)
@@ -100,7 +87,7 @@ pub fn codegen_keys() -> Vec[String] {
 /// `[build.<target>]` names a machine, or is refused naming the ones there are.
 pub fn codegen_table(target: ref String) throws {
     if !contains(targets(), target) {
-        let expected = joined(targets())
+        let expected = choices(targets())
         throw Refused::Because(f"`[build.{target}]` isn't a machine Nikaia builds for. The machines are: {expected}.")
     }
 }
@@ -108,14 +95,14 @@ pub fn codegen_table(target: ref String) throws {
 /// A key of `[build.<target>]` is one it may carry, or is refused.
 pub fn codegen_key(target: ref String, key: ref String) throws {
     if !contains(codegen_keys(), key) {
-        let expected = joined(codegen_keys())
+        let expected = choices(codegen_keys())
         throw Refused::Because(f"`[build.{target}]` has no key called `{key}`. The keys are: {expected}.")
     }
 }
 
 /// Which of the three shapes a `[dependencies]` entry is (ADR-002 D1,
 /// ADR-047 D2).
-pub enum Shape {
+pub enum DependencyShape {
     /// `type = "rust"`: a crate, handed to Cargo without the marker.
     Rust,
     /// `path = "…"`: a Nikaia package, read as part of this program.
@@ -128,17 +115,17 @@ pub enum Shape {
 /// The shape of dependency `name`, from the `type` it says (where `typed`)
 /// and whether it says a `path`. A `type` other than `rust` names no
 /// ecosystem, and is refused rather than guessed at.
-pub fn dependency(name: ref String, typed: bool, kind: ref String, has_path: bool) -> Shape throws {
+pub fn dependency(name: ref String, typed: bool, kind: ref String, has_path: bool) -> DependencyShape throws {
     if typed {
         if kind == "rust" {
-            return Shape::Rust
+            return DependencyShape::Rust
         }
         throw Refused::Because(f"Dependency `{name}` has `type = \"{kind}\"`, which isn't a kind of dependency Nikaia knows. The only one is `rust`, for a crate from crates.io.")
     }
     if has_path {
-        return Shape::Path
+        return DependencyShape::Path
     }
-    return Shape::Nikaia
+    return DependencyShape::Nikaia
 }
 
 /// The name a program writes for the crate a manifest key declares
@@ -167,7 +154,7 @@ fn contains(words: ref Array[String], word: ref String) -> bool {
 }
 
 // `a, b, c`, the way a message names the choices.
-fn joined(words: ref Array[String]) -> String {
+fn choices(words: ref Array[String]) -> String {
     let mut out: String = ""
     for w in words {
         if out.len() > 0 {

@@ -785,6 +785,36 @@ pub fn emit_std_against(
     .program()
 }
 
+/// [`emit_std_against`]'s items and nothing else, for one file of the
+/// toolchain's package (ADR-261): the package writes one preamble for all of
+/// them.
+pub fn emit_std_items_against(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &crate::contracts::Ledger,
+    described: &crate::contracts::Ledger,
+) -> Result<Lowered> {
+    let build = Build {
+        target: Target::X86_64Linux,
+        ..Build::default()
+    };
+    let mut library = std_ledger().clone();
+    library.types.extend(described.types.clone());
+    library.functions.extend(described.functions.clone());
+    let trust = crate::contracts::trust::analyse(parsed, &library);
+    Emitter::with_contracts(
+        parsed,
+        beside,
+        build,
+        trust.provenance,
+        own.clone(),
+        described,
+        &Reads::none(),
+    )
+    .for_std()
+    .items_only()
+}
+
 /// A module's items, with no preamble and no `mod` around them.
 ///
 /// The driver writes the preamble once for the whole program and the `mod`
@@ -2379,7 +2409,14 @@ impl<'p> Emitter<'p> {
             described: described.clone(),
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
-            declared_errors: declared_errors(parsed),
+            // **An error another file of the package declares is the
+            // package's own** (Part I 9.1, ADR-261): its `impl Error` is in
+            // that file, and a function here that throws it travels in its
+            // envelope, as one written beside the `impl` does.
+            declared_errors: std::iter::once(parsed)
+                .chain(beside.iter().copied())
+                .flat_map(declared_errors)
+                .collect(),
             carries_input: crate::views::carried(parsed, &own_contracts, library),
             grammars,
             structs,

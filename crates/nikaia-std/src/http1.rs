@@ -291,7 +291,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
             "400 a request head this does not read".into(),
         ));
     };
-    let read = crate::tools::http1::read(&written);
+    let read = crate::tools::http1::read_head(&written);
     if !read.refused.is_empty() {
         return Err(IoError::Other(read.refused.into()));
     }

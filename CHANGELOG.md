@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.318] — 2026-10-01
+
+**The toolchain's Nikaia is one package** (ADR-261). Every `.nika` in
+`crates/nikaia-std/src/tools/` shares one namespace, as the files of a package
+do, and `nikaia lower-std` checks and lowers them together into one file,
+`src/tools/package.rs`, where seventeen `.rs` files stood. A tool names another
+tool's function or type with nothing in between: the `BESIDE` table is gone,
+and with it the copies it forced - one `slice`, one `find_text`, one
+`split_top_level`, one `Refused` where three files each declared the same one.
+The names two files both declared are renamed once (`rust.nika`'s `Item` is
+`RustItem`, `manifest.nika`'s `Shape` is `DependencyShape`, and five more). One
+module per file at the end of `package.rs` re-exports what that file offers,
+so a Rust caller still writes `nikaia_std::tools::ty::Ty`.
+
+**An error another file of a package declares is the package's own.** A
+function that throws it travelled as `Box<dyn Error>` below, where one written
+beside its `impl Error` travelled in its envelope - found by the package above,
+and as true of a program of several files.
+
+ADR-260's status says what was built (0.0.298-0.0.300).
+
 ## [0.0.317] — 2026-10-01
 
 **A guard reads what a box holds** (ADR-246 D5 item 2, #97). The arm opens a

@@ -151,499 +151,349 @@ pub mod text {
     clippy::needless_option_as_deref
 )]
 pub mod tools {
-    /// **How close one word is to another**, for the compiler's *did you
-    /// mean*: `src/tools/spelling.nika`, lowered to `src/tools/spelling.rs`
-    /// and committed beside it. The first piece of the compiler moved from
-    /// Rust to Nikaia (0.0.238); the checker and `dsl` call it as ordinary
-    /// Rust functions.
-    pub mod spelling {
-        include!("tools/spelling.rs");
+    // **One package, one file** ([ADR-261](../../../docs/specification/adr/adr-261.md)):
+    // every `.nika` in `src/tools` shares one namespace, as the files of a
+    // package do, and `nikaia lower-std` lowers them into `package.rs`. At its
+    // end stands one module per file - `tools::ty`, `tools::ledger` - naming
+    // what that file offers, so a Rust caller still says which file a name is
+    // in. What follows the `include!` is the Rust that Nikaia cannot say, by
+    // the file it serves; `sysroot::HAND_WRITTEN` puts its names in that
+    // file's module.
+    include!("tools/package.rs");
+
+    /// What a lowered `throws` of `std`'s `io` names: a tool has no prelude
+    /// to bring it in.
+    use crate::io;
+
+    // --- http1.nika ---
+
+    /// **The one call a Rust caller makes into the grammar**, for
+    /// `rust::file`'s reason: the generated `Http1::parse_head()` hands
+    /// back a parser rather than a result, and a Rust caller has no
+    /// emitter to write the four lines that turn one into the other.
+    pub fn written(text: &str) -> Result<Written<'_>, crate::grammar::ParseError> {
+        use winnow::Parser;
+        let mut stream = winnow_grammar::ParseInput::<()> {
+            state: winnow_grammar::ParseContext::<()>::default(),
+            input: winnow::stream::LocatingSlice::new(text),
+        };
+        Http1::parse_head()
+            .parse_next(&mut stream)
+            .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
     }
 
-    /// **The holes of a `dsl` block's body**: `src/tools/dsl.nika`, lowered
-    /// to `src/tools/dsl.rs` and committed beside it. The second piece of the
-    /// compiler moved from Rust to Nikaia (0.0.248); the compiler's `dsl`
-    /// module calls it.
-    pub mod dsl {
-        include!("tools/dsl.rs");
+    // --- ast.nika ---
+
+    /// The longest source the compiler reads: a `Span` holds a byte offset
+    /// in a `u32` (ADR-252 D2).
+    pub const LONGEST_SOURCE: usize = u32::MAX as usize;
+
+    /// A byte offset as a `Span` holds it. The 4 GiB refusal in
+    /// `parser::parse` is what makes this total.
+    pub fn offset(at: usize) -> u32 {
+        u32::try_from(at).expect("a source is at most 4 GiB (ADR-252 D2)")
     }
 
-    /// **The table a `comptime` map crosses as**: `src/tools/fixed.nika`,
-    /// FNV-1a and CHD, lowered to `src/tools/fixed.rs` and committed beside it
-    /// ([ADR-248](../../../docs/specification/adr/adr-248.md), 0.0.250). The
-    /// compiler's `fixed` module calls it while it builds a program;
-    /// `crate::fixed` is the lookup a program runs, and computes the same hash.
-    pub mod fixed {
-        include!("tools/fixed.rs");
+    impl Span {
+        /// The span from byte `start` to byte `end`.
+        pub fn new(start: usize, end: usize) -> Span {
+            Span {
+                start: offset(start),
+                end: offset(end),
+            }
+        }
+
+        /// The bytes it covers, to slice the source with.
+        pub fn bytes(self) -> std::ops::Range<usize> {
+            self.start as usize..self.end as usize
+        }
+
+        /// The byte it starts at, which is the key the checker files its
+        /// answers under (ADR-028).
+        pub fn at(self) -> usize {
+            self.start as usize
+        }
+
+        /// The byte after its last.
+        pub fn stop(self) -> usize {
+            self.end as usize
+        }
+
+        /// Whether byte `offset` is inside it.
+        pub fn contains(self, offset: usize) -> bool {
+            self.bytes().contains(&offset)
+        }
     }
 
-    /// **The `html` template DSL split where it is written**:
-    /// `src/tools/template.nika`, the HTML scan that decides where a hole sits
-    /// and whether escaping can make it safe (ADR-017), lowered to
-    /// `src/tools/template.rs` and committed beside it (ADR-250, 0.0.252). The
-    /// compiler's `emit::template` calls it.
-    pub mod template {
-        include!("tools/template.rs");
+    impl From<std::ops::Range<usize>> for Span {
+        fn from(range: std::ops::Range<usize>) -> Span {
+            Span::new(range.start, range.end)
+        }
     }
 
-    /// **How a ledger is written down, read back**: `src/tools/ledger.nika`,
-    /// the lines, tables, quoted strings and lists of `nikaia.contracts`
-    /// (Part III 13.5), lowered to `src/tools/ledger.rs` and committed beside
-    /// it (ADR-250, 0.0.258). The compiler's `Ledger::parse` calls it and keeps
-    /// what each key means.
-    pub mod ledger {
-        use super::ty::*;
-
-        include!("tools/ledger.rs");
+    /// Lets a rule written `-> Spanned<T> @=` wrap its value without an
+    /// action.
+    impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
+        fn with_span(node: T, span: std::ops::Range<usize>) -> Self {
+            Spanned::new(node, Span::from(span))
+        }
     }
 
-    /// **What `nikaia.toml` may say, and what each key does**:
-    /// `src/tools/manifest.nika`, the `[build]` keys that exist, have moved or
-    /// are withdrawn, the machines and keys of `[build.<target>]`, and the
-    /// three shapes of a dependency, lowered to `src/tools/manifest.rs` and
-    /// committed beside it (ADR-250). The compiler's `Manifest::parse` reads
-    /// the file with the `toml` crate and asks this about every key.
-    pub mod manifest {
-        include!("tools/manifest.rs");
-    }
+    // --- paths.nika ---
 
-    /// **What an HTTP/1.1 request head says**: `src/tools/http1.nika`, a
-    /// grammar and the rules a server answers by, lowered to
-    /// `src/tools/http1.rs` and committed beside it
-    /// ([ADR-038](../../../docs/specification/adr/adr-038.md) D6, 0.0.248).
-    /// `crate::http1` keeps the bytes and calls this for the text.
-    pub mod http1 {
-        include!("tools/http1.rs");
+    #[cfg(test)]
+    mod paths_tests {
+        use super::*;
 
-        /// **The one call a Rust caller makes into the grammar**, for
-        /// `rust::file`'s reason: the generated `Http1::parse_head()` hands
-        /// back a parser rather than a result, and a Rust caller has no
-        /// emitter to write the four lines that turn one into the other.
-        pub fn written(text: &str) -> Result<Written<'_>, crate::grammar::ParseError> {
-            use winnow::Parser;
-            let mut stream = winnow_grammar::ParseInput::<()> {
-                state: winnow_grammar::ParseContext::<()>::default(),
-                input: winnow::stream::LocatingSlice::new(text),
+        fn one(name: &str, alias: &str) -> Option<Named> {
+            Some(Named {
+                name: name.into(),
+                alias: alias.into(),
+            })
+        }
+
+        /// The module a file is: `lib.rs` and `mod.rs` are their
+        /// directory, a binary's file is nobody's.
+        #[test]
+        fn a_file_is_the_module_its_path_names() {
+            assert_eq!(module_of("src/lib.rs").as_deref(), Some(""));
+            assert_eq!(module_of("src/a/b.rs").as_deref(), Some("a::b"));
+            assert_eq!(module_of("src/a/mod.rs").as_deref(), Some("a"));
+            assert_eq!(module_of("src/main.rs"), None);
+            assert_eq!(module_of("src/bin/tool.rs"), None);
+            assert_eq!(module_of("build.rs"), None);
+        }
+
+        /// A `pub use` in its three shapes: a group, a glob, one name.
+        #[test]
+        fn a_pub_use_offers_what_it_names() {
+            let group = exported("m", "inner::{a, b as c}");
+            assert_eq!(group.len(), 2);
+            assert_eq!(group[0].prefix, "inner");
+            assert_eq!(group[0].name, one("a", "a"));
+            assert_eq!(group[1].name, one("b", "c"));
+
+            let glob = exported("", "crate::inner::*");
+            assert_eq!(glob[0].prefix, "crate::inner");
+            assert_eq!(glob[0].name, None);
+
+            let single = exported("", " self::x::Y as Z ");
+            assert_eq!(single[0].prefix, "self::x");
+            assert_eq!(single[0].name, one("Y", "Z"));
+
+            assert_eq!(exported("", "spawn")[0].name, one("spawn", "spawn"));
+        }
+
+        /// `crate`, `self` and `super` are answered from where the `use`
+        /// stands; a bare path is tried there and at the root.
+        #[test]
+        fn a_use_path_resolves_from_where_it_was_written() {
+            let at = |prefix: &str| Export {
+                at: "a::b".into(),
+                prefix: prefix.into(),
+                name: None,
             };
-            Http1::parse_head()
-                .parse_next(&mut stream)
-                .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
+            assert_eq!(bases(&at("crate::x")), ["x"]);
+            assert_eq!(bases(&at("crate")), [""]);
+            assert_eq!(bases(&at("self::x")), ["a::b::x"]);
+            assert_eq!(bases(&at("super::x")), ["a::x"]);
+            assert_eq!(bases(&at("x")), ["a::b::x", "x"]);
+            assert_eq!(after("crated", "crate"), None);
+        }
+
+        /// Commas inside brackets do not split.
+        #[test]
+        fn only_the_outer_commas_split() {
+            assert_eq!(
+                split_top_level("a: Vec<(u8, u8)>, b: [u8; 2] ,"),
+                ["a: Vec<(u8, u8)>", "b: [u8; 2]"]
+            );
+            assert_eq!(joined("", "x"), "x");
+            assert_eq!(joined("a", ""), "a");
+            assert_eq!(joined("a", "x"), "a::x");
         }
     }
 
-    /// **The compiler's syntax tree**: `src/tools/ast.nika`, lowered to
-    /// `src/tools/ast.rs` and committed beside it
-    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D1). The
-    /// compiler's `crate::ast` re-exports it.
-    ///
-    /// What stands here in Rust is what Nikaia cannot say, and it is in this
-    /// crate because Rust lets an `impl` of a type stand only where the type
-    /// is declared: a `Span`'s `usize` doors, which slice a source the
-    /// compiler holds as a `&str`, and the grammar backend's `WithSpan`.
-    pub mod ast {
-        include!("tools/ast.rs");
+    // --- crossing.nika ---
 
-        /// The longest source the compiler reads: a `Span` holds a byte offset
-        /// in a `u32` (ADR-252 D2).
-        pub const LONGEST_SOURCE: usize = u32::MAX as usize;
+    #[cfg(test)]
+    mod crossing_tests {
+        use super::*;
 
-        /// A byte offset as a `Span` holds it. The 4 GiB refusal in
-        /// `parser::parse` is what makes this total.
-        pub fn offset(at: usize) -> u32 {
-            u32::try_from(at).expect("a source is at most 4 GiB (ADR-252 D2)")
+        fn texts(all: &[&str]) -> Vec<String> {
+            all.iter().map(|s| s.to_string()).collect()
         }
 
-        impl Span {
-            /// The span from byte `start` to byte `end`.
-            pub fn new(start: usize, end: usize) -> Span {
-                Span {
-                    start: offset(start),
-                    end: offset(end),
-                }
-            }
-
-            /// The bytes it covers, to slice the source with.
-            pub fn bytes(self) -> std::ops::Range<usize> {
-                self.start as usize..self.end as usize
-            }
-
-            /// The byte it starts at, which is the key the checker files its
-            /// answers under (ADR-028).
-            pub fn at(self) -> usize {
-                self.start as usize
-            }
-
-            /// The byte after its last.
-            pub fn stop(self) -> usize {
-                self.end as usize
-            }
-
-            /// Whether byte `offset` is inside it.
-            pub fn contains(self, offset: usize) -> bool {
-                self.bytes().contains(&offset)
-            }
+        /// `Rc` never crosses, plain data does, and anything else - a view,
+        /// an unknown type, no fields known - is silence.
+        #[test]
+        fn what_crosses_is_read_from_the_fields() {
+            assert_eq!(crosses(&texts(&["Rc<u8>", "u8"])), Crosses::MayNot);
+            assert_eq!(
+                crosses(&texts(&["Vec<Option<u8>>", "String"])),
+                Crosses::May
+            );
+            assert_eq!(crosses(&texts(&["Vec<u8, u16>"])), Crosses::May);
+            assert_eq!(crosses(&texts(&["&str"])), Crosses::Undecided);
+            assert_eq!(crosses(&texts(&["Handle"])), Crosses::Undecided);
+            assert_eq!(crosses(&Vec::new()), Crosses::Undecided);
+            assert_eq!(generic_of(" Option <u8>", "Option").as_deref(), Some("u8"));
+            assert_eq!(generic_of("Optional<u8>", "Option"), None);
         }
 
-        impl From<std::ops::Range<usize>> for Span {
-            fn from(range: std::ops::Range<usize>) -> Span {
-                Span::new(range.start, range.end)
-            }
+        /// `Send` as a word, and not as letters inside one.
+        #[test]
+        fn a_bound_names_send_as_a_word() {
+            assert!(bounds_send("T: Send + 'static"));
+            assert!(bounds_send("Send"));
+            assert!(!bounds_send("T: Sender<u8>, U: Resend"));
+            assert!(!bounds_send("Sendé"));
         }
 
-        /// Lets a rule written `-> Spanned<T> @=` wrap its value without an
-        /// action.
-        impl<T> winnow_grammar::WithSpan<T> for Spanned<T> {
-            fn with_span(node: T, span: std::ops::Range<usize>) -> Self {
-                Spanned::new(node, Span::from(span))
-            }
+        /// The article and the commas.
+        #[test]
+        fn a_list_reads_as_a_sentence() {
+            assert_eq!(a_list(&texts(&["a"]), "the one", "the many"), "the one `a`");
+            assert_eq!(
+                a_list(&texts(&["a", "b"]), "x", "the many"),
+                "the many `a` and `b`"
+            );
+            assert_eq!(
+                a_list(&texts(&["a", "b", "c"]), "x", "y"),
+                "y `a`, `b` and `c`"
+            );
+            assert_eq!(a_list(&Vec::new(), "x", "y"), "");
         }
-    }
 
-    /// **What a constant integer expression comes to**:
-    /// `src/tools/fold.nika`, a magnitude and a sign held to the type an
-    /// operand pinned, lowered to `src/tools/fold.rs` and committed beside it
-    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D6). The
-    /// compiler's `fold` turns its answer into an `i128`.
-    pub mod fold {
-        use super::ast::*;
-
-        include!("tools/fold.rs");
-    }
-
-    /// **What `--trust` says about a program**: `src/tools/trust.nika`, which
-    /// written root is a way around the root check and what the report says,
-    /// lowered to `src/tools/trust.rs` and committed beside it (ADR-250). The
-    /// compiler's `contracts::trust` walks the calls and reads the ledger.
-    pub mod trust {
-        use super::ast::*;
-
-        include!("tools/trust.rs");
-    }
-
-    /// **The files `nikaia describe` reads a crate from**:
-    /// `src/tools/sources.nika`, every `.rs` under a crate's `src` by
-    /// `fs::walk`, lowered to `src/tools/sources.rs` and committed beside it
-    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D4). The
-    /// compiler's `describe` drives it to its end.
-    pub mod sources {
-        /// What the lowered `throws` names: `std`'s own `io`, which a tool
-        /// has no prelude to bring in.
-        use crate::io;
-
-        include!("tools/sources.rs");
-    }
-
-    /// **How `nikaia describe` spells a Rust crate's names**:
-    /// `src/tools/paths.nika`, the module a file is and what a `pub use`
-    /// offers, lowered to `src/tools/paths.rs` and committed beside it
-    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D4). The
-    /// compiler's `describe` keeps the table the answers fill.
-    pub mod paths {
-        include!("tools/paths.rs");
-
-        #[cfg(test)]
-        mod tests {
-            use super::*;
-
-            fn one(name: &str, alias: &str) -> Option<Named> {
-                Some(Named {
-                    name: name.into(),
-                    alias: alias.into(),
-                })
-            }
-
-            /// The module a file is: `lib.rs` and `mod.rs` are their
-            /// directory, a binary's file is nobody's.
-            #[test]
-            fn a_file_is_the_module_its_path_names() {
-                assert_eq!(module_of("src/lib.rs").as_deref(), Some(""));
-                assert_eq!(module_of("src/a/b.rs").as_deref(), Some("a::b"));
-                assert_eq!(module_of("src/a/mod.rs").as_deref(), Some("a"));
-                assert_eq!(module_of("src/main.rs"), None);
-                assert_eq!(module_of("src/bin/tool.rs"), None);
-                assert_eq!(module_of("build.rs"), None);
-            }
-
-            /// A `pub use` in its three shapes: a group, a glob, one name.
-            #[test]
-            fn a_pub_use_offers_what_it_names() {
-                let group = exported("m", "inner::{a, b as c}");
-                assert_eq!(group.len(), 2);
-                assert_eq!(group[0].prefix, "inner");
-                assert_eq!(group[0].name, one("a", "a"));
-                assert_eq!(group[1].name, one("b", "c"));
-
-                let glob = exported("", "crate::inner::*");
-                assert_eq!(glob[0].prefix, "crate::inner");
-                assert_eq!(glob[0].name, None);
-
-                let single = exported("", " self::x::Y as Z ");
-                assert_eq!(single[0].prefix, "self::x");
-                assert_eq!(single[0].name, one("Y", "Z"));
-
-                assert_eq!(exported("", "spawn")[0].name, one("spawn", "spawn"));
-            }
-
-            /// `crate`, `self` and `super` are answered from where the `use`
-            /// stands; a bare path is tried there and at the root.
-            #[test]
-            fn a_use_path_resolves_from_where_it_was_written() {
-                let at = |prefix: &str| Export {
-                    at: "a::b".into(),
-                    prefix: prefix.into(),
-                    name: None,
-                };
-                assert_eq!(bases(&at("crate::x")), ["x"]);
-                assert_eq!(bases(&at("crate")), [""]);
-                assert_eq!(bases(&at("self::x")), ["a::b::x"]);
-                assert_eq!(bases(&at("super::x")), ["a::x"]);
-                assert_eq!(bases(&at("x")), ["a::b::x", "x"]);
-                assert_eq!(after("crated", "crate"), None);
-            }
-
-            /// Commas inside brackets do not split.
-            #[test]
-            fn only_the_outer_commas_split() {
-                assert_eq!(
-                    split_top_level("a: Vec<(u8, u8)>, b: [u8; 2] ,"),
-                    ["a: Vec<(u8, u8)>", "b: [u8; 2]"]
-                );
-                assert_eq!(joined("", "x"), "x");
-                assert_eq!(joined("a", ""), "a");
-                assert_eq!(joined("a", "x"), "a::x");
-            }
+        /// The shortest way to a sink, through the crate's own calls, and
+        /// an ambiguous short name is not followed.
+        #[test]
+        fn the_shortest_way_to_a_thread_is_named() {
+            let mut calls = std::collections::BTreeMap::new();
+            calls.insert("a::run".to_string(), texts(&["helper", "slow"]));
+            calls.insert("a::helper".to_string(), texts(&["tokio::spawn"]));
+            calls.insert("a::slow".to_string(), texts(&["a::slower"]));
+            calls.insert("a::slower".to_string(), texts(&["std::thread::spawn"]));
+            calls.insert("a::loops".to_string(), texts(&["a::loops"]));
+            assert_eq!(
+                reaches_a_thread("a::run", &calls),
+                Some(texts(&["a::helper", "tokio::spawn"]))
+            );
+            assert_eq!(reaches_a_thread("a::loops", &calls), None);
+            calls.insert("b::helper".to_string(), Vec::new());
+            assert_eq!(the_crates_own("helper", &calls), None);
         }
     }
 
-    /// **What `nikaia describe` says about threads**:
-    /// `src/tools/crossing.nika`, whether a type's fields let it cross, whether
-    /// a bound names `Send`, and the shortest way a function reaches a thread,
-    /// lowered to `src/tools/crossing.rs` and committed beside it
-    /// ([ADR-193](../../../docs/specification/adr/adr-193.md) D3-D5). It reads
-    /// the ledger's records, as `ledger` does.
-    pub mod crossing {
-        use super::ty::*;
+    // --- signature.nika ---
 
-        include!("tools/crossing.rs");
+    #[cfg(test)]
+    mod signature_tests {
+        use super::*;
 
-        #[cfg(test)]
-        mod tests {
-            use super::*;
-
-            fn texts(all: &[&str]) -> Vec<String> {
-                all.iter().map(|s| s.to_string()).collect()
-            }
-
-            /// `Rc` never crosses, plain data does, and anything else - a view,
-            /// an unknown type, no fields known - is silence.
-            #[test]
-            fn what_crosses_is_read_from_the_fields() {
-                assert_eq!(crosses(&texts(&["Rc<u8>", "u8"])), Crosses::MayNot);
-                assert_eq!(
-                    crosses(&texts(&["Vec<Option<u8>>", "String"])),
-                    Crosses::May
-                );
-                assert_eq!(crosses(&texts(&["Vec<u8, u16>"])), Crosses::May);
-                assert_eq!(crosses(&texts(&["&str"])), Crosses::Undecided);
-                assert_eq!(crosses(&texts(&["Handle"])), Crosses::Undecided);
-                assert_eq!(crosses(&Vec::new()), Crosses::Undecided);
-                assert_eq!(generic_of(" Option <u8>", "Option").as_deref(), Some("u8"));
-                assert_eq!(generic_of("Optional<u8>", "Option"), None);
-            }
-
-            /// `Send` as a word, and not as letters inside one.
-            #[test]
-            fn a_bound_names_send_as_a_word() {
-                assert!(bounds_send("T: Send + 'static"));
-                assert!(bounds_send("Send"));
-                assert!(!bounds_send("T: Sender<u8>, U: Resend"));
-                assert!(!bounds_send("Sendé"));
-            }
-
-            /// The article and the commas.
-            #[test]
-            fn a_list_reads_as_a_sentence() {
-                assert_eq!(a_list(&texts(&["a"]), "the one", "the many"), "the one `a`");
-                assert_eq!(
-                    a_list(&texts(&["a", "b"]), "x", "the many"),
-                    "the many `a` and `b`"
-                );
-                assert_eq!(
-                    a_list(&texts(&["a", "b", "c"]), "x", "y"),
-                    "y `a`, `b` and `c`"
-                );
-                assert_eq!(a_list(&Vec::new(), "x", "y"), "");
-            }
-
-            /// The shortest way to a sink, through the crate's own calls, and
-            /// an ambiguous short name is not followed.
-            #[test]
-            fn the_shortest_way_to_a_thread_is_named() {
-                let mut calls = std::collections::BTreeMap::new();
-                calls.insert("a::run".to_string(), texts(&["helper", "slow"]));
-                calls.insert("a::helper".to_string(), texts(&["tokio::spawn"]));
-                calls.insert("a::slow".to_string(), texts(&["a::slower"]));
-                calls.insert("a::slower".to_string(), texts(&["std::thread::spawn"]));
-                calls.insert("a::loops".to_string(), texts(&["a::loops"]));
-                assert_eq!(
-                    reaches_a_thread("a::run", &calls),
-                    Some(texts(&["a::helper", "tokio::spawn"]))
-                );
-                assert_eq!(reaches_a_thread("a::loops", &calls), None);
-                calls.insert("b::helper".to_string(), Vec::new());
-                assert_eq!(the_crates_own("helper", &calls), None);
-            }
+        fn texts(all: &[&str]) -> Vec<String> {
+            all.iter().map(|s| s.to_string()).collect()
         }
-    }
 
-    /// **What a Rust crate offers a caller**: `src/tools/surface.nika`, every
-    /// `fn` by the path it is defined at, which modules are `pub`, what a
-    /// `pub use` carries, the `pub` types and the `unsafe impl`s, lowered to
-    /// `src/tools/surface.rs` and committed beside it
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D2-D4). It reads
-    /// the Rust grammar's items and the path work beside it.
-    pub mod surface {
-        use super::paths::*;
-        use super::rust::*;
-
-        include!("tools/surface.rs");
-    }
-
-    /// **A Rust signature in the ledger's words**:
-    /// `src/tools/signature.nika`, one type at a time, whether a value of it
-    /// is kept, what a `Result` throws and which parameters a `Send` bound
-    /// reaches, lowered to `src/tools/signature.rs` and committed beside it
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D3, D4). It
-    /// reads the ledger's records, as `ledger` does.
-    pub mod signature {
-        use super::ty::*;
-
-        include!("tools/signature.rs");
-
-        #[cfg(test)]
-        mod tests {
-            use super::*;
-
-            fn texts(all: &[&str]) -> Vec<String> {
-                all.iter().map(|s| s.to_string()).collect()
-            }
-
-            /// A view is not kept, a value is; the crate's own type is named
-            /// by its path and noted; anything else is `?`.
-            #[test]
-            fn a_rust_type_reads_as_the_ledgers() {
-                let types: std::collections::BTreeSet<String> =
-                    ["Conn".to_string()].into_iter().collect();
-                let params = texts(&["T"]);
-                let mut mentioned = std::collections::BTreeSet::new();
-                let mut said = |t: &str| {
-                    let out = translate(t, "db", &params, &types, &mut mentioned);
-                    (text(&out.ty), out.kept)
-                };
-                assert_eq!(said("&str"), ("ref String".to_string(), false));
-                assert_eq!(said("Vec<Conn>"), ("Vec[db::Conn]".to_string(), true));
-                assert_eq!(said("Option<T>"), ("$T?".to_string(), true));
-                assert_eq!(said("u8"), ("u8".to_string(), false));
-                assert_eq!(said("&mut u8"), ("?".to_string(), false));
-                assert!(said("other::Thing").1);
-                assert!(mentioned.contains("Conn"));
-            }
-
-            /// A `Result` throws the crate's own error by its path, and `?` for
-            /// any other.
-            #[test]
-            fn a_result_names_what_it_throws() {
-                let types: std::collections::BTreeSet<String> =
-                    ["Error".to_string()].into_iter().collect();
-                let mut mentioned = std::collections::BTreeSet::new();
-                let own = result_of(
-                    "Result<u8, Error>",
-                    "db",
-                    &Vec::new(),
-                    &types,
-                    &mut mentioned,
-                );
-                assert_eq!(own.fails.as_deref(), Some("db::Error"));
-                let other = result_of(
-                    "Result<(), io::Error>",
-                    "db",
-                    &Vec::new(),
-                    &types,
-                    &mut mentioned,
-                );
-                assert_eq!(other.fails.as_deref(), Some("?"));
-                let plain = result_of("u8", "db", &Vec::new(), &types, &mut mentioned);
-                assert_eq!(plain.fails, None);
-            }
-
-            /// A bound reaches a parameter through its type variable or an
-            /// `impl Send` at the parameter itself.
-            #[test]
-            fn a_send_bound_reaches_its_parameters() {
-                assert_eq!(sends("T: Send + 'static, U: Clone, 'a: 'b"), texts(&["T"]));
-                assert_eq!(
-                    sent_across(
-                        &texts(&["job", "name", "f"]),
-                        &texts(&["&mut T", "&str", "impl FnOnce() + Send"]),
-                        "T: Send, "
-                    ),
-                    texts(&["job", "f"])
-                );
-            }
-        }
-    }
-
-    /// **The type language the checker reasons in and the ledger records**:
-    /// `src/tools/ty.nika`, `Ty` and `Shape` and the text a type is written
-    /// as, lowered to `src/tools/ty.rs` and committed beside it (ADR-257 D1).
-    /// The compiler's `contracts::ty` re-exports them and keeps the algorithms
-    /// over them until ADR-257's step (d).
-    pub mod ty {
-        include!("tools/ty.rs");
-
-        /// A type prints as its text, which is the one thing a `Display` of
-        /// it can say. The language has no `Display` of its own to write this
-        /// in, so it is the one line of Rust beside the declaration.
-        impl std::fmt::Display for Ty {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(&text(self))
-            }
-        }
-    }
-
-    /// **A Rust file's public surface**, read by a Nikaia grammar:
-    /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
-    /// compiler and committed beside it.
-    ///
-    /// This is the reading half of `nikaia describe` (ADR-195 D3). What it
-    /// reads, what it deliberately does not, and how it differs from the
-    /// character scanner it replaces are in the `.nika`'s own header.
-    pub mod rust {
-        include!("tools/rust.rs");
-
-        /// **The one call a Rust caller makes**, and the only hand-written Rust
-        /// in this module.
-        ///
-        /// The generated `Rust::parse_file()` hands back a parser rather than a
-        /// result; what turns one into the other is four lines the emitter
-        /// writes at every call site in a Nikaia program, and a Rust caller has
-        /// no emitter. So they are written once, here, beside the thing they
-        /// are about - which is the same argument ADR-013 makes for `std` being
-        /// a crate rather than a table inside the printer.
-        ///
-        /// The error is [`crate::grammar::ParseError`], already rendered: a
-        /// headline, the line with a caret under it, and what else was possible
-        /// there.
-        pub fn file(text: &str) -> Result<Vec<Item<'_>>, crate::grammar::ParseError> {
-            use winnow::Parser;
-            let mut stream = winnow_grammar::ParseInput::<()> {
-                state: winnow_grammar::ParseContext::<()>::default(),
-                input: winnow::stream::LocatingSlice::new(text),
+        /// A view is not kept, a value is; the crate's own type is named
+        /// by its path and noted; anything else is `?`.
+        #[test]
+        fn a_rust_type_reads_as_the_ledgers() {
+            let types: std::collections::BTreeSet<String> =
+                ["Conn".to_string()].into_iter().collect();
+            let params = texts(&["T"]);
+            let mut mentioned = std::collections::BTreeSet::new();
+            let mut said = |t: &str| {
+                let out = translate(t, "db", &params, &types, &mut mentioned);
+                (text(&out.ty), out.kept)
             };
-            Rust::parse_file()
-                .parse_next(&mut stream)
-                .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
+            assert_eq!(said("&str"), ("ref String".to_string(), false));
+            assert_eq!(said("Vec<Conn>"), ("Vec[db::Conn]".to_string(), true));
+            assert_eq!(said("Option<T>"), ("$T?".to_string(), true));
+            assert_eq!(said("u8"), ("u8".to_string(), false));
+            assert_eq!(said("&mut u8"), ("?".to_string(), false));
+            assert!(said("other::Thing").1);
+            assert!(mentioned.contains("Conn"));
         }
+
+        /// A `Result` throws the crate's own error by its path, and `?` for
+        /// any other.
+        #[test]
+        fn a_result_names_what_it_throws() {
+            let types: std::collections::BTreeSet<String> =
+                ["Error".to_string()].into_iter().collect();
+            let mut mentioned = std::collections::BTreeSet::new();
+            let own = result_of(
+                "Result<u8, Error>",
+                "db",
+                &Vec::new(),
+                &types,
+                &mut mentioned,
+            );
+            assert_eq!(own.fails.as_deref(), Some("db::Error"));
+            let other = result_of(
+                "Result<(), io::Error>",
+                "db",
+                &Vec::new(),
+                &types,
+                &mut mentioned,
+            );
+            assert_eq!(other.fails.as_deref(), Some("?"));
+            let plain = result_of("u8", "db", &Vec::new(), &types, &mut mentioned);
+            assert_eq!(plain.fails, None);
+        }
+
+        /// A bound reaches a parameter through its type variable or an
+        /// `impl Send` at the parameter itself.
+        #[test]
+        fn a_send_bound_reaches_its_parameters() {
+            assert_eq!(sends("T: Send + 'static, U: Clone, 'a: 'b"), texts(&["T"]));
+            assert_eq!(
+                sent_across(
+                    &texts(&["job", "name", "f"]),
+                    &texts(&["&mut T", "&str", "impl FnOnce() + Send"]),
+                    "T: Send, "
+                ),
+                texts(&["job", "f"])
+            );
+        }
+    }
+
+    // --- ty.nika ---
+
+    /// A type prints as its text, which is the one thing a `Display` of
+    /// it can say. The language has no `Display` of its own to write this
+    /// in, so it is the one line of Rust beside the declaration.
+    impl std::fmt::Display for Ty {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(&text(self))
+        }
+    }
+
+    // --- rust.nika ---
+
+    /// **The one call a Rust caller makes**, and the only hand-written Rust
+    /// in this module.
+    ///
+    /// The generated `Rust::parse_file()` hands back a parser rather than a
+    /// result; what turns one into the other is four lines the emitter
+    /// writes at every call site in a Nikaia program, and a Rust caller has
+    /// no emitter. So they are written once, here, beside the thing they
+    /// are about - which is the same argument ADR-013 makes for `std` being
+    /// a crate rather than a table inside the printer.
+    ///
+    /// The error is [`crate::grammar::ParseError`], already rendered: a
+    /// headline, the line with a caret under it, and what else was possible
+    /// there.
+    pub fn file(text: &str) -> Result<Vec<RustItem<'_>>, crate::grammar::ParseError> {
+        use winnow::Parser;
+        let mut stream = winnow_grammar::ParseInput::<()> {
+            state: winnow_grammar::ParseContext::<()>::default(),
+            input: winnow::stream::LocatingSlice::new(text),
+        };
+        Rust::parse_file()
+            .parse_next(&mut stream)
+            .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
     }
 }
 

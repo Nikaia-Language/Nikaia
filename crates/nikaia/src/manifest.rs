@@ -81,7 +81,7 @@ pub enum Dependency {
 }
 
 /// A refusal from `tools/manifest.nika`, in the words it gave.
-fn refusal(thrown: nikaia_std::error::Thrown<decide::Refused>) -> anyhow::Error {
+fn refusal(thrown: nikaia_std::error::Thrown<nikaia_std::tools::Refused>) -> anyhow::Error {
     refused!("{thrown}")
 }
 
@@ -283,7 +283,7 @@ fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> 
         )
         .map_err(refusal)?;
         let declared = match (shape, path) {
-            (decide::Shape::Rust, _) => {
+            (decide::DependencyShape::Rust, _) => {
                 let mut table = value
                     .as_table()
                     .cloned()
@@ -291,7 +291,7 @@ fn dependencies(document: &toml::Value) -> Result<BTreeMap<String, Dependency>> 
                 table.remove("type");
                 Dependency::Rust(toml::Value::Table(table))
             }
-            (decide::Shape::Path, Some(path)) => Dependency::Path(PathBuf::from(path)),
+            (decide::DependencyShape::Path, Some(path)) => Dependency::Path(PathBuf::from(path)),
             _ => Dependency::Nikaia(value.clone()),
         };
         out.insert(name, declared);

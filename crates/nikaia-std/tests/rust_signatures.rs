@@ -13,7 +13,7 @@
 //! functions that do not exist on the fixture below, and this is where that
 //! stops being true.
 
-use nikaia_std::tools::rust::{Item, file};
+use nikaia_std::tools::rust::{RustItem, file};
 
 /// A crate whose text contains items that are not items.
 ///
@@ -85,10 +85,10 @@ unsafe impl<T> Send for Smuggled<T> {}
 "##;
 
 /// Every item, with the path it was found under, one per line.
-fn lines(items: &[Item<'_>], path: &str, out: &mut Vec<String>) {
+fn lines(items: &[RustItem<'_>], path: &str, out: &mut Vec<String>) {
     for item in items {
         match item {
-            Item::Fun(f) => {
+            RustItem::Fun(f) => {
                 let parts = f
                     .parts
                     .iter()
@@ -112,11 +112,11 @@ fn lines(items: &[Item<'_>], path: &str, out: &mut Vec<String>) {
             // ([ADR-193](../../../docs/specification/adr/adr-193.md) D4), and
             // shown here so a test that asserts what is *not* an item can see
             // that this one is not an offer either.
-            Item::Hidden(f) => out.push(format!("{path}{}() (private)", f.name)),
-            Item::Rec(r) => out.push(format!("{} {path}{}", r.what, r.name)),
-            Item::Export(text) => out.push(format!("use {text}")),
-            Item::Used(text) => out.push(format!("(use {text})")),
-            Item::Group(g) => {
+            RustItem::Hidden(f) => out.push(format!("{path}{}() (private)", f.name)),
+            RustItem::Rec(r) => out.push(format!("{} {path}{}", r.what, r.name)),
+            RustItem::Export(text) => out.push(format!("use {text}")),
+            RustItem::Used(text) => out.push(format!("(use {text})")),
+            RustItem::Group(g) => {
                 let shut = match g.visible {
                     true => "",
                     false => " (private)",
@@ -266,7 +266,7 @@ fn a_lifetime_is_not_a_character_literal() {
 fn what_comes_back_are_views_into_the_input() {
     let text = String::from("pub fn only(a: i32) -> i32 { a }");
     let items = file(&text).expect("parses");
-    let Item::Fun(f) = &items[0] else {
+    let RustItem::Fun(f) = &items[0] else {
         panic!("{items:?}");
     };
     let inside = |view: &str| {

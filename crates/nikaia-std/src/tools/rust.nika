@@ -160,10 +160,10 @@ pub struct Group {
     // from `visible` and from the re-exports - not by the grammar deciding not
     // to look.
     pub visible: bool,
-    pub items: Vec[Item],
+    pub items: Vec[RustItem],
 }
 
-pub enum Item {
+pub enum RustItem {
     Fun(Fun),
     Rec(Rec),
     Group(Group),
@@ -201,7 +201,7 @@ pub enum Item {
 // What one position in a file turned out to be. A file is a run of these, and
 // the ones that are nothing are the text between the items.
 pub enum Found {
-    One(Item),
+    One(RustItem),
     Skip,
 }
 
@@ -224,7 +224,7 @@ grammar Rust {
     rule LINE = "//" until(line_ending) { }
     rule BLOCK = "/*" until("*/") "*/" { }
 
-    pub rule file -> Vec[Item] = items:public eof { items }
+    pub rule file -> Vec[RustItem] = items:public eof { items }
 
     // ---- the two bodies ------------------------------------------------
     //
@@ -233,28 +233,28 @@ grammar Rust {
     // trait method is as public as the trait is. The difference is one
     // alternative and it is the whole of the visibility rule.
 
-    rule public -> Vec[Item] =
+    rule public -> Vec[RustItem] =
         found:found* { kept(found) }
 
-    rule exposed -> Vec[Item] =
+    rule exposed -> Vec[RustItem] =
         found:found_exposed* { kept(found) }
 
     rule found -> Found =
           i:item { Found::One(i) }
-        | f:method { Found::One(Item::Hidden(f)) }
+        | f:method { Found::One(RustItem::Hidden(f)) }
         | JUNK { Found::Skip }
 
     rule found_exposed -> Found =
-          f:method { Found::One(Item::Fun(f)) }
+          f:method { Found::One(RustItem::Fun(f)) }
         | i:item { Found::One(i) }
         | JUNK { Found::Skip }
 
-    rule item -> Item =
-          f:function { Item::Fun(f) }
-        | r:record { Item::Rec(r) }
-        | g:group { Item::Group(g) }
-        | e:export { Item::Export(e) }
-        | u:import { Item::Used(u) }
+    rule item -> RustItem =
+          f:function { RustItem::Fun(f) }
+        | r:record { RustItem::Rec(r) }
+        | g:group { RustItem::Group(g) }
+        | e:export { RustItem::Export(e) }
+        | u:import { RustItem::Used(u) }
 
     // `pub use …;` and nothing else: a plain `use` brings a name into this
     // file's scope and makes nothing reachable from outside it, and
@@ -302,7 +302,7 @@ grammar Rust {
     rule inside -> Vec[ref String] = "{" cs:inside_run "}" { cs }
 
     rule inside_run -> Vec[ref String] =
-        pieces:inside_piece* { joined(pieces) }
+        pieces:inside_piece* { every_call(pieces) }
 
     // What one piece turned out to be. **Three variants and not a list**: a
     // piece that is one call would otherwise build a list of one, which the
@@ -592,7 +592,7 @@ grammar Rust {
 }
 
 // Every call one body's pieces found, in order.
-fn joined(pieces: Vec[Called]) -> Vec[ref String] {
+fn every_call(pieces: Vec[Called]) -> Vec[ref String] {
     let mut all = Vec()
     for piece in pieces.drain() {
         match piece {
@@ -605,7 +605,7 @@ fn joined(pieces: Vec[Called]) -> Vec[ref String] {
 }
 
 // What `p*` collected, with the text between the items dropped.
-fn kept(found: Vec[Found]) -> Vec[Item] {
+fn kept(found: Vec[Found]) -> Vec[RustItem] {
     let mut all = Vec()
     for f in found.drain() {
         // Both variants by name rather than a catch-all: `Found` has exactly

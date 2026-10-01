@@ -85,7 +85,7 @@ pub fn empty() -> Surface {
 ///
 /// The file's `use` items are read first, because a call is resolved against
 /// them and one may stand below the function that needs it (ADR-193 D4).
-pub fn read(mut surface: Surface, relative: ref String, items: ref Vec[Item]) {
+pub fn read_items(mut surface: Surface, relative: ref String, items: ref Vec[RustItem]) {
     let found = module_of(relative)
     if found == null {
         return
@@ -212,14 +212,14 @@ pub fn candidates(export: ref Export, name: ref String) -> Vec[String] {
 /// `mod` block treated as the file's can only make a name resolve where it
 /// would not have, which for a *note* is a wrong sentence and not a wrong
 /// claim.
-pub fn imported(items: ref Vec[Item], mut out: collections::BTreeMap[String, String]) {
+pub fn imported(items: ref Vec[RustItem], mut out: collections::BTreeMap[String, String]) {
     for item in items {
         match item {
             // A `pub use` is an import here too: it brings the name into this
             // file exactly as a plain one does, and offers it onward besides.
-            Item::Used(text) => imports_of(text, out),
-            Item::Export(text) => imports_of(text, out),
-            Item::Group(g) => imported(g.items, out),
+            RustItem::Used(text) => imports_of(text, out),
+            RustItem::Export(text) => imports_of(text, out),
+            RustItem::Group(g) => imported(g.items, out),
             else => {}
         }
     }
@@ -241,10 +241,10 @@ fn imports_of(text: ref String, mut out: collections::BTreeMap[String, String]) 
 }
 
 // One file's items, under the module `at`.
-fn walk(mut surface: Surface, items: ref Vec[Item], at: ref String, imports: ref collections::BTreeMap[String, String]) {
+fn walk(mut surface: Surface, items: ref Vec[RustItem], at: ref String, imports: ref collections::BTreeMap[String, String]) {
     for item in items {
         match item {
-            Item::Fun(f) => {
+            RustItem::Fun(f) => {
                 let path = joined(at, f.name)
                 surface.offers.insert(path.clone())
                 surface.functions.insert(path, function_of(f, imports))
@@ -252,10 +252,10 @@ fn walk(mut surface: Surface, items: ref Vec[Item], at: ref String, imports: ref
             // **On the way to an entry rather than one** (ADR-193 D4): nothing
             // outside the crate can call it, and the call graph goes through
             // it.
-            Item::Hidden(f) => {
+            RustItem::Hidden(f) => {
                 surface.functions.insert(joined(at, f.name), function_of(f, imports))
             }
-            Item::Rec(r) => {
+            RustItem::Rec(r) => {
                 let path = joined(at, r.name)
                 if r.what == "struct" {
                     let mut types: Vec[String] = []
@@ -276,15 +276,15 @@ fn walk(mut surface: Surface, items: ref Vec[Item], at: ref String, imports: ref
                 surface.derives.insert(path.clone(), derived)
                 surface.types.insert(path)
             }
-            Item::Export(text) => {
+            RustItem::Export(text) => {
                 for one in exported(at, text) {
                     surface.exports.push(one)
                 }
             }
             // Read before this walk, into the table every call was resolved
             // against.
-            Item::Used(_) => {}
-            Item::Group(g) => {
+            RustItem::Used(_) => {}
+            RustItem::Group(g) => {
                 if g.what == "mod" {
                     let path = joined(at, g.name)
                     surface.modules.insert(path.clone(), g.visible)
@@ -380,12 +380,3 @@ fn last_segment(written: ref String) -> String {
     return last
 }
 
-// The characters from `from` up to `to`. Its own name, because `paths.nika`
-// beside it has a `slice` of its own and a package is one namespace.
-fn between(c: ref Array[char], from: i64, to: i64) -> String {
-    let mut out: String = ""
-    for k in from..<to {
-        out.push(c[k])
-    }
-    return out
-}

@@ -141,7 +141,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         // D3-D4): this drives the two and hands the items between them.
         let items = nikaia_std::tools::rust::file(text)
             .map_err(|error| anyhow::anyhow!("{relative}: {error}"))?;
-        surface::read(&mut surface, relative, &items);
+        surface::read_items(&mut surface, relative, &items);
     }
     surface::resolve(&mut surface);
     let types = surface.types.clone();
@@ -494,7 +494,7 @@ fn contract_of(
     crate_word: &str,
     types: &BTreeSet<String>,
 ) -> (FnContract, BTreeSet<String>) {
-    let written = signature::Written {
+    let written = signature::WrittenFn {
         names: function.args.iter().map(|arg| arg.name.clone()).collect(),
         types: function.args.iter().map(|arg| arg.ty.clone()).collect(),
         result: function.result.clone(),

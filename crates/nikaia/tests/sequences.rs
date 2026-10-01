@@ -278,7 +278,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// exists to tell apart, and the reason it is raised with a sentence.
 ///
 /// **50 at 0.0.315**, a fall, and two things answered it. Every tool is read
-/// with what `lower-std` reads beside it (`sysroot::modules_beside`), not only
+/// with what `lower-std` reads beside it (its package, ADR-261), not only
 /// `ledger.nika`: `crossing.nika` and `signature.nika` call methods on the
 /// ledger's records, and `surface.nika` on the Rust grammar's items. And a
 /// `for` over a set binds its element (#302), which answers two more -
@@ -307,22 +307,36 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let Ok(parsed) = parse_to_ast(&source) else {
                 continue;
             };
-            // **A tool reads what `lower-std` reads beside it**
-            // (`sysroot::modules_beside`): read alone, `ledger.nika` names a
-            // `FnContract` nothing here declares, and every call on one is
-            // unanswered (0.0.292); `surface.nika` the grammar's `Item`.
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            let records: Vec<nikaia::parser::Parsed> = nikaia::sysroot::modules_beside(name)
-                .iter()
-                .map(|module| {
-                    let text = std::fs::read_to_string(path.with_file_name(module))
-                        .expect("a module a tool reads stands beside it");
-                    parse_to_ast(&text).expect("it parses")
-                })
-                .collect();
+            // **A tool is read as `lower-std` reads it: in its package**
+            // (ADR-261), every other file of `src/tools` beside it. Read
+            // alone, `ledger.nika` names a `FnContract` nothing here declares,
+            // and every call on one is unanswered (0.0.292).
+            let in_tools = path
+                .parent()
+                .and_then(|dir| dir.file_name())
+                .is_some_and(|dir| dir == "tools");
+            let records: Vec<nikaia::parser::Parsed> = match in_tools {
+                false => Vec::new(),
+                true => {
+                    let mut others: Vec<PathBuf> = std::fs::read_dir(path.parent().unwrap())
+                        .expect("the package's directory")
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|other| {
+                            other != &path && other.extension().is_some_and(|e| e == "nika")
+                        })
+                        .collect();
+                    others.sort();
+                    others
+                        .iter()
+                        .map(|other| {
+                            let text =
+                                std::fs::read_to_string(other).expect("a file of the package");
+                            parse_to_ast(&text).expect("it parses")
+                        })
+                        .collect()
+                }
+            };
             let beside: Vec<&nikaia::parser::Parsed> = records.iter().collect();
             let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
                 .chain(beside.iter().copied())

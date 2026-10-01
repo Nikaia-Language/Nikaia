@@ -37,7 +37,7 @@ pub fn spelled(wrote: ref Wrote) -> String {
 /// `Root::Anywhere`, or `Root::Dir("/")`, under whatever module path.
 pub fn written_root(names: ref winnow_grammar::InternerContext, arg: ref Expr) -> Wrote? {
     return match arg {
-        Expr::Path(segments) => if named(names, segments, "Anywhere") { Wrote::Anywhere } else { null },
+        Expr::Path(segments) => if ends_with_variant(names, segments, "Anywhere") { Wrote::Anywhere } else { null },
         Expr::Call { func, args, .. } => the_whole_filesystem(names, func, args),
         else => null,
     }
@@ -46,7 +46,7 @@ pub fn written_root(names: ref winnow_grammar::InternerContext, arg: ref Expr) -
 /// `Root::Dir("/")`, and no other directory.
 fn the_whole_filesystem(names: ref winnow_grammar::InternerContext, func: ref Expr, args: ref Vec[Expr]) -> Wrote? {
     let is_dir = match func {
-        Expr::Path(segments) => named(names, segments, "Dir"),
+        Expr::Path(segments) => ends_with_variant(names, segments, "Dir"),
         else => false,
     }
     return null if !is_dir || args.len() == 0
@@ -57,7 +57,7 @@ fn the_whole_filesystem(names: ref winnow_grammar::InternerContext, func: ref Ex
 }
 
 /// Whether a path ends `Root::<variant>`.
-fn named(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol], variant: ref String) -> bool {
+fn ends_with_variant(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol], variant: ref String) -> bool {
     let n = segments.len()
     return n >= 2 && names.resolve(segments[n - 2]) == "Root" && names.resolve(segments[n - 1]) == variant
 }
