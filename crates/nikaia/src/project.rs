@@ -1727,8 +1727,8 @@ impl Project {
         if !layout.in_project {
             refuse!(
                 "There's no `nikaia.toml` in {} or any folder above it.\n\
-                 `nikaia build` needs a project. To compile a single file, run \
-                 `nikaia --input {}`.",
+                 `nikaia build` needs a project. To lower a single file to Rust, \
+                 run `nikaia lower {}`.",
                 start.display(),
                 start.join("main.nika").display()
             );

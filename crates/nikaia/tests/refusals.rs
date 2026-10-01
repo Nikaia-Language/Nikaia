@@ -21,7 +21,7 @@ fn refuse(dir: &Path, source: &str) -> Output {
     let input = dir.join("main.nika");
     std::fs::write(&input, source).expect("the source");
     Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().expect("utf-8 path")])
+        .args(["lower", input.to_str().expect("utf-8 path")])
         .args([
             "--output",
             dir.join("main.rs").to_str().expect("utf-8 path"),
@@ -102,7 +102,7 @@ fn a_program_that_does_not_parse_says_where_and_no_more() {
 #[test]
 fn a_failure_of_the_compiler_keeps_its_trace() {
     let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", "/nowhere/at/all.nika"])
+        .args(["lower", "/nowhere/at/all.nika"])
         .env("RUST_BACKTRACE", "1")
         .output()
         .expect("the nikaia binary runs");
@@ -119,7 +119,7 @@ fn a_failure_of_the_compiler_keeps_its_trace() {
 /// refusal usually comes from. It is not the only place: the emitter refuses a
 /// `dsl` naming a grammar that does not exist, the manifest reader refuses an
 /// unknown key, the project driver refuses a missing entry point, and the CLI
-/// refuses a backend nobody has. Every one of those used to arrive with
+/// refuses an invocation with nothing to do. Every one of those used to arrive with
 /// `Error:` in front of it and ten frames of this compiler behind it.
 ///
 /// The four here are four different modules on purpose - `emit`, `manifest`,
@@ -129,16 +129,10 @@ fn a_failure_of_the_compiler_keeps_its_trace() {
 fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
     let dir = common::scratch_dir("refusal-everywhere");
 
-    // The CLI: a backend that does not exist.
+    // The CLI: a command line with nothing to do.
     let source = dir.join("main.nika");
-    std::fs::write(&source, "fn main() { }\n").expect("a source");
-    let said = run(&[
-        "--input",
-        source.to_str().expect("utf-8 path"),
-        "--backend",
-        "bogus",
-    ]);
-    assert_refusal(&said, "There's no backend called `bogus`.");
+    let said = run(&[]);
+    assert_refusal(&said, "Nothing to do.");
 
     // The emitter: a `dsl` naming a grammar this compiler does not have.
     std::fs::write(
@@ -149,7 +143,7 @@ fn a_refusal_from_anywhere_in_the_compiler_carries_no_trace() {
     )
     .expect("a source");
     let said = run(&[
-        "--input",
+        "lower",
         source.to_str().expect("utf-8 path"),
         "--output",
         dir.join("out.rs").to_str().expect("utf-8 path"),

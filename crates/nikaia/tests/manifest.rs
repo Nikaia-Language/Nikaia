@@ -54,8 +54,7 @@ fn project(purpose: &str, manifest: &str) -> PathBuf {
 fn lower(dir: &Path, flags: &[&str]) -> String {
     let output = dir.join("out.rs");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", dir.join("main.nika").to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", dir.join("main.nika").to_str().unwrap()])
         .args(["--output", output.to_str().unwrap()])
         .args(["--no-cache"])
         .args(flags)
@@ -117,8 +116,7 @@ fn a_flag_overrides_a_committed_switch() {
 fn a_misspelled_key_fails_the_build_and_names_itself() {
     let dir = project("manifest-typo", "[build]\nuser_parallelism = \"yes\"\n");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", dir.join("main.nika").to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", dir.join("main.nika").to_str().unwrap()])
         .output()
         .expect("the nikaia binary runs");
 
@@ -136,8 +134,7 @@ fn a_misspelled_key_fails_the_build_and_names_itself() {
 fn a_count_in_the_manifest_gets_the_same_answer_as_a_count_on_the_cli() {
     let dir = project("manifest-count", "[build]\nuser-parallelism = 4\n");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", dir.join("main.nika").to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", dir.join("main.nika").to_str().unwrap()])
         .output()
         .expect("the nikaia binary runs");
 

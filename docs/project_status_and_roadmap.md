@@ -112,7 +112,7 @@ that needs a library ecosystem.
 *The long history of each finished box is in the [CHANGELOG](../CHANGELOG.md) and the ADR it links. A
 finished box here keeps what it is, the record, and what it leaves open — nothing else.*
 
-**The vertical slice.** `nikaia --input hello.nika` lowers the AST to Rust in one pass
+**The vertical slice.** `nikaia lower hello.nika` lowers the AST to Rust in one pass
 (`crates/nikaia/src/emit`, [ADR-004](specification/adr/adr-004.md) D1) with the source map
 [ADR-012](specification/adr/adr-012.md)'s diagnostics need, `rustc` compiles it and the binary runs;
 `nikaia build`/`run` do the same through Cargo. The subprocess plus the round trip through text is
@@ -184,7 +184,7 @@ form. Self-hosting runs beside all of them: the owner's instruction is to take i
 
 ### Phase 4: Backend optimization
 
-*   [x] **Cranelift / LLVM (investigation)** ([ADR-021](specification/adr/adr-021.md) D9): Cranelift is compatible and buys ~1 s on an incremental rebuild, nothing on a full one; a supported option, not the default. `--backend cranelift`/`llvm` are refused by name rather than silently ignored.
+*   [x] **Cranelift / LLVM (investigation)** ([ADR-021](specification/adr/adr-021.md) D9): Cranelift is compatible and buys ~1 s on an incremental rebuild, nothing on a full one; a supported option, not the default. There is no `--backend` switch since [ADR-260](specification/adr/adr-260.md) D3: each single-file job is a command of its own, so there is no name to give an unbuilt backend.
 
 Tier-1 staging is **withdrawn** ([ADR-178](specification/adr/adr-178.md)) and has no box, because the absence is the decision: every candidate in [`staging-candidates.md`](history/staging-candidates.md) closed, three against their own prediction. What would reopen it is a candidate with a **measured crossover**. The callgrind harness stays (`crates/nikaia/tests/measure.rs`).
 

@@ -204,7 +204,7 @@ const ENTRY: &str = "main.nika";
 
 /// The entry and nothing beside it - a `.nika` file compiled on its own.
 ///
-/// `--input` outside a project is not a package: a directory of loose examples is
+/// `nikaia lower` outside a project is not a package: a directory of loose examples is
 /// a directory of programs, and compiling one of them must not pull in the other
 /// ten. A package is a directory **of a project**, which is what a `nikaia.toml`
 /// declares.
@@ -613,7 +613,7 @@ impl Program {
         Self::of(collect_with(entry, dependencies)?, dependencies)
     }
 
-    /// The entry compiled on its own - what `--input` outside a project is
+    /// The entry compiled on its own - what `nikaia lower` outside a project is
     /// (see [`collect_one`]).
     pub fn read_one(entry: &Path) -> Result<Program> {
         Self::of(collect_one(entry)?, &[])

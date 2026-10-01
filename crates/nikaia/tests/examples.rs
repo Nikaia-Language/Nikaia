@@ -319,7 +319,7 @@ fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     // **A package is a directory** (ADR-047 D1), so an example in a directory of
     // its own is a package and a loose one is not. `examples/` itself is a
     // directory of *programs*: twelve files each declaring `main`, filed
-    // together, which is exactly what the `--input` path outside a project makes
+    // together, which is exactly what `nikaia lower` outside a project makes
     // of them.
     let program = match file.contains('/') {
         true => nikaia::modules::Program::read(&source_path),

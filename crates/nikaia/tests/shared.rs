@@ -52,7 +52,7 @@ fn lower(dir: &Path, source: &str, flags: &[&str]) -> String {
     std::fs::write(&input, source).expect("the source");
     let output = dir.join("main.rs");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().expect("utf-8 path")])
+        .args(["lower", input.to_str().expect("utf-8 path")])
         .args(["--output", output.to_str().expect("utf-8 path")])
         .args(["--no-cache"])
         .args(flags)
@@ -426,7 +426,7 @@ fn report(source: &str) -> String {
     let input = dir.join("main.nika");
     std::fs::write(&input, source).expect("the source");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().expect("utf-8 path")])
+        .args(["lower", input.to_str().expect("utf-8 path")])
         .args([
             "--output",
             dir.join("main.rs").to_str().expect("utf-8 path"),
@@ -547,7 +547,7 @@ fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
     let input = dir.join("main.nika");
     std::fs::write(&input, "fn zaehle(counter: Shared[Locked[i64]]) { }").expect("the source");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().expect("utf-8 path")])
+        .args(["lower", input.to_str().expect("utf-8 path")])
         .args([
             "--output",
             dir.join("main.rs").to_str().expect("utf-8 path"),
@@ -731,7 +731,7 @@ fn a_door_over_several_locks_refuses_what_is_not_one() {
         let input = dir.join("main.nika");
         std::fs::write(&input, source).expect("the source");
         let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .args(["--input", input.to_str().expect("utf-8 path")])
+            .args(["lower", input.to_str().expect("utf-8 path")])
             .args([
                 "--output",
                 dir.join("main.rs").to_str().expect("utf-8 path"),

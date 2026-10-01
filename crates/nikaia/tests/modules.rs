@@ -375,7 +375,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
                 "main.nika",
                 "fn main() {\n\x20   println(f\"{seven()}\")\n}\n",
             ),
-            // **A manifest, so `--input` reads the package** (ADR-047 D1).
+            // **A manifest, so `nikaia lower` reads the package** (ADR-047 D1).
             // Without one the entry is compiled on its own, `seven` is
             // declared by nothing in it, and since 0.0.244 that is `NK1117`
             // rather than a lowering `rustc` would have refused.
@@ -397,7 +397,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
     // And the whole way through the CLI, which is where the user was told to
     // remove it.
     let ran = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", entry.to_str().expect("utf-8 path")])
+        .args(["lower", entry.to_str().expect("utf-8 path")])
         .args([
             "--output",
             dir.join("program.rs").to_str().expect("utf-8 path"),
@@ -773,7 +773,7 @@ fn a_comptime_calls_across_a_file_boundary() {
 /// being run that file is exactly what the evaluator is holding.
 #[test]
 fn a_constant_a_foreign_body_reads_comes_from_its_own_file() {
-    // **A real project**, because `--input` outside one is a single file
+    // **A real project**, because `nikaia lower` outside one is a single file
     // (ADR-047 D1) and would meet a different wall: nothing declares `scaled`
     // at all there.
     let (dir, _) = project(
@@ -798,7 +798,7 @@ fn a_constant_a_foreign_body_reads_comes_from_its_own_file() {
     );
     let entry = dir.join("src/main.nika");
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", entry.to_str().expect("utf-8"), "--no-cache"])
+        .args(["lower", entry.to_str().expect("utf-8"), "--no-cache"])
         .output()
         .expect("the compiler runs");
     let said = String::from_utf8_lossy(&out.stderr);

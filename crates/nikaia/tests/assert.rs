@@ -32,7 +32,7 @@ fn run(purpose: &str, source: &str, parallel: &str) -> Output {
     let path = dir.join("claims.rs");
     let lowered = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .current_dir(&dir)
-        .args(["--input", "claims.nika", "--output", "claims.rs"])
+        .args(["lower", "claims.nika", "--output", "claims.rs"])
         .args(["--user-parallelism", parallel])
         .output()
         .expect("the nikaia binary runs");
@@ -231,13 +231,7 @@ fn asserts_reports_every_claim() {
     std::fs::write(dir.join("claims.nika"), source).expect("write");
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .current_dir(&dir)
-        .args([
-            "--input",
-            "claims.nika",
-            "--output",
-            "claims.rs",
-            "--asserts",
-        ])
+        .args(["lower", "claims.nika", "--output", "claims.rs", "--asserts"])
         .output()
         .expect("the nikaia binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -286,7 +280,7 @@ fn a_body_that_leaves_is_not_followed_by_ok() {
     std::fs::write(dir.join("leaves.nika"), source).expect("write");
     let lowered = Command::new(env!("CARGO_BIN_EXE_nikaia"))
         .current_dir(&dir)
-        .args(["--input", "leaves.nika", "--output", "leaves.rs"])
+        .args(["lower", "leaves.nika", "--output", "leaves.rs"])
         .output()
         .expect("the nikaia binary runs");
     assert!(

@@ -21,7 +21,7 @@ fn nikaia(source: &str, name: &str) -> String {
     let file = dir.join(format!("{name}.nika"));
     std::fs::write(&file, source).expect("write the source");
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .arg("--input")
+        .arg("lower")
         .arg(&file)
         .arg("--no-cache")
         .output()
@@ -149,7 +149,7 @@ fn a_malformed_literal_is_refused_on_its_line() {
 #[test]
 fn a_refusal_about_no_statement_has_no_line() {
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", "/dev/null", "--user-parallelism", "vielleicht"])
+        .args(["lower", "/dev/null", "--user-parallelism", "vielleicht"])
         .output()
         .expect("the compiler runs");
     let said = String::from_utf8_lossy(&out.stderr);

@@ -10,7 +10,7 @@ Every row below is a `.nika` file of one or two lines, written to use exactly on
 construct and handed to the compiler as
 
 ```
-nikaia --input <probe>.nika -o <probe>.rs
+nikaia lower <probe>.nika -o <probe>.rs
 ```
 
 on the release build of the branch's `origin/main` base. The **Result** column
@@ -96,13 +96,15 @@ the Result column; every other row is the original run.
 | `nikaia new` | III 13.1 | `error: unrecognized subcommand 'new'` |
 | `nikaia test` | III 13.2 | **built** ([ADR-245](specification/adr/adr-245.md) D1, D7), with `--both-settings` |
 | `nikaia bench`, `nikaia fmt` | III 13.2 | not present |
-| `nikaia explain <code>`, `nikaia explain --tethers` | I 6.6, 7.1 | `error: unrecognized subcommand 'explain'` |
+| `nikaia explain <code>`, `nikaia explain --tethers` | I 6.6, 7.1 | not present: `nikaia explain` takes a `.nika` file ([ADR-260](specification/adr/adr-260.md) D3), so `NK-2C7` is read as a file name |
 | `nikaia build --with-asserts` | III 14.2 | **withdrawn** ([ADR-245](specification/adr/adr-245.md) D4): no build removes an `assert`, so there is nothing for the flag to put back |
 | `nikaia bench --history` | III 14.4 | no such command |
-| `--locked`, `--overlaps`, `--trust`, `--explain`, `--no-cache`, `--target`, `--user-parallelism`, `--backend` | III 13.2, 13.5, I 8.1.2 | **built** |
+| `nikaia lower`, `nikaia interpret`, `nikaia explain <file>` | III 13.2 | **built** ([ADR-260](specification/adr/adr-260.md) D3); `--input` and `--backend` are gone (D5) |
+| `--locked`, `--overlaps`, `--trust`, `--no-cache`, `--target`, `--user-parallelism` | III 13.2, 13.5, I 8.1.2 | **built** |
 
-Note that `--explain` (read `rustc` JSON on stdin) and the `nikaia explain`
-*subcommand* of Part I are two different things; only the flag exists.
+Note that `nikaia explain <file>.nika` (read `rustc` JSON on stdin) and Part I's
+`nikaia explain <code>` (from an error's site to the line that raised it) are
+two different things; only the first exists.
 
 ## The diagnostics
 

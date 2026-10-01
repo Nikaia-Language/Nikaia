@@ -37,8 +37,7 @@ fn lower(dir: &Path, source: &str, flags: &[&str]) -> String {
     std::fs::write(&input, source).expect("the source");
     let output = dir.join("main.rs");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", input.to_str().unwrap()])
         .args(["--output", output.to_str().unwrap()])
         .args(["--no-cache"])
         .args(flags)
@@ -413,8 +412,7 @@ fn a_manifest_cleanup_deadline_compiles_and_says_where_it_went() {
     std::fs::write(&input, "fn main() { println(\"ran\") }").expect("the source");
 
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", input.to_str().unwrap()])
         .args(["--output", dir.join("main.rs").to_str().unwrap()])
         .args(["--no-cache"])
         .env("NIKAIA_CACHE_DIR", dir.join("cache"))

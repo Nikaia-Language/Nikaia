@@ -128,7 +128,7 @@ fn a_span_is_not_lent() {
 /// from an exact lookup in `std`'s ledger, so a function a program writes bare
 /// is keyed bare — as `print` and `println` already are. The alternative was to
 /// resolve a bare name by its last segment, and that is the emitter guessing:
-/// `examples/inventory` writes its own `read`, and a unit built from `--input`
+/// `examples/inventory` writes its own `read`, and a unit built by `nikaia lower`
 /// does not carry the ledger of the package beside it.
 #[test]
 fn a_sleep_carries_an_await() {

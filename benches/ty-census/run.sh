@@ -30,7 +30,7 @@ while IFS= read -r f; do corpus+=("$f"); done < <(
 for f in "${corpus[@]}"; do
   name="$(echo "${f#$root/}" | tr '/' '_')"
   dir="$(dirname "$f")"
-  if (cd "$dir" && "${tool[@]}" ${extra[@]+"${extra[@]}"} $([[ ${tool[0]} == valgrind ]] && echo "--compress-strings=no --compress-pos=no --callgrind-out-file=$out/$name.cg") "$bin" --input "$f" --backend rust --no-cache \
+  if (cd "$dir" && "${tool[@]}" ${extra[@]+"${extra[@]}"} $([[ ${tool[0]} == valgrind ]] && echo "--compress-strings=no --compress-pos=no --callgrind-out-file=$out/$name.cg") "$bin" lower "$f" --no-cache \
       --output "$out/$name.rs" >"$out/$name.log" 2>&1); then
     echo "ok   $name $(wc -l < "$f")"
   else

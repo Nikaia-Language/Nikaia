@@ -47,8 +47,7 @@ fn lower(dir: &Path, source: &str, flags: &[&str]) -> String {
     std::fs::write(&input, source).expect("the source");
     let output = dir.join("main.rs");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", input.to_str().unwrap()])
         .args(["--output", output.to_str().unwrap()])
         .args(["--no-cache"])
         .args(flags)

@@ -10162,7 +10162,7 @@ impl<'p> Emitter<'p> {
     /// [ADR-150](../../docs/specification/adr/adr-150.md) that is a decision
     /// rather than an accident. A suffix match here — `read` finding
     /// `fs::read` — is the emitter *guessing* at a callee the unit does not
-    /// describe, and a unit built from `--input` does not carry the ledger of
+    /// describe, and a unit built by `nikaia lower` does not carry the ledger of
     /// the package beside it: `examples/inventory` writes its own `read`, and a
     /// name-for-name fallback put an `.await` on a call to a function that is
     /// not a future. So a `std` function a program writes **bare** is keyed

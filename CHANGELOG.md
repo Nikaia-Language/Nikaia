@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.299] — 2026-10-01
+
+**The single-file commands are verbs** (ADR-260 D3 and D5, #131).
+`nikaia --input f.nika` named an argument and not what happened to it, and
+three jobs shared its switches. They are commands of their own now, and each
+one's `--help` says in its first sentence what it does and what it does not:
+
+| Was | Is |
+|---|---|
+| `nikaia --input f.nika` | `nikaia lower f.nika`: writes `f.rs` and the ledger beside it, and does not call `rustc` |
+| `nikaia --input f.nika --backend interpreter` | `nikaia interpret f.nika`: runs the file, writes nothing |
+| `nikaia --input f.nika --explain` | `nikaia explain f.nika`: reads `rustc --error-format=json` on stdin and reports it against the `.nika` |
+
+- **`--input` is removed, not kept as an alias** (D5), and so is `--backend`:
+  `rust` was the only code generator and a verb now says which job is asked.
+  Each is refused by name. `--output` belongs to `lower` alone. The explaining
+  switches and `--locked`, `--no-cache`, `--target`, `--user-parallelism`
+  stay where they were.
+- **`nikaia` with nothing to do** says so, and names `nikaia build` and
+  `nikaia lower`.
+- The test suite, the CI step over `tests/samples/` (now `nikaia interpret`),
+  `benches/ty-census`, Part III 13.2 and the pages that describe the commands
+  moved in the same package. ADRs and measurement notes keep the command line
+  they were written with.
+
 ## [0.0.298] — 2026-10-01
 
 **A file inside a project is a file of that project** (ADR-260 D1 and D2,

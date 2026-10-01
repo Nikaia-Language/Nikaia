@@ -5,7 +5,7 @@
 //! ([ADR-047](../../../docs/specification/adr/adr-047.md) D1): the files of a
 //! package share one namespace, so two `Row`s in it is an error rather than a
 //! rule about which of them a line means. Inside **one** file nothing said it,
-//! unless the build happened to go through a manifest — and `nikaia --input`
+//! unless the build happened to go through a manifest — and `nikaia lower`
 //! skips the module layer, which is the path the corpus, the specification's
 //! blocks and a reader's first program all take.
 //!
