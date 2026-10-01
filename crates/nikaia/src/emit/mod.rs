@@ -1500,7 +1500,7 @@ struct Emitter<'p> {
     /// around one call by `call` and read by `args`, as `hold_args` is.
     boxed_args: std::cell::RefCell<Option<Vec<bool>>>,
     /// **The count each part of a variant was given**, set around one call by
-    /// `call` and read by `args` as `boxed_args` is (0.0.244, the issue tracker
+    /// `call` and read by `args` as `boxed_args` is (0.0.244, issue #158
     /// §1.24): a `Shared(…)` written straight into a part takes the part's
     /// count, or the two would be an `Rc` and an `Arc` of one value.
     variant_counts: std::cell::RefCell<Option<Vec<crate::contracts::sharing::Count>>>,
@@ -3233,7 +3233,7 @@ impl<'p> Emitter<'p> {
             // trait's methods, which is the only answer this position can
             // write: `async fn` in a trait is something the emitter has no way
             // to ask for. What that costs is a trait whose method genuinely
-            // pauses, which the issue tracker carries with its reproduction.
+            // pauses, which issue #253 carries with its reproduction.
             Item::Trait {
                 name,
                 methods,
@@ -7376,7 +7376,7 @@ impl<'p> Emitter<'p> {
                 let copies = self
                     .copied_reaches
                     .contains(&(flow.statement, field.clone()));
-                // **And where it comes out as a view** (0.0.244, the issue tracker
+                // **And where it comes out as a view** (0.0.244, issue #167
                 // §1.25): a view of the member is a view *into* the receiver,
                 // so the receiver has to be lent for it as well. `a.b?.c?.v`
                 // took `a.b` out of a lent `a` - *cannot move out of `a.b`* -
@@ -11418,7 +11418,7 @@ impl<'p> Emitter<'p> {
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3), and
             // a Rust reference in front of it would be the wrong address —
             // `&FILE` is `FILE**` where C wants `FILE*`.
-            // **A nullable view is lent inside its option** (the issue tracker
+            // **A nullable view is lent inside its option** (issue #171
             // §1.31): a `ref String?` parameter is an `Option<&str>` (Part I
             // 2.3), and what reaches it from a `String?` is `x.as_deref()` -
             // `&x` was an `&Option<String>`. A `null` is `None` as it is.

@@ -353,7 +353,7 @@ None of these needs a decision any more. **Every row has a record**, and the
 five that turned out to carry a question in them — what an empty literal is, how
 a range pattern is spelled, whether a hexadecimal literal carries a width — were
 answered in one round and left `open-decisions.md` with it. What each needs now
-is the afternoon, and [the issue tracker](https://github.com/Nikaia-Language/Nikaia/issues) §2 says in what order.
+is the afternoon, and the former backlog file §2 says in what order.
 
 ### 3.2 Reserved words that block ordinary names
 
@@ -425,7 +425,7 @@ brace literal, the anonymous constructor with `new` gone from `std`'s own types,
 nothing in for `std` as for a package. **One record and five migrations**,
 because they are one question — *does this language say one thing one way* — and
 answering them apart would migrate the corpus five times for one property.
-**D1 to D4 are built** and D5 is not; [the issue tracker](https://github.com/Nikaia-Language/Nikaia/issues) §2
+**D1 to D4 are built** and D5 is not; the former backlog file §2
 carries one entry each. D1 went first because
 [ADR-133](specification/adr/adr-133.md)'s call half was blocked on exactly the
 spelling it frees, and that half is built too.

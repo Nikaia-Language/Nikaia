@@ -2,7 +2,7 @@
 //!
 //! **The section's own example did not parse.** A trailing `?` on a type was a
 //! parse error and `null` was read as an ordinary name, so neither line of it
-//! was accepted — which is what the issue tracker carried. These are the
+//! was accepted — which is what issue #263 carried. These are the
 //! programs that page names, compiled rather than only compared as text:
 //! whether the `Some(…)` lands in the right places is settled by the language
 //! below, and reading the emitted string would only say that this compiler

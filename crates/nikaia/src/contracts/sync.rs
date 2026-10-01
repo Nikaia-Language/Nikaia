@@ -956,7 +956,7 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         }
         Expr::TryCatch { expr, .. } => visit_expr(parsed, expr, f),
         Expr::If { cond, .. } => visit_expr(parsed, cond, f),
-        // **An arm is an expression of this function** (the issue tracker
+        // **An arm is an expression of this function** (issue #171
         // §1.31): `R::A => slow()` is a call, and only an arm that is a block
         // reached `visit_expr_blocks`. `pick` came out of the ledger `sync`
         // while its lowering awaited `slow()`, which `rustc` refused - the

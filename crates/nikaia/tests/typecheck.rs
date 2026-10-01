@@ -1354,7 +1354,7 @@ fn a_step_that_leaves_the_pinned_type_is_refused_where_it_leaves() {
 }
 
 /// **And it reaches a name inside an expression**, which is what
-/// the issue tracker carried: `NK1117` used to fire only where a
+/// issue #266 carried: `NK1117` used to fire only where a
 /// statement *was* one name, so `let n = q + 1` was passed over in silence and
 /// `rustc` refused the generated file about a name the user did write.
 ///
@@ -1497,7 +1497,7 @@ fn a_sum_of_constants_that_cannot_fit_is_refused_here() {
 ///
 /// All but one of these `rustc` accepts as well, so this compiler and the one
 /// below agree. **The exception is the unpinned literal**, and it is the
-/// the issue tracker out-of-range-literal case rather than a new one: `rustc` refuses
+/// issue #142 out-of-range-literal case rather than a new one: `rustc` refuses
 /// `3000000000 + 1` because it *has* inference and defaults the literal to an
 /// `i32`, and this checker has none - so refusing here would also refuse the
 /// program that passes the sum to an `i64`, which is the one thing it may never

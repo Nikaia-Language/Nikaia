@@ -941,7 +941,7 @@ impl Foreign {
     /// crate word in front of them, `std`'s carry a module's, and no manifest in
     /// this repository declares a crate whose word is one of `std`'s modules.
     /// The day one does, that is a refusal to write and not a silence to keep —
-    /// the issue tracker carries it.
+    /// issue #100 carries it.
     pub fn library(&self) -> Result<Ledger> {
         let mut library = Ledger::parse(STD).context("std's shipped ledger")?;
         for (name, contract) in &self.descriptions.functions {

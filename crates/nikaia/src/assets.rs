@@ -118,7 +118,7 @@ pub struct Reads {
     /// `None` is D1, and D1 is the default.
     list: Option<Allowlist>,
     /// **Where this build compiles the parsers it runs**
-    /// ([`crate::grammar_run`], the issue tracker
+    /// ([`crate::grammar_run`], issue #178
     /// §2.9).
     ///
     /// Here rather than threaded a second time through the same six

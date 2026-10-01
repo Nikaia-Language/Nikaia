@@ -235,7 +235,7 @@ fn most_of_a_third_of_the_specifications_blocks_are_programs() {
 /// exactly that: Part I 4.5's three-line map example (`E0282`, in a message
 /// naming `TrustedMap`, `BuildHasherDefault<FxHasher>` and a type parameter `K`,
 /// none of which the program wrote) and every string concatenation except
-/// `String + &str` (`E0369`). Both are in the issue tracker.
+/// `String + &str` (`E0369`). Both are in issue #144.
 ///
 /// **Most of the failures here are not defects and the baseline says which.** A
 /// chapter's block names `User`, `Config`, `postgres` or `http` and leaves them

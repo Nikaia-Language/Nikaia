@@ -1554,7 +1554,7 @@ pub fn an_escape_nothing_names(literal: &str) -> Option<Refused> {
 /// rather than by a page here. Measured: `println("a\qb")` is *unknown
 /// character escape: `q`* — on the `.nika` line, which is
 /// [ADR-012](../../../docs/specification/adr/adr-012.md)'s source map working,
-/// and in `rustc`'s vocabulary, which is the issue tracker's.
+/// and in `rustc`'s vocabulary, which is issue #197's.
 ///
 /// So this is a **faithful reading** and not a second definition. `None` where
 /// the escape is one `rustc` would reject: that program does not compile either

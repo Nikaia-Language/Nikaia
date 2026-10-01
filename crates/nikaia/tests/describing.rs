@@ -775,7 +775,7 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
 /// **That chain is what three entries were waiting on**, each from its own end:
 /// ADR-104 §5's *the day the describer reads fields*, ADR-123's *`NK2501` and
 /// `NK2502` can fire, for the first time, on a described foreign type*, and
-/// the issue tracker's task refusals. Asserted from a **program** rather than from
+/// issue #264's task refusals. Asserted from a **program** rather than from
 /// a hand-written ledger, because a hand-written one proves the last link and
 /// none of the others.
 #[test]

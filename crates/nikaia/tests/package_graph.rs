@@ -101,7 +101,7 @@ fn run(entry: &Path, build: Build) -> String {
     String::from_utf8_lossy(&ran.stdout).to_string()
 }
 
-/// The shorter of the issue tracker's two reproductions, and the one that needs no
+/// The shorter of issue #228's two reproductions, and the one that needs no
 /// package at all: two files of **one** package, a trait method, and a plain
 /// function next door.
 ///

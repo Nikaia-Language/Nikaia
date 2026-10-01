@@ -253,7 +253,7 @@ fn a_negative_number_may_be_written_in_any_radix() {
     assert!(rust.contains("let n = -255;"), "{rust}");
 }
 
-/// **A literal in a branch is of the type the `let` wrote** (the issue tracker
+/// **A literal in a branch is of the type the `let` wrote** (issue #171
 /// §1.31, found moving `fold` into Nikaia): `2147483648` in an `if` inside a
 /// `match` arm was written `2147483648i64` under a `let l: u64`, because the
 /// type stopped at the `match`.

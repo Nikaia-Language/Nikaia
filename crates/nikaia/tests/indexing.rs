@@ -298,7 +298,7 @@ fn a_slice_of_text_is_converted_where_the_range_is_computed() {
 
 /// **A slice of text read as a value did not lower**
 /// ([ADR-182](../../../docs/specification/adr/adr-182.md) D2, which closed
-/// the issue tracker's entry for it at 0.0.131).
+/// issue #147's entry for it at 0.0.131).
 ///
 /// The read wrapper writes a `*` around every bracket
 /// ([ADR-161](../../../docs/specification/adr/adr-161.md) D6), which is what

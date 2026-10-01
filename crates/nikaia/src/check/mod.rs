@@ -7001,7 +7001,7 @@ impl<'a> Checker<'a> {
     /// *type* the place ([`Checked::lent_lets`]), and where it could not, the
     /// written `&` is the program's only way to say what the line means — so
     /// refusing it there would take away the escape hatch before the inference
-    /// that replaces it exists. the issue tracker carries that as the rest of D4.
+    /// that replaces it exists. issue #96 carries that as the rest of D4.
     fn the_caller_writes_no_reference(&mut self, value: &Expr, span: &Span, because: &str) {
         if !matches!(
             value,
@@ -7741,7 +7741,7 @@ impl<'a> Checker<'a> {
             // key a call in *that* unit resolves to; a call written
             // `handler::dispatch` resolves to a key no unit's AST produced, and
             // what the bound was came back as `rustc`'s words about the type
-            // this program picked (the issue tracker
+            // this program picked (issue #162
             // §1.10).
             None => match self.bounds_in_a_signature(key) {
                 Some(wanted) => wanted,
@@ -7986,7 +7986,7 @@ impl<'a> Checker<'a> {
     /// literal has no type of its own on purpose: `Expr::LitInt` answers
     /// `Unknown`, so `add(3)` is right wherever the parameter is numeric, and
     /// `let m = 3000000000` is a correct program where the next line passes `m`
-    /// to an `i64` (Part I 2.4, and the issue tracker's out-of-range literal).
+    /// to an `i64` (Part I 2.4, and issue #142's out-of-range literal).
     /// So the places are an
     /// annotated `let`, a `return` against a declared result, and an argument
     /// whose parameter says what it takes.
@@ -11602,7 +11602,7 @@ impl<'a> Checker<'a> {
     /// Keyed on the three names, and **only** on them. A general "this expression
     /// names something nothing declares" is a much wider claim than the statement
     /// rule above makes, and this checker does not make it yet
-    /// (the issue tracker).
+    /// (issue #141).
     /// Hands back whether it said anything, so the general refusal can stand
     /// aside for it.
     fn withdrawn_automatic_name(&mut self, name: &str, span: &Span) -> bool {
@@ -14303,7 +14303,7 @@ impl<'a> Checker<'a> {
         // language below refused. Where the key is a known value that is not
         // a view, it is the map's key; a view or a key of no known type goes
         // through `at` as before, which is the path every map of views takes.
-        // **A map whose key type nothing pinned** (0.0.235, the issue tracker
+        // **A map whose key type nothing pinned** (0.0.235, issue #169
         // §1.21). `collections::HashMap()` with no annotation has `?` keys,
         // and the brackets went through `at`, which is for a **position**: it
         // made `m[1] = 2` a map keyed by `usize` and `m[k]` a read the

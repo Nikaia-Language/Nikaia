@@ -686,7 +686,7 @@ fn compiled_stds(cache: &Path) -> BTreeMap<PathBuf, Option<std::time::SystemTime
     found
 }
 
-/// **The explain modes reach a project build** (the issue tracker, since closed).
+/// **The explain modes reach a project build** (issue #210, since closed).
 ///
 /// `--sharing`'s own help says why they exist: there is no way to *ask* for the
 /// cheaper reference count, every fallback is enumerated instead, and *"that is
@@ -1059,7 +1059,7 @@ fn arithmetic_in_a_package_aborts_like_the_programs_own() {
 
 /// **A trait a package publishes, implemented by a body that calls back into
 /// that package** ([ADR-100](../../../docs/specification/adr/adr-100.md) D1,
-/// D5) — the shape the issue tracker carried as a defect for as long as the entry
+/// D5) — the shape issue #228 carried as a defect for as long as the entry
 /// existed.
 ///
 /// It was `NK1129`: *"`Fixed::greet` can pause, and `lib::Greeter` declares it
@@ -1828,7 +1828,7 @@ fn ask(address: &str, request: &[u8]) -> (String, String) {
 ///
 /// The body is a struct literal rather than a call to `handler::plain()`, and
 /// that is not tidiness: a call out of the unit is `NK1129` today
-/// (the issue tracker, *a `sync` body is refused as pausing when the call leaves
+/// (issue #228, *a `sync` body is refused as pausing when the call leaves
 /// the unit*), so a fixture that made one would be testing two things and
 /// failing for the other.
 #[test]
@@ -2224,7 +2224,7 @@ fn a_head_the_next_file_declares_is_not_refused() {
 
 /// **A grammar entry in tail position over a local that owns its input**
 /// ([ADR-185](../../../docs/specification/adr/adr-185.md) D2, closing
-/// the issue tracker's entry for it at 0.0.136).
+/// issue #139's entry for it at 0.0.136).
 ///
 /// The lowering of an entry is a block holding `let _source = &*data` and a
 /// stream over it. In `Ok({ … }?)` those temporaries live to the end of the
@@ -2344,7 +2344,7 @@ fn a_bound_takes_a_path_across_a_package() {
 /// **A bound a package declares is checked at a consumer's call**
 /// ([ADR-205](../../../docs/specification/adr/adr-205.md) D1).
 ///
-/// It was the one thing left in the issue tracker: `Checker::declared_bounds` is
+/// It was the one thing left in issue #162: `Checker::declared_bounds` is
 /// built from the AST of the unit being checked, under the key a call in *that*
 /// unit resolves to, and a call written `handler::dispatch` resolves to a key no
 /// unit's AST produced. So what a reader got was the backend's words on their own

@@ -113,7 +113,7 @@ fn a_failure_of_the_compiler_keeps_its_trace() {
 }
 
 /// **Every statement about the program leaves without a backtrace, wherever in
-/// the compiler it is made** (the issue tracker, since closed).
+/// the compiler it is made** (issue #145, since closed).
 ///
 /// The first fix covered the type checker and the parser, which is where a
 /// refusal usually comes from. It is not the only place: the emitter refuses a

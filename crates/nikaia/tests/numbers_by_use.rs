@@ -174,7 +174,7 @@ fn two_uses_that_disagree_are_refused_in_this_languages_words() {
     );
 }
 
-/// **An operation that overflows is refused where it stands** (the issue tracker
+/// **An operation that overflows is refused where it stands** (issue #176
 /// §1.27): in an `f"…"` hole, a condition, a list and a receiver, each once,
 /// where only a `let`, a `return` and an argument were asked before.
 #[test]
