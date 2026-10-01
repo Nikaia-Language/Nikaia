@@ -63,10 +63,7 @@ is normative and nothing may depend on it to know what a program means.
   anything false — in the compiler, a specification page or an ADR — `Feature`,
   `Task`), a label says where (`language`, `libraries`, `tools`, `targets`,
   `selfhosting`, `compiler`, `spec`), and **Priority** and **Effort** give the
-  order. Big pieces are issues with sub-issues. A closed issue stays: the numbers
-  the old `open-work.md` carried (`§1.27`) are closed issues too, and a citation
-  such as *the former backlog's §N.M* names an entry from before 0.0.103, when
-  the numbers were reused and cannot be traced to one issue.
+  order. Big pieces are issues with sub-issues. A closed issue stays: every entry the old `open-work.md` ever carried, closed ones included, is an issue, and the citations of its `§N.M` numbers in the CHANGELOG, the ADRs and code comments name the issue they mean. "The former backlog file" in old text means that file as a whole.
 * [`open-decisions.md`](open-decisions.md) — the questions work cannot settle,
   each with what is blocked by it, the options, and a recommendation. **Only
   what is open**: an answered question leaves this file for its
