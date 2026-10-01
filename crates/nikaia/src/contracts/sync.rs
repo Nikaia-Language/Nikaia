@@ -559,21 +559,22 @@ fn collect_reach(
 ) {
     for stmt in &block.stmts {
         let span = stmt.span;
-        visit_stmt(
-            parsed,
-            &stmt.node,
-            &mut |expr| match reached(parsed, expr, own, library) {
-                // **A block that joins on the executor pauses**
-                // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1),
-                // and it is not a call, so `reached` says nothing about it.
-                // Asked first, because `reached` answers `None` for one and
-                // `None` is what this walk reads as *adds nothing*.
-                _ if let Some(construct) = joins_on_the_executor(expr) => {
-                    reach.blocked = true;
-                    reach
-                        .site
-                        .get_or_insert((span, format!("an `{construct}` block")));
-                }
+        visit_stmt(parsed, &stmt.node, &mut |expr| {
+            // **A block that joins on the executor pauses**
+            // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1),
+            // and it is not a call, so `reached` says nothing about it.
+            // Asked first, because `reached` answers `None` for one and
+            // `None` is what this walk reads as *adds nothing*. Before the
+            // `match` rather than as a guard: an `if let` guard is newer
+            // than the toolchain floor (Rust 1.88).
+            if let Some(construct) = joins_on_the_executor(expr) {
+                reach.blocked = true;
+                reach
+                    .site
+                    .get_or_insert((span, format!("an `{construct}` block")));
+                return;
+            }
+            match reached(parsed, expr, own, library) {
                 Some(Reached::Own(name)) => {
                     reach.calls.insert(name);
                 }
@@ -612,8 +613,8 @@ fn collect_reach(
                 // `reach_of` once this walk is done.
                 Some(Reached::Method) => {}
                 Some(Reached::Library { sync: true, .. }) | None => {}
-            },
-        );
+            }
+        });
         // The same walk the check uses: a nested block, and the body of a
         // trailing lambda, are part of the function that writes them.
         visit_stmt_blocks(&stmt.node, &mut |inner| {
