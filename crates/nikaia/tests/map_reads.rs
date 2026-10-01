@@ -298,7 +298,8 @@ fn a_map_read_off_a_caught_value_is_refused() {
     .filter(|f| f.code == "NK1125")
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(found[0].message.contains("`Counts?`"), "{found:#?}");
+    // A view of what the map keeps since #297: `ref Counts?`.
+    assert!(found[0].message.contains("Counts?`"), "{found:#?}");
 }
 
 /// **A `?` whose inside has no type is not written `??`** (issue #154's second

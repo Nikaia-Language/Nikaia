@@ -1714,3 +1714,54 @@ fn a_loop_over_a_nullable_is_refused() {
         "3"
     );
 }
+
+/// **A name bound to a map read is the map read** (#297). `let found =
+/// calls.get(key)` holds a view of the list the map keeps, as `calls[key]`
+/// does: `found ?? []` is `NK1185` with the copy to write, and the copy runs.
+/// And a map's text beside a name that is a view of text is a view whichever
+/// side answers - `imports.get(call) ?? call` - where it reached `rustc` as an
+/// `.into()` nothing could infer.
+#[test]
+fn a_name_bound_to_a_map_read_is_read_as_one() {
+    let source = |walk: &str| {
+        format!(
+            "use std::collections\n\
+             fn count(key: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> i64 {{\n\
+             \x20   let found = calls.get(key)\n\
+             \x20   let mut n = 0\n\
+             \x20   for call in {walk} {{\n\
+             \x20       n += call.len()\n\
+             \x20   }}\n\
+             \x20   return n\n\
+             }}\n\
+             fn resolve(call: ref String, imports: ref collections::BTreeMap[String, String]) -> String {{\n\
+             \x20   let full = imports.get(call) ?? call\n\
+             \x20   return full.clone()\n\
+             }}\n\
+             fn main() {{\n\
+             \x20   let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()\n\
+             \x20   m.insert(\"a\", [\"xy\", \"z\"])\n\
+             \x20   let mut i: collections::BTreeMap[String, String] = collections::BTreeMap()\n\
+             \x20   i.insert(\"spawn\", \"tokio::spawn\")\n\
+             \x20   let n = count(\"a\", m)\n\
+             \x20   println(f\"{{n}} {{resolve(\\\"spawn\\\", i)}} {{resolve(\\\"x\\\", i)}}\")\n\
+             }}\n"
+        )
+    };
+    let found = findings(&source("found ?? []"));
+    let it = found
+        .iter()
+        .find(|f| f.code == "NK1185")
+        .unwrap_or_else(|| panic!("no NK1185: {found:#?}"));
+    assert!(it.message.contains("in the map"), "{it:#?}");
+    assert!(
+        it.help
+            .as_deref()
+            .is_some_and(|h| h.contains("found?.clone()")),
+        "{it:#?}"
+    );
+    assert_eq!(
+        ran("map-read-bound", &source("found?.clone() ?? []")).trim(),
+        "3 tokio::spawn x"
+    );
+}

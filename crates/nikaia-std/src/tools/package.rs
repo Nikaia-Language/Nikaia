@@ -3216,8 +3216,8 @@ fn function_of(f: &Fun<'_>, imports: &collections::BTreeMap<String, String>) -> 
     let mut calls: Vec<String> = vec![];
     for call in f.calls.iter() {
         let call = *call;
-        let full = imports.get(call);
-        if full.is_none() { calls.push(call.to_owned()); } else { calls.push(nikaia_std::index::or(full.as_deref(), || "").to_owned()); }
+        let full = nikaia_std::index::or(imports.get(call), || call);
+        calls.push(full.to_owned());
     }
     Function { parameters, args, result: f.result.to_owned(), bounds: format!("{}, {}", f.generics, f.wheres), calls, pauses: f.pauses }
 }

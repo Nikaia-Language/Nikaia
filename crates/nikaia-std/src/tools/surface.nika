@@ -327,12 +327,8 @@ fn function_of(f: ref Fun, imports: ref collections::BTreeMap[String, String]) -
     }
     let mut calls: Vec[String] = []
     for call in f.calls {
-        let full = imports.get(call)
-        if full == null {
-            calls.push(call.clone())
-        } else {
-            calls.push((full ?? "").clone())
-        }
+        let full = imports.get(call) ?? call
+        calls.push(full.clone())
     }
     return Function {
         parameters: parameters,

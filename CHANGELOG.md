@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.319] — 2026-10-01
+
+**A name bound to a map read is read as one** (#297). `let found =
+calls.get(key)` holds a view of what the map keeps, exactly as `calls[key]`
+does, and it is now typed and refused as one: `found ?? []` is `NK1185` with
+`found?.clone() ?? …` handed over - where it reached `rustc` as *the trait
+bound `&Vec<String>: From<Vec<_>>` is not satisfied* - and `found?.clone()`
+copies the list rather than the view. `m.get(k)` is a map read wherever it
+stands, as `m[k]` was. And a map's text beside a name that is a view of text,
+`imports.get(call) ?? call`, is a view whichever side answers, written as it
+is: it was an `.into()` `rustc` could not infer. The last line of
+`tools/surface.nika` written around it is written the language's way now
+(ADR-250 D3).
+
 ## [0.0.318] — 2026-10-01
 
 **The toolchain's Nikaia is one package** (ADR-261). Every `.nika` in
