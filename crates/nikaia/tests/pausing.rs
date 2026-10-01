@@ -72,6 +72,29 @@ fn only_the_functions_that_can_pause_are_async() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **Asking a view whether it is empty does not pause.** `str::is_empty` had no
+/// entry in `std`'s ledger while `String::is_empty` did, so `.is_empty()` on a
+/// `ref String` parameter read as a call that could pause, and every function
+/// asking it - and every caller of those - became `async` for nothing.
+#[test]
+fn asking_a_view_whether_it_is_empty_does_not_pause() {
+    let dir = common::scratch_dir("pausing-is-empty");
+    let rust = lower(
+        &dir,
+        "fn blank(text: ref String) -> bool {\n\
+         \x20   return text.is_empty()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let empty = blank(\"\")\n\
+         \x20   println(f\"{empty}\")\n\
+         }",
+    );
+    assert!(rust.contains("fn blank("), "{rust}");
+    assert!(!rust.contains("async fn blank"), "{rust}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// D2: the `.await` goes **before** the `?`, and the order is not a choice.
 ///
 /// The future is what can fail, so it has to be driven before there is a

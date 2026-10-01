@@ -144,7 +144,8 @@ pub mod text {
     clippy::ptr_arg,
     clippy::manual_range_contains,
     clippy::let_and_return,
-    clippy::single_match
+    clippy::single_match,
+    clippy::useless_conversion
 )]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
@@ -327,6 +328,88 @@ pub mod tools {
         use crate::io;
 
         include!("tools/sources.rs");
+    }
+
+    /// **How `nikaia describe` spells a Rust crate's names**:
+    /// `src/tools/paths.nika`, the module a file is and what a `pub use`
+    /// offers, lowered to `src/tools/paths.rs` and committed beside it
+    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D4). The
+    /// compiler's `describe` keeps the table the answers fill.
+    pub mod paths {
+        include!("tools/paths.rs");
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            fn one(name: &str, alias: &str) -> Option<Named> {
+                Some(Named {
+                    name: name.into(),
+                    alias: alias.into(),
+                })
+            }
+
+            /// The module a file is: `lib.rs` and `mod.rs` are their
+            /// directory, a binary's file is nobody's.
+            #[test]
+            fn a_file_is_the_module_its_path_names() {
+                assert_eq!(module_of("src/lib.rs").as_deref(), Some(""));
+                assert_eq!(module_of("src/a/b.rs").as_deref(), Some("a::b"));
+                assert_eq!(module_of("src/a/mod.rs").as_deref(), Some("a"));
+                assert_eq!(module_of("src/main.rs"), None);
+                assert_eq!(module_of("src/bin/tool.rs"), None);
+                assert_eq!(module_of("build.rs"), None);
+            }
+
+            /// A `pub use` in its three shapes: a group, a glob, one name.
+            #[test]
+            fn a_pub_use_offers_what_it_names() {
+                let group = exported("m", "inner::{a, b as c}");
+                assert_eq!(group.len(), 2);
+                assert_eq!(group[0].prefix, "inner");
+                assert_eq!(group[0].name, one("a", "a"));
+                assert_eq!(group[1].name, one("b", "c"));
+
+                let glob = exported("", "crate::inner::*");
+                assert_eq!(glob[0].prefix, "crate::inner");
+                assert_eq!(glob[0].name, None);
+
+                let single = exported("", " self::x::Y as Z ");
+                assert_eq!(single[0].prefix, "self::x");
+                assert_eq!(single[0].name, one("Y", "Z"));
+
+                assert_eq!(exported("", "spawn")[0].name, one("spawn", "spawn"));
+            }
+
+            /// `crate`, `self` and `super` are answered from where the `use`
+            /// stands; a bare path is tried there and at the root.
+            #[test]
+            fn a_use_path_resolves_from_where_it_was_written() {
+                let at = |prefix: &str| Export {
+                    at: "a::b".into(),
+                    prefix: prefix.into(),
+                    name: None,
+                };
+                assert_eq!(bases(&at("crate::x")), ["x"]);
+                assert_eq!(bases(&at("crate")), [""]);
+                assert_eq!(bases(&at("self::x")), ["a::b::x"]);
+                assert_eq!(bases(&at("super::x")), ["a::x"]);
+                assert_eq!(bases(&at("x")), ["a::b::x", "x"]);
+                assert_eq!(after("crated", "crate"), None);
+            }
+
+            /// Commas inside brackets do not split.
+            #[test]
+            fn only_the_outer_commas_split() {
+                assert_eq!(
+                    split_top_level("a: Vec<(u8, u8)>, b: [u8; 2] ,"),
+                    ["a: Vec<(u8, u8)>", "b: [u8; 2]"]
+                );
+                assert_eq!(joined("", "x"), "x");
+                assert_eq!(joined("a", ""), "a");
+                assert_eq!(joined("a", "x"), "a::x");
+            }
+        }
     }
 
     /// **The type language the checker reasons in and the ledger records**:

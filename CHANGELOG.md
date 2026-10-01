@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.309] — 2026-10-01
+
+**`nikaia describe` spells a crate's names in Nikaia** (ADR-195 D4, #124).
+`tools/paths.nika` holds what was string work in `describe.rs`: the module a
+file is, a path joined from its parts, what one `pub use` offers, where its
+path could resolve, and a split on the commas outside brackets. Lowered to
+`paths.rs` by `nikaia lower-std`; `describe` keeps the table the answers fill.
+A draft says what it said before.
+
+**Asking a view whether it is empty no longer pauses.** `std`'s ledger had
+`String::is_empty` and no `str::is_empty`, so `.is_empty()` on a `ref String`
+read as a call that could pause and made its function `async` - and every
+caller of that function. It has its entry now, `sync`.
+
 ## [0.0.308] — 2026-10-01
 
 **`nikaia describe` walks a crate in Nikaia** (ADR-195 D4, ADR-196 D4, #124).
