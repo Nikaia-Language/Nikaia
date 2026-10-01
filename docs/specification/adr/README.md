@@ -25,6 +25,15 @@ in the notes. A spec section states the rule and links here; a reader who only
 wants to write Nikaia never has to open one. The full rule is
 [`docs/README.md`](../../README.md).
 
+## Writing a record
+
+Start from [`TEMPLATE.md`](TEMPLATE.md): one question, how other languages and
+tools answer it, every option weighed against the four weights of
+[ADR-258](adr-258.md), the decision as numbered rules, and what it costs. It
+also lists what does **not** belong in a record (progress, the route to the
+decision, the state of other lists). Records written before the template are
+not rewritten to match it.
+
 ## The index
 
 **Status** is one of *Accepted*, *Open* (decided nothing yet), or *Superseded*.
