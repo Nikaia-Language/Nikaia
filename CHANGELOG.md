@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.310] — 2026-10-01
+
+**A copy of a view is text of its own, written type or not** (#293).
+`let last = current.trim()` followed by `out.push(last.clone())` read the copy
+as the view itself, because only a local with `String` written on it counted
+as text: `current` went into the frame's keep, and a `current = ""` elsewhere
+assigned a `String` where the keep's place stood - `rustc` about a file nobody
+wrote. A local bound from text - a literal, a trim, a copy - is text now,
+whatever its `let` wrote.
+
+**A kept buffer assigned again goes into its keep too.** Where a buffer
+really is kept - a view of it outlives it - `current = text.clone()` now puts
+the new value into the same keep, and the views taken before go on reading
+the old one.
+
 ## [0.0.309] — 2026-10-01
 
 **`nikaia describe` spells a crate's names in Nikaia** (ADR-195 D4, #124).

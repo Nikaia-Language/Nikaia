@@ -683,3 +683,64 @@ fn main() {
     );
     runs("assigned-whole", source, "bc");
 }
+
+/// **A copy of a trimmed text holds nothing of it**, with no type written on
+/// the view (#293). `last` is `current.trim()`, and `last.clone()` is text of
+/// its own; read as a copy of the view, it carried `current` into `out`, put
+/// `current` into the frame's keep, and the `current = ""` in the loop then
+/// assigned a `String` where the keep's place stood - `rustc` about a file
+/// nobody wrote.
+#[test]
+fn a_copy_of_an_untyped_view_keeps_nothing() {
+    let source = "fn pieces(text: ref String) -> Vec[String] {
+    let mut out: Vec[String] = []
+    let mut current: String = \"\"
+    for c in text.chars() {
+        if c == ',' {
+            out.push(current.trim().clone())
+            current = \"\"
+            continue
+        }
+        current.push(c)
+    }
+    let last = current.trim()
+    if !last.is_empty() {
+        out.push(last.clone())
+    }
+    return out
+}
+
+fn main() {
+    let p = pieces(\"a, b,c\")
+    println(f\"{p.len()} {p[2]}\")
+}
+";
+    assert!(
+        !lowered(source, Build::default()).contains("put("),
+        "nothing is kept: every copy is text of its own"
+    );
+    runs("untyped-view-copied", source, "3 c");
+}
+
+/// **A kept buffer assigned again puts its new value into the keep too**
+/// (#293): the view taken before still reads the old text, which the keep goes
+/// on holding.
+#[test]
+fn a_kept_buffer_assigned_again_is_kept_again() {
+    let source = "fn first_then(text: ref String) -> String {
+    let mut views: Vec[ref String] = []
+    let mut current: String = \"old\"
+    views.push(current.trim())
+    current = text.clone()
+    views.push(current.trim())
+    return f\"{views[0]} {views[1]}\"
+}
+
+fn main() {
+    println(first_then(\"new\"))
+}
+";
+    let rust = lowered(source, Build::default());
+    assert!(rust.contains("current = __keep_frame.put("), "{rust}");
+    runs("kept-reassigned", source, "old new");
+}

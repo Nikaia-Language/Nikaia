@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.309 (Draft)
+**Version:** 0.0.310 (Draft)
 **Date:** 2026-10-01
 
 ---

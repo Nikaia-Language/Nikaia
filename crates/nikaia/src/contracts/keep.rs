@@ -199,6 +199,12 @@ pub struct Plan {
     pub escapes: Vec<(Source, Escape)>,
     /// What cannot be lowered, said in this language's words.
     pub refusals: Vec<crate::check::Finding>,
+    /// **A kept buffer assigned again**, by the assignment's statement, and
+    /// the keep its new value goes into as well: the views of the old value
+    /// still point into the old one, which the keep goes on holding, and the
+    /// binding is a place in the keep, so the new value has to be one too
+    /// (#293).
+    pub reputs: BTreeMap<usize, KeepAt>,
 }
 
 impl Plan {
@@ -420,6 +426,11 @@ struct Local {
     /// a second name for the same value. Handed on whole it is a move, which
     /// takes the buffer along and leaves nothing to keep alive.
     buffer: bool,
+    /// **Text, where the `let` wrote no type**: `let last = current.trim()`.
+    /// Its `.clone()` is a copy holding nothing of `current`, as the clone of
+    /// a `String` is - read without this, it carried `current` into whatever
+    /// the copy went into, and `current` into the frame's keep (#293).
+    text: bool,
 }
 
 struct Walk<'a> {
@@ -446,6 +457,11 @@ struct Walk<'a> {
     /// Locals bound to what a removal hands back, by the local it was taken
     /// from.
     taken: BTreeMap<String, String>,
+    /// A buffer local assigned again whole, by the assignment's statement:
+    /// the statement of the `let` that bound it, which is its own buffer's.
+    /// Only that one: what flowed into it since may have a keep of its own,
+    /// and the binding is a place in a keep only where its `let` was put.
+    reassigned: BTreeMap<usize, usize>,
     /// The structs that hold a view, from the unit.
     borrowing: &'a BTreeSet<String>,
     /// Task captures: `(binding, its let statement)`.
@@ -500,6 +516,7 @@ fn plan(
                 parameter: true,
                 keeps: arg.mutable && context.carries(parsed, &arg.ty),
                 buffer: false,
+                text: false,
             },
         );
     }
@@ -514,6 +531,7 @@ fn plan(
                 parameter: true,
                 keeps: receiver.is_mut && target.is_some_and(|t| context.borrowing.contains(t)),
                 buffer: false,
+                text: false,
             },
         );
     }
@@ -531,6 +549,7 @@ fn plan(
         puts_into: BTreeMap::new(),
         struct_puts: BTreeMap::new(),
         taken: BTreeMap::new(),
+        reassigned: BTreeMap::new(),
         borrowing: &context.borrowing,
         captured: BTreeMap::new(),
         statement: 0,
@@ -595,19 +614,21 @@ impl Walk<'_> {
     fn copies_text(&self, receiver: &Expr) -> bool {
         match receiver {
             Expr::LitStr { .. } | Expr::LitInterpolated(_) => true,
-            Expr::Variable(name) => self
-                .local(self.parsed.text(*name))
-                .and_then(|local| local.ty.as_ref())
-                .is_some_and(|ty| {
-                    matches!(self.parsed.text(ty.name), "String" | "str") && ty.generics.is_empty()
-                }),
+            Expr::Variable(name) => self.local(self.parsed.text(*name)).is_some_and(|local| {
+                local.text
+                    || local.ty.as_ref().is_some_and(|ty| {
+                        matches!(self.parsed.text(ty.name), "String" | "str")
+                            && ty.generics.is_empty()
+                    })
+            }),
             // **A trimmed text is text** (0.0.252): `expr.trim().clone()` is a
-            // copy of a piece of `expr`, and holds nothing of it.
+            // copy of a piece of `expr`, and holds nothing of it. So is a copy
+            // of text, which is what `let path = whole.clone()` binds (#293).
             Expr::MethodCall {
                 receiver, method, ..
             } if matches!(
                 self.parsed.text(*method),
-                "trim" | "trim_start" | "trim_end"
+                "trim" | "trim_start" | "trim_end" | "clone"
             ) =>
             {
                 self.copies_text(receiver)
@@ -646,6 +667,7 @@ impl Walk<'_> {
         origins: BTreeSet<Id>,
         ty: Option<Type>,
         buffer: bool,
+        text: bool,
     ) {
         let local = Local {
             at,
@@ -655,6 +677,7 @@ impl Walk<'_> {
             parameter: false,
             keeps: false,
             buffer,
+            text,
         };
         self.last_seen.insert(name.clone(), local.clone());
         if let Some(scope) = self.scopes.last_mut() {
@@ -712,6 +735,8 @@ impl Walk<'_> {
                 {
                     self.taken.insert(self.parsed.text(*name).to_string(), from);
                 }
+                // Text with no type written: what a `.clone()` of it copies.
+                let text = names.len() == 1 && ty.is_none() && self.copies_text(value);
                 // A second name for the buffer is the buffer.
                 let renames_a_buffer = self.is_the_buffer(value);
                 let is_buffer = matches!(made, Buffer::Named(_)) || renames_a_buffer;
@@ -733,7 +758,7 @@ impl Walk<'_> {
                 };
                 for name in names {
                     let name = self.parsed.text(*name).to_string();
-                    self.bind(name, at, origins.clone(), ty.clone(), is_buffer);
+                    self.bind(name, at, origins.clone(), ty.clone(), is_buffer, text);
                 }
             }
             Stmt::Comptime { .. } => {}
@@ -743,6 +768,13 @@ impl Walk<'_> {
                 let origins = self.origins(value);
                 if let Some(root) = root_of(self.parsed, target) {
                     let whole = op.is_none() && matches!(target, Expr::Variable(_));
+                    if whole
+                        && let Some(local) = self.local(&root)
+                        && local.buffer
+                    {
+                        let bound = local.at;
+                        self.reassigned.insert(at, bound);
+                    }
                     if whole {
                         self.sheds
                             .entry(root.clone())
@@ -778,7 +810,7 @@ impl Walk<'_> {
                 self.scopes.push(BTreeMap::new());
                 for name in bindings {
                     let name = self.parsed.text(*name).to_string();
-                    self.bind(name, at, origins.clone(), None, false);
+                    self.bind(name, at, origins.clone(), None, false, false);
                 }
                 for inner in &body.stmts {
                     self.statement = inner.span.at();
@@ -1523,6 +1555,13 @@ fn decide(
                     plan.tethered.insert(name.clone(), *at);
                 }
             }
+        }
+    }
+
+    // **A kept buffer assigned again goes into the same keep** (#293).
+    for (statement, bound) in &walk.reassigned {
+        if let Some(keep) = plan.puts.get(bound).copied() {
+            plan.reputs.insert(*statement, keep);
         }
     }
 
