@@ -186,9 +186,6 @@ pub mod tools {
     /// what each key means.
     pub mod ledger {
         use super::ty::*;
-        // The reader enters its own grammars (0.0.297), and what a grammar
-        // fails with is what a program's prelude brings.
-        use crate::grammar::ParseError;
 
         include!("tools/ledger.rs");
     }

@@ -182,14 +182,6 @@ pub fn split_args(written: &str) -> Vec<String> {
 }
 
 pub fn a_view_of(written: &str) -> Option<String> {
-    if written.starts_with("ref(") {
-        let c: Vec<char> = nikaia_std::list::chars(written.chars());
-        let close = closing(&c, 4, ')');
-        if close >= 0 {
-            let rest = between(&c, close + 1, c.len() as i64);
-            return Some(rest.trim_start().to_owned());
-        }
-    }
     if written.starts_with("ref ") {
         let rest = cut(written, 4, 0);
         return Some(rest.trim_start().to_owned());

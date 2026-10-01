@@ -27,7 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::sync::{Reached, reached, visit_expr, visit_stmt, visit_stmt_blocks};
+use super::sync::{Reached, reached, visit_stmt, visit_stmt_blocks};
 use super::{FnContract, Ledger, UNNAMED_ERROR};
 use crate::ast::{Block, Expr, Item};
 use crate::check::MethodCalls;
@@ -249,32 +249,12 @@ fn collect(
         // **The handlers written in this statement**, so the walk into them
         // knows where it is.
         let mut handlers: Vec<*const Block> = Vec::new();
-        // **What a handler catches and does not pass on is not the
-        // function's** (Part I 7.1): a call in the guarded half of a `catch`
-        // whose handler never writes `throw error` fails into the handler and
-        // nowhere else. Counted, `x = rule(t) catch { throw Mine }` made the
-        // function throw the parse's error as well as its own - a sum of two
-        // for a body that raises one (found moving the ledger's reader onto
-        // grammars).
-        let mut caught: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::TryCatch {
-                expr: guarded,
-                handler,
-            } = expr
-            {
+            if let Expr::TryCatch { handler, .. } = expr {
                 handlers.push(handler as *const Block);
-                if !passes_on(parsed, handler) {
-                    visit_expr(parsed, guarded, &mut |inner| {
-                        caught.insert(inner as *const Expr as usize);
-                    });
-                }
             }
         });
         visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if caught.contains(&(expr as *const Expr as usize)) {
-                return;
-            }
             // **`throw error` in a handler passes the caught error on**
             // (ADR-157 D2): its types are the guarded expression's, which the
             // call there already contributed. Read as a value this compiler
@@ -335,25 +315,6 @@ fn collect(
             collect(parsed, inner, own, library, handler, into)
         });
     }
-}
-
-/// Whether a handler passes what it caught on: `throw error` anywhere in it
-/// (ADR-157 D2).
-fn passes_on(parsed: &Parsed, handler: &Block) -> bool {
-    let mut found = false;
-    for stmt in &handler.stmts {
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::Throw(thrown) = expr
-                && matches!(&**thrown, Expr::Variable(name) if parsed.text(*name) == "error")
-            {
-                found = true;
-            }
-        });
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            found |= passes_on(parsed, inner);
-        });
-    }
-    found
 }
 
 /// The type a `throw` raises. `ConfigError::NotFound(p)` and
