@@ -70,10 +70,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::contracts::ty::TyOps;
-use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract, ty::Ty};
+use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract};
 use nikaia_std::tools::crossing;
 use nikaia_std::tools::paths::{self, Export};
+use nikaia_std::tools::signature;
 
 /// What a run of the command did, for the line it prints.
 #[derive(Debug)]
@@ -235,7 +235,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
 
         // **The bound**, which carries the safe half on its own (D4): every
         // safe way of reaching another thread demands it of the caller.
-        let bound: Vec<String> = function.sent_across().collect();
+        let bound: Vec<String> = function.sent_across();
         if !bound.is_empty() {
             said.push(format!(
                 "`{name}`: {} is bound `Send`.",
@@ -917,27 +917,9 @@ impl Function {
     /// and why the shim's `across_a_thread_unchecked` is correctly silent: an
     /// `unsafe impl Send` took its bound away, and only following the calls
     /// reaches the `spawn`.
-    fn sent_across(&self) -> impl Iterator<Item = String> + '_ {
-        let sent = self.sends();
-        self.args.iter().filter_map(move |(name, ty)| {
-            let ty = ty.trim();
-            let named = ty.trim_start_matches(['&', ' ']).trim();
-            let named = named.strip_prefix("mut ").unwrap_or(named);
-            let reached = sent.iter().any(|p| p == named) || crossing::bounds_send(ty);
-            reached.then(|| name.clone())
-        })
-    }
-
-    /// The type parameters this signature binds `Send`.
-    fn sends(&self) -> BTreeSet<String> {
-        paths::split_top_level(&self.bounds)
-            .into_iter()
-            .filter_map(|one| {
-                let (name, bound) = one.split_once(':')?;
-                crossing::bounds_send(bound).then(|| name.trim().to_string())
-            })
-            .filter(|name| !name.is_empty() && !name.starts_with('\''))
-            .collect()
+    fn sent_across(&self) -> Vec<String> {
+        let (names, types): (Vec<String>, Vec<String>) = self.args.iter().cloned().unzip();
+        signature::sent_across(&names, &types, &self.bounds)
     }
 
     /// The entry, and the crate types its signature named.
@@ -950,19 +932,21 @@ impl Function {
         let mut keeps = Vec::new();
         let mut params = Vec::new();
         for (name, text) in &self.args {
-            let (ty, kept) = self.translate(text, crate_word, types, &mut mentioned);
-            if kept {
+            let translated =
+                signature::translate(text, crate_word, &self.parameters, types, &mut mentioned);
+            if translated.kept {
                 keeps.push(name.clone());
             }
-            params.push((name.clone(), ty));
+            params.push((name.clone(), translated.ty));
         }
         let mut throws = Vec::new();
         let result = self.result.as_ref().map(|text| {
-            let (ty, failing) = self.result_of(text, crate_word, types, &mut mentioned);
-            if let Some(error) = failing {
+            let resulted =
+                signature::result_of(text, crate_word, &self.parameters, types, &mut mentioned);
+            if let Some(error) = resulted.fails {
                 throws.push(error);
             }
-            ty
+            resulted.ty
         });
         let contract = FnContract {
             public: true,
@@ -982,113 +966,5 @@ impl Function {
             ..FnContract::empty()
         };
         (contract, mentioned)
-    }
-
-    /// `Result<T, E>` in the result position: the `T` is the type and the `E`
-    /// is a `throws`, named where this can name it and `"?"` where it cannot.
-    fn result_of(
-        &self,
-        text: &str,
-        crate_word: &str,
-        types: &BTreeSet<String>,
-        mentioned: &mut BTreeSet<String>,
-    ) -> (Ty, Option<String>) {
-        if let Some(inner) = crossing::generic_of(text, "Result") {
-            let parts = paths::split_top_level(&inner);
-            let ok = parts.first().cloned().unwrap_or_default();
-            let error = parts.get(1).cloned();
-            let (ty, _) = self.translate(&ok, crate_word, types, mentioned);
-            // The error type where 15.2 can name it (D3). A crate's own error
-            // is that crate's type; anything else is the absence of a name,
-            // which the ledger spells `"?"`.
-            let named = error.map(|error| match types.contains(error.trim()) {
-                true => format!("{crate_word}::{}", error.trim()),
-                false => "?".to_string(),
-            });
-            return (ty, Some(named.unwrap_or_else(|| "?".to_string())));
-        }
-        let (ty, _) = self.translate(text, crate_word, types, mentioned);
-        (ty, None)
-    }
-
-    /// One Rust type as the ledger's, and whether a value of it is **kept**.
-    ///
-    /// D3's first row: `&T` is a view and `T` by value is kept — the crate
-    /// takes ownership, so the caller may not lend it. A number is not kept in
-    /// any sense a caller can act on, so the column names what a caller could
-    /// otherwise have gone on using.
-    fn translate(
-        &self,
-        text: &str,
-        crate_word: &str,
-        types: &BTreeSet<String>,
-        mentioned: &mut BTreeSet<String>,
-    ) -> (Ty, bool) {
-        let text = text.trim();
-        if let Some(rest) = text.strip_prefix("&mut ") {
-            // `&mut T` is *changed in place*, which the ledger says with
-            // `mutates` on the entry rather than on the type — and this
-            // scraper has no place to put it. `?` is the absence of a claim,
-            // which is the fail-closed direction (D4).
-            let _ = rest;
-            return (Ty::Unknown, false);
-        }
-        if let Some(rest) = text.strip_prefix('&') {
-            let (ty, _) = self.translate(rest, crate_word, types, mentioned);
-            return (view_of(ty), false);
-        }
-        if let Some(inner) = crossing::generic_of(text, "Option") {
-            let (ty, kept) = self.translate(&inner, crate_word, types, mentioned);
-            return (Ty::Nullable(Box::new(ty)), kept);
-        }
-        if let Some(inner) = crossing::generic_of(text, "Vec") {
-            let (ty, _) = self.translate(&inner, crate_word, types, mentioned);
-            return (
-                Ty::Named {
-                    name: "Vec".to_string(),
-                    args: vec![ty],
-                    view: false,
-                },
-                true,
-            );
-        }
-        // A type parameter of this function is the ledger's variable.
-        if self.parameters.iter().any(|p| p == text) {
-            return (
-                Ty::Var {
-                    name: text.to_string(),
-                    view: false,
-                },
-                true,
-            );
-        }
-        if crossing::is_plain(text) {
-            return (Ty::named(text), false);
-        }
-        if text == "String" {
-            return (Ty::named("String"), true);
-        }
-        if types.contains(text) {
-            mentioned.insert(text.to_string());
-            return (Ty::named(format!("{crate_word}::{text}")), true);
-        }
-        // Anything else is a name this scraper cannot account for — another
-        // crate's type, a trait object, a path with segments. `?` is the
-        // absence of a claim and D5's own `?`, for a reviewer to fill.
-        (Ty::Unknown, true)
-    }
-}
-
-/// A view of a type, which the ledger's language writes with the `&` on the
-/// name.
-fn view_of(ty: Ty) -> Ty {
-    match ty {
-        Ty::Named { name, args, .. } => Ty::Named {
-            name,
-            args,
-            view: true,
-        },
-        Ty::Var { name, .. } => Ty::Var { name, view: true },
-        other => other,
     }
 }

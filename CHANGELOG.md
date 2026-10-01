@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.314] — 2026-10-01
+
+**`nikaia describe` reads a Rust signature in Nikaia** (ADR-104 D3-D4,
+ADR-193 D4, #124). `tools/signature.nika` holds one Rust type in the ledger's
+words and whether a value of it is kept, what a `Result` throws, and which
+parameters a `Send` bound reaches. It reads the ledger's records for `Ty`. A
+draft says what it said before; what is left in `describe.rs` is the crate's
+table of what it offers and the drafting around it.
+
+**A name a `for` lends over a list of text compares with text of its own**
+(#300). `for one in words { if one == named { … } }` for a `named: String`
+compared a `&String` with a `String` below - `rustc` about a file nobody
+wrote. The lent binding is read there now, as a lent number already was.
+
 ## [0.0.313] — 2026-10-01
 
 **An `Array` written without its length is told the length** (`NK1166`).

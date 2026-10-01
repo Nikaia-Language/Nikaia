@@ -244,3 +244,38 @@ fn a_view_of_a_declared_type_compares_with_a_value() {
     );
     assert_eq!(printed.trim(), "neg both");
 }
+
+/// **A name a `for` lends over a list of text compares with text of its own**:
+/// `for one in words` binds a `&String` below, and `one == named` for a
+/// `named: String` compared a `&String` with a `String`, which has no impl
+/// there - `rustc` about a file nobody wrote (found moving `describe` into
+/// Nikaia, #124). Against a literal and against a view it stays as written.
+#[test]
+fn a_lent_text_compares_with_owned_text() {
+    let printed = ran(
+        "lent-text-compared",
+        "fn has(words: ref Vec[String], wanted: ref String) -> bool {\n\
+         \x20   let named = wanted.trim().clone()\n\
+         \x20   for one in words {\n\
+         \x20       if one == named { return true }\n\
+         \x20   }\n\
+         \x20   return false\n\
+         }\n\
+         \n\
+         fn literal(words: ref Vec[String]) -> bool {\n\
+         \x20   for one in words {\n\
+         \x20       if one == \"b\" || one == words[0] { return true }\n\
+         \x20   }\n\
+         \x20   return false\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let words: Vec[String] = [\"a\", \"b\"]\n\
+         \x20   let found = has(words, \" b \")\n\
+         \x20   let missing = has(words, \"c\")\n\
+         \x20   let lit = literal(words)\n\
+         \x20   println(f\"{found} {missing} {lit}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "true false true");
+}

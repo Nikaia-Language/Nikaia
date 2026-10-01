@@ -1,0 +1,253 @@
+// crates/nikaia-std/src/tools/signature.nika
+//
+// **A Rust signature in the ledger's words** (ADR-104 D3, D4; ADR-193 D4): one
+// type at a time, whether a value of it is kept, what a `Result` throws, and
+// which parameters a `Send` bound reaches.
+//
+// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// by `nikaia lower-std` to `signature.rs` beside it, `include!`d as
+// `nikaia_std::tools::signature`, and called from `describe`. It reads the
+// ledger's records beside it for `Ty`, as `ledger.nika` does.
+//
+// **What it cannot translate is `Ty::Unknown`**, the ledger's `?`: the absence
+// of a claim and never a guess (D4), for a reviewer to fill (D5).
+
+use std::collections
+
+/// One type as the ledger writes it, and whether a value of it is **kept**:
+/// D3's first row - `&T` is a view and `T` by value is kept, because the crate
+/// takes it and the caller may not go on using it.
+pub struct Translated {
+    pub ty: Ty,
+    pub kept: bool,
+}
+
+/// A result type as the ledger writes it, and what it throws where it is a
+/// `Result`: the crate's own error by its path, and `"?"` for any other.
+pub struct Resulted {
+    pub ty: Ty,
+    pub fails: String?,
+}
+
+/// One Rust type as the ledger's. `parameters` are the function's own type
+/// parameters, which the ledger spells as variables; `types` are the crate's
+/// own types, each of which the signature names is added to `mentioned`.
+pub fn translate(written: ref String, crate_word: ref String, parameters: ref Vec[String], types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> Translated {
+    let text = written.trim()
+    // `&mut T` is *changed in place*, which the ledger says with `mutates` on
+    // the entry rather than on the type - and there is no place for it here.
+    if text.starts_with("&mut ") {
+        return Translated { ty: Ty::Unknown, kept: false }
+    }
+    if text.starts_with("&") {
+        let c: Vec[char] = text.chars().collect()
+        let rest = slice(c, 1, c.len())
+        let inner = translate(rest, crate_word, parameters, types, mentioned)
+        return Translated { ty: view_of(inner.ty), kept: false }
+    }
+    let optional = generic_of(text, "Option")
+    if optional != null {
+        let inner = translate(optional ?? "", crate_word, parameters, types, mentioned)
+        return Translated { ty: Ty::Nullable(inner.ty), kept: inner.kept }
+    }
+    let listed = generic_of(text, "Vec")
+    if listed != null {
+        let inner = translate(listed ?? "", crate_word, parameters, types, mentioned)
+        return Translated { ty: Ty::Named { name: "Vec", args: [inner.ty], view: false }, kept: true }
+    }
+    for parameter in parameters {
+        if text == parameter {
+            return Translated { ty: Ty::Var { name: text.clone(), view: false }, kept: true }
+        }
+    }
+    if is_plain(text) {
+        return Translated { ty: Ty::Named { name: text.clone(), args: [], view: false }, kept: false }
+    }
+    if text == "String" {
+        return Translated { ty: Ty::Named { name: "String", args: [], view: false }, kept: true }
+    }
+    if types.contains(text) {
+        mentioned.insert(text.clone())
+        return Translated { ty: Ty::Named { name: f"{crate_word}::{text}", args: [], view: false }, kept: true }
+    }
+    // Anything else - another crate's type, a trait object, a path with
+    // segments - is a name this cannot account for.
+    return Translated { ty: Ty::Unknown, kept: true }
+}
+
+/// `Result<T, E>` in the result position: the `T` is the type and the `E` is a
+/// `throws` - the crate's own error by its path, and `"?"` for any other.
+pub fn result_of(written: ref String, crate_word: ref String, parameters: ref Vec[String], types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> Resulted {
+    let resulted = generic_of(written, "Result")
+    if resulted == null {
+        let plain = translate(written, crate_word, parameters, types, mentioned)
+        return Resulted { ty: plain.ty, fails: null }
+    }
+    let parts = split_top_level(resulted ?? "")
+    let mut ok: String = ""
+    if parts.len() > 0 {
+        ok = parts[0].clone()
+    }
+    let fine = translate(ok, crate_word, parameters, types, mentioned)
+    let mut fails: String = "?"
+    if parts.len() > 1 {
+        let error = parts[1].trim()
+        if types.contains(error) {
+            fails = f"{crate_word}::{error}"
+        }
+    }
+    return Resulted { ty: fine.ty, fails: fails }
+}
+
+/// A view of a type, which the ledger's language writes with the `&` on the
+/// name.
+pub fn view_of(ty: Ty) -> Ty {
+    return match ty {
+        Ty::Named { name, args, .. } => Ty::Named { name: name, args: args, view: true },
+        Ty::Var { name, .. } => Ty::Var { name: name, view: true },
+        else => ty,
+    }
+}
+
+/// **The parameters a `Send` bound reaches**, in declaration order (ADR-193
+/// D4): one whose type is a type variable the bounds send, and one written
+/// `impl … Send …` at the parameter itself. `names` and `types` are the
+/// parameters' names and written types, in order; `bounds` is the `<…>` list
+/// and the `where` clause, joined.
+pub fn sent_across(names: ref Vec[String], types: ref Vec[String], bounds: ref String) -> Vec[String] {
+    let sent = sends(bounds)
+    let mut out: Vec[String] = []
+    for at in 0..<names.len() {
+        let ty = types[at].trim()
+        let named = unreferenced(ty)
+        if bounds_send(ty) || sent.contains(named.clone()) {
+            out.push(names[at].clone())
+        }
+    }
+    return out
+}
+
+/// The type parameters a bound list binds `Send`.
+pub fn sends(bounds: ref String) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for one in split_top_level(bounds) {
+        let c: Vec[char] = one.chars().collect()
+        let colon = find(c, ':')
+        if colon < 0 {
+            continue
+        }
+        let head = slice(c, 0, colon)
+        let name = head.trim()
+        let bound = slice(c, colon + 1, c.len())
+        if bounds_send(bound) && !name.is_empty() && !name.starts_with("'") && !out.contains(name.clone()) {
+            out.push(name.clone())
+        }
+    }
+    out.sort()
+    return out
+}
+
+// A parameter's type without the `&`s and the `mut ` in front.
+fn unreferenced(ty: ref String) -> String {
+    let c: Vec[char] = ty.chars().collect()
+    let mut from = 0
+    while from < c.len() && (c[from] == '&' || c[from] == ' ') {
+        from += 1
+    }
+    let rest = slice(c, from, c.len())
+    let trimmed = rest.trim()
+    if trimmed.starts_with("mut ") {
+        let t: Vec[char] = trimmed.chars().collect()
+        let after = slice(t, 4, t.len())
+        return after.clone()
+    }
+    return trimmed.clone()
+}
+
+// The scalar names that travel unchanged, plus `str`.
+fn is_plain(name: ref String) -> bool {
+    for plain in ["bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"] {
+        if name == plain {
+            return true
+        }
+    }
+    return false
+}
+
+// Whether a bound list names `Send` as a word.
+fn bounds_send(text: ref String) -> bool {
+    let c: Vec[char] = text.chars().collect()
+    let mut start = 0
+    for at in 0..<c.len() + 1 {
+        let ends = at == c.len() || !(c[at].is_alphanumeric() || c[at] == '_')
+        if ends {
+            if slice(c, start, at) == "Send" {
+                return true
+            }
+            start = at + 1
+        }
+    }
+    return false
+}
+
+// `Name<inner>` unwrapped, where the text is exactly that.
+fn generic_of(written: ref String, name: ref String) -> String? {
+    let text = written.trim()
+    if !text.starts_with(name) {
+        return null
+    }
+    let c: Vec[char] = text.chars().collect()
+    let n: Vec[char] = name.chars().collect()
+    let after = slice(c, n.len(), c.len())
+    let rest = after.trim_start()
+    if !rest.starts_with("<") || !rest.ends_with(">") {
+        return null
+    }
+    let r: Vec[char] = rest.chars().collect()
+    return slice(r, 1, r.len() - 1)
+}
+
+// Split on commas that are not inside brackets.
+fn split_top_level(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: Vec[String] = []
+    let mut depth = 0
+    let mut start = 0
+    for at in 0..<c.len() {
+        let one = c[at]
+        if one == '<' || one == '(' || one == '[' {
+            depth += 1
+        } else if one == '>' || one == ')' || one == ']' {
+            depth -= 1
+        } else if one == ',' && depth == 0 {
+            let piece = slice(c, start, at)
+            out.push(piece.trim().clone())
+            start = at + 1
+        }
+    }
+    let last = slice(c, start, c.len())
+    let rest = last.trim()
+    if !rest.is_empty() {
+        out.push(rest.clone())
+    }
+    return out
+}
+
+// Where `target` first stands, or -1.
+fn find(c: ref Array[char], target: char) -> i64 {
+    for at in 0..<c.len() {
+        if c[at] == target {
+            return at
+        }
+    }
+    return -1
+}
+
+// The characters from `from` up to `to`.
+fn slice(c: ref Array[char], from: i64, to: i64) -> String {
+    let mut out: String = ""
+    for k in from..<to {
+        out.push(c[k])
+    }
+    return out
+}

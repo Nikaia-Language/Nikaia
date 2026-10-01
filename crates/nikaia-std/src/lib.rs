@@ -494,6 +494,90 @@ pub mod tools {
         }
     }
 
+    /// **A Rust signature in the ledger's words**:
+    /// `src/tools/signature.nika`, one type at a time, whether a value of it
+    /// is kept, what a `Result` throws and which parameters a `Send` bound
+    /// reaches, lowered to `src/tools/signature.rs` and committed beside it
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D3, D4). It
+    /// reads the ledger's records, as `ledger` does.
+    pub mod signature {
+        use super::ty::*;
+
+        include!("tools/signature.rs");
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            fn texts(all: &[&str]) -> Vec<String> {
+                all.iter().map(|s| s.to_string()).collect()
+            }
+
+            /// A view is not kept, a value is; the crate's own type is named
+            /// by its path and noted; anything else is `?`.
+            #[test]
+            fn a_rust_type_reads_as_the_ledgers() {
+                let types: std::collections::BTreeSet<String> =
+                    ["Conn".to_string()].into_iter().collect();
+                let params = texts(&["T"]);
+                let mut mentioned = std::collections::BTreeSet::new();
+                let mut said = |t: &str| {
+                    let out = translate(t, "db", &params, &types, &mut mentioned);
+                    (text(&out.ty), out.kept)
+                };
+                assert_eq!(said("&str"), ("ref String".to_string(), false));
+                assert_eq!(said("Vec<Conn>"), ("Vec[db::Conn]".to_string(), true));
+                assert_eq!(said("Option<T>"), ("$T?".to_string(), true));
+                assert_eq!(said("u8"), ("u8".to_string(), false));
+                assert_eq!(said("&mut u8"), ("?".to_string(), false));
+                assert!(said("other::Thing").1);
+                assert!(mentioned.contains("Conn"));
+            }
+
+            /// A `Result` throws the crate's own error by its path, and `?` for
+            /// any other.
+            #[test]
+            fn a_result_names_what_it_throws() {
+                let types: std::collections::BTreeSet<String> =
+                    ["Error".to_string()].into_iter().collect();
+                let mut mentioned = std::collections::BTreeSet::new();
+                let own = result_of(
+                    "Result<u8, Error>",
+                    "db",
+                    &Vec::new(),
+                    &types,
+                    &mut mentioned,
+                );
+                assert_eq!(own.fails.as_deref(), Some("db::Error"));
+                let other = result_of(
+                    "Result<(), io::Error>",
+                    "db",
+                    &Vec::new(),
+                    &types,
+                    &mut mentioned,
+                );
+                assert_eq!(other.fails.as_deref(), Some("?"));
+                let plain = result_of("u8", "db", &Vec::new(), &types, &mut mentioned);
+                assert_eq!(plain.fails, None);
+            }
+
+            /// A bound reaches a parameter through its type variable or an
+            /// `impl Send` at the parameter itself.
+            #[test]
+            fn a_send_bound_reaches_its_parameters() {
+                assert_eq!(sends("T: Send + 'static, U: Clone, 'a: 'b"), texts(&["T"]));
+                assert_eq!(
+                    sent_across(
+                        &texts(&["job", "name", "f"]),
+                        &texts(&["&mut T", "&str", "impl FnOnce() + Send"]),
+                        "T: Send, "
+                    ),
+                    texts(&["job", "f"])
+                );
+            }
+        }
+    }
+
     /// **The type language the checker reasons in and the ledger records**:
     /// `src/tools/ty.nika`, `Ty` and `Shape` and the text a type is written
     /// as, lowered to `src/tools/ty.rs` and committed beside it (ADR-257 D1).
