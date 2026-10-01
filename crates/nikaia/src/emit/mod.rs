@@ -36,7 +36,7 @@ use crate::ast::{
 };
 use crate::check::PausingEntry;
 use crate::contracts::SignatureOps;
-use crate::parser::{Parsed, parse_expression};
+use crate::parser::Parsed;
 use crate::{refused, refused_at};
 
 /// One branch of an `overlap { … }`, where the schedule and the written order
@@ -5047,7 +5047,7 @@ impl<'p> Emitter<'p> {
                 template::Segment::Hole { expr, .. } => {
                     // Parsed as Nikaia and emitted as Nikaia: a hole holds an
                     // expression of this language, not a foreign one.
-                    let parsed = parse_expression(&self.parsed.interner, expr).map_err(|e| {
+                    let parsed = self.parsed.hole(expr).map_err(|e| {
                         refused_at!(
                             flow.statement,
                             "The template hole `{{{expr}}}` can't be read. {e}"
@@ -10455,7 +10455,7 @@ impl<'p> Emitter<'p> {
         out.push(&format!("\"{format}\""));
 
         for hole in holes {
-            let mut expr = parse_expression(&self.parsed.interner, &hole).map_err(|e| {
+            let mut expr = self.parsed.hole(&hole).map_err(|e| {
                 refused_at!(flow.statement, "The hole `{{{hole}}}` can't be read. {e}")
             })?;
             // What the tier pass hands over inside it (ADR-229 D1), as every
@@ -12710,11 +12710,7 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes_bound(&segments)
                 .into_iter()
-                .filter_map(|(hole, bound)| {
-                    parse_expression(&parsed.interner, &hole)
-                        .ok()
-                        .map(|expr| (expr, bound))
-                })
+                .filter_map(|(hole, bound)| parsed.hole(&hole).ok().map(|expr| (expr, bound)))
                 .collect(),
             Err(_) => Vec::new(),
         },
@@ -12732,7 +12728,7 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
             Ok((_, holes)) => holes
                 .iter()
                 .filter_map(|hole| {
-                    let mut expr = parse_expression(&parsed.interner, hole).ok()?;
+                    let mut expr = parsed.hole(hole).ok()?;
                     if let Some(wraps) = parsed.hole_wraps.get(hole) {
                         crate::text_tiers::wrap_hole(&mut expr, wraps);
                     }
@@ -12752,7 +12748,7 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
         Expr::Dsl { content, .. } => match template::split(content.trim()) {
             Ok(segments) => template_holes(&segments)
                 .iter()
-                .filter_map(|hole| parse_expression(&parsed.interner, hole).ok())
+                .filter_map(|hole| parsed.hole(hole).ok())
                 .collect(),
             Err(_) => Vec::new(),
         },
