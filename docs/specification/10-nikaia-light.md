@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.301 (Draft)
+**Version:** 0.0.302 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -1977,7 +1977,7 @@ and costs nothing:
 struct Reading { name: ref String, temp: i32 }
 ```
 
-`nikaia --tethers` prints where each buffer lives and why, and changes nothing;
+`--tethers` (on `nikaia build` and `nikaia lower`) prints where each buffer lives and why, and changes nothing;
 a change is a ledger diff in review.
 
 There is no struct with lifetime parameters in Nikaia.
@@ -2027,7 +2027,7 @@ subject, it is treated as kept, and the parameter is a view of the subject's
 buffer.
 
 **A tether keeps the whole buffer alive**, not just the part pointed at.
-`nikaia --tethers` names every buffer kept this way and what keeps it;
+`--tethers` (on `nikaia build` and `nikaia lower`) names every buffer kept this way and what keeps it;
 `.clone()` keeps the part and lets the buffer go.
 
 ### 6.7. The Borrow Contract Ledger

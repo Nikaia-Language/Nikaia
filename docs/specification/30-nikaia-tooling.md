@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.301 (Draft)
+**Version:** 0.0.302 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -295,7 +295,7 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `touches` | fn | which resources it reaches and whether it reads or writes them: `["file(path) write", "stdout write"]`. **Absent means it touches everything**, so a function nobody has described orders against everything and stays where it was written |
 | `locks` | fn | whether the body may **acquire a lock** anywhere it reaches; this decides whether a call may appear inside an open lock. Propagated over the same call graph as `sync`. `locks = "?"` is *this compiler could not tell*, which reads as `true`. **An absent entry means it touches a lock**, the one inverted key in this file (below). The key says *a lock*, never which lock, so it never answers an ordering question; that is `touches`'s |
 | `sharing` | fn | which of its `Shared` positions are one allocation, and which reference count each of those classes gets: `["counts \| <result>: plain", "hits: atomic"]`. `counts` and the result are **the same allocation**, so they have the same count whichever side of the call decides it. The count is `atomic` unless the compiler proved that nothing crosses a thread with the class; `word` is the atomic count where the class is a `SharedMut` of a word-sized value whose crossing was proved and no `access_all`/`update_all` holds it, and its lock is a compare-and-swap (ADR-238). **Absent means the function has no `Shared` position** |
-| `views` | fn | which of Part I 6.6's states each view in its signature solved to: `["data: borrowed", "<result>: tethered"]`. A view in a parameter **borrows**. A result borrows where a receiver or a parameter carries a view, and **tethers** where the buffer is one the body made. `Owned` never appears. **Absent means the signature holds no view.** `nikaia --tethers` prints what it solved |
+| `views` | fn | which of Part I 6.6's states each view in its signature solved to: `["data: borrowed", "<result>: tethered"]`. A view in a parameter **borrows**. A result borrows where a receiver or a parameter carries a view, and **tethers** where the buffer is one the body made. `Owned` never appears. **Absent means the signature holds no view.** `--tethers` (on `nikaia build` and `nikaia lower`) prints what it solved |
 
 `sharing` and `views` are the function keys whose content cannot make a program wrong. The other function keys are read as permissions: a caller that trusts a wrong `sync` puts a pausing body inside a lock, and one that trusts a wrong `locks` puts a second lock inside the first. `sharing` records an **optimisation** on a floor that is already safe: the worst a class can be given is the atomic count. A ledger that says nothing, or says `atomic` about everything, still describes a correct program. The classes compose across a call: a build that can read a dependency's sources continues the analysis through its published functions, and the two reference counts never become two types.
 
@@ -392,7 +392,7 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 
 **A `test` block runs in the package's directory**, so it reads what the package holds, and writes under **`fs::scratch()`**: a fresh, empty directory handed back as an `fs::Root::Dir`, inside the test's own directory and removed with it.
 
-**`nikaia --asserts`** ([ADR-245](adr/adr-245.md) D6), beside `--overlaps`, `--sharing` and `--tethers`, prints every `assert` of the program by line, and whether the compiler proved it, refuted it or left it to run time. Nothing proves a claim yet, so every row says *run time*.
+**`--asserts`** ([ADR-245](adr/adr-245.md) D6), beside `--overlaps`, `--sharing` and `--tethers` on `nikaia build` and `nikaia lower`, prints every `assert` of the program by line and what became of it (14.2): proved while the program was built, a precondition its callers prove, checked by a test when it runs, or refused.
 
 ### 14.2. Assertions: a claim the compiler proves
 *[ADR-245](adr/adr-245.md) D2, D3 and [ADR-256](adr/adr-256.md). Built: `assert`, its checks in a test, and the MVP prover.*
@@ -920,7 +920,7 @@ http::File(request.query("file") ?? "", fs::Root::Dir(store))
 Every `std` function that takes a path takes its root right after it, with no default:
 `http::File` like `fs::map`, `fs::read` and `fs::write`. The root is an `fs::Root`: `Dir(store)`,
 under which the joined name is resolved and compared component by component, or `Anywhere`, which
-performs no check and is listed per site by `nikaia --trust`. A name that leaves its `Dir` is
+performs no check and is listed per site by `--trust` (on `nikaia build` and `nikaia lower`). A name that leaves its `Dir` is
 `io::IoError::Outside`, and the handler answers 404. The call refuses; it does not rewrite. Nothing
 is inferred about where the name came from; a `../../etc/shadow` is stopped at the call, before
 the headers are written. `trusted: false` on `fs::map` is about the file's content and is a
@@ -1008,7 +1008,7 @@ pub fn write(path: Path, root: Root, data: ref Array[u8]; append: bool = false, 
 
 **Every path names its root.** `root` is an `fs::Root`. `Dir(store)` resolves the name under
 that directory and throws `io::IoError::Outside` where it would leave it; `Outside` is a case of
-`io::IoError`, not an error type of its own. `Anywhere` performs no check. `nikaia --trust` lists
+`io::IoError`, not an error type of its own. `Anywhere` performs no check. `--trust` (on `nikaia build` and `nikaia lower`) lists
 every site that writes `Anywhere` or `Dir("/")`. There is no default and no exception for a
 literal: a relative name is resolved against the working directory. A call that leaves the root
 out is refused with `NK1101`, whose help names both forms.
@@ -1125,7 +1125,7 @@ let data = fs::map(path, fs::Root::Anywhere; trusted: false)
 
 The reverse, `trusted: true`, exists for the case where the program knows the peer. Both are recorded in the ledger. A grammar for a wire format can pin the floor for everyone who uses it, `@untrusted grammar HttpHeaders`, so that no application can lower it (Part II, 10.7).
 
-`nikaia --trust` prints where the program's bytes came from, which source said so, and which hasher its maps got:
+`--trust` (on `nikaia build` and `nikaia lower`) prints where the program's bytes came from, which source said so, and which hasher its maps got:
 
 ```text
 $ nikaia lower 1brc.nika --trust
