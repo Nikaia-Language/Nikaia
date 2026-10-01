@@ -156,16 +156,12 @@ pub trait LedgerOps: Sized {
         units: &[&Parsed],
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>);
-    /// [`LedgerOps::infer_package_checked`], and the functions that pause only
-    /// where their lambdas do ([`sync::infer`], ADR-244 D2).
+    /// [`LedgerOps::infer_package_checked`], and what the `sync` inference
+    /// learned for the build to say ([`sync::Noted`], ADR-244 D2 and D5).
     fn infer_package_noted(
         units: &[&Parsed],
         library: &Ledger,
-    ) -> (
-        Self,
-        Vec<crate::check::Checked>,
-        BTreeMap<String, Vec<String>>,
-    );
+    ) -> (Self, Vec<crate::check::Checked>, sync::Noted);
     fn function(
         &self,
         parsed: &Parsed,
@@ -513,11 +509,7 @@ impl LedgerOps for Ledger {
     fn infer_package_noted(
         units: &[&Parsed],
         library: &Ledger,
-    ) -> (
-        Self,
-        Vec<crate::check::Checked>,
-        BTreeMap<String, Vec<String>>,
-    ) {
+    ) -> (Self, Vec<crate::check::Checked>, sync::Noted) {
         let mut ledger = Ledger {
             version: VERSION,
             toolchain: toolchain(),
@@ -833,7 +825,7 @@ impl LedgerOps for Ledger {
             .flat_map(|c| c.methods.iter().map(|(k, v)| (k.clone(), v.clone())))
             .collect();
 
-        let by_code = sync::infer(&mut ledger, units, library, &resolved);
+        let noted = sync::infer(&mut ledger, units, library, &resolved);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
@@ -884,7 +876,7 @@ impl LedgerOps for Ledger {
         // one that changes no lowering — the state it writes is a
         // representation and only one of the three is built.
         tether::infer(&mut ledger, units, library);
-        (ledger, checked, by_code)
+        (ledger, checked, noted)
     }
 
     /// One function's entry, named as a caller would reach it.
