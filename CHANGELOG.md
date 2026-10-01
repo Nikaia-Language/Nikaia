@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.302] — 2026-10-01
+
+**Part III 14 says what `assert` is now** (#104). 14.1 and 14.2 had been
+rewritten to ADR-245's function and ADR-256's proof; what was left said that
+nothing proves a claim and every row of `--asserts` reads *run time*, which
+the report has not printed since the prover was built. It and `--help` now
+name what the report says: proved, a precondition its callers prove, checked
+by a test, or refused. And the explaining switches are written as switches
+of `nikaia build` and `nikaia lower` rather than as `nikaia --trust`, which
+stopped being a command line in 0.0.299.
+
 ## [0.0.301] — 2026-10-01
 
 - **`nikaia run` becomes the program it built** (#281). It started the

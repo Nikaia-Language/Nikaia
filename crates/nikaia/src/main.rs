@@ -110,13 +110,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub tethers: bool,
 
-    /// Print every `assert`, and for each whether the compiler proved it,
-    /// refuted it or left it to run time
-    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D6).
+    /// Print every `assert`, and for each what became of it: proved while the
+    /// program was built, a precondition its callers prove, checked by a test
+    /// when it runs, or refused
+    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D6,
+    /// [ADR-256](../../../docs/specification/adr/adr-256.md)).
     ///
-    /// Nothing proves a claim yet, so every row says *run time*; the report is
-    /// here so that a prover's progress is visible, and so that a reader can
-    /// ask why a check is still emitted.
+    /// The report is here so that a reader can see what the prover did with
+    /// each claim, and ask why one was not proved.
     #[arg(long, global = true)]
     pub asserts: bool,
 

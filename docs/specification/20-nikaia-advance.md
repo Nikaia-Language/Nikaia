@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.301 (Draft)
+**Version:** 0.0.302 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -198,7 +198,7 @@ whether the value is that variant; what a variant carries is read with a
 `Struct` bound, or `T::variants` without an `Enum` bound, is refused with
 `NK1171`.
 
-**What cannot be read is printed.** `nikaia --comptime` prints what was
+**What cannot be read is printed.** `--comptime` (on `nikaia build` and `nikaia lower`) prints what was
 unrolled, once for the program, for the types actually used, as `--overlaps`,
 `--sharing`, `--tethers` and `--trust` print their own analyses. There is no
 syntax for it. A function that walks a shape and is **never called** has a line
