@@ -3180,3 +3180,78 @@ fn another_packages_sync_is_what_its_source_promised() {
     assert_eq!(String::from_utf8_lossy(&promised.stdout).trim(), "2");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **The author is told which `pub` functions could promise more about pausing
+/// than they do** ([ADR-244](../../../docs/specification/adr/adr-244.md) D2),
+/// with the word that would promise it - and, once it is written, nothing.
+///
+/// `parse` never pauses: `sync`. `apply` pauses only where its lambda does:
+/// `sync(f)`. A function that pauses, one that already promises, and one that
+/// is not `pub` are not named, because none has anything to add.
+#[test]
+fn a_build_names_what_its_pub_functions_could_promise() {
+    const BEFORE: &str = "use std::time\n\n\
+        pub fn parse(x: i64) -> i64 {\n    return x + 1\n}\n\n\
+        pub fn apply(f: fn(i64) -> i64, x: i64) -> i64 {\n    return f(x)\n}\n\n\
+        pub fn waits() -> i64 {\n    time::sleep(1.millis())\n    return 1\n}\n\n\
+        pub fn promised(x: i64) -> i64 sync {\n    return x\n}\n\n\
+        fn mine(x: i64) -> i64 {\n    return x\n}\n\n\
+        fn main() {\n    println(parse(1) + apply(fn(v) { v * 2 }, 3) + waits() + promised(1) + mine(1))\n}\n";
+    let dir = a_project("could-promise", "[package]\nname = \"p\"\n", BEFORE);
+    let lower = || {
+        Command::new(env!("CARGO_BIN_EXE_nikaia"))
+            .args([
+                "lower",
+                "src/main.nika",
+                "--output",
+                "main.rs",
+                "--no-cache",
+            ])
+            .current_dir(&dir)
+            .output()
+            .expect("the nikaia binary runs")
+    };
+
+    let before = lower();
+    assert!(before.status.success(), "{}", said(&before));
+    let told = String::from_utf8_lossy(&before.stderr);
+    assert!(
+        told.contains("note: 1 pub function never pauses and does not promise it: `parse`"),
+        "{}",
+        said(&before)
+    );
+    assert!(
+        told.contains("does not promise it: `apply` (`sync(f)`)"),
+        "{}",
+        said(&before)
+    );
+    for silent in ["`waits`", "`promised`", "`mine`"] {
+        assert!(
+            !told.contains(silent),
+            "{silent} has nothing to add: {}",
+            said(&before)
+        );
+    }
+
+    std::fs::write(
+        dir.join("src/main.nika"),
+        BEFORE
+            .replace(
+                "pub fn parse(x: i64) -> i64 {",
+                "pub fn parse(x: i64) -> i64 sync {",
+            )
+            .replace(
+                "pub fn apply(f: fn(i64) -> i64, x: i64) -> i64 {",
+                "pub fn apply(f: fn(i64) -> i64, x: i64) -> i64 sync(f) {",
+            ),
+    )
+    .expect("promise both");
+    let after = lower();
+    assert!(after.status.success(), "{}", said(&after));
+    assert!(
+        !String::from_utf8_lossy(&after.stderr).contains("note:"),
+        "written, there is nothing left to say: {}",
+        said(&after)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

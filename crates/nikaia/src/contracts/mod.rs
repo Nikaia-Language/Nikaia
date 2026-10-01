@@ -156,6 +156,16 @@ pub trait LedgerOps: Sized {
         units: &[&Parsed],
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>);
+    /// [`LedgerOps::infer_package_checked`], and the functions that pause only
+    /// where their lambdas do ([`sync::infer`], ADR-244 D2).
+    fn infer_package_noted(
+        units: &[&Parsed],
+        library: &Ledger,
+    ) -> (
+        Self,
+        Vec<crate::check::Checked>,
+        BTreeMap<String, Vec<String>>,
+    );
     fn function(
         &self,
         parsed: &Parsed,
@@ -496,6 +506,18 @@ impl LedgerOps for Ledger {
         units: &[&Parsed],
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>) {
+        let (ledger, checked, _) = Self::infer_package_noted(units, library);
+        (ledger, checked)
+    }
+
+    fn infer_package_noted(
+        units: &[&Parsed],
+        library: &Ledger,
+    ) -> (
+        Self,
+        Vec<crate::check::Checked>,
+        BTreeMap<String, Vec<String>>,
+    ) {
         let mut ledger = Ledger {
             version: VERSION,
             toolchain: toolchain(),
@@ -811,7 +833,7 @@ impl LedgerOps for Ledger {
             .flat_map(|c| c.methods.iter().map(|(k, v)| (k.clone(), v.clone())))
             .collect();
 
-        sync::infer(&mut ledger, units, library, &resolved);
+        let by_code = sync::infer(&mut ledger, units, library, &resolved);
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
@@ -862,7 +884,7 @@ impl LedgerOps for Ledger {
         // one that changes no lowering — the state it writes is a
         // representation and only one of the three is built.
         tether::infer(&mut ledger, units, library);
-        (ledger, checked)
+        (ledger, checked, by_code)
     }
 
     /// One function's entry, named as a caller would reach it.

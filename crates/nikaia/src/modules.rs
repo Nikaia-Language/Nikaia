@@ -500,23 +500,34 @@ fn package_ledger(
     dependency: Option<&Dependency>,
     library: &crate::contracts::Ledger,
 ) -> crate::contracts::Ledger {
+    package_ledger_noted(units, dependency, library).0
+}
+
+/// [`package_ledger`], and the functions of the package that pause only where
+/// their lambdas do (ADR-244 D2) - none for a shipped ledger, which was
+/// inferred by the package's own build and is read rather than derived.
+fn package_ledger_noted(
+    units: &[Unit],
+    dependency: Option<&Dependency>,
+    library: &crate::contracts::Ledger,
+) -> (crate::contracts::Ledger, BTreeMap<String, Vec<String>>) {
     let sources = sources_of(units);
 
     if let Some(dependency) = dependency
         && let Some(shipped) = shipped_ledger(&dependency.root)
         && shipped.stale_against(&sources).is_empty()
     {
-        return shipped.published(&dependency.reachable);
+        return (shipped.published(&dependency.reachable), BTreeMap::new());
     }
 
     let parsed: Vec<&Parsed> = units.iter().map(|u| &u.parsed).collect();
-    let mut own = crate::contracts::Ledger::infer_package(&parsed, library);
+    let (mut own, _, by_code) = crate::contracts::Ledger::infer_package_noted(&parsed, library);
     // **What these entries are an answer about** (D3), recorded here because
     // this is the only place that has both the answer and the files it came
     // from - and recorded for every package, so that the ledger a dependency's
     // own build writes says what it was derived from.
     own.sources = sources;
-    own
+    (own, by_code)
 }
 
 /// **What another package may rely on about pausing**
@@ -591,6 +602,11 @@ pub struct Program {
     /// them ([ADR-245](../../../docs/specification/adr/adr-245.md) D1). Empty
     /// in every build but a test build, which is the only one that keeps them.
     pub tests: Vec<TestCase>,
+    /// **The program's own functions that pause only where their lambdas do**
+    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2), by key, with
+    /// the code parameters that decide: each could promise `sync(f)`. Read by
+    /// [`Program::could_promise`].
+    pub paused_by_code: BTreeMap<String, Vec<String>>,
 }
 
 /// One `test "…" { … }` of the program, as `nikaia test` names it.
@@ -733,12 +749,14 @@ impl Program {
             contracts.absorb_renaming(Some(&package), &renames, own);
         }
 
+        let mut paused_by_code = BTreeMap::new();
         for group in groups(&units) {
             if units[group.start].package.is_some() {
                 continue;
             }
             let renames = units[group.start].renames.clone();
-            let own = package_ledger(&units[group.clone()], None, &library);
+            let (own, by_code) = package_ledger_noted(&units[group.clone()], None, &library);
+            paused_by_code.extend(by_code);
             contracts.sources = own.sources.clone();
             contracts.absorb_renaming(None, &renames, own);
         }
@@ -749,7 +767,100 @@ impl Program {
             contracts,
             as_its_own,
             tests: Vec::new(),
+            paused_by_code,
         })
+    }
+
+    /// **[ADR-244](../../../docs/specification/adr/adr-244.md) D2's note**:
+    /// the program's own `pub` functions that could promise more about pausing
+    /// than they do, each with the word that would promise it - empty where
+    /// there is none.
+    ///
+    /// Two lists. A function whose entry says `"inferred"` never pauses, and
+    /// `sync` would promise it. One that pauses only where the lambdas it is
+    /// given do would keep `sync(f)`, naming them; a parameter it keeps is left
+    /// out, because `sync(f)` cannot name one (D4, `NK2210`). Since D1 a caller
+    /// in another package counts on neither until it is written.
+    pub fn could_promise(&self) -> String {
+        let mine = |key: &str| {
+            !key.split_once("::")
+                .is_some_and(|(package, _)| self.as_its_own.contains_key(package))
+        };
+        let never: Vec<String> = self
+            .contracts
+            .functions
+            .iter()
+            .filter(|(key, contract)| {
+                mine(key)
+                    && contract.public
+                    && contract.sync_claim == crate::contracts::Sync::Inferred
+            })
+            .map(|(key, _)| format!("`{key}`"))
+            .collect();
+        let through: Vec<String> = self
+            .paused_by_code
+            .iter()
+            .filter_map(|(key, lambdas)| {
+                let contract = self.contracts.functions.get(key)?;
+                // A written `sync(f)` is the promise already made.
+                if !mine(key)
+                    || !contract.public
+                    || contract.sync_claim != crate::contracts::Sync::No
+                {
+                    return None;
+                }
+                let named: Vec<&str> = lambdas
+                    .iter()
+                    .filter(|lambda| !contract.keeps.contains(*lambda))
+                    .map(String::as_str)
+                    .collect();
+                (named.len() == lambdas.len())
+                    .then(|| format!("`{key}` (`sync({})`)", named.join(", ")))
+            })
+            .collect();
+
+        let mut out = String::new();
+        let functions = |n: usize| match n {
+            1 => "1 pub function",
+            _ => "pub functions",
+        };
+        if !never.is_empty() {
+            out.push_str(&format!(
+                "note: {}{} never pause{} and do{} not promise it: {}\n  \
+                 help: write `sync` after the result, and callers in other packages can \
+                 rely on it\n",
+                match never.len() {
+                    1 => String::new(),
+                    n => format!("{n} "),
+                },
+                functions(never.len()),
+                if never.len() == 1 { "s" } else { "" },
+                if never.len() == 1 { "es" } else { "" },
+                never.join(", ")
+            ));
+        }
+        if !through.is_empty() {
+            out.push_str(&format!(
+                "note: {}{} pause{} only where the lambdas {} given do{}, and do{} not promise \
+                 it: {}\n  help: write `sync(f)` after the result, naming those lambdas, \
+                 and callers in other packages can rely on it\n",
+                match through.len() {
+                    1 => String::new(),
+                    n => format!("{n} "),
+                },
+                functions(through.len()),
+                if through.len() == 1 { "s" } else { "" },
+                if through.len() == 1 {
+                    "it is"
+                } else {
+                    "they are"
+                },
+                "",
+                if through.len() == 1 { "es" } else { "" },
+                through.join(", ")
+            ));
+        }
+        out
     }
 
     /// **The program's contracts as its own files are checked against them**
