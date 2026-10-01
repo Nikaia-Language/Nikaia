@@ -2975,9 +2975,9 @@ fn run_file(file: &Path, cwd: &Path) -> std::process::Output {
 /// ([ADR-260](../../../docs/specification/adr/adr-260.md) D4): built through
 /// the same Cargo workspace `nikaia build` makes, in a project kept for it in
 /// the cache, and started - not interpreted. Run again unchanged, nothing is
-/// compiled: the kept copy is rewritten only when the file is. (A new project
-/// is compiled once more on its second build, #280, so freshness is asked of
-/// the third.)
+/// compiled: the kept copy is rewritten only when the file is, and the
+/// generated Rust is written before Cargo starts (#280) - a new project was
+/// compiled once more on its second build.
 #[test]
 fn a_file_outside_a_project_runs_as_a_program_of_its_own() {
     let dir = common::scratch_dir("run-a-file");
@@ -2993,8 +2993,6 @@ fn a_file_outside_a_project_runs_as_a_program_of_its_own() {
         said(&first)
     );
 
-    let settled = run_file(&file, &dir);
-    assert!(settled.status.success(), "{}", said(&settled));
     let again = run_file(&file, &dir);
     assert!(again.status.success(), "{}", said(&again));
     assert!(
@@ -3062,6 +3060,52 @@ fn a_file_of_a_project_runs_only_as_its_entry() {
         "Hallo Welt, Nikaia!",
         "{}",
         said(&entry)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **`nikaia run` becomes the program it built** (#281): the process a
+/// supervisor started is the program, so a signal that ends it ends the
+/// program. Started as a child, the program outlived a killed `nikaia run` and
+/// kept what it held - a port, for the HTTP example this suite runs.
+#[cfg(target_os = "linux")]
+#[test]
+fn nikaia_run_becomes_the_program() {
+    use std::io::BufRead;
+
+    let dir = common::scratch_dir("run-becomes-the-program");
+    let file = dir.join("waits.nika");
+    std::fs::write(
+        &file,
+        "use std::time\n\nfn main() {\n    println(\"started\")\n    time::sleep(30000.millis())\n}\n",
+    )
+    .expect("source");
+
+    let mut run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .arg("run")
+        .arg(&file)
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+        .env_remove("CARGO_TARGET_DIR")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the nikaia binary runs");
+    let mut first = String::new();
+    std::io::BufReader::new(run.stdout.take().expect("stdout"))
+        .read_line(&mut first)
+        .expect("a line");
+    assert_eq!(first.trim(), "started", "the program is running");
+
+    // The process `nikaia run` was started as is now the program itself.
+    let exe = std::fs::read_link(format!("/proc/{}/exe", run.id())).expect("its executable");
+    let named = exe.file_name().map(|n| n.to_string_lossy().into_owned());
+    run.kill().expect("end it");
+    run.wait().expect("it ends");
+    assert_eq!(
+        named.as_deref(),
+        Some("waits"),
+        "the process is the program, not a `nikaia` waiting on it: {}",
+        exe.display()
     );
     std::fs::remove_dir_all(&dir).ok();
 }
