@@ -140,7 +140,7 @@ fn nothing_declares_a_trait(name: &str, span: &Span) -> Finding {
 /// Across files this is `modules::one_namespace`, which has something this does
 /// not — two paths to name ([ADR-047](../../../docs/specification/adr/adr-047.md)
 /// D1). Inside one file nothing said it, unless the build happened to go through
-/// a manifest: `nikaia --input` skips the module layer, and that is the path the
+/// a manifest: `nikaia lower` outside a project skips the module layer, and that is the path the
 /// corpus, the specification's blocks and a reader's first program all take. So
 /// `struct Foo` beside `fn Foo` lowered, and `rustc` answered `E0428` about a
 /// file nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).

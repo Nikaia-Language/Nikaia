@@ -355,7 +355,7 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
 /// several files that see one another with no `use` (Part I 9.1):
 /// `examples/inventory/src/page.nika` builds an `Entry` its sibling declares, so
 /// `NK1135` there is the harness's limitation and not a refusal of the program.
-/// The files `nikaia --input` sweeps are the ones checkable this way, which is
+/// The files `nikaia lower` sweeps are the ones checkable this way, which is
 /// the top level of `examples/` and `std`'s own sources.
 #[test]
 fn no_loose_program_in_the_repository_is_refused() {
@@ -390,7 +390,7 @@ fn no_loose_program_in_the_repository_is_refused() {
     assert!(reported.is_empty(), "a program was refused:\n{reported}");
 }
 
-/// The files a `nikaia --input` sweep covers: one program each, no siblings.
+/// The files a `nikaia lower` sweep covers: one program each, no siblings.
 fn every_program(root: &Path) -> Vec<PathBuf> {
     let mut out = BTreeSet::new();
     for dir in [root.join("examples"), root.join("crates/nikaia-std/src")] {

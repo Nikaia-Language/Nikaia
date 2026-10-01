@@ -29,7 +29,8 @@ graph TD
 *   **Role**: everything that knows what Nikaia means.
 *   **Responsibilities**:
     *   **CLI**: arguments via `clap`; `nikaia build`, `nikaia run`,
-        `nikaia lower-std`, and `--input` for a single file.
+        `nikaia lower-std`, and `nikaia lower`, `interpret` and `explain` for
+        a single file.
     *   **Parsing**: `winnow-grammar` (and `winnow`) parse `.nika` sources into
         a Nikaia-specific AST — over bytes, not over Rust tokens
         ([ADR-001](specification/adr/adr-001.md) D2).

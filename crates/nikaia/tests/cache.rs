@@ -314,8 +314,7 @@ fn a_broken_cache_does_not_break_the_build() {
     let output = dir.join("out.rs");
 
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", input.to_str().unwrap()])
         .args(["--output", output.to_str().unwrap()])
         .env("NIKAIA_CACHE_DIR", blocker.join("cache"))
         .output()
@@ -350,8 +349,7 @@ fn the_cache_is_on_by_default_and_writes_nothing_beside_the_source() {
 
     let run = |args: &[&str]| {
         let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .args(["--input", input.to_str().unwrap()])
-            .args(["--backend", "rust"])
+            .args(["lower", input.to_str().unwrap()])
             .args(args)
             .env("NIKAIA_CACHE_DIR", &home)
             .output()
@@ -420,8 +418,7 @@ fn a_hit_still_writes_the_ledger_and_still_answers_locked() {
 
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .args(["--input", input.to_str().unwrap()])
-            .args(["--backend", "rust"])
+            .args(["lower", input.to_str().unwrap()])
             .args(["--output", output.to_str().unwrap()])
             .args(args)
             .env("NIKAIA_CACHE_DIR", &home)
@@ -471,8 +468,8 @@ fn a_hit_still_writes_the_ledger_and_still_answers_locked() {
 
 /// **What the output names is part of the key** (0.0.239). The abort table
 /// names each file as it was handed to the compiler (ADR-044 D1), and the key
-/// named it relative to its root - so `nikaia --input /abs/one.nika` followed
-/// by `nikaia --input one.nika` served the first lowering to the second, and
+/// named it relative to its root - so `nikaia lower /abs/one.nika` followed
+/// by `nikaia lower one.nika` served the first lowering to the second, and
 /// an abort in it named a path the user never wrote. Each form lowers once and
 /// names itself; the same form again is still a hit.
 #[test]
@@ -487,7 +484,7 @@ fn a_file_named_another_way_is_not_served_the_other_name() {
     let lower = |input: &str| {
         let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
             .current_dir(&dir)
-            .args(["--input", input, "--output", "one.rs"])
+            .args(["lower", input, "--output", "one.rs"])
             .env("NIKAIA_CACHE_DIR", &cache)
             .output()
             .expect("the nikaia binary runs");

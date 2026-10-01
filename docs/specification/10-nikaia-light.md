@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.298 (Draft)
+**Version:** 0.0.299 (Draft)
 **Date:** 2026-10-01
 
 ---
@@ -1546,7 +1546,7 @@ one thread, the runtime's own threads run no user code, and a `Shared` may not
 be handed to code nothing written down describes. What a program passes out of
 itself is what is **inside** the `Shared`, a view or a copy; a foreign library
 that keeps a value puts it in a hull of its own.
-`nikaia --input x.nika --sharing` prints which count each value got, why, and
+`nikaia lower x.nika --sharing` prints which count each value got, why, and
 what would have changed it. It changes no decision.
 
 * **`Shared[T]`**: a value several parts of the program own at once and nobody

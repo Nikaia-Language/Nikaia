@@ -543,26 +543,25 @@ fn a_directory_without_a_manifest_is_not_a_project() {
     let text = format!("{error:#}");
     assert!(text.contains("nikaia.toml"), "{text}");
     assert!(
-        text.contains("--input"),
+        text.contains("nikaia lower"),
         "and it points at the thing that does work for a single file: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The single-file path is unchanged by all of this, and many tests drive it.
-/// Adding a subcommand to a CLI that had none is exactly the change that breaks
-/// it, so it is asserted here next to what was added.
+/// **The single-file verbs** ([ADR-260](../../../docs/specification/adr/adr-260.md)
+/// D3), asserted next to the project commands they stand beside: `lower`
+/// writes Rust and `interpret` runs the file.
 #[test]
-fn the_single_file_path_still_works_without_a_subcommand() {
+fn the_single_file_verbs_lower_and_interpret() {
     let dir = common::scratch_dir("project-single-file");
     let input = dir.join("hello.nika");
     std::fs::write(&input, HELLO).expect("source");
     let output = dir.join("hello.rs");
 
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "rust"])
+        .args(["lower", input.to_str().unwrap()])
         .args(["--output", output.to_str().unwrap()])
         .env("NIKAIA_CACHE_DIR", dir.join("cache"))
         .output()
@@ -572,12 +571,11 @@ fn the_single_file_path_still_works_without_a_subcommand() {
         std::fs::read_to_string(&output)
             .expect("the Rust is written")
             .contains("fn main()"),
-        "the single-file `rust` backend still emits"
+        "`lower` writes the Rust"
     );
 
     let interpreted = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", input.to_str().unwrap()])
-        .args(["--backend", "interpreter"])
+        .args(["interpret", input.to_str().unwrap()])
         .env("NIKAIA_CACHE_DIR", dir.join("cache"))
         .output()
         .expect("the nikaia binary runs");
@@ -2859,7 +2857,7 @@ fn a_literal_handed_to_a_foreign_generic_is_text_of_its_own() {
 }
 
 /// **A file inside a project is a file of that project**
-/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D1): `--input` on a
+/// ([ADR-260](../../../docs/specification/adr/adr-260.md) D1): `nikaia lower` on a
 /// project's entry reads the dependencies its `nikaia.toml` declares, as
 /// `nikaia build` does. It used to read the `[build]` section and hand the
 /// lowering no packages, so `use http` was refused with *add it to
@@ -2887,7 +2885,7 @@ fn a_file_of_a_project_is_lowered_with_the_projects_dependencies() {
     );
     let lower = || {
         Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .arg("--input")
+            .arg("lower")
             .arg(dir.join("app/src/main.nika"))
             .arg("--output")
             .arg(dir.join("app.rs"))
@@ -2937,7 +2935,7 @@ fn a_file_outside_a_project_is_told_it_has_no_dependencies() {
     std::fs::write(&input, "use http\n\nfn main() { }\n").expect("source");
 
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .arg("--input")
+        .arg("lower")
         .arg(&input)
         .arg("--output")
         .arg(dir.join("main.rs"))

@@ -36,8 +36,7 @@ fn repo_root() -> PathBuf {
 fn ledger(source: &Path, scratch: &Path, threads: &str) -> Vec<u8> {
     let output = scratch.join("out.rs");
     let run = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .args(["--input", source.to_str().expect("utf-8 path")])
-        .args(["--backend", "rust"])
+        .args(["lower", source.to_str().expect("utf-8 path")])
         .args(["--output", output.to_str().expect("utf-8 path")])
         .args(["--no-cache"])
         .env("RAYON_NUM_THREADS", threads)
@@ -79,8 +78,7 @@ fn the_ledger_is_the_same_bytes_in_a_second_process() {
         // business, and skipping it is honest as long as the count below shows
         // the test is not vacuous.
         let lowered = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-            .args(["--input", a.to_str().expect("utf-8 path")])
-            .args(["--backend", "rust"])
+            .args(["lower", a.to_str().expect("utf-8 path")])
             .args(["--output", first.join("probe.rs").to_str().expect("path")])
             .output()
             .expect("the nikaia binary runs");

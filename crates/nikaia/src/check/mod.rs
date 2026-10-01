@@ -1093,7 +1093,7 @@ pub fn check_against<'a>(
     // **The program's other files**, for the one question that needs a body
     // rather than a contract: a `comptime` calling across a file boundary
     // ([ADR-073](../../docs/specification/adr/adr-073.md) D5). Empty for a
-    // caller that has one file, which is every test and every `--input`
+    // caller that has one file, which is every test and every `nikaia lower`
     // outside a project.
     beside: &'a [&'a Parsed],
     own: &'a Ledger,
@@ -2517,7 +2517,7 @@ struct Checker<'a> {
     /// rather than a contract — a `comptime` calling across a file boundary.
     ///
     /// Empty for a caller that has one file, which is every test and every
-    /// `--input` outside a project. It carries `Parsed` and not just items,
+    /// `nikaia lower` outside a project. It carries `Parsed` and not just items,
     /// because each one owns the interner its symbols resolve in.
     beside: &'a [&'a Parsed],
     /// **What this build may read while it builds** (ADR-072), carried beside
@@ -19148,7 +19148,7 @@ impl<'a> Checker<'a> {
                 "Running a grammar at build time compiles its parser, which needs a \
                  directory, and this build has none."
                     .to_string(),
-                "Build with `nikaia build` or `nikaia --input`, which both have one.".to_string(),
+                "Build with `nikaia build` or `nikaia lower`, which both have one.".to_string(),
             ),
             Wall::DidNotBuild { detail } => (
                 format!("The parser generated for `{entry}` didn't compile."),

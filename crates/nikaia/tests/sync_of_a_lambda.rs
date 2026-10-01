@@ -42,13 +42,13 @@ fn runs(purpose: &str, source: &str, expected: &str) {
     }
 }
 
-/// What the compiler says about a file, as `nikaia --input` says it.
+/// What the compiler says about a file, as `nikaia lower` says it.
 fn said(purpose: &str, source: &str) -> (bool, String, String) {
     let dir = common::scratch_dir(&format!("sync-of-said-{purpose}"));
     let path = dir.join("m.nika");
     std::fs::write(&path, source).expect("write the source");
     let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
-        .arg("--input")
+        .arg("lower")
         .arg(&path)
         .current_dir(&dir)
         .output()

@@ -13,31 +13,20 @@ use nikaia::project::{self, Project, Settings};
 use nikaia::sysroot::{self, Sysroot};
 use nikaia::{diagnostics, interpreter, parser, refuse};
 
-/// The Nikaia compiler: `nikaia build` for a project, `--input` for one file.
+/// The Nikaia compiler: `nikaia build` for a project, `nikaia lower` for one
+/// file.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// A project command (ADR-002 D1). Without one, `--input` compiles a single
-    /// file - the shape the compiler had before there were projects, and the
-    /// one every `.nika` file outside a project still uses.
+    /// What to do: a project command (ADR-002 D1), or one of the verbs that
+    /// take a single file (ADR-260 D3).
+    ///
+    /// **There is no `--input`** (D5). It named an argument and not what
+    /// happened to it, and three jobs - lowering, interpreting, explaining -
+    /// shared its switches; each is a verb now, and the help of each says in
+    /// its first sentence what it does and what it does not.
     #[command(subcommand)]
     pub command: Option<Command>,
-
-    #[arg(short, long)]
-    pub input: Option<PathBuf>,
-
-    /// `interpreter` or `rust` (the default).
-    ///
-    /// `rust` is what a bare invocation uses and is the only code generator
-    /// (ADR-004 D1): a `.nika` file becomes Rust source text, which `rustc`
-    /// then compiles. `interpreter` runs the program instead of emitting
-    /// anything (ADR-002 D2).
-    ///
-    /// `cranelift` and `llvm` are named by ADR-002 but not implemented; they
-    /// are rejected rather than silently treated as something else
-    /// (ADR-021 D9).
-    #[arg(long, default_value = "rust")]
-    pub backend: String,
 
     /// The machine to build for (ADR-037 D1): `x86_64-linux`,
     /// `aarch64-linux` or `wasm32-unknown`. It decides what `std` can offer and
@@ -60,18 +49,6 @@ pub struct Cli {
     /// `no` where neither says (D5).
     #[arg(long, global = true)]
     pub user_parallelism: Option<String>,
-
-    /// Where the `rust` backend writes. Defaults to `<input>.rs`.
-    #[arg(short, long)]
-    pub output: Option<PathBuf>,
-
-    /// Read `rustc --error-format=json` on stdin and report it against the
-    /// `.nika` source instead of the emitted Rust (ADR-012).
-    ///
-    /// The map is not an artifact: the lowering is deterministic, so it is
-    /// rebuilt from `--input` here rather than written out and kept in step.
-    #[arg(long)]
-    pub explain: bool,
 
     /// Verify the Borrow Contract Ledger instead of updating it (Part III,
     /// 13.5).
@@ -185,9 +162,48 @@ pub struct Cli {
     pub trust: bool,
 }
 
-/// The project commands of Part III 13.2.
+/// The commands of Part III 13.2: the project's, and the verbs that take one
+/// file (ADR-260 D3).
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Lower one `.nika` file to Rust: writes `<file>.rs` and the ledger
+    /// beside it, and does not call `rustc`.
+    ///
+    /// A file inside a project is lowered as a file of that project - its
+    /// `[build]` settings and its declared dependencies (ADR-260 D1); a file
+    /// outside any project is standalone and has none (D2). To compile and run
+    /// a program, use `nikaia build` or `nikaia run`.
+    Lower {
+        /// The `.nika` file.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Where the Rust is written. Defaults to the file with `.rs` for its
+        /// extension.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Run one `.nika` file in the interpreter; nothing is written and
+    /// nothing is compiled.
+    ///
+    /// The interpreter handles a part of the language (ADR-002 D2), so a
+    /// program it runs may still mean more when built.
+    Interpret {
+        /// The `.nika` file.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+    /// Read `rustc --error-format=json` on stdin and report it against the
+    /// `.nika` file instead of the emitted Rust (ADR-012); nothing is written.
+    ///
+    /// The map is not an artifact: the lowering is deterministic, so it is
+    /// rebuilt from the file here rather than written out and kept in step.
+    /// The Rust it names is the file with `.rs` for its extension, where
+    /// `nikaia lower` writes it.
+    Explain {
+        /// The `.nika` file the Rust was lowered from.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
     /// Compile the project in this directory (Part III 13.2).
     ///
     /// `nikaia.toml` is translated to a `Cargo.toml` and `cargo` builds it,
@@ -265,18 +281,12 @@ pub enum Command {
     },
 }
 
-/// What this build can be asked for, for a refusal to name (ADR-021 D9).
-///
-/// Every build of this compiler has both, so the list does not vary - but a
-/// refusal still prints it, because a reader told only *no* has to guess.
-const AVAILABLE: &str = "interpreter, rust";
-
-/// `rustc --error-format=json … | nikaia --input x.nika --explain`
+/// `rustc --error-format=json … | nikaia explain x.nika`
 ///
 /// Every message rustc reports about the emitted file is placed back in the
 /// `.nika` it came from. The text is left alone: because the lowering is name
 /// for name (ADR-011 D2), only the position was ever wrong.
-fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &str) -> Result<()> {
+fn explain(input: &std::path::Path, settings: &Settings, source: &str) -> Result<()> {
     use std::io::Read;
 
     // The same switches the build used, or the map would point into a file this
@@ -287,10 +297,7 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
     let mut rustc_json = String::new();
     std::io::stdin().read_to_string(&mut rustc_json)?;
 
-    let generated = args
-        .output
-        .clone()
-        .unwrap_or_else(|| input.with_extension("rs"));
+    let generated = input.with_extension("rs");
     let path = input.display().to_string();
     let generated = generated.display().to_string();
 
@@ -318,10 +325,14 @@ fn explain(input: &std::path::Path, args: &Cli, settings: &Settings, source: &st
 /// Unchanged by the project build, deliberately. A one-off transformation of a
 /// file that belongs to no project is a real thing to want (ADR-021 D11), and
 /// it is what every test that drives the emitter uses.
-fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Result<()> {
-    let output_path = args
-        .output
-        .clone()
+fn lower_to_rust(
+    input: &std::path::Path,
+    output: Option<&std::path::Path>,
+    args: &Cli,
+    settings: &Settings,
+) -> Result<()> {
+    let output_path = output
+        .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| input.with_extension("rs"));
 
     // `--trust`, `--overlaps` and `--sharing` are explanations, so they are
@@ -420,7 +431,7 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
         Some(directory) => directory,
         None => std::env::current_dir().context("finding the working directory")?,
     };
-    // The same walk `--input` makes, from a directory rather than from a file:
+    // The same walk `nikaia lower` makes, from a directory rather than from a file:
     // a crate is described for a **project**, because the project is what
     // declares it (ADR-104 D1).
     let start = start.canonicalize().unwrap_or(start);
@@ -518,6 +529,9 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
             crate_name,
             project,
         } => return describe(crate_name, project.clone()),
+        Command::Lower { .. } | Command::Interpret { .. } | Command::Explain { .. } => {
+            unreachable!("the single-file verbs are dispatched by `run`")
+        }
     };
 
     let start = match directory {
@@ -641,8 +655,15 @@ fn report_moved_keys(manifest: &Manifest) {
     }
 }
 
-/// The single-file path, unchanged: `nikaia --input x.nika --backend …`.
-fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
+/// **What a verb that takes one file does with it** (ADR-260 D3).
+enum Verb<'a> {
+    Lower { output: Option<&'a std::path::Path> },
+    Interpret,
+    Explain,
+}
+
+/// The single-file verbs: `nikaia lower`, `interpret` and `explain`.
+fn single_file(args: &Cli, input: &std::path::Path, verb: Verb<'_>) -> Result<()> {
     // Resolved before anything is read, so a mistyped switch - in the manifest
     // or on the command line - fails on its own account rather than after a
     // compile. A target the toolchain cannot build for is refused here too:
@@ -664,27 +685,15 @@ fn single_file(args: &Cli, input: &std::path::Path) -> Result<()> {
 
     let source = std::fs::read_to_string(input)?;
 
-    if args.explain {
-        return explain(input, args, &settings, &source);
-    }
-
-    match args.backend.as_str() {
-        "interpreter" => {
+    match verb {
+        Verb::Explain => explain(input, &settings, &source),
+        Verb::Interpret => {
             let parsed = parser::parse_to_ast(&source)?;
             let interpreter = interpreter::Interpreter::new(parsed.interner.clone());
             interpreter.run(&parsed);
             Ok(())
         }
-        "rust" => lower_to_rust(input, args, &settings),
-        // ADR-002 named these and nothing ever matched them, so they ran as
-        // whatever the default was without saying so. Accepting a flag and
-        // quietly doing something else is worse than either implementing or
-        // refusing it (ADR-021 D9).
-        backend @ ("cranelift" | "llvm") => refuse!(
-            "The `{backend}` backend doesn't exist yet.\n\
-             Available: {AVAILABLE}."
-        ),
-        other => refuse!("There's no backend called `{other}`. Available: {AVAILABLE}."),
+        Verb::Lower { output } => lower_to_rust(input, output, args, &settings),
     }
 }
 
@@ -724,16 +733,26 @@ fn run() -> Result<()> {
 
     let args = Cli::parse();
 
-    if let Some(command) = &args.command {
-        let code = project_command(&args, command)?;
-        std::process::exit(code);
-    }
-
-    let Some(input) = args.input.clone() else {
+    let Some(command) = &args.command else {
         refuse!(
-            "Nothing to build. Pass `--input <file.nika>` for a single file, or run \
-             `nikaia build` inside a project."
+            "Nothing to do. Run `nikaia build` inside a project, or \
+             `nikaia lower <file.nika>` for a single file. `nikaia --help` lists \
+             every command."
         );
     };
-    single_file(&args, &input)
+    match command {
+        Command::Lower { file, output } => single_file(
+            &args,
+            file,
+            Verb::Lower {
+                output: output.as_deref(),
+            },
+        ),
+        Command::Interpret { file } => single_file(&args, file, Verb::Interpret),
+        Command::Explain { file } => single_file(&args, file, Verb::Explain),
+        command => {
+            let code = project_command(&args, command)?;
+            std::process::exit(code);
+        }
+    }
 }

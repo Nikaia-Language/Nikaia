@@ -45,8 +45,8 @@ nikaia build --project examples/foreign-runtime/crossing
 nikaia run --project examples/foreign-runtime/smuggled
 
 # What the ordering analysis says about a call it knows nothing about.
-nikaia --input examples/foreign-runtime/overlaps.nika \
-       --overlaps --user-parallelism yes --backend rust --output /tmp/o.rs
+nikaia lower examples/foreign-runtime/overlaps.nika \
+       --overlaps --user-parallelism yes --output /tmp/o.rs
 ```
 
 `serve` prints:

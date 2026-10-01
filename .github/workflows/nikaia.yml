@@ -213,12 +213,13 @@ jobs:
       - name: Test
         run: cargo test --workspace --release --no-fail-fast
 
-      # The driver needs an input file, so run it on the samples rather than
-      # bare `cargo run`, which only prints clap's usage error and exits 2.
+      # The driver needs a file, so run it on the samples rather than bare
+      # `cargo run`, which only refuses with nothing to do. `interpret` runs
+      # each one (ADR-260 D3).
       - name: Run Nikaia Driver (The Magic)
         run: |
           for sample in tests/samples/*.nika; do
             echo "::group::$sample"
-            ./target/release/nikaia --input "$sample" --backend interpreter
+            ./target/release/nikaia interpret "$sample"
             echo "::endgroup::"
           done

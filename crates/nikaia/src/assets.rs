@@ -140,7 +140,7 @@ pub struct Reads {
 
 impl Reads {
     /// **A build given no list reads nothing** (D1), which is what a caller
-    /// that passes nothing gets — every test, every `--input` without the flag,
+    /// that passes nothing gets — every test, every `nikaia lower` without the flag,
     /// and every build of a project that never asked.
     pub fn none() -> Reads {
         Reads::default()
