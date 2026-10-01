@@ -478,6 +478,11 @@ pub struct Checked {
     /// does not copy, and the arm does not keep it - so the name stays whole
     /// after the `match` (Part I 6.5, ADR-242).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// **A guard that reads names bound inside a boxed part** (ADR-246 D5
+    /// item 2), by the arm's pattern, and which of those names copy: the
+    /// lowering binds them again inside the guard, through the box, and copies
+    /// those out.
+    pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// `collect()` calls whose target declares what they build - a map, a
     /// set, text - by statement and receiver shape
     /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
@@ -1697,6 +1702,8 @@ pub struct Propagation {
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
+    /// [`Checked::guards_inside_boxes`].
+    pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// [`Checked::collected_into`].
     pub collected_into: BTreeSet<(usize, String)>,
     /// [`Checked::copied_walks`].
@@ -1962,6 +1969,7 @@ pub fn propagation_against(
         lent_coalesces: checked.lent_coalesces,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
+        guards_inside_boxes: checked.guards_inside_boxes,
         collected_into: checked.collected_into,
         copied_walks: checked.copied_walks,
         filter_patterns: checked.filter_patterns,
@@ -5423,50 +5431,98 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// **`NK1193` for a guard that reads a name bound inside a boxed part**
-    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D5). The guard is
-    /// what asks whether the part has the shape, so it runs before the arm
-    /// takes the part apart, and the names in there are not bound yet.
-    fn a_guard_reading_inside_a_box(&mut self, pattern: &MatchPattern, guard: &Expr, span: &Span) {
+    /// **A guard that reads a name bound inside a boxed part**
+    /// ([ADR-246](../../docs/specification/adr/adr-246.md) D5 item 2, #97).
+    ///
+    /// The guard runs before the arm takes the part apart, so the lowering
+    /// binds those names a second time inside the guard - through the box,
+    /// by reference - and this records which of them the guard reads, and
+    /// which of those are a number, a `bool` or a `char`: those are copied out
+    /// for the guard (`let n = *n;`), and the rest stay views of the part,
+    /// which is what a guard does with them anyway - it reads.
+    fn a_guard_reading_inside_a_box(&mut self, pattern: &MatchPattern, guard: &Expr) {
         let mut inside = Vec::new();
         self.names_inside_boxes(pattern, &mut inside);
         if inside.is_empty() {
             return;
         }
-        let mut read: Option<String> = None;
+        let mut read: BTreeSet<String> = BTreeSet::new();
         crate::contracts::sync::visit_expr(self.parsed, guard, &mut |expr| {
-            if let Expr::Variable(name) = expr
-                && read.is_none()
-            {
+            if let Expr::Variable(name) = expr {
                 let name = self.parsed.text(*name);
                 if inside.iter().any(|bound| bound == name) {
-                    read = Some(name.to_string());
+                    read.insert(name.to_string());
                 }
             }
         });
-        let Some(name) = read else {
+        if read.is_empty() {
             return;
-        };
-        self.checked.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1193",
-            message: format!(
-                "This guard reads `{name}`, which the pattern binds inside a part that holds its \
-                 own type, and a guard can't read such a name yet."
-            ),
-            notes: vec![
-                "A part that holds its own type is stored behind a pointer. The guard decides \
-                 whether the arm is taken before the part is taken apart, so `{name}` isn't \
-                 bound yet when it runs."
-                    .replace("{name}", &name),
-            ],
-            help: Some(format!(
-                "Read `{name}` inside the arm, with an `if` there, or bind the part to a name \
-                 and `match` on it inside the arm."
-            )),
-            labels: Vec::new(),
-        });
+        }
+        let mut typed: BTreeMap<String, Ty> = BTreeMap::new();
+        self.typed_inside_boxes(pattern, &mut typed);
+        let copied: BTreeSet<String> = read
+            .iter()
+            .filter(|name| typed.get(*name).is_some_and(a_copy_by_value))
+            .cloned()
+            .collect();
+        let at = pattern as *const MatchPattern as usize;
+        self.checked.guards_inside_boxes.insert(at, copied);
+    }
+
+    /// The names a pattern binds **whole** to a boxed part: `a` in
+    /// `Expr::Add(a, b)`, which the arm opens and a guard reads through the
+    /// box.
+    fn boxed_names(&self, pattern: &MatchPattern) -> Vec<String> {
+        let mut out = Vec::new();
+        if let MatchPattern::Tuple { path, parts } = pattern {
+            for (at, part) in parts.iter().enumerate() {
+                match part {
+                    MatchPattern::Path(one) if one.len() == 1 && self.boxed_part(path, at) => {
+                        out.push(self.parsed.text(one[0]).to_string());
+                    }
+                    MatchPattern::Tuple { .. } if !self.boxed_part(path, at) => {
+                        out.extend(self.boxed_names(part));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// The types of the names bound inside the boxed parts a pattern looks
+    /// into, where the variant says them: each part is typed by the path its
+    /// own pattern names, which is the boxed type.
+    fn typed_inside_boxes(&self, pattern: &MatchPattern, out: &mut BTreeMap<String, Ty>) {
+        match pattern {
+            MatchPattern::Tuple { path, parts } => {
+                for (at, part) in parts.iter().enumerate() {
+                    match self.boxed_part(path, at) && !binds_a_part(part) {
+                        true => {
+                            let owner = match part {
+                                MatchPattern::Tuple { path, .. }
+                                | MatchPattern::Named { path, .. }
+                                    if path.len() >= 2 =>
+                                {
+                                    Some(self.parsed.text(path[path.len() - 2]).to_string())
+                                }
+                                _ => None,
+                            };
+                            if let Some(owner) = owner {
+                                out.extend(self.pattern_parts(part, &Ty::named(owner)));
+                            }
+                        }
+                        false => self.typed_inside_boxes(part, out),
+                    }
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.typed_inside_boxes(alternative, out);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The names a pattern binds inside the boxed parts it looks into.
@@ -9719,7 +9775,7 @@ impl<'a> Checker<'a> {
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
                     self.a_pattern_inside_a_box(&arm.pattern, span);
                     if let Some(guard) = &arm.guard {
-                        self.a_guard_reading_inside_a_box(&arm.pattern, guard, span);
+                        self.a_guard_reading_inside_a_box(&arm.pattern, guard);
                     }
                     // **Over a place this function owns, a part is lent**
                     // (ADR-242): the bindings are typed from the
@@ -9761,9 +9817,15 @@ impl<'a> Checker<'a> {
                     // through a lent value it was a view of a view - `kind ==
                     // "fn"` compared a `&&str` with a `str` (found moving the
                     // ledger's reader onto a grammar).
+                    // **And so is one bound inside a boxed part** (ADR-246
+                    // D5): the arm opens the box it was lent, and what it
+                    // takes apart is a view too - `Expr::Add(Expr::Num(n), b)
+                    // => n` over a `ref Expr` handed back a `&i64`.
                     if typed.is_a_view() {
                         let at = &arm.pattern as *const MatchPattern as usize;
-                        for (name, ty) in self.pattern_parts(&arm.pattern, &typed) {
+                        let mut parts = self.pattern_parts(&arm.pattern, &typed);
+                        self.typed_inside_boxes(&arm.pattern, &mut parts);
+                        for (name, ty) in parts {
                             if self.copied(&ty) || ty.is_a_view() {
                                 self.checked.copied_bindings.insert((at, name));
                             }
@@ -9797,7 +9859,30 @@ impl<'a> Checker<'a> {
                     // reads the names the pattern bound, and a condition is a
                     // `bool` here exactly as anywhere else.
                     if let Some(guard) = &arm.guard {
+                        // **A part bound whole out of a box is a view of it
+                        // in the guard** (ADR-246 D5 item 2, #97): the guard
+                        // runs before the arm opens the box, so the lowering
+                        // reads it through the box (`peek`), and a comparison
+                        // with a value reads the view as `Expr::Add(a, _) if
+                        // a == Expr::Num(1)` means.
+                        let boxed = self.boxed_names(&arm.pattern);
+                        let mut was: Vec<(usize, Ty, bool)> = Vec::new();
+                        if let Some(frame) = self.scope.last_mut() {
+                            for (at, local) in frame.iter_mut().enumerate() {
+                                if boxed.contains(&local.name) {
+                                    was.push((at, local.ty.clone(), local.lent));
+                                    local.ty = view_of(&local.ty);
+                                    local.lent = true;
+                                }
+                            }
+                        }
                         let found = self.expr(guard, span);
+                        if let Some(frame) = self.scope.last_mut() {
+                            for (at, ty, lent) in was {
+                                frame[at].ty = ty;
+                                frame[at].lent = lent;
+                            }
+                        }
                         self.expect_bool(&found, span, "A `match` guard is a condition.");
                     }
                     let ty = self.expr(&arm.body, span);
