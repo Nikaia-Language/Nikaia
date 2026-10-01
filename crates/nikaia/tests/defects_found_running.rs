@@ -616,3 +616,37 @@ fn a_view_a_loop_or_an_arm_binds_is_the_view() {
         "first\na function\nlet\nnothing\n",
     );
 }
+
+/// **A `match` on a field reached through a view matches the field in place**
+/// (0.0.320). `match item.shape` with `item: ref Item` moved the field out of
+/// what the function was only lent - `rustc`'s E0507 - and what an arm binds
+/// is a view of the field, with a copy part read as the copy (found moving the
+/// trait check into Nikaia, where `match item.node` walks a lent tree).
+#[test]
+fn a_match_on_a_field_through_a_view_matches_it_in_place() {
+    runs(
+        "match-through-a-view",
+        "enum Shape { Named { name: String, sides: i64 }, Round }\n\
+         struct Item { shape: Shape }\n\
+         \n\
+         fn describe(item: ref Item) -> String {\n\
+         \x20   match item.shape {\n\
+         \x20       Shape::Named { name, sides } => {\n\
+         \x20           if sides == 3 { return f\"{name}, a triangle\" }\n\
+         \x20           return name.clone()\n\
+         \x20       }\n\
+         \x20       Shape::Round => { return \"round\" }\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let a = Item { shape: Shape::Named { name: \"delta\", sides: 3 } }\n\
+         \x20   let b = Item { shape: Shape::Named { name: \"square\", sides: 4 } }\n\
+         \x20   println(describe(a))\n\
+         \x20   println(describe(b))\n\
+         \x20   println(describe(Item { shape: Shape::Round }))\n\
+         \x20   println(describe(a))\n\
+         }\n",
+        "delta, a triangle\nsquare\nround\ndelta, a triangle\n",
+    );
+}

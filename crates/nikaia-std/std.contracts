@@ -1182,6 +1182,38 @@ sync = true
 touches = []
 signature = "(self: ref collections::BTreeMap[?, ?]) -> i64"
 
+# A copy of the map, owned by whoever asked for it (#125: without an entry a
+# `.clone()` of one resolved to nothing and read as a call that may pause).
+[fn."collections::HashMap::clone"]
+pub = true
+sync = true
+touches = []
+signature = "[K, V](self: ref collections::HashMap[K, V]) -> collections::HashMap[K, V]"
+
+# A copy of the set, owned by whoever asked for it (#125: without an entry a
+# `.clone()` of one resolved to nothing and read as a call that may pause).
+[fn."collections::HashSet::clone"]
+pub = true
+sync = true
+touches = []
+signature = "[T](self: ref collections::HashSet[T]) -> collections::HashSet[T]"
+
+# A copy of the ordered map, owned by whoever asked for it (#125: without an entry a
+# `.clone()` of one resolved to nothing and read as a call that may pause).
+[fn."collections::BTreeMap::clone"]
+pub = true
+sync = true
+touches = []
+signature = "[K, V](self: ref collections::BTreeMap[K, V]) -> collections::BTreeMap[K, V]"
+
+# A copy of the ordered set, owned by whoever asked for it (#125: without an entry a
+# `.clone()` of one resolved to nothing and read as a call that may pause).
+[fn."collections::BTreeSet::clone"]
+pub = true
+sync = true
+touches = []
+signature = "[T](self: ref collections::BTreeSet[T]) -> collections::BTreeSet[T]"
+
 # The values, one at a time, in the order the keys come out in.
 [fn."collections::HashMap::values"]
 pub = true

@@ -1,0 +1,208 @@
+// crates/nikaia-std/src/tools/traits.nika
+//
+// Kap 4.7: **what an `impl` owes the `trait` it names** - moved from the
+// compiler's `traits.rs` (ADR-250, #125): the first check written in Nikaia,
+// handing back `Finding`s (`findings.nika`).
+//
+// **A walk of its own, and the reason is the ledger's `sync` column.** The type
+// checker runs *before* `sync::infer` - that order is what keeps ADR-027 sound,
+// because the checker resolves method calls and the inference reads the result
+// - so a rule that needs the finished `sync` cannot live inside it. This runs
+// afterwards, from `check_program`, beside `dsl::check` and `views::check`.
+
+use std::collections
+
+/// Every way an `impl` can fail the `trait` it names.
+pub fn check_impls(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], own: ref Ledger) -> Vec[Finding] {
+    let mut found: Vec[Finding] = []
+    for item in items {
+        match item.node {
+            Item::Impl { trait_name, target, methods } => {
+                let written_trait = trait_name ?? continue
+                let named = names.resolve(written_trait).clone()
+                for one in receivers(names, items, named, methods) {
+                    found.push(one)
+                }
+                // A trait this unit does not declare is one nothing here can
+                // check against: `impl Error for ConfigError` names a trait the
+                // compiler reads rather than one a `.nika` file wrote (ADR-023
+                // D3), and a trait a package publishes cannot be reached at all
+                // yet (ADR-078 §4). Silence is the only correct answer about a
+                // declaration that is not here.
+                if !own.traits.contains_key(ref named) {
+                    continue
+                }
+                let declared = own.traits[named]?.clone() ?? collections::BTreeSet()
+                let target_name = names.resolve(target.name).clone()
+                let mut given: Vec[String] = []
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, .. } => {
+                            let symbol = name ?? continue
+                            let written = names.resolve(symbol).clone()
+                            given.push(written.clone())
+                            if !declared.contains(ref written) {
+                                found.push(not_in_the_trait(named, target_name, written, method.span.clone()))
+                                continue
+                            }
+                            for one in pausing(own, named, target_name, written, method.span.clone()) {
+                                found.push(one)
+                            }
+                        }
+                        else => {}
+                    }
+                }
+                let mut missing: Vec[String] = []
+                for wanted in declared {
+                    if !given.contains(wanted.clone()) {
+                        missing.push(wanted.clone())
+                    }
+                }
+                if !missing.is_empty() {
+                    found.push(incomplete(named, target_name, missing, item.span.clone()))
+                }
+            }
+            else => {}
+        }
+    }
+    return found
+}
+
+/// What a trait says one of its methods takes as `self`, where this can know:
+/// `known` is false for a method of a trait declared elsewhere.
+struct Wanted {
+    known: bool,
+    receiver: Receiver?,
+}
+
+/// **`NK1196`: a method takes its `self` another way than the trait says**
+/// (0.0.240). `impl Error for E { fn message(self) … }` against `Error`'s
+/// `message(ref self)` lowered as written, and `rustc` refused the generated
+/// file - *cannot move out of `*self`* - about a line nobody wrote (Part III
+/// C.1). Asked of the three traits the language names and of a trait declared
+/// in this file.
+fn receivers(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], trait_name: ref String, methods: ref Vec[Spanned[Item]]) -> Vec[Finding] {
+    let mut found: Vec[Finding] = []
+    for method in methods {
+        match method.node {
+            Item::Fn { name, receiver, .. } => {
+                let symbol = name ?? continue
+                let written = names.resolve(symbol).clone()
+                let wanted = wanted_receiver(names, items, trait_name, written)
+                if !wanted.known || same_receiver(wanted.receiver?.clone(), receiver?.clone()) {
+                    continue
+                }
+                let theirs = receiver_text(wanted.receiver?.clone())
+                let ours = receiver_text(receiver?.clone())
+                let notes: Vec[String] = ["Callers go through the trait, so they pass the value the way the trait declares."]
+                found.push(refusal("NK1196", method.span.clone(), f"`{trait_name}`'s `{written}` takes {theirs}, but this one takes {ours}.", notes, f"Take it as {theirs}, like `{trait_name}` declares."))
+            }
+            else => {}
+        }
+    }
+    return found
+}
+
+// The receiver a trait declares for one method: the trait's own declaration
+// where this file has one, the language's for `Error`, `Drop` and `Cleanup`.
+fn wanted_receiver(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], trait_name: ref String, method: ref String) -> Wanted {
+    for item in items {
+        match item.node {
+            Item::Trait { name, methods, .. } => {
+                if names.resolve(name) == trait_name {
+                    for declared in methods {
+                        if names.resolve(declared.node.name) == method {
+                            return Wanted { known: true, receiver: declared.node.receiver?.clone() }
+                        }
+                    }
+                    return Wanted { known: false, receiver: null }
+                }
+            }
+            else => {}
+        }
+    }
+    let shared = Receiver { is_ref: true, is_mut: false }
+    let changed = Receiver { is_ref: true, is_mut: true }
+    if trait_name == "Error" && method == "message" {
+        return Wanted { known: true, receiver: shared }
+    }
+    if (trait_name == "Drop" && method == "drop") || (trait_name == "Cleanup" && method == "cleanup") {
+        return Wanted { known: true, receiver: changed }
+    }
+    return Wanted { known: false, receiver: null }
+}
+
+// Whether two receivers are the same way of taking `self`.
+fn same_receiver(a: Receiver?, b: Receiver?) -> bool {
+    if a == null || b == null {
+        return a == null && b == null
+    }
+    let one = a ?? Receiver { is_ref: false, is_mut: false }
+    let other = b ?? Receiver { is_ref: false, is_mut: false }
+    return one.is_ref == other.is_ref && one.is_mut == other.is_mut
+}
+
+// How a receiver is written, for the message.
+fn receiver_text(receiver: Receiver?) -> String {
+    let taken = receiver ?? return "no `self`"
+    if taken.is_ref && taken.is_mut {
+        return "`ref mut self`"
+    }
+    if taken.is_ref {
+        return "`ref self`"
+    }
+    if taken.is_mut {
+        return "`mut self`"
+    }
+    return "`self`"
+}
+
+/// **`NK1129`: the implementation pauses and the declaration says `sync`**
+/// (ADR-109 D2), and **`NK1140`**: it fails and the declaration has no
+/// `throws`. Both are ADR-027's `NK2202` asked of somebody else's signature.
+/// **The other direction fits and says nothing**: a body that never pauses
+/// under a declaration that may, or one that cannot fail under `throws`, is
+/// correct - the declaration is the wider claim and a narrower body honours it.
+fn pausing(own: ref Ledger, trait_name: ref String, target: ref String, method: ref String, span: Span) -> Vec[Finding] {
+    let mut found: Vec[Finding] = []
+    let implemented = f"{target}::{method}"
+    let declaring = f"{trait_name}::{method}"
+    if !own.functions.contains_key(ref implemented) || !own.functions.contains_key(ref declaring) {
+        return found
+    }
+    let contract = own.functions[implemented]?.clone() ?? FnContract::empty()
+    let declared = own.functions[declaring]?.clone() ?? FnContract::empty()
+    if declared.sync_claim.is_sync() && !contract.sync_claim.is_sync() {
+        let notes: Vec[String] = ["`sync` in a trait promises that every implementation never pauses. (The opposite is fine: a body that never pauses can implement a method that may.)"]
+        found.push(refusal("NK1129", span.clone(), f"`{target}::{method}` can pause, but `{trait_name}` declares `{method}` as `sync`.", notes, f"Remove `sync` from `{trait_name}`'s `{method}`, or take out what pauses in the body, such as a file read, a sleep or a `.join()`."))
+    }
+    if declared.fails_with.is_empty() && !contract.fails_with.is_empty() {
+        let notes: Vec[String] = ["A trait method without `throws` promises that no implementation fails. (The opposite is fine: a body that can't fail can implement one with `throws`.)"]
+        found.push(refusal("NK1140", span, f"`{target}::{method}` can fail, but `{trait_name}` declares `{method}` without `throws`.", notes, f"Add `throws` to `{trait_name}`'s `{method}`, or handle the failure in the body with `catch`."))
+    }
+    return found
+}
+
+/// **`NK1130`: the `impl` and the `trait` do not agree on which methods
+/// exist** - a method the trait does not declare, or one it declares that the
+/// `impl` leaves out. Two messages rather than one code per direction, because
+/// a reader is doing two different things.
+fn not_in_the_trait(trait_name: ref String, target: ref String, method: ref String, span: Span) -> Finding {
+    let notes: Vec[String] = [f"`impl {trait_name} for {target}` can only hold `{trait_name}`'s methods. The type's own methods go in a separate `impl {target}`."]
+    return refusal("NK1130", span, f"`{trait_name}` has no method called `{method}`.", notes, f"Move it to `impl {target}`, or add `{method}` to `{trait_name}` if every type that implements it should have one.")
+}
+
+fn incomplete(trait_name: ref String, target: ref String, missing: ref Vec[String], span: Span) -> Finding {
+    let mut listed: String = ""
+    for at in 0..<missing.len() {
+        if at > 0 {
+            listed.push_str(", ")
+        }
+        let one = missing[at]
+        let quoted = f"`{one}`"
+        listed.push_str(ref quoted)
+    }
+    let pronoun = if missing.len() == 1 { "it" } else { "them" }
+    let notes: Vec[String] = ["A trait promises that all its methods are there, which is what lets code call them through a bound."]
+    return refusal("NK1130", span, f"`{target}` is missing {listed} from `{trait_name}`.", notes, f"Add {listed} to this `impl`, or remove {pronoun} from `{trait_name}`.")
+}

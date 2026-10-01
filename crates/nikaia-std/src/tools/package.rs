@@ -602,6 +602,21 @@ fn a_name_goes_on(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='
 fn a_name_begins(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '_') }
 
 
+// --- findings.nika ---
+
+#[derive(Debug, Clone)]
+pub struct Finding {
+    pub code: String,
+    pub span: Span,
+    pub message: String,
+    pub notes: Vec<String>,
+    pub help: Option<String>,
+    pub warning: bool,
+}
+
+pub fn refusal(code: &str, span: Span, message: String, notes: Vec<String>, help: String) -> Finding { Finding { code: code.to_owned(), span, message, notes, help: Some(help), warning: false } }
+
+
 // --- fixed.nika ---
 
 pub const HASHED_FROM: i64 = 12;
@@ -3460,7 +3475,7 @@ impl Scan {
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.
     fn position(&self) -> Position {
-        match self.state {
+        match &self.state {
             ScanState::Text => Position::Text,
             ScanState::Script => Position::Script,
             ScanState::Style => Position::Style,
@@ -3490,7 +3505,7 @@ impl Scan {
             for k in self.tail.len() as i64 - 9..self.tail.len() as i64 { kept.push(*nikaia_std::index::get(&self.tail, nikaia_std::index::at(k))); }
             self.tail = kept;
         }
-        match self.state {
+        match &self.state {
             ScanState::Text => {
                 if self.ended_with("<!--") { self.state = ScanState::Comment; } else if c == '<' {
                     self.state = ScanState::Tag;
@@ -3499,6 +3514,7 @@ impl Scan {
             },
             ScanState::Comment => { if self.ended_with("-->") { self.state = ScanState::Text; } },
             ScanState::Quoted(quote) => {
+                let quote = *quote;
                 if c == quote {
                     self.state = ScanState::Tag;
                     self.attribute = String::from("");
@@ -3546,6 +3562,174 @@ fn quoted(attribute: &str) -> Position {
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 fn blank(c: char) -> bool { c.is_whitespace() }
+
+
+// --- traits.nika ---
+
+pub fn check_impls(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, own: &Ledger) -> Vec<Finding> {
+    let mut found: Vec<Finding> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Impl { trait_name, target, methods } => {
+                let trait_name = *trait_name;
+                let written_trait = match trait_name { Some(__nikaia_value) => __nikaia_value, None => continue };
+                let named = names.resolve(written_trait).to_owned();
+                for one in receivers(names, items, &named, methods) { found.push(one); }
+                if !own.traits.contains_key(&named) { continue; }
+                let declared = nikaia_std::index::or(match *nikaia_std::index::get(&own.traits, &named) {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, || collections::BTreeSet::new().into());
+                let target_name = names.resolve(target.name).to_owned();
+                let mut given: Vec<String> = vec![];
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, .. } => {
+                            let name = *name;
+                            let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => continue };
+                            let written = names.resolve(symbol).to_owned();
+                            given.push(written.to_owned());
+                            if !declared.contains(&written) {
+                                found.push(not_in_the_trait(&named, &target_name, &written, method.span.clone()));
+                                continue;
+                            }
+                            for one in pausing(own, &named, &target_name, &written, method.span.clone()) { found.push(one); }
+                        },
+                        _ => { },
+                    }
+                }
+                let mut missing: Vec<String> = vec![];
+                for wanted in declared.iter() { if !given.contains(&wanted.to_owned()) { missing.push(wanted.to_owned()); } }
+                if !missing.is_empty() { found.push(incomplete(&named, &target_name, &missing, item.span.clone())); }
+            },
+            _ => { },
+        }
+    }
+    found
+}
+
+#[derive(Debug, Clone)]
+struct Wanted {
+    known: bool,
+    receiver: Option<Receiver>,
+}
+
+fn receivers(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, trait_name: &str, methods: &Vec<Spanned<Item>>) -> Vec<Finding> {
+    let mut found: Vec<Finding> = vec![];
+    for method in methods.iter() {
+        match &method.node {
+            Item::Fn { name, receiver, .. } => {
+                let name = *name;
+                let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => continue };
+                let written = names.resolve(symbol).to_owned();
+                let wanted = wanted_receiver(names, items, trait_name, &written);
+                if !wanted.known || same_receiver(match wanted.receiver.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, match receiver.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                    None => None,
+                }) { continue; }
+                let theirs = receiver_text(match wanted.receiver.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                });
+                let ours = receiver_text(match receiver {
+                    Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                    None => None,
+                });
+                let notes: Vec<String> = vec![String::from("Callers go through the trait, so they pass the value the way the trait declares.")];
+                found.push(refusal("NK1196", method.span.clone(), format!("`{}`'s `{}` takes {}, but this one takes {}.", trait_name, written, theirs, ours), notes, format!("Take it as {}, like `{}` declares.", theirs, trait_name)));
+            },
+            _ => { },
+        }
+    }
+    found
+}
+
+fn wanted_receiver(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, trait_name: &str, method: &str) -> Wanted {
+    for item in items.iter() {
+        match &item.node {
+            Item::Trait { name, methods, .. } => {
+                let name = *name;
+                if names.resolve(name) == trait_name {
+                    for declared in methods.iter() {
+                        if names.resolve(declared.node.name) == method {
+                            return Wanted { known: true, receiver: match declared.node.receiver.as_ref() {
+                                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                                None => None,
+                            } };
+                        }
+                    }
+                    return Wanted { known: false, receiver: None };
+                }
+            },
+            _ => { },
+        }
+    }
+    let shared = Receiver { is_ref: true, is_mut: false };
+    let changed = Receiver { is_ref: true, is_mut: true };
+    if trait_name == "Error" && method == "message" { return Wanted { known: true, receiver: Some(shared) }; }
+    if trait_name == "Drop" && method == "drop" || trait_name == "Cleanup" && method == "cleanup" { return Wanted { known: true, receiver: Some(changed) }; }
+    Wanted { known: false, receiver: None }
+}
+
+fn same_receiver(a: Option<Receiver>, b: Option<Receiver>) -> bool {
+    if a.is_none() || b.is_none() { return a.is_none() && b.is_none(); }
+    let one = nikaia_std::index::or(a, || Receiver { is_ref: false, is_mut: false });
+    let other = nikaia_std::index::or(b, || Receiver { is_ref: false, is_mut: false });
+    one.is_ref == other.is_ref && one.is_mut == other.is_mut
+}
+
+fn receiver_text(receiver: Option<Receiver>) -> String {
+    let taken = match receiver { Some(__nikaia_value) => __nikaia_value, None => return String::from("no `self`") };
+    if taken.is_ref && taken.is_mut { return String::from("`ref mut self`"); }
+    if taken.is_ref { return String::from("`ref self`"); }
+    if taken.is_mut { return String::from("`mut self`"); }
+    String::from("`self`")
+}
+
+fn pausing(own: &Ledger, trait_name: &str, target: &str, method: &str, span: Span) -> Vec<Finding> {
+    let mut found: Vec<Finding> = vec![];
+    let implemented = format!("{}::{}", target, method);
+    let declaring = format!("{}::{}", trait_name, method);
+    if !own.functions.contains_key(&implemented) || !own.functions.contains_key(&declaring) { return found; }
+    let contract = nikaia_std::index::or(match *nikaia_std::index::get(&own.functions, &implemented) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || FnContract::empty());
+    let declared = nikaia_std::index::or(match *nikaia_std::index::get(&own.functions, &declaring) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || FnContract::empty());
+    if declared.sync_claim.is_sync() && !contract.sync_claim.is_sync() {
+        let notes: Vec<String> = vec![String::from("`sync` in a trait promises that every implementation never pauses. (The opposite is fine: a body that never pauses can implement a method that may.)")];
+        found.push(refusal("NK1129", span.clone(), format!("`{}::{}` can pause, but `{}` declares `{}` as `sync`.", target, method, trait_name, method), notes, format!("Remove `sync` from `{}`'s `{}`, or take out what pauses in the body, such as a file read, a sleep or a `.join()`.", trait_name, method)));
+    }
+    if declared.fails_with.is_empty() && !contract.fails_with.is_empty() {
+        let notes: Vec<String> = vec![String::from("A trait method without `throws` promises that no implementation fails. (The opposite is fine: a body that can't fail can implement one with `throws`.)")];
+        found.push(refusal("NK1140", span, format!("`{}::{}` can fail, but `{}` declares `{}` without `throws`.", target, method, trait_name, method), notes, format!("Add `throws` to `{}`'s `{}`, or handle the failure in the body with `catch`.", trait_name, method)));
+    }
+    found
+}
+
+fn not_in_the_trait(trait_name: &str, target: &str, method: &str, span: Span) -> Finding {
+    let notes: Vec<String> = vec![format!("`impl {} for {}` can only hold `{}`'s methods. The type's own methods go in a separate `impl {}`.", trait_name, target, trait_name, target)];
+    refusal("NK1130", span, format!("`{}` has no method called `{}`.", trait_name, method), notes, format!("Move it to `impl {}`, or add `{}` to `{}` if every type that implements it should have one.", target, method, trait_name))
+}
+
+fn incomplete(trait_name: &str, target: &str, missing: &Vec<String>, span: Span) -> Finding {
+    let mut listed: String = String::from("");
+    for at in 0..missing.len() as i64 {
+        if at > 0 { listed.push_str(", "); }
+        let one = nikaia_std::index::get(&missing, nikaia_std::index::at(at));
+        let quoted = format!("`{}`", one);
+        listed.push_str(&quoted);
+    }
+    let pronoun = if (missing.len() as i64) == 1 { "it" } else { "them" };
+    let notes: Vec<String> = vec![String::from("A trait promises that all its methods are there, which is what lets code call them through a bound.")];
+    refusal("NK1130", span, format!("`{}` is missing {} from `{}`.", target, listed, trait_name), notes, format!("Add {} to this `impl`, or remove {} from `{}`.", listed, pronoun, trait_name))
+}
 
 
 // --- trust.nika ---
@@ -4795,6 +4979,10 @@ pub mod dsl {
     #[allow(unused_imports)]
     pub use super::{parameters};
 }
+pub mod findings {
+    #[allow(unused_imports)]
+    pub use super::{Finding, refusal};
+}
 pub mod fixed {
     #[allow(unused_imports)]
     pub use super::{HASHED_FROM, Table, fnv, displace, build};
@@ -4842,6 +5030,10 @@ pub mod surface {
 pub mod template {
     #[allow(unused_imports)]
     pub use super::{Position, Segment, literal_length, split, illegal, illegal_message};
+}
+pub mod traits {
+    #[allow(unused_imports)]
+    pub use super::{check_impls};
 }
 pub mod trust {
     #[allow(unused_imports)]
