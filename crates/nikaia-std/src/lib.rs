@@ -145,7 +145,8 @@ pub mod text {
     clippy::manual_range_contains,
     clippy::let_and_return,
     clippy::single_match,
-    clippy::useless_conversion
+    clippy::useless_conversion,
+    clippy::for_kv_map
 )]
 pub mod tools {
     /// **How close one word is to another**, for the compiler's *did you
@@ -408,6 +409,87 @@ pub mod tools {
                 assert_eq!(joined("", "x"), "x");
                 assert_eq!(joined("a", ""), "a");
                 assert_eq!(joined("a", "x"), "a::x");
+            }
+        }
+    }
+
+    /// **What `nikaia describe` says about threads**:
+    /// `src/tools/crossing.nika`, whether a type's fields let it cross, whether
+    /// a bound names `Send`, and the shortest way a function reaches a thread,
+    /// lowered to `src/tools/crossing.rs` and committed beside it
+    /// ([ADR-193](../../../docs/specification/adr/adr-193.md) D3-D5). It reads
+    /// the ledger's records, as `ledger` does.
+    pub mod crossing {
+        use super::ty::*;
+
+        include!("tools/crossing.rs");
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            fn texts(all: &[&str]) -> Vec<String> {
+                all.iter().map(|s| s.to_string()).collect()
+            }
+
+            /// `Rc` never crosses, plain data does, and anything else - a view,
+            /// an unknown type, no fields known - is silence.
+            #[test]
+            fn what_crosses_is_read_from_the_fields() {
+                assert_eq!(crosses(&texts(&["Rc<u8>", "u8"])), Crosses::MayNot);
+                assert_eq!(
+                    crosses(&texts(&["Vec<Option<u8>>", "String"])),
+                    Crosses::May
+                );
+                assert_eq!(crosses(&texts(&["Vec<u8, u16>"])), Crosses::May);
+                assert_eq!(crosses(&texts(&["&str"])), Crosses::Undecided);
+                assert_eq!(crosses(&texts(&["Handle"])), Crosses::Undecided);
+                assert_eq!(crosses(&Vec::new()), Crosses::Undecided);
+                assert_eq!(generic_of(" Option <u8>", "Option").as_deref(), Some("u8"));
+                assert_eq!(generic_of("Optional<u8>", "Option"), None);
+            }
+
+            /// `Send` as a word, and not as letters inside one.
+            #[test]
+            fn a_bound_names_send_as_a_word() {
+                assert!(bounds_send("T: Send + 'static"));
+                assert!(bounds_send("Send"));
+                assert!(!bounds_send("T: Sender<u8>, U: Resend"));
+                assert!(!bounds_send("Sendé"));
+            }
+
+            /// The article and the commas.
+            #[test]
+            fn a_list_reads_as_a_sentence() {
+                assert_eq!(a_list(&texts(&["a"]), "the one", "the many"), "the one `a`");
+                assert_eq!(
+                    a_list(&texts(&["a", "b"]), "x", "the many"),
+                    "the many `a` and `b`"
+                );
+                assert_eq!(
+                    a_list(&texts(&["a", "b", "c"]), "x", "y"),
+                    "y `a`, `b` and `c`"
+                );
+                assert_eq!(a_list(&Vec::new(), "x", "y"), "");
+            }
+
+            /// The shortest way to a sink, through the crate's own calls, and
+            /// an ambiguous short name is not followed.
+            #[test]
+            fn the_shortest_way_to_a_thread_is_named() {
+                let mut calls = std::collections::BTreeMap::new();
+                calls.insert("a::run".to_string(), texts(&["helper", "slow"]));
+                calls.insert("a::helper".to_string(), texts(&["tokio::spawn"]));
+                calls.insert("a::slow".to_string(), texts(&["a::slower"]));
+                calls.insert("a::slower".to_string(), texts(&["std::thread::spawn"]));
+                calls.insert("a::loops".to_string(), texts(&["a::loops"]));
+                assert_eq!(
+                    reaches_a_thread("a::run", &calls),
+                    Some(texts(&["a::helper", "tokio::spawn"]))
+                );
+                assert_eq!(reaches_a_thread("a::loops", &calls), None);
+                calls.insert("b::helper".to_string(), Vec::new());
+                assert_eq!(the_crates_own("helper", &calls), None);
             }
         }
     }
