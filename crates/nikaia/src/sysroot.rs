@@ -61,7 +61,7 @@ const TREE: &str = "ast.nika";
 /// because the records' names (`State`, `Shape`) are words other tools use
 /// for their own things, and a package is one namespace (ADR-047 D1).
 const RECORDS: &str = "ty.nika";
-const READS_THE_RECORDS: &[&str] = &["ledger.nika"];
+const READS_THE_RECORDS: &[&str] = &["crossing.nika", "ledger.nika"];
 
 /// What the Rust a tool module reads says it does (ADR-252 D4.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");

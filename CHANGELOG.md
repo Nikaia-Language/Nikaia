@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.311] — 2026-10-01
+
+**`nikaia describe` says what crosses a thread in Nikaia** (ADR-193 D3-D5,
+#124). `tools/crossing.nika` holds whether a type's fields let it cross,
+whether a bound names `Send` as a word, the scalars that travel unchanged, the
+list of thread sinks, and the shortest way a function reaches one through the
+crate's own calls. It reads the ledger's records beside it for `Crosses`, as
+`ledger.nika` does. A draft says what it said before. `std`'s ledger gains
+`char::is_alphanumeric`, which the `Send` word test needs.
+
 ## [0.0.310] — 2026-10-01
 
 **A copy of a view is text of its own, written type or not** (#293).

@@ -72,6 +72,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::contracts::ty::TyOps;
 use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract, ty::Ty};
+use nikaia_std::tools::crossing;
 use nikaia_std::tools::paths::{self, Export};
 
 /// What a run of the command did, for the line it prints.
@@ -182,7 +183,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
                 // **The one claim that comes from a field**
                 // ([ADR-123](../../docs/specification/adr/adr-123.md) D2), and
                 // the one thing here a Rust *signature* could never say.
-                crosses: crosses(fields.get(&name).map(Vec::as_slice)),
+                crosses: crossing::crosses(fields.get(&name).unwrap_or(&Vec::new())),
                 // **What the type derives is what it promises**
                 // ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3):
                 // `PartialEq` is `==`, and `Copy` is a copy where a move would
@@ -215,6 +216,13 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
             notes.about_the_crate.push(format!("  {promise}"));
         }
     }
+    // What each of the crate's functions calls, by its path: what
+    // `crossing::reaches_a_thread` follows.
+    let calls: BTreeMap<String, Vec<String>> = surface
+        .functions
+        .iter()
+        .map(|(path, function)| (path.clone(), function.calls.clone()))
+        .collect();
     for name in &wanted {
         let Some(function) = surface
             .reachable
@@ -231,7 +239,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         if !bound.is_empty() {
             said.push(format!(
                 "`{name}`: {} is bound `Send`.",
-                a_list(&bound, "the parameter", "the parameters")
+                crossing::a_list(&bound, "the parameter", "the parameters")
             ));
             said.push(
                 "  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**"
@@ -248,7 +256,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         // `unsafe impl Send` took it away, and only following the calls reaches
         // the `spawn` (D4).
         let at = surface.reachable.get(name).cloned().unwrap_or_default();
-        if let Some(path) = reaches_a_thread(&at, &surface.functions) {
+        if let Some(path) = crossing::reaches_a_thread(&at, &calls) {
             let (sink, through) = path.split_last().expect("a path ends at its sink");
             said.push(match through.is_empty() {
                 true => format!("`{name}`: calls `{sink}`."),
@@ -827,132 +835,6 @@ fn imported(items: &[nikaia_std::tools::rust::Item<'_>], out: &mut BTreeMap<Stri
     }
 }
 
-/// **Where a value goes to another thread**, as the paths a crate writes
-/// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
-///
-/// Every **safe** way of reaching another thread carries a `Send` bound, which
-/// is why the bound alone answers most of the question. This list is for the
-/// other row: a crate that took the bound away with an `unsafe impl Send` still
-/// has to reach one of these to do anything with what it was given.
-///
-/// **Full paths and not bare names.** A `.spawn(…)` method on some type of the
-/// crate's own would match a bare `spawn`, and a note about a function that
-/// threads nothing asks a reviewer a question with no answer — which is the
-/// same reason `Send` is matched as a word. A crate that imports the name is
-/// answered by the `use` table instead, which resolves it back to a path here.
-const THREAD_SINKS: &[&str] = &[
-    "std::thread::spawn",
-    "std::thread::Builder::spawn",
-    "std::thread::scope",
-    "thread::spawn",
-    "thread::scope",
-    "tokio::spawn",
-    "tokio::task::spawn",
-    "tokio::task::spawn_blocking",
-    "tokio::task::spawn_local",
-    "task::spawn_blocking",
-    "rayon::spawn",
-    "rayon::scope",
-    "rayon::join",
-    "async_std::task::spawn",
-    "smol::spawn",
-];
-
-/// The path from a function to the first thread sink it reaches, through the
-/// crate's own calls — or `None` where it reaches none.
-///
-/// **Breadth first**, so the path a note names is the shortest one: a reviewer
-/// reading *reaches `tokio::spawn` through `on_one_worker`* is being handed
-/// something to check, and the shortest chain is the one that is quickest to
-/// check.
-///
-/// A cycle terminates because a path is walked once.
-fn reaches_a_thread(from: &str, functions: &BTreeMap<String, Function>) -> Option<Vec<String>> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut queue: std::collections::VecDeque<(String, Vec<String>)> =
-        std::collections::VecDeque::new();
-    queue.push_back((from.to_string(), Vec::new()));
-    seen.insert(from.to_string());
-    while let Some((at, how)) = queue.pop_front() {
-        let Some(function) = functions.get(&at) else {
-            continue;
-        };
-        for call in &function.calls {
-            if THREAD_SINKS.contains(&call.as_str()) {
-                let mut path = how.clone();
-                path.push(call.clone());
-                return Some(path);
-            }
-            let Some(inside) = the_crates_own(call, functions) else {
-                continue;
-            };
-            if !seen.insert(inside.clone()) {
-                continue;
-            }
-            let mut next = how.clone();
-            next.push(inside.clone());
-            queue.push_back((inside, next));
-        }
-    }
-    None
-}
-
-/// The crate's own function a call names, where exactly one answers to it.
-///
-/// The path as written first; failing that the one function whose path **ends**
-/// with it, and only where there is one. Two functions of that name is an
-/// ambiguity this cannot resolve without a scope table, and a note naming the
-/// wrong one is worse than no note.
-fn the_crates_own(call: &str, functions: &BTreeMap<String, Function>) -> Option<String> {
-    if functions.contains_key(call) {
-        return Some(call.to_string());
-    }
-    let ending = format!("::{call}");
-    let mut found = functions.keys().filter(|path| path.ends_with(&ending));
-    let one = found.next()?;
-    found.next().is_none().then(|| one.clone())
-}
-
-/// Whether a bound list names `Send` as a **word**.
-///
-/// `not(WORD)` in prose: `Sender` and `Resend` contain the letters and are not
-/// the bound, and a reader that matched the text alone would propose a note
-/// about a parameter nothing sends.
-fn bounds_send(text: &str) -> bool {
-    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|word| word == "Send")
-}
-
-/// `a` / `a and b` / `a, b and c`, with the right article in front.
-fn a_list(names: &[String], one: &str, many: &str) -> String {
-    let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
-    let word = match quoted.len() {
-        1 => one,
-        _ => many,
-    };
-    match quoted.split_last() {
-        None => String::new(),
-        Some((last, [])) => format!("{word} {last}"),
-        Some((last, rest)) => format!("{word} {} and {last}", rest.join(", ")),
-    }
-}
-
-/// The type constructors that make a value **not sendable** in the language
-/// below ([ADR-123](../../docs/specification/adr/adr-123.md) D2).
-///
-/// **`Cell` and `RefCell` are deliberately not here**, and D2's own list names
-/// one of them. They are `!Sync`, not `!Send`: a `Cell<T>` may be *moved* to
-/// another thread exactly when its `T` may, and it is being *looked at* from
-/// two threads that Rust forbids. A draft that wrote `crosses = false` for one
-/// would put a claim in the file that is false, and a reviewer would have to
-/// undo it — which is the opposite of what D5 asks a review to do. The record
-/// carries the correction.
-const NOT_SENDABLE: &[&str] = &["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"];
-
-/// The type constructors a field may be wrapped in without changing the
-/// answer, for the `crosses = true` half.
-const PASSES_THROUGH: &[&str] = &["Vec<", "Option<", "Box<", "VecDeque<"];
-
 /// One `pub fn`, as its signature reads.
 ///
 /// **No name**: an entry is keyed by the path a caller writes, which
@@ -1041,7 +923,7 @@ impl Function {
             let ty = ty.trim();
             let named = ty.trim_start_matches(['&', ' ']).trim();
             let named = named.strip_prefix("mut ").unwrap_or(named);
-            let reached = sent.iter().any(|p| p == named) || bounds_send(ty);
+            let reached = sent.iter().any(|p| p == named) || crossing::bounds_send(ty);
             reached.then(|| name.clone())
         })
     }
@@ -1052,7 +934,7 @@ impl Function {
             .into_iter()
             .filter_map(|one| {
                 let (name, bound) = one.split_once(':')?;
-                bounds_send(bound).then(|| name.trim().to_string())
+                crossing::bounds_send(bound).then(|| name.trim().to_string())
             })
             .filter(|name| !name.is_empty() && !name.starts_with('\''))
             .collect()
@@ -1111,7 +993,7 @@ impl Function {
         types: &BTreeSet<String>,
         mentioned: &mut BTreeSet<String>,
     ) -> (Ty, Option<String>) {
-        if let Some(inner) = generic_of(text, "Result") {
+        if let Some(inner) = crossing::generic_of(text, "Result") {
             let parts = paths::split_top_level(&inner);
             let ok = parts.first().cloned().unwrap_or_default();
             let error = parts.get(1).cloned();
@@ -1155,11 +1037,11 @@ impl Function {
             let (ty, _) = self.translate(rest, crate_word, types, mentioned);
             return (view_of(ty), false);
         }
-        if let Some(inner) = generic_of(text, "Option") {
+        if let Some(inner) = crossing::generic_of(text, "Option") {
             let (ty, kept) = self.translate(&inner, crate_word, types, mentioned);
             return (Ty::Nullable(Box::new(ty)), kept);
         }
-        if let Some(inner) = generic_of(text, "Vec") {
+        if let Some(inner) = crossing::generic_of(text, "Vec") {
             let (ty, _) = self.translate(&inner, crate_word, types, mentioned);
             return (
                 Ty::Named {
@@ -1180,7 +1062,7 @@ impl Function {
                 true,
             );
         }
-        if PLAIN.contains(&text) {
+        if crossing::is_plain(text) {
             return (Ty::named(text), false);
         }
         if text == "String" {
@@ -1197,61 +1079,6 @@ impl Function {
     }
 }
 
-/// Whether a value of a type may cross a thread, read off its **fields**
-/// ([ADR-123](../../docs/specification/adr/adr-123.md) D2).
-///
-/// Three answers and the third is the common one. `false` where a field holds
-/// something the language below marks as not sendable, which a field reader can
-/// see and a reviewer can check; `true` where every field is something this
-/// knows to be sendable; and **nothing** where it cannot tell — a field of
-/// another crate's type, a tuple struct, a body this could not read. Silence is
-/// *nobody said*, which is not permission
-/// ([ADR-010](../../docs/specification/adr/adr-010.md) D1) and not a refusal
-/// either.
-///
-/// **The `true` half is narrow on purpose.** A promise that a value may cross
-/// is a promise a *refusal* is withheld on, so it is made only where every
-/// field is a scalar, a `String`, or one of those inside a container that
-/// changes nothing. An `Arc<T>` is `Send` exactly when its `T` is `Send` **and**
-/// `Sync`, which is two questions a scraper does not have; it falls to silence.
-fn crosses(fields: Option<&[String]>) -> crate::contracts::Crosses {
-    use crate::contracts::Crosses;
-    let Some(fields) = fields.filter(|fields| !fields.is_empty()) else {
-        return Crosses::Undecided;
-    };
-    if fields
-        .iter()
-        .any(|ty| NOT_SENDABLE.iter().any(|marker| ty.contains(marker)))
-    {
-        return Crosses::MayNot;
-    }
-    match fields.iter().all(|ty| plainly_sendable(ty)) {
-        true => Crosses::May,
-        false => Crosses::Undecided,
-    }
-}
-
-/// Whether one field's type is something this can say crosses, with nothing
-/// left over to be wrong about.
-fn plainly_sendable(ty: &str) -> bool {
-    let ty = ty.trim();
-    if let Some(rest) = ty.strip_prefix('&') {
-        // A view crosses where what it points at does — and whether *that* is
-        // a view of something borrowed for long enough is a lifetime question
-        // this does not have. Silence.
-        let _ = rest;
-        return false;
-    }
-    for wrapper in PASSES_THROUGH {
-        if let Some(inner) = generic_of(ty, wrapper.trim_end_matches('<')) {
-            return paths::split_top_level(&inner)
-                .iter()
-                .all(|part| plainly_sendable(part));
-        }
-    }
-    PLAIN.contains(&ty) || ty == "String"
-}
-
 /// A view of a type, which the ledger's language writes with the `&` on the
 /// name.
 fn view_of(ty: Ty) -> Ty {
@@ -1264,19 +1091,4 @@ fn view_of(ty: Ty) -> Ty {
         Ty::Var { name, .. } => Ty::Var { name, view: true },
         other => other,
     }
-}
-
-/// The scalar names that travel unchanged, plus `str` which is only ever seen
-/// behind a `&`.
-const PLAIN: &[&str] = &[
-    "bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
-    "u128", "usize", "f32", "f64", "()",
-];
-
-/// `Name<inner>` unwrapped, where the text is exactly that.
-fn generic_of(text: &str, name: &str) -> Option<String> {
-    let rest = text.trim().strip_prefix(name)?.trim_start();
-    let rest = rest.strip_prefix('<')?;
-    let inner = rest.strip_suffix('>')?;
-    Some(inner.to_string())
 }

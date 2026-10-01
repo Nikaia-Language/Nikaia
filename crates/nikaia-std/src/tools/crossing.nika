@@ -1,0 +1,275 @@
+// crates/nikaia-std/src/tools/crossing.nika
+//
+// **What `nikaia describe` says about threads** (ADR-193 D3-D5, ADR-123 D2):
+// whether a type's fields let it cross, whether a bound names `Send`, and the
+// shortest way a function reaches a thread through the crate's own calls.
+//
+// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// by `nikaia lower-std` to `crossing.rs` beside it, `include!`d as
+// `nikaia_std::tools::crossing`, and called from `describe`. It reads the
+// ledger's records beside it, as `ledger.nika` does, for `Crosses`.
+//
+// **Every answer here errs towards silence.** A draft that said `crosses =
+// true` where nothing showed it, or named a thread a function does not reach,
+// would put a claim in a file nobody wrote (ADR-104 D4).
+
+use std::collections
+
+/// The type constructors that make a value **not sendable** in the language
+/// below (ADR-123 D2).
+///
+/// **`Cell` and `RefCell` are deliberately not here**, and D2's own list names
+/// one of them. They are `!Sync`, not `!Send`: a `Cell<T>` may be *moved* to
+/// another thread exactly when its `T` may. A draft that wrote `crosses =
+/// false` for one would put a false claim in the file.
+comptime NOT_SENDABLE: Array[ref String, 5] = ["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"]
+
+/// The type constructors a field may be wrapped in without changing the
+/// answer, for the `crosses = true` half.
+comptime PASSES_THROUGH: Array[ref String, 4] = ["Vec", "Option", "Box", "VecDeque"]
+
+/// The scalar names that travel unchanged, plus `str` which is only ever seen
+/// behind a `&`.
+comptime PLAIN: Array[ref String, 18] = ["bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "()"]
+
+/// The calls that hand work to another thread, as a crate writes them.
+///
+/// **A list and not an analysis**: what reaches a thread is decided by these
+/// functions' own signatures, and a describer reading the crate cannot read
+/// theirs. A crate that imports the name is answered by its `use` table,
+/// which resolves it back to a path here.
+comptime THREAD_SINKS: Array[ref String, 15] = ["std::thread::spawn", "std::thread::Builder::spawn", "std::thread::scope", "thread::spawn", "thread::scope", "tokio::spawn", "tokio::task::spawn", "tokio::task::spawn_blocking", "tokio::task::spawn_local", "task::spawn_blocking", "rayon::spawn", "rayon::scope", "rayon::join", "async_std::task::spawn", "smol::spawn"]
+
+/// Whether a type with these fields crosses: `MayNot` where one is made of
+/// something that never does, `May` where every one plainly does, and
+/// `Undecided` otherwise - and for a type whose fields are not known.
+pub fn crosses(fields: ref Vec[String]) -> Crosses {
+    if fields.is_empty() {
+        return Crosses::Undecided
+    }
+    for field in fields {
+        for marker in NOT_SENDABLE {
+            if field.contains(marker) {
+                return Crosses::MayNot
+            }
+        }
+    }
+    for field in fields {
+        if !plainly_sendable(field) {
+            return Crosses::Undecided
+        }
+    }
+    return Crosses::May
+}
+
+/// Whether one field's type is something this can say crosses, with nothing
+/// left over to be wrong about.
+///
+/// A view (`&`) crosses where what it points at does - and whether *that* is
+/// borrowed for long enough is a lifetime question this does not have, so it
+/// is silence.
+pub fn plainly_sendable(written: ref String) -> bool {
+    let ty = written.trim()
+    if ty.starts_with("&") {
+        return false
+    }
+    for wrapper in PASSES_THROUGH {
+        let inner = generic_of(ty, wrapper)
+        if inner != null {
+            for part in paths_split(inner ?? "") {
+                if !plainly_sendable(part) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+    return is_plain(ty) || ty == "String"
+}
+
+/// Whether a Rust type name is one of the scalars that travel unchanged into
+/// the ledger's language - or `str`, only ever seen behind a `&`.
+pub fn is_plain(name: ref String) -> bool {
+    for plain in PLAIN {
+        if name == plain {
+            return true
+        }
+    }
+    return false
+}
+
+/// `Name<inner>` unwrapped, where the text is exactly that.
+pub fn generic_of(written: ref String, name: ref String) -> String? {
+    let text = written.trim()
+    if !text.starts_with(name) {
+        return null
+    }
+    let c: Vec[char] = text.chars().collect()
+    let n: Vec[char] = name.chars().collect()
+    let after = slice(c, n.len(), c.len())
+    let rest = after.trim_start()
+    if !rest.starts_with("<") || !rest.ends_with(">") {
+        return null
+    }
+    let r: Vec[char] = rest.chars().collect()
+    return slice(r, 1, r.len() - 1)
+}
+
+/// Whether a bound list names `Send` as a **word**: `Sender` and `Resend`
+/// contain the letters and are not the bound.
+pub fn bounds_send(text: ref String) -> bool {
+    let c: Vec[char] = text.chars().collect()
+    let mut start = 0
+    for at in 0..<c.len() + 1 {
+        let ends = at == c.len() || !(c[at].is_alphanumeric() || c[at] == '_')
+        if ends {
+            if slice(c, start, at) == "Send" {
+                return true
+            }
+            start = at + 1
+        }
+    }
+    return false
+}
+
+/// `a` / `a and b` / `a, b and c`, each in backticks, with the right article
+/// in front: `one` for a single name, `many` for more.
+pub fn a_list(names: ref Vec[String], one: ref String, many: ref String) -> String {
+    if names.is_empty() {
+        return ""
+    }
+    let mut word = many.clone()
+    if names.len() == 1 {
+        word = one.clone()
+    }
+    let mut out = f"{word} "
+    for at in 0..<names.len() {
+        if at > 0 && at == names.len() - 1 {
+            out.push_str(" and ")
+        } else if at > 0 {
+            out.push_str(", ")
+        }
+        let name = names[at]
+        let quoted = f"`{name}`"
+        out.push_str(ref quoted)
+    }
+    return out
+}
+
+/// The path from a function to the first thread sink it reaches, through the
+/// crate's own calls - or `null` where it reaches none. `calls` holds what
+/// each of the crate's functions calls, by its path.
+///
+/// **Breadth first**, so the path a note names is the shortest one: the
+/// quickest for a reviewer to check. A cycle ends because a function is
+/// walked once.
+pub fn reaches_a_thread(from: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> Vec[String]? {
+    let mut seen: collections::BTreeSet[String] = collections::BTreeSet()
+    let mut queue: Vec[String] = [from.clone()]
+    let mut ways: Vec[Vec[String]] = [[]]
+    seen.insert(from.clone())
+    let mut next = 0
+    while next < queue.len() {
+        let at = queue[next].clone()
+        let how = ways[next].clone()
+        next += 1
+        for call in calls_of(at, calls) {
+            if is_a_sink(call) {
+                let mut path = how.clone()
+                path.push(call.clone())
+                return path
+            }
+            let inside = the_crates_own(call, calls)
+            if inside == null {
+                continue
+            }
+            let own = inside ?? ""
+            if seen.contains(ref own) {
+                continue
+            }
+            seen.insert(own.clone())
+            let mut way = how.clone()
+            way.push(own.clone())
+            queue.push(own)
+            ways.push(way)
+        }
+    }
+    return null
+}
+
+/// The crate's own function a call names, where exactly one answers to it:
+/// the path as written, or failing that the one function whose path **ends**
+/// with it. Two of that name is an ambiguity this cannot resolve without a
+/// scope table, and a note naming the wrong one is worse than none.
+pub fn the_crates_own(call: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> String? {
+    if calls.contains_key(call) {
+        return call.clone()
+    }
+    let ending = f"::{call}"
+    let mut found: String? = null
+    for (path, _) in calls {
+        if path.ends_with(ref ending) {
+            if found != null {
+                return null
+            }
+            found = path.clone()
+        }
+    }
+    return found
+}
+
+// What one of the crate's functions calls, or nothing where it is not one.
+fn calls_of(function: ref String, calls: ref collections::BTreeMap[String, Vec[String]]) -> Vec[String] {
+    for (path, called) in calls {
+        if path == function {
+            return called.clone()
+        }
+    }
+    return []
+}
+
+// Whether a call is one of the thread sinks.
+fn is_a_sink(call: ref String) -> bool {
+    for sink in THREAD_SINKS {
+        if call == sink {
+            return true
+        }
+    }
+    return false
+}
+
+// Split on commas that are not inside brackets - `paths::split_top_level`,
+// which a tool cannot name from here.
+fn paths_split(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: Vec[String] = []
+    let mut depth = 0
+    let mut start = 0
+    for at in 0..<c.len() {
+        let one = c[at]
+        if one == '<' || one == '(' || one == '[' {
+            depth += 1
+        } else if one == '>' || one == ')' || one == ']' {
+            depth -= 1
+        } else if one == ',' && depth == 0 {
+            let piece = slice(c, start, at)
+            out.push(piece.trim().clone())
+            start = at + 1
+        }
+    }
+    let last = slice(c, start, c.len())
+    let rest = last.trim()
+    if !rest.is_empty() {
+        out.push(rest.clone())
+    }
+    return out
+}
+
+// The characters from `from` up to `to`.
+fn slice(c: ref Array[char], from: i64, to: i64) -> String {
+    let mut out: String = ""
+    for k in from..<to {
+        out.push(c[k])
+    }
+    return out
+}

@@ -1982,6 +1982,15 @@ sync = true
 touches = []
 signature = "(self) -> bool"
 
+# **Asked for by `tools/crossing.nika`** (0.0.311): a bound names `Send` as a
+# word, and a word is letters, digits and `_`.
+# Whether the character is a letter or a digit, as Unicode counts them.
+[fn."char::is_alphanumeric"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> bool"
+
 # The character in lower case where it is an ASCII letter, and itself
 # otherwise.
 [fn."char::to_ascii_lowercase"]
