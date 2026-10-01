@@ -1940,6 +1940,83 @@ fn a_param(name: &str, ty: Ty) -> (String, Ty) { (name.to_owned(), ty) }
 fn trimmed(written: &str) -> String { written.trim().to_owned() }
 
 
+// --- locks.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Locking {
+    pub functions: collections::BTreeMap<String, Lock>,
+    pub fields: collections::BTreeMap<String, Lock>,
+}
+
+pub fn locking(itself: &collections::BTreeMap<String, Lock>, callees: &collections::BTreeMap<String, collections::BTreeSet<String>>, declared: &collections::BTreeSet<String>, library: &Ledger, own: &Ledger) -> Locking {
+    let mut touches = itself.to_owned();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, called) in callees.iter() {
+            let before = nikaia_std::index::or(match *nikaia_std::index::get(&touches, name) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || Lock::No);
+            if before.holds() { continue; }
+            let mut reached = Lock::No;
+            for callee in called.iter() { reached = reached.or(theirs_of(&touches, library, declared, callee)); }
+            let grown = before.or(reached);
+            if grown != before {
+                touches.insert(name.to_owned(), grown);
+                changed = true;
+            }
+        }
+    }
+    let mut answer = Locking { functions: collections::BTreeMap::new(), fields: collections::BTreeMap::new() };
+    for (name, holds) in touches.iter() {
+        if name.starts_with("field:") {
+            let c: Vec<char> = nikaia_std::list::chars(name.chars());
+            let field = slice(&c, 6, c.len() as i64);
+            let settled = if published(own, &field) { holds.clone().or(Lock::Undecided) } else { holds.clone() };
+            answer.fields.insert(field, settled);
+        } else if own.functions.contains_key(name) { answer.functions.insert(name.to_owned(), holds.clone()); }
+    }
+    answer
+}
+
+fn theirs_of(touches: &collections::BTreeMap<String, Lock>, library: &Ledger, declared: &collections::BTreeSet<String>, callee: &str) -> Lock {
+    let constructed = format!("{}::new", callee);
+    for key in [callee.to_owned(), constructed] {
+        let found = match match *nikaia_std::index::get(&touches, &key) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => match described(library, &key) { Some(__nikaia_value) => __nikaia_value, None => continue } };
+        return found;
+    }
+    if is_a_variant(declared, callee) { Lock::No } else { Lock::Undecided }
+}
+
+fn described(library: &Ledger, key: &str) -> Option<Lock> {
+    let contract = match *nikaia_std::index::get(&library.functions, key) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(contract.touches_a_lock.clone())
+}
+
+fn is_a_variant(declared: &collections::BTreeSet<String>, callee: &str) -> bool {
+    let mut parts: Vec<String> = vec![];
+    for part in callee.split("::") { parts.push(part.to_owned()); }
+    if (parts.len() as i64) < 2 || *nikaia_std::index::get(&parts, nikaia_std::index::at(parts.len() as i64 - 1)) == "new" { return false; }
+    declared.contains(&struct_type(callee))
+}
+
+fn published(own: &Ledger, field: &str) -> bool {
+    let c: Vec<char> = nikaia_std::list::chars(field.chars());
+    let dot = find_text(&c, 0, ".");
+    if dot < 0 { return false; }
+    let owner = slice(&c, 0, dot);
+    let name = slice(&c, dot + 1, c.len() as i64);
+    let contract = match *nikaia_std::index::get(&own.types, &owner) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    if !contract.public { return false; }
+    for one in contract.fields.iter() { if one.name == name && one.public { return true; } }
+    false
+}
+
+
 // --- manifest.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5074,6 +5151,10 @@ pub mod http1 {
 pub mod ledger {
     #[allow(unused_imports)]
     pub use super::{LedgerLine, Refused, LedgerText, LedgerValue, unquote, list, read, touch_of, held_of, class_of, variant_of, signature_of, Spelling, SignatureText, spelled_signature};
+}
+pub mod locks {
+    #[allow(unused_imports)]
+    pub use super::{Locking, locking};
 }
 pub mod manifest {
     #[allow(unused_imports)]

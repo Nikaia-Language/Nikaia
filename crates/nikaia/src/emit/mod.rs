@@ -6558,6 +6558,21 @@ impl<'p> Emitter<'p> {
                     // below's own** (ADR-212 D3): it is walked once, where it
                     // stands, and needs to be nothing more.
                     Expr::Range { .. } => self.bare_range(out, iter, depth, flow)?,
+                    // **So does a list written into it**: walked once and
+                    // dropped, it is an array, which Rust walks by value -
+                    // `vec![..]` there is an allocation `clippy` calls useless
+                    // (found moving `contracts::locks` into Nikaia). Not an
+                    // empty one, whose element type nothing would say.
+                    Expr::ListLit { items, .. } if !lends && !items.is_empty() => {
+                        out.push("[");
+                        for (i, item) in items.iter().enumerate() {
+                            if i > 0 {
+                                out.push(", ");
+                            }
+                            self.expr(out, item, depth, flow)?;
+                        }
+                        out.push("]");
+                    }
                     // **An element walked is a read with a postfix after it**
                     // (0.0.250): `(*get(&v, i)).iter()`, parenthesised, where
                     // `*get(&v, i).iter()` dereferenced the iterator.
@@ -8173,8 +8188,15 @@ impl<'p> Emitter<'p> {
             // this record's own example is written in, would have thrown
             // nothing and bound a value nobody produced. The `match` puts the
             // jump in the function it was written in.
+            //
+            // **And so is one whose fallback is another `??` that jumps**:
+            // `touches[key] ?? described(key) ?? continue` reads as
+            // `touches[key] ?? (described(key) ?? continue)`, and the inner
+            // `match` written inside the outer closure put the `continue` in a
+            // closure all the same - `rustc`'s E0267 (found moving
+            // `contracts::locks` into Nikaia).
             Expr::Coalesce { value, fallback }
-                if jumps(fallback) || self.never_returns(fallback) =>
+                if jumps_at_the_end(fallback) || self.never_returns(fallback) =>
             {
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
@@ -12384,6 +12406,16 @@ fn jumps(expr: &Expr) -> bool {
         expr,
         Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Continue
     )
+}
+
+/// Whether a `??`'s fallback ends in a jump: a jump itself, or another `??`
+/// whose own fallback does - the chain `a ?? b ?? continue` is one fallback
+/// that may leave.
+fn jumps_at_the_end(expr: &Expr) -> bool {
+    match expr {
+        Expr::Coalesce { fallback, .. } => jumps_at_the_end(fallback),
+        _ => jumps(expr),
+    }
 }
 
 /// **How a call makes the address an `extern "C"` declaration takes**

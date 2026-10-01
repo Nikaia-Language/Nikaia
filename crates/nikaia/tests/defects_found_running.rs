@@ -650,3 +650,35 @@ fn a_match_on_a_field_through_a_view_matches_it_in_place() {
         "delta, a triangle\nsquare\nround\ndelta, a triangle\n",
     );
 }
+
+/// **A `??` chain that ends in a jump jumps from the function it is written
+/// in** (0.0.322). `a ?? b ?? continue` is `a ?? (b ?? continue)`, and the
+/// inner fallback was written inside the outer one's closure - `rustc`'s
+/// E0267, a `continue` inside a closure. And a list written into a `for` is
+/// walked as an array (found moving `contracts::locks` into Nikaia).
+#[test]
+fn a_chain_of_fallbacks_that_ends_in_a_jump() {
+    runs(
+        "chained-jump",
+        "fn small(k: i64) -> i64? {\n\
+         \x20   if k == 2 { return 7 }\n\
+         \x20   return null\n\
+         }\n\
+         \n\
+         fn middle(k: i64) -> i64? {\n\
+         \x20   if k == 1 { return 5 }\n\
+         \x20   return null\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for k in [0, 1, 2, 3] {\n\
+         \x20       let found = small(k) ?? middle(k) ?? continue\n\
+         \x20       println(found)\n\
+         \x20       sum = sum + found\n\
+         \x20   }\n\
+         \x20   println(sum)\n\
+         }\n",
+        "5\n7\n12\n",
+    );
+}

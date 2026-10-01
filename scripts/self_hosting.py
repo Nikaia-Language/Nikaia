@@ -46,6 +46,7 @@ COMPILER_NIKA = {
     "findings.nika": "a refusal a check of the toolchain reports, as one record (0.0.320)",
     "traits.nika": "traits: an impl against the trait it implements (0.0.320)",
     "throws.nika": "contracts::throws: the error sets' fixpoint, what a `throw` names (0.0.321)",
+    "locks.nika": "contracts::locks: which functions can open a lock, the fixpoint (0.0.322)",
 }
 
 
