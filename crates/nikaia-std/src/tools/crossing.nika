@@ -273,3 +273,78 @@ fn slice(c: ref Array[char], from: i64, to: i64) -> String {
     }
     return out
 }
+
+/// **What the describer saw of the crate's promises and did not claim**
+/// (ADR-193 D5): an `unsafe impl` is a promise the toolchain can see was made
+/// and cannot see is true. The lines of the note, or none where it made none.
+pub fn promise_lines(promises: ref Vec[String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    if promises.is_empty() {
+        return out
+    }
+    out.push("**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool")
+    out.push("can see that the promise was made; it cannot see whether it is true - which is")
+    out.push("the line between a rule the toolchain enforces and one it inherits:")
+    for promise in promises {
+        out.push(f"  {promise}")
+    }
+    return out
+}
+
+/// **What the describer saw of one function and threads, and did not claim**
+/// (ADR-193 D3, D4): the parameters a `Send` bound reaches, and the shortest
+/// way to a thread sink through the crate's own calls. The lines of the note,
+/// ending with the question a reviewer answers, or none where it saw neither.
+pub fn thread_lines(name: ref String, bound: ref Vec[String], way: Vec[String]?) -> Vec[String] {
+    let mut out: Vec[String] = []
+    // **The bound**, which carries the safe half on its own (D4): every safe
+    // way of reaching another thread demands it of the caller.
+    if !bound.is_empty() {
+        let listed = a_list(bound, "the parameter", "the parameters")
+        out.push(f"`{name}`: {listed} is bound `Send`.")
+        out.push("  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**")
+        out.push("  send it, which is usually `spawn` and is sometimes an API keeping a door open.")
+    }
+    // **And the other row**: a sink reached through the crate's own calls,
+    // where an `unsafe impl Send` took the bound away (D4).
+    if way != null {
+        let steps = way ?? []
+        let sink = steps[steps.len() - 1]
+        if steps.len() == 1 {
+            out.push(f"`{name}`: calls `{sink}`.")
+        } else {
+            let mut through: String = ""
+            for at in 0..<steps.len() - 1 {
+                if at > 0 {
+                    through.push_str(" -> ")
+                }
+                let step = steps[at]
+                let quoted = f"`{step}`"
+                through.push_str(ref quoted)
+            }
+            out.push(f"`{name}`: reaches `{sink}` through {through}.")
+        }
+        out.push("  A sink reached through a call says *this function threads something*,")
+        out.push("  never *this function threads your argument* (ADR-193 D4) - connecting")
+        out.push("  those is dataflow through a closure capture and is not built.")
+    }
+    if out.is_empty() {
+        return out
+    }
+    out.push("  Does this put it on a thread?  -> threads = true | false")
+    return out
+}
+
+/// **A crate type's entry**, from what its source shows: `crosses` from its
+/// fields - the one claim a Rust *signature* could never make (ADR-123 D2) -
+/// and `compares` and `copies` from what it derives (ADR-252 D4.3), each read
+/// from the source and written for review. `fields` is empty for a type whose
+/// fields were not read, which is *nobody looked*.
+pub fn type_entry(fields: ref Vec[String], derives: ref collections::BTreeSet[String]) -> TypeContract {
+    let mut entry = TypeContract::empty()
+    entry.public = true
+    entry.crosses = crosses(fields)
+    entry.compares = derives.contains("PartialEq")
+    entry.copies = derives.contains("Copy")
+    return entry
+}

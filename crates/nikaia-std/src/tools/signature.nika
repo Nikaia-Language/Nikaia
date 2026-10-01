@@ -251,3 +251,50 @@ fn slice(c: ref Array[char], from: i64, to: i64) -> String {
     }
     return out
 }
+
+/// **One `fn` as it was written**: its parameters' names and written types,
+/// in order, its result's text (empty where there is none), whether it is an
+/// `async fn`, and its own type parameters.
+pub struct Written {
+    pub names: Vec[String],
+    pub types: Vec[String],
+    pub result: String,
+    pub pauses: bool,
+    pub parameters: Vec[String],
+}
+
+/// **One `pub fn`'s entry, from its signature** (ADR-104 D3): each parameter
+/// in the ledger's words, kept where it is taken by value, the result and what
+/// a `Result` throws, and `sync` as the source says it - a plain `fn` cannot
+/// pause and an `async fn` can, nothing between them. The crate types the
+/// signature names go into `mentioned`.
+pub fn contract(written: ref Written, crate_word: ref String, types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> FnContract {
+    let mut keeps: Vec[String] = []
+    let mut params: Vec[(String, Ty)] = []
+    for at in 0..<written.names.len() {
+        let translated = translate(written.types[at], crate_word, written.parameters, types, mentioned)
+        if translated.kept {
+            keeps.push(written.names[at].clone())
+        }
+        params.push((written.names[at].clone(), translated.ty))
+    }
+    let mut fails: Vec[String] = []
+    let mut answer: Ty? = null
+    if !written.result.is_empty() {
+        let resulted = result_of(written.result, crate_word, written.parameters, types, mentioned)
+        if resulted.fails != null {
+            fails.push(resulted.fails ?? "?")
+        }
+        answer = resulted.ty
+    }
+    let mut signature = Signature::empty()
+    signature.params = params
+    signature.result = answer
+    let mut entry = FnContract::empty()
+    entry.public = true
+    entry.sync_claim = if written.pauses { Sync::No } else { Sync::Asserted }
+    entry.fails_with = fails
+    entry.keeps = keeps
+    entry.signature = signature
+    return entry
+}

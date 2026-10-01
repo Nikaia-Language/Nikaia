@@ -174,3 +174,39 @@ fn slice(c: &[char], from: i64, to: i64) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub names: Vec<String>,
+    pub types: Vec<String>,
+    pub result: String,
+    pub pauses: bool,
+    pub parameters: Vec<String>,
+}
+
+pub fn contract(written: &Written, crate_word: &str, types: &collections::BTreeSet<String>, mentioned: &mut collections::BTreeSet<String>) -> FnContract {
+    let mut keeps: Vec<String> = vec![];
+    let mut params: Vec<(String, Ty)> = vec![];
+    for at in 0..written.names.len() as i64 {
+        let translated = translate(nikaia_std::index::get(&written.types, nikaia_std::index::at(at)), crate_word, &written.parameters, types, mentioned);
+        if translated.kept { keeps.push((*nikaia_std::index::get(&written.names, nikaia_std::index::at(at))).to_owned()); }
+        params.push(((*nikaia_std::index::get(&written.names, nikaia_std::index::at(at))).to_owned(), translated.ty));
+    }
+    let mut fails: Vec<String> = vec![];
+    let mut answer: Option<Ty> = None;
+    if !written.result.is_empty() {
+        let resulted = result_of(&written.result, crate_word, &written.parameters, types, mentioned);
+        if resulted.fails.is_some() { fails.push(nikaia_std::index::or(resulted.fails, || "?".into())); }
+        answer = Some(resulted.ty);
+    }
+    let mut signature = Signature::empty();
+    signature.params = params;
+    signature.result = answer;
+    let mut entry = FnContract::empty();
+    entry.public = true;
+    entry.sync_claim = if written.pauses { Sync::No } else { Sync::Asserted };
+    entry.fails_with = fails;
+    entry.keeps = keeps;
+    entry.signature = Some(signature);
+    entry
+}
+
