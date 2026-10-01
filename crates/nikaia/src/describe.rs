@@ -369,9 +369,18 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
         given => given.to_string(),
     };
 
-    let mut files = BTreeMap::new();
+    // **The walk is Nikaia's** (ADR-195 D4, ADR-196 D4): `tools/sources.nika`
+    // reads every `.rs` under `src` by `fs::walk`, and this drives it to its
+    // end. A crate with no `src` has no `.rs` file, which the next lines say.
     let src = crate_root.join("src");
-    collect_rust(&src, &src, &mut files)?;
+    let files = match src.is_dir() {
+        false => BTreeMap::new(),
+        true => nikaia_std::rt::exec::block_on(nikaia_std::tools::sources::rust_sources(
+            &src.to_string_lossy(),
+        ))
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .with_context(|| format!("reading the sources of `{key}`"))?,
+    };
     if files.is_empty() {
         bail!(
             "There's no `.rs` file under {}, and `nikaia describe` reads the crate's \
@@ -470,31 +479,6 @@ fn cargo_version(crate_root: &Path) -> Option<String> {
             .as_str()?
             .to_string(),
     )
-}
-
-/// Every `.rs` under a directory, keyed by its path inside it.
-fn collect_rust(base: &Path, at: &Path, out: &mut BTreeMap<String, String>) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(at) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rust(base, &path, out)?;
-            continue;
-        }
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).with_context(|| format!("{}", path.display()))?;
-        let relative = path
-            .strip_prefix(base)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        out.insert(format!("src/{relative}"), text);
-    }
-    Ok(())
 }
 
 /// The names of this crate every `.nika` of the project writes, without the

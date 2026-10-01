@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.308] — 2026-10-01
+
+**`nikaia describe` walks a crate in Nikaia** (ADR-195 D4, ADR-196 D4, #124).
+The Rust half no longer walks: `tools/sources.nika` reads every `.rs` under a
+crate's `src` with `fs::walk` and `fs::read_to_string`, is lowered by
+`nikaia lower-std` to `sources.rs` beside it, and `describe` drives it to its
+end. ADR-196's sign of a stall - `fs` has a walk and the Rust half is still
+doing the walking - no longer holds. What a draft says is unchanged.
+
 ## [0.0.307] — 2026-10-01
 
 **`fs` gains a directory walk** (ADR-195 D4, #124 step 1). `fs::walk(path,

@@ -1,0 +1,33 @@
+// crates/nikaia-std/src/tools/sources.nika
+//
+// **The files `nikaia describe` reads a crate from** (ADR-195 D4, ADR-196 D4):
+// every `.rs` under the crate's `src`, with its text.
+//
+// The walk the Rust half did with `std::fs::read_dir` and a recursion, moved to
+// Nikaia once `fs` had a walk of its own (0.0.307). Lowered by
+// `nikaia lower-std` to `sources.rs` beside it, `include!`d as
+// `nikaia_std::tools::sources`, and called from the compiler's `describe`.
+//
+// **`fs::Root::Anywhere`, and on purpose**: the directory is the one the
+// operator named as the crate's `path` in `nikaia.toml`, and the describer
+// reads what that crate is made of. A `src` that links a module in from
+// elsewhere is still that crate's source, which is what `Anywhere` says - the
+// program answers for the name, and here the name is the manifest's.
+
+use std::fs
+use std::collections
+
+/// The `.rs` files under a crate's `src`, each with its text, keyed by its
+/// name in the crate: `src/<path under src>`, `/` between the parts.
+///
+/// A directory under `src` that cannot be read is left out, as the walk leaves
+/// it out; a file that cannot be read, or is not UTF-8, is the failure, named.
+pub fn rust_sources(src: ref String) -> collections::BTreeMap[String, String] throws {
+    let mut out = collections::BTreeMap()
+    for name in fs::walk(src, fs::Root::Anywhere) {
+        if !name.ends_with(".rs") { continue }
+        let text = fs::read_to_string(f"{src}/{name}", fs::Root::Anywhere)
+        out.insert(f"src/{name}", text)
+    }
+    return out
+}
