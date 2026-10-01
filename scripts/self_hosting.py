@@ -38,6 +38,11 @@ COMPILER_NIKA = {
     "fold.nika": "fold: a constant's value (ADR-252 D6, 0.0.278)",
     "trust.nika": "contracts::trust: what --trust says (0.0.281)",
     "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-257, 0.0.285-295)",
+    "sources.nika": "describe: the files a crate is read from (0.0.308)",
+    "paths.nika": "describe: a crate's module paths and `pub use` (0.0.309)",
+    "crossing.nika": "describe: what crosses a thread, and the notes (0.0.311, 0.0.316)",
+    "signature.nika": "describe: a Rust signature in the ledger's words (0.0.314, 0.0.316)",
+    "surface.nika": "describe: what a crate offers (0.0.315)",
 }
 
 
