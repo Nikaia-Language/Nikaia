@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.324] — 2026-10-01
+
+**What an operation reaches is decided in Nikaia** (#125).
+`tools/touch.nika` holds the two decisions of `contracts::touch`:
+
+- **when two reached resources might be one** and force an order - families and
+  not kinds, so `stdout` and `stderr` stay one destination under `2>&1`, a
+  resource nobody could name might be any of its kind, and two reads never
+  conflict;
+- **the fixpoint** that gives every function the `touches` its body earns -
+  the greatest one, taking the claim away from whatever reaches a function
+  without it, then the union over everything a function reaches.
+
+`Reached` is the Nikaia record now, and `contracts::order` compares two calls
+with its methods. Reading a `touches` entry, the list of kinds and the walk
+stay Rust, the walk with `sync`'s. Nothing a program is told changed; the move
+compiled as written once the language's own rule was followed -
+`self.named ?? …` on a borrowed `self` is `NK2106`, and `self.named?.clone()`
+is what it asks for.
+
 ## [0.0.323] — 2026-10-01
 
 **A list with a `null` in it is a list of `T?`** (#312). `let xs: Vec[i64?] =

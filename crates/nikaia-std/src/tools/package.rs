@@ -3717,6 +3717,87 @@ fn struct_type(written: &str) -> String {
 }
 
 
+// --- touch.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reached {
+    pub kind: String,
+    pub named: Option<String>,
+    pub unknown: bool,
+    pub write: bool,
+}
+
+impl Reached {
+    pub fn might_be_same(&self, other: &Reached) -> bool {
+        if family(&self.kind) != family(&other.kind) { return false; }
+        if self.unknown || other.unknown { return true; }
+        let mine = match match self.named.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => return true };
+        let theirs = match match other.named.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => return true };
+        mine == theirs
+    }
+    pub fn conflicts_with(&self, other: &Reached) -> bool { (self.write || other.write) && self.might_be_same(other) }
+}
+
+fn family(kind: &str) -> String {
+    if kind == "stderr" { return String::from("stdout"); }
+    kind.to_owned()
+}
+
+pub fn touches_of(unknown: &collections::BTreeMap<String, bool>, outside: &collections::BTreeMap<String, Vec<Touch>>, calls: &collections::BTreeMap<String, collections::BTreeSet<String>>) -> collections::BTreeMap<String, Vec<Touch>> {
+    let mut known: collections::BTreeMap<String, bool> = collections::BTreeMap::new();
+    for (name, lost) in unknown.iter() {
+        let lost = nikaia_std::num::value(lost);
+        known.insert(name.to_owned(), !lost);
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, called) in calls.iter() {
+            let holds = nikaia_std::index::or(*nikaia_std::index::get(&known, name), || false);
+            if !holds { continue; }
+            let mut reaches_unknown = false;
+            for callee in called.iter() {
+                let theirs = nikaia_std::index::or(*nikaia_std::index::get(&known, callee), || false);
+                if !theirs { reaches_unknown = true; }
+            }
+            if reaches_unknown {
+                known.insert(name.to_owned(), false);
+                changed = true;
+            }
+        }
+    }
+    let mut settled: collections::BTreeMap<String, Vec<Touch>> = collections::BTreeMap::new();
+    for (name, holds) in known.iter() {
+        let holds = nikaia_std::num::value(holds);
+        if !holds { continue; }
+        let mut found: Vec<Touch> = vec![];
+        let mut seen: collections::BTreeSet<String> = collections::BTreeSet::new();
+        let mut todo: Vec<String> = vec![name.to_owned()];
+        while (todo.len() as i64) > 0 {
+            let here = match todo.pop() { Some(__nikaia_value) => __nikaia_value, None => break };
+            if seen.contains(&here) { continue; }
+            seen.insert(here.to_owned());
+            for touch in nikaia_std::index::or(match *nikaia_std::index::get(&outside, &here) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || vec![].into()) { found.push(touch); }
+            for callee in nikaia_std::index::or(match *nikaia_std::index::get(&calls, &here) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || collections::BTreeSet::new().into()) { todo.push(callee); }
+        }
+        settled.insert(name.to_owned(), found);
+    }
+    settled
+}
+
+
 // --- traits.nika ---
 
 pub fn check_impls(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, own: &Ledger) -> Vec<Finding> {
@@ -5191,6 +5272,10 @@ pub mod template {
 pub mod throws {
     #[allow(unused_imports)]
     pub use super::{error_sets, error_type};
+}
+pub mod touch {
+    #[allow(unused_imports)]
+    pub use super::{Reached, touches_of};
 }
 pub mod traits {
     #[allow(unused_imports)]

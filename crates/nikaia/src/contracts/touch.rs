@@ -121,54 +121,6 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// anyway.
 pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args", "lock", "socket"];
 
-/// Which kinds may turn out to be **one** resource however differently they are
-/// named.
-///
-/// `stdout` and `stderr` are two handles and one destination the moment anybody
-/// types `2>&1`, which is not an exotic invocation. Recording them as separate
-/// kinds and stopping there would have made
-///
-/// ```nika
-/// println("summe: 12")
-/// eprintln("eine zeile ohne wert")
-/// println("fertig")
-/// ```
-///
-/// a group of three whose output interleaves differently on every run of a
-/// program redirected that way - D1's guarantee broken by a resource nobody
-/// checked the identity of, which is the same shape of mistake as the `catch`
-/// handler whose effects nobody counted (ADR-033 §8.3).
-///
-/// So [`Reached::might_be_same`] compares *families* and not kinds. It is the
-/// doctrine that function already states about names - "everything else might
-/// be, and might be is the answer that keeps the order" - applied to the
-/// question of whether two differently-named resources are one. The kinds stay
-/// separate in the ledger because `eprintln` genuinely does not write standard
-/// output, and a contract should say what a function does.
-///
-/// **It costs almost nothing.** Two console writes are microsecond work, and
-/// §8.4 measured that the overlap cannot pay for anything below roughly a
-/// quarter megabyte whatever carries it. The refusal buys a guarantee and
-/// spends nothing anyone could measure.
-///
-/// It is deliberately *not* the general claim that any two resources might
-/// coincide. `prog > a.txt` while the program writes `a.txt` is the same
-/// question one level out, and D2's table answers it by naming the file the
-/// program named: what a program says it reaches is what the analysis compares.
-/// Where that is not enough, D7's `seq` is the escape the language has for
-/// exactly this - "resources that look disjoint and are not".
-const FAMILIES: &[&[&str]] = &[&["stdout", "stderr"]];
-
-/// The family a kind belongs to, which is what two resources are compared on.
-fn family(kind: &str) -> &str {
-    FAMILIES
-        .iter()
-        .find(|family| family.contains(&kind))
-        .and_then(|family| family.first())
-        .copied()
-        .unwrap_or(kind)
-}
-
 /// What stays Rust of a [`Touch`] (ADR-257 step (b)): reading one back, and
 /// the list of kinds this compiler knows. The declaration and `text` are
 /// `tools/ty.nika`'s.
@@ -196,53 +148,13 @@ impl TouchOps for Touch {
     }
 }
 
-/// Which resource a *call* reaches, with the parameter filled in.
-///
-/// A ledger says `file(path)`; a call site says `file` of `"measurements.txt"`.
-/// This is the second, and it is what two calls are actually compared on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reached {
-    pub kind: String,
-    /// The argument that named it, where the compiler could see one.
-    ///
-    /// `None` means the resource is the kind's only one (`stdout`) **or** the
-    /// argument was not something this compiler can evaluate. Those two are
-    /// deliberately not distinguished here - `same_resource` treats an unknown
-    /// argument as "might be any of them", which is the answer both want.
-    pub named: Option<String>,
-    /// `true` where the argument was not readable, so `named` is not a name.
-    pub unknown: bool,
-    pub write: bool,
-}
-
-impl Reached {
-    /// Whether two reached resources might be the same one.
-    ///
-    /// Different *families* never are - see [`FAMILIES`], and note that it is
-    /// families rather than kinds, because `stdout` and `stderr` are one
-    /// destination as soon as somebody redirects one onto the other. The same
-    /// family with two different *known* names never are. Everything else might
-    /// be, and "might be" is the answer that keeps the order.
-    pub fn might_be_same(&self, other: &Reached) -> bool {
-        if family(&self.kind) != family(&other.kind) {
-            return false;
-        }
-        match (&self.named, &other.named) {
-            (Some(a), Some(b)) if !self.unknown && !other.unknown => a == b,
-            // One of them is a resource this compiler could not name, so it
-            // could be the other one.
-            _ => true,
-        }
-    }
-
-    /// Whether two reached resources force an order between their operations.
-    ///
-    /// Two reads never do, however much they overlap: reading does not change
-    /// what the other one sees.
-    pub fn conflicts_with(&self, other: &Reached) -> bool {
-        (self.write || other.write) && self.might_be_same(other)
-    }
-}
+/// Which resource a *call* reaches, with the parameter filled in, and when
+/// two of them force an order: `tools/touch.nika`'s (#125). It compares
+/// **families** and not kinds - `stdout` and `stderr` are two handles and one
+/// destination the moment anybody types `2>&1`, so `println` / `eprintln` /
+/// `println` stays a group in order - and the kinds stay separate in the
+/// ledger, because `eprintln` genuinely does not write standard output.
+pub use nikaia_std::tools::touch::Reached;
 
 #[cfg(test)]
 mod tests {
@@ -335,9 +247,9 @@ mod tests {
 
     /// … but the two console handles are one destination under `2>&1`.
     ///
-    /// The exception [`FAMILIES`] exists for, and the reason it is not an
-    /// exception to the rule so much as the rule about *names* applied one
-    /// level up: two resources this compiler cannot prove distinct are ordered.
+    /// The exception the families exist for (`tools/touch.nika`), and the
+    /// reason it is not an exception to the rule so much as the rule about
+    /// *names* applied one level up: two resources this compiler cannot prove distinct are ordered.
     /// Without it `println` / `eprintln` / `println` is a group of three whose
     /// output interleaves on a redirected program, and D1's guarantee is gone
     /// for the commonest shape a program has.
@@ -518,55 +430,32 @@ pub fn infer(
         }
     }
 
-    // Start optimistic, then take the claim away until nothing changes.
-    let mut known: BTreeMap<&str, bool> = graph
+    // **The fixpoint is Nikaia** (`tools/touch.nika`, #125): start
+    // optimistic, take the claim away until nothing changes, and give every
+    // function whose claim holds the union of what its reachable graph
+    // touches.
+    let unknown: BTreeMap<String, bool> = graph
         .iter()
-        .map(|(name, reach)| (name.as_str(), !reach.unknown))
+        .map(|(name, reach)| (name.clone(), reach.unknown))
         .collect();
-    loop {
-        let mut changed = false;
-        for (name, reach) in &graph {
-            if !known[name.as_str()] {
-                continue;
-            }
-            let reaches_unknown = reach
-                .calls
-                .iter()
-                .any(|callee| !known.get(callee.as_str()).copied().unwrap_or(false));
-            if reaches_unknown {
-                known.insert(name.as_str(), false);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    // And the set, once every claim that holds is settled. A union over the
-    // whole reachable graph rather than one step, because what a caller reaches
-    // is what everything it calls reaches.
-    for (name, holds) in &known {
-        if !holds {
-            continue;
-        }
-        let mut found: BTreeMap<TouchKey, Touch> = BTreeMap::new();
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        let mut todo = vec![*name];
-        while let Some(here) = todo.pop() {
-            if !seen.insert(here) {
-                continue;
-            }
-            let Some(reach) = graph.get(here) else {
-                continue;
-            };
-            found.extend(reach.outside.iter().map(|(k, t)| (k.clone(), t.clone())));
-            todo.extend(reach.calls.iter().map(|c| c.as_str()));
-        }
-        if let Some(contract) = ledger.functions.get_mut(*name) {
+    let outside: BTreeMap<String, Vec<Touch>> = graph
+        .iter()
+        .map(|(name, reach)| (name.clone(), reach.outside.values().cloned().collect()))
+        .collect();
+    let calls: BTreeMap<String, BTreeSet<String>> = graph
+        .into_iter()
+        .map(|(name, reach)| (name, reach.calls))
+        .collect();
+    for (name, touches) in nikaia_std::tools::touch::touches_of(&unknown, &outside, &calls) {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
             // **Only where nobody said.** A hand-written entry is what its
             // author wrote, the way `sync::infer` leaves an assertion alone.
             if !contract.touches_known {
+                // Kept and written in one order, and once each.
+                let found: BTreeMap<TouchKey, Touch> = touches
+                    .into_iter()
+                    .map(|touch| (order_of(&touch), touch))
+                    .collect();
                 contract.touches = found.into_values().collect();
                 contract.touches_known = true;
             }
