@@ -418,21 +418,12 @@ pub fn names_used(parsed: &Parsed, body: &Expr) -> BTreeSet<String> {
 /// The same, for a **statement** — every name any expression in it mentions.
 ///
 /// `names_in` walks an expression; a statement holds several, and the blocks a
-/// statement holds are walked too. Over-approximate in the direction that costs
+/// statement holds are walked too (`tools/names.nika`, #125). Over-approximate in the direction that costs
 /// nothing, exactly as [`names_used`] is: a function name and a field name are
 /// in the answer, and a caller that looks a name up finds nothing for them.
 pub fn names_used_in_stmt(parsed: &Parsed, stmt: &crate::ast::Stmt) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    super::sync::visit_stmt(parsed, stmt, &mut |expr| {
-        super::order::names_in(parsed, expr, &mut out);
-    });
-    let mut blocks: Vec<&crate::ast::Block> = Vec::new();
-    super::sync::visit_stmt_blocks(stmt, &mut |block| blocks.push(block));
-    for block in blocks {
-        for inner in &block.stmts {
-            out.extend(names_used_in_stmt(parsed, &inner.node));
-        }
-    }
+    nikaia_std::tools::names::names_in_statement(stmt, &parsed.interner, &mut out);
     out
 }
 

@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.340] — 2026-10-02
+
+**Every name a statement mentions is Nikaia** (#125, ADR-250).
+`contracts::send`'s `names_used_in_stmt` - which of a task body's names are
+held across a pause (ADR-055 §2 D6) - asks `tools/names.nika`'s
+`names_in_statement`, which `names_in_block` is now made of, instead of
+walking the statement with `sync`'s visitor and asking `names_in` of every
+expression it met, each one walked again inside the last.
+
 ## [0.0.339] — 2026-10-02
 
 **What a body keeps is asked of the walk in Nikaia** (#125, ADR-250). The walk
