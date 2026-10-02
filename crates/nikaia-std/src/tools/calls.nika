@@ -41,6 +41,13 @@ pub fn callee_of(names: ref winnow_grammar::InternerContext, expr: ref Expr, own
         Expr::Dsl { .. } => return Callee::Opaque(null),
         else => return null,
     }
+    return callee_named(names, name, own, library, items)
+}
+
+/// What a call by `name` goes to, as written: `f`, or `a::b::c`. `null`
+/// where the name is a variant of a type, which builds a value and calls
+/// nothing.
+pub fn callee_named(names: ref winnow_grammar::InternerContext, name: String, own: ref Ledger, library: ref Ledger, items: ref Vec[Spanned[Item]]) -> Callee? {
     // This package first: a program's own functions are what it mostly
     // calls, and a local name shadows nothing in a library.
     if own.functions.contains_key(name) {

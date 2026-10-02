@@ -314,7 +314,6 @@ use crate::check::MethodCalls;
 // `Reached` is a name this file already has for something else, so the one
 // `sync` uses for a call site comes in as `Call`.
 use crate::contracts::Ledger;
-use crate::contracts::sync::{Reached as Call, reached, visit_stmt, visit_stmt_blocks};
 use crate::parser::Parsed;
 
 /// What one function's body reaches, before the fixpoint joins it up.
@@ -503,6 +502,11 @@ fn reach_of(
     Some((key, reach))
 }
 
+/// What a body reaches: the walk is Nikaia (`tools/foreign.nika`, #125), and
+/// what each call by name goes to is `calls::callee_named`, the one resolution
+/// every analysis shares (ADR-028). A method call is answered per function by
+/// the type checker and merged in by `reach_of`; a `spawn`, a `dsl` statement
+/// and a call of something that is not a name are calls nobody can name.
 fn collect(
     parsed: &Parsed,
     block: &crate::ast::Block,
@@ -510,23 +514,24 @@ fn collect(
     library: &Ledger,
     reach: &mut Reach,
 ) {
-    for stmt in &block.stmts {
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            match reached(parsed, expr, own, library) {
-                Some(Call::Own(name)) => {
-                    reach.calls.insert(name);
-                }
-                Some(Call::Library { key, .. }) => absorb(library.functions.get(&key), reach),
-                // Answered per function by the type checker, merged in above.
-                Some(Call::Method) => {}
-                // A name nobody knows, or a construct that runs something.
-                Some(Call::Opaque(_)) => reach.unknown = true,
-                None => {}
+    use crate::foreign::Seen;
+    use nikaia_std::tools::calls::{Callee, callee_named};
+    for seen in crate::foreign::seen_in(parsed, block) {
+        let callee = match seen {
+            Seen::Call { name, .. } => {
+                callee_named(&parsed.interner, name, own, library, &parsed.program.items)
             }
-        });
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            collect(parsed, inner, own, library, reach)
-        });
+            Seen::Spawn | Seen::Opaque => Some(Callee::Opaque(None)),
+            _ => None,
+        };
+        match callee {
+            Some(Callee::Own(name)) => {
+                reach.calls.insert(name);
+            }
+            Some(Callee::Library { key, .. }) => absorb(library.functions.get(&key), reach),
+            Some(Callee::Opaque(_)) => reach.unknown = true,
+            Some(Callee::Method) | None => {}
+        }
     }
 }
 
