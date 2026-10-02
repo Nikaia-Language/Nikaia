@@ -9237,6 +9237,15 @@ impl<'a> Checker<'a> {
                 if of_a_map {
                     self.map_views.insert(id);
                 }
+                // **A read through the brackets that jumps where nothing is
+                // there binds what the container holds, not a copy of it**:
+                // `let first = seen[name] ?? continue` is the `Some` of a
+                // `get` below, a `&String`, which a comparison with a `String`
+                // has no impl for (found moving `types` into Nikaia, #125). A
+                // view below whatever its type says, as a `for` binding is.
+                let read_through_a_jump = matches!(value, Expr::Coalesce { value: read, fallback }
+                    if matches!(**read, Expr::Index { .. })
+                        && matches!(**fallback, Expr::Return(_) | Expr::Continue | Expr::Break | Expr::Throw(_)));
                 self.bind_local(Local {
                     id,
                     name,
@@ -9246,7 +9255,7 @@ impl<'a> Checker<'a> {
                     // initialiser: what the emitter writes there is a `&` in
                     // front of a place, and a cast over the name that comes
                     // out of one is the language below's own deref.
-                    lent: false,
+                    lent: read_through_a_jump,
                     changing: false,
                     // A `let` binds a number where one folded; the whole value
                     // is a `comptime`'s, which is the one that *must* fold.
@@ -9861,14 +9870,27 @@ impl<'a> Checker<'a> {
                 self.branch.push((choice, 0));
                 let from = self.taken_so_far();
                 let then = self.block(then_branch);
-                self.a_branch_that_leaves(from, block_exits(then_branch), span);
+                // **A `continue` or a `break` leaves the turn as a `return`
+                // leaves the function**: what the branch took is not read
+                // after it on any path (found moving `types` into Nikaia,
+                // #125). A name from outside the loop is the loop rule's, which
+                // counts the hand-over itself.
+                self.a_branch_that_leaves(
+                    from,
+                    block_exits(then_branch) || block_leaves(then_branch),
+                    span,
+                );
                 self.branch.pop();
                 let branches = match else_branch {
                     Some(otherwise) => {
                         self.branch.push((choice, 1));
                         let from = self.taken_so_far();
                         let other = self.block(otherwise);
-                        self.a_branch_that_leaves(from, block_exits(otherwise), span);
+                        self.a_branch_that_leaves(
+                            from,
+                            block_exits(otherwise) || block_leaves(otherwise),
+                            span,
+                        );
                         self.branch.pop();
                         // Only when both arms agree is there something to say
                         // - or when they meet at text (ADR-207 D2).

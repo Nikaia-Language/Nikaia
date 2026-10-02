@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.354] — 2026-10-02
+
+**`types` is Nikaia** (#125, ADR-250). The check that a file declares a
+name once (`NK1148`), that a bound names a trait (`NK1135`) and that every
+written type is one something declares (`NK1135`, `NK1158` for a `&mut`
+away from C, `NK1182` for an `Array[T]` with no length outside a parameter)
+moved into `tools/types.nika`. What the file declares as types and what an
+`impl`'s target makes a type parameter are `contracts`' answers, handed in.
+14.5 % of the toolchain is Nikaia, up from 13.8 %.
+
+Found moving it, each fixed in the compiler (ADR-250 D3), each held by
+`tests/defects_found_running.rs`:
+
+- **A read through the brackets that jumps where nothing is there binds a
+  view.** `let first = seen[name] ?? continue` is the `Some` of a `get`
+  below, a `&String`, and the checker read it as a value of its own - so
+  `first == kind` for an owned `kind` reached `rustc` as `&String == String`.
+  Such a binding is read as a view now, as a `for` binding is.
+- **A branch that ends in `continue` or `break` takes its takings with it**,
+  as one that ends in `return` already did (ADR-213 D4): `kept.push(name)`
+  then `continue` was refused with `NK2105` for a read after the `if` that no
+  path which pushed reaches. A name from outside the loop is still refused,
+  by the loop's own rule.
+
 ## [0.0.353] — 2026-10-02
 
 **The prover asks `nikaia-logic`** (ADR-265 D1-D4, step 1 of D8). A crate with
