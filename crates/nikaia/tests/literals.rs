@@ -589,4 +589,7 @@ fn a_broken_hole_is_refused_by_the_parser() {
     assert!(unclosed.contains("is never closed"), "{unclosed}");
     let stray = said("fn main() { println(f\"x } y\") }");
     assert!(stray.contains("has no `{` before it"), "{stray}");
+    // The caret on the `}` - with text after it on the line, a space found
+    // there once sent it to the line's first column.
+    assert!(stray.contains("app.nika:1:25"), "{stray}");
 }

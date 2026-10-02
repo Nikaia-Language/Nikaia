@@ -4393,7 +4393,8 @@ grammar! {
                 "A hole in an `f\"…\"` is code, so a string inside it is written with \
                  plain quotes: `f\"{greet(\"Ada\")}\"`, not `\\\"`."
             ) -> { crate::ast::FPart::Text(String::new()) }
-          | "}" => fail(
+          // Asked, not read: the refusal stands on the `}` itself.
+          | peek("}") => fail(
                 "This `}` has no `{` before it. Write `}}` for a literal brace."
             ) -> { crate::ast::FPart::Text(String::new()) }
           // A `{` the string ends inside of: the quote comes before any `}`.

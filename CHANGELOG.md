@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.332] — 2026-10-02
+
+**A caret on a token that is not a word stays where the parser stopped.** The
+renderer looked for the token found as a whole word, and asked a `}` or a
+space for word edges it cannot have; failing that, it took the first match on
+the line, which put the caret of `f"x } y"`'s refusal in column 1. Word edges
+are now asked only where the token begins or ends with a word character, and
+the stray `}` of an `f"…"` is refused on the brace itself rather than after it.
+
 ## [0.0.331] — 2026-10-01
 
 **The emitter builds an `f"…"` from its parts** (#107, ADR-262 D5). The format
