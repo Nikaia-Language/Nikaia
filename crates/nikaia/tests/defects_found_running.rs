@@ -1067,3 +1067,44 @@ fn taking_a_value_out_of_a_set_is_sync() {
         "true 0\n",
     );
 }
+
+/// **A fallback that jumps takes its takings with it** (ADR-213 D4, found
+/// moving `contracts::order`'s walk into Nikaia, #125): `?? return
+/// Refused(key)` hands `key` over only on the path that leaves, so reading
+/// `key` on the next line is no use after it. It was `NK2105`, as a branch
+/// that ends in `continue` was before 0.0.354.
+#[test]
+fn a_fallback_that_returns_takes_its_takings_with_it() {
+    runs(
+        "coalesce-return-takes",
+        "enum Answer {\n\
+         \x20   Found(String),\n\
+         \x20   Missing(String),\n\
+         }\n\
+         \n\
+         fn half(n: i64) -> i64? {\n\
+         \x20   if n % 2 == 0 {\n\
+         \x20       return n / 2\n\
+         \x20   }\n\
+         \x20   return null\n\
+         }\n\
+         \n\
+         fn look(n: i64, key: String) -> Answer {\n\
+         \x20   let h = half(n) ?? return Answer::Missing(key)\n\
+         \x20   return Answer::Found(f\"{key}:{h}\")\n\
+         }\n\
+         \n\
+         fn said(answer: Answer) -> String {\n\
+         \x20   return match answer {\n\
+         \x20       Answer::Found(text) => text,\n\
+         \x20       Answer::Missing(text) => f\"no {text}\",\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(said(look(4, \"a\".clone())))\n\
+         \x20   println(said(look(3, \"b\".clone())))\n\
+         }\n",
+        "a:2\nno b\n",
+    );
+}

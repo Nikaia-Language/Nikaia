@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.363] — 2026-10-02
+
+**A statement is reduced to an operation in Nikaia** (#125, ADR-250). The
+walk half of `contracts::order` (ADR-033) - a `let` of one name or a bare
+expression statement, looked through a `catch` whose handler cannot divert
+(ADR-034), taken apart into the calls it performs, and each call answered
+from the ledgers: what it touches, an unknown kind, a failure nobody
+catches, a result that may not cross back from the closure overlapping
+builds - moved into `tools/order.nika` beside the verdicts. 17.9 % of the
+toolchain is Nikaia.
+
+Found moving it, fixed in the compiler (ADR-250 D3): **a `??` fallback that
+jumps takes its takings with it** (ADR-213 D4), as a branch that leaves
+does. `let c = f(k) ?? return Refused(k)` hands `k` over only on the path
+that leaves, and a use of `k` on the next line was `NK2105`.
+`tests/defects_found_running.rs` holds it.
+
 ## [0.0.362] — 2026-10-02
 
 **Whether statements keep their order is decided in Nikaia** (#125,
