@@ -1335,6 +1335,10 @@ struct Emitter<'p> {
     view_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::view_coalesces`.
     view_coalesces: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::optional_fallbacks`.
+    optional_fallbacks: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::text_in_lists`.
+    text_in_lists: std::collections::BTreeSet<(usize, String)>,
     /// The f-string hole being written, whose literals are keyed by
     /// `check::text_key`.
     hole: std::cell::RefCell<Option<(usize, String)>>,
@@ -2507,6 +2511,8 @@ impl<'p> Emitter<'p> {
             preluded: std::cell::RefCell::new(HashSet::new()),
             view_fallbacks: propagation.view_fallbacks,
             view_coalesces: propagation.view_coalesces,
+            optional_fallbacks: propagation.optional_fallbacks,
+            text_in_lists: propagation.text_in_lists,
             hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
             holding: std::cell::RefCell::new(None),
@@ -8325,6 +8331,19 @@ impl<'p> Emitter<'p> {
                     || self
                         .view_coalesces
                         .contains(&(flow.statement, crate::check::argument_shape(expr)));
+                // **A fallback that may be `null` too** (Part I 3.5): the
+                // first option that has a value, which is the language
+                // below's `or_else`, and the answer is an option still.
+                if self
+                    .optional_fallbacks
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    self.nested(out, value, u8::MAX - 1, depth, flow)?;
+                    out.push(".or_else(|| ");
+                    self.expr(out, fallback, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
@@ -11214,6 +11233,23 @@ impl<'p> Emitter<'p> {
                     .contains(&(flow.statement, crate::check::argument_shape(receiver)))
         }) {
             return self.postfix_base(out, text, depth, flow);
+        }
+        // **A list of text asked for a view of text** (`check::Checked::
+        // text_in_lists`): compared element by element, which a `String` and
+        // a `str` can be.
+        if let Some(list) = receiver.filter(|receiver| {
+            self.text(method) == "contains"
+                && args.len() == 1
+                && self
+                    .text_in_lists
+                    .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+        }) {
+            out.push("nikaia_std::list::contains(&");
+            self.expr(out, list, depth, flow)?;
+            out.push(", ");
+            self.expr(out, &args[0], depth, flow)?;
+            out.push(")");
+            return Ok(());
         }
         let copies = match receiver {
             Some(receiver) => self

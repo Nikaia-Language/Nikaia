@@ -473,6 +473,14 @@ pub struct Checked {
     /// by statement and shape: the answer is a view, and the fallback is
     /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
     pub view_coalesces: BTreeSet<(usize, String)>,
+    /// **A `??` whose fallback may be `null` too**, by statement and shape:
+    /// the answer is the first side that has a value, or `null`, so it is a
+    /// `T?` and the fallback is written as the option it is (Part I 3.5).
+    pub optional_fallbacks: BTreeSet<(usize, String)>,
+    /// **A list of text asked whether it holds a view of text**, by statement
+    /// and receiver: `xs.contains(name)` for a `name: ref String`, which is a
+    /// `&str` below, where a `Vec<String>`'s own `contains` takes a `&String`.
+    pub text_in_lists: BTreeSet<(usize, String)>,
     /// **`count()` calls that are `std`'s count of a sequence**, by statement
     /// and receiver shape: the language below counts in `usize`, and a count
     /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
@@ -1717,6 +1725,10 @@ pub struct Propagation {
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
     /// [`Checked::view_coalesces`].
     pub view_coalesces: BTreeSet<(usize, String)>,
+    /// [`Checked::optional_fallbacks`].
+    pub optional_fallbacks: BTreeSet<(usize, String)>,
+    /// [`Checked::text_in_lists`].
+    pub text_in_lists: BTreeSet<(usize, String)>,
     /// [`Checked::counted`].
     pub counted: BTreeSet<(usize, String)>,
     /// [`Checked::lent_bindings`].
@@ -1991,6 +2003,8 @@ pub fn propagation_against(
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
         view_coalesces: checked.view_coalesces,
+        optional_fallbacks: checked.optional_fallbacks,
+        text_in_lists: checked.text_in_lists,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
         guards_inside_boxes: checked.guards_inside_boxes,
@@ -10532,6 +10546,22 @@ impl<'a> Checker<'a> {
                             .owned_copies
                             .insert((span.at(), argument_shape(receiver)));
                     }
+                    // **A list of text asked for a view of text** (#125): the
+                    // name is a `&str` below, and what the list's own
+                    // `contains` takes is a `&String`, so `rustc` refused the
+                    // file - and the way round it written in Nikaia was a copy
+                    // of the name (`ref name.clone()`), which ADR-008 D5 says
+                    // is never the program's to need.
+                    if key == "Vec::contains"
+                        && let [Expr::Variable(name)] = args
+                        && self
+                            .binding(self.parsed.text(*name))
+                            .is_some_and(|local| local.ty == Ty::view("str"))
+                    {
+                        self.checked
+                            .text_in_lists
+                            .insert((span.at(), argument_shape(receiver)));
+                    }
                     // **A sequence's count is an `i64`** (Part I 2.2): the
                     // emitter writes the conversion a length has.
                     let counts = [ty::SEQ, ty::PAR]
@@ -11648,6 +11678,18 @@ impl<'a> Checker<'a> {
                             inner, &other, fallback, span,
                         ),
                     }
+                }
+                // **`a ?? b` where `b` may be `null` too is a `T?`** (Part I
+                // 3.5): the first that has a value, and there may be none. It
+                // was read as a `T` whatever the fallback was, and the fallback
+                // was converted into what the option holds - which an option
+                // is not, so `rustc` refused the file (found moving `dsl` into
+                // Nikaia, #125).
+                if let (Ty::Nullable(_), Ty::Nullable(_)) = (&left, &other) {
+                    self.checked
+                        .optional_fallbacks
+                        .insert((span.at(), argument_shape(expr)));
+                    return other;
                 }
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
                 // ending the chain means, and claiming nothing about it cost

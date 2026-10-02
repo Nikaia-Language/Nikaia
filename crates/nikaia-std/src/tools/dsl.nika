@@ -11,6 +11,8 @@
 // the Rust it replaced, and every deferred-parameter DSL in the tests goes
 // through it.
 
+use std::collections
+
 /// The `:name` holes of a body, each once, in the order the body first names
 /// them - empty where there are none.
 ///
@@ -74,4 +76,426 @@ fn a_name_begins(c: char) -> bool sync {
         'a'..'z' | 'A'..'Z' | '_' => true,
         else => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// **The rest of the compiler's `dsl`** (#125, ADR-250): what a deferred
+// statement lowers to, which functions take one, and the check of every call
+// that hands one its parameters. The compiler's `dsl` is the calls now.
+
+/// `html` is the one target this compiler *is* the grammar for, and ADR-017
+/// built its `:name` as an immediate capture rather than a deferred parameter.
+comptime TEMPLATE: ref String = "html"
+
+/// Whether a `dsl <target> { … } eod` body's holes are deferred parameters.
+/// For every target but `html` the holes are the grammar author's business,
+/// and the only binding this compiler can give them without inventing a
+/// meaning is the deferred one (ADR-007 D4).
+pub fn is_deferred(target: ref String, body: ref String) -> bool sync {
+    return target != TEMPLATE && parameters(body).len() > 0
+}
+
+/// The Rust name of the shadow type for a parameter list. Derived from the
+/// names themselves, so the call site can write the struct literal knowing
+/// only what it passes - a struct literal names its fields, so the order a
+/// call writes them in does not have to match the body's.
+pub fn type_name(parameters: ref Vec[String]) -> String sync {
+    let mut names = parameters.clone()
+    names.sort()
+    let joined = joined_by(names, "_")
+    return f"NikaiaDslParams_{joined}"
+}
+
+/// Every distinct shadow type a program needs, with the field order of the
+/// body that first asked for it.
+pub fn shadow_types(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> collections::BTreeMap[String, Vec[String]] {
+    let mut statements: Vec[(String, String)] = []
+    for item in items {
+        match item.node {
+            Item::Fn { body, .. } => statements_in_block(body, words, statements),
+            Item::Impl { methods, .. } => {
+                for method in methods {
+                    match method.node {
+                        Item::Fn { body, .. } => statements_in_block(body, words, statements),
+                        else => {}
+                    }
+                }
+            }
+            Item::Test { body, .. } => statements_in_block(body, words, statements),
+            Item::Bench { body, .. } => statements_in_block(body, words, statements),
+            else => {}
+        }
+    }
+    let mut types: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for (target, content) in statements {
+        if is_deferred(target, content) {
+            let found = parameters(content)
+            let named = type_name(found)
+            // The first body that asks keeps its order.
+            if types.contains_key(ref named) {
+                continue
+            }
+            types.insert(named, found)
+        }
+    }
+    return types
+}
+
+/// The functions of this program that accept a DSL's parameters, by name: a
+/// call carrying a `;` is an ordinary options call unless the callee declared
+/// the typed spread, and this is what tells the two apart.
+pub fn drivers(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[String] {
+    let mut names: Vec[String] = []
+    for item in items {
+        match item.node {
+            Item::Impl { methods, .. } => {
+                for method in methods {
+                    a_driver(method.node, words, names)
+                }
+            }
+            else => a_driver(item.node, words, names),
+        }
+    }
+    return names
+}
+
+fn a_driver(item: ref Item, words: ref winnow_grammar::InternerContext, mut names: Vec[String]) {
+    match item {
+        Item::Fn { name, spread, .. } => {
+            if spread != null {
+                let named = name ?? return
+                names.push(words.resolve(named).clone())
+            }
+        }
+        else => {}
+    }
+}
+
+/// Every call site that supplies a DSL's parameters and gets them wrong: a
+/// `:name` the body has and the call does not pass (`NK1112`), a name the
+/// call passes and the body does not have (`NK1113`), and parameters handed
+/// to something that is not a driver (`NK1109`). Reported against the
+/// `.nika` statement they are in (ADR-012).
+pub fn check(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[Finding] {
+    let takers = drivers(words, items)
+    let mut found: Vec[Finding] = []
+    for item in items {
+        match item.node {
+            Item::Fn { body, .. } => checked_body(body, words, takers, found),
+            Item::Impl { methods, .. } => {
+                for method in methods {
+                    match method.node {
+                        Item::Fn { body, .. } => checked_body(body, words, takers, found),
+                        else => {}
+                    }
+                }
+            }
+            Item::Test { body, .. } => checked_body(body, words, takers, found),
+            Item::Bench { body, .. } => checked_body(body, words, takers, found),
+            else => {}
+        }
+    }
+    return found
+}
+
+// One function's body: what each name is bound to, where it is a deferred
+// statement, and every call in it checked against that. A name is bound by a
+// `let` of one name - a deferred block is one value, so a tuple cannot be
+// bound to one (ADR-098) - and any other value unbinds it.
+fn checked_body(body: ref Block, words: ref winnow_grammar::InternerContext, takers: ref Vec[String], mut found: Vec[Finding]) {
+    let mut bound: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for stmt in body.stmts {
+        match stmt.node {
+            Stmt::Let { names, value, .. } => {
+                if names.len() != 1 {
+                    continue
+                }
+                let text = words.resolve(names[0]).clone()
+                let deferred = deferred_parameters(value, words)
+                if deferred != null {
+                    bound.insert(text, deferred ?? [])
+                } else {
+                    bound.remove(ref text)
+                }
+            }
+            else => {}
+        }
+        calls_in_statement(stmt.node, stmt.span, words, bound, takers, found)
+    }
+}
+
+// What a deferred statement takes, or nothing where `value` is not one.
+fn deferred_parameters(value: ref Expr, words: ref winnow_grammar::InternerContext) -> Vec[String]? {
+    return match value {
+        Expr::Dsl { target, content, .. } => if is_deferred(words.resolve(target), content) { parameters(content) } else { null },
+        else => null,
+    }
+}
+
+// The expressions of a statement, without the bodies of its loops.
+fn calls_in_statement(stmt: ref Stmt, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
+    match stmt {
+        Stmt::Let { value, .. } => calls_in(value, span, words, bound, takers, found),
+        Stmt::Comptime { value, .. } => calls_in(value, span, words, bound, takers, found),
+        Stmt::Expr(value) => calls_in(value, span, words, bound, takers, found),
+        Stmt::Return(value) => calls_in(value ?? return, span, words, bound, takers, found),
+        Stmt::Assign { target, value, .. } => {
+            calls_in(target, span, words, bound, takers, found)
+            calls_in(value, span, words, bound, takers, found)
+        }
+        Stmt::For { iter, .. } => calls_in(iter, span, words, bound, takers, found),
+        Stmt::While { cond, .. } => calls_in(cond, span, words, bound, takers, found),
+        else => {}
+    }
+}
+
+// Every statement of a block, a loop's body included.
+fn calls_in_block(block: ref Block, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
+    for stmt in block.stmts {
+        calls_in_statement(stmt.node, span, words, bound, takers, found)
+        match stmt.node {
+            Stmt::While { body, .. } => calls_in_block(body, span, words, bound, takers, found),
+            Stmt::For { body, .. } => calls_in_block(body, span, words, bound, takers, found),
+            else => {}
+        }
+    }
+}
+
+// Every call inside an expression, checked where it names a bound statement.
+fn calls_in(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
+    a_call(expr, span, words, bound, takers, found)
+    match expr {
+        Expr::MethodCall { receiver, args, .. } => {
+            calls_in(receiver, span, words, bound, takers, found)
+            for arg in args {
+                calls_in(arg, span, words, bound, takers, found)
+            }
+        }
+        Expr::SafeMethod { receiver, args, .. } => {
+            calls_in(receiver, span, words, bound, takers, found)
+            for arg in args {
+                calls_in(arg, span, words, bound, takers, found)
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            calls_in(func, span, words, bound, takers, found)
+            for arg in args {
+                calls_in(arg, span, words, bound, takers, found)
+            }
+        }
+        Expr::Block(block) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::Overlap(block) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::If { cond, then_branch, else_branch } => {
+            calls_in(cond, span, words, bound, takers, found)
+            calls_in_block(then_branch, span, words, bound, takers, found)
+            calls_in_block(else_branch ?? return, span, words, bound, takers, found)
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            calls_in(lhs, span, words, bound, takers, found)
+            calls_in(rhs, span, words, bound, takers, found)
+        }
+        Expr::Unary { expr, .. } => calls_in(expr, span, words, bound, takers, found),
+        Expr::Try(inner) => calls_in(inner, span, words, bound, takers, found),
+        Expr::Field { base, .. } => calls_in(base, span, words, bound, takers, found),
+        Expr::SafeField { base, .. } => calls_in(base, span, words, bound, takers, found),
+        Expr::TryCatch { expr, handler } => {
+            calls_in(expr, span, words, bound, takers, found)
+            calls_in_block(handler, span, words, bound, takers, found)
+        }
+        else => {}
+    }
+}
+
+// The deferred statements of a block, as their target and their body: the
+// same walk, asked a different question.
+fn statements_in_block(block: ref Block, words: ref winnow_grammar::InternerContext, mut out: Vec[(String, String)]) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { value, .. } => statements_in(value, words, out),
+            Stmt::Comptime { value, .. } => statements_in(value, words, out),
+            Stmt::Expr(value) => statements_in(value, words, out),
+            Stmt::Return(value) => {
+                let returned = value ?? continue
+                statements_in(returned, words, out)
+            }
+            Stmt::Assign { target, value, .. } => {
+                statements_in(target, words, out)
+                statements_in(value, words, out)
+            }
+            Stmt::For { iter, body, .. } => {
+                statements_in(iter, words, out)
+                statements_in_block(body, words, out)
+            }
+            Stmt::While { cond, body } => {
+                statements_in(cond, words, out)
+                statements_in_block(body, words, out)
+            }
+            else => {}
+        }
+    }
+}
+
+fn statements_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut out: Vec[(String, String)]) {
+    match expr {
+        Expr::Dsl { target, content, .. } => out.push(a_statement(words.resolve(target), content)),
+        Expr::MethodCall { receiver, args, .. } => {
+            statements_in(receiver, words, out)
+            for arg in args {
+                statements_in(arg, words, out)
+            }
+        }
+        Expr::SafeMethod { receiver, args, .. } => {
+            statements_in(receiver, words, out)
+            for arg in args {
+                statements_in(arg, words, out)
+            }
+        }
+        Expr::Call { func, args, .. } => {
+            statements_in(func, words, out)
+            for arg in args {
+                statements_in(arg, words, out)
+            }
+        }
+        Expr::Block(block) => statements_in_block(block, words, out),
+        Expr::Overlap(block) => statements_in_block(block, words, out),
+        Expr::If { cond, then_branch, else_branch } => {
+            statements_in(cond, words, out)
+            statements_in_block(then_branch, words, out)
+            statements_in_block(else_branch ?? return, words, out)
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            statements_in(lhs, words, out)
+            statements_in(rhs, words, out)
+        }
+        Expr::Unary { expr, .. } => statements_in(expr, words, out),
+        Expr::Try(inner) => statements_in(inner, words, out),
+        Expr::Field { base, .. } => statements_in(base, words, out),
+        Expr::SafeField { base, .. } => statements_in(base, words, out),
+        Expr::TryCatch { expr, handler } => {
+            statements_in(expr, words, out)
+            statements_in_block(handler, words, out)
+        }
+        else => {}
+    }
+}
+
+fn a_statement(target: ref String, content: ref String) -> (String, String) {
+    return (target.clone(), content.clone())
+}
+
+// One call, checked where it hands a bound statement its parameters. The
+// statement is whichever subject of the call is one: the receiver
+// (`stm.execute(; …)`) or an argument (`db.execute(stm; …)`) - both spell
+// the same protocol, subject before the `;` and configuration after it. Kap
+// 5.1's zone reaches a `?.m()` for the reason it reaches a `.m()`: a `?.`
+// decides whether the call happens, never what a call is (ADR-066).
+fn a_call(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
+    match expr {
+        Expr::MethodCall { receiver, method, args, config } => {
+            let subject = bound_subject(receiver, words, bound) ?? bound_argument(args, words, bound)
+            a_parameter_call(words.resolve(method), option_names(config, words), subject, span, bound, takers, found)
+        }
+        Expr::SafeMethod { receiver, method, args, config } => {
+            let subject = bound_subject(receiver, words, bound) ?? bound_argument(args, words, bound)
+            a_parameter_call(words.resolve(method), option_names(config, words), subject, span, bound, takers, found)
+        }
+        Expr::Call { func, args, config } => {
+            a_parameter_call(callee_name(func, words), option_names(config, words), bound_argument(args, words, bound), span, bound, takers, found)
+        }
+        else => {}
+    }
+}
+
+// The name a call is made by, or nothing for a call of anything else.
+fn callee_name(func: ref Expr, words: ref winnow_grammar::InternerContext) -> String {
+    return match func {
+        Expr::Variable(name) => words.resolve(name).clone(),
+        else => "",
+    }
+}
+
+// A subject that names a bound statement.
+fn bound_subject(subject: ref Expr, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]]) -> String? {
+    return match subject {
+        Expr::Variable(name) => if bound.contains_key(words.resolve(name)) { words.resolve(name).clone() } else { null },
+        else => null,
+    }
+}
+
+fn bound_argument(args: ref Vec[Expr], words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]]) -> String? {
+    for arg in args {
+        let named = bound_subject(arg, words, bound)
+        if named != null {
+            return named
+        }
+    }
+    return null
+}
+
+// A call that passes options with a bound statement among its subjects.
+// **The parameters arrive at a driver, or nowhere**: what stands after the
+// `;` becomes the shadow value only where the callee declared `...args:
+// Self::dsl`, and anywhere else it was dropped on the way down (ADR-007 D5,
+// ADR-082 §1).
+fn a_parameter_call(callee: ref String, passed: Vec[String], subject: String?, span: ref Span, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
+    if passed.len() == 0 {
+        return
+    }
+    let name = subject ?? return
+    let declared = bound[name] ?? return
+    if callee.len() == 0 || !takers.contains(callee) {
+        let shown: String = if callee.len() == 0 { "this call" } else { callee.clone() }
+        let first: String = if passed.len() > 0 { passed[0].clone() } else { "" }
+        let reached = parameter_list(passed)
+        found.push(refusal("NK1109", span.clone(), f"`{shown}` has no option called `{first}`.", [f"`{name}` is a `dsl` statement, and its parameters go to a driver: a function declared with `...args: Self::dsl`. Nothing in this file declares `{shown}` that way, so {reached} would reach nothing."], f"Hand `{name}` to a driver, a method declared `run(ref self, statement: ref String; ...args: Self::dsl)`, and pass the parameters there: `driver.run({name}; {first}: …)`."))
+        return
+    }
+    let listed = parameter_list(declared)
+    for parameter in declared {
+        if !passed.contains(parameter) {
+            found.push(refusal("NK1112", span.clone(), f"`{name}` needs `:{parameter}`, but this call doesn't pass it.", [f"The statement's parameters are {listed}."], f"Pass it after the `;`: `{parameter}: …`."))
+        }
+    }
+    for given in passed {
+        if declared.contains(given) {
+            continue
+        }
+        let note: String = if declared.len() == 0 { f"`{name}` has no parameters at all." } else { f"The statement's parameters are {listed}." }
+        let near = nearest_parameter(given, declared)
+        let help: String = if near != null { let one = near ?? ""
+            f"Did you mean `{one}`?" } else { f"Add `:{given}` to the statement, or remove it here." }
+        found.push(refusal("NK1113", span.clone(), f"`{name}` has no parameter called `:{given}`.", [note], help))
+    }
+}
+
+// The names a call's options are passed under, after its `;`.
+fn option_names(config: ref Vec[ConfigArg], words: ref winnow_grammar::InternerContext) -> Vec[String] {
+    let mut passed: Vec[String] = []
+    for setting in config {
+        passed.push(words.resolve(setting.name).clone())
+    }
+    return passed
+}
+
+// A declared parameter one edit away from `name`, if there is one.
+fn nearest_parameter(name: ref String, declared: ref Vec[String]) -> String? {
+    for candidate in declared {
+        if one_edit_apart(name, candidate) {
+            return candidate.clone()
+        }
+    }
+    return null
+}
+
+// `` `:a`, `:b` ``.
+fn parameter_list(names: ref Vec[String]) -> String {
+    let mut out: String = ""
+    for k in 0..<names.len() {
+        if k > 0 {
+            out.push_str(", ")
+        }
+        let one = names[k].clone()
+        out.push_str(ref f"`:{one}`")
+    }
+    return out
 }

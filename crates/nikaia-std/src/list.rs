@@ -14,6 +14,14 @@ impl<T> ListExt<T> for Vec<T> {
     }
 }
 
+/// **Whether a list holds a value, asked with a view of it**: `xs.contains(name)`
+/// for a `Vec[String]` and a `name: ref String`, which is a `&str` here, where
+/// the list's own `contains` takes a `&String`. Compared element by element,
+/// which a `String` and a `str` can be - with nothing copied to ask.
+pub fn contains<T: PartialEq<A>, A: ?Sized>(items: &[T], value: &A) -> bool {
+    items.iter().any(|item| item == value)
+}
+
 /// `text.chars().collect()` into a `Vec[char]`, with the room for every
 /// character asked for once: a text's length in bytes is at least its count of
 /// characters. `collect` over `Chars` asks for a quarter of that and grows,

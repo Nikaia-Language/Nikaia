@@ -3492,9 +3492,18 @@ grammar! {
 
         rule jump_expr -> Expr =
             KW_THROW e:expr -> { Expr::Throw(Box::new(e)) }
-          | KW_RETURN e:expr? -> { Expr::Return(Box::new(e)) }
+          | KW_RETURN e:returned? -> { Expr::Return(Box::new(e)) }
           | KW_BREAK -> { Expr::Break }
           | KW_CONTINUE -> { Expr::Continue }
+
+        // **What a `return` inside an expression hands back stands on its
+        // line** ([ADR-135](../../../docs/specification/adr/adr-135.md) D3's
+        // rule). `let x = y ?? return` at the end of a line, in a function
+        // that returns nothing, took the next line's statement as the value
+        // it returned - `names.push(…)` became what the `return` handed back,
+        // and the push never ran where it was written (found moving `dsl`
+        // into Nikaia, #125).
+        rule returned -> Expr = same_line e:expr -> { e }
 
         rule float_lit -> Expr =
             f:FLOAT -> { Expr::LitFloat(f) }

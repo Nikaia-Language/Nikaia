@@ -1168,6 +1168,15 @@ sync = true
 touches = []
 signature = "[K, V](self: ref collections::BTreeMap[K, V], key: ?) -> V?"
 
+# Take a key and what it names out of the map, and hand back what it named
+# (#125: without an entry a `.remove(…)` resolved to nothing and read as a call
+# that may pause).
+[fn."collections::BTreeMap::remove"]
+pub = true
+sync = true
+touches = []
+signature = "[K, V](mut self: ref collections::BTreeMap[K, V], key: ?) -> V?"
+
 # Whether the map holds this key.
 [fn."collections::BTreeMap::contains_key"]
 pub = true
