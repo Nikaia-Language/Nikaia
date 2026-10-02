@@ -45,12 +45,18 @@ macro_rules! signed {
         $(
             impl Of for $t {
                 type Out = usize;
+                // Inlined always, and a comparison rather than a conversion,
+                // for `index::at`'s reason
+                // ([ADR-270](../../../docs/specification/adr/adr-270.md) D8
+                // step 1): the count of `vec![v; n]` is then a length the
+                // optimiser can carry to every read of the list below.
+                #[inline(always)]
                 #[track_caller]
                 fn of(self) -> usize {
-                    match usize::try_from(self) {
-                        Ok(count) => count,
-                        Err(_) => negative(self as i64),
+                    if self < 0 {
+                        negative(self as i64)
                     }
+                    self as usize
                 }
             }
         )*
@@ -64,6 +70,7 @@ macro_rules! unsigned {
         $(
             impl Of for $t {
                 type Out = usize;
+                #[inline(always)]
                 fn of(self) -> usize {
                     self as usize
                 }
@@ -79,6 +86,7 @@ unsigned!(u8, u16, u32, u64, usize);
 /// `index::at` be written around every index.
 impl<'a, T: ?Sized> Of for &'a T {
     type Out = &'a T;
+    #[inline(always)]
     fn of(self) -> &'a T {
         self
     }
@@ -88,6 +96,7 @@ impl<'a, T: ?Sized> Of for &'a T {
 ///
 /// `#[track_caller]`, so a negative count is reported at the line that wrote it -
 /// see [`negative`].
+#[inline(always)]
 #[track_caller]
 pub fn of<N: Of>(count: N) -> N::Out {
     count.of()

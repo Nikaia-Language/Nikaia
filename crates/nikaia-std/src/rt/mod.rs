@@ -209,8 +209,30 @@ pub fn start(user_code: UserCode) -> Started {
 /// first operation in such a process pays the start, which is exactly the cost
 /// D4 exists to remove.
 pub fn handle() -> &'static Runtime {
-    RUNTIME
-        .get_or_init(|| Runtime::build(UserCode::default(), Config::load().unwrap_or_else(report)))
+    RUNTIME.get_or_init(|| {
+        let user_code = ON_DEMAND.get().copied().unwrap_or_default();
+        Runtime::build(user_code, Config::load().unwrap_or_else(report))
+    })
+}
+
+/// What [`on_demand`] recorded, for the start [`handle`] does when something
+/// first asks for the runtime.
+static ON_DEMAND: OnceLock<UserCode> = OnceLock::new();
+
+/// **The runtime of a `main` that cannot pause, started when it is first
+/// needed** ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1).
+///
+/// ADR-038 D4 starts the runtime before the first statement so that an
+/// operation inside the program costs no thread start - which is worth it for a
+/// program that pauses. One whose `main` cannot pause has no operation that
+/// needs the I/O workers, and starting them anyway put a second thread in the
+/// process: the allocator then takes its locks on every allocation, which cost
+/// the solver's kernels two per cent against the same loops in Rust
+/// (`docs/solver-workload.md` §8). Here nothing starts until [`handle`] is
+/// asked, which such a program normally never does.
+pub fn on_demand(user_code: UserCode) -> Started {
+    let _ = ON_DEMAND.set(user_code);
+    Started { _private: () }
 }
 
 /// A configuration file that does not parse is the operator's to fix, and a
@@ -237,7 +259,10 @@ impl Started {
     /// Drain, bounded by the configured deadline, and warn about what did not
     /// finish (ADR-006 D5).
     pub fn finish(self) {
-        let runtime = handle();
+        // A runtime that was never started has nothing to drain (`on_demand`).
+        let Some(runtime) = RUNTIME.get() else {
+            return;
+        };
         let deadline = runtime.config.cleanup_deadline;
         if deadline.is_zero() {
             // "0" disables draining, which is ADR-006 D5's own word for it.

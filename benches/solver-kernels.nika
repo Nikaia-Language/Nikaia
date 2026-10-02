@@ -16,6 +16,7 @@
 // two are the same program.
 
 use std::cli
+use std::text
 
 // --- a deterministic stream of numbers ------------------------------------
 
@@ -116,11 +117,9 @@ fn watch(n: i64) -> i64 {
     // Each clause is watched by its first two literals, with the other as the
     // blocker; a watch holds the clause's offset.
     let mut watched: Vec[Vec[u32]] = []
+    watched.resize((2 * variables) as i64, [])
     let mut blockers: Vec[Vec[u32]] = []
-    for _ in 0..<(2 * variables) {
-        watched.push([])
-        blockers.push([])
-    }
+    blockers.resize((2 * variables) as i64, [])
     for c in 0..<clauses {
         let first = arena[c * size]
         let second = arena[c * size + 1]
@@ -131,9 +130,7 @@ fn watch(n: i64) -> i64 {
     }
     // An assignment: 1 true, -1 false, by literal.
     let mut value: Vec[i64] = []
-    for _ in 0..<(2 * variables) {
-        value.push(0)
-    }
+    value.resize((2 * variables) as i64, 0)
     let mut checksum: i64 = 0
     for round in 0..<n {
         // Assign a third of the variables, then scan the lists of the
@@ -184,9 +181,7 @@ fn watch(n: i64) -> i64 {
 // --- 3. multiplying big integers --------------------------------------------
 
 fn multiply(x: ref Vec[u32], y: ref Vec[u32], mut out: Vec[u32]) sync {
-    for _ in 0..<(x.len() + y.len()) {
-        out.push(0)
-    }
+    out.resize(x.len() + y.len(), 0)
     for i in 0..<x.len() {
         let mut carry: u64 = 0
         let xi = x[i] as u64
@@ -222,7 +217,7 @@ fn bignum(n: i64) -> i64 {
 
 fn main() {
     let count = cli::args().nth(1) ?? "1000"
-    let n: i64 = count.parse() catch { 1000 }
+    let n = text::parse_i64(count) ?? 1000
     let which = cli::args().nth(2) ?? "all"
     if which == "rows" || which == "all" {
         println(f"rows {rows(n)}")

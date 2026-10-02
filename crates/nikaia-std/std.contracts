@@ -1756,6 +1756,23 @@ touches = []
 keeps = ["value"]
 signature = "[T](mut self: ref Vec[T], at: i64, value: T)"
 
+# **A list of a given length in one call** ([ADR-270](../../docs/specification/adr/adr-270.md)
+# D8 step 1): without it a list of `n` zeros was `n` pushes, which cost the
+# solver's big-integer kernel 4 % and its watch lists 8 % against the same
+# loop in Rust (`docs/solver-workload.md` §8). The length is converted as
+# `insert`'s position is (ADR-212 D5).
+# Make the list `length` long: cut it there, or add `value` at the end until
+# it is.
+#
+# The list **keeps** the value, so what is handed over is given away rather
+# than lent.
+[fn."Vec::resize"]
+pub = true
+sync = true
+touches = []
+keeps = ["value"]
+signature = "[T](mut self: ref Vec[T], length: i64, value: T)"
+
 # **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
 # program wrote `a + b`. It was reached before only because a method nothing
 # describes fails open.

@@ -1363,6 +1363,13 @@ struct Emitter<'p> {
     /// written with a flow of its own (`Flow::PLAIN`), and its statements are
     /// still the function's to the plan that walked them.
     keep_function: std::cell::RefCell<String>,
+    /// **The counters of each function that are never negative**, by its key
+    /// ([ADR-270](../../docs/specification/adr/adr-270.md) D8 step 1): a
+    /// local that starts at a non-negative literal and is only ever given or
+    /// added one, and the binding of a range that starts at one. Indexed and
+    /// compared with a length as the `usize` it is, so no sign is tested and
+    /// the optimiser sees one unsigned value in the loop's test and the read.
+    nonnegative: std::cell::RefCell<HashMap<String, HashSet<Symbol>>>,
     /// The method calls that can fail, by the byte their statement starts at
     /// and the method's name (ADR-023 D8).
     ///
@@ -2552,6 +2559,7 @@ impl<'p> Emitter<'p> {
             holding: std::cell::RefCell::new(None),
             hold_args: std::cell::RefCell::new(None),
             keep_function: std::cell::RefCell::new(String::new()),
+            nonnegative: std::cell::RefCell::new(HashMap::new()),
             comptime_values: propagation.comptime_values,
             with_types: propagation.with_types,
             unrolled: propagation.unrolled,
@@ -3005,8 +3013,17 @@ impl<'p> Emitter<'p> {
         out.push(&format!(
             "    nikaia_std::abort::report_in_nikaia_terms({ABORT_TABLE});\n"
         ));
+        // **A `main` that cannot pause starts the runtime on demand**
+        // ([ADR-270](../../docs/specification/adr/adr-270.md) D8 step 1): it
+        // has no operation that needs the I/O workers, and starting them put a
+        // second thread in the process, which makes every allocation take the
+        // allocator's locks. `rt::handle` still starts it if something asks.
+        let start = match (self.pauses(MAIN), self.build.user_parallelism) {
+            (false, UserParallelism::No) => "on_demand",
+            _ => "start",
+        };
         out.push(&format!(
-            "    let nikaia_runtime = nikaia_std::rt::start(nikaia_std::rt::UserCode::{user_code});\n"
+            "    let nikaia_runtime = nikaia_std::rt::{start}(nikaia_std::rt::UserCode::{user_code});\n"
         ));
         // **ADR-055 D3: `main` is what the executor drives.** Where the
         // program's own entry can pause it is an `async fn` (D1), so the one
@@ -4586,6 +4603,9 @@ impl<'p> Emitter<'p> {
             channel,
         } = declared;
         *self.keep_function.borrow_mut() = key.to_string();
+        self.nonnegative
+            .borrow_mut()
+            .insert(key.to_string(), nonnegative_locals(body));
         let flow = Flow {
             changed: &[],
             awaited,
@@ -5996,6 +6016,43 @@ impl<'p> Emitter<'p> {
             // checked (D3).
 
             let stmt = &block.stmts[i];
+            // **An empty list made `n` long at once is `vec![v; n]`**
+            // ([ADR-270](../../docs/specification/adr/adr-270.md) D8 step 1):
+            // `let mut xs: Vec[T] = []` followed by `xs.resize(n, v)` is one
+            // allocation of a known length - zeroed by the system for zeros -
+            // which is what Rust writes, and what lets the optimiser drop the
+            // bounds checks of every read below that it can see is in range.
+            if i < last
+                && let Some((fill, length)) = self.filled_at_once(stmt, &block.stmts[i + 1])
+            {
+                let declared = Out::scratch(|scratch| {
+                    scratch.from(&stmt.span, |s| {
+                        self.stmt(s, &stmt.node, &stmt.span, depth + 1, tail.at(i, last), flow)
+                    })
+                })?;
+                if let Some(head) = declared.buf.strip_suffix("vec![];") {
+                    let next = &block.stmts[i + 1];
+                    let flow = flow.at(next.span.at());
+                    let value = Out::scratch(|v| self.expr(v, fill, depth + 1, flow))?;
+                    let count = Out::scratch(|c| match only_literals(length) {
+                        true => self.expr(c, length, depth + 1, flow.inferred()),
+                        false => {
+                            c.push("nikaia_std::count::of(");
+                            self.expr(c, length, depth + 1, flow)?;
+                            c.push(")");
+                            Ok(())
+                        }
+                    })?;
+                    out.push(&inner_pad);
+                    out.from(&stmt.span, |o| {
+                        o.push(&format!("{head}vec![{}; {}];", value.buf, count.buf));
+                        Ok(())
+                    })?;
+                    out.push("\n");
+                    i += 2;
+                    continue;
+                }
+            }
             out.push(&inner_pad);
             out.from(&stmt.span, |out| {
                 self.stmt(
@@ -6013,6 +6070,106 @@ impl<'p> Emitter<'p> {
         out.push(&pad);
         out.push("}");
         Ok(())
+    }
+
+    /// Whether `expr` is never negative here: a non-negative literal, a
+    /// counter of [`Emitter::nonnegative`], or a sum or product of those.
+    fn never_negative(&self, flow: Flow<'_>, expr: &Expr) -> bool {
+        match expr {
+            Expr::LitInt { negative, .. } => !negative,
+            Expr::Variable(name) => self
+                .nonnegative
+                .borrow()
+                .get(flow.function)
+                .is_some_and(|set| set.contains(name)),
+            Expr::Binary {
+                op: BinaryOp::Add | BinaryOp::Mul,
+                lhs,
+                rhs,
+                ..
+            } => self.never_negative(flow, lhs) && self.never_negative(flow, rhs),
+            _ => false,
+        }
+    }
+
+    /// `i < xs.len()` for a counter `i` that is never negative, written as
+    /// `(i as usize) < xs.len()`; `None` where the comparison is not that.
+    fn against_a_length(
+        &self,
+        out: &mut Out,
+        op: &BinaryOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<Option<()>> {
+        let a_length = |e: &Expr| {
+            matches!(e, Expr::MethodCall { method, args, .. }
+                if args.is_empty() && self.text(*method) == "len")
+        };
+        let (counter, length, counter_first) = match (lhs, rhs) {
+            (c, l) if a_length(l) && !a_length(c) && self.never_negative(flow, c) => (c, l, true),
+            (l, c) if a_length(l) && !a_length(c) && self.never_negative(flow, c) => (c, l, false),
+            _ => return Ok(None),
+        };
+        let written = Out::scratch(|s| self.nested(s, length, u8::MAX, depth, flow))?;
+        let Some(bare) = written
+            .buf
+            .strip_suffix(" as i64")
+            .or_else(|| {
+                written
+                    .buf
+                    .strip_prefix('(')
+                    .and_then(|b| b.strip_suffix(" as i64)"))
+            })
+        else {
+            return Ok(None);
+        };
+        let counted = Out::scratch(|s| self.expr(s, counter, depth, flow))?;
+        let counter = format!("(({}) as usize)", counted.buf);
+        let (left, right) = match counter_first {
+            true => (counter, bare.to_string()),
+            false => (bare.to_string(), counter),
+        };
+        out.push(&format!("{left} {} {right}", binary_op(*op)));
+        Ok(Some(()))
+    }
+
+    /// `let mut xs = []` and, right after it, `xs.resize(n, v)` with `std`'s
+    /// `resize`: the value and the length, for `vec![v; n]`.
+    fn filled_at_once<'s>(
+        &self,
+        declared: &'s Spanned<Stmt>,
+        next: &'s Spanned<Stmt>,
+    ) -> Option<(&'s Expr, &'s Expr)> {
+        let Stmt::Let {
+            names,
+            mutable: true,
+            value: Expr::ListLit { items, .. },
+            ..
+        } = &declared.node
+        else {
+            return None;
+        };
+        let ([name], true) = (names.as_slice(), items.is_empty()) else {
+            return None;
+        };
+        let Stmt::Expr(Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            config,
+        }) = &next.node
+        else {
+            return None;
+        };
+        let filled = matches!(&**receiver, Expr::Variable(r) if r == name)
+            && self.text(*method) == "resize"
+            && args.len() == 2
+            && config.is_empty()
+            && self.own_contracts.candidates("resize").is_empty()
+            && !args.iter().any(|a| mentions_symbol(a, *name));
+        filled.then(|| (&args[1], &args[0]))
     }
 
     /// Whether a **branch of an `overlap`** can pause
@@ -6445,6 +6602,11 @@ impl<'p> Emitter<'p> {
                         out.push(", ");
                         self.key(out, form, index, depth, flow)?;
                         out.push(&format!(", {STORED}); }}"));
+                    }
+                    None if self.never_negative(flow, index) => {
+                        out.push(", (");
+                        self.index_expr(out, index, depth, flow)?;
+                        out.push(&format!(") as usize, {STORED}); }}"));
                     }
                     None => {
                         out.push(", nikaia_std::index::at(");
@@ -8300,6 +8462,16 @@ impl<'p> Emitter<'p> {
                         _ => ".is_some()",
                     });
                     return Ok(());
+                }
+                // **A counter that is never negative is compared with a length
+                // as a `usize`** ([ADR-270](../../docs/specification/adr/adr-270.md)
+                // D8 step 1): `i < xs.len()` is `(i as usize) < xs.len()`, the
+                // same comparison for `i >= 0`, and the one the optimiser can
+                // match with the bounds check of `xs[i]` and drop it.
+                if op.is_comparison()
+                    && let Some(compared) = self.against_a_length(out, op, lhs, rhs, depth, flow)?
+                {
+                    return Ok(compared);
                 }
                 // Parenthesised only where precedence needs it: the operators
                 // mean the same in both languages, so `value * 10 + n` should
@@ -11816,6 +11988,11 @@ impl<'p> Emitter<'p> {
         match (key, only_literals(index) && !counts_down) {
             (Some(form), _) => self.key(out, form, index, depth, flow)?,
             (None, true) => self.index_expr(out, index, depth, flow.inferred())?,
+            (None, false) if !slicing && self.never_negative(flow, index) => {
+                out.push("(");
+                self.index_expr(out, index, depth, flow)?;
+                out.push(") as usize");
+            }
             (None, false) => {
                 out.push("nikaia_std::index::at(");
                 let flow = match counts_down {
@@ -13172,7 +13349,7 @@ pub fn branch_starts_first<'p>(
     move |stmt| emitter.branch_pauses(stmt, Flow::PLAIN)
 }
 
-pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn visit_block<'a>(block: &'a Block, f: &mut impl FnMut(&'a Expr)) {
     for stmt in &block.stmts {
         match &stmt.node {
             Stmt::Let { value, .. } | Stmt::Comptime { value, .. } => visit_expr(value, f),
@@ -13206,7 +13383,7 @@ pub(crate) fn visit_block(block: &Block, f: &mut impl FnMut(&Expr)) {
 /// ([ADR-099](../../docs/specification/adr/adr-099.md)): `NK2205` asks whether
 /// a `get` is written anywhere inside a `set`'s argument, and a second walk
 /// over the same shape is a second thing to keep in step with the AST.
-pub(crate) fn visit_expr(expr: &Expr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn visit_expr<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     f(expr);
     match expr {
         Expr::Block(block) | Expr::Unsafe(block) | Expr::Overlap(block) => visit_block(block, f),
@@ -13831,4 +14008,135 @@ enum Names<'a> {
 fn binds_a_part(part: &MatchPattern) -> bool {
     matches!(part, MatchPattern::Path(one) if one.len() == 1)
         || matches!(part, MatchPattern::Otherwise)
+}
+
+/// Whether `expr` reads the name `name` anywhere in it.
+fn mentions_symbol(expr: &Expr, name: Symbol) -> bool {
+    let mut found = false;
+    visit_expr(expr, &mut |e| {
+        if let Expr::Variable(v) = e {
+            found |= *v == name;
+        }
+    });
+    found
+}
+
+/// **The counters of a function body that are never negative**
+/// ([`Emitter::nonnegative`]): a `let` of a non-negative literal whose name is
+/// only ever given or added a non-negative literal, and a range's binding where
+/// the range starts at one. A name declared twice, or handed to a call - which
+/// might change it - is left out.
+fn nonnegative_locals(body: &Block) -> HashSet<Symbol> {
+    let mut statements: Vec<&Stmt> = Vec::new();
+    let mut seen: HashSet<*const Stmt> = HashSet::new();
+    every_statement(body, &mut statements, &mut seen);
+    let literal = |e: &Expr| matches!(e, Expr::LitInt { negative: false, .. });
+    let mut declared: HashMap<Symbol, usize> = HashMap::new();
+    let mut candidates: HashSet<Symbol> = HashSet::new();
+    let mut spoiled: HashSet<Symbol> = HashSet::new();
+    for stmt in &statements {
+        match stmt {
+            Stmt::Let { names, ty, value, .. } => {
+                for name in names {
+                    *declared.entry(*name).or_default() += 1;
+                }
+                if let [name] = names.as_slice()
+                    && ty.is_none()
+                    && literal(value)
+                {
+                    candidates.insert(*name);
+                }
+            }
+            Stmt::For { bindings, iter, .. } => {
+                for name in bindings {
+                    *declared.entry(*name).or_default() += 1;
+                }
+                if let ([name], Expr::Range { start, .. }) = (bindings.as_slice(), iter)
+                    && literal(start)
+                {
+                    candidates.insert(*name);
+                }
+            }
+            Stmt::Assign {
+                target: Expr::Variable(name),
+                op,
+                value,
+            } => {
+                let keeps = match op {
+                    None | Some(BinaryOp::Add) | Some(BinaryOp::Mul) => literal(value),
+                    _ => false,
+                };
+                if !keeps {
+                    spoiled.insert(*name);
+                }
+            }
+            _ => {}
+        }
+    }
+    // A name handed to a call may be changed by it (`mut` parameters).
+    visit_block(body, &mut |expr| {
+        let args = match expr {
+            Expr::Call { args, .. }
+            | Expr::MethodCall { args, .. }
+            | Expr::SafeMethod { args, .. } => args,
+            _ => return,
+        };
+        for arg in args {
+            if let Expr::Variable(name) = arg {
+                spoiled.insert(*name);
+            }
+        }
+    });
+    candidates
+        .into_iter()
+        .filter(|name| declared.get(name) == Some(&1) && !spoiled.contains(name))
+        .collect()
+}
+
+/// Every statement of `block` and of every block inside it, once each.
+fn every_statement<'b>(
+    block: &'b Block,
+    out: &mut Vec<&'b Stmt>,
+    seen: &mut HashSet<*const Stmt>,
+) {
+    for stmt in &block.stmts {
+        if !seen.insert(&stmt.node as *const Stmt) {
+            continue;
+        }
+        out.push(&stmt.node);
+        if let Stmt::For { body, .. } | Stmt::While { body, .. } = &stmt.node {
+            every_statement(body, out, seen);
+        }
+    }
+    let mut inner: Vec<&'b Block> = Vec::new();
+    collect_blocks(block, &mut inner);
+    for b in inner {
+        every_statement(b, out, seen);
+    }
+}
+
+/// Every block that stands inside the expressions of `block`'s statements, at
+/// any depth: an `if`'s branches, a closure's body - one handed to a call too -
+/// a block, an `unsafe` and an `overlap`.
+fn collect_blocks<'b>(block: &'b Block, out: &mut Vec<&'b Block>) {
+    visit_block(block, &mut |expr| match expr {
+        Expr::Block(b) | Expr::Unsafe(b) | Expr::Overlap(b) => out.push(b),
+        Expr::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            out.push(then_branch);
+            if let Some(b) = else_branch {
+                out.push(b);
+            }
+        }
+        Expr::Closure { body, .. } => out.push(body),
+        _ => {}
+    });
+    for stmt in &block.stmts {
+        if let Stmt::For { body, .. } | Stmt::While { body, .. } = &stmt.node {
+            out.push(body);
+        }
+    }
 }

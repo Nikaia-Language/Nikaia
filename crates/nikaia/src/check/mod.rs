@@ -21904,6 +21904,7 @@ const COUNTS: &[(&str, usize)] = &[
     ("Vec::chunks", 0),
     ("Vec::windows", 0),
     ("Vec::insert", 0),
+    ("Vec::resize", 0),
     ("str::splitn", 0),
 ];
 
