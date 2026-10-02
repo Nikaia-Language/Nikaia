@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.351 (Draft)
+**Version:** 0.0.352 (Draft)
 **Date:** 2026-10-02
 
 ---
@@ -422,7 +422,7 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 
 **What the prover reads** (ADR-264 D9). Comparisons of whole numbers built with `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`, over bindings that do not change, and the `len()` of a list or text that does not change; it knows the branch an `if` is in, what a jump with its condition after it has ruled out (`return 0 if b == 0` leaves `b != 0`), a `for` over a range, a `let`'s value and every claim proved before. It may fail to prove a true claim and never proves a false one (D10); a claim it cannot prove is checked when the program runs. A claim it can **refute**, with values that reach it false, is a warning naming them (D8), and is still checked.
 
-**A claim about parameters is the caller's** (ADR-264 D5). An `assert` at the top of a function that names only its parameters, and that the body cannot prove, is the function's precondition: the body assumes it, a call that proves it costs nothing, and a call that does not carries the check, so that a failure names the caller. `divide` below asks each caller to show `b != 0`. Until the ledger carries preconditions, a `pub fn`, a method and a function handed on as a value check theirs in the body.
+**A claim about parameters is the caller's** (ADR-264 D5). An `assert` at the top of a function that names only its parameters, and that the body cannot prove, is the function's precondition: the body assumes it, a call that proves it costs nothing, and a call that does not carries the check, so that a failure names the caller. `divide` below asks each caller to show `b != 0`. Until the ledger carries preconditions, a `pub fn`, a method and a function handed on as a value check theirs in the body. [ADR-266](adr/adr-266.md), not built yet, generalises this: every written `assert` is part of its function's published contract, placed as a precondition or postcondition by computing it back to the entry or forward to the exit; a guard is only observed; and a contract changed in the breaking direction warns its author.
 
 **A claim about data from outside the program is refused** (`NK1202`, ADR-264 D6): it is not a defect when such data is wrong, so it is checked where it arrives, with a guard the program handles (ADR-010); after the guard, the claim is proved.
 

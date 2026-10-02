@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.352] — 2026-10-02
+
+**ADR-266: a written `assert` is a published contract.** The owner's answer
+to what crosses a package boundary: no clauses in a signature - the `assert`
+the author writes is the promise, and a guard is only an observation, read as
+absent by another package. A claim is placed by computing it back to the
+entry (weakest precondition: a `let` substitutes, an `if` becomes an
+implication) or forward to every exit, so a claim after `let y = x - 1` is a
+precondition about `x`. The ledger gains `requires`, `ensures`, `inferred`
+and `from`; a contract that changes in the breaking direction, decided by the
+solver against the committed ledger, warns its author; a function with a
+precondition gets a checked and an unchecked entry. Amends ADR-264 D5. Not
+built.
+
 ## [0.0.351] — 2026-10-02
 
 **ADR-265: the prover is a frontend, a logic and a solver.** The owner asked
