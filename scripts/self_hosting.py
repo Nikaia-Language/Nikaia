@@ -49,7 +49,7 @@ COMPILER_NIKA = {
     "locks.nika": "contracts::locks: which functions can open a lock, the fixpoint (0.0.322)",
     "touch.nika": "contracts::touch: when two resources force an order, the touches fixpoint (0.0.324)",
     "calls.nika": "contracts::sync::reached: what a call resolves to, for every analysis (0.0.325)",
-    "foreign.nika": "foreign, contracts::trust and contracts::locks: every qualified name a unit writes and every call it makes, the first walk of the tree (0.0.334, 0.0.336, 0.0.337)",
+    "foreign.nika": "the walk of the tree, for foreign, contracts::trust, contracts::locks, contracts::keep and contracts::keeps (0.0.334, 0.0.336, 0.0.337, 0.0.339)",
     "names.nika": "contracts::order: every name an expression mentions (0.0.338)",
 }
 

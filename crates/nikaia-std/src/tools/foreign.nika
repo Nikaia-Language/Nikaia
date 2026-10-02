@@ -17,6 +17,12 @@
 // A package's alias is resolved by the compiler too (`unaliased`, ADR-046 D3),
 // because the manifest key is the only name the declaration has.
 
+/// What the walk has met so far, and whether it was asked for names.
+struct Walked {
+    seen: Vec[Seen],
+    with_names: bool,
+}
+
 /// What the walk meets that a reader outside it asks about.
 pub enum Seen {
     /// A qualified name, beside the span of the item or statement it is
@@ -28,28 +34,47 @@ pub enum Seen {
     /// hands the parameter called `root` where `root_at` says the callee has
     /// one (`--trust`, ADR-108 D4).
     Call { name: String, wrote: Wrote?, span: Span },
+    /// A bare name, where the walk was asked for them.
+    Name(String),
+    /// A `spawn`, where the walk was asked for names: its body runs later and
+    /// elsewhere, and the walk does not descend into it, so a reader of names
+    /// knows there are some it did not see.
+    Spawn,
 }
 
 /// Every qualified name `program` writes and every call it makes by name, in
 /// the order the walk meets them. `root_at` answers where a callee's `root`
 /// parameter stands, or `-1`.
 pub fn written_in(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync) -> Vec[Seen] {
-    let mut found: Vec[Seen] = []
+    let mut found = Walked { seen: [], with_names: false }
     for item in program.items {
         item_names(item.node, item.span, names, unaliased, holes_of, root_at, found)
     }
-    return found
+    return found.seen
 }
 
 /// The same walk over one block - a function's body, a grammar's action -
 /// for a reader that asks about one function at a time (`contracts::locks`).
-pub fn seen_in(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync) -> Vec[Seen] {
-    let mut found: Vec[Seen] = []
+/// `with_names` asks for every bare name and every `spawn` too, which a
+/// reader of what a body keeps needs (`contracts::keep`, `contracts::keeps`)
+/// and a build's every-file walk does not pay for.
+pub fn seen_in(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, with_names: bool) -> Vec[Seen] {
+    let mut found = Walked { seen: [], with_names: with_names }
     block_names(block, names, unaliased, holes_of, root_at, found)
-    return found
+    return found.seen
 }
 
-fn item_names(item: ref Item, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+/// The same walk from one expression: its own expressions, then the blocks
+/// it holds.
+pub fn seen_in_expression(expr: ref Expr, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, with_names: bool) -> Vec[Seen] {
+    let mut found = Walked { seen: [], with_names: with_names }
+    let nowhere = Span::nowhere()
+    expression_paths(expr, nowhere, names, unaliased, holes_of, root_at, found)
+    expression_blocks(expr, names, unaliased, holes_of, root_at, found)
+    return found.seen
+}
+
+fn item_names(item: ref Item, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     match item {
         Item::Fn { args, ret_type, body, .. } => {
             for arg in args {
@@ -75,10 +100,10 @@ fn item_names(item: ref Item, span: ref Span, names: ref winnow_grammar::Interne
 // A written type may name a crate too - `hyper_shim::Handle` in a parameter is
 // as much a reach across the boundary as a call is, and it is the one the
 // crossing rules are about.
-fn type_names(ty: ref Type, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Vec[Seen]) {
+fn type_names(ty: ref Type, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Walked) {
     let name = unaliased(names.resolve(ty.name))
     if name.contains("::") {
-        found.push(named_at(name, span))
+        found.seen.push(named_at(name, span))
     }
     for argument in ty.generics {
         type_names(argument, span, names, unaliased, found)
@@ -86,13 +111,13 @@ fn type_names(ty: ref Type, span: ref Span, names: ref winnow_grammar::InternerC
     maybe_type_names(ty.code?.result, span, names, unaliased, found)
 }
 
-fn maybe_type_names(ty: ref Type?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Vec[Seen]) {
+fn maybe_type_names(ty: ref Type?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Walked) {
     type_names(ty ?? return, span, names, unaliased, found)
 }
 
 // A block's statements: a `let`'s written type, the paths each statement's
 // expressions hold, and then the blocks inside it.
-fn block_names(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn block_names(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     for stmt in block.stmts {
         match stmt.node {
             Stmt::Let { ty, .. } => maybe_type_names(ty, stmt.span, names, unaliased, found),
@@ -105,7 +130,7 @@ fn block_names(block: ref Block, names: ref winnow_grammar::InternerContext, una
 
 // Every expression a statement holds, without descending into nested blocks -
 // those are walked separately, so that each keeps its own statement's span.
-fn statement_paths(stmt: ref Stmt, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn statement_paths(stmt: ref Stmt, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     match stmt {
         Stmt::Let { value, .. } => expression_paths(value, span, names, unaliased, holes_of, root_at, found),
         Stmt::Comptime { value, .. } => expression_paths(value, span, names, unaliased, holes_of, root_at, found),
@@ -121,20 +146,30 @@ fn statement_paths(stmt: ref Stmt, span: ref Span, names: ref winnow_grammar::In
     }
 }
 
-fn maybe_expression_paths(expr: ref Expr?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn maybe_expression_paths(expr: ref Expr?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     expression_paths(expr ?? return, span, names, unaliased, holes_of, root_at, found)
 }
 
 // Every path inside an expression, the holes of a literal included, and not
 // inside the bodies of nested blocks.
-fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     for hole in holes_of(expr) {
         expression_paths(hole, span, names, unaliased, holes_of, root_at, found)
     }
     match expr {
         Expr::Path(segments) => {
             if segments.len() > 0 {
-                found.push(named_at(path_name(segments, names, unaliased), span))
+                found.seen.push(named_at(path_name(segments, names, unaliased), span))
+            }
+        }
+        Expr::Variable(name) => {
+            if found.with_names {
+                found.seen.push(Seen::Name(names.resolve(name).clone()))
+            }
+        }
+        Expr::Spawn { .. } => {
+            if found.with_names {
+                found.seen.push(Seen::Spawn)
             }
         }
         Expr::Call { func, args, config } => {
@@ -228,7 +263,7 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
 }
 
 // Every block a statement holds.
-fn statement_blocks(stmt: ref Stmt, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn statement_blocks(stmt: ref Stmt, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     match stmt {
         Stmt::For { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
         Stmt::While { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
@@ -248,7 +283,7 @@ fn statement_blocks(stmt: ref Stmt, names: ref winnow_grammar::InternerContext, 
 
 // Every block an expression holds, the body of a lambda passed as an argument
 // included: a trailing lambda runs during the call it is given to.
-fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     match expr {
         Expr::Block(block) => block_names(block, names, unaliased, holes_of, root_at, found),
         Expr::Unsafe(block) => block_names(block, names, unaliased, holes_of, root_at, found),
@@ -319,7 +354,7 @@ fn named_at(name: String, span: ref Span) -> Seen {
 }
 
 // A call by a name or a path, as written, and what it hands a `root`.
-fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref winnow_grammar::InternerContext, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
+fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref winnow_grammar::InternerContext, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     let name = match func {
         Expr::Variable(name) => names.resolve(name).clone(),
         Expr::Path(segments) => call_path(segments, names),
@@ -333,7 +368,7 @@ fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref 
     if at >= 0 && at < args.len() {
         wrote = written_root(names, args[at])
     }
-    found.push(Seen::Call { name: name, wrote: wrote, span: span.clone() })
+    found.seen.push(Seen::Call { name: name, wrote: wrote, span: span.clone() })
 }
 
 // `fs::Root::Dir` as written, every segment as it stands.

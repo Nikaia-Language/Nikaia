@@ -1025,38 +1025,18 @@ impl Default for Named {
     }
 }
 
+/// By the walk in Nikaia (`tools/foreign.nika`, #125): every bare name, and a
+/// `spawn` it does not read into clears `exhaustive`.
 fn names_in_block(parsed: &Parsed, block: &Block, found: &mut Named) {
-    for stmt in &block.stmts {
-        super::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
-            note_name(parsed, expr, found);
-        });
-        let mut blocks: Vec<&Block> = Vec::new();
-        super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| blocks.push(inner));
-        for inner in blocks {
-            names_in_block(parsed, inner, found);
-        }
-    }
+    let (names, a_spawn) = crate::foreign::names_in_block(parsed, block);
+    found.names.extend(names);
+    found.exhaustive &= !a_spawn;
 }
 
 fn names_in_expr(parsed: &Parsed, expr: &Expr, found: &mut Named) {
-    super::sync::visit_expr(parsed, expr, &mut |inner| {
-        note_name(parsed, inner, found);
-    });
-    let mut blocks: Vec<&Block> = Vec::new();
-    super::sync::visit_expr_blocks(expr, &mut |block| blocks.push(block));
-    for block in blocks {
-        names_in_block(parsed, block, found);
-    }
-}
-
-fn note_name(parsed: &Parsed, expr: &Expr, found: &mut Named) {
-    match expr {
-        Expr::Variable(ident) => {
-            found.names.insert(parsed.text(*ident).to_string());
-        }
-        Expr::Spawn { .. } => found.exhaustive = false,
-        _ => {}
-    }
+    let (names, a_spawn) = crate::foreign::names_in_expression(parsed, expr);
+    found.names.extend(names);
+    found.exhaustive &= !a_spawn;
 }
 
 /// Whether a declared type has text both kinds flow into anywhere in it.
