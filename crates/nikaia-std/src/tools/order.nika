@@ -670,3 +670,121 @@ fn an_arm_throws(arms: ref Vec[MatchArm], bound: bool) -> bool {
     }
     return false
 }
+
+/// **Every `overlap { … }` block in a program, and what it was allowed**
+/// (ADR-050 D3): which branches are started first and which run while they
+/// wait (D6), and - where two of them meet on something - the first pair
+/// that may not run together and why. `overlaps_in` is the blocks a body
+/// holds, at any depth; `pauses` whether a branch can pause, which is the
+/// emitter's answer and no analysis's here (ADR-033 §8.2b).
+pub fn overlap_report(items: ref Vec[Spanned[Item]], names: ref winnow_grammar::InternerContext, walking: ref Walking, overlaps_in: fn(ref Block) -> Vec[Block] sync, pauses: fn(ref Spanned[Stmt]) -> bool sync) -> String {
+    let mut out: String = ""
+    for item in items {
+        match item.node {
+            Item::Fn { .. } => block_report(item.node, null, names, walking, overlaps_in, pauses, out),
+            Item::Impl { target, methods, .. } => {
+                let owner: String? = names.resolve(target.name).clone()
+                for method in methods {
+                    block_report(method.node, owner, names, walking, overlaps_in, pauses, out)
+                }
+            }
+            else => {}
+        }
+    }
+    if out.len() == 0 {
+        out.push_str("this program writes no `overlap { … }` block.\n")
+    }
+    return out
+}
+
+// One function's blocks. **The header is read off the pairs rather than
+// asserted**, and the first refused pair is the one named: a block that meets
+// on two things has one thing wrong with it.
+fn block_report(item: ref Item, target: ref String?, names: ref winnow_grammar::InternerContext, walking: ref Walking, overlaps_in: fn(ref Block) -> Vec[Block] sync, pauses: fn(ref Spanned[Stmt]) -> bool sync, mut out: String) {
+    match item {
+        Item::Fn { name, body, .. } => {
+            let own_name = function_name(names, name)
+            let key = keyed(target, own_name)
+            for block in overlaps_in(body) {
+                one_block_report(key, block, names, walking, pauses, out)
+            }
+        }
+        else => {}
+    }
+}
+
+fn keyed(target: ref String?, own_name: ref String) -> String {
+    let owner = target ?? return own_name.clone()
+    return f"{owner}::{own_name}"
+}
+
+fn one_block_report(key: ref String, block: ref Block, names: ref winnow_grammar::InternerContext, walking: ref Walking, pauses: fn(ref Spanned[Stmt]) -> bool sync, mut out: String) {
+    if block.stmts.len() == 0 {
+        return
+    }
+    let mut operations: Vec[Operation] = []
+    let mut present: Vec[bool] = []
+    let mut lines: Vec[String] = []
+    for stmt in block.stmts {
+        let answer = accounted(stmt.node, names, walking)
+        let named = match answer {
+            Accounted::Operation(operation) => operation.callee.clone(),
+            else => "…",
+        }
+        match answer {
+            Accounted::Operation(operation) => {
+                operations.push(operation.clone())
+                present.push(true)
+            }
+            else => {
+                operations.push(Operation { binds: null, mentions: collections::BTreeSet(), reaches: [], callee: "" })
+                present.push(false)
+            }
+        }
+        // D6's two halves, said as they happen.
+        let when = if pauses(stmt) { "started first" } else { "runs while they wait" }
+        lines.push(f"    {padded_right(when, 22)} {named}")
+    }
+    let count = block.stmts.len()
+    let refused = first_refused(operations, present)
+    if refused.len() == 0 {
+        out.push_str(ref f"{key}: an `overlap` of {count} branches, which meet on nothing\n")
+    } else {
+        out.push_str(ref refused_header(key, count, operations, refused))
+    }
+    for line in lines {
+        out.push_str(line)
+        out.push('\n')
+    }
+}
+
+// The first pair, in written order, that may not run together - as its two
+// positions, or nothing.
+fn first_refused(operations: ref Vec[Operation], present: ref Vec[bool]) -> Vec[i64] {
+    for i in 0..<operations.len() {
+        for j in (i + 1)..<operations.len() {
+            if present[i] && present[j] && !verdict(operations[i], operations[j]).is_overlap() {
+                return [i, j]
+            }
+        }
+    }
+    return []
+}
+
+fn refused_header(key: ref String, count: i64, operations: ref Vec[Operation], pair: ref Vec[i64]) -> String {
+    let first = pair[0] + 1
+    let second = pair[1] + 1
+    let why = verdict(operations[pair[0]], operations[pair[1]]).why()
+    return f"{key}: an `overlap` of {count} branches, and branches {first} and {second} may not run together - {why}\n"
+}
+
+// `text` padded with spaces on the right to `width` characters.
+fn padded_right(text: ref String, width: i64) -> String {
+    let mut out = text.clone()
+    let mut have = text.chars().count()
+    while have < width {
+        out.push(' ')
+        have += 1
+    }
+    return out
+}

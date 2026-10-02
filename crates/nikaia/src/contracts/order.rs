@@ -54,7 +54,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::ast::{Expr, Item, Spanned, Stmt};
+use crate::ast::{Expr, Spanned, Stmt};
 use crate::parser::Parsed;
 
 use super::Ledger;
@@ -179,35 +179,27 @@ pub fn overlap_report(
     library: &Ledger,
     pauses: Pauses<'_>,
 ) -> String {
-    let mut out = String::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { .. } => {
-                block_report(parsed, &item.node, None, own, library, pauses, &mut out)
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    block_report(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        own,
-                        library,
-                        pauses,
-                        &mut out,
-                    );
+    // The report is `tools/order.nika`'s (#125); the blocks a body holds are
+    // found by the emitter's walk, and whether a branch pauses is its answer.
+    nikaia_std::tools::order::overlap_report(
+        &parsed.program.items,
+        &parsed.interner,
+        &nikaia_std::tools::threads::Walking {
+            own,
+            library,
+            into: super::send::Destination::Ours,
+        },
+        &|body: &crate::ast::Block| {
+            let mut blocks = Vec::new();
+            crate::emit::visit_block(body, &mut |expr| {
+                if let Expr::Overlap(block) = expr {
+                    blocks.push(block.clone());
                 }
-            }
-            _ => {}
-        }
-    }
-    if out.is_empty() {
-        out.push_str("this program writes no `overlap { … }` block.\n");
-    }
-    out
+            });
+            blocks
+        },
+        &|stmt: &Spanned<Stmt>| pauses(stmt),
+    )
 }
 
 /// Whether a branch can pause, which is what decides the starting order (D6).
@@ -217,100 +209,3 @@ pub fn overlap_report(
 /// ledger's `sync` column and the checker's answers about method calls, and no
 /// analysis in this file may reach for either.
 pub type Pauses<'a> = &'a dyn Fn(&Spanned<Stmt>) -> bool;
-
-fn block_report(
-    parsed: &Parsed,
-    item: &Item,
-    target: Option<&str>,
-    own: &Ledger,
-    library: &Ledger,
-    pauses: Pauses<'_>,
-    out: &mut String,
-) {
-    let Item::Fn { name, body, .. } = item else {
-        return;
-    };
-    let own_name = match name {
-        Some(name) => parsed.text(*name).to_string(),
-        None => "new".to_string(),
-    };
-    let key = match target {
-        Some(target) => format!("{target}::{own_name}"),
-        None => own_name,
-    };
-
-    let mut blocks = Vec::new();
-    crate::emit::visit_block(body, &mut |expr| {
-        if let Expr::Overlap(block) = expr {
-            blocks.push(block.clone());
-        }
-    });
-
-    for block in &blocks {
-        // **The header is read off the pairs rather than asserted.** It said
-        // *"which meet on nothing"* about every block, including one the checker
-        // refuses on the next line - and this report exists because *"the
-        // refusals are the compiler's own … that is only fair if the refusals
-        // can be asked about"*. A report that answers the question wrongly is
-        // worse than one that is not there.
-        //
-        // The first refused pair is the one named, for the reason `check` stops
-        // after one finding per branch: a block that meets on two things has one
-        // thing wrong with it.
-        let operations: Vec<Option<Operation>> = block
-            .stmts
-            .iter()
-            .map(|stmt| operation(parsed, &stmt.node, own, library))
-            .collect();
-        let mut refused: Option<(usize, usize, Verdict)> = None;
-        'pairs: for (i, earlier) in operations.iter().enumerate() {
-            for (j, later) in operations.iter().enumerate().skip(i + 1) {
-                let (Some(earlier), Some(later)) = (earlier, later) else {
-                    continue;
-                };
-                let seen = verdict(earlier, later);
-                if !seen.is_overlap() {
-                    refused = Some((i, j, seen));
-                    break 'pairs;
-                }
-            }
-        }
-
-        let mut lines = Vec::new();
-        for stmt in &block.stmts {
-            let named = match accounted(parsed, &stmt.node, own, library) {
-                Accounted::Operation(operation) => operation.callee,
-                _ => "…".to_string(),
-            };
-            // D6's two halves, said as they happen: a branch that can pause is
-            // started first and gives the thread up at its first suspension
-            // point; one that cannot runs while the others are in flight.
-            let when = match pauses(stmt) {
-                true => "started first",
-                false => "runs while they wait",
-            };
-            lines.push(format!("    {when:22} {named}"));
-        }
-        if lines.is_empty() {
-            continue;
-        }
-        match &refused {
-            None => out.push_str(&format!(
-                "{key}: an `overlap` of {} branches, which meet on nothing\n",
-                block.stmts.len()
-            )),
-            Some((i, j, seen)) => out.push_str(&format!(
-                "{key}: an `overlap` of {} branches, and branches {} and {} may not \
-                 run together - {}\n",
-                block.stmts.len(),
-                i + 1,
-                j + 1,
-                seen.why()
-            )),
-        }
-        for line in lines {
-            out.push_str(&line);
-            out.push('\n');
-        }
-    }
-}
