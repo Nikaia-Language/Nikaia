@@ -3140,6 +3140,148 @@ fn words_of(text: &str, out: &mut collections::BTreeSet<String>) {
 }
 
 
+// --- parse_notes.nika ---
+
+pub fn previous_token(source: &str, end: i64) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    if end <= 0 { return String::from(""); }
+    let last = *nikaia_std::index::get(&c, nikaia_std::index::at(end - 1));
+    let mut start = end - 1;
+    if a_word_char(last) { while start > 0 && a_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(start - 1))) { start -= 1; } } else if an_operator_char(last) { while start > 0 && an_operator_char(*nikaia_std::index::get(&c, nikaia_std::index::at(start - 1))) { start -= 1; } }
+    slice(&c, start, end)
+}
+
+fn a_word_char(c: char) -> bool { c.is_alphanumeric() || c == '_' }
+
+fn an_operator_char(c: char) -> bool { c == '=' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '!' || c == '&' || c == '|' }
+
+pub fn unclosed_quote(source: &str) -> i64 {
+    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let mut open: i64 = -1;
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if open >= 0 {
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '\\' {
+                at += 2;
+                continue;
+            }
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' { open = -1; }
+        } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' { open = at; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '/' && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '/' {
+            at = past_the_line(&c, at);
+            continue;
+        }
+        at += 1;
+    }
+    open
+}
+
+pub fn unclosed_bracket(source: &str) -> i64 {
+    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let mut stack: Vec<i64> = vec![];
+    let mut in_string = false;
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if in_string {
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '\\' {
+                at += 2;
+                continue;
+            }
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' { in_string = false; }
+        } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' { in_string = true; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '/' && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '/' {
+            at = past_the_line(&c, at);
+            continue;
+        } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '{' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '(' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '[' { stack.push(at); } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '}' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ')' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ']' { stack.pop(); }
+        at += 1;
+    }
+    if (stack.len() as i64) == 0 { return -1; }
+    *nikaia_std::index::get(&stack, nikaia_std::index::at(stack.len() as i64 - 1))
+}
+
+fn past_the_line(c: &[char], at: i64) -> i64 {
+    let mut k = at;
+    while k < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(k)) != '\n' { k += 1; }
+    k + 1
+}
+
+pub fn opening_of_an_unclosed_comment(source: &str) -> i64 {
+    let c: Vec<char> = nikaia_std::list::chars(source.chars());
+    let mut open: Vec<i64> = vec![];
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if (open.len() as i64) == 0 {
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' {
+                at += 1;
+                while at < c.len() as i64 {
+                    if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '\\' { at += 2; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '"' {
+                        at += 1;
+                        break;
+                    } else { at += 1; }
+                }
+                continue;
+            }
+            if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '/' && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '/' {
+                while at < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) != '\n' { at += 1; }
+                continue;
+            }
+        }
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '/' && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '*' {
+            open.push(at);
+            at += 2;
+            continue;
+        }
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '*' && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '/' && (open.len() as i64) > 0 {
+            open.pop();
+            at += 2;
+            continue;
+        }
+        at += 1;
+    }
+    if (open.len() as i64) == 0 { return -1; }
+    *nikaia_std::index::get(&open, 0)
+}
+
+pub fn first_sentence(text: &str) -> Vec<String> {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let mut quoted = false;
+    for at in 0..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '`' { quoted = !quoted; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '.' && !quoted && at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ' ' {
+            let rest = slice(&c, at + 1, c.len() as i64).trim().to_owned();
+            if (rest.len() as i64) == 0 { return vec![slice(&c, 0, at + 1)]; }
+            return vec![slice(&c, 0, at + 1), rest];
+        }
+    }
+    vec![text.to_owned()]
+}
+
+pub fn the_spelling_ref_replaced_note(found: &str) -> Option<String> {
+    if found != "&" { return None; }
+    Some(String::from("A view is written `ref T`: `ref String` for text, `ref Array[T]` for elements something else keeps, and `ref value` to borrow a value. (`&&` still means *and*.)"))
+}
+
+pub fn an_effect_on_a_lambda_note(found: &str, before: &str) -> Option<String> {
+    if found != "sync" && found != "throws" { return None; }
+    let trimmed = before.trim_end();
+    if !(trimmed.ends_with(")") && trimmed.contains("fn")) { return None; }
+    Some(format!("`{}` isn't written on a lambda yet: a lambda's parameter list is followed by its block and nothing else.", found))
+}
+
+const AFTER_A_FALLBACK: [&str; 17] = ["==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%", "as"];
+
+pub fn coalesce_fallback_note(found: &str, before: &str) -> Vec<String> {
+    if !before.contains("??") { return vec![]; }
+    for operator in AFTER_A_FALLBACK.iter() {
+        let operator = *operator;
+        if found == operator { return vec![String::from("The fallback after `??` is a single value unless you use brackets, so `a ?? 0 > 3` would mean `a ?? (0 > 3)`."), String::from("Put brackets around the part you mean: `(a ?? 0) > 3`, or `a ?? (0 > 3)`.")]; }
+    }
+    vec![]
+}
+
+pub fn let_names_note(found: &str, before: &str) -> Vec<String> {
+    if found != "(" || !(before.contains("let (") || before.contains("let mut (")) { return vec![]; }
+    vec![String::from("A `let` binds one name, or a flat list of names like `let (tx, rx) = …`. A tuple inside a tuple can't be taken apart here."), String::from("Bind the outer parts to one name each, and read the inner parts from those names.")]
+}
+
+
 // --- paths.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6789,6 +6931,10 @@ pub mod manifest {
 pub mod names {
     #[allow(unused_imports)]
     pub use super::{names_in, names_in_block, names_in_statement};
+}
+pub mod parse_notes {
+    #[allow(unused_imports)]
+    pub use super::{previous_token, unclosed_quote, unclosed_bracket, opening_of_an_unclosed_comment, first_sentence, the_spelling_ref_replaced_note, an_effect_on_a_lambda_note, coalesce_fallback_note, let_names_note};
 }
 pub mod paths {
     #[allow(unused_imports)]

@@ -199,3 +199,17 @@ fn every_program(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     out.sort();
     out
 }
+
+/// **The caret counts characters, and the span counts bytes** (#125): the
+/// text half of a parse error's reading is Nikaia and answers in characters,
+/// which the compiler turns into the byte a span stands at. Text before the
+/// mistake that is not ASCII is where the two differ.
+#[test]
+fn an_unclosed_quote_after_umlauts_is_found_where_it_opens() {
+    let source = "fn main() { let s = \"äöü\" let t = \"x }";
+    let refused = parse_to_ast(source).expect_err("a parse error");
+    let finding = nikaia::diagnostics::refused_finding(&refused).expect("a finding");
+    let said = nikaia::diagnostics::render_finding(finding, "app.nika", source);
+    assert!(said.contains("never closed"), "{said}");
+    assert!(said.contains("app.nika:1:35"), "{said}");
+}

@@ -674,11 +674,7 @@ fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
 /// **Only for a bare `&`.** `&&` is a program's *and* and is untouched, which
 /// is the one place the character is still the language's.
 fn the_spelling_ref_replaced_note(found: Option<&str>) -> Option<String> {
-    (found == Some("&")).then(|| {
-        "A view is written `ref T`: `ref String` for text, `ref Array[T]` for elements \
-         something else keeps, and `ref value` to borrow a value. (`&&` still means *and*.)"
-            .to_string()
-    })
+    nikaia_std::tools::parse_notes::the_spelling_ref_replaced_note(found.unwrap_or_default())
 }
 
 /// `` `struct` is a reserved word`` - said only where a **name** was what
@@ -704,14 +700,7 @@ fn reserved_word_note(found: Option<&str>, source: &str, at: usize) -> Option<St
 /// ADR-006 D6 write for the panic hook and nothing in the grammar gives a
 /// lambda yet. Said where the word stands right after a parameter list.
 fn an_effect_on_a_lambda_note(found: Option<&str>, before: &str) -> Option<String> {
-    let word = found.filter(|w| matches!(*w, "sync" | "throws"))?;
-    let before = before.trim_end();
-    (before.ends_with(')') && before.contains("fn")).then(|| {
-        format!(
-            "`{word}` isn't written on a lambda yet: a lambda's parameter list is followed by \
-             its block and nothing else."
-        )
-    })
+    nikaia_std::tools::parse_notes::an_effect_on_a_lambda_note(found.unwrap_or_default(), before)
 }
 
 /// **The mistake, where the reader made it** ([Part III C.2](../../../../docs/specification/30-nikaia-tooling.md),
@@ -914,75 +903,37 @@ fn parses_further(input: &str, past: usize) -> bool {
 /// The token that ends at `end`: a word, or a run of operator characters, or
 /// one other character.
 fn previous_token(source: &str, end: usize) -> String {
-    let before = &source[..end];
-    let Some(last) = before.chars().last() else {
-        return String::new();
-    };
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    let operator = |c: char| "=+-*/%<>!&|".contains(c);
-    let start = if word(last) {
-        before.trim_end_matches(word).len()
-    } else if operator(last) {
-        before.trim_end_matches(operator).len()
-    } else {
-        end - last.len_utf8()
-    };
-    before[start..].to_string()
+    nikaia_std::tools::parse_notes::previous_token(source, source[..end].chars().count() as i64)
+}
+
+/// The byte a character index of `source` stands at - what the text half in
+/// Nikaia answers in, turned into what a span counts.
+fn byte_of(source: &str, at: i64) -> Option<usize> {
+    let at = usize::try_from(at).ok()?;
+    Some(
+        source
+            .char_indices()
+            .nth(at)
+            .map_or(source.len(), |(byte, _)| byte),
+    )
 }
 
 /// Where the last string that is never closed opens.
 fn unclosed_quote(source: &str) -> Option<usize> {
-    let mut open: Option<usize> = None;
-    let mut chars = source.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        match (open, c) {
-            (Some(_), '\\') => {
-                chars.next();
-            }
-            (Some(_), '"') => open = None,
-            (None, '"') => open = Some(i),
-            (None, '/') if chars.peek().is_some_and(|(_, n)| *n == '/') => {
-                for (_, n) in chars.by_ref() {
-                    if n == '\n' {
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    open
+    byte_of(
+        source,
+        nikaia_std::tools::parse_notes::unclosed_quote(source),
+    )
 }
 
 /// The innermost bracket still open at the end of the file, outside strings
 /// and `//` comments.
 fn unclosed_bracket(source: &str) -> Option<(usize, char)> {
-    let mut stack: Vec<(usize, char)> = Vec::new();
-    let mut in_string = false;
-    let mut chars = source.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        match (in_string, c) {
-            (true, '\\') => {
-                chars.next();
-            }
-            (true, '"') => in_string = false,
-            (true, _) => {}
-            (false, '"') => in_string = true,
-            (false, '/') if chars.peek().is_some_and(|(_, n)| *n == '/') => {
-                for (_, n) in chars.by_ref() {
-                    if n == '\n' {
-                        break;
-                    }
-                }
-            }
-            (false, '{' | '(' | '[') => stack.push((i, c)),
-            (false, '}' | ')' | ']') => {
-                stack.pop();
-            }
-            _ => {}
-        }
-    }
-    stack.pop()
+    let at = byte_of(
+        source,
+        nikaia_std::tools::parse_notes::unclosed_bracket(source),
+    )?;
+    Some((at, source[at..].chars().next()?))
 }
 
 /// Where a parse of `input` stops, or `None` where it goes through.
@@ -1041,51 +992,10 @@ fn unclosed_block_comment(error: &ParseError, source: &str) -> Option<crate::che
 /// every byte of a multi-byte character is `>= 0x80`, so the scan cannot stop
 /// inside one.
 fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut open: Vec<usize> = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        // A string and a line comment are only themselves *outside* a block
-        // comment: D1's *a `//` inside a block comment is comment, not a second
-        // comment*, and the same of a quote.
-        if open.is_empty() {
-            match bytes[at] {
-                b'"' => {
-                    at += 1;
-                    while at < bytes.len() {
-                        match bytes[at] {
-                            b'\\' => at += 2,
-                            b'"' => {
-                                at += 1;
-                                break;
-                            }
-                            _ => at += 1,
-                        }
-                    }
-                    continue;
-                }
-                b'/' if bytes.get(at + 1) == Some(&b'/') => {
-                    while at < bytes.len() && bytes[at] != b'\n' {
-                        at += 1;
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        if bytes[at] == b'/' && bytes.get(at + 1) == Some(&b'*') {
-            open.push(at);
-            at += 2;
-            continue;
-        }
-        if bytes[at] == b'*' && bytes.get(at + 1) == Some(&b'/') && !open.is_empty() {
-            open.pop();
-            at += 2;
-            continue;
-        }
-        at += 1;
-    }
-    open.first().copied()
+    byte_of(
+        source,
+        nikaia_std::tools::parse_notes::opening_of_an_unclosed_comment(source),
+    )
 }
 
 /// The note a parse error gets when a `??`'s fallback reached for an operator.
@@ -1104,28 +1014,15 @@ fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
 /// it adds a sentence and corrects nothing
 /// ([ADR-089](../../../docs/specification/adr/adr-089.md) D2).
 fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
-    // **`=` is in the list and that is not a mistake.** The backend names the
-    // *first* character it could not use, so a `==` is reported as `=`. A line
-    // that has a `??` to the left of the caret and a stray `=` at it is this
-    // shape and not an assignment typo, which is what keeps the pair of
-    // conditions together rather than either alone.
-    const OPERATORS: &[&str] = &[
-        "==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%", "as",
-    ];
-    if !before.contains("??") || !OPERATORS.contains(&found?) {
-        return None;
-    }
-    // **The token is not written into the message**, and that is deliberate: the
-    // backend reports the first character it could not use, so a `==` arrives
-    // here as `=` and a help that quoted it back would read `(a ?? 0) = …`.
-    // The shape is the same whichever operator it was, so the message shows the
-    // shape.
-    Some((
-        "The fallback after `??` is a single value unless you use brackets, so \
-         `a ?? 0 > 3` would mean `a ?? (0 > 3)`."
-            .to_string(),
-        "Put brackets around the part you mean: `(a ?? 0) > 3`, or `a ?? (0 > 3)`.".to_string(),
+    a_pair(nikaia_std::tools::parse_notes::coalesce_fallback_note(
+        found?, before,
     ))
+}
+
+/// A note and its help, where there are both.
+fn a_pair(said: Vec<String>) -> Option<(String, String)> {
+    let mut said = said.into_iter();
+    Some((said.next()?, said.next()?))
 }
 
 /// **A `let` taking apart something a flat tuple of names cannot**
@@ -1148,15 +1045,8 @@ fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, 
 /// matched, so the backend's message is about the token it stopped at and the
 /// note is what supplies the sentence.
 fn let_names_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
-    if found != Some("(") || !(before.contains("let (") || before.contains("let mut (")) {
-        return None;
-    }
-    Some((
-        "A `let` binds one name, or a flat list of names like `let (tx, rx) = …`. A tuple \
-         inside a tuple can't be taken apart here."
-            .to_string(),
-        "Bind the outer parts to one name each, and read the inner parts from those names."
-            .to_string(),
+    a_pair(nikaia_std::tools::parse_notes::let_names_note(
+        found?, before,
     ))
 }
 
@@ -1340,22 +1230,9 @@ fn what_was_expected(error: &ParseError) -> String {
 /// The first sentence of a written message and what follows it: the headline
 /// and the help. A sentence ends at `. ` outside backticks.
 fn first_sentence(text: &str) -> (String, Option<String>) {
-    let mut quoted = false;
-    let bytes = text.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        match b {
-            b'`' => quoted = !quoted,
-            b'.' if !quoted && bytes.get(i + 1) == Some(&b' ') => {
-                let rest = text[i + 1..].trim();
-                return (
-                    text[..=i].to_string(),
-                    (!rest.is_empty()).then(|| rest.to_string()),
-                );
-            }
-            _ => {}
-        }
-    }
-    (text.to_string(), None)
+    let mut parts = nikaia_std::tools::parse_notes::first_sentence(text).into_iter();
+    let headline = parts.next().unwrap_or_default();
+    (headline, parts.next())
 }
 
 // --- Action-block helpers ---
