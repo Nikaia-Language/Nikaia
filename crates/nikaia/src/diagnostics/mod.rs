@@ -1129,8 +1129,15 @@ fn headed(level: &str, code: &str) -> String {
 /// Where `word` stands in `line` at or after 1-based `column`, as a whole
 /// word, and how wide it is. Where it is not there, the statement's own
 /// column and one character, which is what every finding showed before.
+///
+/// A whole word only at an edge that is a word character: `}` or a space has
+/// no word to be part of, and asking it for one sent the caret to the first
+/// such character on the line.
 fn word_in(line: &str, column: usize, word: &str) -> (usize, usize) {
-    let boundary = |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+    let wordy = |c: char| c.is_alphanumeric() || c == '_';
+    let starts_wordy = word.chars().next().is_some_and(wordy);
+    let ends_wordy = word.chars().next_back().is_some_and(wordy);
+    let boundary = |c: Option<char>| c.is_none_or(|c| !wordy(c));
     let from = line
         .char_indices()
         .nth(column.saturating_sub(1))
@@ -1140,8 +1147,8 @@ fn word_in(line: &str, column: usize, word: &str) -> (usize, usize) {
             .match_indices(word)
             .map(|(at, _)| start + at)
             .find(|&at| {
-                boundary(line[..at].chars().next_back())
-                    && boundary(line[at + word.len()..].chars().next())
+                (!starts_wordy || boundary(line[..at].chars().next_back()))
+                    && (!ends_wordy || boundary(line[at + word.len()..].chars().next()))
             })
     });
     match found {
