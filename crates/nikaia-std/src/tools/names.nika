@@ -189,27 +189,33 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
 /// with each other.
 pub fn names_in_block(block: ref Block, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
     for stmt in block.stmts {
-        match stmt.node {
-            Stmt::Let { value, .. } => names_in(value, words, out),
-            Stmt::Comptime { value, .. } => names_in(value, words, out),
-            Stmt::Expr(value) => names_in(value, words, out),
-            Stmt::Assign { target, value, .. } => {
-                names_in(target, words, out)
-                names_in(value, words, out)
-            }
-            Stmt::For { iter, body, .. } => {
-                names_in(iter, words, out)
-                names_in_block(body, words, out)
-            }
-            Stmt::While { cond, body } => {
-                names_in(cond, words, out)
-                names_in_block(body, words, out)
-            }
-            Stmt::Return(value) => maybe_names_in(value, words, out),
-            // Neither mentions a name, so neither contributes one.
-            Stmt::Break => {}
-            Stmt::Continue => {}
+        names_in_statement(stmt.node, words, out)
+    }
+}
+
+/// Every name one statement mentions, the blocks it holds included
+/// (`contracts::send`, of a task body's statements).
+pub fn names_in_statement(stmt: ref Stmt, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    match stmt {
+        Stmt::Let { value, .. } => names_in(value, words, out),
+        Stmt::Comptime { value, .. } => names_in(value, words, out),
+        Stmt::Expr(value) => names_in(value, words, out),
+        Stmt::Assign { target, value, .. } => {
+            names_in(target, words, out)
+            names_in(value, words, out)
         }
+        Stmt::For { iter, body, .. } => {
+            names_in(iter, words, out)
+            names_in_block(body, words, out)
+        }
+        Stmt::While { cond, body } => {
+            names_in(cond, words, out)
+            names_in_block(body, words, out)
+        }
+        Stmt::Return(value) => maybe_names_in(value, words, out),
+        // Neither mentions a name, so neither contributes one.
+        Stmt::Break => {}
+        Stmt::Continue => {}
     }
 }
 

@@ -3088,28 +3088,28 @@ pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut 
     }
 }
 
-pub fn names_in_block(block: &Block, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
-    for stmt in block.stmts.iter() {
-        match &stmt.node {
-            Stmt::Let { value, .. } => names_in(value, words, out),
-            Stmt::Comptime { value, .. } => names_in(value, words, out),
-            Stmt::Expr(value) => names_in(value, words, out),
-            Stmt::Assign { target, value, .. } => {
-                names_in(target, words, out);
-                names_in(value, words, out);
-            },
-            Stmt::For { iter, body, .. } => {
-                names_in(iter, words, out);
-                names_in_block(body, words, out);
-            },
-            Stmt::While { cond, body } => {
-                names_in(cond, words, out);
-                names_in_block(body, words, out);
-            },
-            Stmt::Return(value) => maybe_names_in((value).as_ref(), words, out),
-            Stmt::Break => { },
-            Stmt::Continue => { },
-        }
+pub fn names_in_block(block: &Block, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) { for stmt in block.stmts.iter() { names_in_statement(&stmt.node, words, out); } }
+
+pub fn names_in_statement(stmt: &Stmt, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. } => names_in(value, words, out),
+        Stmt::Comptime { value, .. } => names_in(value, words, out),
+        Stmt::Expr(value) => names_in(value, words, out),
+        Stmt::Assign { target, value, .. } => {
+            names_in(target, words, out);
+            names_in(value, words, out);
+        },
+        Stmt::For { iter, body, .. } => {
+            names_in(iter, words, out);
+            names_in_block(body, words, out);
+        },
+        Stmt::While { cond, body } => {
+            names_in(cond, words, out);
+            names_in_block(body, words, out);
+        },
+        Stmt::Return(value) => maybe_names_in((value).as_ref(), words, out),
+        Stmt::Break => { },
+        Stmt::Continue => { },
     }
 }
 
@@ -6279,7 +6279,7 @@ pub mod manifest {
 }
 pub mod names {
     #[allow(unused_imports)]
-    pub use super::{names_in, names_in_block};
+    pub use super::{names_in, names_in_block, names_in_statement};
 }
 pub mod paths {
     #[allow(unused_imports)]
