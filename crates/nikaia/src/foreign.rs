@@ -221,7 +221,7 @@ fn named(seen: Vec<Seen>) -> (Vec<String>, bool) {
     for one in seen {
         match one {
             Seen::Name(name) => names.push(name),
-            Seen::Spawn => a_spawn = true,
+            Seen::Spawn { .. } => a_spawn = true,
             _ => {}
         }
     }

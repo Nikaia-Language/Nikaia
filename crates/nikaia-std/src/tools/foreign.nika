@@ -39,10 +39,13 @@ pub enum Seen {
     /// A `spawn`: its body runs later and elsewhere, and the walk does not
     /// descend into it, so a reader of names knows there are some it did not
     /// see, and a reader of calls one it cannot name.
-    Spawn,
+    Spawn { span: Span },
     /// Something else that runs what nobody can name: a `dsl` statement, or a
     /// call of something that is not a name (`calls::callee_of`'s `Opaque`).
-    Opaque,
+    Opaque { span: Span },
+    /// An `overlap` or a `select`, which joins on the executor and so pauses
+    /// whatever it stands in (ADR-163 D1).
+    Joins { construct: String, span: Span },
 }
 
 /// Every qualified name `program` writes and every call it makes by name, in
@@ -156,6 +159,16 @@ fn maybe_expression_paths(expr: ref Expr?, span: ref Span, names: ref winnow_gra
 // Every path inside an expression, the holes of a literal included, and not
 // inside the bodies of nested blocks.
 fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
+    // What the expression is itself, before its holes and its parts: the
+    // order `contracts::sync` names the first place a body pauses in.
+    match expr {
+        Expr::Spawn { .. } => found.seen.push(Seen::Spawn { span: span.clone() }),
+        Expr::Dsl { .. } => found.seen.push(Seen::Opaque { span: span.clone() }),
+        Expr::Overlap(_) => found.seen.push(Seen::Joins { construct: "overlap", span: span.clone() }),
+        Expr::Select(_) => found.seen.push(Seen::Joins { construct: "select", span: span.clone() }),
+        Expr::Call { func, args, .. } => a_named_call(func, args, span, names, root_at, found),
+        else => {}
+    }
     for hole in holes_of(expr) {
         expression_paths(hole, span, names, unaliased, holes_of, root_at, found)
     }
@@ -170,10 +183,7 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
                 found.seen.push(Seen::Name(names.resolve(name).clone()))
             }
         }
-        Expr::Spawn { .. } => found.seen.push(Seen::Spawn),
-        Expr::Dsl { .. } => found.seen.push(Seen::Opaque),
         Expr::Call { func, args, config } => {
-            a_named_call(func, args, span, names, root_at, found)
             expression_paths(func, span, names, unaliased, holes_of, root_at, found)
             for arg in args {
                 expression_paths(arg, span, names, unaliased, holes_of, root_at, found)
@@ -361,7 +371,7 @@ fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref 
         else => "",
     }
     if name.len() == 0 {
-        found.seen.push(Seen::Opaque)
+        found.seen.push(Seen::Opaque { span: span.clone() })
         return
     }
     let at = root_at(name)

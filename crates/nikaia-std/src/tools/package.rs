@@ -1308,8 +1308,9 @@ pub enum Seen {
     Path { name: String, span: Span },
     Call { name: String, wrote: Option<Wrote>, span: Span },
     Name(String),
-    Spawn,
-    Opaque,
+    Spawn { span: Span },
+    Opaque { span: Span },
+    Joins { construct: String, span: Span },
 }
 
 pub fn written_in(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
@@ -1384,6 +1385,14 @@ fn statement_paths(stmt: &Stmt, span: &Span, names: &winnow_grammar::InternerCon
 fn maybe_expression_paths(expr: Option<&Expr>, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) { expression_paths(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, span, names, unaliased, holes_of, root_at, found); }
 
 fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
+    match expr {
+        Expr::Spawn { .. } => found.seen.push(Seen::Spawn { span: span.clone() }),
+        Expr::Dsl { .. } => found.seen.push(Seen::Opaque { span: span.clone() }),
+        Expr::Overlap(_) => found.seen.push(Seen::Joins { construct: String::from("overlap"), span: span.clone() }),
+        Expr::Select(_) => found.seen.push(Seen::Joins { construct: String::from("select"), span: span.clone() }),
+        Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); a_named_call(func, args, span, names, root_at, found) },
+        _ => { },
+    }
     for hole in holes_of(expr) { expression_paths(&hole, span, names, unaliased, holes_of, root_at, found); }
     match expr {
         Expr::Path(segments) => { if (segments.len() as i64) > 0 { found.seen.push(named_at(path_name(segments, names, unaliased), span)); } },
@@ -1391,11 +1400,8 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
             let name = *name;
             if found.with_names { found.seen.push(Seen::Name(names.resolve(name).to_owned())); }
         },
-        Expr::Spawn { .. } => found.seen.push(Seen::Spawn),
-        Expr::Dsl { .. } => found.seen.push(Seen::Opaque),
         Expr::Call { func, args, config } => {
             let func = nikaia_std::boxed::open(func);
-            a_named_call(func, args, span, names, root_at, found);
             expression_paths(func, span, names, unaliased, holes_of, root_at, found);
             for arg in args.iter() { expression_paths(arg, span, names, unaliased, holes_of, root_at, found); }
             for setting in config.iter() { expression_paths(&setting.value, span, names, unaliased, holes_of, root_at, found); }
@@ -1535,7 +1541,7 @@ fn a_named_call(func: &Expr, args: &Vec<Expr>, span: &Span, names: &winnow_gramm
         _ => String::from(""),
     };
     if (name.len() as i64) == 0 {
-        found.seen.push(Seen::Opaque);
+        found.seen.push(Seen::Opaque { span: span.clone() });
         return;
     }
     let at = root_at(&name);

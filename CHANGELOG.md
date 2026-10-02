@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.343] — 2026-10-02
+
+**`sync` reads a body off the walk in Nikaia** (#125, ADR-250). Both of
+`contracts::sync`'s walks - what a body reaches for the inference, and what
+breaks a promise for the check - read the list `tools/foreign.nika`'s walk
+hands back, and resolve each call by name with `calls::callee_named`. The
+walk says where an `overlap` and a `select` stand (`Seen::Joins`, which join
+on the executor and so pause, ADR-163 D1) and gives a `spawn` and an
+`Opaque` their statement's span, and it says what an expression is before
+the holes inside it, which is the order a refusal names the first pause in.
+`joins_on_the_executor` and `called` are gone with the walks: seven readers
+of the tree share one walk now. Every ledger and every refusal the suite
+meets is what it was.
+
 ## [0.0.342] — 2026-10-02
 
 **What a body touches is read off the walk in Nikaia** (#125, ADR-250).
