@@ -1124,7 +1124,7 @@ impl LedgerOps for Ledger {
                 // `std`, and `std` states its own (ADR-010 D2).
                 provenance: None,
                 // **The body's `assert`s, not its declaration**
-                // ([ADR-266](../../../docs/specification/adr/adr-266.md) D5):
+                // ([ADR-269](../../../docs/specification/adr/adr-269.md) D18):
                 // the prover publishes them after the check, through the
                 // lowering. Empty until then.
                 requires: Vec::new(),
@@ -1453,7 +1453,7 @@ impl LedgerOps for Ledger {
                 out.push_str("ends_by_length = true\n");
             }
             // **The function's contract from its `assert`s**
-            // ([ADR-266](../../../../docs/specification/adr/adr-266.md) D5):
+            // ([ADR-269](../../../../docs/specification/adr/adr-269.md) D18):
             // what a caller establishes, what it may rely on, and the `assert`
             // each came from.
             for (key, list) in [

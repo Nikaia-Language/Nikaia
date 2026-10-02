@@ -1,6 +1,6 @@
 //! **Every `assert` outside a test is proved while the program is built
 //! where it can be, and checked when the program runs where it cannot**
-//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4). A proved claim
+//! ([ADR-269](../../../docs/specification/adr/adr-269.md) D4). A proved claim
 //! leaves nothing behind in the emitted Rust.
 
 mod common;
@@ -37,7 +37,7 @@ fn held(source: &str) -> Vec<nikaia::prove::Held> {
 }
 
 /// How many calls in the emitted Rust check a precondition where they
-/// stand (ADR-266 D7): `(if !… , call).1`.
+/// stand (ADR-269 D20): `(if !… , call).1`.
 fn call_checks(rust: &str) -> usize {
     rust.matches("(if !").count() + rust.matches("({ if !").count()
 }
@@ -131,7 +131,7 @@ fn branches_lets_ranges_and_guards_are_facts() {
 /// why it was not proved.
 #[test]
 fn a_claim_nothing_shows_is_checked_when_the_program_runs() {
-    // After a loop the claim is not carried back to the entry (ADR-266 D3),
+    // After a loop the claim is not carried back to the entry (ADR-269 D16),
     // so it is no precondition either.
     let source = "fn f(x: i64) -> i64 {\n\
                   \x20   let y = x * 2\n\
@@ -226,7 +226,7 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     assert_eq!(call_checks(&rust), 1, "{rust}");
 }
 
-/// **ADR-266 D7: a caller the prover doesn't see reaches the checked
+/// **ADR-269 D20: a caller the prover doesn't see reaches the checked
 /// entry**: a `pub fn` and a method have a precondition like any function,
 /// and a function handed on as a value is its checked entry, while the calls
 /// the prover saw prove theirs and take the unchecked one.
@@ -330,7 +330,7 @@ fn a_tests_claim_is_not_the_provers() {
     );
 }
 
-/// **A list's length is a number the prover reads** (ADR-264 D9, 0.0.273):
+/// **A list's length is a number the prover reads** (ADR-269 D9, 0.0.273):
 /// `xs.len()` of a binding that does not change, never negative, known for a
 /// literal, and carried into a callee's precondition.
 #[test]
@@ -457,7 +457,7 @@ fn warned(source: &str, code: &str) -> Vec<nikaia::check::Finding> {
         .collect()
 }
 
-/// **ADR-264 D8: a claim the facts rule out is a warning with values**, and
+/// **ADR-269 D8: a claim the facts rule out is a warning with values**, and
 /// stays a check. Shown false only where it is false every time it is
 /// reached - proved so, certificate and all - with a model of what is known
 /// for the values.
@@ -542,7 +542,7 @@ fn a_claim_that_can_hold_is_not_warned_about() {
     assert!(warned(source, "NK1207").is_empty());
 }
 
-/// **ADR-266 D2: a claim is carried back to the entry.** A parameter changed
+/// **ADR-269 D15: a claim is carried back to the entry.** A parameter changed
 /// before the claim (`let x = x + 1`), a value computed from one, a branch and
 /// a guard: each claim is a precondition over the parameters, its callers
 /// prove it, and no check is left in the program.
@@ -585,7 +585,7 @@ fn a_claim_carried_back_to_the_entry_is_a_precondition() {
 }
 
 /// **A call that breaks a computed precondition** is told the condition at
-/// the entry and the `assert` it came from (ADR-266 D8), and the call checks
+/// the entry and the `assert` it came from (ADR-269 D21), and the call checks
 /// the condition at the entry with its arguments in place (D7).
 #[test]
 fn a_computed_precondition_names_both_ends() {
@@ -619,7 +619,7 @@ fn a_computed_precondition_names_both_ends() {
     );
 }
 
-/// **ADR-266 D4: a claim about the value returned, shown at every exit, is a
+/// **ADR-269 D17: a claim about the value returned, shown at every exit, is a
 /// postcondition**, and a caller knows it of the result: `clamp`'s
 /// `result >= 0` proves `a >= 0`, and a chain of them proves `t >= 0`. One
 /// exit that does not show it - `wrong`'s `return -1` - and it is none, so

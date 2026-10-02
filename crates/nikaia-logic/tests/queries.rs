@@ -1,4 +1,4 @@
-//! **Queries through the interface** (ADR-265 D3, D4): facts and a goal as
+//! **Queries through the interface** (ADR-270 D3, D14): facts and a goal as
 //! terms, and the reference solver's answer. Nothing here knows Nikaia.
 
 use nikaia_logic::{
@@ -7,7 +7,7 @@ use nikaia_logic::{
 };
 
 /// The solver's answer, with a *proved* one's certificate checked: every proof
-/// in this file goes through the checker too (ADR-265 D5).
+/// in this file goes through the checker too (ADR-270 D5).
 fn check(arena: &Arena, facts: &[TermId], goal: TermId) -> Answer {
     let query = Query { arena, facts, goal };
     let answer = FourierMotzkin.check(&query, &Budget::default());
@@ -86,7 +86,7 @@ fn a_product_of_variables_is_outside_the_theory() {
     );
 }
 
-/// **The budget bounds the work** (D4): a goal whose proof needs more
+/// **The budget bounds the work** (D14): a goal whose proof needs more
 /// branches than allowed is unknown, the same at every run. Ten numbers, each
 /// `-1` or `1`, never add up to `1` - but only every one of the 1024 ways of
 /// choosing them shows it.
@@ -129,7 +129,7 @@ fn steps(certificate: &mut Certificate) -> &mut Vec<Step> {
     }
 }
 
-/// **The checker trusts nothing it is handed** (ADR-265 D5): a certificate
+/// **The checker trusts nothing it is handed** (ADR-270 D5): a certificate
 /// that leaves a case out, names a bound that is not there, uses a negative
 /// multiplier or ends on something that is not a contradiction is rejected.
 #[test]
@@ -204,7 +204,7 @@ fn a_forged_certificate_is_rejected() {
     assert!(verify(&other, &certificate).is_err());
 }
 
-/// **SMT-LIB 2 at the edge** (ADR-265 D6): a query written out reads the
+/// **SMT-LIB 2 at the edge** (ADR-270 D6): a query written out reads the
 /// way another solver expects, and read back it gets the same answer.
 #[test]
 fn a_query_round_trips_through_smtlib() {
@@ -280,7 +280,7 @@ fn a_benchmark_style_script_is_read() {
 }
 
 /// **A model is the nearest to zero the bounds allow, and it is checked**
-/// (ADR-265 D3, D4): back-substitution through two eliminations, a value
+/// (ADR-270 D3): back-substitution through two eliminations, a value
 /// pushed off zero by a bound, and one forced by a chain.
 #[test]
 fn a_model_is_found_through_the_eliminations() {
@@ -339,7 +339,7 @@ fn alethe_checked(query: &Query<'_>) -> String {
     proof
 }
 
-/// **A proof as Alethe** (ADR-265 D6), written for another checker to check:
+/// **A proof as Alethe** (ADR-270 D6), written for another checker to check:
 /// a conjunction, whose refutation is one choice - an equality's two bounds,
 /// a combination, an integer tightening - and one that splits, through a
 /// disjunction and a `!=`, into choices folded back by resolution.
@@ -392,7 +392,7 @@ fn a_proof_is_written_as_alethe() {
     }
 }
 
-/// **A number is an `i64`** (ADR-265 D2): a combination whose coefficients
+/// **A number is an `i64`** (ADR-270 D11): a combination whose coefficients
 /// leave it answers *unknown* for its reason, never a wrong answer. Here the
 /// facts hold at `x = 1, y = 1`, and eliminating either name multiplies a
 /// coefficient near `2^62` by `5` or `7`.
@@ -434,7 +434,7 @@ fn certificate(answer: Answer) -> Certificate {
     }
 }
 
-/// **A disjunction is split where a branch needs it** (D4): thirty-two
+/// **A disjunction is split where a branch needs it** (D5): thirty-two
 /// guards `return … if x == k` leave `x != 0`, …, `x != 31`, which with
 /// `0 <= x <= 32` prove `x == 32`. Taken apart up front that is 2^33 cases;
 /// split on demand, each split has one alternative refuted at once.
@@ -465,7 +465,7 @@ fn guards_are_split_on_demand() {
     assert_eq!(check(&a, &fewer, goal), refuted(&[("x", 31)]));
 }
 
-/// **A split that was not needed is dropped** (D4): `y != 0` for twenty
+/// **A split that was not needed is dropped** (D5): `y != 0` for twenty
 /// names says nothing about `x`, and the proof of `x > 3` from `x > 5` does
 /// not split one of them.
 #[test]

@@ -1,6 +1,6 @@
 // crates/nikaia-logic/src/alethe.rs
 //
-// **A proof as Alethe** (ADR-265 D5, D6): an export, so that a checker this
+// **A proof as Alethe** (ADR-270 D5, D6): an export, so that a checker this
 // crate does not trust - Carcara, cvc5's - can check what the reference
 // solver claims. It is not on the prover's path; `verify` is.
 //

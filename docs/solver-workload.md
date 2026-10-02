@@ -2,10 +2,10 @@
 
 **Date:** October 2, 2026
 **Status:** a measurement. The numbers that decided something are quoted in
-[ADR-267](specification/adr/adr-267.md) D1; this file is the method and the
+[ADR-270](specification/adr/adr-270.md) D9; this file is the method and the
 full tables behind them.
-**Related:** [ADR-265](specification/adr/adr-265.md) (the solver's layers and
-its determinism rule), [ADR-264](specification/adr/adr-264.md) D9-D10 (what
+**Related:** [ADR-270](specification/adr/adr-270.md) (the solver's layers and
+its determinism rule), [ADR-269](specification/adr/adr-269.md) D9-D10 (what
 the prover asks)
 **What ran:** `benches/solver-workload/` (the stress families, the analysis,
 the fragment count and the run of z3 and cvc5), an instrumented copy of
@@ -110,8 +110,8 @@ Fourier-Motzkin eliminates `n` over the rationals and keeps `blank = 1`, which
 has a rational solution; the parity of `2·n` is lost with `n`. The satisfiable
 ones fail at the model: back-substitution takes `y = 1` and then `x = 1/2`.
 Eliminating an equality exactly - solving it for a variable with a unit
-coefficient, or tightening by the gcd first - answers all 92; ADR-267 D12
-makes them step 1's criterion.
+coefficient, or tightening by the gcd first - answers all 92; ADR-270 D8
+makes them step 3's criterion.
 
 ## 5. Where the time goes
 
@@ -160,7 +160,7 @@ loses by an order of magnitude at ten variables.
 
 ## 7. The size of a certificate
 
-What [ADR-268](specification/adr/adr-268.md) D3's committed proof file would
+What [ADR-270](specification/adr/adr-270.md) D19's committed proof file would
 hold, for the certificates of 0.0.368 (a split tree of refutations). *Bytes*
 is a compact encoding estimated from the steps - one byte per step kind and
 index, the multipliers as variable-length integers - before any text
@@ -179,6 +179,6 @@ parity with ten variables.
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the
   container this ran in could not reach; every statement about them in
-  ADR-267 is from the literature and marked so.
+  ADR-270 is from the literature and marked so.
 * **Threads.** Everything ran on one thread.
 * **The frontend's own cost** beyond the `prove()` total of §5.

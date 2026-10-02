@@ -1,6 +1,6 @@
 // crates/nikaia-logic/src/lia.rs
 //
-// **The reference solver: linear integer arithmetic** (ADR-265 D1, ADR-264
+// **The reference solver: linear integer arithmetic** (ADR-270 D1, ADR-269
 // D10). A goal is proved when every case of its negation, joined with the
 // facts, has no integer solution. Fourier-Motzkin elimination over the
 // rationals decides that from one side: where it finds a contradiction there
@@ -70,7 +70,7 @@ impl State {
     }
 }
 
-/// **Splitting on demand** (ADR-265 D4): refute what the branch holds; where
+/// **Splitting on demand** (ADR-270 D5): refute what the branch holds; where
 /// it is consistent, split the open disjunction with the fewest alternatives
 /// and refute each. A case that did not rely on the alternative it was given
 /// refutes the branch as it stands, so the disjunction's other alternatives
@@ -465,7 +465,7 @@ type Held = (Lin, usize);
 
 /// Fourier-Motzkin with integer tightening: where the bounds, all `<= 0`,
 /// have no integer solution, the derivation of `c <= 0` with `c > 0` that
-/// shows it (ADR-265 D5); why not where it cannot tell.
+/// shows it (ADR-270 D5); why not where it cannot tell.
 ///
 /// Every bound the elimination holds remembers the step that made it, so the
 /// contradiction it ends on can be traced back to the case's own bounds, and

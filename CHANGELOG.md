@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.371] — 2026-10-02
+
+**The assert and solver records, consolidated; the solver is written in
+Nikaia.** No code changes.
+
+- **ADR-269** restates ADR-264 and ADR-266 as one record: an `assert` is a
+  contract, proved where the compiler can, checked where it cannot, published
+  across packages. 264's D1-D13 keep their numbers; 266's D1-D8 are D14-D21.
+- **ADR-270** restates ADR-265, ADR-267 and ADR-268 as one record: the
+  prover's frontend, logic and solver; the free search and the committed
+  `nikaia.proofs` (D4, D19-D23); one proof format (D5); the measured workload
+  (D9); the CDCL(T) architecture (D10-D18). 265's D1-D8 keep their numbers.
+- **Decided anew, by the owner: the solver is written in Nikaia from its
+  first engine** (ADR-270 D1, D8, §3 Options M-N), not first in Rust. D11's
+  numbers need no overflow-reporting arithmetic. The order: a performance
+  probe of three kernels in Nikaia against Rust, the reference solver ported
+  and checked against the Rust crate (then removed), then the engines.
+- ADR-264 to ADR-268 stay, marked *Superseded*; every live citation - code
+  comments, tests, Part III, the notes - now names ADR-269 or ADR-270 with the
+  same decision numbers.
+
 ## [0.0.370] — 2026-10-02
 
 **ADR-268: the search is free; what a build uses is a committed proof

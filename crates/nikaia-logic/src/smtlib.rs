@@ -1,6 +1,6 @@
 // crates/nikaia-logic/src/smtlib.rs
 //
-// **SMT-LIB 2 at the edge** (ADR-265 D6): a query written so that another
+// **SMT-LIB 2 at the edge** (ADR-270 D6): a query written so that another
 // solver can be asked the same question, and the part of SMT-LIB 2 this
 // crate's sorts cover read back - for comparing answers and for running public
 // benchmark sets against the solver. It is not the interface: a solver is

@@ -1,8 +1,8 @@
-//! **`assert`, a claim** ([ADR-264](../../../docs/specification/adr/adr-264.md)
+//! **`assert`, a claim** ([ADR-269](../../../docs/specification/adr/adr-269.md)
 //! D2, D3): a prelude function the compiler knows, whose condition changes
 //! nothing. Outside a test it is proved while the program is built where it
 //! can be, and checked when it runs where it cannot
-//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4); a program runs
+//! ([ADR-269](../../../docs/specification/adr/adr-269.md) D4); a program runs
 //! here at both settings of `user_parallelism`.
 
 mod common;
@@ -91,7 +91,7 @@ fn refused(source: &str, code: &str) -> Vec<String> {
 }
 
 /// **Claims the prover holds change nothing**
-/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D4): the program
+/// ([ADR-269](../../../docs/specification/adr/adr-269.md) D4): the program
 /// runs to its end, at both settings, and no check was written for any of
 /// them.
 #[test]
@@ -115,10 +115,10 @@ fn claims_the_compiler_proves_let_the_program_run() {
     assert_eq!(stdout, "all held 0\n");
 }
 
-/// **A false claim the prover cannot hold stops the program** (ADR-264 D4,
+/// **A false claim the prover cannot hold stops the program** (ADR-269 D4,
 /// D2): at both settings, naming its line, its message, the claim as written
 /// and its operand's value. After a loop the claim is not carried back to the
-/// entry (ADR-266 D3), so it is checked where it stands.
+/// entry (ADR-269 D16), so it is checked where it stands.
 #[test]
 fn a_false_claim_stops_the_program_when_it_runs() {
     let (ok, stdout, stderr) = outcome(
@@ -148,7 +148,7 @@ fn a_false_claim_stops_the_program_when_it_runs() {
 }
 
 /// **A claim carried back to the entry fails at the call that breaks it**
-/// (ADR-266 D2, D7, D8), with the `assert`'s message, the condition at the
+/// (ADR-269 D15, D20, D21), with the `assert`'s message, the condition at the
 /// entry, the `assert` it came from and the parameter's value.
 #[test]
 fn a_computed_precondition_fails_at_the_call() {
@@ -177,7 +177,7 @@ fn a_computed_precondition_fails_at_the_call() {
 }
 
 /// **A call that does not prove a precondition checks it, and its failure
-/// names the call** (ADR-264 D5): the caller broke the contract.
+/// names the call** (ADR-269 D5): the caller broke the contract.
 #[test]
 fn a_broken_precondition_names_the_caller() {
     let (ok, stdout, stderr) = outcome(
@@ -285,7 +285,7 @@ fn a_program_may_declare_its_own_assert() {
     assert_eq!(stdout, "mine: false\n");
 }
 
-/// **`--asserts` names every claim and how it is held** (ADR-264 D7): proved,
+/// **`--asserts` names every claim and how it is held** (ADR-269 D7): proved,
 /// a precondition and the calls that check it (D5), or checked at run time
 /// with the reason - and how many of each.
 #[test]

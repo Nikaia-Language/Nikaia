@@ -1,6 +1,6 @@
 // crates/nikaia-logic/src/lib.rs
 //
-// **The logic layer of the prover** (ADR-265): terms, queries, answers and
+// **The logic layer of the prover** (ADR-270): terms, queries, answers and
 // solvers, knowing nothing of Nikaia. The compiler's frontend (`prove.rs`)
 // walks a program and asks questions here; another language or tool may ask
 // the same questions in the same form.
@@ -8,8 +8,9 @@
 // * A **query** is self-contained (D3): its facts and its goal, as terms in an
 //   arena it reads and does not change. There is no assertion stack, and no
 //   state is left behind for the next query.
-// * An **answer** depends on the query and a budget counted in units of work,
-//   never on time or on how many threads ran it (D4).
+// * The reference solver's **answer** depends on the query and a budget
+//   counted in units of work (D14). A search may be freer than that; what a
+//   build uses is the committed proof file (D4).
 // * The first solver is the **reference**: Fourier-Motzkin elimination with
 //   integer tightening, over linear integer arithmetic, splitting a
 //   disjunction only where a branch needs it.
@@ -37,7 +38,7 @@ pub struct Query<'a> {
     pub goal: TermId,
 }
 
-/// What a solver answers (ADR-265 D3).
+/// What a solver answers (ADR-270 D3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     /// The facts imply the goal, and the certificate shows why.
@@ -67,7 +68,9 @@ pub enum Unknown {
 }
 
 /// How much work a solver may do on one query, counted in its own units
-/// (ADR-265 D4): never seconds, so that an answer is the same on any machine.
+/// (ADR-270 D14): the reference solver answers the same for the same budget
+/// anywhere, which keeps its tests stable. What a build uses is the committed
+/// proof file, not this answer (D4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
     /// How many branches the search may look at, each one elimination.
@@ -85,12 +88,12 @@ impl Default for Budget {
     }
 }
 
-/// A decision procedure (ADR-265 D1).
+/// A decision procedure (ADR-270 D1).
 pub trait Solver {
     fn check(&self, query: &Query<'_>, budget: &Budget) -> Answer;
 }
 
-/// **Why a goal holds, in a form a small checker can follow** (ADR-265 D5).
+/// **Why a goal holds, in a form a small checker can follow** (ADR-270 D5).
 ///
 /// The facts and the goal's negation are atoms `lin <= 0` and disjunctions,
 /// numbered in the order the query writes them. A certificate is a tree: a
@@ -133,11 +136,11 @@ pub enum Step {
     },
 }
 
-/// Values that make a query's facts true and its goal false (ADR-265 D3).
+/// Values that make a query's facts true and its goal false (ADR-270 D3).
 /// [`verify_model`] checks one by evaluating the query, so it need not be
 /// trusted either. Among the models a solver could give it gives the same one
 /// on every run: the first branch of the search that has one, and in it each variable as near
-/// to zero as its bounds allow (D4).
+/// to zero as its bounds allow (D3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub values: std::collections::BTreeMap<String, i64>,

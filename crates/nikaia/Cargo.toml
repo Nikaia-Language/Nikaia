@@ -33,7 +33,7 @@ orchestrator = { workspace = true }
 # `libc` were already in the tree), and it was a dev-dependency here already.
 nikaia-std = { workspace = true }
 # The prover's logic layer: terms, queries and the solver, knowing nothing of
-# Nikaia (ADR-265 D1).
+# Nikaia (ADR-270 D1).
 nikaia-logic = { workspace = true }
 winnow = { workspace = true }
 winnow-grammar = { workspace = true }

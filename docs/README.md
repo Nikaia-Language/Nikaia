@@ -92,7 +92,7 @@ is normative and nothing may depend on it to know what a program means.
   solver and where the time goes: 1 697 queries of at most four variables,
   83 % of them bounds on single variables or differences, 4.2 µs each, and
   the one pattern - an equality with a coefficient - behind every query it
-  cannot answer. The numbers [ADR-267](specification/adr/adr-267.md) D1 rests on.
+  cannot answer. The numbers [ADR-270](specification/adr/adr-270.md) D9 rests on.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.

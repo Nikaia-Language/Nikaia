@@ -1,4 +1,4 @@
-//! **`nikaia test`** ([ADR-264](../../../docs/specification/adr/adr-264.md) D1,
+//! **`nikaia test`** ([ADR-269](../../../docs/specification/adr/adr-269.md) D1,
 //! D12): `test "name" { … }` blocks in any file of a package, compiled only by
 //! this command, each run in a process of its own - at the project's setting,
 //! or at both with `--both-settings`. Driven through the real binary, because

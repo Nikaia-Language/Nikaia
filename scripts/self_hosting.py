@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "crates" / "nikaia" / "src"
-# The prover's logic layer is toolchain Rust too (ADR-265 D1): moved out of
+# The prover's logic layer is toolchain Rust too (ADR-270 D1): moved out of
 # `crates/nikaia/src`, it would otherwise leave the count without anything
 # having become Nikaia.
 LOGIC = ROOT / "crates" / "nikaia-logic" / "src"

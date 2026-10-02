@@ -57,7 +57,7 @@ const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 /// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 /// Set where the build is `nikaia test`'s
-/// ([ADR-264](../../docs/specification/adr/adr-264.md) D1).
+/// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 const TESTS_VAR: &str = "NIKAIA_TESTS";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
@@ -99,7 +99,7 @@ pub struct Settings {
     pub user_parallelism: String,
     pub reentrancy_check: String,
     /// **Whether this is `nikaia test`'s build**
-    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D1): the program's
+    /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1): the program's
     /// `test` blocks are compiled, and its `main` runs them by number. A
     /// choice like the others, so the cache and the wrapper both see it.
     pub tests: bool,
@@ -922,7 +922,7 @@ pub fn lower_reading(
                 (lowered, program)
             };
             let (lowered, mut program) = lowered;
-            // **The contract the `assert`s make** (ADR-266 D5): the prover
+            // **The contract the `assert`s make** (ADR-269 D18): the prover
             // decided it while the program was checked, and the ledger
             // publishes it.
             for (key, published) in &lowered.published {
@@ -965,7 +965,7 @@ pub fn lower_reading(
         }
     };
 
-    // **A contract that changed in the breaking direction** (ADR-266 D6),
+    // **A contract that changed in the breaking direction** (ADR-269 D19),
     // against the committed file this lowering has not written yet: the new
     // ledger is read back, whether it came from the cache or not.
     if layout.in_project
@@ -1699,7 +1699,7 @@ pub struct Explain {
     /// [ADR-088](../../docs/specification/adr/adr-088.md) D6's report: what a
     /// `T::fields` loop was unrolled to, for the types actually used.
     pub comptime: bool,
-    /// [ADR-264](../../docs/specification/adr/adr-264.md) D7's report: every
+    /// [ADR-269](../../docs/specification/adr/adr-269.md) D7's report: every
     /// `assert`, and whether it was proved, refuted or left to run time.
     pub asserts: bool,
 }
@@ -2369,7 +2369,7 @@ impl Project {
         // **With the packages**, or a `use` line would be read against an empty
         // set and the translation of somebody else's error would be a refusal of
         // a program that is fine.
-        // **The program the build lowered**, test build included (ADR-264
+        // **The program the build lowered**, test build included (ADR-269
         // D1): a test build's entry has its dispatcher, and a map rebuilt
         // from the other program places a warning in the wrong file.
         let mut program = match self.settings.tests {
@@ -2528,7 +2528,7 @@ fn executable_in(messages: &str) -> Option<std::path::PathBuf> {
         .next_back()
 }
 
-/// **What one test did, at one setting** ([ADR-264](../../docs/specification/adr/adr-264.md) D1).
+/// **What one test did, at one setting** ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Outcome {
     /// Whether the process ended successfully.
@@ -2542,7 +2542,7 @@ struct Outcome {
     files: Vec<(String, Option<Vec<u8>>)>,
 }
 
-/// **An output test** ([ADR-264](../../docs/specification/adr/adr-264.md) D13,
+/// **An output test** ([ADR-269](../../docs/specification/adr/adr-269.md) D13,
 /// [ADR-247](../../docs/specification/adr/adr-247.md) D2): named by a
 /// `tests/NAME.stdout` or a `tests/NAME.out/`, with what goes in beside them.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2740,7 +2740,7 @@ pub struct Suite<'a> {
 }
 
 /// **Run each test in a process and a directory of its own, and say how each
-/// went** ([ADR-264](../../docs/specification/adr/adr-264.md) D1, D12, D13;
+/// went** ([ADR-269](../../docs/specification/adr/adr-269.md) D1, D12, D13;
 /// [ADR-247](../../docs/specification/adr/adr-247.md)).
 ///
 /// A `test` block fails on an error that leaves it, a false `assert` or a

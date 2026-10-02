@@ -511,7 +511,7 @@ pub mod prelude {
     // import to say so.
     pub use crate::abort::panic;
     // **How a false `assert` prints its operands**
-    // ([ADR-264](../../../docs/specification/adr/adr-264.md) D2): the emitter
+    // ([ADR-269](../../../docs/specification/adr/adr-269.md) D2): the emitter
     // writes `.shown()` on each, and a method needs its trait in scope.
     pub use crate::abort::{ShownByDebug as _, ShownByNothing as _};
     pub use crate::bytes::Bytes;

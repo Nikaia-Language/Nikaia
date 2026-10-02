@@ -12,7 +12,7 @@
 // value, `sync` functions, and floating-point arithmetic in a loop.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-264 D13).
+// what it prints against `tests/` (ADR-269 D13).
 
 use std::cli
 

@@ -48,7 +48,7 @@ pub fn panic(message: impl std::fmt::Display) -> ! {
 }
 
 /// **A false `assert`**
-/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D2): unrecoverable,
+/// ([ADR-269](../../../docs/specification/adr/adr-269.md) D2): unrecoverable,
 /// as a `panic` is, and saying what only the compiler knew - the claim as it
 /// was written and the value of each operand of its comparison, by the name
 /// it was written with. The hook above puts the `.nika` line in front.
@@ -87,7 +87,7 @@ fn failed_claim(
 }
 
 /// **An operand of a claim, printed where it can be**
-/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D2).
+/// ([ADR-269](../../../docs/specification/adr/adr-269.md) D2).
 ///
 /// The compiler writes `(&&Operand(&x)).shown()` for each operand of a false
 /// `assert`'s comparison, and does not know whether `x`'s type prints: an

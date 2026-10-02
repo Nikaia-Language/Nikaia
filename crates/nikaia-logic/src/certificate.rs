@@ -1,6 +1,6 @@
 // crates/nikaia-logic/src/certificate.rs
 //
-// **The checker** (ADR-265 D5): what has to be trusted so that no solver has
+// **The checker** (ADR-270 D5): what has to be trusted so that no solver has
 // to be. It numbers the query's atoms and disjunctions itself, follows the
 // certificate's splits - every alternative of a disjunction the branch has
 // not split yet - and replays each refutation step by step: a few arithmetic

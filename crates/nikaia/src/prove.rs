@@ -1,7 +1,7 @@
 // crates/nikaia/src/prove.rs
 //
 // Every `assert` outside a `test` block, proved while the program is built
-// ([ADR-264](../../docs/specification/adr/adr-264.md)).
+// ([ADR-269](../../docs/specification/adr/adr-269.md)).
 //
 // **What it reads** (D9): comparisons of whole numbers built from names,
 // literals, `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`.
@@ -17,7 +17,7 @@
 // proved before.
 //
 // **How** (D10) is not decided here: each claim is a query to `nikaia-logic`
-// ([ADR-265](../../docs/specification/adr/adr-265.md)) - its facts and its
+// ([ADR-270](../../docs/specification/adr/adr-270.md)) - its facts and its
 // goal as terms - and the reference solver there answers it. This file is the
 // frontend: it knows the program, and what an answer means for it.
 //
@@ -38,7 +38,7 @@ use crate::check::{Finding, Severity};
 use crate::contracts::{Ledger, Provenance};
 use crate::parser::Parsed;
 
-/// How the compiler holds one `assert` (ADR-264 D4-D6, D11).
+/// How the compiler holds one `assert` (ADR-269 D4-D6, D11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Held {
     /// In a `test` block: the test's verdict, checked when it runs (D11).
@@ -47,7 +47,7 @@ pub enum Held {
     Proved,
     /// The precondition of the named function (D5): the body assumes it; a
     /// call proves it or carries the check, and a caller the compiler can't
-    /// see reaches the entry that checks it (ADR-266 D7). The number is how
+    /// see reaches the entry that checks it (ADR-269 D20). The number is how
     /// many distinct calls carry a check.
     Precondition(String, usize),
     /// Not proved: the condition is checked where it is reached (D4), for
@@ -57,8 +57,8 @@ pub enum Held {
     Refused,
 }
 
-/// A precondition checked before a function's body runs (ADR-264 D5,
-/// ADR-266 D7): the condition as the language below writes it, over names in
+/// A precondition checked before a function's body runs (ADR-269 D5,
+/// ADR-269 D20): the condition as the language below writes it, over names in
 /// scope where it stands, and what it says when it fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
@@ -69,13 +69,13 @@ pub struct Check {
     pub written: String,
     /// The `assert`'s `message:`, where it wrote one.
     pub message: Option<String>,
-    /// The values a failure shows (ADR-264 D2): each parameter the condition
+    /// The values a failure shows (ADR-269 D2): each parameter the condition
     /// reads, by name, and the expression of the language below that is its
     /// value where the check stands.
     pub operands: Vec<(String, String)>,
 }
 
-/// **How a call reaches a function with a precondition** (ADR-266 D7).
+/// **How a call reaches a function with a precondition** (ADR-269 D20).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reach {
     /// Every precondition is proved here: the unchecked entry.
@@ -125,11 +125,11 @@ pub struct Proved {
     /// By the ledger's key (`f`, `Type::m`): what the checked entry checks.
     pub entries: BTreeMap<String, Vec<Check>>,
     pub reaches: Reaches,
-    /// By the ledger's key: what the ledger publishes (ADR-266 D5).
+    /// By the ledger's key: what the ledger publishes (ADR-269 D18).
     pub published: BTreeMap<String, Published>,
 }
 
-/// **A function's contract as the ledger writes it** (ADR-266 D5), in the
+/// **A function's contract as the ledger writes it** (ADR-269 D18), in the
 /// language's syntax.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Published {
@@ -181,7 +181,7 @@ pub fn prove(
     prover.collecting = false;
     prover.preconditions = preconditions;
     // **Pass 2, until nothing changes: every claim and every call**, with
-    // the postconditions still standing (ADR-266 D4). Each one starts as a
+    // the postconditions still standing (ADR-269 D17). Each one starts as a
     // candidate and is struck where an exit does not show it; a proof at one
     // exit may lean on another function's postcondition, so the walk repeats
     // until no candidate falls. The last walk is the answer: it ran with
@@ -201,8 +201,8 @@ pub fn prove(
         }
     }
 
-    // **Every function with a precondition has a checked entry** (ADR-266
-    // D7), whatever its calls do: a caller the compiler doesn't see - a
+    // **Every function with a precondition has a checked entry** (ADR-269
+    // D20), whatever its calls do: a caller the compiler doesn't see - a
     // function value, another package, the language below - reaches it.
     let entries: BTreeMap<String, Vec<Check>> = prover
         .preconditions
@@ -233,7 +233,7 @@ pub fn prove(
         })
         .collect();
     prover.out.entries = entries;
-    // **What the ledger publishes** (ADR-266 D5): every precondition and
+    // **What the ledger publishes** (ADR-269 D18): every precondition and
     // every postcondition still standing, and the `assert` each came from.
     let mut published: BTreeMap<String, Published> = BTreeMap::new();
     for (function, pre) in &prover.preconditions {
@@ -305,7 +305,7 @@ struct Precondition {
 
 impl PreClaim {
     /// What a failed check of it says: the condition, and where a computed
-    /// one came from (ADR-266 D8).
+    /// one came from (ADR-269 D21).
     fn message(&self, function: &str) -> String {
         match &self.computed {
             Some(computed) => format!(
@@ -317,7 +317,7 @@ impl PreClaim {
     }
 }
 
-/// **Another package's function, as its ledger states it** (ADR-266 D5):
+/// **Another package's function, as its ledger states it** (ADR-269 D18):
 /// its parameters, whether it hands back a whole number, and its contract
 /// read back into terms.
 #[derive(Debug, Clone)]
@@ -328,7 +328,7 @@ struct Foreign {
     ensures: Vec<PostClaim>,
 }
 
-/// One claim of a postcondition (ADR-266 D4).
+/// One claim of a postcondition (ADR-269 D17).
 #[derive(Debug, Clone)]
 struct PostClaim {
     /// Over `result` and the function's parameters.
@@ -340,7 +340,7 @@ struct PostClaim {
 /// The name a postcondition calls the value a function hands back.
 const RESULT: &str = "result";
 
-/// One claim of a precondition (ADR-266 D2).
+/// One claim of a precondition (ADR-269 D15).
 #[derive(Debug, Clone)]
 struct PreClaim {
     /// The condition at the function's entry, over its parameters: the
@@ -350,7 +350,7 @@ struct PreClaim {
     /// The `assert`'s condition, written, for messages.
     written: String,
     /// The condition at the entry as a reader writes it, where it is not the
-    /// claim as written: `mode == 1 → x - 1 > 0` (ADR-266 D8).
+    /// claim as written: `mode == 1 → x - 1 > 0` (ADR-269 D21).
     computed: Option<String>,
     /// The `assert`'s `message:`, where it is text as written.
     message: Option<String>,
@@ -359,14 +359,14 @@ struct PreClaim {
 struct Prover<'a> {
     parsed: &'a Parsed,
     /// The program's ledger: another package's functions, with their
-    /// `requires` and `ensures` (ADR-266 D5).
+    /// `requires` and `ensures` (ADR-269 D18).
     own: &'a Ledger,
     library: &'a Ledger,
     /// Another package's contracts as terms, read once per function.
     foreign: BTreeMap<String, Option<Foreign>>,
     claims: &'a BTreeSet<(usize, String)>,
     preconditions: BTreeMap<String, Precondition>,
-    /// Pass 1's postconditions, before any exit is asked (ADR-266 D4).
+    /// Pass 1's postconditions, before any exit is asked (ADR-269 D17).
     candidates: BTreeMap<String, Vec<PostClaim>>,
     /// The postconditions standing in this walk: callers read them.
     postconditions: BTreeMap<String, Vec<PostClaim>>,
@@ -380,7 +380,7 @@ struct Prover<'a> {
     collecting: bool,
     out: Proved,
     in_test: bool,
-    /// Every term the walk builds, facts and claims alike (ADR-265 D2).
+    /// Every term the walk builds, facts and claims alike (ADR-270 D2).
     arena: Arena,
 }
 
@@ -396,7 +396,7 @@ struct Scope {
     locals: BTreeSet<String>,
     facts: Vec<TermId>,
     /// **Each whole number's value at the function's entry**, as a term over
-    /// its parameters (ADR-266 D2): after `let y = x - 1`, `y` is `x - 1`,
+    /// its parameters (ADR-269 D15): after `let y = x - 1`, `y` is `x - 1`,
     /// and after `let x = x + 1`, `x` is the parameter plus one.
     entry: BTreeMap<String, TermId>,
     /// **What holds of the parameters on the way here**: the branches taken
@@ -631,7 +631,7 @@ impl<'a> Prover<'a> {
                 let value_lin = lin(&mut self.arena, self.parsed, value, scope);
                 let value_at_entry = value_lin.and_then(|v| self.at_entry(v, scope));
                 // **A call's postconditions are facts about its result**
-                // (ADR-266 D4): `let r = f(x)` knows what `f` ensures.
+                // (ADR-269 D17): `let r = f(x)` knows what `f` ensures.
                 let called = match (names.as_slice(), value) {
                     ([only], Expr::Call { func, args, .. }) if !mutable => {
                         let callee = match &**func {
@@ -774,7 +774,7 @@ impl<'a> Prover<'a> {
                     }
                 }
                 // A claim in a loop, or after one, is not carried back to
-                // the entry (ADR-266 D3): that needs an invariant.
+                // the entry (ADR-269 D16): that needs an invariant.
                 inner.path = None;
                 self.block(body, &mut inner, &nested);
                 scope.path = None;
@@ -910,7 +910,7 @@ impl<'a> Prover<'a> {
         }
         let claim = claim(&mut self.arena, self.parsed, cond, scope);
         // A claim about the value the next statement returns is a candidate
-        // postcondition (ADR-266 D4).
+        // postcondition (ADR-269 D17).
         if self.collecting
             && at.free
             && !at.lambda
@@ -939,15 +939,15 @@ impl<'a> Prover<'a> {
         }
 
         // **A claim the body cannot prove is its callers'** where it can be
-        // carried back to the entry (ADR-266 D2): what it says about the
+        // carried back to the entry (ADR-269 D15): what it says about the
         // parameters, under the branches and guards on the way. At the top of
         // the body, over parameters only, that is the claim as written
-        // (ADR-264 D5).
+        // (ADR-269 D5).
         let names = names_in(self.parsed, cond);
         let only_params = !names.is_empty() && names.iter().all(|n| at.params.contains(n));
         // **A claim what is known rules out is not a precondition**: every
         // caller that reaches it breaks it, so it would only say *never come
-        // here*. It is warned about where it stands (ADR-264 D8). Decided in
+        // here*. It is warned about where it stands (ADR-269 D8). Decided in
         // both passes alike, so the first pass's preconditions are the
         // second's.
         let tainted_claim = names.iter().any(|n| scope.tainted.contains(n));
@@ -1015,7 +1015,7 @@ impl<'a> Prover<'a> {
 
         // **Neither proved nor refused: checked where it is reached** (D4) -
         // and where what is known before it rules the claim out, the author
-        // is told, with values (ADR-264 D8).
+        // is told, with values (ADR-269 D8).
         if let Some(values) = refuted.as_ref().filter(|_| !self.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
@@ -1207,7 +1207,7 @@ impl<'a> Prover<'a> {
             if proved {
                 continue;
             }
-            // **A call that breaks the precondition every time** (ADR-264
+            // **A call that breaks the precondition every time** (ADR-269
             // D8): what is known at the call rules it out. The values shown
             // are the parameters', as this call gives them.
             if let Some(goal) = goal
@@ -1260,7 +1260,7 @@ impl<'a> Prover<'a> {
             // arguments in place of the parameters - where every argument is
             // one the prover reads, which also makes it pure, so evaluating it
             // once more for the check changes nothing. Where one is not, the
-            // call reaches the checked entry (ADR-266 D7).
+            // call reaches the checked entry (ADR-269 D20).
             reach = reach.joined(match goal {
                 Some(goal) => Reach::Checked(vec![Check {
                     rust: rust_of(&self.arena, goal),
@@ -1286,7 +1286,7 @@ impl<'a> Prover<'a> {
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
-    /// ([ADR-265](../../docs/specification/adr/adr-265.md) D3, D4), whose
+    /// ([ADR-270](../../docs/specification/adr/adr-270.md) D3, D4), whose
     /// certificate is checked before a check is left out (D5). The reference
     /// solver's word would be enough; checking it costs a replay of a few
     /// steps, and a solver fault becomes a check at run time instead of a
@@ -1354,7 +1354,7 @@ impl<'a> Prover<'a> {
 
     /// **An exit of a free function**: each postcondition standing has to be
     /// shown here, with the value handed back as `result`, or it falls
-    /// (ADR-266 D4). A parameter bound again before the exit reads something
+    /// (ADR-269 D17). A parameter bound again before the exit reads something
     /// else than at the entry, and that is a fall too.
     fn exit(&mut self, value: &Expr, scope: &Scope, at: &Where) {
         if self.collecting || at.lambda || !at.free {
@@ -1463,7 +1463,7 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// **Another package's contract, read back into terms** (ADR-266 D5):
+    /// **Another package's contract, read back into terms** (ADR-269 D18):
     /// each `requires` and `ensures` the ledger states, parsed as the
     /// language's own syntax over the parameters' names. `None` where the
     /// ledger has no such function; a condition that does not read back is
@@ -1552,7 +1552,7 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// **The precondition a claim makes** (ADR-266 D2, D3): `path → claim`
+    /// **The precondition a claim makes** (ADR-269 D15, D16): `path → claim`
     /// at the entry, where both read only the function's parameters and the
     /// lengths of its lists, and the result is no larger than a fixed number
     /// of terms - counted, so that whether a claim is a precondition does not
@@ -1575,7 +1575,7 @@ impl<'a> Prover<'a> {
     }
 
     /// The values that show a claim false every time it is reached
-    /// (ADR-264 D8): the solver proves, with a checked certificate, that the
+    /// (ADR-269 D8): the solver proves, with a checked certificate, that the
     /// facts rule the claim out - so it is false in every state the program
     /// reaches it in - and a model of the facts, checked by evaluating it,
     /// gives values for the claim's names. A model alone would not do: the
@@ -1842,7 +1842,7 @@ fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
 // --- A program's numbers as terms -----------------------------------------
 
 /// **What a `pub` function's contract changed in the breaking direction**
-/// since the committed ledger (ADR-266 D6), as warnings: a precondition the
+/// since the committed ledger (ADR-269 D19), as warnings: a precondition the
 /// old one does not imply - a caller that showed the old may now stop where
 /// it is checked - and a postcondition the new one does not imply - a caller's
 /// proof that leaned on it may no longer hold. The solver decides each
@@ -1940,7 +1940,7 @@ fn implies(from: &[String], to: &[String], names: &BTreeSet<String>) -> bool {
     }
 }
 
-/// **A condition the ledger states, read back** (ADR-266 D5): the text is
+/// **A condition the ledger states, read back** (ADR-269 D18): the text is
 /// the language's own syntax, so the compiler's parser reads it, inside an
 /// `assert` of a function nobody calls, and the prover's own reading turns it
 /// into a term. Only `names` are variables of it.
@@ -1982,10 +1982,10 @@ fn is_a_parameter(name: &str, at: &Where) -> bool {
 }
 
 /// How many terms a precondition carried back to the entry may have
-/// (ADR-266 D3).
+/// (ADR-269 D16).
 const PRECONDITION_TERMS: usize = 64;
 
-/// A whole-number expression, where it is one this prover reads (ADR-264 D9).
+/// A whole-number expression, where it is one this prover reads (ADR-269 D9).
 fn lin(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
     lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }

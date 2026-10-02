@@ -14,7 +14,7 @@
 // parse error caught and printed, and a two-key sort done as two stable sorts.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-264 D13).
+// what it prints against `tests/` (ADR-269 D13).
 
 use std::fs
 use std::cli

@@ -1,9 +1,9 @@
 // crates/nikaia-logic/src/term.rs
 //
-// Terms by id in an arena (ADR-265 D2). A term never changes once built, so an
+// Terms by id in an arena (ADR-270 D2). A term never changes once built, so an
 // arena handed to a solver can be read from any number of threads without a
 // lock. Whether two equal terms share one id (hash-consing) is a
-// representation choice ADR-265 D2 leaves to a measurement; nothing here
+// representation choice ADR-270 D2 leaves to a measurement; nothing here
 // depends on it, and today they do not.
 
 /// A term, named by its place in an [`Arena`].
@@ -12,7 +12,7 @@ pub struct TermId(u32);
 
 /// One term. Sorts are `Bool` and `Int` (unbounded integers); a variable is an
 /// `Int`. Each further theory adds its sorts and terms by a record of its own
-/// (ADR-265 D2).
+/// (ADR-270 D2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
     Bool(bool),

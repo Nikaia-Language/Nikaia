@@ -1,5 +1,5 @@
 //! **A contract crosses the package boundary**
-//! ([ADR-266](../../../docs/specification/adr/adr-266.md) D5-D7): a package's
+//! ([ADR-269](../../../docs/specification/adr/adr-269.md) D18-D20): a package's
 //! `assert`s are published in its ledger as `requires` and `ensures`, a
 //! consumer proves the one and relies on the other, a call it does not prove
 //! checks the precondition where it stands, and a contract that changes in the

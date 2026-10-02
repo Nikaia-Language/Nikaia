@@ -459,7 +459,7 @@ pub struct Lowered {
     pub rust: String,
     pub map: SourceMap,
     /// What the prover publishes of each function's contract, for the ledger
-    /// ([ADR-266](../../../docs/specification/adr/adr-266.md) D5).
+    /// ([ADR-269](../../../docs/specification/adr/adr-269.md) D18).
     pub published: std::collections::BTreeMap<String, crate::prove::Published>,
 }
 
@@ -1553,13 +1553,13 @@ struct Emitter<'p> {
     wrapped: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
-    /// `check::Checked::claims` ([ADR-264](../../docs/specification/adr/adr-264.md) D2).
+    /// `check::Checked::claims` ([ADR-269](../../docs/specification/adr/adr-269.md) D2).
     claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
-    /// `check::Checked::entries` ([ADR-266](../../docs/specification/adr/adr-266.md) D7).
+    /// `check::Checked::entries` ([ADR-269](../../docs/specification/adr/adr-269.md) D20).
     entries: std::collections::BTreeMap<String, Vec<crate::prove::Check>>,
-    /// `check::Checked::reaches` (ADR-266 D7).
+    /// `check::Checked::reaches` (ADR-269 D20).
     reaches: crate::prove::Reaches,
-    /// `check::Checked::published` (ADR-266 D5).
+    /// `check::Checked::published` (ADR-269 D18).
     published: std::collections::BTreeMap<String, crate::prove::Published>,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
@@ -1734,8 +1734,8 @@ const LENGTH_PARAMETER: &str = "__NIKAIA_N";
 
 /// The name a Nikaia program gives its entry point.
 const MAIN: &str = "main";
-/// **A precondition checked where it stands** (ADR-266 D7), and what its
-/// failure says (ADR-264 D2): the condition, the `assert`'s message, and the
+/// **A precondition checked where it stands** (ADR-269 D20), and what its
+/// failure says (ADR-269 D2): the condition, the `assert`'s message, and the
 /// value of each parameter it reads.
 fn failed_check(check: &crate::prove::Check) -> String {
     let message = match &check.message {
@@ -1756,7 +1756,7 @@ fn failed_check(check: &crate::prove::Check) -> String {
 }
 
 /// The suffix of a function's unchecked entry
-/// ([ADR-266](../../docs/specification/adr/adr-266.md) D7): `f` checks its
+/// ([ADR-269](../../docs/specification/adr/adr-269.md) D20): `f` checks its
 /// precondition and calls `f__unchecked`, which is the body.
 const UNCHECKED: &str = "__unchecked";
 
@@ -4453,7 +4453,7 @@ impl<'p> Emitter<'p> {
             out.push(&pad);
         }
         // **A function with a precondition has two entries**
-        // ([ADR-266](../../docs/specification/adr/adr-266.md) D7): `f` checks
+        // ([ADR-269](../../docs/specification/adr/adr-269.md) D20): `f` checks
         // it and calls `f__unchecked`, which is the body. A caller the prover
         // saw prove it, or check it at the call, calls the second; every other
         // caller - a function value, another package, the language below -
@@ -8779,12 +8779,12 @@ impl<'p> Emitter<'p> {
         // entry unless the prover saw this call prove it, or check it here
         // with the call's arguments in place of the parameters, so that a
         // failure names the caller
-        // ([ADR-266](../../docs/specification/adr/adr-266.md) D7). The
+        // ([ADR-269](../../docs/specification/adr/adr-269.md) D20). The
         // arguments of a checked call are ones the prover reads, so reading
         // them once more changes nothing.
         // A function of this file with a checked entry, or one of another
         // package whose ledger states a precondition: that package was
-        // lowered with the two entries (ADR-266 D5, D7).
+        // lowered with the two entries (ADR-269 D18, D20).
         let callee = match func {
             Expr::Variable(name) if self.entries.contains_key(self.text(*name)) => {
                 Some(self.text(*name).to_string())
@@ -8834,7 +8834,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// A call, past [`Self::call`]'s precondition check: to the unchecked
-    /// entry where `unchecked` says so (ADR-266 D7).
+    /// entry where `unchecked` says so (ADR-269 D20).
     #[allow(clippy::too_many_arguments)]
     fn call_inner(
         &self,
@@ -8846,7 +8846,7 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
         unchecked: bool,
     ) -> Result<()> {
-        // **An `assert` is a claim checked here** (ADR-264 D2, D4) unless it
+        // **An `assert` is a claim checked here** (ADR-269 D2, D4) unless it
         // was proved, and the failure is
         // written with what only this compiler knew - the claim as written
         // and its operands by name. The condition changes nothing (D3), which
@@ -8859,7 +8859,7 @@ impl<'p> Emitter<'p> {
                 .get(&(flow.statement, crate::check::argument_shape(condition)))
         {
             // **A claim held before the program runs costs nothing when it
-            // does** ([ADR-264](../../docs/specification/adr/adr-264.md) D4,
+            // does** ([ADR-269](../../docs/specification/adr/adr-269.md) D4,
             // D5): a precondition is checked by the calls that do not prove
             // it, and every other claim here.
             if matches!(

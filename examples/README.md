@@ -10,7 +10,7 @@ on its own, so the pair is the only place in this directory where the dependency
 down rather than described.
 
 **Eleven of them are packages that test themselves**
-([ADR-264](../docs/specification/adr/adr-264.md) D13, [ADR-247](../docs/specification/adr/adr-247.md)):
+([ADR-269](../docs/specification/adr/adr-269.md) D13, [ADR-247](../docs/specification/adr/adr-247.md)):
 `calc/`, `access-log/`, `config/`, `json/`, `n-body/`, `k-nucleotide/`, `escaping/`, `trend/`,
 `tally/`, `report/` and `inventory/` each hold `nikaia.toml`, `src/` and a `tests/` directory:
 `NAME.stdout` is what the program must print and `NAME.out/` the files it must write;

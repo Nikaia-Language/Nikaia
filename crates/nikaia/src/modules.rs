@@ -612,7 +612,7 @@ pub struct Program {
     /// there is nothing to get wrong.
     pub as_its_own: std::collections::BTreeMap<String, crate::contracts::Ledger>,
     /// **The program's `test` blocks**, in the order `nikaia test` numbers
-    /// them ([ADR-264](../../../docs/specification/adr/adr-264.md) D1). Empty
+    /// them ([ADR-269](../../../docs/specification/adr/adr-269.md) D1). Empty
     /// in every build but a test build, which is the only one that keeps them.
     pub tests: Vec<TestCase>,
     /// **The program's own functions that pause only where their lambdas do**
@@ -644,7 +644,7 @@ fn test_function(k: usize) -> String {
 
 /// Whether a function is a `test` block a test build turned into one
 /// ([`test_function`]): its `assert`s are the test's verdict, not claims the
-/// prover holds ([ADR-264](../../docs/specification/adr/adr-264.md) D11).
+/// prover holds ([ADR-269](../../docs/specification/adr/adr-269.md) D11).
 pub fn is_a_test_function(name: &str) -> bool {
     name.strip_prefix("__nikaia_test_")
         .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
@@ -679,7 +679,7 @@ impl Program {
     }
 
     /// **The program as `nikaia test` builds it**
-    /// ([ADR-264](../../../docs/specification/adr/adr-264.md) D1): every
+    /// ([ADR-269](../../../docs/specification/adr/adr-269.md) D1): every
     /// `test` block of the program's own files is a function, and the entry's
     /// `main` is replaced by one that runs the test whose number it is given
     /// as its first argument - so the program is compiled once and each test
@@ -702,7 +702,7 @@ impl Program {
     }
 
     fn of(mut units: Vec<Unit>, dependencies: &[Dependency]) -> Result<Program> {
-        // **A `test` block is compiled only by `nikaia test`** (ADR-264 D1),
+        // **A `test` block is compiled only by `nikaia test`** (ADR-269 D1),
         // which has turned every one it runs into a function by now: what is
         // left is left out.
         for unit in &mut units {
@@ -1134,7 +1134,7 @@ impl Program {
 
 /// **Every `test` block of the program's own files, as a function**, and the
 /// entry's `main` replaced by the one that runs them by number
-/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D1).
+/// ([ADR-269](../../../docs/specification/adr/adr-269.md) D1).
 ///
 /// The dispatcher is Nikaia, appended to the entry's text and parsed with it,
 /// so it goes through every check and the one lowering a program does: a test
