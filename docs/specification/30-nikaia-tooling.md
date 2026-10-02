@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.369 (Draft)
+**Version:** 0.0.370 (Draft)
 **Date:** 2026-10-02
 
 ---
@@ -23,6 +23,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
     * **Not in the lockfile:** the build options of Part I 1.2, `opt-level` and the backend. They are hashed into the cache key and never written.
     * **Incremental builds:** where the hashes on disk are unchanged, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/`. The store is git-ignored. The lockfile holds inputs and the store holds outputs. Keys are per translation unit, so one changed asset invalidates that unit and not the project.
 * `nikaia.contracts`: the **borrow contract ledger**. It is generated and committed like the lockfile. It records the borrow contracts the compiler inferred for the program's functions and the tether relationships of its structs. It is an incremental-build cache and the basis of the compiler's contract-change diagnostics (13.5).
+* `nikaia.proofs`: the **proof file** ([ADR-268](adr/adr-268.md)). It is generated and committed like the lockfile. It holds one entry per query the prover asks: the SHA-256 of the query in normal form and its answer - `proved` with its certificate, `refuted` with its model, or `unknown`. Every entry is checked when read, so a wrong entry is ignored, never believed. A build uses only what the file holds; the solver's search, which may be timed, parallel and cached, only adds to it. Long certificates live in `nikaia.proofs.d/`. *Decided, not built yet.*
 * `src/`: the source.
     * `main.nika`: the entry point.
 
@@ -371,12 +372,12 @@ A method with no entry is an unknown, and an unknown costs every function that c
 
 **Version control.** `nikaia.contracts` and `nikaia.derived` are committed. A merge conflict resolves like a lockfile conflict: accept either side and run `nikaia build` to regenerate. Where a toolchain upgrade, and not user code, changed the inference results, the build output states that the contract changes were caused by the toolchain update.
 
-**Determinism guarantee.** The ledger and its record are a **pure function of (source tree, toolchain)**: the same sources and the same pinned toolchain produce a byte-identical `nikaia.contracts` on every machine, every run, with any thread count. A violation is a compiler bug. Two consequences:
+**Determinism guarantee.** The ledger and its record are a **pure function of (source tree, toolchain)**, where the source tree includes the committed `nikaia.proofs` ([ADR-268](adr/adr-268.md) D2): the solver's search may differ between machines, and a build uses only the answers that file records; the same sources and the same pinned toolchain produce a byte-identical `nikaia.contracts` on every machine, every run, with any thread count. A violation is a compiler bug. Two consequences:
 
 * There is exactly **one** ledger per project, valid at every value of every build option. Borrow contracts and tether relationships do not depend on a build option. A check that does, such as a thread-safety rule, is performed by the compiler directly and is never recorded in the ledger.
 * Ledger stability is **not** promised across toolchain upgrades. The recorded toolchain and the narration explain such a diff.
 
-**Verification mode (`--locked`).** `nikaia build --locked` verifies instead of updating: the compiler regenerates the contracts in memory, the program's and those of every path dependency it has sources for, and compares each byte for byte against its committed `nikaia.contracts` and `nikaia.derived`. Any difference fails the build with the narrated contract diff (`NK2401` above). This is the one place contracts are compared rather than hashes; a development build compares hashes and derives only what changed. A CI build with `--locked` is equivalent to `git diff --exit-code nikaia.contracts` after a regular build.
+**Verification mode (`--locked`).** `nikaia build --locked` verifies instead of updating: the compiler regenerates the contracts in memory, the program's and those of every path dependency it has sources for, and compares each byte for byte against its committed `nikaia.contracts` and `nikaia.derived`. Any difference fails the build with the narrated contract diff (`NK2401` above). This is the one place contracts are compared rather than hashes; a development build compares hashes and derives only what changed. A CI build with `--locked` is equivalent to `git diff --exit-code nikaia.contracts` after a regular build. `--locked` also searches no proof: every query the build asks must have a checking entry in `nikaia.proofs`, and every entry must be asked; a difference fails the build with the query's position and *run `nikaia build` and commit `nikaia.proofs`* ([ADR-268](adr/adr-268.md) D6; decided, not built yet).
 
 ---
 

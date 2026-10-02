@@ -158,7 +158,24 @@ The z3 and cvc5 times include parsing and a fresh solver; z3 spends about
 set-up costs; on parity it is a comparison of algorithms, and Fourier-Motzkin
 loses by an order of magnitude at ten variables.
 
-## 7. What this does not measure
+## 7. The size of a certificate
+
+What [ADR-268](specification/adr/adr-268.md) D3's committed proof file would
+hold, for the certificates of 0.0.368 (a split tree of refutations). *Bytes*
+is a compact encoding estimated from the steps - one byte per step kind and
+index, the multipliers as variable-length integers - before any text
+encoding:
+
+| | proved | steps: median | p90 | max | bytes: median | p90 | max | bytes in all |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| full suite | 649 | 3 | 6 | 6 | 10 | 22 | 22 | 7 073 |
+| stress set | 22 | 35 | 455 | 9 702 | 122 | 1 643 | 34 648 | 46 379 |
+
+The 649 proved queries of the suite are fewer than 105 distinct ones (§5), so
+a project's file is a few kilobytes; the stress set's largest certificate is
+parity with ten variables.
+
+## 8. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the
   container this ran in could not reach; every statement about them in

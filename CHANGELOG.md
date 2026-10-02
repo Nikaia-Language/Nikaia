@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.370] — 2026-10-02
+
+**ADR-268: the search is free; what a build uses is a committed proof
+file.** By the owner's decision the solver's search no longer has to be
+deterministic - it may use time limits, race engines, share clauses at any
+moment and keep local caches - on the condition that what one machine proved
+is never rejected by CI or another machine. No code changes.
+
+- **`nikaia.proofs`**, committed beside `nikaia.contracts`: one sorted line per
+  query the prover asks, keyed by the SHA-256 of its normal form, with
+  `proved` and its certificate, `refuted` and its model, or `unknown`; long
+  certificates in `nikaia.proofs.d/`. Code, published contracts and
+  `NK1207`/`NK1208` follow from the file only.
+- Every entry is checked when read, so the file needs no trust; a normal build
+  searches what is missing and writes it; `nikaia build --locked` searches
+  nothing and fails on any difference, naming the query and the fix.
+- Measured: the suite's certificates are 10 bytes in the median and 22 at most
+  in a compact encoding (`docs/solver-workload.md` §7).
+- Supersedes ADR-265 D4; narrows ADR-267 D7, D8, D11 and D12's criteria. Part
+  III 13.1 names the file and 13.5's determinism guarantee and `--locked`
+  include it (decided, not built yet).
+
 ## [0.0.369] — 2026-10-02
 
 **ADR-267: the solver's architecture**, decided before its algorithms. The
