@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.345] — 2026-10-02
+
+**A `rustc` message is put in the program's words by Nikaia** (#125,
+ADR-250). What `diagnostics` does to a message the language below wrote about
+the generated Rust - `Rc<T>` and `Arc<T>` back to `Shared[T]` with the brackets
+matched, the lock's two shapes back to `Locked`, a trusted map back to
+`HashMap`, `Option::map` back to the `?.` the program wrote (ADR-056 D1,
+ADR-057, ADR-189), the note that names something a `.nika` file cannot reach,
+and the *expected `A`, found `A`* that marks this compiler's own defect (D2) -
+moved into `tools/rustc_words.nika`. `tests/diagnostics.rs` holds a nested
+hull, a name that only ends in `Rc<`, and the lock and map. 13.2 % of the
+toolchain is Nikaia, up from 13.0 %.
+
 ## [0.0.344] — 2026-10-02
 
 **The specification's blocks are read in Nikaia** (#125, ADR-250). The text

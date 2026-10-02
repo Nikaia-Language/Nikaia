@@ -461,3 +461,20 @@ fn a_nested_shared_type_is_translated_whole() {
     );
     assert_eq!(translated[0].internal, None);
 }
+
+/// **The words put back are Nikaia's own** (`tools/rustc_words.nika`, #125):
+/// a hull nested in a hull comes through whole, a bare `Rc<` does not eat the
+/// tail of a name that ends in it, and the lock's and the map's shapes go back
+/// as the names the program wrote.
+#[test]
+fn a_rustc_message_is_put_in_the_programs_words() {
+    use nikaia_std::tools::rustc_words::in_this_language;
+    assert_eq!(
+        in_this_language("expected `Rc<Vec<Arc<Conn>>>`, found `MyRc<u8>`"),
+        "expected `Shared[Vec<Shared[Conn]>]`, found `MyRc<u8>`"
+    );
+    assert_eq!(
+        in_this_language("`TrustedMap<K, V, BuildHasherDefault<FxHasher>>` in `lock::Crossing<T>`"),
+        "`HashMap<K, V>` in `Locked<T>`"
+    );
+}

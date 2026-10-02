@@ -52,6 +52,7 @@ COMPILER_NIKA = {
     "foreign.nika": "the walk of the tree, for foreign, contracts::trust, contracts::locks, contracts::keep, contracts::keeps, contracts::touch and contracts::sync (0.0.334-0.0.343)",
     "names.nika": "contracts::order and contracts::send: every name an expression or a statement mentions (0.0.338, 0.0.340)",
     "specbook.nika": "specbook: the specification's blocks and the readings a block can have (0.0.344)",
+    "rustc_words.nika": "diagnostics: a rustc message in the words the program wrote (0.0.345)",
 }
 
 

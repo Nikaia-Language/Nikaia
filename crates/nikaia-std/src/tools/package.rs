@@ -3935,6 +3935,116 @@ fn kept(found: Vec<Found<'_>>) -> Vec<RustItem<'_>> {
 }
 
 
+// --- rustc_words.nika ---
+
+pub fn in_this_language(message: &str) -> String {
+    let mut out = shared_names(message);
+    out = replaced(&out, "nikaia_std::lock::Crossing", "Locked");
+    out = replaced(&out, "nikaia_std::lock::Local", "Locked");
+    out = replaced(&out, "lock::Crossing", "Locked");
+    out = replaced(&out, "lock::Local", "Locked");
+    out = replaced(&out, "Crossing<", "Locked<");
+    out = replaced(&out, "Local<", "Locked<");
+    out = replaced(&out, ", BuildHasherDefault<FxHasher>>", ">");
+    out = replaced(&out, "nikaia_std::hash::TrustedMap", "HashMap");
+    out = replaced(&out, "nikaia_std::hash::TrustedSet", "HashSet");
+    out = replaced(&out, "TrustedMap", "HashMap");
+    out = replaced(&out, "TrustedSet", "HashSet");
+    out = replaced(&out, "`Option::<T>::map` takes ownership of the receiver `self`", "`?.` over a member that is not copied takes the value it reaches through ");
+    out = replaced(&out, "`Option::<T>::and_then` takes ownership of the receiver `self`", "`?.` over a member that is not copied takes the value it reaches through ");
+    out
+}
+
+pub fn is_rust_internal(note: &str) -> bool {
+    for internal in ["#[deny(", "#[warn(", "#[allow(", "#[forbid(", "Cargo.toml", "cargo add", "RUST_BACKTRACE", "rustc --explain", "consider using the type `u32`", "consider using the type `u64`", "consider using the type `usize`", "consider calling `.as_ref()`", "consider calling `.as_mut()`", "you can `clone` the value and consume it"] { if note.contains(internal) { return true; } }
+    false
+}
+
+pub fn both_sides_the_same(message: &str) -> Option<String> {
+    let expected = match backticked_after(message, "expected ") { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let found = match backticked_after(message, "found ") { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if expected == found { return Some(expected); }
+    None
+}
+
+fn backticked_after(message: &str, word: &str) -> Option<String> {
+    let c: Vec<char> = nikaia_std::list::chars(message.chars());
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let at = find_text(&c, 0, word);
+    if at < 0 { return None; }
+    let open = find(&c, at + w.len() as i64, '`');
+    if open < 0 { return None; }
+    let close = find(&c, open + 1, '`');
+    if close < 0 { return None; }
+    Some(slice(&c, open + 1, close))
+}
+
+fn shared_names(message: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(message.chars());
+    let mut out: String = String::from("");
+    let mut last = ' ';
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        let mut taken = false;
+        for hull in ["std::rc::Rc<", "alloc::rc::Rc<", "std::sync::Arc<", "alloc::sync::Arc<", "Rc<", "Arc<"] {
+            if !taken && begins_at(&c, at, hull) {
+                let preceded_by_a_name = !hull.contains("::") && at > 0 && (last.is_alphanumeric() || last == '_' || last == ':');
+                let h: Vec<char> = nikaia_std::list::chars(hull.chars());
+                let close = closing_angle(&c, at + h.len() as i64);
+                if !preceded_by_a_name && close >= 0 {
+                    out.push_str("Shared[");
+                    out.push_str(&shared_names(&slice(&c, at + h.len() as i64, close)));
+                    out.push(']');
+                    last = ']';
+                    at = close + 1;
+                    taken = true;
+                }
+            }
+        }
+        if !taken {
+            out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(at)));
+            last = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
+            at += 1;
+        }
+    }
+    out
+}
+
+fn closing_angle(c: &[char], from: i64) -> i64 {
+    let mut depth = 1;
+    for at in from..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '<' { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '>' {
+            depth -= 1;
+            if depth == 0 { return at; }
+        }
+    }
+    -1
+}
+
+fn begins_at(c: &[char], at: i64, word: &str) -> bool {
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    if (at + w.len() as i64) > c.len() as i64 { return false; }
+    for k in 0..w.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at + k)) != *nikaia_std::index::get(&w, nikaia_std::index::at(k)) { return false; } }
+    true
+}
+
+fn replaced(text: &str, from: &str, to: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let f: Vec<char> = nikaia_std::list::chars(from.chars());
+    let mut out: String = String::from("");
+    let mut at: i64 = 0;
+    let mut next = find_text(&c, 0, from);
+    while next >= 0 {
+        out.push_str(&slice(&c, at, next));
+        out.push_str(to);
+        at = next + f.len() as i64;
+        next = find_text(&c, at, from);
+    }
+    out.push_str(&slice(&c, at, c.len() as i64));
+    out
+}
+
+
 // --- signature.nika ---
 
 #[derive(Debug, Clone)]
@@ -6642,6 +6752,10 @@ pub mod paths {
 pub mod rust {
     #[allow(unused_imports)]
     pub use super::{Part, Fun, Rec, Group, RustItem, Found, Called, Rust, file};
+}
+pub mod rustc_words {
+    #[allow(unused_imports)]
+    pub use super::{in_this_language, is_rust_internal, both_sides_the_same};
 }
 pub mod signature {
     #[allow(unused_imports)]
