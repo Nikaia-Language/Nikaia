@@ -854,9 +854,14 @@ pub struct Checked {
     /// and the shape of its condition, and how each is held
     /// ([ADR-264](../../docs/specification/adr/adr-264.md) D4).
     pub claims: BTreeMap<(usize, String), Claim>,
-    /// **The calls that check a precondition they do not prove**
-    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D5).
-    pub call_checks: crate::prove::CallChecks,
+    /// **The functions with a checked entry, and what it checks**
+    /// ([ADR-266](../../docs/specification/adr/adr-266.md) D7).
+    pub entries: BTreeMap<String, Vec<crate::prove::Check>>,
+    /// **How each call the prover saw reaches a function with a
+    /// precondition** (ADR-266 D7).
+    pub reaches: crate::prove::Reaches,
+    /// **What the ledger publishes of each function's contract** (ADR-266 D5).
+    pub published: BTreeMap<String, crate::prove::Published>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1360,9 +1365,11 @@ fn walked<'a>(
     // when the program runs where it cannot. After the walk,
     // because the checker is what decided which calls are the prelude's.
     let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
-    let proved = crate::prove::prove(parsed, library, &keys);
+    let proved = crate::prove::prove(parsed, own, library, &keys);
     checker.checked.findings.extend(proved.findings);
-    checker.checked.call_checks = proved.call_checks;
+    checker.checked.entries = proved.entries;
+    checker.checked.reaches = proved.reaches;
+    checker.checked.published = proved.published;
     for (key, held) in proved.held {
         if let Some(claim) = checker.checked.claims.get_mut(&key) {
             claim.held = Some(held);
@@ -1858,8 +1865,12 @@ pub struct Propagation {
     pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
     pub claims: BTreeMap<(usize, String), Claim>,
-    /// [`Checked::call_checks`].
-    pub call_checks: crate::prove::CallChecks,
+    /// [`Checked::entries`].
+    pub entries: BTreeMap<String, Vec<crate::prove::Check>>,
+    /// [`Checked::reaches`].
+    pub reaches: crate::prove::Reaches,
+    /// [`Checked::published`].
+    pub published: BTreeMap<String, crate::prove::Published>,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -2067,7 +2078,9 @@ pub fn propagation_against(
         wrapped: checked.wrapped,
         compared_views: checked.compared_views,
         claims: checked.claims,
-        call_checks: checked.call_checks,
+        entries: checked.entries,
+        reaches: checked.reaches,
+        published: checked.published,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -22791,15 +22804,18 @@ pub fn claims_report(
     for (line, claim) in rows {
         let how = match &claim.held {
             Some(Held::Proved) => "proved".to_string(),
-            Some(Held::Precondition(f, 0)) => {
-                format!("precondition of `{f}`: proved at every call")
-            }
-            Some(Held::Precondition(f, 1)) => {
-                format!("precondition of `{f}`: one call checks it when it runs")
-            }
-            Some(Held::Precondition(f, n)) => {
-                format!("precondition of `{f}`: {n} calls check it when they run")
-            }
+            Some(Held::Precondition(f, 0)) => format!(
+                "precondition of `{f}`: proved at every call the compiler sees; any other \
+                 reaches the entry that checks it"
+            ),
+            Some(Held::Precondition(f, 1)) => format!(
+                "precondition of `{f}`: one call checks it when it runs; any other call \
+                 proves it or reaches the entry that checks it"
+            ),
+            Some(Held::Precondition(f, n)) => format!(
+                "precondition of `{f}`: {n} calls check it when they run; any other call \
+                 proves it or reaches the entry that checks it"
+            ),
             Some(Held::AtRunTime(why)) => format!("checked at run time: {why}"),
             Some(Held::ByTheTest) => "checked when the test runs".to_string(),
             Some(Held::Refused) | None => {

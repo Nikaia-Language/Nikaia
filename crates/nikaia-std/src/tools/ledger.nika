@@ -442,6 +442,12 @@ fn function_key(mut entry: FnContract, name: ref String, key: ref String, value:
         entry.sharing = classes
     } else if key == "ends_by_length" {
         entry.ends_by_length = value == "true"
+    } else if key == "requires" {
+        entry.requires = entries(value, n)
+    } else if key == "ensures" {
+        entry.ensures = entries(value, n)
+    } else if key == "from" {
+        entry.from = entries(value, n)
     } else {
         throw Refused::Because(f"line {n}: unknown key `{key}` on a fn")
     }

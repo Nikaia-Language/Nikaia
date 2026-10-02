@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.365] — 2026-10-02
+
+**A contract crosses the package boundary** (ADR-266 D4-D7).
+
+- **Postconditions** (D4): an `assert` about the value a `return` hands back,
+  shown at every exit of the function, is a postcondition over `result` and
+  the parameters, and a caller knows it of the result - `let c = clamp(n)`
+  proves `c >= 0`. Each starts as a candidate and is struck where an exit
+  does not show it; the walk repeats until none falls. After a check at run
+  time the claim holds too, and is a fact for what follows.
+- **The ledger** (D5): `requires`, `ensures` and `from` in `nikaia.contracts`,
+  in the language's syntax - `!(mode == 1) || x - 1 > 0` - and read back by a
+  consumer with the compiler's own parser.
+- **Two entries** (D7): a function with a precondition is `f`, which checks
+  it, and `f__unchecked`, the body. A call the prover saw prove the
+  precondition, or check it where it stands - in `i128`, with the arguments in
+  place, naming the caller's line, the `assert`'s message and the parameters'
+  values - takes the second; a function value, a method call, a caller in
+  another package without a proof, and the language below reach the first.
+  `pub fn`s and methods have preconditions now; a trait implementation's
+  methods do not.
+- **A contract changed in the breaking direction** (D6), against the
+  committed ledger and decided by the solver: `NK1208`, until it is committed.
+- `tests/contracts_across.rs` holds two packages end to end.
+- Not written: D5's `inferred`, which nothing would read.
+
 ## [0.0.364] — 2026-10-02
 
 **The `--overlaps` report is Nikaia** (#125, ADR-250). What every

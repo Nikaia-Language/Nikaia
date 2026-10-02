@@ -2205,7 +2205,7 @@ fn function_key(entry: &mut FnContract, name: &str, key: &str, value: &str, n: i
             classes.push(nikaia_std::index::or(read, || Class { members: vec![], count: Count::Atomic }));
         }
         entry.sharing = classes;
-    } else if key == "ends_by_length" { entry.ends_by_length = value == "true"; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a fn", n, key)), &"function_key")); }
+    } else if key == "ends_by_length" { entry.ends_by_length = value == "true"; } else if key == "requires" { entry.requires = entries(value, n)?; } else if key == "ensures" { entry.ensures = entries(value, n)?; } else if key == "from" { entry.from = entries(value, n)?; } else { return Err(nikaia_std::error::throwing(Refused::Because(format!("line {}: unknown key `{}` on a fn", n, key)), &"function_key")); }
     Ok(())
 }
 
@@ -7537,10 +7537,13 @@ pub struct FnContract {
     pub views: Vec<Held>,
     pub sharing: Vec<Class>,
     pub ends_by_length: bool,
+    pub requires: Vec<String>,
+    pub ensures: Vec<String>,
+    pub from: Vec<String>,
 }
 
 impl FnContract {
-    pub fn empty() -> FnContract { FnContract { public: false, sync_claim: Sync::No, fails_with: vec![], touches: vec![], touches_known: false, provenance: None, signature: None, borrows: vec![], keeps: vec![], mutates: false, touches_a_lock: Lock::No, threads: Threads::Undecided, views: vec![], sharing: vec![], ends_by_length: false } }
+    pub fn empty() -> FnContract { FnContract { public: false, sync_claim: Sync::No, fails_with: vec![], touches: vec![], touches_known: false, provenance: None, signature: None, borrows: vec![], keeps: vec![], mutates: false, touches_a_lock: Lock::No, threads: Threads::Undecided, views: vec![], sharing: vec![], ends_by_length: false, requires: vec![], ensures: vec![], from: vec![] } }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

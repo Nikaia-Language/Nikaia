@@ -1061,6 +1061,7 @@ impl Program {
         rust.push('\n');
 
         let mut map = SourceMap::default();
+        let mut published = std::collections::BTreeMap::new();
         for (at, unit) in self.units.iter().enumerate() {
             // **A dependency's files are read and not written** (ADR-053 D1).
             // They are here so the ledger and the checks know what the package
@@ -1103,6 +1104,7 @@ impl Program {
             })?;
 
             map.extend(body.map.placed(rust.len(), at));
+            published.extend(body.published);
             rust.push_str(&body.rust);
             rust.push('\n');
         }
@@ -1122,7 +1124,11 @@ impl Program {
             rust.push_str(&crate::emit::abort_table(&rust, &map, &paths, &sources));
         }
 
-        Ok(Lowered { rust, map })
+        Ok(Lowered {
+            rust,
+            map,
+            published,
+        })
     }
 }
 

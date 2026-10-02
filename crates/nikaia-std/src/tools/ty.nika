@@ -1070,6 +1070,17 @@ pub struct FnContract {
     pub views: Vec[Held],
     pub sharing: Vec[Class],
     pub ends_by_length: bool,
+    /// **What a caller has to establish**: the function's preconditions, each
+    /// an `assert` of its body carried back to the entry, in the language's
+    /// syntax over the parameters
+    /// ([ADR-266](../../../../docs/specification/adr/adr-266.md) D5).
+    pub requires: Vec[String],
+    /// **What a caller may rely on afterwards**: its postconditions, over the
+    /// parameters and `result` (ADR-266 D4, D5).
+    pub ensures: Vec[String],
+    /// For each entry of `requires` and then of `ensures`, the `assert` it was
+    /// computed from, as written (ADR-266 D5).
+    pub from: Vec[String],
 }
 
 impl FnContract {
@@ -1092,6 +1103,9 @@ impl FnContract {
             views: [],
             sharing: [],
             ends_by_length: false,
+            requires: [],
+            ensures: [],
+            from: [],
         }
     }
 }

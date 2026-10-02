@@ -36,6 +36,12 @@ fn held(source: &str) -> Vec<nikaia::prove::Held> {
         .collect()
 }
 
+/// How many calls in the emitted Rust check a precondition where they
+/// stand (ADR-266 D7): `(if !… , call).1`.
+fn call_checks(rust: &str) -> usize {
+    rust.matches("(if !").count() + rust.matches("({ if !").count()
+}
+
 fn the_one(source: &str, code: &str) -> nikaia::check::Finding {
     let found = findings(source);
     let mut matching: Vec<_> = found.iter().filter(|f| f.code == code).cloned().collect();
@@ -192,7 +198,8 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
          }\n",
     );
     assert_eq!(out, "25 75 0\n");
-    assert!(!rust.contains("assertion_failed"), "{rust}");
+    assert_eq!(call_checks(&rust), 0, "{rust}");
+    assert!(rust.contains("percent__unchecked(1, 4)"), "{rust}");
 
     let (out, rust) = ran(
         "prove-call-check",
@@ -211,52 +218,55 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     );
     assert_eq!(out, "75\n");
     assert!(
-        rust.contains("(if !(total > 0) { nikaia_std::abort::assertion_failed("),
+        rust.contains(
+            "(if !((total.clone() as i128) > (0i128)) { nikaia_std::abort::assertion_failed("
+        ),
         "{rust}"
     );
-    assert_eq!(rust.matches("assertion_failed(").count(), 1, "{rust}");
+    assert_eq!(call_checks(&rust), 1, "{rust}");
 }
 
-/// **D5: where a precondition cannot be carried yet, its body checks it**: a
-/// `pub fn`, a method, and a function handed on as a value.
+/// **ADR-266 D7: a caller the prover doesn't see reaches the checked
+/// entry**: a `pub fn` and a method have a precondition like any function,
+/// and a function handed on as a value is its checked entry, while the calls
+/// the prover saw prove theirs and take the unchecked one.
 #[test]
-fn a_precondition_is_checked_in_the_body_where_it_cannot_be_carried() {
-    let public = "pub fn half(n: i64) -> i64 {\n\
+fn a_caller_the_prover_does_not_see_reaches_the_checked_entry() {
+    let source = "struct Counter {\n\
+                  \x20   total: i64,\n\
+                  }\n\
+                  \n\
+                  impl Counter {\n\
+                  \x20   fn add(self, n: i64) -> i64 {\n\
+                  \x20       assert(n > 0)\n\
+                  \x20       return self.total + n\n\
+                  \x20   }\n\
+                  }\n\
+                  \n\
+                  pub fn half(n: i64) -> i64 {\n\
                   \x20   assert(n >= 0)\n\
                   \x20   return n / 2\n\
                   }\n\
                   \n\
                   fn main() {\n\
-                  \x20   println(f\"{half(4)}\")\n\
+                  \x20   let c = Counter { total: 1 }\n\
+                  \x20   let g = half\n\
+                  \x20   println(f\"{half(4)} {g(6)} {c.add(2)}\")\n\
                   }\n";
-    assert!(
-        matches!(
-            held(public).as_slice(),
-            [nikaia::prove::Held::AtRunTime(why)] if why.contains("a `pub fn` can't have a precondition yet")
-        ),
-        "{:#?}",
-        held(public)
-    );
-
-    let value = "fn positive(n: i64) -> i64 {\n\
-                 \x20   assert(n > 0)\n\
-                 \x20   return n\n\
-                 }\n\
-                 \n\
-                 fn main() {\n\
-                 \x20   let f = positive\n\
-                 \x20   println(f\"{f(1)} {positive(2)}\")\n\
-                 }\n";
     assert_eq!(
-        held(value),
-        [nikaia::prove::Held::AtRunTime(
-            "a precondition of `positive`, checked in its body: it is handed on as a value"
-                .to_string()
-        )]
+        held(source),
+        [
+            nikaia::prove::Held::Precondition("Counter::add".to_string(), 0),
+            nikaia::prove::Held::Precondition("half".to_string(), 0),
+        ]
     );
-    let (out, rust) = ran("prove-value", value);
-    assert_eq!(out, "1 2\n");
-    assert_eq!(rust.matches("assertion_failed(").count(), 1, "{rust}");
+    let (out, rust) = ran("prove-entries", source);
+    assert_eq!(out, "2 3 3\n");
+    assert!(rust.contains("pub fn half__unchecked(n: i64)"), "{rust}");
+    assert!(rust.contains("half__unchecked(4)"), "{rust}");
+    assert!(rust.contains("let g = half;"), "{rust}");
+    assert!(rust.contains("c.add(2)"), "{rust}");
+    assert!(rust.contains("self.add__unchecked(n)"), "{rust}");
 }
 
 /// **D6: a claim about data from outside the program** is refused with where
@@ -361,7 +371,10 @@ fn a_length_is_a_variable_of_the_proof() {
          }\n",
     );
     assert_eq!(out, "1\n");
-    assert!(rust.contains("(if !((ys.len() as i64) > 0)"), "{rust}");
+    assert!(
+        rust.contains("(if !((ys.len() as i128) > (0i128))"),
+        "{rust}"
+    );
 }
 
 /// **A lambda keeps what holds around it**, and its own parameters are new
@@ -568,12 +581,12 @@ fn a_claim_carried_back_to_the_entry_is_a_precondition() {
     );
     let (out, rust) = ran("prove-carried-back", source);
     assert_eq!(out, "4 -1 4 2 0\n");
-    assert!(!rust.contains("assertion_failed"), "{rust}");
+    assert_eq!(call_checks(&rust), 0, "{rust}");
 }
 
 /// **A call that breaks a computed precondition** is told the condition at
-/// the entry and the `assert` it came from (ADR-266 D8), and the claim is
-/// checked in the body, where it stands, until the ledger carries it (D7).
+/// the entry and the `assert` it came from (ADR-266 D8), and the call checks
+/// the condition at the entry with its arguments in place (D7).
 #[test]
 fn a_computed_precondition_names_both_ends() {
     let source = "fn f(x: i64, mode: i64) -> i64 {\n\
@@ -600,9 +613,84 @@ fn a_computed_precondition_names_both_ends() {
             "The precondition is `assert(y > 0)` in `f`, carried back to its entry.".to_string()
         ]
     );
+    assert_eq!(
+        held(source),
+        [nikaia::prove::Held::Precondition("f".to_string(), 1)]
+    );
+}
+
+/// **ADR-266 D4: a claim about the value returned, shown at every exit, is a
+/// postcondition**, and a caller knows it of the result: `clamp`'s
+/// `result >= 0` proves `a >= 0`, and a chain of them proves `t >= 0`. One
+/// exit that does not show it - `wrong`'s `return -1` - and it is none, so
+/// `b >= 0` stays a check.
+#[test]
+fn a_claim_shown_at_every_exit_is_a_postcondition() {
+    use nikaia::prove::Held::{AtRunTime, Proved};
+    let source = "fn clamp(n: i64) -> i64 {\n\
+                  \x20   return 0 if n < 0\n\
+                  \x20   assert(n >= 0)\n\
+                  \x20   return n\n\
+                  }\n\
+                  \n\
+                  fn wrong(n: i64) -> i64 {\n\
+                  \x20   return 0 - 1 if n < 0\n\
+                  \x20   let m = n\n\
+                  \x20   assert(m >= 0)\n\
+                  \x20   return m\n\
+                  }\n\
+                  \n\
+                  fn twice_clamped(n: i64) -> i64 {\n\
+                  \x20   let c = clamp(n)\n\
+                  \x20   let d = c * 2\n\
+                  \x20   assert(d >= 0)\n\
+                  \x20   return d\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let a = clamp(0 - 5)\n\
+                  \x20   assert(a >= 0)\n\
+                  \x20   let b = wrong(5)\n\
+                  \x20   assert(b >= 0)\n\
+                  \x20   let t = twice_clamped(3)\n\
+                  \x20   assert(t >= 0)\n\
+                  \x20   println(f\"{a} {b} {t}\")\n\
+                  }\n";
+    let held = held(source);
     assert!(
-        matches!(held(source).as_slice(), [nikaia::prove::Held::AtRunTime(why)] if why.contains("checked in its body")),
-        "{:#?}",
-        held(source)
+        matches!(
+            held.as_slice(),
+            [Proved, Proved, Proved, Proved, AtRunTime(_), Proved]
+        ),
+        "{held:#?}"
+    );
+    let (out, rust) = ran("prove-postcondition", source);
+    assert_eq!(out, "0 5 6\n");
+    assert_eq!(rust.matches("assertion_failed(").count(), 1, "{rust}");
+}
+
+/// **What a postcondition is not shown by**: a `return` inside a lambda is
+/// the lambda's, and a body that can end without a `return` has an exit no
+/// claim stands before.
+#[test]
+fn an_exit_that_shows_nothing_makes_no_postcondition() {
+    use nikaia::prove::Held::{AtRunTime, Proved};
+    let source = "fn open_end(n: i64) -> i64 {\n\
+                  \x20   if n > 0 {\n\
+                  \x20       assert(n > 0)\n\
+                  \x20       return n\n\
+                  \x20   }\n\
+                  \x20   println(\"none\")\n\
+                  \x20   return 0 - 1\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let a = open_end(2)\n\
+                  \x20   assert(a > 0)\n\
+                  }\n";
+    let held = held(source);
+    assert!(
+        matches!(held.as_slice(), [Proved, AtRunTime(_)]),
+        "{held:#?}"
     );
 }

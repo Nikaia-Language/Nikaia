@@ -458,6 +458,9 @@ impl Lifetimes {
 pub struct Lowered {
     pub rust: String,
     pub map: SourceMap,
+    /// What the prover publishes of each function's contract, for the ledger
+    /// ([ADR-266](../../../docs/specification/adr/adr-266.md) D5).
+    pub published: std::collections::BTreeMap<String, crate::prove::Published>,
 }
 
 /// **[ADR-044](../../../docs/specification/adr/adr-044.md) D1's table, as a Rust
@@ -1552,8 +1555,12 @@ struct Emitter<'p> {
     compared_views: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-264](../../docs/specification/adr/adr-264.md) D2).
     claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
-    /// `check::Checked::call_checks` ([ADR-264](../../docs/specification/adr/adr-264.md) D5).
-    call_checks: crate::prove::CallChecks,
+    /// `check::Checked::entries` ([ADR-266](../../docs/specification/adr/adr-266.md) D7).
+    entries: std::collections::BTreeMap<String, Vec<crate::prove::Check>>,
+    /// `check::Checked::reaches` (ADR-266 D7).
+    reaches: crate::prove::Reaches,
+    /// `check::Checked::published` (ADR-266 D5).
+    published: std::collections::BTreeMap<String, crate::prove::Published>,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
     /// around one call by `call` and read by `args`, as `hold_args` is.
@@ -1727,6 +1734,31 @@ const LENGTH_PARAMETER: &str = "__NIKAIA_N";
 
 /// The name a Nikaia program gives its entry point.
 const MAIN: &str = "main";
+/// **A precondition checked where it stands** (ADR-266 D7), and what its
+/// failure says (ADR-264 D2): the condition, the `assert`'s message, and the
+/// value of each parameter it reads.
+fn failed_check(check: &crate::prove::Check) -> String {
+    let message = match &check.message {
+        Some(text) => format!("Some(&{text:?})"),
+        None => "None".to_string(),
+    };
+    let operands: String = check
+        .operands
+        .iter()
+        .map(|(name, value)| {
+            format!("({name:?}, (&&nikaia_std::abort::Operand(&{value})).shown()), ")
+        })
+        .collect();
+    format!(
+        "if !{} {{ nikaia_std::abort::assertion_failed({:?}, {message}, &[{operands}]) }} ",
+        check.rust, check.written
+    )
+}
+
+/// The suffix of a function's unchecked entry
+/// ([ADR-266](../../docs/specification/adr/adr-266.md) D7): `f` checks its
+/// precondition and calls `f__unchecked`, which is the body.
+const UNCHECKED: &str = "__unchecked";
 
 /// The type several parts of a program own at once (Part I 6.2).
 ///
@@ -2545,7 +2577,9 @@ impl<'p> Emitter<'p> {
             wrapped: propagation.wrapped,
             compared_views: propagation.compared_views,
             claims: propagation.claims,
-            call_checks: propagation.call_checks,
+            entries: propagation.entries,
+            reaches: propagation.reaches,
+            published: propagation.published,
             boxed_args: std::cell::RefCell::new(None),
             variant_counts: std::cell::RefCell::new(None),
             hull_count: std::cell::Cell::new(None),
@@ -2760,6 +2794,7 @@ impl<'p> Emitter<'p> {
         Ok(Lowered {
             rust: out.buf,
             map: out.map,
+            published: self.published.clone(),
         })
     }
 
@@ -2875,6 +2910,7 @@ impl<'p> Emitter<'p> {
         Ok(Lowered {
             rust: out.buf,
             map: out.map,
+            published: self.published.clone(),
         })
     }
 
@@ -4416,11 +4452,64 @@ impl<'p> Emitter<'p> {
             out.push("#[allow(non_snake_case)]\n");
             out.push(&pad);
         }
-        out.push(&format!(
-            "{vis}{pausing}fn {emitted}{}({}){ret} ",
-            angled(&declared),
-            params.join(", ")
-        ));
+        // **A function with a precondition has two entries**
+        // ([ADR-266](../../docs/specification/adr/adr-266.md) D7): `f` checks
+        // it and calls `f__unchecked`, which is the body. A caller the prover
+        // saw prove it, or check it at the call, calls the second; every other
+        // caller - a function value, another package, the language below -
+        // reaches the first. A copy made per type is reached by name from the
+        // call that made it, so it checks at the top of its body instead.
+        let checks = self.entries.get(&key).filter(|c| !c.is_empty());
+        let copy = self.standing_for().is_some();
+        let signature = |name: &str| {
+            format!(
+                "{vis}{pausing}fn {name}{}({}){ret} ",
+                angled(&declared),
+                params.join(", ")
+            )
+        };
+        let check_lines =
+            |checks: &[crate::prove::Check]| checks.iter().map(failed_check).collect::<String>();
+        let pending = match checks {
+            Some(checks) if !copy => {
+                out.push("#[allow(non_snake_case)]\n");
+                out.push(&pad);
+                out.push(&signature(&format!("{emitted}{UNCHECKED}")));
+                // The checked entry is written after the body, below.
+                Some(format!(
+                    "{pad}#[allow(dead_code)]\n{pad}{}{{ {}{}{UNCHECKED}({}){} }}\n",
+                    signature(&emitted),
+                    check_lines(checks),
+                    match (receiver.is_some(), owner.is_some()) {
+                        (true, _) => format!("self.{emitted}"),
+                        (false, true) => format!("Self::{emitted}"),
+                        (false, false) => emitted.clone(),
+                    },
+                    params
+                        .iter()
+                        .filter(|p| !p.ends_with("self"))
+                        .map(|p| p
+                            .split(':')
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .trim_start_matches("mut ")
+                            .to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if pausing.is_empty() { "" } else { ".await" },
+                ))
+            }
+            Some(checks) => {
+                out.push(&signature(&emitted));
+                out.push(&format!("{{ {}", check_lines(checks)));
+                Some("}".to_string())
+            }
+            None => {
+                out.push(&signature(&emitted));
+                None
+            }
+        };
         // **The parameters a call has to await**
         // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): those whose
         // type is code and does not say `sync`, which is the default.
@@ -4467,7 +4556,16 @@ impl<'p> Emitter<'p> {
             }
             None => self.function_body(out, body, depth, declared)?,
         }
-        out.push("\n");
+        // The checked entry after the unchecked one's body, or the brace that
+        // closes a copy's checks around its body.
+        match pending {
+            Some(closing) if closing == "}" => out.push(" }\n"),
+            Some(entry) => {
+                out.push("\n");
+                out.push(&entry);
+            }
+            None => out.push("\n"),
+        }
         Ok(())
     }
 
@@ -8677,37 +8775,68 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        // **A call that does not prove its callee's precondition checks it**
-        // ([ADR-264](../../docs/specification/adr/adr-264.md) D5), before the
-        // call and with the call's arguments in place of the parameters, so
-        // that a failure names the caller. The arguments are ones the prover
-        // reads, so reading them once more changes nothing.
-        if let Expr::Variable(name) = func
-            && let Some(checks) =
-                self.call_checks
-                    .get(&crate::prove::call_key(self.parsed, self.text(*name), args))
-        {
-            // `(check, call).1`: an expression in every position the call
-            // could stand in, which a block at the start of a statement is not.
-            out.push(if checks.len() == 1 { "(" } else { "({ " });
-            for check in checks {
-                out.push("if !(");
-                self.expr(out, &check.condition, depth, flow)?;
-                out.push(&format!(
-                    ") {{ nikaia_std::abort::assertion_failed({:?}, None, &[]) }} ",
-                    check.written
-                ));
+        // **A call to a function with a precondition** reaches its checked
+        // entry unless the prover saw this call prove it, or check it here
+        // with the call's arguments in place of the parameters, so that a
+        // failure names the caller
+        // ([ADR-266](../../docs/specification/adr/adr-266.md) D7). The
+        // arguments of a checked call are ones the prover reads, so reading
+        // them once more changes nothing.
+        // A function of this file with a checked entry, or one of another
+        // package whose ledger states a precondition: that package was
+        // lowered with the two entries (ADR-266 D5, D7).
+        let callee = match func {
+            Expr::Variable(name) if self.entries.contains_key(self.text(*name)) => {
+                Some(self.text(*name).to_string())
             }
-            out.push(if checks.len() == 1 { ", " } else { "}, " });
-            self.call_unchecked(out, func, args, config, depth, flow)?;
-            out.push(").1");
-            return Ok(());
+            Expr::Path(segments) => {
+                let qualified = self.parsed.unaliased(
+                    &segments
+                        .iter()
+                        .map(|s| self.text(*s))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                );
+                self.own_contracts
+                    .functions
+                    .get(&qualified)
+                    .is_some_and(|c| !c.requires.is_empty())
+                    .then_some(qualified)
+            }
+            _ => None,
+        };
+        if let Some(callee) = callee
+            && let Some(reach) =
+                self.reaches
+                    .get(&crate::prove::call_key(self.parsed, &callee, args))
+        {
+            match reach {
+                crate::prove::Reach::Proved => {
+                    return self.call_inner(out, func, args, config, depth, flow, true);
+                }
+                crate::prove::Reach::Checked(checks) => {
+                    // `(check, call).1`: an expression in every position the
+                    // call could stand in, which a block at the start of a
+                    // statement is not.
+                    out.push(if checks.len() == 1 { "(" } else { "({ " });
+                    for check in checks {
+                        out.push(&failed_check(check));
+                    }
+                    out.push(if checks.len() == 1 { ", " } else { "}, " });
+                    self.call_inner(out, func, args, config, depth, flow, true)?;
+                    out.push(").1");
+                    return Ok(());
+                }
+                crate::prove::Reach::Through => {}
+            }
         }
-        self.call_unchecked(out, func, args, config, depth, flow)
+        self.call_inner(out, func, args, config, depth, flow, false)
     }
 
-    /// A call, past [`Self::call`]'s precondition check.
-    fn call_unchecked(
+    /// A call, past [`Self::call`]'s precondition check: to the unchecked
+    /// entry where `unchecked` says so (ADR-266 D7).
+    #[allow(clippy::too_many_arguments)]
+    fn call_inner(
         &self,
         out: &mut Out,
         func: &Expr,
@@ -8715,6 +8844,7 @@ impl<'p> Emitter<'p> {
         config: &[crate::ast::ConfigArg],
         depth: usize,
         flow: Flow<'_>,
+        unchecked: bool,
     ) -> Result<()> {
         // **An `assert` is a claim checked here** (ADR-264 D2, D4) unless it
         // was proved, and the failure is
@@ -8883,7 +9013,7 @@ impl<'p> Emitter<'p> {
             });
         }
 
-        self.called(out, func, args, config, depth, flow)?;
+        self.called(out, func, args, config, depth, flow, unchecked)?;
 
         if hull.is_some() {
             out.push(")");
@@ -8927,6 +9057,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The call itself, without ADR-023 D8's propagation.
+    #[allow(clippy::too_many_arguments)]
     fn called(
         &self,
         out: &mut Out,
@@ -8935,6 +9066,7 @@ impl<'p> Emitter<'p> {
         config: &[crate::ast::ConfigArg],
         depth: usize,
         flow: Flow<'_>,
+        unchecked: bool,
     ) -> Result<()> {
         // **A call to a function that walks a type's fields goes to the copy**
         // ([ADR-181](../../docs/specification/adr/adr-181.md) D2), and which
@@ -9127,6 +9259,9 @@ impl<'p> Emitter<'p> {
         }
 
         self.expr(out, func, depth, flow)?;
+        if unchecked {
+            out.push(UNCHECKED);
+        }
         out.push("(");
         let takes = self.takes_a_handle_at(func);
         // The written callee, which is what the checker keyed its answers by —

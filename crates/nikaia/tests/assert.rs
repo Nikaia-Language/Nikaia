@@ -117,11 +117,43 @@ fn claims_the_compiler_proves_let_the_program_run() {
 
 /// **A false claim the prover cannot hold stops the program** (ADR-264 D4,
 /// D2): at both settings, naming its line, its message, the claim as written
-/// and its operand's value.
+/// and its operand's value. After a loop the claim is not carried back to the
+/// entry (ADR-266 D3), so it is checked where it stands.
 #[test]
 fn a_false_claim_stops_the_program_when_it_runs() {
     let (ok, stdout, stderr) = outcome(
         "false",
+        "fn twice(n: i64) -> i64 sync {\n\
+         \x20   let blank = n * 2\n\
+         \x20   for i in 0..<1 {\n\
+         \x20   }\n\
+         \x20   assert(blank == 1; message: \"an empty line is blank\")\n\
+         \x20   return blank\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(\"before\")\n\
+         \x20   println(f\"{twice(1)}\")\n\
+         }\n",
+    );
+    assert!(!ok, "{stdout}");
+    assert_eq!(stdout, "before\n");
+    assert!(
+        stderr.contains("claims.nika:5")
+            && stderr.contains("assertion failed: an empty line is blank")
+            && stderr.contains("assert(blank == 1; message: \"an empty line is blank\")")
+            && stderr.contains("blank is 2"),
+        "{stderr}"
+    );
+}
+
+/// **A claim carried back to the entry fails at the call that breaks it**
+/// (ADR-266 D2, D7, D8), with the `assert`'s message, the condition at the
+/// entry, the `assert` it came from and the parameter's value.
+#[test]
+fn a_computed_precondition_fails_at_the_call() {
+    let (ok, stdout, stderr) = outcome(
+        "computed",
         "fn twice(n: i64) -> i64 sync {\n\
          \x20   let blank = n * 2\n\
          \x20   assert(blank == 1; message: \"an empty line is blank\")\n\
@@ -136,10 +168,10 @@ fn a_false_claim_stops_the_program_when_it_runs() {
     assert!(!ok, "{stdout}");
     assert_eq!(stdout, "before\n");
     assert!(
-        stderr.contains("claims.nika:3")
+        stderr.contains("claims.nika:9")
             && stderr.contains("assertion failed: an empty line is blank")
-            && stderr.contains("assert(blank == 1; message: \"an empty line is blank\")")
-            && stderr.contains("blank is 2"),
+            && stderr.contains("precondition of `twice`: `n * 2 == 1`, from `assert(blank == 1)`")
+            && stderr.contains("n is 1"),
         "{stderr}"
     );
 }
@@ -289,7 +321,8 @@ fn asserts_reports_every_claim() {
             "asserts in claims.nika: 3 - proved 1, preconditions 1, checked at run time 1, \
              checked by a test 0, refused 0\n\
              \x20 claims.nika:2  assert(n >= 0; message: \"not negative\")  precondition of \
-             `half`: proved at every call\n\
+             `half`: proved at every call the compiler sees; any other reaches the entry \
+             that checks it\n\
              \x20 claims.nika:9  assert(four == 4)  proved\n\
              \x20 claims.nika:11  assert(twice > 2)  checked at run time: nothing before it \
              shows it\n"

@@ -822,6 +822,9 @@ pub fn lower_reading(
     // Read off the program, which every lowering builds - a cache hit too - so
     // the note is the same whether the emitter ran or not.
     let mut notes = program.could_promise();
+    // The packages this program depends on: their entries in the ledger are
+    // theirs, and a contract they changed is said in their own build.
+    let dependencies: BTreeSet<String> = program.as_its_own.keys().cloned().collect();
     // **What a `pub` function lost since the ledger was committed** (ADR-244
     // D5), against the project's committed file, which this lowering has not
     // written yet. Outside a project there is no committed ledger to have lost
@@ -918,7 +921,17 @@ pub fn lower_reading(
                 let lowered = program.emit_reading(settings.build, &reads)?;
                 (lowered, program)
             };
-            let (lowered, program) = lowered;
+            let (lowered, mut program) = lowered;
+            // **The contract the `assert`s make** (ADR-266 D5): the prover
+            // decided it while the program was checked, and the ledger
+            // publishes it.
+            for (key, published) in &lowered.published {
+                if let Some(contract) = program.contracts.functions.get_mut(key) {
+                    contract.requires = published.requires.clone();
+                    contract.ensures = published.ensures.clone();
+                    contract.from = published.from.clone();
+                }
+            }
             let ledger = program.contracts.render();
             let derived = program.contracts.render_derived();
 
@@ -951,6 +964,24 @@ pub fn lower_reading(
             (lowered.rust, ledger, derived)
         }
     };
+
+    // **A contract that changed in the breaking direction** (ADR-266 D6),
+    // against the committed file this lowering has not written yet: the new
+    // ledger is read back, whether it came from the cache or not.
+    if layout.in_project
+        && let Some(committed) = std::fs::read_to_string(layout.root.join("nikaia.contracts"))
+            .ok()
+            .and_then(|text| Ledger::parse(&text).ok())
+        && let Ok(now) = Ledger::parse(&ledger)
+    {
+        notes.insert_str(
+            0,
+            &crate::prove::changed_contracts(&now, &committed, |key| {
+                !key.split_once("::")
+                    .is_some_and(|(package, _)| dependencies.contains(package))
+            }),
+        );
+    }
 
     Ok(Lowered {
         rust,
