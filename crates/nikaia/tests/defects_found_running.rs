@@ -799,3 +799,25 @@ fn a_jump_a_fallback_and_a_list_of_text() {
         "x\n-\n1\ntrue\nfalse\n",
     );
 }
+
+/// **A `mut` parameter is typed like any other** (#125): the `&mut` is the
+/// compiler's to write, and the check of the argument stopped there - a
+/// `Box2` handed to a `mut xs: Vec[i64]` was accepted and `rustc` refused the
+/// file. It is `NK1102`, as at any other position.
+#[test]
+fn an_argument_for_a_mut_parameter_is_its_type() {
+    let found = findings(
+        "struct Box2 { items: Vec[i64] }\n\
+         fn add(mut xs: Vec[i64]) { xs.push(1) }\n\
+         fn main() {\n\
+         \x20   let mut b = Box2 { items: [] }\n\
+         \x20   add(b)\n\
+         }\n",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1102" && f.message.contains("`add` expects `xs`")),
+        "{found:#?}"
+    );
+}

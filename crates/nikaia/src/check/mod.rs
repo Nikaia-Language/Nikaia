@@ -6510,6 +6510,15 @@ impl<'a> Checker<'a> {
             let Some(given) = given else {
                 return false;
             };
+            // **The `&mut` is the compiler's, the type is still the
+            // argument's.** This answered *it fits* for whatever stood there,
+            // so a `Walked` handed to a `mut found: Vec[Seen]` was accepted
+            // and `rustc` refused the file (found moving the walk's names
+            // into Nikaia, #125). An argument that is not the parameter's type
+            // falls through to `NK1102` as it does at any other position.
+            if !(found.fits(want) || self.fits_through_deref(found, want)) {
+                return false;
+            }
             // **A reference that is already there is not written twice.** Where
             // the argument is a `mut` parameter of the function this call stands
             // in, the binding *is* a `&mut T`, so the call hands it straight on

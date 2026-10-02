@@ -1394,31 +1394,13 @@ pub fn root_of(parsed: &Parsed, expr: &Expr) -> Option<String> {
     }
 }
 
-/// Every name an expression mentions, lambdas and blocks included.
+/// Every name an expression mentions, lambdas and blocks included - and a
+/// task's body, which this reader asks about where the shared walk does not
+/// descend. By the walk in Nikaia (`tools/foreign.nika`, #125).
 fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>) {
-    super::sync::visit_expr(parsed, expr, &mut |e| {
-        if let Expr::Variable(name) = e {
-            out.insert(parsed.text(*name).to_string());
-        }
-    });
-    let mut blocks: Vec<&Block> = Vec::new();
-    super::sync::visit_expr_blocks(expr, &mut |b| blocks.push(b));
+    out.extend(crate::foreign::names_in_expression(parsed, expr).0);
     if let Expr::Spawn { body, .. } = expr {
         names_in(parsed, body, out);
-    }
-    for block in blocks {
-        names_in_block(parsed, block, out);
-    }
-}
-
-fn names_in_block(parsed: &Parsed, block: &Block, out: &mut BTreeSet<String>) {
-    for stmt in &block.stmts {
-        super::sync::visit_stmt(parsed, &stmt.node, &mut |e| {
-            if let Expr::Variable(name) = e {
-                out.insert(parsed.text(*name).to_string());
-            }
-        });
-        super::sync::visit_stmt_blocks(&stmt.node, &mut |b| names_in_block(parsed, b, out));
     }
 }
 

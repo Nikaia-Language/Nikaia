@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.339] — 2026-10-02
+
+**What a body keeps is asked of the walk in Nikaia** (#125, ADR-250). The walk
+of `tools/foreign.nika` names every bare name and every `spawn` it meets where
+it is asked to (`with_names`; a build's every-file walk does not pay for
+them), and starts from one expression as well as from a block or a program.
+`contracts::keep`'s and `contracts::keeps`' own walks of names are gone: five
+readers of the tree share one walk now. Every ledger the suite writes is what
+it was.
+
+- **Found moving it, fixed in the compiler** (ADR-250 D3): an argument for a
+  `mut` parameter was not typed at all - the `&mut` is the compiler's to
+  write, and the check stopped there, so a `Walked` handed to a
+  `mut found: Vec[Seen]` was accepted and `rustc` refused the file. It is
+  `NK1102` now, as at any other position (`tests/defects_found_running.rs`).
+
 ## [0.0.338] — 2026-10-02
 
 **Every name an expression mentions is Nikaia** (#125, ADR-250).

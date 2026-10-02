@@ -1294,24 +1294,40 @@ pub fn wants_widening(folded: &Folded) -> bool {
 // --- foreign.nika ---
 
 #[derive(Debug, Clone)]
+struct Walked {
+    seen: Vec<Seen>,
+    with_names: bool,
+}
+
+#[derive(Debug, Clone)]
 pub enum Seen {
     Path { name: String, span: Span },
     Call { name: String, wrote: Option<Wrote>, span: Span },
+    Name(String),
+    Spawn,
 }
 
 pub fn written_in(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
-    let mut found: Vec<Seen> = vec![];
+    let mut found = Walked { seen: vec![], with_names: false };
     for item in program.items.iter() { item_names(&item.node, &item.span, names, unaliased, holes_of, root_at, &mut found); }
-    found
+    found.seen
 }
 
-pub fn seen_in(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
-    let mut found: Vec<Seen> = vec![];
+pub fn seen_in(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, with_names: bool) -> Vec<Seen> {
+    let mut found = Walked { seen: vec![], with_names };
     block_names(block, names, unaliased, holes_of, root_at, &mut found);
-    found
+    found.seen
 }
 
-fn item_names(item: &Item, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+pub fn seen_in_expression(expr: &Expr, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, with_names: bool) -> Vec<Seen> {
+    let mut found = Walked { seen: vec![], with_names };
+    let nowhere = Span::nowhere();
+    expression_paths(expr, &nowhere, names, unaliased, holes_of, root_at, &mut found);
+    expression_blocks(expr, names, unaliased, holes_of, root_at, &mut found);
+    found.seen
+}
+
+fn item_names(item: &Item, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     match item {
         Item::Fn { args, ret_type, body, .. } => {
             for arg in args.iter() { type_names(&arg.ty, span, names, unaliased, found); }
@@ -1324,16 +1340,16 @@ fn item_names(item: &Item, span: &Span, names: &winnow_grammar::InternerContext,
     }
 }
 
-fn type_names(ty: &Type, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, found: &mut Vec<Seen>) {
+fn type_names(ty: &Type, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, found: &mut Walked) {
     let name = unaliased(names.resolve(ty.name));
-    if name.contains("::") { found.push(named_at(name, span)); }
+    if name.contains("::") { found.seen.push(named_at(name, span)); }
     for argument in ty.generics.iter() { type_names(argument, span, names, unaliased, found); }
     maybe_type_names((*ty.code).as_ref().and_then(|__nikaia_it| (*__nikaia_it.result).as_ref()), span, names, unaliased, found);
 }
 
-fn maybe_type_names(ty: Option<&Type>, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, found: &mut Vec<Seen>) { type_names(match ty { Some(__nikaia_value) => __nikaia_value, None => return }, span, names, unaliased, found); }
+fn maybe_type_names(ty: Option<&Type>, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, found: &mut Walked) { type_names(match ty { Some(__nikaia_value) => __nikaia_value, None => return }, span, names, unaliased, found); }
 
-fn block_names(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn block_names(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     for stmt in block.stmts.iter() {
         match &stmt.node {
             Stmt::Let { ty, .. } => maybe_type_names((ty).as_ref(), &stmt.span, names, unaliased, found),
@@ -1344,7 +1360,7 @@ fn block_names(block: &Block, names: &winnow_grammar::InternerContext, unaliased
     }
 }
 
-fn statement_paths(stmt: &Stmt, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn statement_paths(stmt: &Stmt, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     match stmt {
         Stmt::Let { value, .. } => expression_paths(value, span, names, unaliased, holes_of, root_at, found),
         Stmt::Comptime { value, .. } => expression_paths(value, span, names, unaliased, holes_of, root_at, found),
@@ -1360,12 +1376,17 @@ fn statement_paths(stmt: &Stmt, span: &Span, names: &winnow_grammar::InternerCon
     }
 }
 
-fn maybe_expression_paths(expr: Option<&Expr>, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) { expression_paths(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, span, names, unaliased, holes_of, root_at, found); }
+fn maybe_expression_paths(expr: Option<&Expr>, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) { expression_paths(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, span, names, unaliased, holes_of, root_at, found); }
 
-fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     for hole in holes_of(expr) { expression_paths(&hole, span, names, unaliased, holes_of, root_at, found); }
     match expr {
-        Expr::Path(segments) => { if (segments.len() as i64) > 0 { found.push(named_at(path_name(segments, names, unaliased), span)); } },
+        Expr::Path(segments) => { if (segments.len() as i64) > 0 { found.seen.push(named_at(path_name(segments, names, unaliased), span)); } },
+        Expr::Variable(name) => {
+            let name = *name;
+            if found.with_names { found.seen.push(Seen::Name(names.resolve(name).to_owned())); }
+        },
+        Expr::Spawn { .. } => { if found.with_names { found.seen.push(Seen::Spawn); } },
         Expr::Call { func, args, config } => {
             let func = nikaia_std::boxed::open(func);
             a_named_call(func, args, span, names, root_at, found);
@@ -1435,7 +1456,7 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
     }
 }
 
-fn statement_blocks(stmt: &Stmt, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn statement_blocks(stmt: &Stmt, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     match stmt {
         Stmt::For { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
         Stmt::While { body, .. } => block_names(body, names, unaliased, holes_of, root_at, found),
@@ -1451,7 +1472,7 @@ fn statement_blocks(stmt: &Stmt, names: &winnow_grammar::InternerContext, unalia
     }
 }
 
-fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn expression_blocks(expr: &Expr, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     match expr {
         Expr::Block(block) => block_names(block, names, unaliased, holes_of, root_at, found),
         Expr::Unsafe(block) => block_names(block, names, unaliased, holes_of, root_at, found),
@@ -1501,7 +1522,7 @@ fn path_name(segments: &Vec<winnow_grammar::Symbol>, names: &winnow_grammar::Int
 
 fn named_at(name: String, span: &Span) -> Seen { Seen::Path { name, span: span.clone() } }
 
-fn a_named_call(func: &Expr, args: &Vec<Expr>, span: &Span, names: &winnow_grammar::InternerContext, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
+fn a_named_call(func: &Expr, args: &Vec<Expr>, span: &Span, names: &winnow_grammar::InternerContext, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     let name = match func {
         Expr::Variable(name) => { let name = *name; names.resolve(name).to_owned() },
         Expr::Path(segments) => call_path(segments, names),
@@ -1511,7 +1532,7 @@ fn a_named_call(func: &Expr, args: &Vec<Expr>, span: &Span, names: &winnow_gramm
     let at = root_at(&name);
     let mut wrote: Option<Wrote> = None;
     if at >= 0 && at < args.len() as i64 { wrote = written_root(names, nikaia_std::index::get(&args, nikaia_std::index::at(at))); }
-    found.push(Seen::Call { name, wrote, span: span.clone() });
+    found.seen.push(Seen::Call { name, wrote, span: span.clone() });
 }
 
 fn call_path(segments: &Vec<winnow_grammar::Symbol>, names: &winnow_grammar::InternerContext) -> String {
@@ -6238,7 +6259,7 @@ pub mod fold {
 }
 pub mod foreign {
     #[allow(unused_imports)]
-    pub use super::{Seen, written_in, seen_in};
+    pub use super::{Seen, written_in, seen_in, seen_in_expression};
 }
 pub mod http1 {
     #[allow(unused_imports)]

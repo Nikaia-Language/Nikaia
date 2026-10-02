@@ -171,7 +171,7 @@ fn written(parsed: &Parsed) -> Vec<(String, Span)> {
         .into_iter()
         .filter_map(|seen| match seen {
             Seen::Path { name, span } => Some((name, span)),
-            Seen::Call { .. } => None,
+            _ => None,
         })
         .collect()
 }
@@ -185,7 +185,47 @@ pub(crate) fn seen_in(parsed: &Parsed, block: &crate::ast::Block) -> Vec<Seen> {
         &|name: &str| parsed.unaliased(name),
         &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
         &|_: &str| -1,
+        false,
     )
+}
+
+/// **Every bare name a block mentions**, by the same walk, and whether it met
+/// a `spawn` it did not read into: what a body keeps is asked of the names it
+/// reaches (`contracts::keep`, `contracts::keeps`).
+pub(crate) fn names_in_block(parsed: &Parsed, block: &crate::ast::Block) -> (Vec<String>, bool) {
+    named(nikaia_std::tools::foreign::seen_in(
+        block,
+        &parsed.interner,
+        &|name: &str| parsed.unaliased(name),
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        &|_: &str| -1,
+        true,
+    ))
+}
+
+/// The same from one expression, and the blocks it holds.
+pub(crate) fn names_in_expression(parsed: &Parsed, expr: &Expr) -> (Vec<String>, bool) {
+    named(nikaia_std::tools::foreign::seen_in_expression(
+        expr,
+        &parsed.interner,
+        &|name: &str| parsed.unaliased(name),
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        &|_: &str| -1,
+        true,
+    ))
+}
+
+fn named(seen: Vec<Seen>) -> (Vec<String>, bool) {
+    let mut names = Vec::new();
+    let mut a_spawn = false;
+    for one in seen {
+        match one {
+            Seen::Name(name) => names.push(name),
+            Seen::Spawn => a_spawn = true,
+            _ => {}
+        }
+    }
+    (names, a_spawn)
 }
 
 /// What the walk meets, paths and calls: `root_at` says where a callee's
