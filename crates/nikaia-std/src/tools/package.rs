@@ -5774,8 +5774,8 @@ fn the_whole_filesystem(names: &winnow_grammar::InternerContext, func: &Expr, ar
         _ => false,
     };
     if !is_dir || (args.len() as i64) == 0 { return None; }
-    match *nikaia_std::index::get(&args, 0) {
-        Expr::LitStr { ref text, .. } => if text == "/" { Some(Wrote::TheFilesystemRoot) } else { None },
+    match nikaia_std::index::get(&args, 0) {
+        Expr::LitStr { text, .. } => if text == "/" { Some(Wrote::TheFilesystemRoot) } else { None },
         _ => None,
     }
 }
@@ -7279,6 +7279,893 @@ fn std_module_of(name: &str, known: &collections::BTreeSet<String>) -> String {
 }
 
 
+// --- views.nika ---
+
+#[derive(Debug, Clone)]
+pub struct Stored {
+    pub span: Span,
+    pub param: String,
+    pub ty: String,
+    pub function: String,
+    pub subject: Option<String>,
+    pub into: Destination,
+    pub carried: bool,
+    pub method: u32,
+    pub symbol: winnow_grammar::Symbol,
+    pub carrier: Option<winnow_grammar::Symbol>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Destination {
+    Field { owner: String, field: String, ty: String },
+    Subject { owner: String },
+    Returned { ty: String },
+    Task,
+    ParamField { param: winnow_grammar::Symbol, owner: String, field: String, ty: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct Asked<'a> {
+    pub names: &'a winnow_grammar::InternerContext,
+    pub own: &'a Ledger,
+    pub library: &'a Ledger,
+}
+
+#[derive(Debug, Clone)]
+struct Unit {
+    borrowing: collections::BTreeSet<String>,
+    fields: collections::BTreeMap<String, Vec<(String, Type)>>,
+}
+
+#[derive(Debug, Clone)]
+struct Here {
+    subject: Option<Type>,
+    subject_fields: Vec<(String, Type)>,
+    declared: Vec<(winnow_grammar::Symbol, Type)>,
+    result: Option<Type>,
+    ours: Option<String>,
+    carriers: collections::BTreeSet<String>,
+    found: Vec<(Span, Destination)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Root {
+    Subject,
+    SubjectField(String),
+    Param(winnow_grammar::Symbol),
+    ParamField(winnow_grammar::Symbol, String),
+    Elsewhere,
+}
+
+pub fn views_stored(asked: &Asked<'_>, items: &Vec<Spanned<Item>>, own_buffer: &impl Fn(&Expr) -> bool) -> Vec<Stored> {
+    let unit = Unit { borrowing: borrowing_types(asked.names, items), fields: view_fields(asked.names, items) };
+    let mut found: Vec<Stored> = vec![];
+    let nothing: Option<Type> = None;
+    for item in items.iter() {
+        match &item.node {
+            Item::Fn { .. } => scan(&unit, asked, (nothing).as_ref(), item.span.start, &item.node, own_buffer, &mut found),
+            Item::Impl { target, methods, .. } => {
+                let subject: Option<Type> = Some(target.clone());
+                for method in methods.iter() { scan(&unit, asked, (subject).as_ref(), method.span.start, &method.node, own_buffer, &mut found); }
+            },
+            _ => { },
+        }
+    }
+    in_source_order(&found)
+}
+
+pub fn views_checked(asked: &Asked<'_>, items: &Vec<Spanned<Item>>, own_buffer: &impl Fn(&Expr) -> bool) -> Vec<Finding> {
+    let mut out: Vec<Finding> = vec![];
+    for stored in views_stored(asked, items, own_buffer) { if !stored.carried { out.push(finding(&stored)); } }
+    out
+}
+
+fn in_source_order(found: &Vec<Stored>) -> Vec<Stored> {
+    let mut out: Vec<Stored> = vec![];
+    for stored in found.iter() {
+        let mut at = out.len() as i64;
+        while at > 0 && nikaia_std::index::get(&out, nikaia_std::index::at(at - 1)).span.start > stored.span.start { at -= 1; }
+        out.insert(nikaia_std::count::of(at), stored.clone());
+    }
+    out
+}
+
+fn finding(stored: &Stored) -> Finding {
+    let param = stored.param.to_owned();
+    let written = stored.ty.to_owned();
+    let function = stored.function.to_owned();
+    let where_it_goes = match &stored.into {
+        Destination::Field { owner, field, .. } => format!("`{}.{}`", owner, field),
+        Destination::ParamField { owner, field, .. } => format!("`{}.{}`", owner, field),
+        Destination::Subject { owner } => format!("`{}`, through a call on it", owner),
+        Destination::Returned { .. } => String::from("the value this function returns"),
+        Destination::Task => String::from("a task, which goes on running after the call"),
+    };
+    let why = match &stored.into {
+        Destination::ParamField { owner, field, .. } => format!("`{}.{}` belongs to a struct that was passed in, and this function stores into more than one such struct, so it's unclear whose data `{}` points into.", owner, field, param),
+        Destination::Field { owner, field, ty } => format!("`{}.{}` is a `{}`, so it points into some data, but `{}: {}` doesn't say whose.", owner, field, ty, param, written),
+        Destination::Subject { owner } => format!("A call on `{}` might keep what it's given, and nothing says it doesn't, so `{}` counts as kept.", owner, param),
+        Destination::Returned { ty } => format!("The result is a `{}`, which holds a view, and this function takes views of other data besides `{}`, so it's unclear which one the result points into.", ty, param),
+        Destination::Task => String::from("A task keeps running after the call that started it, so anything it looks at has to live longer than the call."),
+    };
+    let of = of_what((stored.subject).as_deref(), &function);
+    let mut help: String = String::from("Put the view in a struct and pass the struct, so its declaration says whose data it is (like `Reading` in `examples/1brc.nika`):\n           struct Held { ");
+    help.push_str(&format!("{}: {}", param, written));
+    help.push_str(" }\n           …\n           fn ");
+    help.push_str(&format!("{}(…, held: Held)", function));
+    help.push_str(" { … held.");
+    help.push_str(&param);
+    help.push_str(" … }\n       Or keep a copy of the text with `.clone()`, which costs one allocation.");
+    refusal("NK2302", stored.span.clone(), format!("{} keeps `{}` after this call, but `{}: {}` doesn't say whose data it points into.", of, param, param, written), vec![format!("It's stored in {}.", where_it_goes), why], help)
+}
+
+fn of_what(subject: Option<&str>, function: &str) -> String {
+    let owner = match subject { Some(__nikaia_value) => __nikaia_value, None => return format!("`{}`", function) };
+    format!("`{}.{}`", owner, function)
+}
+
+fn borrowing_types(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>) -> collections::BTreeSet<String> {
+    let mut types_of: Vec<(String, Vec<Type>)> = vec![];
+    let mut borrowing: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for item in items.iter() {
+        match &item.node {
+            Item::Enum { name, variants, .. } => {
+                let name = *name;
+                let mut types: Vec<Type> = vec![];
+                for variant in variants.iter() {
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        VariantFields::Tuple(written) => { for ty in written.iter() { types.push(ty.clone()); } },
+                        VariantFields::Named(declared) => { for field in declared.iter() { types.push(field.ty.clone()); } },
+                    }
+                }
+                a_shape(names.resolve(name).to_owned(), types, &mut borrowing, &mut types_of);
+            },
+            Item::Struct { name, fields, .. } => {
+                let name = *name;
+                let mut types: Vec<Type> = vec![];
+                for field in fields.iter() { types.push(field.ty.clone()); }
+                a_shape(names.resolve(name).to_owned(), types, &mut borrowing, &mut types_of);
+            },
+            _ => { },
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, types) in types_of.iter() {
+            if !borrowing.contains(name) && any_names_borrowing(names, types, &borrowing) {
+                borrowing.insert(name.to_owned());
+                changed = true;
+            }
+        }
+    }
+    borrowing
+}
+
+fn a_shape(name: String, types: Vec<Type>, borrowing: &mut collections::BTreeSet<String>, types_of: &mut Vec<(String, Vec<Type>)>) {
+    for ty in types.iter() { if holds_view(ty) { borrowing.insert(name.to_owned()); } }
+    types_of.push((name, types));
+}
+
+fn any_names_borrowing(names: &winnow_grammar::InternerContext, types: &Vec<Type>, borrowing: &collections::BTreeSet<String>) -> bool {
+    for ty in types.iter() { if names_borrowing(names, ty, borrowing) { return true; } }
+    false
+}
+
+fn holds_view(ty: &Type) -> bool {
+    if ty.is_view { return true; }
+    for inner in ty.generics.iter() { if holds_view(inner) { return true; } }
+    false
+}
+
+fn names_borrowing(names: &winnow_grammar::InternerContext, ty: &Type, borrowing: &collections::BTreeSet<String>) -> bool {
+    if borrowing.contains(names.resolve(ty.name)) { return true; }
+    for inner in ty.generics.iter() { if names_borrowing(names, inner, borrowing) { return true; } }
+    false
+}
+
+fn brings_buffer(unit: &Unit, asked: &Asked<'_>, ty: &Type) -> bool { holds_view(ty) || names_borrowing(asked.names, ty, &unit.borrowing) }
+
+fn view_fields(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>) -> collections::BTreeMap<String, Vec<(String, Type)>> {
+    let mut out: collections::BTreeMap<String, Vec<(String, Type)>> = collections::BTreeMap::new();
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, fields, .. } => {
+                let name = *name;
+                let mut declared: Vec<(String, Type)> = vec![];
+                for field in fields.iter() { declared.push((names.resolve(field.name).to_owned(), field.ty.clone())); }
+                out.insert(names.resolve(name).to_owned(), declared);
+            },
+            Item::Enum { name, variants, .. } => {
+                let name = *name;
+                let mut carried: Vec<(String, Type)> = vec![];
+                for variant in variants.iter() {
+                    match &variant.fields {
+                        VariantFields::Unit => { },
+                        VariantFields::Tuple(written) => { for i in 0..written.len() as i64 { carried.push((format!("{}", i), (*nikaia_std::index::get(&written, nikaia_std::index::at(i))).clone())); } },
+                        VariantFields::Named(declared) => { for field in declared.iter() { carried.push((names.resolve(field.name).to_owned(), field.ty.clone())); } },
+                    }
+                }
+                out.insert(names.resolve(name).to_owned(), carried);
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+pub fn written_type(names: &winnow_grammar::InternerContext, ty: &Type) -> String {
+    let mut out: String = String::from("");
+    if ty.is_view {
+        out.push_str("ref ");
+        if ty.is_mut { out.push_str("mut "); }
+    }
+    let mut parts: Vec<String> = vec![];
+    for inner in ty.generics.iter() { parts.push(written_type(names, inner)); }
+    let joined = parts.join(", ");
+    if ty.is_tuple {
+        out.push_str(&format!("({})", joined));
+        return out;
+    }
+    let name = names.resolve(ty.name);
+    if ty.is_view && name == "str" { out.push_str(TEXT); } else { out.push_str(name); }
+    if (parts.len() as i64) > 0 { out.push_str(&format!("[{}]", joined)); }
+    out
+}
+
+fn scan(unit: &Unit, asked: &Asked<'_>, target: Option<&Type>, method: u32, item: &Item, own_buffer: &impl Fn(&Expr) -> bool, out: &mut Vec<Stored>) {
+    match item {
+        Item::Fn { name, receiver, args, config, ret_type, body, .. } => {
+            let name = *name;
+            let mut declared: Vec<(winnow_grammar::Symbol, Type)> = vec![];
+            for arg in args.iter() { declared.push((arg.name, arg.ty.clone())); }
+            for option in config.iter() { declared.push((option.name, option.ty.clone())); }
+            let mut any_view = false;
+            for (_, ty) in declared.iter() { if ty.is_view { any_view = true; } }
+            if !any_view { return; }
+            let mut sources: Vec<String> = vec![];
+            for (param, ty) in declared.iter() { if brings_buffer(unit, asked, ty) { sources.push(asked.names.resolve(*param).to_owned()); } }
+            let subject_is_a_source = takes_a_view_of_itself((receiver).as_ref());
+            let result_holds_view = buffered(unit, asked, (ret_type).as_ref());
+            let subject_names_a_buffer = named_in(asked, target, &unit.borrowing);
+            let subject_name = text_of(asked, target);
+            let function = function_name(asked.names, name);
+            let subject_fields = fields_of_type(unit, asked, target);
+            for (param, ty) in declared.iter() {
+                if !ty.is_view { continue; }
+                let param_name = asked.names.resolve(*param).to_owned();
+                let result_is_ours = !subject_is_a_source && (sources.len() as i64) == 1 && *nikaia_std::index::get(&sources, 0) == param_name;
+                let hands_back = result_holds_view && !result_is_ours;
+                let mut carriers: collections::BTreeSet<String> = collections::BTreeSet::new();
+                carriers.insert(param_name.to_owned());
+                let mut here = Here { subject: match target {
+                    Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                    None => None,
+                }, subject_fields: subject_fields.to_owned(), declared: declared.to_owned(), result: if hands_back {
+                    match ret_type {
+                        Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                        None => None,
+                    }
+                } else { None }, ours: if result_holds_view && result_is_ours { text_of(asked, (ret_type).as_ref()) } else { None }, carriers, found: vec![] };
+                walk_block(unit, asked, body, true, own_buffer, &mut here);
+                one_answer(asked, &here, *param, Scanned { param: param_name, ty: written_type(asked.names, ty), function: function.to_owned(), subject: match subject_name.as_ref() {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, method, names_a_buffer: subject_names_a_buffer }, out);
+            }
+        },
+        _ => { },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Scanned {
+    param: String,
+    ty: String,
+    function: String,
+    subject: Option<String>,
+    method: u32,
+    names_a_buffer: bool,
+}
+
+fn one_answer(asked: &Asked<'_>, here: &Here, symbol: winnow_grammar::Symbol, signed: Scanned, out: &mut Vec<Stored>) {
+    let mut carriers: collections::BTreeSet<String> = collections::BTreeSet::new();
+    let mut carrier: Option<winnow_grammar::Symbol> = None;
+    for (_, into) in here.found.iter() {
+        match into {
+            Destination::ParamField { param, .. } => {
+                let param = *param;
+                if carriers.insert(asked.names.resolve(param).to_owned()) && carrier.is_none() { carrier = Some(param); }
+            },
+            _ => { },
+        }
+    }
+    let one_carrier = (carriers.len() as i64) == 1 && !signed.names_a_buffer;
+    let mut unreached: Vec<(Span, Destination)> = vec![];
+    let mut reached: Vec<(Span, Destination)> = vec![];
+    for (span, into) in here.found.iter() { if covered_by_the_subject(signed.names_a_buffer, into) || one_carrier && a_param_field(into) { reached.push((span.clone(), into.clone())); } else { unreached.push((span.clone(), into.clone())); } }
+    let carried = (unreached.len() as i64) == 0;
+    let candidates = if carried { reached } else { unreached };
+    if (candidates.len() as i64) == 0 { return; }
+    let mut best: i64 = 0;
+    for i in 1..candidates.len() as i64 {
+        let rank_i = rank(&nikaia_std::index::get(&candidates, nikaia_std::index::at(i)).1);
+        let rank_best = rank(&nikaia_std::index::get(&candidates, nikaia_std::index::at(best)).1);
+        if rank_i < rank_best || rank_i == rank_best && nikaia_std::index::get(&candidates, nikaia_std::index::at(i)).0.start < nikaia_std::index::get(&candidates, nikaia_std::index::at(best)).0.start { best = i; }
+    }
+    out.push(Stored { span: nikaia_std::index::get(&candidates, nikaia_std::index::at(best)).0.clone(), param: signed.param, ty: signed.ty, function: signed.function, subject: signed.subject, into: nikaia_std::index::get(&candidates, nikaia_std::index::at(best)).1.clone(), carried, method: signed.method, symbol, carrier: if one_carrier && carried { carrier } else { None } });
+}
+
+fn a_param_field(into: &Destination) -> bool { matches!(into, Destination::ParamField { .. }) }
+
+fn covered_by_the_subject(subject_names_a_buffer: bool, into: &Destination) -> bool { subject_names_a_buffer && matches!(into, Destination::Field { .. } | Destination::Subject { .. }) }
+
+fn rank(into: &Destination) -> i64 {
+    match into {
+        Destination::Field { .. } => 0,
+        Destination::Subject { .. } => 1,
+        Destination::Task => 2,
+        Destination::Returned { .. } => 3,
+        Destination::ParamField { .. } => 0,
+    }
+}
+
+fn takes_a_view_of_itself(receiver: Option<&Receiver>) -> bool {
+    let taken = match receiver { Some(__nikaia_value) => __nikaia_value, None => return false };
+    taken.is_ref
+}
+
+fn buffered(unit: &Unit, asked: &Asked<'_>, ty: Option<&Type>) -> bool { brings_buffer(unit, asked, match ty { Some(__nikaia_value) => __nikaia_value, None => return false }) }
+
+fn named_in(asked: &Asked<'_>, ty: Option<&Type>, borrowing: &collections::BTreeSet<String>) -> bool {
+    let named = match ty { Some(__nikaia_value) => __nikaia_value, None => return false };
+    borrowing.contains(asked.names.resolve(named.name))
+}
+
+fn text_of(asked: &Asked<'_>, ty: Option<&Type>) -> Option<String> {
+    let named = match ty { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(asked.names.resolve(named.name).to_owned())
+}
+
+fn function_name(names: &winnow_grammar::InternerContext, name: Option<winnow_grammar::Symbol>) -> String {
+    let named = match name { Some(__nikaia_value) => __nikaia_value, None => return String::from("new") };
+    names.resolve(named).to_owned()
+}
+
+fn fields_of_type(unit: &Unit, asked: &Asked<'_>, ty: Option<&Type>) -> Vec<(String, Type)> {
+    let named = match ty { Some(__nikaia_value) => __nikaia_value, None => return vec![] };
+    nikaia_std::index::or(match *nikaia_std::index::get(&unit.fields, asked.names.resolve(named.name)) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || vec![].into())
+}
+
+fn walk_block(unit: &Unit, asked: &Asked<'_>, block: &Block, tail: bool, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) {
+    let count = block.stmts.len() as i64;
+    for i in 0..count {
+        let returning = tail && i + 1 == count;
+        let span = nikaia_std::index::get(&block.stmts, nikaia_std::index::at(i)).span.clone();
+        match &nikaia_std::index::get(&block.stmts, nikaia_std::index::at(i)).node {
+            Stmt::Let { names, value, .. } => {
+                if mentions(unit, asked, &here, value) && !own_buffer(value) { for name in names.iter() { here.carriers.insert(asked.names.resolve(*name).to_owned()); } }
+                stores(unit, asked, value, &span, own_buffer, here);
+            },
+            Stmt::Comptime { name, value, .. } => {
+                let name = *name;
+                if mentions(unit, asked, &here, value) { here.carriers.insert(asked.names.resolve(name).to_owned()); }
+                stores(unit, asked, value, &span, own_buffer, here);
+            },
+            Stmt::Assign { target, value, .. } => {
+                if mentions(unit, asked, &here, value) {
+                    match target {
+                        Expr::Variable(name) => {
+                            let name = *name;
+                            here.carriers.insert(asked.names.resolve(name).to_owned());
+                        },
+                        _ => assigned(unit, asked, target, &span, here),
+                    }
+                }
+                stores(unit, asked, target, &span, own_buffer, here);
+                stores(unit, asked, value, &span, own_buffer, here);
+            },
+            Stmt::Return(value) => returned_maybe(unit, asked, (value).as_ref(), &span, own_buffer, here),
+            Stmt::Expr(expr) => {
+                if returning {
+                    returned(unit, asked, expr, &span, here);
+                    handed_back(unit, asked, expr, &span, own_buffer, here);
+                } else { stores(unit, asked, expr, &span, own_buffer, here); }
+            },
+            Stmt::For { bindings, iter, body } => {
+                if mentions(unit, asked, &here, iter) { for binding in bindings.iter() { here.carriers.insert(asked.names.resolve(*binding).to_owned()); } }
+                stores(unit, asked, iter, &span, own_buffer, here);
+                walk_block(unit, asked, body, false, own_buffer, here);
+            },
+            Stmt::While { cond, body } => {
+                stores(unit, asked, cond, &span, own_buffer, here);
+                walk_block(unit, asked, body, false, own_buffer, here);
+            },
+            Stmt::Break => { },
+            Stmt::Continue => { },
+        }
+    }
+}
+
+fn returned_maybe(unit: &Unit, asked: &Asked<'_>, value: Option<&Expr>, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) {
+    let handed = match value { Some(__nikaia_value) => __nikaia_value, None => return };
+    returned(unit, asked, handed, span, here);
+    handed_back(unit, asked, handed, span, own_buffer, here);
+}
+
+fn handed_back(unit: &Unit, asked: &Asked<'_>, value: &Expr, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) {
+    match value {
+        Expr::StructLit { name, .. } => {
+            let name = *name;
+            if ours_is(asked, (here.ours).as_deref(), name) { descend(unit, asked, value, span, own_buffer, here); } else { stores(unit, asked, value, span, own_buffer, here); }
+        },
+        _ => stores(unit, asked, value, span, own_buffer, here),
+    }
+}
+
+fn ours_is(asked: &Asked<'_>, ours: Option<&str>, name: winnow_grammar::Symbol) -> bool {
+    let named = match ours { Some(__nikaia_value) => __nikaia_value, None => return false };
+    named == asked.names.resolve(name)
+}
+
+fn assigned(unit: &Unit, asked: &Asked<'_>, target: &Expr, span: &Span, here: &mut Here) {
+    match root(unit, asked, &here, target) {
+        Root::SubjectField(ref field) => field_of_subject(unit, asked, &field, span, here),
+        Root::Subject => subject_destination(unit, asked, span, here),
+        Root::ParamField(param, ref field) => field_of_param(unit, asked, param, &field, span, here),
+        Root::Param(_) => { },
+        Root::Elsewhere => { },
+    }
+}
+
+fn a_struct_parameter(unit: &Unit, asked: &Asked<'_>, here: &Here, name: winnow_grammar::Symbol) -> Option<String> {
+    let wanted = asked.names.resolve(name);
+    for (declared, ty) in here.declared.iter() {
+        if asked.names.resolve(*declared) == wanted {
+            let owner = asked.names.resolve(ty.name);
+            if !ty.is_view && unit.borrowing.contains(owner) { return Some(owner.to_owned()); }
+            return None;
+        }
+    }
+    None
+}
+
+fn field_of_param(unit: &Unit, asked: &Asked<'_>, param: winnow_grammar::Symbol, field: &str, span: &Span, here: &mut Here) {
+    let owner = match a_struct_parameter(unit, asked, &here, param) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let declared = nikaia_std::index::or(match *nikaia_std::index::get(&unit.fields, &owner) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || vec![].into());
+    for (name, ty) in declared.iter() {
+        if name == field {
+            if brings_buffer(unit, asked, ty) { here.found.push((span.clone(), Destination::ParamField { param, owner, field: field.to_owned(), ty: written_type(asked.names, ty) })); }
+            return;
+        }
+    }
+}
+
+fn returned(unit: &Unit, asked: &Asked<'_>, value: &Expr, span: &Span, here: &mut Here) {
+    let result = match match here.result.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    } { Some(__nikaia_value) => __nikaia_value, None => return };
+    if !mentions(unit, asked, &here, value) { return; }
+    if hands_back_another_buffer(unit, asked, &here, value) { return; }
+    here.found.push((span.clone(), Destination::Returned { ty: written_type(asked.names, &result) }));
+}
+
+fn hands_back_another_buffer(unit: &Unit, asked: &Asked<'_>, here: &Here, value: &Expr) -> bool {
+    match value {
+        Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_method_borrows_elsewhere(unit, asked, here, receiver, method, args) },
+        Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_method_borrows_elsewhere(unit, asked, here, receiver, method, args) },
+        Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); match func {
+            Expr::Variable(name) => { let name = *name; borrows_elsewhere(unit, asked, here, asked.names.resolve(name), None, args) },
+            Expr::Path(parts) => borrows_elsewhere(unit, asked, here, &joined_path(asked, parts), None, args),
+            _ => false,
+        } },
+        _ => false,
+    }
+}
+
+fn a_method_borrows_elsewhere(unit: &Unit, asked: &Asked<'_>, here: &Here, receiver: &Expr, method: winnow_grammar::Symbol, args: &Vec<Expr>) -> bool {
+    let ty = match type_of(unit, asked, here, receiver) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let subject = asked.names.resolve(ty.name);
+    let name = asked.names.resolve(method);
+    let on: Option<Expr> = Some(receiver.clone());
+    borrows_elsewhere(unit, asked, here, &format!("{}::{}", subject, name), (on).as_ref(), args)
+}
+
+fn joined_path(asked: &Asked<'_>, parts: &Vec<winnow_grammar::Symbol>) -> String {
+    let mut written: Vec<String> = vec![];
+    for part in parts.iter() { written.push(asked.names.resolve(*part).to_owned()); }
+    written.join("::")
+}
+
+fn borrows_elsewhere(unit: &Unit, asked: &Asked<'_>, here: &Here, key: &str, receiver: Option<&Expr>, args: &Vec<Expr>) -> bool {
+    let contract = match match *nikaia_std::index::get(&asked.own.functions, key) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    } { Some(__nikaia_value) => __nikaia_value, None => match match *nikaia_std::index::get(&asked.library.functions, key) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    } { Some(__nikaia_value) => __nikaia_value, None => return false } };
+    let signature = match match contract.signature.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    } { Some(__nikaia_value) => __nikaia_value, None => return false };
+    if (contract.borrows.len() as i64) == 0 { return false; }
+    let takes_a_receiver = signature.takes_a_receiver();
+    for borrowed in contract.borrows.iter() {
+        if borrowed == "self" {
+            if !receiver_clear(unit, asked, here, receiver) { return false; }
+            continue;
+        }
+        let mut at: i64 = -1;
+        for i in 0..signature.params.len() as i64 { if at < 0 && nikaia_std::index::get(&signature.params, nikaia_std::index::at(i)).0 == *borrowed { at = i; } }
+        if at < 0 { return false; }
+        if takes_a_receiver { at -= 1; }
+        if at < 0 || at >= args.len() as i64 { return false; }
+        if mentions(unit, asked, here, nikaia_std::index::get(&args, nikaia_std::index::at(at))) { return false; }
+    }
+    true
+}
+
+fn receiver_clear(unit: &Unit, asked: &Asked<'_>, here: &Here, receiver: Option<&Expr>) -> bool {
+    let on = match receiver { Some(__nikaia_value) => __nikaia_value, None => return false };
+    !mentions(unit, asked, here, on)
+}
+
+fn type_of(unit: &Unit, asked: &Asked<'_>, here: &Here, receiver: &Expr) -> Option<Type> {
+    match receiver {
+        Expr::Variable(name) => { let name = *name; variable_type(asked, here, asked.names.resolve(name)) },
+        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; field_type(unit, asked, here, base, asked.names.resolve(name)) },
+        _ => None,
+    }
+}
+
+fn variable_type(asked: &Asked<'_>, here: &Here, name: &str) -> Option<Type> {
+    if name == "self" {
+        return match here.subject.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+    }
+    for (param, ty) in here.declared.iter() { if asked.names.resolve(*param) == name { return Some(ty.clone()); } }
+    None
+}
+
+fn field_type(unit: &Unit, asked: &Asked<'_>, here: &Here, base: &Expr, name: &str) -> Option<Type> {
+    let fields = match fields_reached(unit, asked, here, base) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    for (field, ty) in fields.iter() { if field == name { return Some(ty.clone()); } }
+    None
+}
+
+fn fields_reached(unit: &Unit, asked: &Asked<'_>, here: &Here, base: &Expr) -> Option<Vec<(String, Type)>> {
+    if is_self(asked, base) { return Some(here.subject_fields.to_owned()); }
+    let ty = match type_of(unit, asked, here, base) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    match *nikaia_std::index::get(&unit.fields, asked.names.resolve(ty.name)) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }
+}
+
+fn is_self(asked: &Asked<'_>, expr: &Expr) -> bool {
+    match expr {
+        Expr::Variable(name) => { let name = *name; asked.names.resolve(name) == "self" },
+        _ => false,
+    }
+}
+
+fn stores(unit: &Unit, asked: &Asked<'_>, expr: &Expr, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) {
+    match expr {
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            handed_to(unit, asked, receiver, args, config, span, here);
+            descend(unit, asked, expr, span, own_buffer, here);
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            handed_to(unit, asked, receiver, args, config, span, here);
+            descend(unit, asked, expr, span, own_buffer, here);
+        },
+        Expr::StructLit { name, fields } => {
+            let name = *name;
+            let owner = asked.names.resolve(name).to_owned();
+            if unit.borrowing.contains(&owner) {
+                let declared = nikaia_std::index::or(match *nikaia_std::index::get(&unit.fields, &owner) {
+                    Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                    None => None,
+                }, || vec![].into());
+                for init in fields.iter() { a_field_built(unit, asked, &owner, &declared, init, span, here); }
+            }
+            descend(unit, asked, expr, span, own_buffer, here);
+        },
+        Expr::Spawn { body, .. } => {
+            let body = nikaia_std::boxed::open(body);
+            if mentions(unit, asked, &here, body) { here.found.push((span.clone(), Destination::Task)); }
+            descend(unit, asked, expr, span, own_buffer, here);
+        },
+        _ => descend(unit, asked, expr, span, own_buffer, here),
+    }
+}
+
+fn handed_to(unit: &Unit, asked: &Asked<'_>, receiver: &Expr, args: &Vec<Expr>, config: &Vec<ConfigArg>, span: &Span, here: &mut Here) {
+    let mut handed_over = false;
+    for arg in args.iter() { if mentions(unit, asked, &here, arg) { handed_over = true; } }
+    for setting in config.iter() { if mentions(unit, asked, &here, &setting.value) { handed_over = true; } }
+    if !handed_over { return; }
+    match root(unit, asked, &here, receiver) {
+        Root::SubjectField(ref field) => field_of_subject(unit, asked, &field, span, here),
+        Root::Subject => subject_destination(unit, asked, span, here),
+        _ => { },
+    }
+}
+
+fn a_field_built(unit: &Unit, asked: &Asked<'_>, owner: &str, declared: &Vec<(String, Type)>, init: &FieldInit, span: &Span, here: &mut Here) {
+    let field = asked.names.resolve(init.name).to_owned();
+    let mentioned = value_mentions(unit, asked, &here, (init.value).as_ref(), &field);
+    if !mentioned { return; }
+    for (name, ty) in declared.iter() {
+        if *name == field {
+            if brings_buffer(unit, asked, ty) { here.found.push((span.clone(), Destination::Field { owner: owner.to_owned(), field, ty: written_type(asked.names, ty) })); }
+            return;
+        }
+    }
+}
+
+fn value_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, value: Option<&Expr>, field: &str) -> bool {
+    let written = match value { Some(__nikaia_value) => __nikaia_value, None => return here.carriers.contains(field) };
+    mentions(unit, asked, here, written)
+}
+
+fn subject_destination(unit: &Unit, asked: &Asked<'_>, span: &Span, here: &mut Here) {
+    let owner = match text_of(asked, (here.subject).as_ref()) { Some(__nikaia_value) => __nikaia_value, None => return };
+    let known = unit.fields.contains_key(&owner);
+    let mut can_hold = false;
+    for (_, ty) in here.subject_fields.iter() { if brings_buffer(unit, asked, ty) { can_hold = true; } }
+    if known && !can_hold { return; }
+    here.found.push((span.clone(), Destination::Subject { owner }));
+}
+
+fn field_of_subject(unit: &Unit, asked: &Asked<'_>, field: &str, span: &Span, here: &mut Here) {
+    let mut written: Option<String> = None;
+    for (name, ty) in here.subject_fields.iter() {
+        if written.is_none() && name == field && brings_buffer(unit, asked, ty) { written = Some(written_type(asked.names, ty)); }
+        if name == field { break; }
+    }
+    let ty = match written { Some(__nikaia_value) => __nikaia_value, None => return };
+    let owner = match text_of(asked, (here.subject).as_ref()) { Some(__nikaia_value) => __nikaia_value, None => return };
+    here.found.push((span.clone(), Destination::Field { owner, field: field.to_owned(), ty }));
+}
+
+fn root(unit: &Unit, asked: &Asked<'_>, here: &Here, expr: &Expr) -> Root {
+    match expr {
+        Expr::Variable(name) => { let name = *name; a_variable_root(unit, asked, here, name) },
+        Expr::Field { base, name } => { let base = nikaia_std::boxed::open(base); let name = *name; match root(unit, asked, here, base) {
+            Root::Subject => Root::SubjectField(asked.names.resolve(name).to_owned()),
+            Root::Param(param) => Root::ParamField(param, asked.names.resolve(name).to_owned()),
+            Root::SubjectField(field) => Root::SubjectField(field),
+            Root::ParamField(param, field) => Root::ParamField(param, field),
+            Root::Elsewhere => Root::Elsewhere,
+        } },
+        Expr::MethodCall { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); root(unit, asked, here, receiver) },
+        Expr::SafeMethod { receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); root(unit, asked, here, receiver) },
+        Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root(unit, asked, here, base) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); root(unit, asked, here, inner) },
+        _ => Root::Elsewhere,
+    }
+}
+
+fn a_variable_root(unit: &Unit, asked: &Asked<'_>, here: &Here, name: winnow_grammar::Symbol) -> Root {
+    if asked.names.resolve(name) == "self" { return Root::Subject; }
+    if a_struct_parameter(unit, asked, here, name).is_some() { return Root::Param(name); }
+    Root::Elsewhere
+}
+
+fn mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, node: &Expr) -> bool {
+    match node {
+        Expr::Variable(name) => { let name = *name; here.carriers.contains(asked.names.resolve(name)) },
+        Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
+        Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
+        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) },
+        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); mentions(unit, asked, here, base) || mentions(unit, asked, here, index) },
+        Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); mentions(unit, asked, here, lhs) || mentions(unit, asked, here, rhs) },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); mentions(unit, asked, here, inner) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); mentions(unit, asked, here, body) },
+        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback) },
+        Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); mentions(unit, asked, here, start) || mentions(unit, asked, here, end) },
+        Expr::Tuple(parts) => any_mentions(unit, asked, here, parts),
+        Expr::ListLit { items, .. } => any_mentions(unit, asked, here, items),
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_mentions(unit, asked, here, (value).as_ref()) },
+        Expr::StructLit { fields, .. } => fields_mention(unit, asked, here, fields),
+        Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); mentions(unit, asked, here, base) || fields_mention(unit, asked, here, fields) },
+        Expr::Match { value, arms } => { let value = nikaia_std::boxed::open(value); mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms) },
+        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, (else_branch).as_ref()) },
+        Expr::Block(block) => block_mentions(unit, asked, here, block),
+        Expr::Unsafe(block) => block_mentions(unit, asked, here, block),
+        Expr::Overlap(block) => block_mentions(unit, asked, here, block),
+        Expr::Closure { body, .. } => block_mentions(unit, asked, here, body),
+        Expr::Select(arms) => select_mentions(unit, asked, here, arms),
+        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler) },
+        Expr::Break => false,
+        Expr::Continue => false,
+        Expr::Asm { .. } => false,
+        Expr::Dsl { .. } => false,
+        Expr::Path(_) => false,
+        Expr::LitInt { .. } => false,
+        Expr::LitFloat(_) => false,
+        Expr::LitStr { .. } => false,
+        Expr::LitInterpolated { .. } => false,
+        Expr::LitChar(_) => false,
+        Expr::LitBool(_) => false,
+        Expr::LitNull => false,
+    }
+}
+
+fn any_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, exprs: &Vec<Expr>) -> bool {
+    for expr in exprs.iter() { if mentions(unit, asked, here, expr) { return true; } }
+    false
+}
+
+fn config_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, config: &Vec<ConfigArg>) -> bool {
+    for setting in config.iter() { if mentions(unit, asked, here, &setting.value) { return true; } }
+    false
+}
+
+fn fields_mention(unit: &Unit, asked: &Asked<'_>, here: &Here, fields: &Vec<FieldInit>) -> bool {
+    for field in fields.iter() { if maybe_mentions(unit, asked, here, (field.value).as_ref()) { return true; } }
+    false
+}
+
+fn arms_mention(unit: &Unit, asked: &Asked<'_>, here: &Here, arms: &Vec<MatchArm>) -> bool {
+    for arm in arms.iter() { if mentions(unit, asked, here, &arm.body) { return true; } }
+    false
+}
+
+fn select_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, arms: &Vec<SelectArm>) -> bool {
+    for arm in arms.iter() { if mentions(unit, asked, here, &arm.value) || block_mentions(unit, asked, here, &arm.body) { return true; } }
+    false
+}
+
+fn maybe_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, expr: Option<&Expr>) -> bool { mentions(unit, asked, here, match expr { Some(__nikaia_value) => __nikaia_value, None => return false }) }
+
+fn maybe_block_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, block: Option<&Block>) -> bool { block_mentions(unit, asked, here, match block { Some(__nikaia_value) => __nikaia_value, None => return false }) }
+
+fn block_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, block: &Block) -> bool {
+    for stmt in block.stmts.iter() { if statement_mentions(unit, asked, here, &stmt.node) { return true; } }
+    false
+}
+
+fn statement_mentions(unit: &Unit, asked: &Asked<'_>, here: &Here, stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } => mentions(unit, asked, here, value),
+        Stmt::Comptime { value, .. } => mentions(unit, asked, here, value),
+        Stmt::Expr(expr) => mentions(unit, asked, here, expr),
+        Stmt::Return(value) => maybe_mentions(unit, asked, here, (value).as_ref()),
+        Stmt::Assign { target, value, .. } => mentions(unit, asked, here, target) || mentions(unit, asked, here, value),
+        Stmt::For { iter, body, .. } => mentions(unit, asked, here, iter) || block_mentions(unit, asked, here, body),
+        Stmt::While { cond, body } => mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, body),
+        Stmt::Break => false,
+        Stmt::Continue => false,
+    }
+}
+
+fn descend(unit: &Unit, asked: &Asked<'_>, node: &Expr, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) {
+    match node {
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            stores(unit, asked, receiver, span, own_buffer, here);
+            stores_all(unit, asked, args, span, own_buffer, here);
+            stores_config(unit, asked, config, span, own_buffer, here);
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            stores(unit, asked, receiver, span, own_buffer, here);
+            stores_all(unit, asked, args, span, own_buffer, here);
+            stores_config(unit, asked, config, span, own_buffer, here);
+        },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            stores(unit, asked, func, span, own_buffer, here);
+            stores_all(unit, asked, args, span, own_buffer, here);
+            stores_config(unit, asked, config, span, own_buffer, here);
+        },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); stores(unit, asked, base, span, own_buffer, here) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); stores(unit, asked, base, span, own_buffer, here) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            stores(unit, asked, base, span, own_buffer, here);
+            stores(unit, asked, index, span, own_buffer, here);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            stores(unit, asked, lhs, span, own_buffer, here);
+            stores(unit, asked, rhs, span, own_buffer, here);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); stores(unit, asked, expr, span, own_buffer, here) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); stores(unit, asked, inner, span, own_buffer, here) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); stores(unit, asked, expr, span, own_buffer, here) },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); stores(unit, asked, body, span, own_buffer, here) },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            stores(unit, asked, value, span, own_buffer, here);
+            stores(unit, asked, fallback, span, own_buffer, here);
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            stores(unit, asked, start, span, own_buffer, here);
+            stores(unit, asked, end, span, own_buffer, here);
+        },
+        Expr::Tuple(parts) => stores_all(unit, asked, parts, span, own_buffer, here),
+        Expr::ListLit { items, .. } => stores_all(unit, asked, items, span, own_buffer, here),
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); stores_maybe(unit, asked, (value).as_ref(), span, own_buffer, here) },
+        Expr::StructLit { fields, .. } => stores_fields(unit, asked, fields, span, own_buffer, here),
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            stores(unit, asked, base, span, own_buffer, here);
+            stores_fields(unit, asked, fields, span, own_buffer, here);
+        },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            stores(unit, asked, value, span, own_buffer, here);
+            for arm in arms.iter() { stores(unit, asked, &arm.body, span, own_buffer, here); }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            stores(unit, asked, cond, span, own_buffer, here);
+            walk_block(unit, asked, then_branch, false, own_buffer, here);
+            walk_maybe_block(unit, asked, (else_branch).as_ref(), own_buffer, here);
+        },
+        Expr::Block(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Unsafe(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Overlap(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Closure { body, .. } => walk_block(unit, asked, body, false, own_buffer, here),
+        Expr::Select(arms) => {
+            for arm in arms.iter() { stores(unit, asked, &arm.value, span, own_buffer, here); }
+            for arm in arms.iter() { walk_block(unit, asked, &arm.body, false, own_buffer, here); }
+        },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            stores(unit, asked, expr, span, own_buffer, here);
+            walk_block(unit, asked, handler, false, own_buffer, here);
+        },
+        Expr::Break => { },
+        Expr::Continue => { },
+        Expr::Asm { .. } => { },
+        Expr::Dsl { .. } => { },
+        Expr::Path(_) => { },
+        Expr::Variable(_) => { },
+        Expr::LitInt { .. } => { },
+        Expr::LitFloat(_) => { },
+        Expr::LitStr { .. } => { },
+        Expr::LitInterpolated { .. } => { },
+        Expr::LitChar(_) => { },
+        Expr::LitBool(_) => { },
+        Expr::LitNull => { },
+    }
+}
+
+fn stores_all(unit: &Unit, asked: &Asked<'_>, exprs: &Vec<Expr>, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { for expr in exprs.iter() { stores(unit, asked, expr, span, own_buffer, here); } }
+
+fn stores_config(unit: &Unit, asked: &Asked<'_>, config: &Vec<ConfigArg>, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { for setting in config.iter() { stores(unit, asked, &setting.value, span, own_buffer, here); } }
+
+fn stores_fields(unit: &Unit, asked: &Asked<'_>, fields: &Vec<FieldInit>, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { for field in fields.iter() { stores_maybe(unit, asked, (field.value).as_ref(), span, own_buffer, here); } }
+
+fn stores_maybe(unit: &Unit, asked: &Asked<'_>, expr: Option<&Expr>, span: &Span, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { stores(unit, asked, match expr { Some(__nikaia_value) => __nikaia_value, None => return }, span, own_buffer, here); }
+
+fn walk_maybe_block(unit: &Unit, asked: &Asked<'_>, block: Option<&Block>, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { walk_block(unit, asked, match block { Some(__nikaia_value) => __nikaia_value, None => return }, false, own_buffer, here); }
+
+
 pub mod ast {
     #[allow(unused_imports)]
     pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
@@ -7398,4 +8285,8 @@ pub mod ty {
 pub mod types {
     #[allow(unused_imports)]
     pub use super::{types_checked};
+}
+pub mod views {
+    #[allow(unused_imports)]
+    pub use super::{Stored, Destination, Asked, views_stored, views_checked, written_type};
 }

@@ -1722,6 +1722,31 @@ sync = true
 touches = []
 signature = "[T](mut self: ref Vec[T]) -> T?"
 
+# **Joining a list of text** (0.0.355). Nothing described it, so a call was
+# one no ledger knew, and a function that joined a `Vec[String]` was taken to
+# pause and lowered `async` (found moving the compiler's `views` into Nikaia).
+# The texts written one after another, with this text between them.
+[fn."Vec::join"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref Vec[String], sep: ref String) -> String"
+
+# **Putting a value in at a position** (0.0.355). Nothing described it, so
+# `out.insert(at, n)` with an `i64` position reached `rustc` as *expected
+# `usize`, found `i64`* about a generated file; the position is converted as
+# `chunks`' count is (ADR-212 D5).
+# Put a value in at a position, moving everything from there on one further.
+#
+# The list **keeps** the value, so what is handed over is given away rather
+# than lent.
+[fn."Vec::insert"]
+pub = true
+sync = true
+touches = []
+keeps = ["value"]
+signature = "[T](mut self: ref Vec[T], at: i64, value: T)"
+
 # **The way to join two lists** (0.0.234): what `NK1191`'s help names where a
 # program wrote `a + b`. It was reached before only because a method nothing
 # describes fails open.

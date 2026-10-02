@@ -4,6 +4,49 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.355] — 2026-10-02
+
+**`views` is Nikaia** (#125, ADR-250). Where a naked view parameter's view
+ends up - a field of the subject, a struct the function builds, its result, a
+task - and so whether it is refused (`NK2302`) or written as a view of the
+buffer the subject or a struct parameter names (ADR-008 D1) moved into
+`tools/views.nika`. Whether a `let`'s value is a buffer of its own is still
+`contracts::tether`'s answer, handed in. 16.3 % of the toolchain is Nikaia,
+up from 14.5 %.
+
+Found moving it, each fixed in the compiler (ADR-250 D3), each held by a test
+(`tests/defects_found_running.rs`, `tests/sysroot.rs`, `tests/modules.rs`):
+
+- **A view of a type that copies by declaration is copied out where the value
+  is wanted** (ADR-233 D4): a `Symbol` - a described type whose ledger says
+  `copies` - or one of the unit's own `Copy` types, as a number already was.
+  `for name in names` over a `ref Vec[Symbol]` handed `resolve` a view and
+  was refused as a mismatch.
+- **A constant another file of the package declares is read** (ADR-047 D1):
+  the tools are checked a file at a time with the others beside them, and
+  only the file's own `comptime`s were bound - `TEXT` from `ty.nika` was
+  `NK1117` in `views.nika`.
+- **`Vec::insert` and `Vec::join` are described.** Neither was, so an `i64`
+  position reached `rustc` unconverted (it is a count now, as `chunks`' is,
+  ADR-212 D5), and a function that joined a list of text was taken to pause
+  and lowered `async`.
+- **A tuple's part is the type written at its position**: `params[i].0` was
+  untyped, so its comparison with a lent `String` reached `rustc` as `String
+  == &String`. Typed, `r.0.len()` over an `overlap`'s reads resolves, and
+  `main`'s error is named `io::IoError` rather than the catch-all.
+- **A `match` over a name a `match` lent, or over a place reached through the
+  brackets of a view, reads it as the view it is**: `match target {
+  Expr::Variable(name) => … }` for a `target` bound out of `block.stmts[i]`
+  handed on a `&Symbol`; the number it binds is copied out now.
+- **A view of what does not copy, kept where the receiver keeps the value, is
+  refused** with `NK1102` and `.clone()` as the way out, as a view of text
+  already was (ADR-225 D2): `for p in found { out.push(p) }` reached `rustc`
+  as *expected `P`, found `&P`*.
+
+The variant a result is stored in is `Destination::Returned`: one named
+`Result` made `rustc` print `std::result::Result` in full, and a stale
+description's `Result` mismatch was no longer recognised as one.
+
 ## [0.0.354] — 2026-10-02
 
 **`types` is Nikaia** (#125, ADR-250). The check that a file declares a

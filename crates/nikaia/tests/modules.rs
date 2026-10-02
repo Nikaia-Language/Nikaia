@@ -461,6 +461,38 @@ fn a_type_another_file_declares_can_be_named_and_built() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// **A constant another file declares is read like a function it declares**
+/// (ADR-047 D1): one namespace holds the package's `comptime`s too. The
+/// program's half of what `tests/sysroot.rs` holds for the tools, where each
+/// file bound only its own (found moving the compiler's `views` into Nikaia,
+/// #125).
+#[test]
+fn a_constant_another_file_declares_can_be_read() {
+    let (dir, entry) = project(
+        "foreign-constant",
+        &[
+            (
+                "limits.nika",
+                "pub comptime LIMIT: i64 = 40\n\
+                 comptime NAMES: Array[ref String, 2] = [\"a\", \"b\"]\n\
+                 \n\
+                 pub fn first() -> String {\n\
+                 \x20   return NAMES[0].clone()\n\
+                 }\n",
+            ),
+            (
+                "main.nika",
+                "fn main() {\n\
+                 \x20   let n = LIMIT + 2\n\
+                 \x20   println(f\"{n} {first()} {NAMES[1]}\")\n\
+                 }\n",
+            ),
+        ],
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "42 a b");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// …and the checker still says no where it should. Three shapes, each answered
 /// by `rustc` about a generated file before a foreign struct's fields could be
 /// read at all.
