@@ -2416,7 +2416,7 @@ struct OpenNumber {
     /// The statements that give it a number, by the byte they start at, and
     /// every literal in them: the emitter writes each with the type's suffix
     /// where it would otherwise write another.
-    written: Vec<(usize, Vec<(usize, i128)>, bool)>,
+    written: Vec<(usize, Literals, bool)>,
 }
 
 /// A name in scope: what it is called, the type it holds, and - where this
@@ -9593,8 +9593,8 @@ impl<'a> Checker<'a> {
                 // and the language below could not infer what the index read.
                 if let ([_], Expr::Range { start, end, .. }) = (bindings.as_slice(), iter) {
                     let mut open = Vec::new();
-                    self.open_numbers_in(&**start, &mut open);
-                    self.open_numbers_in(&**end, &mut open);
+                    self.open_numbers_in(start, &mut open);
+                    self.open_numbers_in(end, &mut open);
                     self.open_numbers_joined(&open);
                     if let (Some(first), Some(local)) = (open.first(), frame.first_mut()) {
                         local.open_number = Some(self.open_root(*first));
@@ -22499,9 +22499,12 @@ fn an_operation_of_one_type(op: BinaryOp) -> bool {
     !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or)
 }
 
+/// The integer literals of a value, each by its node and its value.
+type Literals = Vec<(usize, i128)>;
+
 /// Every integer literal in a value, by its node, for the suffix the emitter
 /// may owe it.
-fn literals_in(expr: &Expr, out: &mut Vec<(usize, i128)>) {
+fn literals_in(expr: &Expr, out: &mut Literals) {
     match expr {
         Expr::LitInt { value, negative } => {
             out.push((value_node(expr), crate::ast::int_value(*value, *negative)))
