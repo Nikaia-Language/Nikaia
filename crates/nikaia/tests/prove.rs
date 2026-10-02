@@ -125,8 +125,12 @@ fn branches_lets_ranges_and_guards_are_facts() {
 /// why it was not proved.
 #[test]
 fn a_claim_nothing_shows_is_checked_when_the_program_runs() {
+    // After a loop the claim is not carried back to the entry (ADR-266 D3),
+    // so it is no precondition either.
     let source = "fn f(x: i64) -> i64 {\n\
                   \x20   let y = x * 2\n\
+                  \x20   for i in 0..<1 {\n\
+                  \x20   }\n\
                   \x20   assert(y > 0)\n\
                   \x20   return y\n\
                   }\n\
@@ -523,4 +527,82 @@ fn a_claim_that_can_hold_is_not_warned_about() {
                   \x20   println(f\"{f(1)} {g(2)}\")\n\
                   }\n";
     assert!(warned(source, "NK1207").is_empty());
+}
+
+/// **ADR-266 D2: a claim is carried back to the entry.** A parameter changed
+/// before the claim (`let x = x + 1`), a value computed from one, a branch and
+/// a guard: each claim is a precondition over the parameters, its callers
+/// prove it, and no check is left in the program.
+#[test]
+fn a_claim_carried_back_to_the_entry_is_a_precondition() {
+    let source = "fn f(x: i64, mode: i64) -> i64 {\n\
+                  \x20   let y = x - 1\n\
+                  \x20   if mode == 1 {\n\
+                  \x20       assert(y > 0)\n\
+                  \x20   }\n\
+                  \x20   return y\n\
+                  }\n\
+                  \n\
+                  fn g(x: i64) -> i64 {\n\
+                  \x20   let x = x + 1\n\
+                  \x20   assert(x > 3)\n\
+                  \x20   return x\n\
+                  }\n\
+                  \n\
+                  fn h(n: i64) -> i64 {\n\
+                  \x20   return 0 if n < 0\n\
+                  \x20   let m = n - 5\n\
+                  \x20   assert(m >= 0)\n\
+                  \x20   return m\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{f(5, 1)} {f(0, 2)} {g(3)} {h(7)} {h(0 - 1)}\")\n\
+                  }\n";
+    assert!(
+        held(source)
+            .iter()
+            .all(|h| matches!(h, nikaia::prove::Held::Precondition(_, 0))),
+        "{:#?}",
+        held(source)
+    );
+    let (out, rust) = ran("prove-carried-back", source);
+    assert_eq!(out, "4 -1 4 2 0\n");
+    assert!(!rust.contains("assertion_failed"), "{rust}");
+}
+
+/// **A call that breaks a computed precondition** is told the condition at
+/// the entry and the `assert` it came from (ADR-266 D8), and the claim is
+/// checked in the body, where it stands, until the ledger carries it (D7).
+#[test]
+fn a_computed_precondition_names_both_ends() {
+    let source = "fn f(x: i64, mode: i64) -> i64 {\n\
+                  \x20   let y = x - 1\n\
+                  \x20   if mode == 1 {\n\
+                  \x20       assert(y > 0)\n\
+                  \x20   }\n\
+                  \x20   return y\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{f(0, 1)}\")\n\
+                  }\n";
+    let found = warned(source, "NK1207");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(
+        found[0].message,
+        "This call breaks `f`'s precondition `mode == 1 → x - 1 > 0` every time it is reached."
+    );
+    assert_eq!(
+        found[0].notes[..2],
+        [
+            "Here `mode` is 1, `x` is 0.".to_string(),
+            "The precondition is `assert(y > 0)` in `f`, carried back to its entry.".to_string()
+        ]
+    );
+    assert!(
+        matches!(held(source).as_slice(), [nikaia::prove::Held::AtRunTime(why)] if why.contains("checked in its body")),
+        "{:#?}",
+        held(source)
+    );
 }

@@ -227,4 +227,52 @@ impl Arena {
             _ => None,
         }
     }
+
+    /// `id` with each variable `with` names replaced by its term; a variable
+    /// it does not name stays. Built anew where anything changed, so the
+    /// terms `id` was made of are untouched.
+    pub fn substitute(
+        &mut self,
+        id: TermId,
+        with: &std::collections::BTreeMap<String, TermId>,
+    ) -> TermId {
+        let term = self.get(id).clone();
+        let mut s = |a: TermId| self.substitute(a, with);
+        let rebuilt = match term {
+            Term::Var(name) => return with.get(&name).copied().unwrap_or(id),
+            Term::Bool(_) | Term::Int(_) => return id,
+            Term::Neg(a) => Term::Neg(s(a)),
+            Term::Not(a) => Term::Not(s(a)),
+            Term::Add(a, b) => Term::Add(s(a), s(b)),
+            Term::Sub(a, b) => Term::Sub(s(a), s(b)),
+            Term::Mul(a, b) => Term::Mul(s(a), s(b)),
+            Term::Le(a, b) => Term::Le(s(a), s(b)),
+            Term::Lt(a, b) => Term::Lt(s(a), s(b)),
+            Term::Ge(a, b) => Term::Ge(s(a), s(b)),
+            Term::Gt(a, b) => Term::Gt(s(a), s(b)),
+            Term::Eq(a, b) => Term::Eq(s(a), s(b)),
+            Term::Ne(a, b) => Term::Ne(s(a), s(b)),
+            Term::And(parts) => Term::And(parts.into_iter().map(&mut s).collect()),
+            Term::Or(parts) => Term::Or(parts.into_iter().map(&mut s).collect()),
+        };
+        self.push(rebuilt)
+    }
+
+    /// How many terms `id` is made of, counting a shared one each time.
+    pub fn size(&self, id: TermId) -> usize {
+        1 + match self.get(id) {
+            Term::Bool(_) | Term::Int(_) | Term::Var(_) => 0,
+            Term::Neg(a) | Term::Not(a) => self.size(*a),
+            Term::Add(a, b)
+            | Term::Sub(a, b)
+            | Term::Mul(a, b)
+            | Term::Le(a, b)
+            | Term::Lt(a, b)
+            | Term::Ge(a, b)
+            | Term::Gt(a, b)
+            | Term::Eq(a, b)
+            | Term::Ne(a, b) => self.size(*a) + self.size(*b),
+            Term::And(parts) | Term::Or(parts) => parts.iter().map(|p| self.size(*p)).sum(),
+        }
+    }
 }

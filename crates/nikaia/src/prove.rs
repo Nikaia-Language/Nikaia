@@ -164,7 +164,27 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
 /// parameters (D5).
 #[derive(Debug, Clone)]
 struct Precondition {
-    claims: Vec<Expr>,
+    claims: Vec<PreClaim>,
+}
+
+/// One claim of a precondition (ADR-266 D2).
+#[derive(Debug, Clone)]
+struct PreClaim {
+    /// The condition at the function's entry, over its parameters: the
+    /// `assert`'s claim carried back through the body - `mode == 1 → x > 1`
+    /// for `assert(y > 0)` after `let y = x - 1` inside `if mode == 1`.
+    term: TermId,
+    /// The `assert`'s condition as written, where it is the precondition as
+    /// it stands - at the top of the body, over parameters only - so that a
+    /// call can check it with its arguments in place (ADR-264 D5). A
+    /// computed one is checked in the body until the ledger carries it
+    /// (ADR-266 D7).
+    as_written: Option<Expr>,
+    /// The `assert`'s condition, written, for messages.
+    written: String,
+    /// The condition at the entry as a reader writes it, where it is not the
+    /// claim as written: `mode == 1 → x - 1 > 0` (ADR-266 D8).
+    computed: Option<String>,
 }
 
 struct Prover<'a> {
@@ -193,6 +213,14 @@ struct Scope {
     /// shadows is not the callee.
     locals: BTreeSet<String>,
     facts: Vec<TermId>,
+    /// **Each whole number's value at the function's entry**, as a term over
+    /// its parameters (ADR-266 D2): after `let y = x - 1`, `y` is `x - 1`,
+    /// and after `let x = x + 1`, `x` is the parameter plus one.
+    entry: BTreeMap<String, TermId>,
+    /// **What holds of the parameters on the way here**: the branches taken
+    /// and the guards passed, at the entry. `None` once a loop, a lambda or a
+    /// block this walk cannot see stands between the entry and here (D3).
+    path: Option<Vec<TermId>>,
 }
 
 impl Scope {
@@ -202,6 +230,8 @@ impl Scope {
         self.ints.remove(name);
         self.ints.remove(&length);
         self.tainted.remove(name);
+        self.entry.remove(name);
+        self.entry.remove(&length);
         self.locals.insert(name.to_string());
         self.facts
             .retain(|fact| !arena.mentions(*fact, name) && !arena.mentions(*fact, &length));
@@ -218,6 +248,7 @@ impl Scope {
         if let Some(n) = known {
             let n = arena.int(n);
             self.facts.push(arena.eq(len, n));
+            self.entry.insert(length, n);
         }
     }
 
@@ -234,6 +265,8 @@ impl Scope {
             tainted: self.tainted.clone(),
             locals: self.locals.clone(),
             facts: Vec::new(),
+            entry: BTreeMap::new(),
+            path: None,
         }
     }
 }
@@ -296,7 +329,10 @@ impl<'a> Prover<'a> {
         let was_a_test = own
             .as_deref()
             .is_some_and(crate::modules::is_a_test_function);
-        let mut scope = Scope::default();
+        let mut scope = Scope {
+            path: Some(Vec::new()),
+            ..Scope::default()
+        };
         let mut params = BTreeSet::new();
         if receiver.is_some() {
             scope.locals.insert("self".to_string());
@@ -308,6 +344,8 @@ impl<'a> Prover<'a> {
             if !arg.mutable && arg.ty.generics.is_empty() && is_whole_number(ty) {
                 scope.ints.insert(arg_name.clone());
                 params.insert(arg_name.clone());
+                let at_entry = self.arena.var(&arg_name);
+                scope.entry.insert(arg_name.clone(), at_entry);
                 if ty.starts_with('u') {
                     scope.not_negative(&mut self.arena, &arg_name);
                 }
@@ -315,6 +353,9 @@ impl<'a> Prover<'a> {
             if !arg.mutable && has_a_length(ty) {
                 scope.has_length(&mut self.arena, &arg_name, None);
                 params.insert(arg_name.clone());
+                let length = length_of(&arg_name);
+                let at_entry = self.arena.var(&length);
+                scope.entry.insert(length, at_entry);
             }
         }
         let no_precondition = if method || receiver.is_some() {
@@ -367,6 +408,7 @@ impl<'a> Prover<'a> {
                 self.expr(value, span, scope, &nested);
                 let tainted = self.tainted(value, scope);
                 let value_lin = lin(&mut self.arena, self.parsed, value, scope);
+                let value_at_entry = value_lin.and_then(|v| self.at_entry(v, scope));
                 for name in names {
                     let name = self.parsed.text(*name).to_string();
                     scope.rebind(&self.arena, &name);
@@ -391,6 +433,11 @@ impl<'a> Prover<'a> {
                         if !self.arena.mentions(value_lin, &name) {
                             let named = self.arena.var(&name);
                             scope.facts.push(self.arena.eq(named, value_lin));
+                        }
+                        // At the entry the value is what it read there, so
+                        // a shadowing `let` is no trouble here.
+                        if let Some(at_entry) = value_at_entry {
+                            scope.entry.insert(name.clone(), at_entry);
                         }
                     } else if typed_whole {
                         scope.ints.insert(name.clone());
@@ -481,12 +528,18 @@ impl<'a> Prover<'a> {
                         });
                     }
                 }
+                // A claim in a loop, or after one, is not carried back to
+                // the entry (ADR-266 D3): that needs an invariant.
+                inner.path = None;
                 self.block(body, &mut inner, &nested);
+                scope.path = None;
                 false
             }
             Stmt::While { cond, body } => {
                 self.expr(cond, span, scope, &nested);
                 let mut inner = scope.clone();
+                inner.path = None;
+                scope.path = None;
                 if let Some(holds) = claim(&mut self.arena, self.parsed, cond, &inner) {
                     inner.facts.push(holds);
                 }
@@ -535,6 +588,7 @@ impl<'a> Prover<'a> {
                 if let Some(holds) = &holds {
                     then_scope.facts.push(*holds);
                 }
+                self.on_the_path(&mut then_scope, holds);
                 let then_leaves = self.block(then_branch, &mut then_scope, &nested);
                 let else_leaves = match else_branch {
                     Some(block) => {
@@ -542,6 +596,7 @@ impl<'a> Prover<'a> {
                         if let Some(fails) = &fails {
                             else_scope.facts.push(*fails);
                         }
+                        self.on_the_path(&mut else_scope, fails);
                         self.block(block, &mut else_scope, &nested)
                     }
                     None => false,
@@ -554,11 +609,13 @@ impl<'a> Prover<'a> {
                         if let Some(fails) = fails {
                             scope.facts.push(fails);
                         }
+                        self.on_the_path(scope, fails);
                     }
                     (false, true) => {
                         if let Some(holds) = holds {
                             scope.facts.push(holds);
                         }
+                        self.on_the_path(scope, holds);
                     }
                     (false, false) => {}
                 }
@@ -602,26 +659,42 @@ impl<'a> Prover<'a> {
             }
         }
 
-        // **A claim about parameters the body cannot prove is its callers'**
-        // (D5), where it can be: at the top of a free function, naming only
-        // parameters.
+        // **A claim the body cannot prove is its callers'** where it can be
+        // carried back to the entry (ADR-266 D2): what it says about the
+        // parameters, under the branches and guards on the way. At the top of
+        // the body, over parameters only, that is the claim as written
+        // (ADR-264 D5).
         let names = names_in(self.parsed, cond);
         let only_params = !names.is_empty() && names.iter().all(|n| at.params.contains(n));
-        if let (Some(claim), true, true, None, Some(function)) = (
-            &claim,
-            only_params,
-            at.top,
-            at.no_precondition,
-            at.function.as_ref(),
-        ) {
+        // **A claim what is known rules out is not a precondition**: every
+        // caller that reaches it breaks it, so it would only say *never come
+        // here*. It is warned about where it stands (ADR-264 D8). Decided in
+        // both passes alike, so the first pass's preconditions are the
+        // second's.
+        let tainted_claim = names.iter().any(|n| scope.tainted.contains(n));
+        let refuted = match claim {
+            Some(claim) if !tainted_claim => self.refutes(&scope.facts, claim),
+            _ => None,
+        };
+        if let (Some(claim), None, Some(function), None) =
+            (claim, at.no_precondition, at.function.clone(), &refuted)
+            && let Some(term) = self.precondition_at(claim, scope, at)
+        {
             if self.collecting {
-                let entry = self
-                    .preconditions
+                let as_written = (only_params && at.top).then(|| cond.clone());
+                let pre = PreClaim {
+                    term,
+                    computed: as_written.is_none().then(|| term_text(&self.arena, term)),
+                    as_written,
+                    written: crate::check::written(self.parsed, cond),
+                };
+                self.preconditions
                     .entry(function.clone())
-                    .or_insert_with(|| Precondition { claims: Vec::new() });
-                entry.claims.push(cond.clone());
+                    .or_insert_with(|| Precondition { claims: Vec::new() })
+                    .claims
+                    .push(pre);
             }
-            scope.facts.push(*claim);
+            scope.facts.push(claim);
             self.out
                 .held
                 .insert(key, Held::Precondition(function.clone(), 0));
@@ -664,11 +737,7 @@ impl<'a> Prover<'a> {
         // **Neither proved nor refused: checked where it is reached** (D4) -
         // and where what is known before it rules the claim out, the author
         // is told, with values (ADR-264 D8).
-        let refuted = match claim {
-            Some(claim) if !self.collecting => self.refutes(&scope.facts, claim),
-            _ => None,
-        };
-        if let Some(values) = &refuted {
+        if let Some(values) = refuted.as_ref().filter(|_| !self.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
                 severity: Severity::Warning,
@@ -780,6 +849,7 @@ impl<'a> Prover<'a> {
                     for param in params {
                         inner.rebind(&self.arena, param);
                     }
+                    inner.path = None;
                     inner
                 }
                 None => scope.blind(),
@@ -814,12 +884,13 @@ impl<'a> Prover<'a> {
             .iter()
             .map(|p| self.parsed.text(p.name).to_string())
             .collect();
-        for claim in &pre.claims {
+        for pre in &pre.claims {
+            // Each parameter's term as this call gives it, and a list's
+            // length as the argument's: `p.len()` in the precondition is the
+            // argument's.
             let mut with: BTreeMap<String, Option<TermId>> = BTreeMap::new();
             for (param, arg) in params.iter().zip(args) {
                 with.insert(param.clone(), lin(&mut self.arena, self.parsed, arg, scope));
-                // A list handed over carries its length: `p.len()` in the
-                // callee's claim is the argument's.
                 if let Expr::Variable(name) = arg {
                     let length = length_of(self.parsed.text(*name));
                     let known = scope
@@ -829,7 +900,13 @@ impl<'a> Prover<'a> {
                     with.insert(length_of(param), known);
                 }
             }
-            let goal = substituted(&mut self.arena, self.parsed, claim, &with);
+            let mut read = BTreeSet::new();
+            self.arena.variables(pre.term, &mut read);
+            let given: Option<BTreeMap<String, TermId>> = read
+                .iter()
+                .map(|name| Some((name.clone(), with.get(name).copied().flatten()?)))
+                .collect();
+            let goal = given.map(|given| self.arena.substitute(pre.term, &given));
             let proved = goal.is_some_and(|g| self.proves(&scope.facts, g).is_ok());
             if proved {
                 continue;
@@ -840,22 +917,26 @@ impl<'a> Prover<'a> {
             if let Some(goal) = goal
                 && let Some(values) = self.refutes(&scope.facts, goal)
             {
-                // The precondition's own names: a parameter it reads, or the
-                // length of one.
-                let mentioned = names_in(self.parsed, claim);
+                // The precondition's own names: the parameters it reads, and
+                // the lengths of them.
                 let given: BTreeMap<String, i128> = with
                     .iter()
-                    .filter(|(name, _)| {
-                        mentioned.contains(*name)
-                            || name
-                                .strip_suffix(".len()")
-                                .is_some_and(|base| mentioned.contains(base))
-                    })
+                    .filter(|(name, _)| read.contains(*name))
                     .filter_map(|(name, term)| {
                         Some((name.clone(), self.arena.int_value((*term)?, &values)?))
                     })
                     .collect();
-                let written = crate::check::written(self.parsed, claim);
+                let (written, from) = match &pre.computed {
+                    Some(computed) => (
+                        computed.clone(),
+                        Some(format!(
+                            "The precondition is `assert({})` in `{callee}`, carried back to its \
+                             entry.",
+                            pre.written
+                        )),
+                    ),
+                    None => (pre.written.clone(), None),
+                };
                 self.out.findings.push(Finding {
                     severity: Severity::Warning,
                     span,
@@ -864,12 +945,14 @@ impl<'a> Prover<'a> {
                         "This call breaks `{callee}`'s precondition `{written}` every time it is \
                          reached."
                     ),
-                    notes: vec![
-                        format!("Here {}.", shown(&given)),
-                        "The precondition is checked at the call when the program runs, and \
-                         stops it there."
-                            .to_string(),
-                    ],
+                    notes: [Some(format!("Here {}.", shown(&given))), from]
+                        .into_iter()
+                        .flatten()
+                        .chain([
+                            "When the program runs, it stops where the precondition is checked."
+                                .to_string(),
+                        ])
+                        .collect(),
                     help: Some(format!(
                         "Pass `{callee}` arguments for which `{written}` holds, or check them \
                          with a guard before the call."
@@ -883,19 +966,23 @@ impl<'a> Prover<'a> {
             // once more for the check changes nothing.
             let arguments: BTreeMap<String, Expr> =
                 params.iter().cloned().zip(args.iter().cloned()).collect();
-            let condition = goal
-                .is_some()
-                .then(|| with_arguments(self.parsed, claim, &arguments))
-                .flatten();
+            let condition = match (&pre.as_written, goal) {
+                (Some(claim), Some(_)) => with_arguments(self.parsed, claim, &arguments),
+                _ => None,
+            };
             let Some(condition) = condition else {
+                let why = if goal.is_none() {
+                    "a call's argument isn't a whole number the prover reads"
+                } else {
+                    "it is computed through the body, and a call can't check it before the \
+                     ledger carries it"
+                };
                 self.in_the_body
                     .entry(callee.to_string())
-                    .or_insert_with(|| {
-                        "a call's argument isn't a whole number the prover reads".to_string()
-                    });
+                    .or_insert_with(|| why.to_string());
                 continue;
             };
-            let written = crate::check::written(self.parsed, claim);
+            let written = pre.written.clone();
             let checks = self
                 .out
                 .call_checks
@@ -933,6 +1020,57 @@ impl<'a> Prover<'a> {
             }),
             Answer::Refuted { .. } | Answer::Unknown(_) => Err(None),
         }
+    }
+
+    /// `term` at the function's entry: each name it reads replaced by its
+    /// value there. `None` where it reads a name whose value at the entry is
+    /// not known - the result of a call, a mutable binding.
+    fn at_entry(&mut self, term: TermId, scope: &Scope) -> Option<TermId> {
+        let mut read = BTreeSet::new();
+        self.arena.variables(term, &mut read);
+        let values: Option<BTreeMap<String, TermId>> = read
+            .into_iter()
+            .map(|name| Some((name.clone(), *scope.entry.get(&name)?)))
+            .collect();
+        Some(self.arena.substitute(term, &values?))
+    }
+
+    /// A branch taken or a guard passed: what it says at the entry joins the
+    /// path, or the path is no longer known.
+    fn on_the_path(&mut self, scope: &mut Scope, condition: Option<TermId>) {
+        let at_entry = condition.and_then(|c| self.at_entry(c, scope));
+        match (&mut scope.path, at_entry) {
+            (Some(path), Some(c)) => path.push(c),
+            (path, None) => *path = None,
+            (None, Some(_)) => {}
+        }
+    }
+
+    /// **The precondition a claim makes** (ADR-266 D2, D3): `path → claim`
+    /// at the entry, where both read only the function's parameters and the
+    /// lengths of its lists, and the result is no larger than a fixed number
+    /// of terms - counted, so that whether a claim is a precondition does not
+    /// depend on the machine.
+    fn precondition_at(&mut self, claim: TermId, scope: &Scope, at: &Where) -> Option<TermId> {
+        let path = scope.path.clone()?;
+        let at_entry = self.at_entry(claim, scope)?;
+        let term = match path.as_slice() {
+            [] => at_entry,
+            _ => {
+                let taken = self.arena.and(path);
+                let not_taken = self.arena.not(taken);
+                self.arena.or(vec![not_taken, at_entry])
+            }
+        };
+        let mut read = BTreeSet::new();
+        self.arena.variables(term, &mut read);
+        let parameters_only = read.iter().all(|name| {
+            at.params.contains(name)
+                || name
+                    .strip_suffix(".len()")
+                    .is_some_and(|base| at.params.contains(base))
+        });
+        (parameters_only && self.arena.size(term) <= PRECONDITION_TERMS).then_some(term)
     }
 
     /// The values that show a claim false every time it is reached
@@ -1049,6 +1187,84 @@ fn with_arguments(
     replace(parsed, &mut condition, arguments).then_some(condition)
 }
 
+/// A term as a reader writes it, in the language's operators, with `→` for
+/// the implication a branch makes of a precondition: `mode == 1 → x - 1 > 0`.
+fn term_text(arena: &Arena, id: TermId) -> String {
+    use nikaia_logic::Term;
+    // How tightly each form binds, for parentheses: higher binds tighter.
+    fn rank(term: &Term) -> u8 {
+        match term {
+            Term::Or(parts) if is_implication(parts) => 0,
+            Term::Or(_) => 1,
+            Term::And(_) => 2,
+            Term::Le(..)
+            | Term::Lt(..)
+            | Term::Ge(..)
+            | Term::Gt(..)
+            | Term::Eq(..)
+            | Term::Ne(..) => 3,
+            Term::Add(..) | Term::Sub(..) => 4,
+            Term::Mul(..) => 5,
+            Term::Neg(_) | Term::Not(_) => 6,
+            Term::Bool(_) | Term::Int(_) | Term::Var(_) => 7,
+        }
+    }
+    fn is_implication(parts: &[TermId]) -> bool {
+        parts.len() == 2
+    }
+    fn inner(arena: &Arena, id: TermId, at_least: u8) -> String {
+        let term = arena.get(id);
+        let text = whole(arena, id);
+        if rank(term) < at_least {
+            format!("({text})")
+        } else {
+            text
+        }
+    }
+    fn whole(arena: &Arena, id: TermId) -> String {
+        let term = arena.get(id);
+        let r = rank(term);
+        let binary = |op: &str, a: &TermId, b: &TermId| {
+            format!("{} {op} {}", inner(arena, *a, r), inner(arena, *b, r + 1))
+        };
+        let joined = |op: &str, parts: &[TermId]| {
+            parts
+                .iter()
+                .map(|p| inner(arena, *p, r + 1))
+                .collect::<Vec<_>>()
+                .join(op)
+        };
+        match term {
+            Term::Bool(b) => b.to_string(),
+            Term::Int(n) => n.to_string(),
+            Term::Var(name) => name.clone(),
+            Term::Neg(a) => format!("-{}", inner(arena, *a, r)),
+            Term::Not(a) => format!("!{}", inner(arena, *a, r)),
+            Term::Add(a, b) => binary("+", a, b),
+            Term::Sub(a, b) => binary("-", a, b),
+            Term::Mul(a, b) => binary("*", a, b),
+            Term::Le(a, b) => binary("<=", a, b),
+            Term::Lt(a, b) => binary("<", a, b),
+            Term::Ge(a, b) => binary(">=", a, b),
+            Term::Gt(a, b) => binary(">", a, b),
+            Term::Eq(a, b) => binary("==", a, b),
+            Term::Ne(a, b) => binary("!=", a, b),
+            // `!taken || claim` is how a precondition under a path is built.
+            Term::Or(parts) if is_implication(parts) => match arena.get(parts[0]) {
+                Term::Not(taken) => format!(
+                    "{} → {}",
+                    inner(arena, *taken, 1),
+                    inner(arena, parts[1], 1)
+                ),
+                _ => joined(" || ", parts),
+            },
+            Term::Or(parts) => joined(" || ", parts),
+            Term::And(parts) => joined(" && ", parts),
+        }
+    }
+    whole(arena, id)
+}
+
 /// Values as a reader writes them: `` `x` is 5, `xs.len()` is 0 ``.
 fn shown(values: &BTreeMap<String, i128>) -> String {
     if values.is_empty() {
@@ -1100,41 +1316,29 @@ fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
 
 // --- A program's numbers as terms -----------------------------------------
 
-/// What a name in a claim stands for: a variable of the proof, or a term
-/// already built - an argument in place of a parameter.
-enum Leaf {
-    Name(String),
-    Term(TermId),
-}
+/// How many terms a precondition carried back to the entry may have
+/// (ADR-266 D3).
+const PRECONDITION_TERMS: usize = 64;
 
 /// A whole-number expression, where it is one this prover reads (ADR-264 D9).
 fn lin(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
-    lin_with(arena, parsed, expr, &|name| {
-        scope
-            .ints
-            .contains(name)
-            .then(|| Leaf::Name(name.to_string()))
-    })
-}
-
-fn leaf(arena: &mut Arena, leaf: Leaf) -> TermId {
-    match leaf {
-        Leaf::Name(name) => arena.var(&name),
-        Leaf::Term(term) => term,
-    }
+    lin_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
 fn lin_with(
     arena: &mut Arena,
     parsed: &Parsed,
     expr: &Expr,
-    var: &dyn Fn(&str) -> Option<Leaf>,
+    var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
     match expr {
         Expr::LitInt { value, negative } => {
             Some(arena.int(crate::ast::int_value(*value, *negative)))
         }
-        Expr::Variable(name) => Some(leaf(arena, var(parsed.text(*name))?)),
+        Expr::Variable(name) => {
+            let name = parsed.text(*name);
+            var(name).then(|| arena.var(name))
+        }
         // `xs.len()` of a list that does not change is a variable of its own.
         Expr::MethodCall {
             receiver,
@@ -1142,7 +1346,10 @@ fn lin_with(
             args,
             ..
         } if args.is_empty() && parsed.text(*method) == "len" => match &**receiver {
-            Expr::Variable(name) => Some(leaf(arena, var(&length_of(parsed.text(*name)))?)),
+            Expr::Variable(name) => {
+                let length = length_of(parsed.text(*name));
+                var(&length).then(|| arena.var(&length))
+            }
             _ => None,
         },
         Expr::Unary {
@@ -1171,31 +1378,14 @@ fn lin_with(
 
 /// The claim `expr` as a term, where it is one this prover reads.
 fn claim(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
-    claim_with(arena, parsed, expr, &|name| {
-        scope
-            .ints
-            .contains(name)
-            .then(|| Leaf::Name(name.to_string()))
-    })
-}
-
-/// A callee's claim with the call's arguments in place of its parameters.
-fn substituted(
-    arena: &mut Arena,
-    parsed: &Parsed,
-    expr: &Expr,
-    with: &BTreeMap<String, Option<TermId>>,
-) -> Option<TermId> {
-    claim_with(arena, parsed, expr, &|name| {
-        with.get(name).copied().flatten().map(Leaf::Term)
-    })
+    claim_with(arena, parsed, expr, &|name| scope.ints.contains(name))
 }
 
 fn claim_with(
     arena: &mut Arena,
     parsed: &Parsed,
     expr: &Expr,
-    var: &dyn Fn(&str) -> Option<Leaf>,
+    var: &dyn Fn(&str) -> bool,
 ) -> Option<TermId> {
     match expr {
         Expr::LitBool(b) => Some(arena.bool(*b)),

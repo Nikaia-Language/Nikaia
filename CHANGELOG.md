@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.360] — 2026-10-02
+
+**A claim is carried back to the entry and becomes a precondition**
+(ADR-266 D2, D3, D8 within a package). The prover keeps each whole number's
+value at the function's entry - `y` after `let y = x - 1` is `x - 1`, and `x`
+after `let x = x + 1` the parameter plus one - and the branches and guards on
+the way. A claim that then reads only the parameters is a precondition,
+`path → claim`, and its callers prove it: `let x = x + 1; assert(x > 3)` asks
+each call for `x > 2`, and `g(3)` leaves no check behind.
+
+- **What stops it** (D3): a loop, a lambda, a `match` arm, a call's result,
+  a mutable binding, or a condition past a fixed number of terms. The claim
+  stays a check where it stands.
+- **A claim what is known rules out is not made a precondition** - it would
+  only say *never come here* - and is warned about where it stands (`NK1207`).
+- **A computed precondition** is proved at each call, or checked in the body
+  where a call does not prove it, until the ledger carries it (D7). A call
+  that breaks it every time is told the condition at the entry and the
+  `assert` it came from (D8): *`f`'s precondition `mode == 1 → x - 1 > 0`*,
+  *`assert(y > 0)` in `f`, carried back to its entry*.
+- `nikaia_logic::Arena` gains `substitute` and `size`.
+
 ## [0.0.359] — 2026-10-02
 
 **A claim the facts rule out is a warning with values** (ADR-264 D8; step 3
