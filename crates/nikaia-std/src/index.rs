@@ -47,12 +47,21 @@ macro_rules! signed {
         $(
             impl At for $t {
                 type Out = usize;
+                // **Inlined always, and a comparison rather than a
+                // conversion** ([ADR-270](../../../docs/specification/adr/adr-270.md)
+                // D8 step 1): written as `usize::try_from` and left to the
+                // inliner's judgement, this cost the solver's kernels up to
+                // 3.3 times the instructions of the same loop in Rust
+                // (`docs/solver-workload.md` §8). A sign test before the cast
+                // leaves the optimiser one branch to the cold path, which it
+                // folds with the bounds check that follows.
+                #[inline(always)]
                 #[track_caller]
                 fn at(self) -> usize {
-                    match usize::try_from(self) {
-                        Ok(index) => index,
-                        Err(_) => out_of_bounds(self as i64),
+                    if self < 0 {
+                        out_of_bounds(self as i64)
                     }
+                    self as usize
                 }
             }
 
@@ -83,6 +92,7 @@ macro_rules! unsigned {
         $(
             impl At for $t {
                 type Out = usize;
+                #[inline(always)]
                 fn at(self) -> usize {
                     self as usize
                 }
@@ -114,6 +124,7 @@ impl<'a, T: ?Sized> At for &'a T {
 ///
 /// `#[track_caller]`, so a negative index is reported at the line that wrote it -
 /// see [`out_of_bounds`].
+#[inline(always)]
 #[track_caller]
 pub fn at<I: At>(index: I) -> I::Out {
     index.at()
@@ -266,6 +277,29 @@ where
     fn get(&self, key: K) -> Self::Out<'_> {
         let inner: &'b T = self;
         inner.get(key)
+    }
+}
+
+/// **A container a function was lent to change reads like the container**
+/// ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1): a
+/// `mut out: Vec[u32]` parameter is a `&mut Vec<u32>` in the language below,
+/// and the emitter writes `get(&out, …)` for it as for any other - so a
+/// `&&mut Vec<u32>` arrives here. Before this, `out[i]` on such a parameter was
+/// *the trait `Get<_>` is not implemented for `&mut Vec<u32>`*, about a file
+/// nobody wrote.
+impl<K, T> Get<K> for &mut T
+where
+    T: Get<K> + ?Sized,
+{
+    type Out<'a>
+        = T::Out<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    #[track_caller]
+    fn get(&self, key: K) -> Self::Out<'_> {
+        (**self).get(key)
     }
 }
 
@@ -497,6 +531,19 @@ impl<V> Set<usize, V> for Vec<V> {
     #[track_caller]
     fn set(&mut self, key: usize, value: V) {
         self[key] = value;
+    }
+}
+
+/// The write of the same: `out[i] = x` on a `mut out: Vec[u32]` parameter is
+/// `set(&mut out, …)` on what is already a `&mut Vec<u32>`.
+impl<K, V, T> Set<K, V> for &mut T
+where
+    T: Set<K, V> + ?Sized,
+{
+    #[inline(always)]
+    #[track_caller]
+    fn set(&mut self, key: K, value: V) {
+        (**self).set(key, value);
     }
 }
 

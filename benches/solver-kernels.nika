@@ -99,24 +99,24 @@ fn rows(n: i64) -> i64 {
 // --- 2. scanning watch lists ----------------------------------------------
 
 fn watch(n: i64) -> i64 {
-    // **Annotated on purpose.** Unannotated, its uses - a `u64` cast and an
-    // index - pin no type, the lowering writes `let variables = 2000;`, and
-    // `rustc` cannot infer what the index reads (finding 2 of the probe).
-    let variables: i64 = 2000
-    let clauses = 8000
-    let size = 4
+    // Literals, clauses and offsets are `u32`, as ADR-270 D10 and D16 keep
+    // them: an index read out of memory is then a plain conversion, where an
+    // `i64` one has to be checked for a sign every time.
+    let variables: u32 = 2000
+    let clauses: u32 = 8000
+    let size: u32 = 4
     let mut state: u64 = 11
     // Literals are `2·variable + sign`; a clause is `size` literals in one
-    // arena, starting at `clause · size`.
-    let mut arena: Vec[i64] = []
+    // arena, starting at its offset.
+    let mut arena: Vec[u32] = []
     for _ in 0..<(clauses * size) {
         state = next(state)
-        arena.push(((state >> 33) % (2 * variables) as u64) as i64)
+        arena.push(((state >> 33) % ((2 * variables) as u64)).truncating_u32())
     }
     // Each clause is watched by its first two literals, with the other as the
-    // blocker.
-    let mut watched: Vec[Vec[i64]] = []
-    let mut blockers: Vec[Vec[i64]] = []
+    // blocker; a watch holds the clause's offset.
+    let mut watched: Vec[Vec[u32]] = []
+    let mut blockers: Vec[Vec[u32]] = []
     for _ in 0..<(2 * variables) {
         watched.push([])
         blockers.push([])
@@ -124,9 +124,9 @@ fn watch(n: i64) -> i64 {
     for c in 0..<clauses {
         let first = arena[c * size]
         let second = arena[c * size + 1]
-        watched[first].push(c)
+        watched[first].push(c * size)
         blockers[first].push(second)
-        watched[second].push(c)
+        watched[second].push(c * size)
         blockers[second].push(first)
     }
     // An assignment: 1 true, -1 false, by literal.
@@ -134,13 +134,13 @@ fn watch(n: i64) -> i64 {
     for _ in 0..<(2 * variables) {
         value.push(0)
     }
-    let mut checksum = 0
+    let mut checksum: i64 = 0
     for round in 0..<n {
         // Assign a third of the variables, then scan the lists of the
         // literals that became false.
         for v in 0..<variables {
             state = next(state)
-            let pick = ((state >> 33) % 3) as i64
+            let pick = (state >> 33) % 3
             if pick == 0 {
                 value[2 * v] = 1
                 value[2 * v + 1] = 0 - 1
@@ -160,15 +160,14 @@ fn watch(n: i64) -> i64 {
                     if value[blocks[k]] == 1 {
                         checksum += 1
                     } else {
-                        let start = list[k] * size
-                        let mut found = 0 - 1
+                        let start = list[k]
+                        let mut found = false
                         for at in 2..<size {
-                            let other = arena[start + at]
-                            if found < 0 && value[other] != 0 - 1 {
-                                found = other
+                            if !found && value[arena[start + at]] != 0 - 1 {
+                                found = true
                             }
                         }
-                        if found >= 0 {
+                        if found {
                             checksum += 3
                         } else {
                             checksum += 7
@@ -184,11 +183,7 @@ fn watch(n: i64) -> i64 {
 
 // --- 3. multiplying big integers --------------------------------------------
 
-// **Returns the product** rather than filling a `mut out: Vec[u32]`: an index
-// into a `mut` parameter is lowered as `set(&mut out, ...)` on what is already
-// a `&mut Vec`, which `rustc` refuses (finding 1 of the probe).
-fn multiply(x: ref Vec[u32], y: ref Vec[u32]) -> Vec[u32] sync {
-    let mut out: Vec[u32] = []
+fn multiply(x: ref Vec[u32], y: ref Vec[u32], mut out: Vec[u32]) sync {
     for _ in 0..<(x.len() + y.len()) {
         out.push(0)
     }
@@ -202,7 +197,6 @@ fn multiply(x: ref Vec[u32], y: ref Vec[u32]) -> Vec[u32] sync {
         }
         out[i + y.len()] = carry.truncating_u32()
     }
-    return out
 }
 
 fn bignum(n: i64) -> i64 {
@@ -218,7 +212,8 @@ fn bignum(n: i64) -> i64 {
     }
     let mut checksum: u64 = 0
     for round in 0..<n {
-        let out = multiply(x, y)
+        let mut out: Vec[u32] = []
+        multiply(x, y, out)
         checksum = checksum.wrapping_add(out[round % (2 * limbs)] as u64)
         x[round % limbs] = out[limbs]
     }

@@ -1108,3 +1108,76 @@ fn a_fallback_that_returns_takes_its_takings_with_it() {
         "a:2\nno b\n",
     );
 }
+
+/// **Found by the solver's kernels** ([ADR-270](../../../docs/specification/adr/adr-270.md)
+/// D8 step 1): an index into a `mut` parameter, read and written. The
+/// parameter is a `&mut Vec<u32>` below, and the write was `set(&mut out, …)` -
+/// a second borrow of a binding that is not `mut` - and the read
+/// `get(&out, …)` on a `&&mut Vec<u32>`, which nothing implemented.
+#[test]
+fn an_index_into_a_mut_parameter() {
+    runs(
+        "mut-parameter-index",
+        "fn fill(mut out: Vec[u32], n: i64) {\n\
+         \x20   for _ in 0..<n {\n\
+         \x20       out.push(0)\n\
+         \x20   }\n\
+         \x20   for i in 0..<n {\n\
+         \x20       out[i] = (i * 3).truncating_u32() + out[i]\n\
+         \x20   }\n\
+         \x20   out[0] = out[n - 1] + 1\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut xs: Vec[u32] = []\n\
+         \x20   fill(xs, 5)\n\
+         \x20   println(f\"{xs[0]} {xs[4]}\")\n\
+         }\n",
+        "13 12\n",
+    );
+}
+
+/// **A literal in the brackets keeps the index's type**: `xs[n - 1] + 1` over
+/// a `Vec[u32]` types the second `1` as a `u32`, and the suffix was written
+/// on every `1` of the statement - `n - 1u32`, an `i64` minus a `u32`.
+#[test]
+fn a_literal_in_an_index_beside_an_unsigned_one() {
+    runs(
+        "index-literal-beside-unsigned",
+        "fn main() {\n\
+         \x20   let mut xs: Vec[u32] = [1, 2, 3]\n\
+         \x20   let n = xs.len()\n\
+         \x20   xs[0] = xs[n - 1] + 1\n\
+         \x20   let y = xs[n - 1] + 1\n\
+         \x20   println(f\"{xs[0]} {y}\")\n\
+         }\n",
+        "4 4\n",
+    );
+}
+
+/// **A number no use types is written with the type it has** (Part I 2.4: the
+/// first that holds it). Left unwritten, a number that reaches an index only
+/// through a loop's binding gave the language below nothing to infer from:
+/// *type annotations needed* about a file nobody wrote.
+#[test]
+fn a_number_no_use_types_reaches_an_index_through_a_loop() {
+    runs(
+        "untyped-number-to-index",
+        "fn main() {\n\
+         \x20   let variables = 2000\n\
+         \x20   let state: u64 = 12345\n\
+         \x20   let pick = (state % (2 * variables) as u64) as i64\n\
+         \x20   let mut lists: Vec[Vec[i64]] = []\n\
+         \x20   for _ in 0..<(2 * variables) {\n\
+         \x20       lists.push([])\n\
+         \x20   }\n\
+         \x20   let mut seen = 0\n\
+         \x20   for lit in 0..<(2 * variables) {\n\
+         \x20       let list = lists[lit]\n\
+         \x20       seen += list.len()\n\
+         \x20   }\n\
+         \x20   println(f\"{pick} {seen}\")\n\
+         }\n",
+        "345 0\n",
+    );
+}

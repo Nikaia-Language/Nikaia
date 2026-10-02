@@ -6420,7 +6420,17 @@ impl<'p> Emitter<'p> {
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
-                out.push("; nikaia_std::index::set(&mut ");
+                // **A `mut` parameter is already a `&mut`** (ADR-094 D3), so
+                // it is lent on again rather than borrowed a second time:
+                // `set(&mut out, …)` asks for the binding itself to be `mut`,
+                // which a parameter is not ([ADR-270](../../docs/specification/adr/adr-270.md)
+                // D8 step 1).
+                let lent_on = matches!(&**base, Expr::Variable(name)
+                    if self.changes_in_place(flow, self.text(*name)));
+                out.push(match lent_on {
+                    true => "; nikaia_std::index::set(&mut *",
+                    false => "; nikaia_std::index::set(&mut ",
+                });
                 // **The container written into is a place** (0.0.238):
                 // `d[i][j] = v` writes into the list `d[i]`, and read as
                 // `*index::get(&d, …)` that list is behind a shared reference -
@@ -7095,6 +7105,16 @@ impl<'p> Emitter<'p> {
 
     /// What stands inside brackets: a range there is a **slice**, and stays
     /// the language below's own (ADR-212 D3).
+    /// Whether `name` is a parameter of the function being emitted that it
+    /// changes in place - a `mut` parameter, lowered as `&mut T` (ADR-094 D3).
+    fn changes_in_place(&self, flow: Flow<'_>, name: &str) -> bool {
+        self.own_contracts
+            .functions
+            .get(flow.function)
+            .and_then(|c| c.signature.as_ref())
+            .is_some_and(|s| s.mutable.iter().any(|m| m == name))
+    }
+
     fn index_expr(&self, out: &mut Out, index: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         self.bare_range(out, index, depth, flow)
     }
@@ -7131,7 +7151,10 @@ impl<'p> Emitter<'p> {
             // (ADR-248 D1), ahead of the widening a bare one gets.
             Expr::LitInt { value, negative } => {
                 let v = crate::ast::int_value(*value, *negative);
-                match self.unsigned_literals.get(&(flow.statement, v)) {
+                match self
+                    .unsigned_literals
+                    .get(&(crate::check::value_node(expr), v))
+                {
                     Some(ty) => out.push(&format!("{v}{ty}")),
                     None => out.push(&integer_literal(v, flow.widen)),
                 }

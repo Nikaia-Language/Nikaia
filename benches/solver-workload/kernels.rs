@@ -97,26 +97,26 @@ fn rows(n: i64) -> i64 {
 }
 
 fn watch(n: i64) -> i64 {
-    let (variables, clauses, size) = (2000usize, 8000usize, 4usize);
+    let (variables, clauses, size) = (2000u32, 8000u32, 4u32);
     let mut state: u64 = 11;
-    let mut arena: Vec<usize> = Vec::new();
+    let mut arena: Vec<u32> = Vec::new();
     for _ in 0..clauses * size {
         state = next(state);
-        arena.push(((state >> 33) % (2 * variables) as u64) as usize);
+        arena.push(((state >> 33) % (2 * variables) as u64) as u32);
     }
-    let mut watched: Vec<Vec<usize>> = vec![Vec::new(); 2 * variables];
-    let mut blockers: Vec<Vec<usize>> = vec![Vec::new(); 2 * variables];
+    let mut watched: Vec<Vec<u32>> = vec![Vec::new(); (2 * variables) as usize];
+    let mut blockers: Vec<Vec<u32>> = vec![Vec::new(); (2 * variables) as usize];
     for c in 0..clauses {
-        let (first, second) = (arena[c * size], arena[c * size + 1]);
-        watched[first].push(c);
-        blockers[first].push(second);
-        watched[second].push(c);
-        blockers[second].push(first);
+        let (first, second) = (arena[(c * size) as usize], arena[(c * size + 1) as usize]);
+        watched[first as usize].push(c * size);
+        blockers[first as usize].push(second);
+        watched[second as usize].push(c * size);
+        blockers[second as usize].push(first);
     }
-    let mut value: Vec<i64> = vec![0; 2 * variables];
+    let mut value: Vec<i64> = vec![0; (2 * variables) as usize];
     let mut checksum: i64 = 0;
     for round in 0..n {
-        for v in 0..variables {
+        for v in 0..variables as usize {
             state = next(state);
             match (state >> 33) % 3 {
                 0 => {
@@ -133,23 +133,22 @@ fn watch(n: i64) -> i64 {
                 }
             }
         }
-        for lit in 0..2 * variables {
+        for lit in 0..(2 * variables) as usize {
             if value[lit] == -1 {
                 let list = &watched[lit];
                 let blocks = &blockers[lit];
                 for k in 0..list.len() {
-                    if value[blocks[k]] == 1 {
+                    if value[blocks[k] as usize] == 1 {
                         checksum += 1;
                     } else {
-                        let start = list[k] * size;
-                        let mut found: i64 = -1;
+                        let start = list[k];
+                        let mut found = false;
                         for at in 2..size {
-                            let other = arena[start + at];
-                            if found < 0 && value[other] != -1 {
-                                found = other as i64;
+                            if !found && value[arena[(start + at) as usize] as usize] != -1 {
+                                found = true;
                             }
                         }
-                        checksum += if found >= 0 { 3 } else { 7 };
+                        checksum += if found { 3 } else { 7 };
                     }
                 }
             }
@@ -159,8 +158,8 @@ fn watch(n: i64) -> i64 {
     checksum
 }
 
-fn multiply(x: &[u32], y: &[u32]) -> Vec<u32> {
-    let mut out = vec![0; x.len() + y.len()];
+fn multiply(x: &[u32], y: &[u32], out: &mut Vec<u32>) {
+    out.resize(x.len() + y.len(), 0);
     for i in 0..x.len() {
         let mut carry: u64 = 0;
         let xi = x[i] as u64;
@@ -171,7 +170,6 @@ fn multiply(x: &[u32], y: &[u32]) -> Vec<u32> {
         }
         out[i + y.len()] = carry as u32;
     }
-    out
 }
 
 fn bignum(n: i64) -> i64 {
@@ -187,7 +185,8 @@ fn bignum(n: i64) -> i64 {
     }
     let mut checksum: u64 = 0;
     for round in 0..n as usize {
-        let out = multiply(&x, &y);
+        let mut out = Vec::new();
+        multiply(&x, &y, &mut out);
         checksum = checksum.wrapping_add(out[round % (2 * limbs)] as u64);
         x[round % limbs] = out[limbs];
     }

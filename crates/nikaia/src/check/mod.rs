@@ -426,11 +426,17 @@ pub struct Checked {
     /// `Vec[ref String]` is a `&&str` below, so it is read out with a `*` once
     /// where the body opens, as a number is with `num::value`.
     pub copied_view_bindings: BTreeSet<(usize, String)>,
-    /// **An integer literal whose place is an unsigned type**, by the byte the
-    /// statement starts at and the value, and the type
+    /// **An integer literal whose place is an unsigned type**, by the
+    /// literal's own node and its value, and the type
     /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). The emitter
     /// writes the suffix: a number above an `i32` is otherwise given `i64`'s,
     /// which is right for a bare `let` and wrong beside a `u64`.
+    ///
+    /// **By the node, not by the statement** ([ADR-270](../../docs/specification/adr/adr-270.md)
+    /// D8 step 1): keyed by where the statement starts and the value, every
+    /// `1` of `value[2 * v + 1] = 1` took the type one of them was given - a
+    /// `u32` beside the index's `v` made the `1` stored into a `Vec[i64]` a
+    /// `1u32`, and `xs[n - 1] + 1` over a `Vec[u32]` made the index's `1` one.
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
     /// **A `let` without an annotation whose number its uses typed**, by the
     /// byte the statement starts at, and the type
@@ -2410,7 +2416,7 @@ struct OpenNumber {
     /// The statements that give it a number, by the byte they start at, and
     /// every literal in them: the emitter writes each with the type's suffix
     /// where it would otherwise write another.
-    written: Vec<(usize, Vec<i128>, bool)>,
+    written: Vec<(usize, Vec<(usize, i128)>, bool)>,
 }
 
 /// A name in scope: what it is called, the type it holds, and - where this
@@ -8778,16 +8784,14 @@ impl<'a> Checker<'a> {
             if let Some(ty) = decided {
                 for member in &members {
                     self.checked.number_lets.insert(member.at.at(), ty.clone());
-                    for (statement, literals, widened) in &member.written {
+                    for (_, literals, widened) in &member.written {
                         let suffixed =
-                            *widened || literals.iter().any(|v| i32::try_from(*v).is_err());
+                            *widened || literals.iter().any(|(_, v)| i32::try_from(*v).is_err());
                         if ty == "i64" || !suffixed {
                             continue;
                         }
-                        for value in literals {
-                            self.checked
-                                .unsigned_literals
-                                .insert((*statement, *value), ty.clone());
+                        for literal in literals {
+                            self.checked.unsigned_literals.insert(*literal, ty.clone());
                         }
                     }
                 }
@@ -9579,6 +9583,22 @@ impl<'a> Checker<'a> {
                         lent: lent && !copied && !a_view,
                         ..Local::free(name, element)
                     });
+                }
+                // **A range's binding is a use of the numbers it counts
+                // between** ([ADR-249](../../docs/specification/adr/adr-249.md)
+                // D1, [ADR-270](../../docs/specification/adr/adr-270.md) D8
+                // step 1): in `for lit in 0..<(2 * variables) { lists[lit] }`
+                // the index asks `variables` for its type through `lit`. Left
+                // unjoined, nothing asked, the number was written with no type,
+                // and the language below could not infer what the index read.
+                if let ([_], Expr::Range { start, end, .. }) = (bindings.as_slice(), iter) {
+                    let mut open = Vec::new();
+                    self.open_numbers_in(&**start, &mut open);
+                    self.open_numbers_in(&**end, &mut open);
+                    self.open_numbers_joined(&open);
+                    if let (Some(first), Some(local)) = (open.first(), frame.first_mut()) {
+                        local.open_number = Some(self.open_root(*first));
+                    }
                 }
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a `for` binding");
@@ -12315,10 +12335,15 @@ impl<'a> Checker<'a> {
     /// Every integer literal a constant expression is made of, recorded as
     /// being of an unsigned type ([`Checked::unsigned_literals`]).
     fn literals_are(&mut self, value: &Expr, ty: &str, span: &Span) {
+        let value_expr = value;
         match value {
             Expr::LitInt { value, negative } => {
+                let _ = span;
                 self.checked.unsigned_literals.insert(
-                    (span.at(), crate::ast::int_value(*value, *negative)),
+                    (
+                        value_node(value_expr),
+                        crate::ast::int_value(*value, *negative),
+                    ),
                     ty.to_string(),
                 );
             }
@@ -22474,10 +22499,13 @@ fn an_operation_of_one_type(op: BinaryOp) -> bool {
     !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or)
 }
 
-/// Every integer literal in a value, for the suffix the emitter may owe it.
-fn literals_in(expr: &Expr, out: &mut Vec<i128>) {
+/// Every integer literal in a value, by its node, for the suffix the emitter
+/// may owe it.
+fn literals_in(expr: &Expr, out: &mut Vec<(usize, i128)>) {
     match expr {
-        Expr::LitInt { value, negative } => out.push(crate::ast::int_value(*value, *negative)),
+        Expr::LitInt { value, negative } => {
+            out.push((value_node(expr), crate::ast::int_value(*value, *negative)))
+        }
         Expr::Binary { lhs, rhs, .. } => {
             literals_in(lhs, out);
             literals_in(rhs, out);
@@ -22485,6 +22513,12 @@ fn literals_in(expr: &Expr, out: &mut Vec<i128>) {
         Expr::Unary { expr, .. } => literals_in(expr, out),
         _ => {}
     }
+}
+
+/// A literal's node, as [`Checked::unsigned_literals`] keys it and the emitter
+/// finds it again: the address of the expression in the one tree both walk.
+pub fn value_node(expr: &Expr) -> usize {
+    expr as *const Expr as usize
 }
 
 /// **`an i32` and `a u64`**: the article as the name is said (`NK1116`'s rule).
