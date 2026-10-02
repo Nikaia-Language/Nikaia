@@ -841,21 +841,31 @@ pub fn unpromised_call(violation: &crate::contracts::sync::Violation) -> crate::
 /// The same shape `NK2202` and every relayed `rustc` message use, because a
 /// rule the compiler checks itself should not look different from one it
 /// relays (ADR-012). Part III C.2 asks for a headline, the reason, and one
-/// concrete way out; a `Finding` carries all three and this writes them down.
+/// concrete way out; a `Finding` carries all three and **`tools/render.nika`**
+/// writes them down (#125): the headline, the place, each label underlined
+/// whole (`^` where the error is, `-` where something explains it), the notes
+/// and the help.
 pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str) -> String {
-    if !finding.labels.is_empty() {
-        return render_labelled(finding, path, source);
-    }
-    // One layout for every message: a finding that names no place of its own
-    // is marked where it stands.
-    let mut placed = finding.clone();
-    placed.labels.push(crate::check::Label {
+    use nikaia_std::tools::render::{Marked, Shown, rendered};
+    let shown = Shown {
+        warning: matches!(finding.severity, crate::check::Severity::Warning),
+        code: finding.code.to_string(),
+        message: finding.message.clone(),
+        notes: finding.notes.clone(),
+        help: finding.help.clone(),
         span: finding.span,
-        word: String::new(),
-        text: String::new(),
-        main: true,
-    });
-    render_labelled(&placed, path, source)
+        labels: finding
+            .labels
+            .iter()
+            .map(|label| Marked {
+                span: label.span,
+                word: label.word.clone(),
+                text: label.text.clone(),
+                main: label.main,
+            })
+            .collect(),
+    };
+    rendered(&shown, path, source)
 }
 
 /// **A line of a message as a sentence** (Part III C.2, rule 5): it starts
@@ -864,133 +874,6 @@ pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str)
 /// whole, whichever piece came first.
 pub fn said(text: &str) -> String {
     nikaia_std::tools::rustc_words::said(text)
-}
-
-/// **A finding that points at more than one place**, each underlined whole
-/// and named (Part III C.2, rule 5):
-///
-/// ```text
-/// error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
-///   --> app.nika:4:9
-///    |
-///  2 |     let count = 0
-///    |         ----- declared here without `mut`
-///  4 |         count += n
-///    |         ^^^^^ changed here
-///    |
-///    = help: Add `mut` where it's declared: `let mut count`.
-/// ```
-///
-/// `^` marks the place the error is and `-` a place that explains it. The
-/// header names the first `^`, which is where the reader's editor should go.
-fn render_labelled(finding: &crate::check::Finding, path: &str, source: &str) -> String {
-    let level = match finding.severity {
-        crate::check::Severity::Error => "error",
-        crate::check::Severity::Warning => "warning",
-    };
-    let lines: Vec<&str> = source.split('\n').collect();
-    // Each label as (line, column, width), 1-based, found in the text.
-    let mut placed: Vec<(usize, usize, usize, &crate::check::Label)> = finding
-        .labels
-        .iter()
-        .map(|label| {
-            let (line, column) = winnow_grammar::span::line_column(source, label.span.at());
-            let text = lines.get(line - 1).copied().unwrap_or("");
-            let (column, width) = match label.word.is_empty() {
-                true => (column, spanned_width(source, label.span)),
-                false => word_in(text, column, &label.word),
-            };
-            (line, column, width, label)
-        })
-        .collect();
-    placed.sort_by_key(|(line, column, _, _)| (*line, *column));
-    let (line, column) = placed
-        .iter()
-        .find(|(_, _, _, label)| label.main)
-        .map(|(line, column, _, _)| (*line, *column))
-        .unwrap_or_else(|| winnow_grammar::span::line_column(source, finding.span.at()));
-
-    let gutter = placed
-        .iter()
-        .map(|(line, ..)| line.to_string().len())
-        .max()
-        .unwrap_or(1);
-    let bar = format!("{} |", " ".repeat(gutter + 1));
-    let mut out = format!(
-        "{}: {}\n",
-        headed(level, finding.code),
-        said(&finding.message)
-    );
-    out.push_str(&format!(
-        "{}--> {path}:{line}:{column}\n",
-        " ".repeat(gutter + 1)
-    ));
-    out.push_str(&bar);
-    out.push('\n');
-    let mut shown = None;
-    for (line, column, width, label) in &placed {
-        if shown != Some(*line) {
-            if shown.is_some_and(|last| line - last > 1) {
-                out.push_str(&format!("{}...\n", " ".repeat(gutter + 2)));
-            }
-            let text = lines.get(line - 1).copied().unwrap_or("");
-            out.push_str(&format!(" {line:>gutter$} | {}\n", text.trim_end()));
-            shown = Some(*line);
-        }
-        let mark = if label.main { "^" } else { "-" };
-        let marked = format!(
-            "{bar} {}{} {}",
-            " ".repeat(column - 1),
-            mark.repeat(*width),
-            label.text
-        );
-        out.push_str(marked.trim_end());
-        out.push('\n');
-    }
-    out.push_str(&bar);
-    out.push('\n');
-    let indent = " ".repeat(gutter + 2);
-    for note in &finding.notes {
-        out.push_str(&format!("{indent}= note: {}\n", said(note)));
-    }
-    if let Some(help) = &finding.help {
-        out.push_str(&format!("{indent}= help: {}\n", said(help)));
-    }
-    out
-}
-
-/// How many characters of its first line a span covers, without the trailing
-/// space: what a label with no word of its own underlines. One at least, so a
-/// place is always marked.
-fn spanned_width(source: &str, span: crate::ast::Span) -> usize {
-    source
-        .get(span.bytes())
-        .unwrap_or_default()
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim_end()
-        .chars()
-        .count()
-        .max(1)
-}
-
-/// `error[NK1139]`, or `error` alone for a message that has no code: a parse
-/// error, which is about the text and not about anything the checker decided.
-fn headed(level: &str, code: &str) -> String {
-    nikaia_std::tools::rustc_words::headed(level, code)
-}
-
-/// Where `word` stands in `line` at or after 1-based `column`, as a whole
-/// word, and how wide it is. Where it is not there, the statement's own
-/// column and one character, which is what every finding showed before.
-///
-/// A whole word only at an edge that is a word character: `}` or a space has
-/// no word to be part of, and asking it for one sent the caret to the first
-/// such character on the line.
-fn word_in(line: &str, column: usize, word: &str) -> (usize, usize) {
-    let (column, width) = nikaia_std::tools::rustc_words::word_in(line, column as i64, word);
-    (column as usize, width as usize)
 }
 
 /// Byte offset -> line and column, computed once per file.

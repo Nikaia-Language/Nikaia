@@ -1,0 +1,246 @@
+// crates/nikaia-std/src/tools/render.nika
+//
+// **A finding on the `.nika` line it is about** (ADR-012, Part III C.2): the
+// headline, the file and the place, the lines with each named place
+// underlined, then the reasons and one way out. Every message a reader gets
+// has this shape - the checker's own findings, `NK2202`, and `rustc`'s words
+// relayed - so it is written once, here. Moved from the compiler's
+// `diagnostics` (ADR-250, #125).
+//
+// ```text
+// error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
+//   --> app.nika:4:9
+//    |
+//  2 |     let count = 0
+//    |         ----- declared here without `mut`
+//  4 |         count += n
+//    |         ^^^^^ changed here
+//    |
+//    = help: Add `mut` where it's declared: `let mut count`.
+// ```
+//
+// `^` marks the place the error is and `-` a place that explains it. The
+// header names the first `^`, which is where the reader's editor should go.
+// A span is in bytes and a column is in characters, as an editor counts.
+
+/// One place a finding points at.
+pub struct Marked {
+    /// The statement it is in.
+    pub span: Span,
+    /// What to underline, as written; empty for the statement itself.
+    pub word: String,
+    /// What happens there, in a few words.
+    pub text: String,
+    /// The place the error is: `^` under it, where another place gets `-`.
+    pub main: bool,
+}
+
+/// What a finding says, as the layout needs it.
+pub struct Shown {
+    pub warning: bool,
+    /// `NK1139`, or empty for a message that has no code.
+    pub code: String,
+    pub message: String,
+    pub notes: Vec[String],
+    pub help: String?,
+    /// Where the finding stands, for one that names no place of its own.
+    pub span: Span,
+    pub labels: Vec[Marked],
+}
+
+// One label, found in the text: 1-based line and column, and how wide.
+struct Placed {
+    line: i64,
+    column: i64,
+    width: i64,
+    label: Marked,
+}
+
+/// The finding, laid out.
+pub fn rendered(shown: ref Shown, path: ref String, source: ref String) -> String {
+    let chars: Vec[char] = source.chars().collect()
+    let lines: Vec[ref String] = source.split("\n").collect()
+    let mut labels: Vec[Marked] = shown.labels.clone()
+    // One layout for every message: a finding that names no place of its own
+    // is marked where it stands.
+    if labels.len() == 0 {
+        labels.push(Marked { span: shown.span.clone(), word: "", text: "", main: true })
+    }
+    let mut placed: Vec[Placed] = []
+    for label in labels {
+        let at = line_column(chars, label.span.start)
+        let text = line_of(lines, at.0)
+        let found = if label.word.len() == 0 { (at.1, spanned_width(chars, label.span)) } else { word_in(text, at.1, label.word) }
+        placed.push(Placed { line: at.0, column: found.0, width: found.1, label: label.clone() })
+    }
+    let placed = in_order(placed)
+    let mut line = -1
+    let mut column = -1
+    for one in placed {
+        if line < 0 && one.label.main {
+            line = one.line
+            column = one.column
+        }
+    }
+    if line < 0 {
+        let at = line_column(chars, shown.span.start)
+        line = at.0
+        column = at.1
+    }
+    let mut gutter = 1
+    for one in placed {
+        let digits = f"{one.line}".len()
+        if digits > gutter {
+            gutter = digits
+        }
+    }
+    let mut bar = spaces(gutter + 1)
+    bar.push_str(" |")
+    let level = if shown.warning { "warning" } else { "error" }
+    let mut out = headed(level, shown.code)
+    out.push_str(": ")
+    out.push_str(ref said(shown.message))
+    out.push('\n')
+    out.push_str(ref spaces(gutter + 1))
+    out.push_str(ref f"--> {path}:{line}:{column}")
+    out.push('\n')
+    out.push_str(ref bar)
+    out.push('\n')
+    let mut shown_line = -1
+    for one in placed {
+        if shown_line != one.line {
+            if shown_line >= 0 && one.line - shown_line > 1 {
+                out.push_str(ref spaces(gutter + 2))
+                out.push_str("...")
+                out.push('\n')
+            }
+            out.push(' ')
+            out.push_str(ref right_aligned(f"{one.line}", gutter))
+            out.push_str(" | ")
+            out.push_str(ref line_of(lines, one.line).trim_end().to_string())
+            out.push('\n')
+            shown_line = one.line
+        }
+        let mark = if one.label.main { "^" } else { "-" }
+        let mut marked = bar.clone()
+        marked.push(' ')
+        marked.push_str(ref spaces(one.column - 1))
+        marked.push_str(ref mark.repeat(one.width))
+        marked.push(' ')
+        marked.push_str(ref one.label.text)
+        out.push_str(ref marked.trim_end().to_string())
+        out.push('\n')
+    }
+    out.push_str(ref bar)
+    out.push('\n')
+    let indent = spaces(gutter + 2)
+    for note in shown.notes {
+        out.push_str(ref indent)
+        out.push_str("= note: ")
+        out.push_str(ref said(note))
+        out.push('\n')
+    }
+    out.push_str(ref helped(indent, shown.help))
+    return out
+}
+
+// `= help: …`, where there is a way out to give.
+fn helped(indent: ref String, help: ref String?) -> String {
+    let given = help ?? return ""
+    return f"{indent}= help: {said(given)}\n"
+}
+
+// By line and then column; places on one spot keep their order.
+fn in_order(placed: Vec[Placed]) -> Vec[Placed] {
+    let mut out: Vec[Placed] = []
+    for one in placed {
+        let mut at = out.len()
+        while at > 0 && (out[at - 1].line > one.line || (out[at - 1].line == one.line && out[at - 1].column > one.column)) {
+            at -= 1
+        }
+        out.insert(at, one.clone())
+    }
+    return out
+}
+
+// The 1-based line, or nothing past the end.
+fn line_of(lines: ref Vec[ref String], line: i64) -> String {
+    if line < 1 || line > lines.len() {
+        return ""
+    }
+    return lines[line - 1].clone()
+}
+
+// The 1-based line and the 1-based column, in characters, of a byte offset.
+fn line_column(chars: ref Vec[char], offset: u32) -> (i64, i64) {
+    let wanted = offset as i64
+    let mut bytes = 0
+    let mut line = 1
+    let mut column = 1
+    for c in chars {
+        if bytes >= wanted {
+            break
+        }
+        bytes += utf8_width(c)
+        if c == '\n' {
+            line += 1
+            column = 1
+        } else {
+            column += 1
+        }
+    }
+    return (line, column)
+}
+
+// How many characters of its first line a span covers, without the trailing
+// space: what a label with no word of its own underlines. One at least, so a
+// place is always marked.
+fn spanned_width(chars: ref Vec[char], span: ref Span) -> i64 {
+    let start = span.start as i64
+    let end = span.end as i64
+    let mut bytes = 0
+    let mut covered: String = ""
+    for c in chars {
+        if bytes >= end {
+            break
+        }
+        if bytes >= start {
+            if c == '\n' {
+                break
+            }
+            covered.push(c)
+        }
+        bytes += utf8_width(c)
+    }
+    let width = covered.trim_end().chars().count()
+    if width < 1 {
+        return 1
+    }
+    return width
+}
+
+// How many bytes a character takes in UTF-8.
+fn utf8_width(c: char) -> i64 {
+    let point = c as u32
+    if point < 128 {
+        return 1
+    }
+    if point < 2048 {
+        return 2
+    }
+    if point < 65536 {
+        return 3
+    }
+    return 4
+}
+
+fn spaces(n: i64) -> String {
+    return " ".repeat(n)
+}
+
+// `text` right-aligned in `width` characters.
+fn right_aligned(text: String, width: i64) -> String {
+    let mut out = spaces(width - text.len())
+    out.push_str(ref text)
+    return out
+}

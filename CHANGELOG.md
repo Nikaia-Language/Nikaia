@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.356] — 2026-10-02
+
+**A finding's layout is Nikaia** (#125, ADR-250). The shape every message a
+reader gets has - the headline, `--> file:line:column`, the lines with each
+named place underlined (`^` where the error is, `-` where something explains
+it, `...` between lines that are far apart), then the notes and the help as
+sentences - moved from the compiler's `diagnostics` into
+`tools/render.nika`. A span is in bytes and a column in characters, so the
+mapping between them is written there too; `tests/diagnostics.rs` holds it on
+a line with `ü` before the place. 16.6 % of the toolchain is Nikaia.
+
 ## [0.0.355] — 2026-10-02
 
 **`views` is Nikaia** (#125, ADR-250). Where a naked view parameter's view
