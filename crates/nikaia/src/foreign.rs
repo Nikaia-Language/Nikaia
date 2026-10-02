@@ -176,6 +176,18 @@ fn written(parsed: &Parsed) -> Vec<(String, Span)> {
         .collect()
 }
 
+/// What the walk meets in one block, paths and calls, where nobody asks about
+/// a `root`.
+pub(crate) fn seen_in(parsed: &Parsed, block: &crate::ast::Block) -> Vec<Seen> {
+    nikaia_std::tools::foreign::seen_in(
+        block,
+        &parsed.interner,
+        &|name: &str| parsed.unaliased(name),
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        &|_: &str| -1,
+    )
+}
+
 /// What the walk meets, paths and calls: `root_at` says where a callee's
 /// `root` parameter stands, for `--trust`, and `-1` where nobody asks.
 pub(crate) fn seen(parsed: &Parsed, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {

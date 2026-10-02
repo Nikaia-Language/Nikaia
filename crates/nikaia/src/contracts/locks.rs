@@ -58,7 +58,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Block, Expr, Item};
+use crate::ast::{Block, Item};
 use crate::parser::Parsed;
 
 use super::{Ledger, Lock};
@@ -321,47 +321,21 @@ fn reaches_of(
     Some((key, reaches))
 }
 
-/// Every free call a body makes, the blocks it holds included.
+/// Every free call a body makes, the blocks it holds included - by the walk
+/// in Nikaia (`tools/foreign.nika`, #125), each name with the file's alias
+/// resolved. A `spawn`'s body runs later and elsewhere, so a lock taken in one
+/// is the ordinary case (D3), and the walk does not descend into one.
 fn walk(parsed: &Parsed, block: &Block, reaches: &mut Reaches) {
-    for stmt in &block.stmts {
-        super::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
-            // A `spawn`'s body runs later and elsewhere, so a lock taken in one
-            // is the ordinary case (D3). `visit_stmt` hands the `spawn` itself
-            // here and `visit_stmt_blocks` does not descend into it, so there
-            // is nothing to exclude - this arm exists to say so.
-            if matches!(expr, Expr::Spawn { .. }) {
-                return;
-            }
-            if let Some(name) = free_call(parsed, expr) {
-                // **A door over several locks is a free call** (ADR-065), so it
-                // is named here where every other free call is.
-                if MULTI.contains(&name.as_str()) {
-                    reaches.itself = reaches.itself.or(Lock::Holds);
-                }
-                reaches.callees.insert(name);
-            }
-        });
-        let mut blocks: Vec<&Block> = Vec::new();
-        super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| blocks.push(inner));
-        for inner in blocks {
-            walk(parsed, inner, reaches);
+    for seen in crate::foreign::seen_in(parsed, block) {
+        let crate::foreign::Seen::Call { name, .. } = seen else {
+            continue;
+        };
+        let name = parsed.unaliased(&name);
+        // **A door over several locks is a free call** (ADR-065), so it is
+        // named here where every other free call is.
+        if MULTI.contains(&name.as_str()) {
+            reaches.itself = reaches.itself.or(Lock::Holds);
         }
+        reaches.callees.insert(name);
     }
-}
-
-/// The name a free call names, unaliased, or nothing where this is not one.
-fn free_call(parsed: &Parsed, expr: &Expr) -> Option<String> {
-    let Expr::Call { func, .. } = expr else {
-        return None;
-    };
-    let name = match func.as_ref() {
-        Expr::Variable(name) => parsed.text(*name).to_string(),
-        Expr::Path(segments) => segments
-            .iter()
-            .map(|s| parsed.text(*s))
-            .collect::<Vec<_>>()
-            .join("::"),
-        _ => return None,
-    };
-    Some(parsed.unaliased(&name))
 }
