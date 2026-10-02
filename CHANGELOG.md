@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.361] — 2026-10-02
+
+**Whether a value may cross a thread is Nikaia** (#125, ADR-250). The
+verdict `NK2501`, `NK2502` and `NK2503` stand on - plain data, containers
+answered by what they hold, the lock family whose answer is the destination's
+(ADR-045 D2, D3; a shared count into code nothing describes, ADR-061 D1), a
+described type's own word or its fields walked transitively (Group B), and
+which of a task's bindings are held across a pause (ADR-055 D6) - moved from
+`contracts::send` into `tools/threads.nika`. 17.0 % of the toolchain is
+Nikaia.
+
+Found moving it, fixed in the compiler (ADR-250 D3): **`BTreeSet::remove` is
+described**. Nothing was, so a walk that marks a name and takes the mark off
+again was taken to pause and lowered `async`. `tests/defects_found_running.rs`
+holds it.
+
+The refused part and its field are answered one at a time
+(`refused_part`, `refused_at`): a nullable pair is not a type Part I 2.3
+writes, and the parser says so on purpose.
+
 ## [0.0.360] — 2026-10-02
 
 **A claim is carried back to the entry and becomes a precondition**

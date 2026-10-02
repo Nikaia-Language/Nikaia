@@ -5511,6 +5511,236 @@ fn quoted(attribute: &str) -> Position {
 fn blank(c: char) -> bool { c.is_whitespace() }
 
 
+// --- threads.nika ---
+
+const PLAIN_DATA: [&str; 18] = ["bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"];
+
+const CONTAINER_TYPES: [&str; 11] = ["BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Receiver", "Result", "Sender", "Shared", "Vec"];
+
+const CHOSEN_TYPES: [&str; 3] = ["Locked", "SharedMut", "Shared"];
+
+const CROSSING_DEPTH: i64 = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Going {
+    Ours,
+    Foreign,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    Lock,
+    Count,
+    Said,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Crossing {
+    May,
+    MayNot { part: String, at: Option<String>, why: Refusal },
+    Undecided { part: String },
+}
+
+impl Crossing {
+    pub fn may(&self) -> bool { matches!(self, Crossing::May) }
+    pub fn refused_part(&self) -> Option<String> {
+        match self {
+            Crossing::MayNot { part, .. } => Some(part.to_owned()),
+            _ => None,
+        }
+    }
+    pub fn refused_at(&self) -> Option<String> {
+        match self {
+            Crossing::MayNot { at, .. } => a_copy_of((at).as_deref()),
+            _ => None,
+        }
+    }
+    pub fn why(&self) -> Option<Refusal> {
+        match self {
+            Crossing::MayNot { why, .. } => Some(why.clone()),
+            _ => None,
+        }
+    }
+    pub fn way_out(&self) -> Option<String> {
+        match self {
+            Crossing::MayNot { why, .. } => Some(way_out_of(why)),
+            _ => None,
+        }
+    }
+    pub fn note(&self) -> Option<String> {
+        match self {
+            Crossing::May => None,
+            Crossing::MayNot { part, at, why } => Some(refusal_note(part, (at).as_deref(), why)),
+            Crossing::Undecided { part } => Some(format!("Nothing says whether `{}` can move to another thread, so the compiler assumes it can't.", part)),
+        }
+    }
+}
+
+fn a_copy_of(text: Option<&str>) -> Option<String> {
+    let there = match text { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(there.to_owned())
+}
+
+fn way_out_of(why: &Refusal) -> String {
+    match why {
+        Refusal::Lock => String::from("Open the lock here and pass the value inside it, so the called code gets an ordinary value and no lock."),
+        Refusal::Count => String::from("Pass what the shared value holds, a view or a copy, instead of the shared value itself."),
+        Refusal::Said => String::from("Keep it here, and pass the call only what it needs from it."),
+    }
+}
+
+fn refusal_note(part: &str, at: Option<&str>, why: &Refusal) -> String {
+    let clause = held_clause(at);
+    match why {
+        Refusal::Lock => format!("`{}`{} holds a lock, and a lock can't be passed to code the compiler knows nothing about.", part, clause),
+        Refusal::Count => format!("`{}`{} is shared, and how a shared value is counted is decided per value, so code outside Nikaia can't be written to handle it.", part, clause),
+        Refusal::Said => format!("`{}`{} is described as a value that can't move to another thread.", part, clause),
+    }
+}
+
+fn held_clause(at: Option<&str>) -> String {
+    let field = match at { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    format!(", which its field `{}` holds,", field)
+}
+
+pub fn crossing(ty: &Ty, walking: &Walking<'_>) -> Crossing {
+    let mut seen: collections::BTreeSet<String> = collections::BTreeSet::new();
+    crossing_walk(ty, walking, &mut seen, CROSSING_DEPTH)
+}
+
+#[derive(Debug, Clone)]
+pub struct Walking<'a> {
+    pub own: &'a Ledger,
+    pub library: &'a Ledger,
+    pub into: Going,
+}
+
+fn crossing_walk(ty: &Ty, walking: &Walking<'_>, seen: &mut collections::BTreeSet<String>, depth: i64) -> Crossing {
+    if depth == 0 { return Crossing::Undecided { part: ty.text() }; }
+    match ty {
+        Ty::Unknown => Crossing::Undecided { part: String::from("?") },
+        Ty::Count(_) => Crossing::May,
+        Ty::Pointed { .. } => Crossing::Undecided { part: ty.text() },
+        Ty::Var { .. } => Crossing::Undecided { part: ty.text() },
+        Ty::Fn { .. } => Crossing::Undecided { part: ty.text() },
+        Ty::Seq { .. } => Crossing::Undecided { part: ty.text() },
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); crossing_walk(inner, walking, seen, depth - 1) },
+        Ty::Tuple(parts) => all_of(parts, walking, seen, depth),
+        Ty::Named { name, args, .. } => named_crossing(ty, name, args, walking, seen, depth),
+    }
+}
+
+fn named_crossing(ty: &Ty, name: &str, args: &Vec<Ty>, walking: &Walking<'_>, seen: &mut collections::BTreeSet<String>, depth: i64) -> Crossing {
+    let base = base_name(name);
+    if one_of(&PLAIN_DATA, &base) {
+        if (args.len() as i64) == 0 { return Crossing::May; }
+        return Crossing::Undecided { part: ty.text() };
+    }
+    let foreign = match &walking.into {
+        Going::Foreign => true,
+        Going::Ours => false,
+    };
+    if one_of(&CONTAINER_TYPES, &base) {
+        let inside = if (args.len() as i64) == 0 { Crossing::Undecided { part: ty.text() } } else { all_of(args, walking, seen, depth) };
+        if foreign && one_of(&CHOSEN_TYPES, name) && inside.refused_part().is_none() { return Crossing::MayNot { part: ty.text(), at: None, why: Refusal::Count }; }
+        return inside;
+    }
+    if one_of(&CHOSEN_TYPES, name) {
+        if foreign { return Crossing::MayNot { part: ty.text(), at: None, why: Refusal::Lock }; }
+        if (args.len() as i64) == 0 { return Crossing::Undecided { part: ty.text() }; }
+        return all_of(args, walking, seen, depth);
+    }
+    described_crossing(ty, name, args, walking, seen, depth)
+}
+
+fn described_crossing(ty: &Ty, name: &str, args: &Vec<Ty>, walking: &Walking<'_>, seen: &mut collections::BTreeSet<String>, depth: i64) -> Crossing {
+    let contract = match ledger_type(name, walking.own, walking.library) { Some(__nikaia_value) => __nikaia_value, None => return Crossing::Undecided { part: ty.text() } };
+    if contract.crosses.may_not() { return Crossing::MayNot { part: ty.text(), at: None, why: Refusal::Said }; }
+    if contract.crosses.may() && (args.len() as i64) == 0 { return Crossing::May; }
+    if (contract.fields.len() as i64) == 0 { return Crossing::Undecided { part: ty.text() }; }
+    if !seen.insert(name.to_owned()) { return Crossing::May; }
+    let mut worst = Crossing::May;
+    for field in contract.fields.iter() {
+        let answer = name_the_field(&field.name, crossing_walk(&field.ty, walking, seen, depth - 1));
+        worst = worst_of(worst, answer);
+    }
+    seen.remove(name);
+    worst
+}
+
+fn all_of(parts: &Vec<Ty>, walking: &Walking<'_>, seen: &mut collections::BTreeSet<String>, depth: i64) -> Crossing {
+    let mut worst = Crossing::May;
+    for part in parts.iter() { worst = worst_of(worst, crossing_walk(part, walking, seen, depth - 1)); }
+    worst
+}
+
+pub fn worst_of(worst: Crossing, answer: Crossing) -> Crossing {
+    match worst {
+        Crossing::MayNot { .. } => worst,
+        Crossing::Undecided { .. } => match answer {
+            Crossing::MayNot { .. } => answer,
+            _ => worst,
+        },
+        Crossing::May => answer,
+    }
+}
+
+fn name_the_field(field: &str, answer: Crossing) -> Crossing {
+    match answer {
+        Crossing::MayNot { ref part, ref at, ref why } => field_named_at(field, &part, (at).as_deref(), &why),
+        _ => answer,
+    }
+}
+
+fn field_named_at(field: &str, part: &str, at: Option<&str>, why: &Refusal) -> Crossing {
+    let already = match at { Some(__nikaia_value) => __nikaia_value, None => return Crossing::MayNot { part: part.to_owned(), at: Some(field.to_owned()), why: why.clone() } };
+    Crossing::MayNot { part: part.to_owned(), at: Some(already.to_owned()), why: why.clone() }
+}
+
+fn ledger_type(name: &str, own: &Ledger, library: &Ledger) -> Option<TypeContract> {
+    let suffix = format!("::{}", name);
+    let mine = in_one_ledger(name, &suffix, own);
+    if mine.is_some() { return mine; }
+    in_one_ledger(name, &suffix, library)
+}
+
+fn in_one_ledger(name: &str, suffix: &str, ledger: &Ledger) -> Option<TypeContract> {
+    let whole: Option<TypeContract> = match *nikaia_std::index::get(&ledger.types, name) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    if whole.is_some() { return whole; }
+    for (key, contract) in ledger.types.iter() { if key.ends_with(suffix) { return Some(contract.clone()); } }
+    None
+}
+
+fn base_name(name: &str) -> String {
+    let parts: Vec<&str> = name.split("::").collect::<Vec<_>>();
+    (*nikaia_std::index::get(&parts, nikaia_std::index::at(parts.len() as i64 - 1))).to_owned()
+}
+
+fn one_of(names: &[&str], name: &str) -> bool {
+    for one in names.iter() {
+        let one = *one;
+        if one == name { return true; }
+    }
+    false
+}
+
+pub fn held_across_a_pause(bound: &Vec<(String, i64)>, pauses: &Vec<i64>, named: &collections::BTreeMap<String, i64>) -> collections::BTreeSet<String> {
+    let mut out: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for (name, at) in bound.iter() {
+        let at = nikaia_std::num::value(at);
+        let last = match *nikaia_std::index::get(&named, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        for pause in pauses.iter() {
+            let pause = nikaia_std::num::value(pause);
+            if pause > at && *last > pause { out.insert(name.to_owned()); }
+        }
+    }
+    out
+}
+
+
 // --- throws.nika ---
 
 pub fn error_sets(direct: &collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &collections::BTreeMap<String, collections::BTreeSet<String>>, own: &Ledger) -> collections::BTreeMap<String, Vec<String>> {
@@ -8561,6 +8791,10 @@ pub mod surface {
 pub mod template {
     #[allow(unused_imports)]
     pub use super::{Position, Segment, literal_length, split, illegal, illegal_message};
+}
+pub mod threads {
+    #[allow(unused_imports)]
+    pub use super::{Going, Refusal, Crossing, crossing, Walking, worst_of, held_across_a_pause};
 }
 pub mod throws {
     #[allow(unused_imports)]
