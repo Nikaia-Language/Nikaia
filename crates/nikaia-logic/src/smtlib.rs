@@ -245,7 +245,7 @@ impl Reader {
             Sexp::Atom(a) if a == "true" => Ok(self.arena.bool(true)),
             Sexp::Atom(a) if a == "false" => Ok(self.arena.bool(false)),
             Sexp::Atom(a) if a.chars().all(|c| c.is_ascii_digit()) => a
-                .parse::<i128>()
+                .parse::<i64>()
                 .map(|n| self.arena.int(n))
                 .map_err(|_| ReadError::Unsupported(format!("the numeral {a}"))),
             Sexp::Atom(a) => {

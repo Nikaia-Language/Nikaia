@@ -52,7 +52,7 @@ impl Solver for FourierMotzkin {
 /// reads is given - zero where the case did not mention it - and the model is
 /// checked by evaluating the query, so a fault in the back-substitution is an
 /// *unknown*, never a wrong model.
-fn refuted(query: &Query<'_>, mut values: BTreeMap<String, i128>) -> Option<Model> {
+fn refuted(query: &Query<'_>, mut values: BTreeMap<String, i64>) -> Option<Model> {
     let mut names = BTreeSet::new();
     for id in query.facts.iter().chain([&query.goal]) {
         query.arena.variables(*id, &mut names);
@@ -70,7 +70,7 @@ enum Open {
     /// The elimination ran out of variables without one: the bounds are
     /// consistent over the rationals, with integer values where back-
     /// substitution found them.
-    Consistent(Option<BTreeMap<String, i128>>),
+    Consistent(Option<BTreeMap<String, i64>>),
     /// The solver could not tell.
     Unknown(Unknown),
 }
@@ -90,12 +90,12 @@ pub(crate) fn query_cases(query: &Query<'_>, budget: &Budget) -> Result<Vec<Vec<
 /// `Σ coefficient·name + constant`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Lin {
-    pub(crate) terms: BTreeMap<String, i128>,
-    pub(crate) constant: i128,
+    pub(crate) terms: BTreeMap<String, i64>,
+    pub(crate) constant: i64,
 }
 
 impl Lin {
-    fn constant(c: i128) -> Lin {
+    fn constant(c: i64) -> Lin {
         Lin {
             terms: BTreeMap::new(),
             constant: c,
@@ -122,7 +122,7 @@ impl Lin {
         Some(out)
     }
 
-    pub(crate) fn scale(&self, k: i128) -> Option<Lin> {
+    pub(crate) fn scale(&self, k: i64) -> Option<Lin> {
         if k == 0 {
             return Some(Lin::constant(0));
         }
@@ -140,7 +140,7 @@ impl Lin {
         self.add(&other.scale(-1)?)
     }
 
-    fn add_const(&self, c: i128) -> Lin {
+    fn add_const(&self, c: i64) -> Lin {
         let mut out = self.clone();
         out.constant = out.constant.saturating_add(c);
         out
@@ -149,7 +149,7 @@ impl Lin {
     /// Divide through by the coefficients' common factor and round the bound
     /// towards the integers: `2x + 3 <= 0` is `x + 2 <= 0` over the integers.
     pub(crate) fn tightened(mut self) -> Lin {
-        let g = self.terms.values().fold(0i128, |g, k| gcd(g, k.abs()));
+        let g = self.terms.values().fold(0i64, |g, k| gcd(g, k.abs()));
         if g > 1 {
             for k in self.terms.values_mut() {
                 *k /= g;
@@ -166,7 +166,7 @@ impl Lin {
     }
 }
 
-fn gcd(a: i128, b: i128) -> i128 {
+fn gcd(a: i64, b: i64) -> i64 {
     if b == 0 { a } else { gcd(b, a % b) }
 }
 
@@ -405,10 +405,10 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Open> 
 /// Integer values for the eliminated names, last eliminated first: each one
 /// as near to zero as the bounds that held it allow, given the values of the
 /// names eliminated after it. `None` where a name's bounds leave no integer.
-fn back_substituted(rounds: &[(String, Vec<Lin>)]) -> Option<BTreeMap<String, i128>> {
-    let mut values: BTreeMap<String, i128> = BTreeMap::new();
+fn back_substituted(rounds: &[(String, Vec<Lin>)]) -> Option<BTreeMap<String, i64>> {
+    let mut values: BTreeMap<String, i64> = BTreeMap::new();
     for (name, bounds) in rounds.iter().rev() {
-        let (mut low, mut high): (Option<i128>, Option<i128>) = (None, None);
+        let (mut low, mut high): (Option<i64>, Option<i64>) = (None, None);
         for bound in bounds {
             // k·name + rest <= 0
             let k = bound.terms[name];
@@ -502,7 +502,7 @@ fn traced(steps: Vec<Step>, last: usize) -> Refutation {
 mod tests {
     use super::*;
 
-    fn le(terms: &[(&str, i128)], constant: i128) -> Lin {
+    fn le(terms: &[(&str, i64)], constant: i64) -> Lin {
         Lin {
             terms: terms.iter().map(|(n, k)| (n.to_string(), *k)).collect(),
             constant,

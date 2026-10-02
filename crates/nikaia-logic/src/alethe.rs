@@ -365,7 +365,7 @@ fn choice(
     };
     // Each bound of the case: the literal it was read off, negated as the
     // lemma writes it, and the multiplier that turns one into the other.
-    let mut sources: Vec<(String, i128)> = Vec::new();
+    let mut sources: Vec<(String, i64)> = Vec::new();
     for fact in &facts {
         let (id, positive) = match arena.get(*fact) {
             Term::Not(inner) => (*inner, false),
@@ -403,7 +403,7 @@ fn choice(
             }
             Step::Tighten(from) => {
                 let (before, before_atom) = made.get(from)?.clone();
-                let factor = before.terms.values().fold(0i128, |g, k| gcd(g, k.abs()));
+                let factor = before.terms.values().fold(0i64, |g, k| gcd(g, k.abs()));
                 let bound = before.tightened();
                 let atom = atom(&bound);
                 (
@@ -473,7 +473,7 @@ impl Proof {
 
 /// A bound `lin <= 0` as an SMT-LIB atom.
 fn atom(lin: &Lin) -> String {
-    let number = |n: i128| match n < 0 {
+    let number = |n: i64| match n < 0 {
         true => format!("(- {})", n.unsigned_abs()),
         false => n.to_string(),
     };
@@ -494,6 +494,6 @@ fn atom(lin: &Lin) -> String {
     }
 }
 
-fn gcd(a: i128, b: i128) -> i128 {
+fn gcd(a: i64, b: i64) -> i64 {
     if b == 0 { a } else { gcd(b, a % b) }
 }

@@ -427,7 +427,7 @@ impl Scope {
         self.ints.insert(length.clone());
         let (len, zero) = (arena.var(&length), arena.int(0));
         self.facts.push(arena.ge(len, zero));
-        if let Some(n) = known {
+        if let Some(n) = known.and_then(|n| i64::try_from(n).ok()) {
             let n = arena.int(n);
             self.facts.push(arena.eq(len, n));
             self.entry.insert(length, n);
@@ -1215,7 +1215,7 @@ impl<'a> Prover<'a> {
             {
                 // The precondition's own names: the parameters it reads, and
                 // the lengths of them.
-                let given: BTreeMap<String, i128> = with
+                let given: BTreeMap<String, i64> = with
                     .iter()
                     .filter(|(name, _)| read.contains(*name))
                     .filter_map(|(name, term)| {
@@ -1581,7 +1581,7 @@ impl<'a> Prover<'a> {
     /// gives values for the claim's names. A model alone would not do: the
     /// facts are true but not all that is true, so a value they allow need not
     /// be one the program reaches. `None` where either is missing.
-    fn refutes(&mut self, facts: &[TermId], claim: TermId) -> Option<BTreeMap<String, i128>> {
+    fn refutes(&mut self, facts: &[TermId], claim: TermId) -> Option<BTreeMap<String, i64>> {
         let negation = self.arena.not(claim);
         self.proves(facts, negation).ok()?;
         let falsum = self.arena.bool(false);
@@ -1598,7 +1598,7 @@ impl<'a> Prover<'a> {
         }
         let mut names = BTreeSet::new();
         self.arena.variables(claim, &mut names);
-        let values: BTreeMap<String, i128> = names
+        let values: BTreeMap<String, i64> = names
             .into_iter()
             .filter_map(|n| Some((n.clone(), *model.values.get(&n)?)))
             .collect();
@@ -1791,7 +1791,7 @@ fn term_text_as(arena: &Arena, id: TermId, arrow: bool) -> String {
 }
 
 /// Values as a reader writes them: `` `x` is 5, `xs.len()` is 0 ``.
-fn shown(values: &BTreeMap<String, i128>) -> String {
+fn shown(values: &BTreeMap<String, i64>) -> String {
     if values.is_empty() {
         return "no value of its own; the claim is false as written".to_string();
     }
@@ -1998,7 +1998,8 @@ fn lin_with(
 ) -> Option<TermId> {
     match expr {
         Expr::LitInt { value, negative } => {
-            Some(arena.int(crate::ast::int_value(*value, *negative)))
+            // A literal no `i64` holds is outside what the solver reads.
+            Some(arena.int(i64::try_from(crate::ast::int_value(*value, *negative)).ok()?))
         }
         Expr::Variable(name) => {
             let name = parsed.text(*name);

@@ -16,7 +16,7 @@ pub struct TermId(u32);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
     Bool(bool),
-    Int(i128),
+    Int(i64),
     /// An integer variable, by name.
     Var(String),
     Add(TermId, TermId),
@@ -67,7 +67,7 @@ impl Arena {
         self.push(Term::Bool(value))
     }
 
-    pub fn int(&mut self, value: i128) -> TermId {
+    pub fn int(&mut self, value: i64) -> TermId {
         self.push(Term::Int(value))
     }
 
@@ -147,7 +147,7 @@ impl Arena {
     }
 
     /// The value of an integer term that reads no variable, where it fits.
-    pub fn constant(&self, id: TermId) -> Option<i128> {
+    pub fn constant(&self, id: TermId) -> Option<i64> {
         match self.get(id) {
             Term::Int(n) => Some(*n),
             Term::Neg(a) => self.constant(*a)?.checked_neg(),
@@ -187,12 +187,12 @@ impl Arena {
     }
 
     /// An integer term's value under `values`, where it has one: every
-    /// variable it reads is given, and nothing leaves `i128`.
+    /// variable it reads is given, and nothing leaves `i64`.
     pub fn int_value(
         &self,
         id: TermId,
-        values: &std::collections::BTreeMap<String, i128>,
-    ) -> Option<i128> {
+        values: &std::collections::BTreeMap<String, i64>,
+    ) -> Option<i64> {
         let v = |id: &TermId| self.int_value(*id, values);
         match self.get(id) {
             Term::Int(n) => Some(*n),
@@ -209,7 +209,7 @@ impl Arena {
     pub fn bool_value(
         &self,
         id: TermId,
-        values: &std::collections::BTreeMap<String, i128>,
+        values: &std::collections::BTreeMap<String, i64>,
     ) -> Option<bool> {
         let i = |id: &TermId| self.int_value(*id, values);
         let b = |id: &TermId| self.bool_value(*id, values);

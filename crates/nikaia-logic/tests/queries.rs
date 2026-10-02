@@ -21,7 +21,7 @@ fn check(arena: &Arena, facts: &[TermId], goal: TermId) -> Answer {
     answer
 }
 
-fn refuted(values: &[(&str, i128)]) -> Answer {
+fn refuted(values: &[(&str, i64)]) -> Answer {
     Answer::Refuted {
         model: Model {
             values: values.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
@@ -371,4 +371,31 @@ fn a_proof_is_written_as_alethe() {
     for rule in ["or_pos", "and_neg", "la_disequality", "resolution"] {
         assert!(proof.contains(rule), "{rule}\n{proof}");
     }
+}
+
+/// **A number is an `i64`** (ADR-265 D2): a combination whose coefficients
+/// leave it answers *unknown* for its reason, never a wrong answer. Here the
+/// facts hold at `x = 1, y = 1`, and eliminating either name multiplies a
+/// coefficient near `2^62` by `5` or `7`.
+#[test]
+fn a_step_that_leaves_i64_is_unknown_and_never_wrong() {
+    let mut a = Arena::new();
+    let (x, y) = (a.var("x"), a.var("y"));
+    let (big, near, five, seven) = (
+        a.int(i64::MAX / 2),
+        a.int(i64::MAX / 2 - 1),
+        a.int(5),
+        a.int(7),
+    );
+    let (one, two) = (a.int(1), a.int(2));
+    let (bx, ty) = (a.mul(big, x), a.mul(near, y));
+    let left = a.sub(bx, ty);
+    let first = a.ge(left, one);
+    let (fx, sy) = (a.mul(five, x), a.mul(seven, y));
+    let right = a.sub(fx, sy);
+    let second = a.le(right, two);
+    let falsum = a.bool(false);
+    let answer = check(&a, &[first, second], falsum);
+    assert!(!proved(&answer), "{answer:?}");
+    assert_eq!(answer, Answer::Unknown(Unknown::Overflow), "{answer:?}");
 }

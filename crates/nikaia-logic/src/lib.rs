@@ -121,9 +121,9 @@ pub enum Step {
     /// `by_left · left + by_right · right`, both multipliers positive.
     Combine {
         left: usize,
-        by_left: i128,
+        by_left: i64,
         right: usize,
-        by_right: i128,
+        by_right: i64,
     },
 }
 
@@ -134,5 +134,5 @@ pub enum Step {
 /// to zero as its bounds allow (D4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
-    pub values: std::collections::BTreeMap<String, i128>,
+    pub values: std::collections::BTreeMap<String, i64>,
 }

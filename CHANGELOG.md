@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.367] — 2026-10-02
+
+**The solver's numbers are `i64`** (ADR-265 D2, D8). `nikaia-logic` held its
+constants, coefficients, certificate multipliers and model values in an
+`i128`, a width Nikaia does not have ([ADR-252](docs/specification/adr/adr-252.md)
+keeps it out). They are `i64` now, so a port to Nikaia needs no new number
+type. A step that leaves `i64` answers *unknown* (overflow), never a wrong
+answer; a program literal no `i64` holds is not read, and its claim stays
+checked at run time. ADR-265 D2 records the rule and names the way further:
+exact integers of any size built from `u32` pieces, not a wider type.
+
+- **Nothing lost**: the 353 queries the prover's tests ask give the same
+  answers - 179 proved, every certificate checked, every Alethe proof `valid`
+  under Carcara.
+- `tests/queries.rs`: a query whose every elimination overflows is *unknown*.
+- The run-time checks the compiler writes still compare in Rust's `i128`, so
+  `x - 1 > 0` cannot overflow where it is checked; that is the lowering's
+  Rust, not a number of the language.
+
 ## [0.0.366] — 2026-10-02
 
 **A proof as Alethe** (ADR-265 D6). `nikaia_logic::alethe::write` writes
