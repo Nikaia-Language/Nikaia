@@ -36,7 +36,7 @@ pub fn write(query: &Query<'_>) -> String {
 
 /// A name as an SMT-LIB symbol: bare where it may be, quoted otherwise -
 /// `xs.len()` is `|xs.len()|`.
-fn symbol(name: &str) -> String {
+pub(crate) fn symbol(name: &str) -> String {
     let simple = !name.is_empty()
         && !name.starts_with(|c: char| c.is_ascii_digit())
         && name
@@ -49,7 +49,7 @@ fn symbol(name: &str) -> String {
     }
 }
 
-fn term(arena: &Arena, id: TermId) -> String {
+pub(crate) fn term(arena: &Arena, id: TermId) -> String {
     let t = |id: &TermId| term(arena, *id);
     let list = |op: &str, parts: &[TermId], empty: &str| match parts {
         [] => empty.to_string(),
@@ -73,7 +73,7 @@ fn term(arena: &Arena, id: TermId) -> String {
         Term::Ge(a, b) => format!("(>= {} {})", t(a), t(b)),
         Term::Gt(a, b) => format!("(> {} {})", t(a), t(b)),
         Term::Eq(a, b) => format!("(= {} {})", t(a), t(b)),
-        Term::Ne(a, b) => format!("(distinct {} {})", t(a), t(b)),
+        Term::Ne(a, b) => format!("(not (= {} {}))", t(a), t(b)),
         Term::And(parts) => list("and", parts, "true"),
         Term::Or(parts) => list("or", parts, "false"),
         Term::Not(a) => format!("(not {})", t(a)),

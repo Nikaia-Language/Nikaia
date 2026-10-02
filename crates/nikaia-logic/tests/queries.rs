@@ -287,3 +287,88 @@ fn a_model_is_found_through_the_eliminations() {
     let falsum = a.bool(false);
     assert!(proved(&check(&a, &[parity], falsum)));
 }
+
+/// Write the query's Alethe proof, and where `NIKAIA_CARCARA` names the
+/// Carcara binary, have it check the proof against the query's own SMT-LIB
+/// script.
+fn alethe_checked(query: &Query<'_>) -> String {
+    let proof = nikaia_logic::alethe::write(query).expect("a proof");
+    if let Some(carcara) = std::env::var_os("NIKAIA_CARCARA") {
+        let dir = std::env::temp_dir().join(format!(
+            "nikaia-alethe-{}-{}",
+            std::process::id(),
+            proof.len()
+        ));
+        std::fs::create_dir_all(&dir).expect("a directory");
+        std::fs::write(dir.join("q.smt2"), smtlib::write(query)).expect("the problem");
+        std::fs::write(dir.join("q.alethe"), &proof).expect("the proof");
+        let out = std::process::Command::new(carcara)
+            .arg("check")
+            .arg(dir.join("q.alethe"))
+            .arg(dir.join("q.smt2"))
+            .output()
+            .expect("carcara runs");
+        let said = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            said.trim(),
+            "valid",
+            "{proof}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    proof
+}
+
+/// **A proof as Alethe** (ADR-265 D6), written for another checker to check:
+/// a conjunction, whose refutation is one choice - an equality's two bounds,
+/// a combination, an integer tightening - and one that splits, through a
+/// disjunction and a `!=`, into choices folded back by resolution.
+#[test]
+fn a_proof_is_written_as_alethe() {
+    let mut a = Arena::new();
+    let (x, five, one) = (a.var("x"), a.int(5), a.int(1));
+    let (two, y) = (a.int(2), a.var("y"));
+    let fact = a.eq(x, five);
+    let twice = a.mul(two, y);
+    let odd = a.add(twice, one);
+    let parity = a.le(odd, x);
+    let above = a.ge(odd, x);
+    let goal = a.gt(x, one);
+    let facts = [fact, parity, above];
+    let query = Query {
+        arena: &a,
+        facts: &facts,
+        goal,
+    };
+    let proof = alethe_checked(&query);
+    assert!(proof.starts_with("(assume h0 (= x 5))\n"), "{proof}");
+    assert!(proof.contains(":rule la_generic"), "{proof}");
+    assert!(proof.contains("(cl) :rule resolution"), "{proof}");
+
+    // `mode == 1 → x - 1 > 0` with `x = 5`, and `y != 3` with `y >= 3`:
+    // the goal `y > 3 && (mode != 1 || x > 1)` splits into choices.
+    let (mode, three) = (a.var("mode"), a.int(3));
+    let is_one = a.eq(mode, one);
+    let taken = a.not(is_one);
+    let less = a.sub(x, one);
+    let zero = a.int(0);
+    let shifted = a.gt(less, zero);
+    let implied = a.or(vec![taken, shifted]);
+    let not_three = a.ne(y, three);
+    let at_least = a.ge(y, three);
+    let past = a.gt(y, three);
+    let bigger = a.gt(x, one);
+    let either = a.or(vec![taken, bigger]);
+    let goal = a.and(vec![past, either]);
+    let facts = [fact, implied, not_three, at_least];
+    let query = Query {
+        arena: &a,
+        facts: &facts,
+        goal,
+    };
+    let proof = alethe_checked(&query);
+    for rule in ["or_pos", "and_neg", "la_disequality", "resolution"] {
+        assert!(proof.contains(rule), "{rule}\n{proof}");
+    }
+}

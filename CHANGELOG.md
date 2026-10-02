@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.366] — 2026-10-02
+
+**A proof as Alethe** (ADR-265 D6). `nikaia_logic::alethe::write` writes
+the reference solver's proof of a query in Alethe, for a checker this crate
+does not trust. Each assertion is taken apart into clauses of comparison
+literals with Alethe's Boolean rules (`and`, `not_or`, `and_pos`, `and_neg`,
+`or_pos`, `or_neg`, `not_not`; a negated equality through `la_disequality`);
+every choice of one literal per clause is refuted by the solver, its
+certificate becoming `la_generic` lemmas - a bound read off a literal, a
+combination, an integer tightening, the final `c <= 0`; and a resolution tree
+folds the choices back to `(cl)`.
+
+- **Checked by Carcara**: all 179 queries the prover's tests prove, written
+  and checked, are `valid`, the 116 that split into cases among them.
+  `tests/queries.rs` runs Carcara where `NIKAIA_CARCARA` names it.
+- `smtlib::write` writes `!=` as `(not (= a b))`; `(distinct a b)` still
+  reads back.
+
 ## [0.0.365] — 2026-10-02
 
 **A contract crosses the package boundary** (ADR-266 D4-D7).

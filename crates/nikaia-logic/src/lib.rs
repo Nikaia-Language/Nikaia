@@ -15,8 +15,10 @@
 // * A *proved* answer carries a **certificate** that [`verify`] checks without
 //   trusting the solver that made it (D5).
 // * A query can be written as **SMT-LIB 2**, and read back from it, so that
-//   another solver can be asked the same question (D6).
+//   another solver can be asked the same question, and a one-case proof as
+//   **Alethe**, so that another checker can check it (D6).
 
+pub mod alethe;
 mod certificate;
 mod lia;
 pub mod smtlib;
