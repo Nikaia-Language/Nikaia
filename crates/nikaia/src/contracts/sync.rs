@@ -850,22 +850,6 @@ fn called(
     }
 }
 
-/// Every call by name in a block and the blocks inside it.
-///
-/// Shared with the trust analysis, which asks a different question of the same
-/// walk: `sync` asks what a call promises, provenance asks where its result
-/// came from.
-pub(super) fn walk_calls(parsed: &Parsed, block: &Block, f: &mut impl FnMut(&str)) {
-    for stmt in &block.stmts {
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Some(name) = super::trust::call_name(parsed, expr) {
-                f(&name);
-            }
-        });
-        visit_stmt_blocks(&stmt.node, &mut |inner| walk_calls(parsed, inner, f));
-    }
-}
-
 /// Every expression a statement holds, without descending into nested blocks -
 /// those are walked separately so that each keeps its own statement's span.
 pub(crate) fn visit_stmt(parsed: &Parsed, stmt: &Stmt, f: &mut impl FnMut(&Expr)) {

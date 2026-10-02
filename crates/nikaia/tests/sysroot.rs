@@ -336,3 +336,26 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
         "{std_module:#}"
     );
 }
+
+/// **The toolchain's files are one namespace, and say so** (ADR-047 D1, #125):
+/// two private functions of one name in two of them were lowered as one, and
+/// a call of the one met the other's parameters - an argument count refused
+/// about a function the caller never meant.
+#[test]
+fn two_tools_that_declare_one_name_are_refused() {
+    let dir = std::env::temp_dir().join(format!("nikaia-tools-twice-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory to work in");
+    std::fs::write(dir.join("a.nika"), "fn helper() -> i64 { return 1 }\n").expect("write a");
+    std::fs::write(
+        dir.join("b.nika"),
+        "fn helper(x: i64) -> i64 { return x }\n",
+    )
+    .expect("write b");
+    let refused = sysroot::lower_tools(&dir).expect_err("one name, two files");
+    let said = format!("{refused:#}");
+    assert!(
+        said.contains("`helper` is declared twice in this package"),
+        "{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

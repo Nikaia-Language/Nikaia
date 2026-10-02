@@ -282,11 +282,24 @@ fn read_unit(
 /// case for as long as it was the only rule there was, and served it badly:
 /// a sentence about two files, naming one of them twice.
 fn one_namespace(units: &[Unit]) -> Result<()> {
+    let files: Vec<(&Path, &Parsed)> = units
+        .iter()
+        .map(|unit| (unit.path.as_path(), &unit.parsed))
+        .collect();
+    declared_once(&files)
+}
+
+/// The same rule for any set of files that is one package: a project's, and
+/// `std`'s toolchain package (`sysroot::lower_tools`), whose files were lowered
+/// into one namespace without it - two private `a_call`s in two files were
+/// read as one, and a call of the one met the other's parameters (found
+/// moving `trust`'s walk into Nikaia, #125).
+pub(crate) fn declared_once(files: &[(&Path, &Parsed)]) -> Result<()> {
     let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
-    for unit in units {
-        for name in declared_names(&unit.parsed) {
+    for (path, parsed) in files {
+        for name in declared_names(parsed) {
             if let Some(first) = seen.get(&name) {
-                if first == &unit.path {
+                if first == path {
                     continue;
                 }
                 return Err(crate::diagnostics::refuse(format!(
@@ -294,10 +307,10 @@ fn one_namespace(units: &[Unit]) -> Result<()> {
                      All files of a package share their names. Rename one of the two, or \
                      keep one declaration and use it from the other file.",
                     first.display(),
-                    unit.path.display()
+                    path.display()
                 )));
             }
-            seen.insert(name, unit.path.clone());
+            seen.insert(name, path.to_path_buf());
         }
     }
     Ok(())

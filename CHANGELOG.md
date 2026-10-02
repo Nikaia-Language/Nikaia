@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.336] — 2026-10-02
+
+**`--trust` reads the program with the walk in Nikaia** (#125, ADR-250). The
+walk of `tools/foreign.nika` meets calls as well as paths now (`Seen`), and
+for a call by name it says what the call hands a parameter called `root`
+where the callee has one. `contracts::trust` reads its reasons and its roots
+off that list, and its own two walks - `sync::walk_calls` and `roots_of` -
+are gone: one walk of the tree, two readers. 11.8 % of the toolchain is
+Nikaia, up from 11.7 %.
+
+Found moving it, each fixed where it was (ADR-250 D3):
+
+- **The toolchain's files were one namespace and did not say so.** Two
+  private `a_call`s in two files were lowered as one, and a call of the one met
+  the other's parameters. `lower-std` refuses a name declared in two files
+  with the project's sentence now (ADR-047 D1, `modules::declared_once`), and
+  `tests/sysroot.rs` holds it.
+- **A parameter of code was handed an owned value where it takes a view.**
+  `root_at(name)` for a `root_at: fn(ref String) -> i64` wrote `root_at(name)`
+  below, a `String` where the closure takes a `&str`. What a code parameter
+  takes as a view is lent to it now, as a declared function's argument is
+  (`tests/function_types.rs`).
+
 ## [0.0.335] — 2026-10-02
 
 **`dsl` is Nikaia** (#125, ADR-250). The rest of the compiler's `dsl` moved
