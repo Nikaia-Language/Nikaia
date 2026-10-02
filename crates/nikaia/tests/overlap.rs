@@ -371,3 +371,52 @@ fn the_overlap_report_reads_the_verdicts_rather_than_asserting_them() {
         "a block that does meet on nothing still says so:\n{free}"
     );
 }
+
+/// **The report `--overlaps` prints** (D3, D6), written in Nikaia since
+/// 0.0.364 (`tools/order.nika`): each block under the function that writes
+/// it, the header read off the pairs, and each branch with the half of D6 it
+/// falls in.
+#[test]
+fn the_overlap_report_says_what_each_block_was_allowed() {
+    let report = |source: &str| {
+        let parsed = parse_to_ast(source).expect("the source parses");
+        let own = Ledger::infer(&parsed);
+        let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+        let first = |_: &nikaia::ast::Spanned<nikaia::ast::Stmt>| true;
+        nikaia::contracts::order::overlap_report(&parsed, &own, &library, &first)
+    };
+    let three = report(THREE_READS);
+    assert!(
+        three.starts_with("main: an `overlap` of 3 branches, which meet on nothing\n"),
+        "{three}"
+    );
+    assert_eq!(three.lines().count(), 4, "{three}");
+    assert!(
+        three
+            .lines()
+            .skip(1)
+            .all(|line| line.ends_with("fs::read_to_string")
+                && (line.starts_with("    started first          ")
+                    || line.starts_with("    runs while they wait   "))),
+        "{three}"
+    );
+    let printing = report(
+        "fn main() {\n\
+         \x20   let r = overlap {\n\
+         \x20       println(\"x\")\n\
+         \x20       println(\"y\")\n\
+         \x20   }\n\
+         }",
+    );
+    assert!(
+        printing.starts_with(
+            "main: an `overlap` of 2 branches, and branches 1 and 2 may not run together - \
+             both touch stdout, and one writes to it\n"
+        ),
+        "{printing}"
+    );
+    assert_eq!(
+        report("fn main() {\n    println(\"x\")\n}"),
+        "this program writes no `overlap { … }` block.\n"
+    );
+}

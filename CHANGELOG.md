@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.364] — 2026-10-02
+
+**The `--overlaps` report is Nikaia** (#125, ADR-250). What every
+`overlap { … }` block was allowed (ADR-050 D3) - under the function that
+writes it, the header read off the pairs (the first two branches that may not
+run together, and why), and each branch with the half of D6 it falls in -
+moved into `tools/order.nika`, so `contracts::order` holds nothing but
+adapters now. The blocks a body holds are still found by the emitter's walk,
+and whether a branch pauses is still its answer. `tests/overlap.rs` holds the
+report's text, which nothing did. 18.1 % of the toolchain is Nikaia.
+
 ## [0.0.363] — 2026-10-02
 
 **A statement is reduced to an operation in Nikaia** (#125, ADR-250). The

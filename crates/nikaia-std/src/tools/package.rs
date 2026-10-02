@@ -3746,6 +3746,94 @@ fn an_arm_throws(arms: &Vec<MatchArm>, bound: bool) -> bool {
     false
 }
 
+pub fn overlap_report(items: &Vec<Spanned<Item>>, names: &winnow_grammar::InternerContext, walking: &Walking<'_>, overlaps_in: &impl Fn(&Block) -> Vec<Block>, pauses: &impl Fn(&Spanned<Stmt>) -> bool) -> String {
+    let mut out: String = String::from("");
+    for item in items.iter() {
+        match &item.node {
+            Item::Fn { .. } => block_report(&item.node, None, names, walking, overlaps_in, pauses, &mut out),
+            Item::Impl { target, methods, .. } => {
+                let owner: Option<String> = Some(names.resolve(target.name).to_owned());
+                for method in methods.iter() { block_report(&method.node, (owner).as_deref(), names, walking, overlaps_in, pauses, &mut out); }
+            },
+            _ => { },
+        }
+    }
+    if (out.len() as i64) == 0 { out.push_str("this program writes no `overlap { … }` block.\n"); }
+    out
+}
+
+fn block_report(item: &Item, target: Option<&str>, names: &winnow_grammar::InternerContext, walking: &Walking<'_>, overlaps_in: &impl Fn(&Block) -> Vec<Block>, pauses: &impl Fn(&Spanned<Stmt>) -> bool, out: &mut String) {
+    match item {
+        Item::Fn { name, body, .. } => {
+            let name = *name;
+            let own_name = function_name(names, name);
+            let key = keyed(target, &own_name);
+            for block in overlaps_in(body) { one_block_report(&key, &block, names, walking, pauses, out); }
+        },
+        _ => { },
+    }
+}
+
+fn keyed(target: Option<&str>, own_name: &str) -> String {
+    let owner = match target { Some(__nikaia_value) => __nikaia_value, None => return own_name.to_owned() };
+    format!("{}::{}", owner, own_name)
+}
+
+fn one_block_report(key: &str, block: &Block, names: &winnow_grammar::InternerContext, walking: &Walking<'_>, pauses: &impl Fn(&Spanned<Stmt>) -> bool, out: &mut String) {
+    if (block.stmts.len() as i64) == 0 { return; }
+    let mut operations: Vec<Operation> = vec![];
+    let mut present: Vec<bool> = vec![];
+    let mut lines: Vec<String> = vec![];
+    for stmt in block.stmts.iter() {
+        let answer = accounted(&stmt.node, names, walking);
+        let named = match answer {
+            Accounted::Operation(ref operation) => operation.callee.to_owned(),
+            _ => String::from("…"),
+        };
+        match answer {
+            Accounted::Operation(ref operation) => {
+                operations.push(operation.clone());
+                present.push(true);
+            },
+            _ => {
+                operations.push(Operation { binds: None, mentions: collections::BTreeSet::new(), reaches: vec![], callee: String::from("") });
+                present.push(false);
+            },
+        }
+        let when = if pauses(stmt) { "started first" } else { "runs while they wait" };
+        lines.push(format!("    {} {}", padded_right(when, 22), named));
+    }
+    let count = block.stmts.len() as i64;
+    let refused = first_refused(&operations, &present);
+    if (refused.len() as i64) == 0 { out.push_str(&format!("{}: an `overlap` of {} branches, which meet on nothing\n", key, count)); } else { out.push_str(&refused_header(key, count, &operations, &refused)); }
+    for line in lines.iter() {
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
+fn first_refused(operations: &Vec<Operation>, present: &Vec<bool>) -> Vec<i64> {
+    for i in 0..operations.len() as i64 { for j in i + 1..operations.len() as i64 { if *nikaia_std::index::get(&present, nikaia_std::index::at(i)) && *nikaia_std::index::get(&present, nikaia_std::index::at(j)) && !verdict(nikaia_std::index::get(&operations, nikaia_std::index::at(i)), nikaia_std::index::get(&operations, nikaia_std::index::at(j))).is_overlap() { return vec![i, j]; } } }
+    vec![]
+}
+
+fn refused_header(key: &str, count: i64, operations: &Vec<Operation>, pair: &Vec<i64>) -> String {
+    let first = *nikaia_std::index::get(&pair, 0) + 1;
+    let second = *nikaia_std::index::get(&pair, 1) + 1;
+    let why = verdict(nikaia_std::index::get(&operations, nikaia_std::index::at(*nikaia_std::index::get(&pair, 0))), nikaia_std::index::get(&operations, nikaia_std::index::at(*nikaia_std::index::get(&pair, 1)))).why();
+    format!("{}: an `overlap` of {} branches, and branches {} and {} may not run together - {}\n", key, count, first, second, why)
+}
+
+fn padded_right(text: &str, width: i64) -> String {
+    let mut out = text.to_owned();
+    let mut have = text.chars().count() as i64;
+    while have < width {
+        out.push(' ');
+        have += 1;
+    }
+    out
+}
+
 
 // --- parse_notes.nika ---
 
@@ -9192,7 +9280,7 @@ pub mod names {
 }
 pub mod order {
     #[allow(unused_imports)]
-    pub use super::{Operation, Accounted, Verdict, verdict, group_verdict, group_of, accounted, OneCall, diverts_within};
+    pub use super::{Operation, Accounted, Verdict, verdict, group_verdict, group_of, accounted, OneCall, diverts_within, overlap_report};
 }
 pub mod parse_notes {
     #[allow(unused_imports)]
