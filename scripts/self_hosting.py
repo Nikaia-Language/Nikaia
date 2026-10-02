@@ -28,7 +28,7 @@ TOOLS = ROOT / "crates" / "nikaia-std" / "src" / "tools"
 # HTTP server, which a program runs, and not a piece of the compiler.
 COMPILER_NIKA = {
     "spelling.nika": "check: *did you mean* (0.0.238)",
-    "dsl.nika": "dsl: a body's parameters (0.0.248)",
+    "dsl.nika": "dsl: a body's parameters, the shadow types, the drivers and the check of a call (0.0.248, 0.0.335)",
     "rust.nika": "describe: reading a crate's Rust (ADR-195)",
     "fixed.nika": "fixed: FNV-1a and CHD (0.0.250)",
     "template.nika": "emit::template: the HTML scan (0.0.252)",

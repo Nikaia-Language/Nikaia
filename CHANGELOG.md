@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.335] — 2026-10-02
+
+**`dsl` is Nikaia** (#125, ADR-250). The rest of the compiler's `dsl` moved
+into `tools/dsl.nika` beside the scan of a body that went first (0.0.248):
+whether a statement's holes are deferred, the shadow type's name, the shadow
+types a program needs, the functions that take a statement's parameters, and
+the check of every call that hands them over (`NK1109`, `NK1112`, `NK1113`).
+The compiler's `dsl` is the calls. 11.7 % of the toolchain is Nikaia, up from
+11.1 %.
+
+Found moving it, each fixed where it was (ADR-250 D3), and held by
+`tests/defects_found_running.rs`:
+
+- **`?? return` at the end of a line took the next line as its value.** In a
+  function that returns nothing, `let x = y ?? return` and then
+  `names.push(…)` lowered to `return names.push(…)` - the push ran only where
+  the `return` did. A `return` inside an expression hands back what stands on
+  its line now, ADR-135 D3's rule for an index.
+- **`a ?? b` where `b` may be `null` too was read as a `T`**, and its fallback
+  converted into what the option holds, which an option is not. It is the
+  first that has a value, or `null` - a `T?`, lowered to `or_else`
+  (Part I 3.5).
+- **A list of text asked whether it holds a `ref String`** handed the list's
+  own `contains` a `&str` where it takes a `&String`. It is compared element by
+  element now (`nikaia_std::list::contains`), and the copy `ledger.nika` wrote
+  to get past it (`ref name.clone()`) is gone.
+- **`collections::BTreeMap::remove` had no entry in `std`'s ledger**, so a
+  call of it read as one that may pause, and so did every function around it.
+
+`tests/range_spelling.rs` reads only a `for` head for the old range spelling:
+a message that says *in* and names `...args` is text.
+
 ## [0.0.334] — 2026-10-02
 
 **The first walk of the tree in Nikaia** (#125, ADR-250). `foreign`'s walk -

@@ -113,8 +113,13 @@ fn no_nika_source_in_the_tree_was_left_on_the_old_meaning() {
                     continue;
                 }
                 // A `for` head is the shape the corpus writes; an inclusive one
-                // would be deliberate, and none is.
-                if code.contains(" in ") && code.contains("..") && !code.contains("..<") {
+                // would be deliberate, and none is. Only a head: a message that
+                // says *in* and names `...args` is text, not a range.
+                if code.starts_with("for ")
+                    && code.contains(" in ")
+                    && code.contains("..")
+                    && !code.contains("..<")
+                {
                     left.push(format!("{}:{}: {}", path.display(), n + 1, code));
                 }
             }

@@ -940,7 +940,7 @@ fn pointed_into(result: ref String, order: ref Vec[String]) -> Vec[String] {
     let mut named: Vec[String] = []
     for group in groups {
         for name in group {
-            if !named.contains(ref name.clone()) {
+            if !named.contains(name) {
                 named.push(name.clone())
             }
         }

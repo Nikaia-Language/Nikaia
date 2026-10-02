@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.334 (Draft)
+**Version:** 0.0.335 (Draft)
 **Date:** 2026-10-02
 
 ---
@@ -908,7 +908,8 @@ A member of a nullable type is reached through an operator that handles the
   there as it does anywhere.
 * **Null coalescing (`??`):** supplies a fallback value where an expression is
   `null`. A chain may be written: `a ?? b ?? c` takes the first that has a
-  value.
+  value. Where the last fallback may be `null` too, so may the answer: `a ?? b`
+  with a `b: T?` is a `T?`.
 
 ```nika
 // If find_user returns null, 'name' becomes null.
@@ -2162,7 +2163,9 @@ let user = find(id) ?? throw NotFound(id)
 
 A `throw` leaves the function and makes it `throws`, a `break` needs a loop,
 and a statement after a `break` in the same block is refused with `NK1133`
-(3.3).
+(3.3). What a `return` written inside an expression hands back stands on its
+line: `let x = y ?? return` at the end of one returns nothing, and the next
+line is the next statement.
 
 **Propagation happens on its own, and nothing marks it.** A call that can fail
 stands inside a function that declares `throws`. There is no operator and no

@@ -749,3 +749,53 @@ fn a_return_in_a_fallback_and_a_variant_part_are_wrapped() {
         "named\nnothing\n1 2\n1 -1\n2\n0\n",
     );
 }
+
+/// **Three found moving `dsl` into Nikaia** (#125), each a program the
+/// checker accepted and `rustc` refused, or one that ran other than written:
+///
+/// * `?? return` at the end of a line took the next line's statement as the
+///   value it returned, so the push below it never ran;
+/// * `a ?? b` with a `b` that may be `null` too was read as a `T` and its
+///   fallback converted into one;
+/// * a list of text asked whether it holds a `ref String` handed the list's
+///   own `contains` a `&str`.
+#[test]
+fn a_jump_a_fallback_and_a_list_of_text() {
+    runs(
+        "dsl-moves",
+        "fn first(xs: ref Vec[String]) -> String? {\n\
+         \x20   if xs.len() > 0 {\n\
+         \x20       return xs[0].clone()\n\
+         \x20   }\n\
+         \x20   return null\n\
+         }\n\
+         \n\
+         fn either(a: ref Vec[String], b: ref Vec[String]) -> String? {\n\
+         \x20   let found = first(a) ?? first(b)\n\
+         \x20   return found\n\
+         }\n\
+         \n\
+         fn keep(given: String?, mut into: Vec[String]) {\n\
+         \x20   let one = given ?? return\n\
+         \x20   into.push(one)\n\
+         }\n\
+         \n\
+         fn holds(xs: ref Vec[String], name: ref String) -> bool {\n\
+         \x20   return xs.contains(name)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let none: Vec[String] = []\n\
+         \x20   let some: Vec[String] = [\"x\"]\n\
+         \x20   println(either(none, some) ?? \"-\")\n\
+         \x20   println(either(none, none) ?? \"-\")\n\
+         \x20   let mut kept: Vec[String] = []\n\
+         \x20   keep(\"a\", kept)\n\
+         \x20   keep(null, kept)\n\
+         \x20   println(kept.len())\n\
+         \x20   println(holds(some, \"x\"))\n\
+         \x20   println(holds(some, \"y\"))\n\
+         }\n",
+        "x\n-\n1\ntrue\nfalse\n",
+    );
+}

@@ -673,6 +673,352 @@ fn a_name_goes_on(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='
 // this was written - see `contracts::sync`.
 fn a_name_begins(c: char) -> bool { matches!(c, 'a'..='z' | 'A'..='Z' | '_') }
 
+const TEMPLATE: &str = "html";
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn is_deferred(target: &str, body: &str) -> bool { target != TEMPLATE && (parameters(body).len() as i64) > 0 }
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn type_name(parameters: &Vec<String>) -> String {
+    let mut names = parameters.to_owned();
+    names.sort();
+    let joined = joined_by(&names, "_");
+    format!("NikaiaDslParams_{}", joined)
+}
+
+pub fn shadow_types(words: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>) -> collections::BTreeMap<String, Vec<String>> {
+    let mut statements: Vec<(String, String)> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Fn { body, .. } => statements_in_block(body, words, &mut statements),
+            Item::Impl { methods, .. } => {
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { body, .. } => statements_in_block(body, words, &mut statements),
+                        _ => { },
+                    }
+                }
+            },
+            Item::Test { body, .. } => statements_in_block(body, words, &mut statements),
+            Item::Bench { body, .. } => statements_in_block(body, words, &mut statements),
+            _ => { },
+        }
+    }
+    let mut types: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for (target, content) in statements.iter() {
+        if is_deferred(target, content) {
+            let found = parameters(content);
+            let named = type_name(&found);
+            if types.contains_key(&named) { continue; }
+            types.insert(named, found);
+        }
+    }
+    types
+}
+
+pub fn drivers(words: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>) -> Vec<String> {
+    let mut names: Vec<String> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Impl { methods, .. } => { for method in methods.iter() { a_driver(&method.node, words, &mut names); } },
+            _ => a_driver(&item.node, words, &mut names),
+        }
+    }
+    names
+}
+
+fn a_driver(item: &Item, words: &winnow_grammar::InternerContext, names: &mut Vec<String>) {
+    match item {
+        Item::Fn { name, spread, .. } => {
+            let name = *name; let spread = *spread;
+            if spread.is_some() {
+                let named = match name { Some(__nikaia_value) => __nikaia_value, None => return };
+                names.push(words.resolve(named).to_owned());
+            }
+        },
+        _ => { },
+    }
+}
+
+pub fn check(words: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>) -> Vec<Finding> {
+    let takers = drivers(words, items);
+    let mut found: Vec<Finding> = vec![];
+    for item in items.iter() {
+        match &item.node {
+            Item::Fn { body, .. } => checked_body(body, words, &takers, &mut found),
+            Item::Impl { methods, .. } => {
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { body, .. } => checked_body(body, words, &takers, &mut found),
+                        _ => { },
+                    }
+                }
+            },
+            Item::Test { body, .. } => checked_body(body, words, &takers, &mut found),
+            Item::Bench { body, .. } => checked_body(body, words, &takers, &mut found),
+            _ => { },
+        }
+    }
+    found
+}
+
+fn checked_body(body: &Block, words: &winnow_grammar::InternerContext, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    let mut bound: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for stmt in body.stmts.iter() {
+        match &stmt.node {
+            Stmt::Let { names, value, .. } => {
+                if (names.len() as i64) != 1 { continue; }
+                let text = words.resolve(*nikaia_std::index::get(&names, 0)).to_owned();
+                let deferred = deferred_parameters(value, words);
+                if deferred.is_some() { bound.insert(text, nikaia_std::index::or(deferred, || vec![].into())); } else { bound.remove(&text); }
+            },
+            _ => { },
+        }
+        calls_in_statement(&stmt.node, &stmt.span, words, &bound, takers, found);
+    }
+}
+
+fn deferred_parameters(value: &Expr, words: &winnow_grammar::InternerContext) -> Option<Vec<String>> {
+    match value {
+        Expr::Dsl { target, content, .. } => { let target = *target; if is_deferred(words.resolve(target), content) { Some(parameters(content)) } else { None } },
+        _ => None,
+    }
+}
+
+fn calls_in_statement(stmt: &Stmt, span: &Span, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    match stmt {
+        Stmt::Let { value, .. } => calls_in(value, span, words, bound, takers, found),
+        Stmt::Comptime { value, .. } => calls_in(value, span, words, bound, takers, found),
+        Stmt::Expr(value) => calls_in(value, span, words, bound, takers, found),
+        Stmt::Return(value) => calls_in(match value { Some(__nikaia_value) => __nikaia_value, None => return }, span, words, bound, takers, found),
+        Stmt::Assign { target, value, .. } => {
+            calls_in(target, span, words, bound, takers, found);
+            calls_in(value, span, words, bound, takers, found);
+        },
+        Stmt::For { iter, .. } => calls_in(iter, span, words, bound, takers, found),
+        Stmt::While { cond, .. } => calls_in(cond, span, words, bound, takers, found),
+        _ => { },
+    }
+}
+
+fn calls_in_block(block: &Block, span: &Span, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    for stmt in block.stmts.iter() {
+        calls_in_statement(&stmt.node, span, words, bound, takers, found);
+        match &stmt.node {
+            Stmt::While { body, .. } => calls_in_block(body, span, words, bound, takers, found),
+            Stmt::For { body, .. } => calls_in_block(body, span, words, bound, takers, found),
+            _ => { },
+        }
+    }
+}
+
+fn calls_in(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    a_call(expr, span, words, bound, takers, found);
+    match expr {
+        Expr::MethodCall { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            calls_in(receiver, span, words, bound, takers, found);
+            for arg in args.iter() { calls_in(arg, span, words, bound, takers, found); }
+        },
+        Expr::SafeMethod { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            calls_in(receiver, span, words, bound, takers, found);
+            for arg in args.iter() { calls_in(arg, span, words, bound, takers, found); }
+        },
+        Expr::Call { func, args, .. } => {
+            let func = nikaia_std::boxed::open(func);
+            calls_in(func, span, words, bound, takers, found);
+            for arg in args.iter() { calls_in(arg, span, words, bound, takers, found); }
+        },
+        Expr::Block(block) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::Overlap(block) => calls_in_block(block, span, words, bound, takers, found),
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            calls_in(cond, span, words, bound, takers, found);
+            calls_in_block(then_branch, span, words, bound, takers, found);
+            calls_in_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, span, words, bound, takers, found);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            calls_in(lhs, span, words, bound, takers, found);
+            calls_in(rhs, span, words, bound, takers, found);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); calls_in(expr, span, words, bound, takers, found) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); calls_in(inner, span, words, bound, takers, found) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); calls_in(base, span, words, bound, takers, found) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); calls_in(base, span, words, bound, takers, found) },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            calls_in(expr, span, words, bound, takers, found);
+            calls_in_block(handler, span, words, bound, takers, found);
+        },
+        _ => { },
+    }
+}
+
+fn statements_in_block(block: &Block, words: &winnow_grammar::InternerContext, out: &mut Vec<(String, String)>) {
+    for stmt in block.stmts.iter() {
+        match &stmt.node {
+            Stmt::Let { value, .. } => statements_in(value, words, out),
+            Stmt::Comptime { value, .. } => statements_in(value, words, out),
+            Stmt::Expr(value) => statements_in(value, words, out),
+            Stmt::Return(value) => {
+                let returned = match value { Some(__nikaia_value) => __nikaia_value, None => continue };
+                statements_in(returned, words, out);
+            },
+            Stmt::Assign { target, value, .. } => {
+                statements_in(target, words, out);
+                statements_in(value, words, out);
+            },
+            Stmt::For { iter, body, .. } => {
+                statements_in(iter, words, out);
+                statements_in_block(body, words, out);
+            },
+            Stmt::While { cond, body } => {
+                statements_in(cond, words, out);
+                statements_in_block(body, words, out);
+            },
+            _ => { },
+        }
+    }
+}
+
+fn statements_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut Vec<(String, String)>) {
+    match expr {
+        Expr::Dsl { target, content, .. } => { let target = *target; out.push(a_statement(words.resolve(target), content)) },
+        Expr::MethodCall { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            statements_in(receiver, words, out);
+            for arg in args.iter() { statements_in(arg, words, out); }
+        },
+        Expr::SafeMethod { receiver, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            statements_in(receiver, words, out);
+            for arg in args.iter() { statements_in(arg, words, out); }
+        },
+        Expr::Call { func, args, .. } => {
+            let func = nikaia_std::boxed::open(func);
+            statements_in(func, words, out);
+            for arg in args.iter() { statements_in(arg, words, out); }
+        },
+        Expr::Block(block) => statements_in_block(block, words, out),
+        Expr::Overlap(block) => statements_in_block(block, words, out),
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            statements_in(cond, words, out);
+            statements_in_block(then_branch, words, out);
+            statements_in_block(match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, words, out);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            statements_in(lhs, words, out);
+            statements_in(rhs, words, out);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); statements_in(expr, words, out) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); statements_in(inner, words, out) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); statements_in(base, words, out) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); statements_in(base, words, out) },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            statements_in(expr, words, out);
+            statements_in_block(handler, words, out);
+        },
+        _ => { },
+    }
+}
+
+fn a_statement(target: &str, content: &str) -> (String, String) { (target.to_owned(), content.to_owned()) }
+
+fn a_call(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    match expr {
+        Expr::MethodCall { receiver, method, args, config } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            let subject = bound_subject(receiver, words, bound).or_else(|| bound_argument(args, words, bound));
+            a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
+        },
+        Expr::SafeMethod { receiver, method, args, config } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            let subject = bound_subject(receiver, words, bound).or_else(|| bound_argument(args, words, bound));
+            a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
+        },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            a_parameter_call(&callee_name(func, words), &option_names(config, words), bound_argument(args, words, bound), span, bound, takers, found);
+        },
+        _ => { },
+    }
+}
+
+fn callee_name(func: &Expr, words: &winnow_grammar::InternerContext) -> String {
+    match func {
+        Expr::Variable(name) => { let name = *name; words.resolve(name).to_owned() },
+        _ => String::from(""),
+    }
+}
+
+fn bound_subject(subject: &Expr, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>) -> Option<String> {
+    match subject {
+        Expr::Variable(name) => { let name = *name; if bound.contains_key(words.resolve(name)) { Some(words.resolve(name).to_owned()) } else { None } },
+        _ => None,
+    }
+}
+
+fn bound_argument(args: &Vec<Expr>, words: &winnow_grammar::InternerContext, bound: &collections::BTreeMap<String, Vec<String>>) -> Option<String> {
+    for arg in args.iter() {
+        let named = bound_subject(arg, words, bound);
+        if named.is_some() { return named; }
+    }
+    None
+}
+
+fn a_parameter_call(callee: &str, passed: &Vec<String>, subject: Option<String>, span: &Span, bound: &collections::BTreeMap<String, Vec<String>>, takers: &Vec<String>, found: &mut Vec<Finding>) {
+    if (passed.len() as i64) == 0 { return; }
+    let name = match subject { Some(__nikaia_value) => __nikaia_value, None => return };
+    let declared = match *nikaia_std::index::get(&bound, &name) { Some(__nikaia_value) => __nikaia_value, None => return };
+    if (callee.len() as i64) == 0 || !nikaia_std::list::contains(&takers, callee) {
+        let shown: String = if (callee.len() as i64) == 0 { String::from("this call") } else { callee.to_owned() };
+        let first: String = if (passed.len() as i64) > 0 { (*nikaia_std::index::get(&passed, 0)).to_owned() } else { String::from("") };
+        let reached = parameter_list(&passed);
+        found.push(refusal("NK1109", span.clone(), format!("`{}` has no option called `{}`.", shown, first), vec![format!("`{}` is a `dsl` statement, and its parameters go to a driver: a function declared with `...args: Self::dsl`. Nothing in this file declares `{}` that way, so {} would reach nothing.", name, shown, reached)], format!("Hand `{}` to a driver, a method declared `run(ref self, statement: ref String; ...args: Self::dsl)`, and pass the parameters there: `driver.run({}; {}: …)`.", name, name, first)));
+        return;
+    }
+    let listed = parameter_list(&declared);
+    for parameter in declared.iter() { if !nikaia_std::list::contains(&passed, parameter) { found.push(refusal("NK1112", span.clone(), format!("`{}` needs `:{}`, but this call doesn't pass it.", name, parameter), vec![format!("The statement's parameters are {}.", listed)], format!("Pass it after the `;`: `{}: …`.", parameter))); } }
+    for given in passed.iter() {
+        if nikaia_std::list::contains(&declared, given) { continue; }
+        let note: String = if (declared.len() as i64) == 0 { format!("`{}` has no parameters at all.", name) } else { format!("The statement's parameters are {}.", listed) };
+        let near = nearest_parameter(given, &declared);
+        let help: String = if near.is_some() {
+            let one = nikaia_std::index::or(near, || "".into());
+            format!("Did you mean `{}`?", one)
+        } else { format!("Add `:{}` to the statement, or remove it here.", given) };
+        found.push(refusal("NK1113", span.clone(), format!("`{}` has no parameter called `:{}`.", name, given), vec![note], help));
+    }
+}
+
+fn option_names(config: &Vec<ConfigArg>, words: &winnow_grammar::InternerContext) -> Vec<String> {
+    let mut passed: Vec<String> = vec![];
+    for setting in config.iter() { passed.push(words.resolve(setting.name).to_owned()); }
+    passed
+}
+
+fn nearest_parameter(name: &str, declared: &Vec<String>) -> Option<String> {
+    for candidate in declared.iter() { if one_edit_apart(name, candidate) { return Some(candidate.to_owned()); } }
+    None
+}
+
+fn parameter_list(names: &Vec<String>) -> String {
+    let mut out: String = String::from("");
+    for k in 0..names.len() as i64 {
+        if k > 0 { out.push_str(", "); }
+        let one = (*nikaia_std::index::get(&names, nikaia_std::index::at(k))).to_owned();
+        out.push_str(&format!("`:{}`", one));
+    }
+    out
+}
+
 
 // --- findings.nika ---
 
@@ -1572,7 +1918,7 @@ pub fn read(written: &str) -> Result<Ledger, nikaia_std::error::Thrown<Refused>>
     }
     let mut done: Vec<String> = vec![];
     for (trait_name, _) in answers.iter() {
-        if !done.contains(trait_name) {
+        if !nikaia_std::list::contains(&done, trait_name) {
             let mut types: collections::BTreeSet<String> = collections::BTreeSet::new();
             for (other, answering) in answers.iter() { if other == trait_name { types.insert(answering.to_owned()); } }
             ledger.implementations.insert(trait_name.to_owned(), types);
@@ -2135,12 +2481,12 @@ fn pointed_into(result: &str, order: &Vec<String>) -> Vec<String> {
     for group in groups.iter() {
         for name in group.iter() {
             let name = *name;
-            if !named.contains(&name.to_owned()) { named.push(name.to_owned()); }
+            if !nikaia_std::list::contains(&named, name) { named.push(name.to_owned()); }
         }
     }
     let mut borrows: Vec<String> = vec![];
-    for name in order.iter() { if named.contains(name) { borrows.push(name.to_owned()); } }
-    for name in named.iter() { if !borrows.contains(name) { borrows.push(name.to_owned()); } }
+    for name in order.iter() { if nikaia_std::list::contains(&named, name) { borrows.push(name.to_owned()); } }
+    for name in named.iter() { if !nikaia_std::list::contains(&borrows, name) { borrows.push(name.to_owned()); } }
     borrows
 }
 
@@ -5094,7 +5440,7 @@ impl Signature {
         for (name, ty) in self.params.iter() {
             if !inside.is_empty() { inside.push_str(", "); }
             if name == "self" { inside.push_str(&ty.text()); } else {
-                if self.mutable.contains(name) { inside.push_str("mut "); }
+                if nikaia_std::list::contains(&self.mutable, name) { inside.push_str("mut "); }
                 inside.push_str(&format!("{}: {}", name, ty.text()));
             }
         }
@@ -5658,7 +6004,7 @@ pub mod crossing {
 }
 pub mod dsl {
     #[allow(unused_imports)]
-    pub use super::{parameters};
+    pub use super::{parameters, is_deferred, type_name, shadow_types, drivers, check};
 }
 pub mod findings {
     #[allow(unused_imports)]
