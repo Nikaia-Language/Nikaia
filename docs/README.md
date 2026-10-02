@@ -88,6 +88,11 @@ is normative and nothing may depend on it to know what a program means.
   can be silently wrong, where the syntax will make people curse, and the order
   in which turning it inside out would pay. Every claim reproduced with a probe
   or quoted from the page.
+* [`solver-workload.md`](solver-workload.md) — what the prover asks its
+  solver and where the time goes: 1 697 queries of at most four variables,
+  83 % of them bounds on single variables or differences, 4.2 µs each, and
+  the one pattern - an equality with a coefficient - behind every query it
+  cannot answer. The numbers [ADR-267](specification/adr/adr-267.md) D1 rests on.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.

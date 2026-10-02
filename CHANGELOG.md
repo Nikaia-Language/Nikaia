@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.369] — 2026-10-02
+
+**ADR-267: the solver's architecture**, decided before its algorithms. The
+goal is a universal solver that wins SMT-LIB's QF_LIA against z3 and cvc5 and
+then widens; ADR-265 D4 (deterministic, a budget in work) and a small checker
+are fixed conditions. No code changes.
+
+- **The workload, measured** (`docs/solver-workload.md`, tools in
+  `benches/solver-workload/`): the 353 recorded queries and all 1 697 the test
+  suite asks. At most four variables and 12 atoms; 83 % interval or difference
+  atoms; 4.2 µs to solve on average, 58 % of it in Fourier-Motzkin; the prover
+  is 1-6 % of `nikaia lower`. **92 queries are missed**, all an equality with a
+  coefficient 2 (`blank = 2·n`, `blank = 1`): 56 are provable, 36 satisfiable.
+  z3 agrees with every answer given; z3 and cvc5 were timed on the same files.
+- **Decided**: `u32` variables and sparse rows with a dense eight-lane kernel
+  (D2); an `i64` fast path with deterministic promotion to big integers and
+  fractions (D3); one proof log - LRAT-like clauses, Farkas, Chvátal-Gomory
+  rounding, splits and floor extensions - and the cuts it admits, with the
+  checker under 1 500 lines (D4); CDCL(T) as the skeleton with one theory
+  interface and allocation-free fast paths (D5); model-based theory
+  combination over an e-graph (D6); a strategy layer switching only at work
+  counts (D7); a result cache re-checked on every hit, shared lemmas only as a
+  committed input (D8); the core's memory layout and where SIMD goes (D9);
+  SMT-LIB and differential fuzzing as the measuring rod (D10); five build
+  steps with their criteria, the port to Nikaia after the third (D12).
+- ADR-265 is amended in D8's order only.
+- Open: SMT-LIB's benchmarks are on Zenodo, which this environment cannot
+  reach; overflow-reporting arithmetic in Nikaia for the port; the `Real`
+  sort.
+
 ## [0.0.368] — 2026-10-02
 
 **The solver splits where a branch needs it** (ADR-265 D4, D5). It took a
