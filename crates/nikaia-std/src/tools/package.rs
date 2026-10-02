@@ -4097,6 +4097,153 @@ pub async fn rust_sources(src: &str) -> Result<collections::BTreeMap<String, Str
 }
 
 
+// --- specbook.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecBlock {
+    pub line: i64,
+    pub code: String,
+    pub discusses_a_refusal: bool,
+    pub sketch: bool,
+}
+
+pub fn blocks_in(text: &str) -> Vec<SpecBlock> {
+    let mut lines: Vec<String> = vec![];
+    for line in text.split("\n") { lines.push(line.to_owned()); }
+    let mut found: Vec<SpecBlock> = vec![];
+    let mut at: i64 = 0;
+    while at < lines.len() as i64 {
+        if (*nikaia_std::index::get(&lines, nikaia_std::index::at(at))).trim() != "```nika" {
+            at += 1;
+            continue;
+        }
+        let start: i64 = at + 1;
+        let mut end: i64 = start;
+        while end < lines.len() as i64 && (*nikaia_std::index::get(&lines, nikaia_std::index::at(end))).trim() != "```" { end += 1; }
+        let mut code: String = String::from("");
+        for k in start..end {
+            if k > start { code.push('\n'); }
+            code.push_str(nikaia_std::index::get(&lines, nikaia_std::index::at(k)));
+        }
+        found.push(SpecBlock { line: start + 1, discusses_a_refusal: discusses_a_refusal(&code), sketch: is_a_sketch(&code), code });
+        at = end + 1;
+    }
+    found
+}
+
+pub fn discusses_a_refusal(code: &str) -> bool {
+    let lower = code.to_lowercase();
+    for mark in ["error[nk", "// invalid", "// ungültig", "// fehler", "// error", "// compiler error", "refused", "does not parse"] { if lower.contains(mark) { return true; } }
+    for word in lower.split_whitespace() { if word.starts_with("nk1") || word.starts_with("nk2") { return true; } }
+    false
+}
+
+pub fn is_a_sketch(code: &str) -> bool {
+    let c: Vec<char> = nikaia_std::list::chars(code.chars());
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '…' { return true; }
+        if at + 2 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '.' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == '.' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 2)) == '.' {
+            let named = at + 3 < c.len() as i64 && ((*nikaia_std::index::get(&c, nikaia_std::index::at(at + 3))).is_alphabetic() || *nikaia_std::index::get(&c, nikaia_std::index::at(at + 3)) == '_');
+            if !named { return true; }
+            at += 3;
+        } else { at += 1; }
+    }
+    false
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reading {
+    pub name: String,
+    pub source: String,
+}
+
+pub fn readings(code: &str) -> Vec<Reading> {
+    let mut all: Vec<Reading> = vec![Reading { name: String::from("as written"), source: code.to_owned() }];
+    if code.contains("fn main") { return all; }
+    let mut with_a_main = code.trim_end().to_owned();
+    with_a_main.push_str("\n\nfn main() {\n}\n");
+    all.push(Reading { name: String::from("items and a main"), source: with_a_main });
+    all.push(Reading { name: String::from("a body"), source: wrapped(code) });
+    let parts = split_at_the_first_statement(code);
+    if (parts.len() as i64) == 2 {
+        let mut both = (*nikaia_std::index::get(&parts, 0)).to_owned();
+        both.push_str("\n\n");
+        both.push_str(&wrapped(nikaia_std::index::get(&parts, 1)));
+        all.push(Reading { name: String::from("items, then a body"), source: both });
+    }
+    all
+}
+
+fn wrapped(body: &str) -> String {
+    let mut out: String = String::from("fn main() {\n");
+    let mut first = true;
+    for line in body.trim_end().split("\n") {
+        if !first { out.push('\n'); }
+        first = false;
+        if (line.trim().len() as i64) > 0 {
+            out.push_str("    ");
+            out.push_str(line);
+        }
+    }
+    out.push_str("\n}\n");
+    out
+}
+
+fn split_at_the_first_statement(code: &str) -> Vec<String> {
+    let mut lines: Vec<String> = vec![];
+    for line in code.trim_end().split("\n") { lines.push(line.to_owned()); }
+    let mut head: i64 = 0;
+    let mut depth: i64 = 0;
+    for at in 0..lines.len() as i64 {
+        let trimmed = (*nikaia_std::index::get(&lines, nikaia_std::index::at(at))).trim();
+        if depth == 0 {
+            if !((trimmed.len() as i64) == 0 || trimmed.starts_with("//") || an_item(trimmed)) { break; }
+            head = at + 1;
+        }
+        depth += braces(nikaia_std::index::get(&lines, nikaia_std::index::at(at)));
+    }
+    if head == 0 || head >= lines.len() as i64 { return vec![]; }
+    let mut before: String = String::from("");
+    let mut after: String = String::from("");
+    for at in 0..lines.len() as i64 {
+        if at < head {
+            if at > 0 { before.push('\n'); }
+            before.push_str(nikaia_std::index::get(&lines, nikaia_std::index::at(at)));
+        } else {
+            if at > head { after.push('\n'); }
+            after.push_str(nikaia_std::index::get(&lines, nikaia_std::index::at(at)));
+        }
+    }
+    vec![before, after]
+}
+
+fn an_item(line: &str) -> bool {
+    for word in ["use ", "struct ", "enum ", "impl ", "trait ", "fn ", "grammar ", "const ", "comptime ", "pub "] { if line.starts_with(word) { return true; } }
+    false
+}
+
+fn braces(line: &str) -> i64 {
+    let mut depth: i64 = 0;
+    for c in line.chars() { if c == '{' { depth += 1; } else if c == '}' { depth -= 1; } }
+    depth
+}
+
+pub fn opening(code: &str) -> String {
+    for line in code.split("\n") {
+        let trimmed = line.trim();
+        if (trimmed.len() as i64) == 0 { continue; }
+        let c: Vec<char> = nikaia_std::list::chars(trimmed.chars());
+        if (c.len() as i64) <= 56 { return trimmed.to_owned(); }
+        let mut cut: String = String::from("");
+        for k in 0..55 { cut.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
+        cut.push('…');
+        return cut;
+    }
+    String::from("(empty)")
+}
+
+
 // --- spelling.nika ---
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
@@ -6503,6 +6650,10 @@ pub mod signature {
 pub mod sources {
     #[allow(unused_imports)]
     pub use super::{rust_sources};
+}
+pub mod specbook {
+    #[allow(unused_imports)]
+    pub use super::{SpecBlock, blocks_in, discusses_a_refusal, is_a_sketch, Reading, readings, opening};
 }
 pub mod spelling {
     #[allow(unused_imports)]

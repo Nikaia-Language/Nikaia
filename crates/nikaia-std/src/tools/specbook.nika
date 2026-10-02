@@ -1,0 +1,229 @@
+// crates/nikaia-std/src/tools/specbook.nika
+//
+// **Every `nika` block in the specification, and the readings it can have**,
+// for the compiler's `specbook` (`tests/specification.rs` and its baseline).
+// The text half, moved from Rust (ADR-250, #125): what a page's blocks are,
+// whether the page is discussing a refusal in one, whether an elision stands
+// where code would, and the programs a block can be read as. Reading the pages
+// and taking each reading through the compiler stays Rust.
+
+/// One ```nika block of a page: the 1-based line its code starts on, the
+/// code, and what the page says about it.
+pub struct SpecBlock {
+    pub line: i64,
+    pub code: String,
+    /// The page is **discussing a refusal** here - it names a diagnostic, or
+    /// says in a comment that a line is not allowed.
+    pub discusses_a_refusal: bool,
+    /// An elision stands where code would.
+    pub sketch: bool,
+}
+
+/// Every ```nika block of one page, in line order.
+pub fn blocks_in(text: ref String) -> Vec[SpecBlock] {
+    let mut lines: Vec[String] = []
+    for line in text.split("\n") {
+        lines.push(line.clone())
+    }
+    let mut found: Vec[SpecBlock] = []
+    let mut at = 0
+    while at < lines.len() {
+        if lines[at].trim() != "```nika" {
+            at += 1
+            continue
+        }
+        let start = at + 1
+        let mut end = start
+        while end < lines.len() && lines[end].trim() != "```" {
+            end += 1
+        }
+        let mut code: String = ""
+        for k in start..<end {
+            if k > start {
+                code.push('\n')
+            }
+            code.push_str(ref lines[k])
+        }
+        found.push(SpecBlock { line: start + 1, discusses_a_refusal: discusses_a_refusal(code), sketch: is_a_sketch(code), code: code })
+        at = end + 1
+    }
+    return found
+}
+
+/// Whether the page is talking about a refusal in this block: read off the
+/// block's own text rather than off a marker somebody has to remember to add.
+/// A page that discusses a refusal names the code, says *"Invalid"*, or says
+/// *"error"* - in either language, since Part I is written in both.
+pub fn discusses_a_refusal(code: ref String) -> bool {
+    let lower = code.to_lowercase()
+    for mark in ["error[nk", "// invalid", "// ungültig", "// fehler", "// error", "// compiler error", "refused", "does not parse"] {
+        if lower.contains(mark) {
+            return true
+        }
+    }
+    for word in lower.split_whitespace() {
+        if word.starts_with("nk1") || word.starts_with("nk2") {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether an elision stands where code would. `...args` is not one: three
+/// dots against a name are the typed spread of ADR-007 D5, which a driver
+/// writes as code.
+pub fn is_a_sketch(code: ref String) -> bool {
+    let c: Vec[char] = code.chars().collect()
+    let mut at = 0
+    while at < c.len() {
+        if c[at] == '…' {
+            return true
+        }
+        if at + 2 < c.len() && c[at] == '.' && c[at + 1] == '.' && c[at + 2] == '.' {
+            let named = at + 3 < c.len() && (c[at + 3].is_alphabetic() || c[at + 3] == '_')
+            if !named {
+                return true
+            }
+            at += 3
+        } else {
+            at += 1
+        }
+    }
+    return false
+}
+
+/// A program a block can be read as, and the name the report gives it.
+pub struct Reading {
+    pub name: String,
+    pub source: String,
+}
+
+/// The readings a block can have. Best-case first is **not** the order: each
+/// is tried and the furthest wins, because a block that parses as written may
+/// still be a body that would check if it had a function around it.
+pub fn readings(code: ref String) -> Vec[Reading] {
+    let mut all: Vec[Reading] = [Reading { name: "as written", source: code.clone() }]
+    if code.contains("fn main") {
+        return all
+    }
+    let mut with_a_main = code.trim_end().clone()
+    with_a_main.push_str("\n\nfn main() {\n}\n")
+    all.push(Reading { name: "items and a main", source: with_a_main })
+    all.push(Reading { name: "a body", source: wrapped(code) })
+    // **Items, then statements** - the shape a chapter uses most: a `use` or
+    // a `struct` at the top and then the lines that exercise it. Neither
+    // reading above can take it, and it is not a defect in the page.
+    let parts = split_at_the_first_statement(code)
+    if parts.len() == 2 {
+        let mut both = parts[0].clone()
+        both.push_str("\n\n")
+        both.push_str(ref wrapped(parts[1]))
+        all.push(Reading { name: "items, then a body", source: both })
+    }
+    return all
+}
+
+/// A body inside a `main`, every line that says something indented.
+fn wrapped(body: ref String) -> String {
+    let mut out: String = "fn main() {\n"
+    let mut first = true
+    for line in body.trim_end().split("\n") {
+        if !first {
+            out.push('\n')
+        }
+        first = false
+        if line.trim().len() > 0 {
+            out.push_str("    ")
+            out.push_str(line)
+        }
+    }
+    out.push_str("\n}\n")
+    return out
+}
+
+// A block split into its leading items and the statements after them - two
+// texts, or none. Brace depth rather than a parser, because this runs on text
+// that may not parse at all, which is the case it exists for: a line at depth
+// zero that starts with an item keyword, a comment, or nothing extends the
+// head; the first line at depth zero that does not is where the body begins.
+fn split_at_the_first_statement(code: ref String) -> Vec[String] {
+    let mut lines: Vec[String] = []
+    for line in code.trim_end().split("\n") {
+        lines.push(line.clone())
+    }
+    let mut head = 0
+    let mut depth = 0
+    for at in 0..<lines.len() {
+        let trimmed = lines[at].trim()
+        if depth == 0 {
+            if !(trimmed.len() == 0 || trimmed.starts_with("//") || an_item(trimmed)) {
+                break
+            }
+            head = at + 1
+        }
+        depth += braces(lines[at])
+    }
+    if head == 0 || head >= lines.len() {
+        return []
+    }
+    let mut before: String = ""
+    let mut after: String = ""
+    for at in 0..<lines.len() {
+        if at < head {
+            if at > 0 {
+                before.push('\n')
+            }
+            before.push_str(ref lines[at])
+        } else {
+            if at > head {
+                after.push('\n')
+            }
+            after.push_str(ref lines[at])
+        }
+    }
+    return [before, after]
+}
+
+fn an_item(line: ref String) -> bool {
+    for word in ["use ", "struct ", "enum ", "impl ", "trait ", "fn ", "grammar ", "const ", "comptime ", "pub "] {
+        if line.starts_with(word) {
+            return true
+        }
+    }
+    return false
+}
+
+// How many braces a line opens, less how many it closes.
+fn braces(line: ref String) -> i64 {
+    let mut depth = 0
+    for c in line.chars() {
+        if c == '{' {
+            depth += 1
+        } else if c == '}' {
+            depth -= 1
+        }
+    }
+    return depth
+}
+
+/// The block's first line of code, as the thing a reader recognises it by:
+/// trimmed and cut, because this is an anchor and not the content.
+pub fn opening(code: ref String) -> String {
+    for line in code.split("\n") {
+        let trimmed = line.trim()
+        if trimmed.len() == 0 {
+            continue
+        }
+        let c: Vec[char] = trimmed.chars().collect()
+        if c.len() <= 56 {
+            return trimmed.clone()
+        }
+        let mut cut: String = ""
+        for k in 0..<55 {
+            cut.push(c[k])
+        }
+        cut.push('…')
+        return cut
+    }
+    return "(empty)"
+}
