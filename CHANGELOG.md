@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.347] — 2026-10-02
+
+**A parse error's reading is Nikaia, the text half** (#125, ADR-250). What
+the parser's better readings look back at - the token before the caret, the
+quote, the bracket and the block comment never closed - and the notes a
+refusal gets from what a reader sees on its line (a `??`'s fallback, a `let`
+taking apart a nested tuple, `&` for `ref`, an effect on a lambda), with the
+split of a written message into its headline and the rest, moved into
+`tools/parse_notes.nika`. It answers in characters, and the compiler turns a
+position into the byte a span counts (`tests/parse_error.rs` holds an
+unclosed quote after umlauts). 13.7 % of the toolchain is Nikaia, up from
+13.3 %.
+
 ## [0.0.346] — 2026-10-02
 
 **How a message is set down is Nikaia** (#125, ADR-250). `diagnostics`'

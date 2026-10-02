@@ -53,6 +53,7 @@ COMPILER_NIKA = {
     "names.nika": "contracts::order and contracts::send: every name an expression or a statement mentions (0.0.338, 0.0.340)",
     "specbook.nika": "specbook: the specification's blocks and the readings a block can have (0.0.344)",
     "rustc_words.nika": "diagnostics: a rustc message in the words the program wrote, and how a message is set down (0.0.345, 0.0.346)",
+    "parse_notes.nika": "parser: a parse error's reading, the text half (0.0.347)",
 }
 
 

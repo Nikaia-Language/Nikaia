@@ -1,0 +1,225 @@
+// crates/nikaia-std/src/tools/parse_notes.nika
+//
+// **A parse error in the reader's words** (Part III C.2, rule 5;
+// `docs/error-corpus.md`), the text half: what a refusal's caret looks back
+// at - the token before it, the quote or the bracket or the comment never
+// closed - and the notes a refusal gets from what a reader sees on the line.
+// Moved from the compiler's `parser` (ADR-250, #125). Every position here is
+// a character index into the text; the compiler turns it into the byte its
+// spans are counted in.
+
+/// The token that ends at character `end`: a word, a run of operator
+/// characters, or one other character.
+pub fn previous_token(source: ref String, end: i64) -> String {
+    let c: Vec[char] = source.chars().collect()
+    if end <= 0 {
+        return ""
+    }
+    let last = c[end - 1]
+    let mut start = end - 1
+    if a_word_char(last) {
+        while start > 0 && a_word_char(c[start - 1]) {
+            start -= 1
+        }
+    } else if an_operator_char(last) {
+        while start > 0 && an_operator_char(c[start - 1]) {
+            start -= 1
+        }
+    }
+    return slice(c, start, end)
+}
+
+fn a_word_char(c: char) -> bool {
+    return c.is_alphanumeric() || c == '_'
+}
+
+fn an_operator_char(c: char) -> bool {
+    return c == '=' || c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '!' || c == '&' || c == '|'
+}
+
+/// Where the last string that is never closed opens, or -1.
+pub fn unclosed_quote(source: ref String) -> i64 {
+    let c: Vec[char] = source.chars().collect()
+    let mut open = -1
+    let mut at = 0
+    while at < c.len() {
+        if open >= 0 {
+            if c[at] == '\\' {
+                at += 2
+                continue
+            }
+            if c[at] == '"' {
+                open = -1
+            }
+        } else if c[at] == '"' {
+            open = at
+        } else if c[at] == '/' && at + 1 < c.len() && c[at + 1] == '/' {
+            at = past_the_line(c, at)
+            continue
+        }
+        at += 1
+    }
+    return open
+}
+
+/// The innermost bracket still open at the end of the text, outside strings
+/// and `//` comments, or -1.
+pub fn unclosed_bracket(source: ref String) -> i64 {
+    let c: Vec[char] = source.chars().collect()
+    let mut stack: Vec[i64] = []
+    let mut in_string = false
+    let mut at = 0
+    while at < c.len() {
+        if in_string {
+            if c[at] == '\\' {
+                at += 2
+                continue
+            }
+            if c[at] == '"' {
+                in_string = false
+            }
+        } else if c[at] == '"' {
+            in_string = true
+        } else if c[at] == '/' && at + 1 < c.len() && c[at + 1] == '/' {
+            at = past_the_line(c, at)
+            continue
+        } else if c[at] == '{' || c[at] == '(' || c[at] == '[' {
+            stack.push(at)
+        } else if c[at] == '}' || c[at] == ')' || c[at] == ']' {
+            stack.pop()
+        }
+        at += 1
+    }
+    if stack.len() == 0 {
+        return -1
+    }
+    return stack[stack.len() - 1]
+}
+
+// Past the `\n` that ends the line `at` stands on.
+fn past_the_line(c: ref Array[char], at: i64) -> i64 {
+    let mut k = at
+    while k < c.len() && c[k] != '\n' {
+        k += 1
+    }
+    return k + 1
+}
+
+/// Where the outermost block comment that is never closed opens, or -1. A
+/// string and a line comment are only themselves *outside* a block comment:
+/// a `//` inside one is comment, not a second comment, and so is a quote.
+pub fn opening_of_an_unclosed_comment(source: ref String) -> i64 {
+    let c: Vec[char] = source.chars().collect()
+    let mut open: Vec[i64] = []
+    let mut at = 0
+    while at < c.len() {
+        if open.len() == 0 {
+            if c[at] == '"' {
+                at += 1
+                while at < c.len() {
+                    if c[at] == '\\' {
+                        at += 2
+                    } else if c[at] == '"' {
+                        at += 1
+                        break
+                    } else {
+                        at += 1
+                    }
+                }
+                continue
+            }
+            if c[at] == '/' && at + 1 < c.len() && c[at + 1] == '/' {
+                while at < c.len() && c[at] != '\n' {
+                    at += 1
+                }
+                continue
+            }
+        }
+        if c[at] == '/' && at + 1 < c.len() && c[at + 1] == '*' {
+            open.push(at)
+            at += 2
+            continue
+        }
+        if c[at] == '*' && at + 1 < c.len() && c[at + 1] == '/' && open.len() > 0 {
+            open.pop()
+            at += 2
+            continue
+        }
+        at += 1
+    }
+    if open.len() == 0 {
+        return -1
+    }
+    return open[0]
+}
+
+/// A written message's first sentence, and the rest where there is one: a
+/// full stop followed by a space ends it, outside backticks.
+pub fn first_sentence(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut quoted = false
+    for at in 0..<c.len() {
+        if c[at] == '`' {
+            quoted = !quoted
+        } else if c[at] == '.' && !quoted && at + 1 < c.len() && c[at + 1] == ' ' {
+            let rest = slice(c, at + 1, c.len()).trim().clone()
+            if rest.len() == 0 {
+                return [slice(c, 0, at + 1)]
+            }
+            return [slice(c, 0, at + 1), rest]
+        }
+    }
+    return [text.clone()]
+}
+
+/// `&` where a view was meant: the spelling `ref` replaced.
+pub fn the_spelling_ref_replaced_note(found: ref String) -> String? {
+    if found != "&" {
+        return null
+    }
+    return "A view is written `ref T`: `ref String` for text, `ref Array[T]` for elements something else keeps, and `ref value` to borrow a value. (`&&` still means *and*.)"
+}
+
+/// `fn(info) sync { … }`: an effect written on a lambda, which nothing in the
+/// grammar gives a lambda yet. Said where the word stands right after a
+/// parameter list.
+pub fn an_effect_on_a_lambda_note(found: ref String, before: ref String) -> String? {
+    if found != "sync" && found != "throws" {
+        return null
+    }
+    let trimmed = before.trim_end()
+    if !(trimmed.ends_with(")") && trimmed.contains("fn")) {
+        return null
+    }
+    return f"`{found}` isn't written on a lambda yet: a lambda's parameter list is followed by its block and nothing else."
+}
+
+// What may stand after a `??`'s fallback and fail there.
+comptime AFTER_A_FALLBACK: Array[ref String, 17] = ["==", "!=", "<=", ">=", "=", "<", ">", "&&", "|", "||", "..", "+", "-", "*", "/", "%", "as"]
+
+/// The note and the help a parse error gets when a `??`'s fallback reached
+/// for an operator: the fallback is one value, so `a ?? 0 > 3` fails after
+/// the fallback succeeded, in a rule whose message is about something else
+/// (ADR-089 D2). `=` is among the operators because the backend names the
+/// first character it could not use, so a `==` arrives as `=`; and the token
+/// is not written into the message for the same reason.
+pub fn coalesce_fallback_note(found: ref String, before: ref String) -> Vec[String] {
+    if !before.contains("??") {
+        return []
+    }
+    for operator in AFTER_A_FALLBACK {
+        if found == operator {
+            return ["The fallback after `??` is a single value unless you use brackets, so `a ?? 0 > 3` would mean `a ?? (0 > 3)`.", "Put brackets around the part you mean: `(a ?? 0) > 3`, or `a ?? (0 > 3)`."]
+        }
+    }
+    return []
+}
+
+/// The note and the help a `let` gets that takes apart something a flat
+/// tuple of names cannot (ADR-098).
+pub fn let_names_note(found: ref String, before: ref String) -> Vec[String] {
+    if found != "(" || !(before.contains("let (") || before.contains("let mut (")) {
+        return []
+    }
+    return ["A `let` binds one name, or a flat list of names like `let (tx, rx) = …`. A tuple inside a tuple can't be taken apart here.", "Bind the outer parts to one name each, and read the inner parts from those names."]
+}
