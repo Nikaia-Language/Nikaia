@@ -357,3 +357,55 @@ fn with_a_blocking_read(rust: &str) -> String {
     );
     out
 }
+
+/// **The solver's inner loops, lowered from Nikaia against Rust by hand**
+/// ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1).
+///
+/// `benches/solver-kernels.nika` and `benches/solver-workload/kernels.rs` hold the same
+/// three kernels - combining sparse rows, scanning watch lists, multiplying big
+/// integers - and print the same checksums, which this checks before it counts
+/// anything. What it prints is how many more instructions the lowering's
+/// version retires than the hand-written one; the cause of a gap is read off
+/// the lowered Rust, and is the compiler's to close.
+#[test]
+#[ignore = "shells out to valgrind; run with --ignored"]
+fn the_solver_kernels_lowered_against_rust_by_hand() {
+    let nikaia = lower("solver-kernels.nika");
+    let by_hand = std::fs::read_to_string(repo_root().join("benches/solver-workload/kernels.rs"))
+        .expect("benches/solver-workload/kernels.rs");
+
+    // The same program: the same checksums from both, at a small size.
+    let outputs: Vec<String> = [("nikaia", &nikaia), ("rust", &by_hand)]
+        .iter()
+        .map(|(label, source)| {
+            let dir = common::scratch_dir(&format!("kernels-check-{label}"));
+            let file = dir.join("kernels.rs");
+            std::fs::write(&file, source).expect("write the Rust");
+            let binary = dir.join("kernels");
+            let compiled = common::compile(
+                &file,
+                &["--crate-type", "bin", "-O", "-o", binary.to_str().expect("utf-8")],
+            );
+            assert!(
+                compiled.status.success(),
+                "{label} did not compile:\n{}",
+                String::from_utf8_lossy(&compiled.stderr)
+            );
+            let run = Command::new(&binary)
+                .args(["2000", "all"])
+                .output()
+                .expect("run");
+            let _ = std::fs::remove_dir_all(&dir);
+            String::from_utf8_lossy(&run.stdout).to_string()
+        })
+        .collect();
+    assert_eq!(outputs[0], outputs[1], "the two halves are not the same program");
+
+    for (kernel, n) in [("rows", "200000"), ("watch", "2000"), ("bignum", "20000")] {
+        let runs = [
+            instructions("Rust, by hand", &by_hand, &[n, kernel]),
+            instructions("Nikaia, lowered", &nikaia, &[n, kernel]),
+        ];
+        report(kernel, &format!("n = {n}"), &runs);
+    }
+}

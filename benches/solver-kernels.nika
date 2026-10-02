@@ -1,0 +1,234 @@
+// benches/solver-kernels.nika
+//
+// **The solver's inner loops, in Nikaia** - ADR-270 D8 step 1. Three kernels a
+// CDCL(T) solver spends its time in, written the way the solver would write
+// them, so that their lowering can be measured against the same algorithms
+// written by hand in Rust (`benches/solver-workload/kernels.rs`):
+//
+//   * `rows` - combining two sparse rows, `a·r + b·s`, merged by column, with
+//     ADR-270 D11's check that every coefficient stays in 32 bits;
+//   * `watch` - scanning watch lists the way unit propagation does: a blocking
+//     literal first, the clause only where it is not true;
+//   * `bignum` - multiplying big integers of `u32` limbs with `u64` products.
+//
+// The first argument is the size, the second the kernel. Every kernel prints a
+// checksum, and the Rust version prints the same one: that is what says the
+// two are the same program.
+
+use std::cli
+
+// --- a deterministic stream of numbers ------------------------------------
+
+fn next(state: u64) -> u64 sync {
+    return state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+}
+
+// --- 1. combining sparse rows ---------------------------------------------
+
+// `a·(rc, rv) + b·(sc, sv)` into `(oc, ov)`, by column; how many coefficients
+// left the 32-bit range and would have been promoted to big integers.
+fn combine(rc: ref Vec[i64], rv: ref Vec[i64], a: i64, sc: ref Vec[i64], sv: ref Vec[i64], b: i64, mut oc: Vec[i64], mut ov: Vec[i64]) -> i64 sync {
+    let limit: i64 = 2147483647
+    let mut promoted = 0
+    let mut i = 0
+    let mut j = 0
+    while i < rc.len() || j < sc.len() {
+        let mut col = 0
+        let mut value = 0
+        if j >= sc.len() || (i < rc.len() && rc[i] < sc[j]) {
+            col = rc[i]
+            value = a * rv[i]
+            i += 1
+        } else if i >= rc.len() || sc[j] < rc[i] {
+            col = sc[j]
+            value = b * sv[j]
+            j += 1
+        } else {
+            col = rc[i]
+            value = a * rv[i] + b * sv[j]
+            i += 1
+            j += 1
+        }
+        if value != 0 {
+            if value > limit || value < 0 - limit {
+                promoted += 1
+            }
+            oc.push(col)
+            ov.push(value)
+        }
+    }
+    return promoted
+}
+
+fn rows(n: i64) -> i64 {
+    let width = 16
+    let columns = 4096
+    let count = 256
+    let mut state: u64 = 7
+    let mut cols: Vec[Vec[i64]] = []
+    let mut vals: Vec[Vec[i64]] = []
+    for _ in 0..<count {
+        let mut c: Vec[i64] = []
+        let mut v: Vec[i64] = []
+        let mut at = 0
+        for _ in 0..<width {
+            state = next(state)
+            at += 1 + ((state >> 33) % (columns / width)) as i64
+            c.push(at)
+            state = next(state)
+            v.push(((state >> 40) % 2001) as i64 - 1000)
+        }
+        cols.push(c)
+        vals.push(v)
+    }
+    let mut checksum = 0
+    for round in 0..<n {
+        let r = round % count
+        let s = (round * 7 + 1) % count
+        let mut oc: Vec[i64] = []
+        let mut ov: Vec[i64] = []
+        let promoted = combine(cols[r], vals[r], 3 + round % 5, cols[s], vals[s], 0 - 2 - round % 3, oc, ov)
+        checksum += promoted + oc.len()
+        if oc.len() > 0 {
+            checksum += ov[0] % 97
+        }
+    }
+    return checksum
+}
+
+// --- 2. scanning watch lists ----------------------------------------------
+
+fn watch(n: i64) -> i64 {
+    let variables = 2000
+    let clauses = 8000
+    let size = 4
+    let mut state: u64 = 11
+    // Literals are `2·variable + sign`; a clause is `size` literals in one
+    // arena, starting at `clause · size`.
+    let mut arena: Vec[i64] = []
+    for _ in 0..<(clauses * size) {
+        state = next(state)
+        arena.push(((state >> 33) % (2 * variables) as u64) as i64)
+    }
+    // Each clause is watched by its first two literals, with the other as the
+    // blocker.
+    let mut watched: Vec[Vec[i64]] = []
+    let mut blockers: Vec[Vec[i64]] = []
+    for _ in 0..<(2 * variables) {
+        watched.push([])
+        blockers.push([])
+    }
+    for c in 0..<clauses {
+        let first = arena[c * size]
+        let second = arena[c * size + 1]
+        watched[first].push(c)
+        blockers[first].push(second)
+        watched[second].push(c)
+        blockers[second].push(first)
+    }
+    // An assignment: 1 true, -1 false, by literal.
+    let mut value: Vec[i64] = []
+    for _ in 0..<(2 * variables) {
+        value.push(0)
+    }
+    let mut checksum = 0
+    for round in 0..<n {
+        // Assign a third of the variables, then scan the lists of the
+        // literals that became false.
+        for v in 0..<variables {
+            state = next(state)
+            let pick = ((state >> 33) % 3) as i64
+            if pick == 0 {
+                value[2 * v] = 1
+                value[2 * v + 1] = 0 - 1
+            } else if pick == 1 {
+                value[2 * v] = 0 - 1
+                value[2 * v + 1] = 1
+            } else {
+                value[2 * v] = 0
+                value[2 * v + 1] = 0
+            }
+        }
+        for lit in 0..<(2 * variables) {
+            if value[lit] == 0 - 1 {
+                let list = watched[lit]
+                let blocks = blockers[lit]
+                for k in 0..<list.len() {
+                    if value[blocks[k]] == 1 {
+                        checksum += 1
+                    } else {
+                        let start = list[k] * size
+                        let mut found = 0 - 1
+                        for at in 2..<size {
+                            let other = arena[start + at]
+                            if found < 0 && value[other] != 0 - 1 {
+                                found = other
+                            }
+                        }
+                        if found >= 0 {
+                            checksum += 3
+                        } else {
+                            checksum += 7
+                        }
+                    }
+                }
+            }
+        }
+        checksum = checksum % 1000000007 + round
+    }
+    return checksum
+}
+
+// --- 3. multiplying big integers --------------------------------------------
+
+fn multiply(x: ref Vec[u32], y: ref Vec[u32], mut out: Vec[u32]) sync {
+    for _ in 0..<(x.len() + y.len()) {
+        out.push(0)
+    }
+    for i in 0..<x.len() {
+        let mut carry: u64 = 0
+        let xi = x[i] as u64
+        for j in 0..<y.len() {
+            let t = xi * (y[j] as u64) + (out[i + j] as u64) + carry
+            out[i + j] = t.truncating_u32()
+            carry = t >> 32
+        }
+        out[i + y.len()] = carry.truncating_u32()
+    }
+}
+
+fn bignum(n: i64) -> i64 {
+    let limbs = 64
+    let mut state: u64 = 13
+    let mut x: Vec[u32] = []
+    let mut y: Vec[u32] = []
+    for _ in 0..<limbs {
+        state = next(state)
+        x.push((state >> 32).truncating_u32())
+        state = next(state)
+        y.push((state >> 32).truncating_u32())
+    }
+    let mut checksum: u64 = 0
+    for round in 0..<n {
+        let mut out: Vec[u32] = []
+        multiply(x, y, out)
+        checksum = checksum.wrapping_add(out[round % (2 * limbs)] as u64)
+        x[round % limbs] = out[limbs]
+    }
+    return (checksum % 1000000007) as i64
+}
+
+fn main() {
+    let count = cli::args().nth(1) ?? "1000"
+    let n: i64 = count.parse() catch { 1000 }
+    let which = cli::args().nth(2) ?? "all"
+    if which == "rows" || which == "all" {
+        println(f"rows {rows(n)}")
+    }
+    if which == "watch" || which == "all" {
+        println(f"watch {watch(n / 100 + 1)}")
+    }
+    if which == "bignum" || which == "all" {
+        println(f"bignum {bignum(n)}")
+    }
+}
