@@ -72,28 +72,6 @@ pub struct Violation {
     pub construct: bool,
 }
 
-/// The **constructs that join on the executor**, which is a pause
-/// ([ADR-163](../../../docs/specification/adr/adr-163.md) D1).
-///
-/// An `overlap { … }` and a `select { … }` lower to `task::overlap<n>(…).await`
-/// and `task::race<n>(…).await`: the block hands its branches to the executor
-/// and parks until they answer, which is exactly what
-/// [ADR-055](../../../docs/specification/adr/adr-055.md) calls a suspension
-/// point. Neither is a **call**, so [`reached`] has nothing to answer about
-/// them and both analyses have to ask this separately.
-///
-/// **And `throws` deliberately does not ask.** A block's failures are its
-/// branches', which that walk already reaches by descending into them; treating
-/// the construct as opaque there would put a `"?"` in the set of every function
-/// that writes one, which is a claim about failures rather than about pausing.
-pub(crate) fn joins_on_the_executor(expr: &Expr) -> Option<&'static str> {
-    match expr {
-        Expr::Overlap(_) => Some("overlap"),
-        Expr::Select(_) => Some("select"),
-        _ => None,
-    }
-}
-
 /// Every call a `sync` function makes that the ledgers say can pause.
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Violation> {
     let mut found = Vec::new();
@@ -556,69 +534,54 @@ fn collect_reach(
     code: &BTreeMap<String, bool>,
     reach: &mut Reach,
 ) {
-    for stmt in &block.stmts {
-        let span = stmt.span;
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            // **A block that joins on the executor pauses**
-            // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1),
-            // and it is not a call, so `reached` says nothing about it.
-            // Asked first, because `reached` answers `None` for one and
-            // `None` is what this walk reads as *adds nothing*. Before the
-            // `match` rather than as a guard: an `if let` guard is newer
-            // than the toolchain floor (Rust 1.88).
-            if let Some(construct) = joins_on_the_executor(expr) {
+    use crate::foreign::Seen;
+    use nikaia_std::tools::calls::Callee;
+    for seen in crate::foreign::seen_in(parsed, block) {
+        let (callee, span) = match seen {
+            Seen::Joins { construct, span } => {
                 reach.blocked = true;
                 reach
                     .site
                     .get_or_insert((span, format!("an `{construct}` block")));
-                return;
+                continue;
             }
-            match reached(parsed, expr, own, library) {
-                Some(Reached::Own(name)) => {
-                    reach.calls.insert(name);
-                }
-                // **A call to a parameter that is code**
-                // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
-                // and [ADR-122](../../../docs/specification/adr/adr-122.md) D1
-                // for the answer). It is not a name nothing describes: the
-                // *declaration* describes it, and **the type decides**.
-                //
-                // A parameter that may pause is a closure returning a boxed
-                // future, so calling it is awaiting one and this function
-                // pauses — run or kept, which is what took D3's run-kept split
-                // out of this pass. One that says `sync` is a plain closure and
-                // its call adds nothing.
-                Some(Reached::Opaque(Some(name))) if code.contains_key(&name) => {
-                    if code[&name] {
-                        reach.site.get_or_insert((span, format!("`{name}`")));
-                        reach.through_code.insert(name);
-                    }
-                }
-                Some(Reached::Library { sync: false, key }) => {
-                    reach.blocked = true;
-                    reach.site.get_or_insert((span, format!("`{key}`")));
-                }
-                Some(Reached::Opaque(name)) => {
-                    reach.blocked = true;
-                    reach.site.get_or_insert((
-                        span,
-                        name.map_or(
-                            "something this compiler cannot see the end of".to_string(),
-                            |n| format!("`{n}`"),
-                        ),
-                    ));
-                }
-                // Answered per function by the type checker, and merged in by
-                // `reach_of` once this walk is done.
-                Some(Reached::Method) => {}
-                Some(Reached::Library { sync: true, .. }) | None => {}
+            Seen::Call { name, span, .. } => (named(parsed, name, own, library), span),
+            Seen::Spawn { span } | Seen::Opaque { span } => (Some(Callee::Opaque(None)), span),
+            _ => continue,
+        };
+        match callee {
+            Some(Callee::Own(name)) => {
+                reach.calls.insert(name);
             }
-        });
-        // The same walk the check uses: a nested block, and the body of a
-        // trailing lambda, are part of the function that writes them.
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            collect_reach(parsed, inner, own, library, code, reach)
-        });
+            Some(Callee::Opaque(Some(name))) if code.contains_key(&name) => {
+                if code[&name] {
+                    reach.site.get_or_insert((span, format!("`{name}`")));
+                    reach.through_code.insert(name);
+                }
+            }
+            Some(Callee::Library {
+                never_pauses: false,
+                key,
+            }) => {
+                reach.blocked = true;
+                reach.site.get_or_insert((span, format!("`{key}`")));
+            }
+            Some(Callee::Opaque(name)) => {
+                reach.blocked = true;
+                reach.site.get_or_insert((
+                    span,
+                    name.map_or(
+                        "something this compiler cannot see the end of".to_string(),
+                        |n| format!("`{n}`"),
+                    ),
+                ));
+            }
+            Some(Callee::Method) => {}
+            Some(Callee::Library {
+                never_pauses: true, ..
+            })
+            | None => {}
+        }
     }
 }
 
@@ -696,54 +659,68 @@ fn walk_block(
     library: &Ledger,
     found: &mut Vec<Violation>,
 ) {
-    for stmt in &block.stmts {
-        let span = stmt.span;
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            // **The construct half** ([ADR-163](../../../docs/specification/adr/adr-163.md)
-            // D1). [ADR-027](../../../docs/specification/adr/adr-027.md) D4 says
-            // an assertion is never overwritten by the inference, so fixing the
-            // inference alone would leave a hand-written `sync` on a body that
-            // pauses - and `rustc` would say so about the generated file
-            // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
-            if let Some(construct) = joins_on_the_executor(expr) {
-                found.push(Violation {
-                    span,
-                    caller: caller.to_string(),
-                    promise: promise.to_string(),
-                    callee: construct.to_string(),
-                    from_library: false,
-                    unpromised: false,
-                    construct: true,
-                });
-                return;
+    use crate::foreign::Seen;
+    use nikaia_std::tools::calls::Callee;
+    for seen in crate::foreign::seen_in(parsed, block) {
+        let violation = |span, callee: String, from_library, unpromised, construct| Violation {
+            span,
+            caller: caller.to_string(),
+            promise: promise.to_string(),
+            callee,
+            from_library,
+            unpromised,
+            construct,
+        };
+        let (callee, span) = match seen {
+            Seen::Joins { construct, span } => {
+                found.push(violation(span, construct, false, false, true));
+                continue;
             }
-            if let Expr::Call { func, .. } = expr
-                && let Expr::Variable(name) = func.as_ref()
-                && sync_code.contains(parsed.text(*name))
-            {
-                return;
+            // A code parameter the promise names is the caller's to keep: a
+            // call of one by its bare name is not this body's pause.
+            Seen::Call { name, .. } if !name.contains("::") && sync_code.contains(&name) => {
+                continue;
             }
-            if let Some((callee, from_library, unpromised)) = called(parsed, expr, own, library) {
-                found.push(Violation {
-                    span,
-                    caller: caller.to_string(),
-                    promise: promise.to_string(),
-                    callee,
-                    from_library,
-                    unpromised,
-                    construct: false,
-                });
+            Seen::Call { name, span, .. } => (named(parsed, name, own, library), span),
+            Seen::Spawn { span } | Seen::Opaque { span } => (Some(Callee::Opaque(None)), span),
+            _ => continue,
+        };
+        let pauses = match callee {
+            Some(Callee::Own(name)) => own.functions.get(&name).and_then(|contract| {
+                let unpromised = contract.sync_claim == Sync::Unpromised;
+                (!contract.sync_claim.is_sync()).then_some((name, false, unpromised))
+            }),
+            Some(Callee::Library { key, never_pauses }) => {
+                (!never_pauses).then_some((key, true, false))
             }
-        });
-
-        // A nested block is part of the same function, so its calls are the
-        // same promise.
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            walk_block(
-                parsed, inner, caller, promise, sync_code, own, library, found,
-            )
-        });
+            Some(Callee::Method) | None => None,
+            Some(Callee::Opaque(name)) => Some((
+                name.unwrap_or_else(|| "something this compiler cannot resolve".to_string()),
+                false,
+                false,
+            )),
+        };
+        if let Some((callee, from_library, unpromised)) = pauses {
+            found.push(violation(span, callee, from_library, unpromised, false));
+        }
     }
+}
+
+/// What a call by `name` goes to: `calls::callee_named`, the one resolution
+/// every analysis shares (ADR-028), for a name the walk in Nikaia read.
+fn named(
+    parsed: &Parsed,
+    name: String,
+    own: &Ledger,
+    library: &Ledger,
+) -> Option<nikaia_std::tools::calls::Callee> {
+    nikaia_std::tools::calls::callee_named(
+        &parsed.interner,
+        name,
+        own,
+        library,
+        &parsed.program.items,
+    )
 }
 
 /// What one expression tells either analysis, where it is a call at all.
@@ -805,49 +782,6 @@ pub(crate) fn reached(
             Callee::Opaque(name) => Reached::Opaque(name),
         },
     )
-}
-
-/// The name a call resolves to, when a ledger says it can pause.
-///
-/// `None` covers three different things and the difference does not matter to
-/// the *check*: it is not a call, it is a call this compiler cannot resolve, or
-/// it resolves to something a ledger says is `sync`. The permissive direction,
-/// stated as code.
-fn called(
-    parsed: &Parsed,
-    expr: &Expr,
-    own: &Ledger,
-    library: &Ledger,
-) -> Option<(String, bool, bool)> {
-    match reached(parsed, expr, own, library)? {
-        Reached::Own(name) => {
-            let contract = own.functions.get(&name)?;
-            let unpromised = contract.sync_claim == Sync::Unpromised;
-            (!contract.sync_claim.is_sync()).then_some((name, false, unpromised))
-        }
-        Reached::Library { key, sync } => (!sync).then_some((key, true, false)),
-        // A method call the check deliberately does not resolve, and the reason
-        // is the diagnostic rather than the analysis: `NK2202` names one call
-        // and puts a caret under it, where the type checker answers per
-        // *function*. The **inference** merges that answer in per function
-        // (`reach_of`), so nothing is lost - the claim is still taken away.
-        Reached::Method => None,
-        // An unresolvable call is a different case and may not be permissive
-        // here. The inference already takes `sync` away for one
-        // ([ADR-027](adr-027.md) D2, conservative in the restrictive
-        // direction), but D4 says an **assertion** is never overwritten by the
-        // inference - so a source that writes `sync` and calls something no
-        // ledger knows used to keep `sync = true` in a file that ships
-        // ([ADR-020](adr-020.md)), and a consumer's `par_iter` body would
-        // believe it. That is the polarity [ADR-010](adr-010.md) D1 forbids,
-        // paid for a caret: and the caret is available, because Part III C.2
-        // reports this checker and `NK2202` at *statement* granularity already.
-        Reached::Opaque(name) => Some((
-            name.unwrap_or_else(|| "something this compiler cannot resolve".to_string()),
-            false,
-            false,
-        )),
-    }
 }
 
 /// Every expression a statement holds, without descending into nested blocks -

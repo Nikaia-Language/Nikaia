@@ -521,7 +521,7 @@ fn collect(
             Seen::Call { name, .. } => {
                 callee_named(&parsed.interner, name, own, library, &parsed.program.items)
             }
-            Seen::Spawn | Seen::Opaque => Some(Callee::Opaque(None)),
+            Seen::Spawn { .. } | Seen::Opaque { .. } => Some(Callee::Opaque(None)),
             _ => None,
         };
         match callee {
