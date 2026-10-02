@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.362] — 2026-10-02
+
+**Whether statements keep their order is decided in Nikaia** (#125,
+ADR-250). The verdict half of `contracts::order` (ADR-033) - a statement
+reduced to an `Operation` or the reason it could not be (`Accounted`, with
+the sentence a report prints), and whether two operations, or a whole run of
+them, may overlap (`verdict`, `group_verdict`, `group_of`: a data dependency,
+a shadowed name, two touch sets meeting on a write, two names for what may be
+one destination) - moved into `tools/order.nika`. The walk that reduces a
+statement stays in Rust for now. 17.3 % of the toolchain is Nikaia.
+
 ## [0.0.361] — 2026-10-02
 
 **Whether a value may cross a thread is Nikaia** (#125, ADR-250). The

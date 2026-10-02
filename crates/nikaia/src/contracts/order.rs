@@ -63,21 +63,14 @@ use super::touch::Reached;
 use crate::contracts::SignatureOps;
 use crate::contracts::touch::TouchOps;
 
-/// One statement, reduced to what deciding an order needs.
-#[derive(Debug, Clone)]
-pub struct Operation {
-    /// The name it binds, where it binds one.
-    pub binds: Option<String>,
-    /// Every name its value mentions. A statement that mentions what the one
-    /// before it bound is a data dependency, and nothing else has to be
-    /// consulted.
-    pub mentions: BTreeSet<String>,
-    /// What the call it performs reaches, as the ledger describes it with the
-    /// call's own arguments filled in.
-    pub reaches: Vec<Reached>,
-    /// The ledger key of the call, for a diagnostic that wants to name it.
-    pub callee: String,
-}
+/// **The verdict half is written in Nikaia** (`tools/order.nika`, #125): a
+/// statement reduced (`Operation`) or the reason it could not be
+/// (`Accounted`), and whether two of them, or a run, keep their order
+/// (`Verdict`, `verdict`, `group_verdict`, `group_of`). What stays here is the
+/// walk that does the reducing.
+pub use nikaia_std::tools::order::{
+    Accounted, Operation, Verdict, group_of, group_verdict, verdict,
+};
 
 /// Reduce a statement to an [`Operation`], where it is one this can reason about.
 ///
@@ -95,126 +88,6 @@ pub fn operation(
     match accounted(parsed, stmt, own, library) {
         Accounted::Operation(operation) => Some(operation),
         _ => None,
-    }
-}
-
-/// A statement, reduced - or the reason it could not be.
-///
-/// The reason is the whole point (ADR-033 D9). Nikaia has no `allow_parallel`,
-/// so the only thing standing between a refusal and a mystery is the compiler
-/// being able to say which refusal it was.
-#[derive(Debug, Clone)]
-pub enum Accounted {
-    Operation(Operation),
-    /// It performs nothing at all: a loop, an `if`, an assignment, a `return`,
-    /// a `let` of a value that calls nothing.
-    ///
-    /// The one refusal that is about the **statement** rather than about what
-    /// the compiler knows. `let n = 0` has no touch set because it reaches
-    /// nothing, and pairing it with the operation next to it would ask a
-    /// thread to carry a constant.
-    NotAnOperation,
-    /// It performs something this analysis will not take apart, named so the
-    /// report says *which* thing.
-    Opaque(&'static str),
-    /// Its `catch` handler can leave the function, so the statement after it is
-    /// conditional on this one having succeeded (ADR-034).
-    DivertingHandler,
-    /// It can fail and nothing catches the failure, so the failure leaves the
-    /// function - and the statement after it is conditional on this one having
-    /// succeeded, exactly as a diverting handler makes it (ADR-034 D2).
-    ///
-    /// The same rule as [`Accounted::DivertingHandler`] reached from the other
-    /// side, and it has to be here: an uncaught `fs::write(…, fs::Root::Anywhere)` is precisely the
-    /// shape a bare expression statement makes common.
-    UncaughtFailure(String),
-    /// Nothing describes what the call reaches, so it reaches everything (D4).
-    NoTouches(String),
-    /// Something describes what the call reaches, in a word this compiler does
-    /// not know - so it reaches everything, for D4's reason and not for want of
-    /// a contract.
-    ///
-    /// The two are worth telling apart in a report: `NoTouches` is a gap
-    /// somebody can close by writing a line, and this one is a ledger written
-    /// against a newer vocabulary than this compiler has. It is refused rather
-    /// than ignored because an unknown kind is *different* from every kind
-    /// there is, and therefore disjoint from all of them - a typo that bought
-    /// an overlap would be the worst shape a mistake in this analysis can take
-    /// (`contracts::touch::KINDS`).
-    UnknownResource {
-        callee: String,
-        kind: String,
-    },
-    /// What it hands back may not cross a thread, or nothing written down says
-    /// it may (ADR-005 §1 Group B).
-    ///
-    /// An overlapped operation runs in a closure somewhere else and hands its
-    /// value back, so the result crosses a thread. `contracts::send` answers
-    /// whether it may, and anything but yes keeps the statement where it was
-    /// written - the crossing question answered with D4's polarity. The way to
-    /// buy the overlap back is the same as for `touches`: write the type down.
-    MayNotCross {
-        callee: String,
-        crossing: super::send::Crossing,
-    },
-    /// A value that is not a literal, which this increment will not send to
-    /// another thread.
-    ///
-    /// Each operation is lowered into a closure that runs somewhere else, and a
-    /// closure that captures nothing cannot capture something that must not
-    /// cross a thread. What may cross one is a decision of its own and not an
-    /// implicit answer here - D9's table calls it "an implementation limit, not
-    /// a language question", and it is the one refusal in that table a wider
-    /// analysis alone cannot lift.
-    ///
-    /// **D10's vehicle has no closure in it**, so that argument does not reach
-    /// a completion pair - and the refusal stays anyway. A path this compiler
-    /// cannot read is a file it cannot *name*, which is what D4 answers with
-    /// "it reaches everything": the pair would be refused one line further down
-    /// for a reason that has nothing to do with threads. Lifting this is still
-    /// the decision it always was.
-    NonLiteralArgument(String),
-}
-
-impl Accounted {
-    /// One line, for a report a person reads - and, where there is one, the way
-    /// out. A refusal a reader can act on is worth several they cannot.
-    pub fn why(&self) -> String {
-        match self {
-            Accounted::Operation(_) => "it is an operation".to_string(),
-            Accounted::NotAnOperation => "one of them performs no operation at all".to_string(),
-            Accounted::Opaque(what) => format!("one of them holds {what}"),
-            Accounted::DivertingHandler => {
-                "its `catch` can leave the function, so the next statement might never run. \
-                 Make the handler return a value instead, and check it afterwards"
-                    .to_string()
-            }
-            Accounted::UncaughtFailure(name) => {
-                format!(
-                    "`{name}` can fail and nothing catches it, so the next statement might never \
-                     run. `catch` it into a value, and check it afterwards"
-                )
-            }
-            Accounted::NoTouches(name) => {
-                format!("nothing says what `{name}` touches, so it might touch anything")
-            }
-            Accounted::UnknownResource { callee, kind } => {
-                format!(
-                    "`{callee}` says it touches {} `{kind}`, which this version of Nikaia \
-                     doesn't know, so it might touch anything",
-                    crate::check::an_or_a(kind)
-                )
-            }
-            Accounted::MayNotCross { callee, crossing } => {
-                format!(
-                    "what `{callee}` returns would have to move to another thread. {}",
-                    crossing.note().unwrap_or_else(|| "It can't.".to_string())
-                )
-            }
-            Accounted::NonLiteralArgument(name) => {
-                format!("`{name}` isn't a literal, and only literals can be sent to another thread")
-            }
-        }
     }
 }
 
@@ -237,7 +110,8 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
             // tuple pattern. Nothing needs it yet.
             if ty.is_some() {
                 return Accounted::Opaque(
-                    "a written type, which would have to be carried onto one half of a pattern",
+                    "a written type, which would have to be carried onto one half of a pattern"
+                        .to_string(),
                 );
             }
             // **A tuple of names is opaque here**
@@ -248,7 +122,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
             // the safe direction - it declines to reorder rather than
             // reordering wrongly.
             let [name] = names.as_slice() else {
-                return Accounted::Opaque("several names bound at once");
+                return Accounted::Opaque("several names bound at once".to_string());
             };
             (Some(parsed.text(*name).to_string()), value)
         }
@@ -499,7 +373,7 @@ fn walk_block<'a>(parsed: &Parsed, block: &'a crate::ast::Block, out: &mut Walke
         match &stmt.node {
             Stmt::Let { value, .. } | Stmt::Expr(value) => walk(parsed, value, out),
             _ => out.refuse(Accounted::Opaque(
-                "a `catch` handler doing more than handing back a value",
+                "a `catch` handler doing more than handing back a value".to_string(),
             )),
         }
     }
@@ -531,15 +405,11 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             // parameter could be read off them. They are not, so a call that
             // uses them is refused.
             if !config.is_empty() {
-                out.refuse(Accounted::Opaque(
-                    "a call with options, which nothing matches against the callee's order yet",
-                ));
+                out.refuse(Accounted::Opaque("a call with options, which nothing matches against the callee's order yet".to_string()));
                 return;
             }
             if callee_of(parsed, expr).is_none() {
-                out.refuse(Accounted::Opaque(
-                    "a call through something that is not a name",
-                ));
+                out.refuse(Accounted::Opaque("a call through something that is not a name".to_string()));
                 return;
             }
             for arg in args {
@@ -556,9 +426,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             // operation that only sometimes runs may not be started early
             // (ADR-033 D5).
             if matches!(op, BinaryOp::And | BinaryOp::Or) {
-                out.refuse(Accounted::Opaque(
-                    "a `&&` or `||`, whose right side runs only sometimes",
-                ));
+                out.refuse(Accounted::Opaque("a `&&` or `||`, whose right side runs only sometimes".to_string()));
                 return;
             }
             walk(parsed, lhs, out);
@@ -572,7 +440,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // follows it in a `seq` does not run, so this refuses rather than
         // accounting for it.
         Expr::Return(_) | Expr::Break | Expr::Continue => {
-            out.refuse(Accounted::Opaque("a `return`, a `break` or a `continue`"))
+            out.refuse(Accounted::Opaque("a `return`, a `break` or a `continue`".to_string()))
         }
 
         // A name that is not a callee's is a value from somewhere else, and the
@@ -589,11 +457,11 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // literal rule defers. The walk goes on through it, so that
         // `f("a").field` is still known to perform `f`.
         Expr::Field { base, .. } | Expr::SafeField { base, .. } => {
-            out.note(Accounted::Opaque("a value read from somewhere else"));
+            out.note(Accounted::Opaque("a value read from somewhere else".to_string()));
             walk(parsed, base, out);
         }
         Expr::Index { base, index } => {
-            out.note(Accounted::Opaque("a value read from somewhere else"));
+            out.note(Accounted::Opaque("a value read from somewhere else".to_string()));
             walk(parsed, base, out);
             walk(parsed, index, out);
         }
@@ -613,7 +481,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // of two files, which have to overlap or that test proves nothing.
         Expr::Path(_) => {}
         Expr::StructLit { fields, .. } => {
-            out.note(Accounted::Opaque("a value read from somewhere else"));
+            out.note(Accounted::Opaque("a value read from somewhere else".to_string()));
             for field in fields {
                 if let Some(value) = &field.value {
                     walk(parsed, value, out);
@@ -621,15 +489,13 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             }
         }
         Expr::Range { start, end, .. } => {
-            out.note(Accounted::Opaque("a value read from somewhere else"));
+            out.note(Accounted::Opaque("a value read from somewhere else".to_string()));
             walk(parsed, start, out);
             walk(parsed, end, out);
         }
         // `a ?? b` runs `b` only when `a` had nothing, which is D5's case again.
         Expr::Coalesce { value, fallback } => {
-            out.note(Accounted::Opaque(
-                "a `??`, whose fallback runs only sometimes",
-            ));
+            out.note(Accounted::Opaque("a `??`, whose fallback runs only sometimes".to_string()));
             walk(parsed, value, out);
             walk(parsed, fallback, out);
         }
@@ -639,9 +505,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // Text with code in it (ADR-035). What it says depends on what its holes
         // hold, and the holes are Nikaia this has not parsed - so what they call
         // is unknown, which is the reason this counts as performing something.
-        Expr::LitInterpolated { .. } => out.refuse(Accounted::Opaque(
-            "text with code in it, whose holes this has not parsed",
-        )),
+        Expr::LitInterpolated { .. } => out.refuse(Accounted::Opaque("text with code in it, whose holes this has not parsed".to_string())),
         // *Which* ledger entry `xs.len()` is depends on what `xs` is, and that
         // is the type checker's answer rather than this one's (ADR-028). The
         // weaker question is answerable here: if every `::len` in the ledger
@@ -700,195 +564,12 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         // a `touches` entry for a higher-order function would have to say is
         // *add* what the lambda reaches, and everything where the lambda cannot
         // be read - the polarity `walk_block` already gives a handler.
-        Expr::Closure { .. } => out.refuse(Accounted::Opaque(
-            "a lambda, whose body this analysis does not read",
-        )),
+        Expr::Closure { .. } => out.refuse(Accounted::Opaque("a lambda, whose body this analysis does not read".to_string())),
 
         // Everything with its own control flow: what runs inside it is decided
         // while it runs, and D5 allows only operations that certainly run.
-        _ => out.refuse(Accounted::Opaque("something with its own control flow")),
+        _ => out.refuse(Accounted::Opaque("something with its own control flow".to_string())),
     }
-}
-
-/// Why two statements keep the order they were written in - or that they need
-/// not (ADR-033 D9).
-///
-/// The analysis knew every one of these and threw all but the boolean away. It
-/// is kept because the decision *not* to give the language a word for "run
-/// these together anyway" is only defensible if the compiler can say what it
-/// refused and why: a silent refusal with no way to ask is the trap the
-/// keyword would have been an escape from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
-    /// They meet on nothing and neither waits for the other.
-    Overlap,
-    /// `later` uses what `earlier` bound.
-    DataDependency(String),
-    /// Both bind the same name, so the order decides which value survives.
-    Shadowed(String),
-    /// Their touch sets meet on something one of them writes.
-    SameResource {
-        kind: String,
-        named: Option<String>,
-        /// The resource has no name because this compiler could not read one,
-        /// rather than because the kind has only one of it.
-        ///
-        /// Two answers that both say "no name" and mean opposite things: there
-        /// is exactly one `stdout`, and `fs::write(pfad, fs::Root::Anywhere, …)` reaches a file
-        /// nobody here can identify. A report that called the first one
-        /// unnameable would be telling a reader to go and name something that
-        /// has no name to give.
-        unnameable: bool,
-    },
-    /// Their touch sets meet on two resources that are named differently and
-    /// may be the same thing - `stdout` and `stderr` under `2>&1`
-    /// (`contracts::touch::FAMILIES`).
-    SameDestination { one: String, other: String },
-    /// One of them is not a statement this analysis can account for at all -
-    /// a call it cannot resolve, a handler that can leave the function, an
-    /// argument that is not a literal. An admission of ignorance, and it keeps
-    /// the order for the same reason a real dependency does (D4).
-    NotAccountedFor,
-}
-
-impl Verdict {
-    pub fn is_overlap(&self) -> bool {
-        matches!(self, Verdict::Overlap)
-    }
-
-    /// One line, for a report a person reads.
-    pub fn why(&self) -> String {
-        match self {
-            Verdict::Overlap => "they meet on nothing".to_string(),
-            Verdict::DataDependency(name) => format!("the second uses `{name}`"),
-            Verdict::Shadowed(name) => format!("both bind `{name}`"),
-            Verdict::SameResource {
-                kind,
-                named: Some(named),
-                ..
-            } => {
-                format!("both reach {kind} `{named}`, and one writes it")
-            }
-            Verdict::SameResource {
-                kind,
-                unnameable: true,
-                ..
-            } => {
-                format!("both touch a {kind} the compiler can't name, and one writes to it")
-            }
-            Verdict::SameResource { kind, .. } => {
-                format!("both touch {kind}, and one writes to it")
-            }
-            Verdict::SameDestination { one, other } => {
-                format!(
-                    "one touches {one} and the other {other}, which might be the same \
-                     place. Use `seq` to run them in order"
-                )
-            }
-            Verdict::NotAccountedFor => "the compiler can't tell what one of them does".to_string(),
-        }
-    }
-}
-
-/// Whether `later` may run at the same time as `earlier`, and why not.
-///
-/// Both halves of the rule, in the order they are cheapest to refuse:
-/// a **data** dependency - `later` uses what `earlier` bound - and an **effect**
-/// dependency, where their touch sets meet on something one of them writes.
-pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
-    if let Some(bound) = &earlier.binds
-        && later.mentions.contains(bound)
-    {
-        return Verdict::DataDependency(bound.clone());
-    }
-    // Two `let`s of the same name would make the order decide which value
-    // survives. The parser allows shadowing, so this is reachable.
-    if earlier.binds.is_some() && earlier.binds == later.binds {
-        return Verdict::Shadowed(earlier.binds.clone().unwrap_or_default());
-    }
-
-    for a in &earlier.reaches {
-        for b in &later.reaches {
-            if a.conflicts_with(b) {
-                // Two kinds that conflict at all are two names for what may be
-                // one thing, and saying which two is the whole of the answer.
-                if a.kind != b.kind {
-                    return Verdict::SameDestination {
-                        one: a.kind.clone(),
-                        other: b.kind.clone(),
-                    };
-                }
-                // The one that is named is the more useful half to print; where
-                // neither is, saying so is the point.
-                let named = a
-                    .named
-                    .clone()
-                    .filter(|_| !a.unknown)
-                    .or_else(|| b.named.clone().filter(|_| !b.unknown));
-                return Verdict::SameResource {
-                    kind: a.kind.clone(),
-                    unnameable: named.is_none() && (a.unknown || b.unknown),
-                    named,
-                };
-            }
-        }
-    }
-
-    Verdict::Overlap
-}
-
-/// Whether a whole **run** of operations may run as one group, and why not
-/// (ADR-033 §6, "more than two statements at a time").
-///
-/// **Every pair, not every adjacent pair.** Disjointness is not transitive, and
-/// this is the one place where believing it would be a soundness hole rather
-/// than a missed optimisation:
-///
-/// ```text
-/// let a = fs::read_to_string("eins.txt", fs::Root::Anywhere)   // reads eins.txt
-/// let b = fs::read_to_string("zwei.txt", fs::Root::Anywhere)   // reads zwei.txt
-/// fs::write("eins.txt", fs::Root::Anywhere, "x")               // writes eins.txt
-/// ```
-///
-/// The two adjacent pairs are each disjoint. The run is not: the third meets
-/// the first, and in a group they all run at once, so a chain of adjacent
-/// answers would have overlapped a read of a file with the write of it. So this
-/// asks about `(i, j)` for every `i < j`, and the pair it names in a refusal is
-/// the *earliest* such pair - which is also the one a reader is looking at.
-///
-/// D6 needs nothing extra from a group. Members that meet on nothing cannot
-/// observe one another's effects, and the operations this analysis accounts for
-/// either cannot fail or catch their failure into a value
-/// ([`Accounted::UncaughtFailure`]), so there is no error left whose order
-/// could be decided by a race.
-pub fn group_verdict(run: &[Operation]) -> Verdict {
-    for (at, earlier) in run.iter().enumerate() {
-        for later in &run[at + 1..] {
-            let verdict = verdict(earlier, later);
-            if !verdict.is_overlap() {
-                return verdict;
-            }
-        }
-    }
-    Verdict::Overlap
-}
-
-/// How many operations from the front of `run` may go together.
-///
-/// A **prefix** and not the largest subset, deliberately: a group is a run of
-/// statements the emitter replaces in place, so leaving one out of the middle
-/// would reorder the ones after it past the one left behind. The answer is
-/// therefore the longest prefix every member of which meets every other on
-/// nothing, and `0` where that is fewer than two.
-pub fn group_of(run: &[Operation]) -> usize {
-    let mut taken = 1.min(run.len());
-    while taken < run.len() {
-        if !group_verdict(&run[..taken + 1]).is_overlap() {
-            break;
-        }
-        taken += 1;
-    }
-    if taken < 2 { 0 } else { taken }
 }
 
 /// The ledger key of the call an expression performs, where it performs one.
