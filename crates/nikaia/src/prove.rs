@@ -7,8 +7,8 @@
 // literals, `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`.
 // A name is a variable of the proof only where it is an immutable binding of a
 // whole-number type; anything else makes the claim one this prover cannot
-// read, and that is never a guess. Today it is a refusal: D4's check at run
-// time for a claim that is not proved is not built yet.
+// read, and that is never a guess: the claim is checked when the program
+// runs (D4).
 //
 // **What it knows** (D9): the branch an `if` is in, what a branch that always
 // leaves has ruled out — `return … if c` is exactly that
@@ -22,7 +22,7 @@
 // none over the rationals, so none over the integers; each derived bound is
 // tightened to the integers on the way, which is what lets `x < 5` and
 // `x > 4` contradict. It may fail to find a contradiction that exists — then
-// the claim is refused — and never finds one that does not.
+// the claim is checked at run time — and never finds one that does not.
 //
 // **Soundness around bindings.** A fact names variables by their name, so a
 // name bound again drops every fact that mentions it, and a block whose
@@ -37,26 +37,54 @@ use crate::check::{Finding, Severity};
 use crate::contracts::{Ledger, Provenance};
 use crate::parser::Parsed;
 
-/// How the compiler holds one `assert` (ADR-264 D4-D5).
+/// How the compiler holds one `assert` (ADR-264 D4-D6, D11).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Held {
     /// In a `test` block: the test's verdict, checked when it runs (D11).
     ByTheTest,
     /// Proved from what precedes it; no check is emitted.
     Proved,
-    /// The precondition of the named function: its callers prove it (D5).
-    Precondition(String),
-    /// Neither; the program is refused (`NK1202`). D4 makes this a check at
-    /// run time, and keeps the refusal only for D6; not built yet.
+    /// The precondition of the named function (D5): the body assumes it, and
+    /// each call proves it or carries the check. The number is how many
+    /// distinct calls carry one.
+    Precondition(String, usize),
+    /// Not proved: the condition is checked where it is reached (D4), for
+    /// the reason given.
+    AtRunTime(String),
+    /// A claim about data from outside the program (D6): `NK1202`.
     Refused,
 }
 
-/// What the prover found: its refusals, and how each claim it reached is held,
-/// keyed as [`crate::check::Checked::claims`] is.
+/// A precondition a call does not prove, checked at the call (D5): the
+/// callee's claim with the call's arguments in place of its parameters.
+#[derive(Debug, Clone)]
+pub struct CallCheck {
+    pub condition: Expr,
+    /// The claim as the callee wrote it, and whose it is.
+    pub written: String,
+}
+
+/// The calls that carry a check, by callee and their arguments as written:
+/// two calls that read the same carry the same check.
+pub type CallChecks = BTreeMap<(String, String), Vec<CallCheck>>;
+
+/// What the prover found: its refusals, how each claim it reached is held,
+/// keyed as [`crate::check::Checked::claims`] is, and the calls that carry a
+/// precondition's check.
 #[derive(Debug, Default)]
 pub struct Proved {
     pub findings: Vec<Finding>,
     pub held: BTreeMap<(usize, String), Held>,
+    pub call_checks: CallChecks,
+}
+
+/// How a call is named in [`CallChecks`].
+pub fn call_key(parsed: &Parsed, callee: &str, args: &[Expr]) -> (String, String) {
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| crate::check::written(parsed, a))
+        .collect();
+    (callee.to_string(), args.join(", "))
 }
 
 /// Prove every `assert` of the program. `claims` are the checker's: a call is
@@ -67,6 +95,7 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
         library,
         claims,
         preconditions: BTreeMap::new(),
+        in_the_body: BTreeMap::new(),
         collecting: true,
         out: Proved::default(),
         in_test: false,
@@ -81,7 +110,31 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
     // Pass 2: every claim and every call.
     prover.every_body();
 
-    // An `assert` this walk did not reach is not one it may leave to run time.
+    // **A precondition some call cannot carry is checked in the body** (D5):
+    // a call whose arguments the prover cannot read, or the function handed
+    // on as a value. Its calls then carry nothing.
+    let in_the_body = std::mem::take(&mut prover.in_the_body);
+    prover
+        .out
+        .call_checks
+        .retain(|(callee, _), _| !in_the_body.contains_key(callee));
+    let mut carried: BTreeMap<String, usize> = BTreeMap::new();
+    for (callee, _) in prover.out.call_checks.keys() {
+        *carried.entry(callee.clone()).or_insert(0) += 1;
+    }
+    for held in prover.out.held.values_mut() {
+        if let Held::Precondition(function, calls) = held {
+            if let Some(why) = in_the_body.get(function) {
+                *held = Held::AtRunTime(format!(
+                    "a precondition of `{function}`, checked in its body: {why}"
+                ));
+            } else {
+                *calls = carried.get(function).copied().unwrap_or(0);
+            }
+        }
+    }
+
+    // An `assert` this walk did not reach is checked where it stands.
     let tests: Vec<std::ops::Range<usize>> = parsed
         .program
         .items
@@ -97,18 +150,10 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
             prover.out.held.insert(key.clone(), Held::ByTheTest);
             continue;
         }
-        prover.out.held.insert(key.clone(), Held::Refused);
-        prover.out.findings.push(refusal(
-            Span::new(key.0, key.0 + 1),
-            "This `assert` is somewhere the prover doesn't look yet.".to_string(),
-            vec![
-                "An `assert` outside a test is proved while the program is built, or the \
-                 program doesn't build."
-                    .to_string(),
-            ],
-            "Move the claim out of the expression it's in, onto a line of its own in the \
-             function's body.",
-        ));
+        prover.out.held.insert(
+            key.clone(),
+            Held::AtRunTime("it stands somewhere the prover doesn't look yet".to_string()),
+        );
     }
     prover.out
 }
@@ -125,6 +170,8 @@ struct Prover<'a> {
     library: &'a Ledger,
     claims: &'a BTreeSet<(usize, String)>,
     preconditions: BTreeMap<String, Precondition>,
+    /// Functions whose precondition is checked in their body, and why (D5).
+    in_the_body: BTreeMap<String, String>,
     /// Pass 1 records preconditions and says nothing.
     collecting: bool,
     out: Proved,
@@ -306,7 +353,7 @@ impl<'a> Prover<'a> {
                 ty,
                 value,
             } => {
-                self.expr(value, span, scope, &nested);
+                self.expr(value, scope, &nested);
                 let tainted = self.tainted(value, scope);
                 let value_lin = lin(self.parsed, value, scope);
                 for name in names {
@@ -355,13 +402,13 @@ impl<'a> Prover<'a> {
                 false
             }
             Stmt::Comptime { name, value, .. } => {
-                self.expr(value, span, scope, &nested);
+                self.expr(value, scope, &nested);
                 scope.rebind(self.parsed.text(*name));
                 false
             }
             Stmt::Assign { target, value, .. } => {
-                self.expr(target, span, scope, &nested);
-                self.expr(value, span, scope, &nested);
+                self.expr(target, scope, &nested);
+                self.expr(value, scope, &nested);
                 if let Expr::Variable(name) = target {
                     let name = self.parsed.text(*name).to_string();
                     let tainted = self.tainted(value, scope);
@@ -377,7 +424,7 @@ impl<'a> Prover<'a> {
                 iter,
                 body,
             } => {
-                self.expr(iter, span, scope, &nested);
+                self.expr(iter, scope, &nested);
                 let tainted = self.tainted(iter, scope);
                 let mut inner = scope.clone();
                 for binding in bindings {
@@ -414,7 +461,7 @@ impl<'a> Prover<'a> {
                 false
             }
             Stmt::While { cond, body } => {
-                self.expr(cond, span, scope, &nested);
+                self.expr(cond, scope, &nested);
                 let mut inner = scope.clone();
                 if let Some(holds) = formula(self.parsed, cond, &inner, true) {
                     inner.facts.push(holds);
@@ -424,7 +471,7 @@ impl<'a> Prover<'a> {
             }
             Stmt::Return(value) => {
                 if let Some(value) = value {
-                    self.expr(value, span, scope, &nested);
+                    self.expr(value, scope, &nested);
                 }
                 true
             }
@@ -448,7 +495,7 @@ impl<'a> Prover<'a> {
                         .claims
                         .contains(&(span.at(), crate::check::argument_shape(&args[0]))) =>
             {
-                self.expr(&args[0], span, scope, &nested);
+                self.expr(&args[0], scope, &nested);
                 self.an_assert(&args[0], span, scope, at);
                 false
             }
@@ -457,7 +504,7 @@ impl<'a> Prover<'a> {
                 then_branch,
                 else_branch,
             } => {
-                self.expr(cond, span, scope, &nested);
+                self.expr(cond, scope, &nested);
                 let holds = formula(self.parsed, cond, scope, true);
                 let fails = formula(self.parsed, cond, scope, false);
                 let mut then_scope = scope.clone();
@@ -494,18 +541,18 @@ impl<'a> Prover<'a> {
                 false
             }
             Expr::Throw(value) => {
-                self.expr(value, span, scope, &nested);
+                self.expr(value, scope, &nested);
                 true
             }
             Expr::Return(value) => {
                 if let Some(value) = &**value {
-                    self.expr(value, span, scope, &nested);
+                    self.expr(value, scope, &nested);
                 }
                 true
             }
             Expr::Break | Expr::Continue => true,
             other => {
-                self.expr(other, span, scope, &nested);
+                self.expr(other, scope, &nested);
                 false
             }
         }
@@ -550,73 +597,65 @@ impl<'a> Prover<'a> {
             scope.facts.push(claim.clone());
             self.out
                 .held
-                .insert(key, Held::Precondition(function.clone()));
+                .insert(key, Held::Precondition(function.clone(), 0));
             return;
         }
 
-        self.out.held.insert(key, Held::Refused);
-        if self.collecting {
-            return;
-        }
-        let written = crate::check::written(self.parsed, cond);
         let tainted: Vec<&String> = names
             .iter()
             .filter(|n| scope.tainted.contains(*n))
             .collect();
-        let mut notes = Vec::new();
-        let help;
+        // **A claim about data from outside is a guard's job** (D6): the one
+        // claim that is refused rather than checked.
         if let Some(first) = tainted.first() {
-            notes.push(format!(
-                "`{first}` comes from outside the program, so nothing the compiler can see \
-                 says what it holds."
-            ));
-            help = format!(
-                "Check it where it arrives, with a guard the program handles: \
-                 `throw BadInput({first}) if !({written})`, or `return … if !({written})`. \
-                 After that line, this `assert` is proved."
-            );
-        } else if claim.is_none() {
-            notes.push(
-                "The prover reads comparisons of whole numbers built with `+`, `-` and a `*` \
-                 by a constant, joined with `&&`, `||` and `!`, over names that don't change."
-                    .to_string(),
-            );
-            help = "Compute the numbers you're claiming something about with `let` first, \
-                    or check it with a guard the program handles."
-                .to_string();
-        } else {
-            notes.push("Nothing before this line shows it.".to_string());
-            if only_params && let Some(why) = at.no_precondition {
-                notes.push(why.to_string());
-            } else if only_params && !at.top {
-                notes.push(
-                    "A claim about parameters is a precondition only at the top of the \
-                     function's body."
-                        .to_string(),
-                );
+            self.out.held.insert(key, Held::Refused);
+            if self.collecting {
+                return;
             }
-            help = format!(
-                "Add a guard before it, like `return … if !({written})`, so the compiler \
-                 can see why it holds."
-            );
+            let written = crate::check::written(self.parsed, cond);
+            self.out.findings.push(refusal(
+                span,
+                format!("`{written}` is a claim about data from outside the program."),
+                vec![
+                    format!(
+                        "`{first}` comes from outside the program, so nothing the compiler \
+                         can see says what it holds."
+                    ),
+                    "That it is wrong is a case the program has to handle, not a defect an \
+                     `assert` catches."
+                        .to_string(),
+                ],
+                &format!(
+                    "Check it where it arrives, with a guard the program handles: \
+                     `throw BadInput({first}) if !({written})`, or `return … if !({written})`. \
+                     After that line, this `assert` is proved."
+                ),
+            ));
+            return;
         }
-        notes.push(
-            "An `assert` outside a test is proved while the program is built; it is never \
-             checked while it runs."
-                .to_string(),
-        );
-        self.out.findings.push(refusal(
-            span,
-            format!("The compiler can't prove `{written}`."),
-            notes,
-            &help,
-        ));
+
+        // **Neither proved nor refused: checked where it is reached** (D4).
+        let why = if claim.is_none() {
+            "it is not a comparison of whole numbers the prover reads".to_string()
+        } else if only_params && let Some(no) = at.no_precondition {
+            format!(
+                "nothing before it shows it; {}",
+                lowered_first(no.trim_end_matches('.'))
+            )
+        } else if only_params && !at.top {
+            "nothing before it shows it, and a claim about parameters is a precondition only \
+             at the top of the function's body"
+                .to_string()
+        } else {
+            "nothing before it shows it".to_string()
+        };
+        self.out.held.insert(key, Held::AtRunTime(why));
     }
 
     /// Walk an expression for what it calls: a call to a function with a
     /// precondition proves it here (D5), a function with one is not handed on
     /// as a value, and a nested block is walked with what it may know.
-    fn expr(&mut self, expr: &Expr, span: Span, scope: &Scope, at: &Where) {
+    fn expr(&mut self, expr: &Expr, scope: &Scope, at: &Where) {
         let parsed = self.parsed;
         let mut calls: Vec<(String, Vec<Expr>)> = Vec::new();
         let mut values: Vec<String> = Vec::new();
@@ -638,27 +677,17 @@ impl<'a> Prover<'a> {
                 continue;
             }
             if let Some(pre) = self.preconditions.get(&callee).cloned() {
-                self.a_call(&callee, &pre, &args, span, scope);
+                self.a_call(&callee, &pre, &args, scope);
             }
         }
+        // **A function with a precondition handed on as a value** is called
+        // where the compiler can't see the call, so its body checks it (D5).
         if !self.collecting {
             for value in values {
                 if !scope.locals.contains(&value) && self.preconditions.contains_key(&value) {
-                    self.out.findings.push(Finding {
-                        severity: Severity::Error,
-                        span,
-                        code: "NK1204",
-                        message: format!(
-                            "`{value}` has a precondition, so it can't be handed on as a value."
-                        ),
-                        notes: vec![
-                            "Whoever calls it later has to prove the precondition, and the \
-                             compiler can't see that call."
-                                .to_string(),
-                        ],
-                        help: Some(format!("Call `{value}` here, or wrap the call in a lambda that checks the arguments first.")),
-                        labels: Vec::new(),
-                    });
+                    self.in_the_body
+                        .entry(value)
+                        .or_insert_with(|| "it is handed on as a value".to_string());
                 }
             }
         }
@@ -708,14 +737,7 @@ impl<'a> Prover<'a> {
     }
 
     /// A call to a function with a precondition (D5).
-    fn a_call(
-        &mut self,
-        callee: &str,
-        pre: &Precondition,
-        args: &[Expr],
-        span: Span,
-        scope: &Scope,
-    ) {
+    fn a_call(&mut self, callee: &str, pre: &Precondition, args: &[Expr], scope: &Scope) {
         if self.collecting {
             return;
         }
@@ -745,26 +767,39 @@ impl<'a> Prover<'a> {
             if proved {
                 continue;
             }
+            // **Not proved: the call carries the check** (D5), with the
+            // arguments in place of the parameters - where every argument is
+            // one the prover reads, which also makes it pure, so evaluating it
+            // once more for the check changes nothing.
+            let arguments: BTreeMap<String, Expr> =
+                params.iter().cloned().zip(args.iter().cloned()).collect();
+            let condition = negation
+                .is_some()
+                .then(|| with_arguments(self.parsed, claim, &arguments))
+                .flatten();
+            let Some(condition) = condition else {
+                self.in_the_body
+                    .entry(callee.to_string())
+                    .or_insert_with(|| {
+                        "a call's argument isn't a whole number the prover reads".to_string()
+                    });
+                continue;
+            };
             let written = crate::check::written(self.parsed, claim);
-            self.out.findings.push(Finding {
-                severity: Severity::Error,
-                span,
-                code: "NK1203",
-                message: format!("This call to `{callee}` doesn't show `{written}`."),
-                notes: vec![
-                    format!("`{callee}` asserts `{written}` about its parameters, so every call has to prove it."),
-                    match negation {
-                        None => "An argument here isn't a whole number the prover can read."
-                            .to_string(),
-                        Some(_) => "Nothing before this call shows it.".to_string(),
-                    },
-                ],
-                help: Some(format!(
-                    "Check the arguments before the call, like `return … if !(…)`, so \
-                     `{written}` holds for them."
-                )),
-                labels: Vec::new(),
-            });
+            let checks = self
+                .out
+                .call_checks
+                .entry(call_key(self.parsed, callee, args))
+                .or_default();
+            if !checks
+                .iter()
+                .any(|c| c.written.ends_with(&format!("`{written}`")))
+            {
+                checks.push(CallCheck {
+                    condition,
+                    written: format!("precondition of `{callee}`: `{written}`"),
+                });
+            }
         }
     }
 
@@ -817,6 +852,46 @@ fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Findi
         notes,
         help: Some(help.to_string()),
         labels: Vec::new(),
+    }
+}
+
+/// `claim` with each parameter replaced by the argument the call gives it,
+/// where the claim is one the prover reads (D9) - which is all a precondition
+/// can be.
+fn with_arguments(
+    parsed: &Parsed,
+    claim: &Expr,
+    arguments: &BTreeMap<String, Expr>,
+) -> Option<Expr> {
+    fn replace(parsed: &Parsed, expr: &mut Expr, arguments: &BTreeMap<String, Expr>) -> bool {
+        match expr {
+            Expr::Variable(name) => {
+                if let Some(argument) = arguments.get(parsed.text(*name)) {
+                    *expr = argument.clone();
+                }
+                true
+            }
+            Expr::LitInt { .. } | Expr::LitBool(_) => true,
+            Expr::MethodCall { receiver, args, .. } if args.is_empty() => {
+                replace(parsed, receiver, arguments)
+            }
+            Expr::Unary { expr, .. } => replace(parsed, expr, arguments),
+            Expr::Binary { lhs, rhs, .. } => {
+                replace(parsed, lhs, arguments) && replace(parsed, rhs, arguments)
+            }
+            _ => false,
+        }
+    }
+    let mut condition = claim.clone();
+    replace(parsed, &mut condition, arguments).then_some(condition)
+}
+
+/// `"A method can't …"` as the rest of a sentence.
+fn lowered_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 

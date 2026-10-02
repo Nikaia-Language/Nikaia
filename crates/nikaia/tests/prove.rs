@@ -1,6 +1,7 @@
-//! **Every `assert` outside a test is proved while the program is built**
-//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4), or - until
-//! D4's check at run time is built - the program is refused. A proved claim leaves nothing behind in the emitted Rust.
+//! **Every `assert` outside a test is proved while the program is built
+//! where it can be, and checked when the program runs where it cannot**
+//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4). A proved claim
+//! leaves nothing behind in the emitted Rust.
 
 mod common;
 
@@ -21,6 +22,18 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 
 fn codes(source: &str) -> Vec<&'static str> {
     findings(source).iter().map(|f| f.code).collect()
+}
+
+/// How each `assert` of the program is held, in the order they are written.
+fn held(source: &str) -> Vec<nikaia::prove::Held> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    nikaia::check::check(&parsed, &own, &library)
+        .claims
+        .into_values()
+        .filter_map(|c| c.held)
+        .collect()
 }
 
 fn the_one(source: &str, code: &str) -> nikaia::check::Finding {
@@ -108,58 +121,54 @@ fn branches_lets_ranges_and_guards_are_facts() {
     assert!(codes(source).is_empty(), "{:#?}", findings(source));
 }
 
-/// **A claim nothing shows is refused**, and the message says what to do -
-/// until ADR-264 D4's check at run time is built.
+/// **D4: a claim nothing shows is checked when the program runs**, and says
+/// why it was not proved.
 #[test]
-fn a_claim_nothing_shows_is_refused() {
-    let refusal = the_one(
-        "fn f(x: i64) -> i64 {\n\
-         \x20   let y = x * 2\n\
-         \x20   assert(y > 0)\n\
-         \x20   return y\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{f(1)}\")\n\
-         }\n",
-        "NK1202",
+fn a_claim_nothing_shows_is_checked_when_the_program_runs() {
+    let source = "fn f(x: i64) -> i64 {\n\
+                  \x20   let y = x * 2\n\
+                  \x20   assert(y > 0)\n\
+                  \x20   return y\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{f(1)}\")\n\
+                  }\n";
+    assert_eq!(
+        held(source),
+        [nikaia::prove::Held::AtRunTime(
+            "nothing before it shows it".to_string()
+        )]
     );
-    assert_eq!(refusal.message, "The compiler can't prove `y > 0`.");
+    let (out, rust) = ran("prove-at-run-time", source);
+    assert_eq!(out, "2\n");
     assert!(
-        refusal
-            .notes
-            .iter()
-            .any(|n| n == "Nothing before this line shows it."),
-        "{refusal:#?}"
-    );
-    assert!(
-        refusal
-            .help
-            .unwrap_or_default()
-            .contains("return … if !(y > 0)")
+        rust.contains("assertion_failed(\"assert(y > 0)\""),
+        "{rust}"
     );
 }
 
-/// **D9: a claim the prover cannot read is not guessed** - it is refused,
-/// until ADR-264 D4's check at run time is built.
+/// **D9: a claim the prover cannot read is not guessed**: it is checked when
+/// the program runs.
 #[test]
-fn a_claim_outside_what_the_prover_reads_is_refused() {
-    let refusal = the_one(
-        "fn main() {\n\
-         \x20   let name = \"ab\"\n\
-         \x20   assert(name == \"ab\")\n\
-         }\n",
-        "NK1202",
+fn a_claim_outside_what_the_prover_reads_is_checked() {
+    let source = "fn main() {\n\
+                  \x20   let name = \"ab\"\n\
+                  \x20   assert(name == \"ab\")\n\
+                  }\n";
+    assert_eq!(
+        held(source),
+        [nikaia::prove::Held::AtRunTime(
+            "it is not a comparison of whole numbers the prover reads".to_string()
+        )]
     );
-    assert!(
-        refusal.notes[0].starts_with("The prover reads comparisons of whole numbers"),
-        "{refusal:#?}"
-    );
+    let (_, rust) = ran("prove-unread", source);
+    assert!(rust.contains("assertion_failed"), "{rust}");
 }
 
 /// **D5: a claim about parameters is the caller's to prove**: a literal
-/// argument proves it, a guard proves it, and a call that shows nothing is
-/// `NK1203` - at the call.
+/// argument proves it, a guard proves it, and a call that shows nothing
+/// checks it - at the call, with its arguments in place of the parameters.
 #[test]
 fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     let (out, rust) = ran(
@@ -181,7 +190,8 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     assert_eq!(out, "25 75 0\n");
     assert!(!rust.contains("assertion_failed"), "{rust}");
 
-    let refusal = the_one(
+    let (out, rust) = ran(
+        "prove-call-check",
         "fn percent(part: i64, whole: i64) -> i64 {\n\
          \x20   assert(whole > 0)\n\
          \x20   return part * 100 / whole\n\
@@ -194,54 +204,55 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
          fn main() {\n\
          \x20   println(f\"{report(3, 4)}\")\n\
          }\n",
-        "NK1203",
     );
-    assert_eq!(
-        refusal.message,
-        "This call to `percent` doesn't show `whole > 0`."
+    assert_eq!(out, "75\n");
+    assert!(
+        rust.contains("(if !(total > 0) { nikaia_std::abort::assertion_failed("),
+        "{rust}"
     );
+    assert_eq!(rust.matches("assertion_failed(").count(), 1, "{rust}");
 }
 
-/// **D5: where a precondition cannot be carried yet**, the claim is refused
-/// with the reason: a `pub fn`, a method, and a function handed on as a value.
-/// D5 checks it in the body instead; not built yet.
+/// **D5: where a precondition cannot be carried yet, its body checks it**: a
+/// `pub fn`, a method, and a function handed on as a value.
 #[test]
-fn a_precondition_is_refused_where_it_cannot_be_carried() {
-    let public = the_one(
-        "pub fn half(n: i64) -> i64 {\n\
-         \x20   assert(n >= 0)\n\
-         \x20   return n / 2\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   println(f\"{half(4)}\")\n\
-         }\n",
-        "NK1202",
-    );
+fn a_precondition_is_checked_in_the_body_where_it_cannot_be_carried() {
+    let public = "pub fn half(n: i64) -> i64 {\n\
+                  \x20   assert(n >= 0)\n\
+                  \x20   return n / 2\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{half(4)}\")\n\
+                  }\n";
     assert!(
-        public
-            .notes
-            .iter()
-            .any(|n| n.contains("A `pub fn` can't have a precondition yet")),
-        "{public:#?}"
+        matches!(
+            held(public).as_slice(),
+            [nikaia::prove::Held::AtRunTime(why)] if why.contains("a `pub fn` can't have a precondition yet")
+        ),
+        "{:#?}",
+        held(public)
     );
 
-    let value = the_one(
-        "fn positive(n: i64) -> i64 {\n\
-         \x20   assert(n > 0)\n\
-         \x20   return n\n\
-         }\n\
-         \n\
-         fn main() {\n\
-         \x20   let f = positive\n\
-         \x20   println(f\"{f(1)}\")\n\
-         }\n",
-        "NK1204",
+    let value = "fn positive(n: i64) -> i64 {\n\
+                 \x20   assert(n > 0)\n\
+                 \x20   return n\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let f = positive\n\
+                 \x20   println(f\"{f(1)} {positive(2)}\")\n\
+                 }\n";
+    assert_eq!(
+        held(value),
+        [nikaia::prove::Held::AtRunTime(
+            "a precondition of `positive`, checked in its body: it is handed on as a value"
+                .to_string()
+        )]
     );
-    assert!(
-        value.message.contains("`positive` has a precondition"),
-        "{value:#?}"
-    );
+    let (out, rust) = ran("prove-value", value);
+    assert_eq!(out, "1 2\n");
+    assert_eq!(rust.matches("assertion_failed(").count(), 1, "{rust}");
 }
 
 /// **D6: a claim about data from outside the program** is refused with where
@@ -328,8 +339,10 @@ fn a_length_is_a_variable_of_the_proof() {
                   }\n";
     assert!(codes(source).is_empty(), "{:#?}", findings(source));
 
-    // And a call that shows nothing about the length is refused at the call.
-    let refusal = the_one(
+    // And a call that shows nothing about the length checks it, with the
+    // argument's length in place of the parameter's.
+    let (out, rust) = ran(
+        "prove-length-call",
         "fn first(xs: Vec[i64]) -> i64 {\n\
          \x20   assert(xs.len() > 0)\n\
          \x20   return xs[0]\n\
@@ -342,9 +355,9 @@ fn a_length_is_a_variable_of_the_proof() {
          fn main() {\n\
          \x20   println(f\"{use_it([1])}\")\n\
          }\n",
-        "NK1203",
     );
-    assert!(refusal.message.contains("xs.len() > 0"), "{refusal:#?}");
+    assert_eq!(out, "1\n");
+    assert!(rust.contains("(if !((ys.len() as i64) > 0)"), "{rust}");
 }
 
 /// **A lambda keeps what holds around it**, and its own parameters are new
@@ -381,8 +394,11 @@ fn a_lambda_sees_the_facts_around_it_and_not_through_its_parameters() {
                     \x20   println(f\"{f(1).len()}\")\n\
                     }\n";
     assert!(
-        codes(shadowed).contains(&"NK1202"),
+        matches!(
+            held(shadowed).as_slice(),
+            [nikaia::prove::Held::AtRunTime(_)]
+        ),
         "{:#?}",
-        findings(shadowed)
+        held(shadowed)
     );
 }

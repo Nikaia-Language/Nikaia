@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.349] — 2026-10-02
+
+**A claim the compiler cannot prove is checked when the program runs**
+(ADR-264 D4-D7). `prove.rs` no longer refuses an `assert` it cannot prove:
+the claim is held `AtRunTime` with the reason, and the emitter writes the
+check it already wrote for a test's claim. `NK1202` is left to D6 - a claim
+about data from outside the program, which a guard checks instead.
+
+- **A precondition is checked at the call that does not prove it** (D5):
+  `(if !(total > 0) { assertion_failed(…) }, percent(done, total)).1`, the
+  callee's claim with the call's arguments in place of its parameters, so a
+  failure names the caller's line. Two calls that read the same carry the same
+  check. Where a call's argument is not one the prover reads, or the function
+  is handed on as a value, the body checks it instead. `NK1203` and `NK1204`
+  are retired.
+- **`--asserts` says why** (D7): each claim checked at run time names the
+  reason the prover gave up, a precondition says how many calls check it, and
+  the heading counts the claims checked at run time.
+- Not built: D8's refutation with values.
+
 ## [0.0.348] — 2026-10-02
 
 **An `assert` is a contract: proved where the compiler can, checked where it

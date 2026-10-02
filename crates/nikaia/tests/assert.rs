@@ -1,6 +1,7 @@
 //! **`assert`, a claim** ([ADR-264](../../../docs/specification/adr/adr-264.md)
 //! D2, D3): a prelude function the compiler knows, whose condition changes
-//! nothing. Outside a test it is proved while the program is built
+//! nothing. Outside a test it is proved while the program is built where it
+//! can be, and checked when it runs where it cannot
 //! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4); a program runs
 //! here at both settings of `user_parallelism`.
 
@@ -114,22 +115,61 @@ fn claims_the_compiler_proves_let_the_program_run() {
     assert_eq!(stdout, "all held 0\n");
 }
 
-/// **A false claim never reaches the program**: it is refused while the
-/// program is built - today, until ADR-264 D4 and D8 (a warning, and a check
-/// at run time) are built. What a false claim says when it *runs* is a
-/// test's (`nikaia_test.rs`), the one place an `assert` is still a check.
+/// **A false claim the prover cannot hold stops the program** (ADR-264 D4,
+/// D2): at both settings, naming its line, its message, the claim as written
+/// and its operand's value.
 #[test]
-fn a_false_claim_is_refused_before_the_program_runs() {
-    let found = refused(
-        "fn main() {\n\
-         \x20   let blank = 2\n\
-         \x20   assert(blank + 1 == 4; message: \"an empty line is blank\")\n\
+fn a_false_claim_stops_the_program_when_it_runs() {
+    let (ok, stdout, stderr) = outcome(
+        "false",
+        "fn twice(n: i64) -> i64 sync {\n\
+         \x20   let blank = n * 2\n\
+         \x20   assert(blank == 1; message: \"an empty line is blank\")\n\
+         \x20   return blank\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(\"before\")\n\
+         \x20   println(f\"{twice(1)}\")\n\
          }\n",
-        "NK1202",
     );
+    assert!(!ok, "{stdout}");
+    assert_eq!(stdout, "before\n");
     assert!(
-        found[0].starts_with("The compiler can't prove `blank + 1 == 4`."),
-        "{found:?}"
+        stderr.contains("claims.nika:3")
+            && stderr.contains("assertion failed: an empty line is blank")
+            && stderr.contains("assert(blank == 1; message: \"an empty line is blank\")")
+            && stderr.contains("blank is 2"),
+        "{stderr}"
+    );
+}
+
+/// **A call that does not prove a precondition checks it, and its failure
+/// names the call** (ADR-264 D5): the caller broke the contract.
+#[test]
+fn a_broken_precondition_names_the_caller() {
+    let (ok, stdout, stderr) = outcome(
+        "precondition",
+        "fn percent(part: i64, whole: i64) -> i64 sync {\n\
+         \x20   assert(whole > 0)\n\
+         \x20   return part * 100 / whole\n\
+         }\n\
+         \n\
+         fn report(done: i64, total: i64) -> i64 sync {\n\
+         \x20   return percent(done, total)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{report(1, 4)}\")\n\
+         \x20   println(f\"{report(1, 0)}\")\n\
+         }\n",
+    );
+    assert!(!ok, "{stdout}");
+    assert_eq!(stdout, "25\n");
+    assert!(
+        stderr.contains("claims.nika:7")
+            && stderr.contains("precondition of `percent`: `whole > 0`"),
+        "{stderr}"
     );
 }
 
@@ -213,8 +253,9 @@ fn a_program_may_declare_its_own_assert() {
     assert_eq!(stdout, "mine: false\n");
 }
 
-/// **`--asserts` names every claim and how it is held** (D7): proved, or a
-/// precondition its callers prove (ADR-264 D5).
+/// **`--asserts` names every claim and how it is held** (ADR-264 D7): proved,
+/// a precondition and the calls that check it (D5), or checked at run time
+/// with the reason - and how many of each.
 #[test]
 fn asserts_reports_every_claim() {
     let source = "fn half(n: i64) -> i64 sync {\n\
@@ -226,6 +267,8 @@ fn asserts_reports_every_claim() {
                   \x20   let k = half(4)\n\
                   \x20   let four = 4\n\
                   \x20   assert(four == 4)\n\
+                  \x20   let twice: i64 = k * 2\n\
+                  \x20   assert(twice > 2)\n\
                   \x20   println(f\"{k}\")\n\
                   }\n";
     let dir = common::scratch_dir("assert-report");
@@ -243,11 +286,13 @@ fn asserts_reports_every_claim() {
     );
     assert!(
         stdout.contains(
-            "asserts in claims.nika: 2 - proved 1, preconditions 1, checked by a test 0, \
-             refused 0\n\
+            "asserts in claims.nika: 3 - proved 1, preconditions 1, checked at run time 1, \
+             checked by a test 0, refused 0\n\
              \x20 claims.nika:2  assert(n >= 0; message: \"not negative\")  precondition of \
-             `half`: its callers prove it\n\
-             \x20 claims.nika:9  assert(four == 4)  proved\n"
+             `half`: proved at every call\n\
+             \x20 claims.nika:9  assert(four == 4)  proved\n\
+             \x20 claims.nika:11  assert(twice > 2)  checked at run time: nothing before it \
+             shows it\n"
         ),
         "{stdout}"
     );

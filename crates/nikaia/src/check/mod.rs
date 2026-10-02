@@ -206,10 +206,9 @@ pub struct StoredCode {
 /// with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Claim {
-    /// How the compiler holds it ([ADR-264](../../docs/specification/adr/adr-264.md)):
-    /// only a test's claim is checked when it runs, and the emitter writes
-    /// nothing for any other - because D4's second row, a check for a claim
-    /// that is not proved, is not built yet, and such a claim is refused.
+    /// How the compiler holds it ([ADR-264](../../docs/specification/adr/adr-264.md)
+    /// D4): the emitter writes a check for every claim that is neither
+    /// proved nor a precondition.
     pub held: Option<crate::prove::Held>,
     /// `assert(blank == 1; message: "…")`, rewritten from the tree.
     pub written: String,
@@ -854,6 +853,9 @@ pub struct Checked {
     /// and the shape of its condition, and how each is held
     /// ([ADR-264](../../docs/specification/adr/adr-264.md) D4).
     pub claims: BTreeMap<(usize, String), Claim>,
+    /// **The calls that check a precondition they do not prove**
+    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D5).
+    pub call_checks: crate::prove::CallChecks,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
     /// [`Checked::lent_args`] is.
@@ -1353,12 +1355,13 @@ fn walked<'a>(
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
     // **Every `assert` outside a test is proved where it can be**
-    // ([ADR-264](../../docs/specification/adr/adr-264.md) D4); until D4's
-    // check for an unproved claim is built, one is refused. After the walk,
+    // ([ADR-264](../../docs/specification/adr/adr-264.md) D4), and checked
+    // when the program runs where it cannot. After the walk,
     // because the checker is what decided which calls are the prelude's.
     let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
     let proved = crate::prove::prove(parsed, library, &keys);
     checker.checked.findings.extend(proved.findings);
+    checker.checked.call_checks = proved.call_checks;
     for (key, held) in proved.held {
         if let Some(claim) = checker.checked.claims.get_mut(&key) {
             claim.held = Some(held);
@@ -1854,6 +1857,8 @@ pub struct Propagation {
     pub compared_views: BTreeSet<(usize, String)>,
     /// [`Checked::claims`].
     pub claims: BTreeMap<(usize, String), Claim>,
+    /// [`Checked::call_checks`].
+    pub call_checks: crate::prove::CallChecks,
     /// [`Checked::mut_args`].
     pub mut_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::copied_args`].
@@ -2061,6 +2066,7 @@ pub fn propagation_against(
         wrapped: checked.wrapped,
         compared_views: checked.compared_views,
         claims: checked.claims,
+        call_checks: checked.call_checks,
         mut_args: checked.mut_args,
         copied_args: checked.copied_args,
         settle_fns: checked.settle_fns,
@@ -22585,8 +22591,9 @@ fn unviewed(ty: &Ty) -> Ty {
 
 /// **`--asserts`** ([ADR-264](../../docs/specification/adr/adr-264.md) D7):
 /// every `assert` of one file, by line, and how the compiler holds it: proved,
-/// a precondition its callers prove, a test's check, or refused (until
-/// D4's run-time check is built).
+/// a precondition and how many calls check it, checked at run time and why, a
+/// test's check, or refused (D6) - and how many of each, so that the number
+/// checked at run time can be watched.
 pub fn claims_report(
     parsed: &Parsed,
     source: &str,
@@ -22611,19 +22618,32 @@ pub fn claims_report(
             .count()
     };
     let mut out = format!(
-        "asserts in {path}: {} - proved {}, preconditions {}, checked by a test {}, refused {}\n",
+        "asserts in {path}: {} - proved {}, preconditions {}, checked at run time {}, \
+         checked by a test {}, refused {}\n",
         rows.len(),
         count(|h| matches!(h, Held::Proved)),
-        count(|h| matches!(h, Held::Precondition(_))),
+        count(|h| matches!(h, Held::Precondition(..))),
+        count(|h| matches!(h, Held::AtRunTime(_))),
         count(|h| matches!(h, Held::ByTheTest)),
         count(|h| matches!(h, Held::Refused)),
     );
     for (line, claim) in rows {
         let how = match &claim.held {
             Some(Held::Proved) => "proved".to_string(),
-            Some(Held::Precondition(f)) => format!("precondition of `{f}`: its callers prove it"),
+            Some(Held::Precondition(f, 0)) => {
+                format!("precondition of `{f}`: proved at every call")
+            }
+            Some(Held::Precondition(f, 1)) => {
+                format!("precondition of `{f}`: one call checks it when it runs")
+            }
+            Some(Held::Precondition(f, n)) => {
+                format!("precondition of `{f}`: {n} calls check it when they run")
+            }
+            Some(Held::AtRunTime(why)) => format!("checked at run time: {why}"),
             Some(Held::ByTheTest) => "checked when the test runs".to_string(),
-            Some(Held::Refused) | None => "refused: the compiler can't prove it".to_string(),
+            Some(Held::Refused) | None => {
+                "refused: a claim about data from outside the program".to_string()
+            }
         };
         out.push_str(&format!("  {path}:{line}  {}  {how}\n", claim.written));
     }

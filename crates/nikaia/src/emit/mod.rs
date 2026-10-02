@@ -1552,6 +1552,8 @@ struct Emitter<'p> {
     compared_views: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::claims` ([ADR-264](../../docs/specification/adr/adr-264.md) D2).
     claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
+    /// `check::Checked::call_checks` ([ADR-264](../../docs/specification/adr/adr-264.md) D5).
+    call_checks: crate::prove::CallChecks,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
     /// around one call by `call` and read by `args`, as `hold_args` is.
@@ -2543,6 +2545,7 @@ impl<'p> Emitter<'p> {
             wrapped: propagation.wrapped,
             compared_views: propagation.compared_views,
             claims: propagation.claims,
+            call_checks: propagation.call_checks,
             boxed_args: std::cell::RefCell::new(None),
             variant_counts: std::cell::RefCell::new(None),
             hull_count: std::cell::Cell::new(None),
@@ -8674,8 +8677,47 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        // **An `assert` is a claim checked here** (ADR-264 D2, D4): nothing
-        // proves one yet, so each is a test at run time, and the failure is
+        // **A call that does not prove its callee's precondition checks it**
+        // ([ADR-264](../../docs/specification/adr/adr-264.md) D5), before the
+        // call and with the call's arguments in place of the parameters, so
+        // that a failure names the caller. The arguments are ones the prover
+        // reads, so reading them once more changes nothing.
+        if let Expr::Variable(name) = func
+            && let Some(checks) =
+                self.call_checks
+                    .get(&crate::prove::call_key(self.parsed, self.text(*name), args))
+        {
+            // `(check, call).1`: an expression in every position the call
+            // could stand in, which a block at the start of a statement is not.
+            out.push(if checks.len() == 1 { "(" } else { "({ " });
+            for check in checks {
+                out.push("if !(");
+                self.expr(out, &check.condition, depth, flow)?;
+                out.push(&format!(
+                    ") {{ nikaia_std::abort::assertion_failed({:?}, None, &[]) }} ",
+                    check.written
+                ));
+            }
+            out.push(if checks.len() == 1 { ", " } else { "}, " });
+            self.call_unchecked(out, func, args, config, depth, flow)?;
+            out.push(").1");
+            return Ok(());
+        }
+        self.call_unchecked(out, func, args, config, depth, flow)
+    }
+
+    /// A call, past [`Self::call`]'s precondition check.
+    fn call_unchecked(
+        &self,
+        out: &mut Out,
+        func: &Expr,
+        args: &[Expr],
+        config: &[crate::ast::ConfigArg],
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        // **An `assert` is a claim checked here** (ADR-264 D2, D4) unless it
+        // was proved, and the failure is
         // written with what only this compiler knew - the claim as written
         // and its operands by name. The condition changes nothing (D3), which
         // is what makes reading an operand a second time, for the message,
@@ -8688,10 +8730,11 @@ impl<'p> Emitter<'p> {
         {
             // **A claim held before the program runs costs nothing when it
             // does** ([ADR-264](../../docs/specification/adr/adr-264.md) D4,
-            // D3): only a test's `assert` is still a check.
+            // D5): a precondition is checked by the calls that do not prove
+            // it, and every other claim here.
             if matches!(
                 claim.held,
-                Some(crate::prove::Held::Proved | crate::prove::Held::Precondition(_))
+                Some(crate::prove::Held::Proved | crate::prove::Held::Precondition(..))
             ) {
                 out.push("()");
                 return Ok(());
