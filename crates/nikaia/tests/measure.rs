@@ -384,7 +384,13 @@ fn the_solver_kernels_lowered_against_rust_by_hand() {
             let binary = dir.join("kernels");
             let compiled = common::compile(
                 &file,
-                &["--crate-type", "bin", "-O", "-o", binary.to_str().expect("utf-8")],
+                &[
+                    "--crate-type",
+                    "bin",
+                    "-O",
+                    "-o",
+                    binary.to_str().expect("utf-8"),
+                ],
             );
             assert!(
                 compiled.status.success(),
@@ -399,7 +405,10 @@ fn the_solver_kernels_lowered_against_rust_by_hand() {
             String::from_utf8_lossy(&run.stdout).to_string()
         })
         .collect();
-    assert_eq!(outputs[0], outputs[1], "the two halves are not the same program");
+    assert_eq!(
+        outputs[0], outputs[1],
+        "the two halves are not the same program"
+    );
 
     for (kernel, n) in [("rows", "200000"), ("watch", "2000"), ("bignum", "20000")] {
         let runs = [

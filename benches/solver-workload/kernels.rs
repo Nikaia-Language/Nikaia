@@ -159,8 +159,8 @@ fn watch(n: i64) -> i64 {
     checksum
 }
 
-fn multiply(x: &[u32], y: &[u32], out: &mut Vec<u32>) {
-    out.resize(x.len() + y.len(), 0);
+fn multiply(x: &[u32], y: &[u32]) -> Vec<u32> {
+    let mut out = vec![0; x.len() + y.len()];
     for i in 0..x.len() {
         let mut carry: u64 = 0;
         let xi = x[i] as u64;
@@ -171,6 +171,7 @@ fn multiply(x: &[u32], y: &[u32], out: &mut Vec<u32>) {
         }
         out[i + y.len()] = carry as u32;
     }
+    out
 }
 
 fn bignum(n: i64) -> i64 {
@@ -186,8 +187,7 @@ fn bignum(n: i64) -> i64 {
     }
     let mut checksum: u64 = 0;
     for round in 0..n as usize {
-        let mut out = Vec::new();
-        multiply(&x, &y, &mut out);
+        let out = multiply(&x, &y);
         checksum = checksum.wrapping_add(out[round % (2 * limbs)] as u64);
         x[round % limbs] = out[limbs];
     }

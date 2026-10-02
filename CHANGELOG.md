@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.372] — 2026-10-02
+
+**The solver's kernels, lowered from Nikaia, against Rust by hand** (ADR-270
+D8 step 1). `benches/solver-kernels.nika` holds three kernels a CDCL(T)
+solver lives in - combining sparse rows, scanning watch lists, multiplying big
+integers - and `benches/solver-workload/kernels.rs` the same algorithms in
+Rust; `the_solver_kernels_lowered_against_rust_by_hand` (ignored, callgrind)
+checks both print the same checksums and counts their instructions.
+
+- **Measured**: Nikaia retires 25 %, 80 % and 411 % more instructions.
+  Replacing the lowering's `index::at` by `as usize` leaves 3 %, 28 % and
+  56 %: the negative-index check on every `xs[i]` is the gap, and an index
+  known to be non-negative - a range's loop variable, or what the prover
+  shows - does not need it. What remains is `i64` loop counters and no
+  `Vec` of a given length in `std`.
+- **Two lowerings that did not compile**, worked around in the benchmark: an
+  index into a `mut` parameter (`set(&mut out, ...)` on a `&mut Vec`), and a
+  number its uses do not type (`let variables = 2000;`, left to `rustc`).
+- `docs/solver-workload.md` §8 has the table. The compiler is not changed.
+
 ## [0.0.371] — 2026-10-02
 
 **The assert and solver records, consolidated; the solver is written in

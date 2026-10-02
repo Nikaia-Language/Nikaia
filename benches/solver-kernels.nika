@@ -99,7 +99,10 @@ fn rows(n: i64) -> i64 {
 // --- 2. scanning watch lists ----------------------------------------------
 
 fn watch(n: i64) -> i64 {
-    let variables = 2000
+    // **Annotated on purpose.** Unannotated, its uses - a `u64` cast and an
+    // index - pin no type, the lowering writes `let variables = 2000;`, and
+    // `rustc` cannot infer what the index reads (finding 2 of the probe).
+    let variables: i64 = 2000
     let clauses = 8000
     let size = 4
     let mut state: u64 = 11
@@ -181,7 +184,11 @@ fn watch(n: i64) -> i64 {
 
 // --- 3. multiplying big integers --------------------------------------------
 
-fn multiply(x: ref Vec[u32], y: ref Vec[u32], mut out: Vec[u32]) sync {
+// **Returns the product** rather than filling a `mut out: Vec[u32]`: an index
+// into a `mut` parameter is lowered as `set(&mut out, ...)` on what is already
+// a `&mut Vec`, which `rustc` refuses (finding 1 of the probe).
+fn multiply(x: ref Vec[u32], y: ref Vec[u32]) -> Vec[u32] sync {
+    let mut out: Vec[u32] = []
     for _ in 0..<(x.len() + y.len()) {
         out.push(0)
     }
@@ -195,6 +202,7 @@ fn multiply(x: ref Vec[u32], y: ref Vec[u32], mut out: Vec[u32]) sync {
         }
         out[i + y.len()] = carry.truncating_u32()
     }
+    return out
 }
 
 fn bignum(n: i64) -> i64 {
@@ -210,8 +218,7 @@ fn bignum(n: i64) -> i64 {
     }
     let mut checksum: u64 = 0
     for round in 0..<n {
-        let mut out: Vec[u32] = []
-        multiply(x, y, out)
+        let out = multiply(x, y)
         checksum = checksum.wrapping_add(out[round % (2 * limbs)] as u64)
         x[round % limbs] = out[limbs]
     }

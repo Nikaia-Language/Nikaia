@@ -175,7 +175,52 @@ The 649 proved queries of the suite are fewer than 105 distinct ones (§5), so
 a project's file is a few kilobytes; the stress set's largest certificate is
 parity with ten variables.
 
-## 8. What this does not measure
+## 8. The solver's kernels, lowered from Nikaia
+
+[ADR-270](specification/adr/adr-270.md) D8 step 1: three kernels a CDCL(T)
+solver lives in, in `benches/solver-kernels.nika`, against the same
+algorithms written by hand in Rust (`benches/solver-workload/kernels.rs`),
+by `the_solver_kernels_lowered_against_rust_by_hand` in
+`crates/nikaia/tests/measure.rs` - instructions retired under callgrind, both
+halves printing the same checksums. Two further columns come from editing the
+lowered Rust by hand, to find where the difference lives: every index helper
+replaced by `as usize`, and only `index::at` replaced, `get` and `set` kept.
+
+| kernel | Rust by hand | Nikaia, lowered | `as usize` everywhere | only `at` replaced |
+| :--- | ---: | ---: | ---: | ---: |
+| combining sparse rows, n = 200 000 | 1 018 M | 1 278 M (+25.5 %) | 1 053 M (+3.4 %) | 1 053 M (+3.4 %) |
+| scanning watch lists, n = 2 000 | 10.8 M | 19.3 M (+79.6 %) | 12.6 M (+16.5 %) | 13.8 M (+28.2 %) |
+| multiplying big integers, n = 20 000 | 724 M | 3 705 M (+411 %) | 1 132 M (+56 %) | 1 132 M (+56 %) |
+
+**What the lowering has to change**, in the order of what it costs:
+
+1. **`index::at` is the gap.** Every `xs[i]` with an `i64` index becomes
+   `index::get(&xs, index::at(i))`, and `at` converts with a check for a
+   negative index and a `#[track_caller]` panic path. `get` and `set` cost
+   nothing; `at` costs the big-integer kernel a factor of 3.3 and the others
+   most of their gap. A loop variable of `0..<n`, and a sum of such, is not
+   negative - and where it is not obvious, the prover can show it
+   ([ADR-269](specification/adr/adr-269.md)): an index known to be
+   non-negative needs only the bounds check `Vec` already makes.
+2. **What is left** (+56 % on big integers, +17 % on watch lists) is the
+   index type: `i64` loop counters cast to `usize` at every access, where the
+   Rust half counts in `usize` and lets the optimiser drop bounds checks; and
+   `std` has no `Vec` of a given length (`vec![0; n]`), so the Nikaia half
+   pushes zeros in a loop.
+
+**Two programs that did not compile**, found on the way and worked around in
+the benchmark so that it measures:
+
+* **An index into a `mut` parameter.** `out[i] = x` where `out` is
+  `mut out: Vec[u32]` is lowered as `index::set(&mut out, ...)` on what is
+  already a `&mut Vec<u32>`; `rustc` refuses `&mut &mut Vec<u32>: Set`. The
+  benchmark returns the vector instead.
+* **A number its uses do not type.** `let variables = 2000`, used in a `u64`
+  cast and as an index, is lowered as `let variables = 2000;` with no type,
+  and `rustc` cannot infer what `watched[lit]` reads. The benchmark annotates
+  it `i64`.
+
+## 9. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the
   container this ran in could not reach; every statement about them in
