@@ -1069,3 +1069,282 @@ fn trimmed(written: ref String) -> String {
     return written.trim().clone()
 }
 
+
+// ---------------------------------------------------------------------------
+// **A signature written the way Nikaia writes one** (ADR-251 D4), moved from
+// the compiler's `contracts::spelling` (#125). The compiler keeps a signature
+// as it always has - the receiver as its type, a type variable as `$T`, what
+// the result points into as a list beside it - and this writes the file's
+// spelling; `spelled_signature` above reads it back.
+//
+//     (ref Scan, c: char)                       mutates = true
+//     (ref mut self, c: char)
+//
+//     (ref HashMap[$K, $V], key: ?) -> Entry[$V]
+//     [K, V](ref self: HashMap[K, V], key: ?) -> Entry[V]
+//
+//     (ref Position) -> ref String              returns = "borrows(self)"
+//     (ref self) -> ref(self) String
+
+/// A signature in the file's spelling, and which of the two facts beside it the
+/// spelling could carry: a result with no `ref` in it has no place for where it
+/// points, and a function with no receiver none for whether the call changes it.
+pub struct Spelled {
+    pub text: String,
+    pub borrows_said: bool,
+    pub mutates_said: bool,
+}
+
+/// The compiler's signature text, `key`'s entry, into the file's spelling.
+/// Text that is not a signature stays as it is, and says neither fact.
+pub fn spell(text: ref String, key: ref String, borrows: ref Vec[String], mutates: bool) -> Spelled {
+    let c: Vec[char] = text.trim().chars().collect()
+    // The bracket list's entries, where there is one.
+    let mut declared: Vec[String] = []
+    let mut open = 0
+    if c.len() > 0 && c[0] == '[' {
+        let close = matching(c, 1, '[', ']')
+        if close < 0 {
+            return as_written(text)
+        }
+        for entry in split_args(slice(c, 1, close)) {
+            let entry = trimmed(entry)
+            if entry.len() > 0 {
+                declared.push(entry)
+            }
+        }
+        open = close + 1
+        while open < c.len() && c[open].is_whitespace() {
+            open += 1
+        }
+    }
+    if open >= c.len() || c[open] != '(' {
+        return as_written(text)
+    }
+    let close = matching(c, open + 1, '(', ')')
+    if close < 0 {
+        return as_written(text)
+    }
+    let inside: Vec[char] = slice(c, open + 1, close).chars().collect()
+    let mut result = slice(c, close + 1, c.len())
+
+    // The positional parameters, and the options after a `;`.
+    let semicolon = top_level_semicolon(inside)
+    let positional = if semicolon < 0 { slice(inside, 0, inside.len()) } else { slice(inside, 0, semicolon) }
+    let mut parameters: Vec[String] = []
+    for part in split_args(positional) {
+        let part = trimmed(part)
+        if part.len() > 0 {
+            parameters.push(part)
+        }
+    }
+
+    // **The receiver as the source writes it.** `ref self` where the type is
+    // the owner's own, and the type written out where it is not - a type with
+    // arguments, a trait's `?`.
+    let mut mutates_said = false
+    let mut written_parameters: Vec[String] = []
+    for k in 0..<parameters.len() {
+        if k == 0 && !is_named(parameters[0]) {
+            written_parameters.push(receiver(parameters[0], key, mutates))
+            mutates_said = mutates
+        } else {
+            written_parameters.push(parameters[k].clone())
+        }
+    }
+
+    // **Where the result points, in the result** - every `ref` in it, because
+    // a view the result holds may point into any view it was given.
+    let mut borrows_said = false
+    if borrows.len() > 0 && word_starts(result, "ref").len() > 0 {
+        let pointed = joined_by(borrows, " | ")
+        result = replace_ref(result, f"ref({pointed})")
+        borrows_said = true
+    }
+
+    // **Type variables declared in brackets**, the bounded ones first and in
+    // their order, then every other in the order it first appears.
+    let mut seen: Vec[String] = []
+    for entry in declared {
+        seen.push(before_colon(entry))
+    }
+    let mut body = joined_by(written_parameters, ", ")
+    if semicolon >= 0 {
+        let options = trimmed(slice(inside, semicolon + 1, inside.len()))
+        body = f"{body}; {options}"
+    }
+    for variable in variables(f"{body}{result}") {
+        if !seen.contains(variable) {
+            seen.push(variable.clone())
+            declared.push(variable.clone())
+        }
+    }
+    let mut before: String = ""
+    if declared.len() > 0 {
+        let names = joined_by(declared, ", ")
+        before = f"[{names}]"
+    }
+    return Spelled { text: without_dollars(f"{before}({body}){result}"), borrows_said: borrows_said, mutates_said: mutates_said }
+}
+
+// What is not a signature, kept as it is.
+fn as_written(text: ref String) -> Spelled {
+    return Spelled { text: text.clone(), borrows_said: false, mutates_said: false }
+}
+
+// The receiver, `written` as the compiler keeps it, as the source writes it.
+fn receiver(written: ref String, key: ref String, mutates: bool) -> String {
+    let has_owner = owner_of(key) != null
+    let owner = owner_of(key) ?? ""
+    let viewed = after_prefix(written, "ref ")
+    if viewed != null && has_owner && (viewed ?? "") == owner {
+        if mutates {
+            return "ref mut self"
+        }
+        return "ref self"
+    }
+    if viewed == null && has_owner && written == owner && !mutates {
+        return "self"
+    }
+    if mutates {
+        return f"mut self: {written}"
+    }
+    return f"self: {written}"
+}
+
+// `name: T` or `mut name: T`, and not a bare type - which may hold a `::`.
+fn is_named(part: ref String) -> bool {
+    let mut rest = trimmed(part)
+    while rest.starts_with("mut ") {
+        rest = from_char(rest, 4)
+    }
+    let c: Vec[char] = rest.chars().collect()
+    let mut end = 0
+    while end < c.len() && is_word_char(c[end]) {
+        end += 1
+    }
+    if end == 0 || !(is_lower(c[0]) || c[0] == '_') {
+        return false
+    }
+    let after = trimmed_start(slice(c, end, c.len()))
+    return after.starts_with(":") && !after.starts_with("::")
+}
+
+// Where the bracket opened just before `from` closes, or -1.
+fn matching(c: ref Array[char], from: i64, open: char, close: char) -> i64 {
+    let mut depth = 0
+    for at in from..<c.len() {
+        if c[at] == open {
+            depth += 1
+        } else if c[at] == close {
+            if depth == 0 {
+                return at
+            }
+            depth -= 1
+        }
+    }
+    return -1
+}
+
+// Where the first `;` outside a bracket stands, or -1.
+fn top_level_semicolon(c: ref Array[char]) -> i64 {
+    let mut depth = 0
+    for at in 0..<c.len() {
+        if c[at] == '[' || c[at] == '(' {
+            depth += 1
+        } else if c[at] == ']' || c[at] == ')' {
+            if depth > 0 {
+                depth -= 1
+            }
+        } else if c[at] == ';' && depth == 0 {
+            return at
+        }
+    }
+    return -1
+}
+
+// Where `word` stands in `text` as a word of its own, followed by a blank.
+fn word_starts(text: ref String, word: ref String) -> Vec[i64] {
+    let c: Vec[char] = text.chars().collect()
+    let w: Vec[char] = word.chars().collect()
+    let mut starts: Vec[i64] = []
+    let mut at = find_text(c, 0, word)
+    while at >= 0 {
+        let free_before = at == 0 || !(is_word_char(c[at - 1]) || c[at - 1] == '$')
+        let blank_after = at + w.len() < c.len() && c[at + w.len()] == ' '
+        if free_before && blank_after {
+            starts.push(at)
+        }
+        at = find_text(c, at + 1, word)
+    }
+    return starts
+}
+
+// Every `ref ` in `text`, written `by ` instead.
+fn replace_ref(text: ref String, by: ref String) -> String {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: String = ""
+    let mut from = 0
+    for at in word_starts(text, "ref") {
+        out.push_str(ref slice(c, from, at))
+        out.push_str(by)
+        from = at + 3
+    }
+    out.push_str(ref slice(c, from, c.len()))
+    return out
+}
+
+// Every `$T` in `text`, by name, in the order each first appears.
+fn variables(text: ref String) -> Vec[String] {
+    let c: Vec[char] = text.chars().collect()
+    let mut out: Vec[String] = []
+    for at in 0..<c.len() {
+        if c[at] == '$' {
+            let mut end = at + 1
+            while end < c.len() && is_word_char(c[end]) {
+                end += 1
+            }
+            let name = slice(c, at + 1, end)
+            if name.len() > 0 && !out.contains(name) {
+                out.push(name)
+            }
+        }
+    }
+    return out
+}
+
+// `parts` with `between` between each two.
+fn joined_by(parts: ref Vec[String], between: ref String) -> String {
+    let mut out: String = ""
+    for k in 0..<parts.len() {
+        if k > 0 {
+            out.push_str(between)
+        }
+        out.push_str(ref parts[k])
+    }
+    return out
+}
+
+// `text` without its `$`s.
+fn without_dollars(text: ref String) -> String {
+    let mut out: String = ""
+    for c in text.chars() {
+        if c != '$' {
+            out.push(c)
+        }
+    }
+    return out
+}
+
+// `written` with the blanks at its front taken off.
+fn trimmed_start(written: ref String) -> String {
+    return written.trim_start().clone()
+}
+
+fn is_word_char(c: char) -> bool {
+    return is_lower(c) || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+fn is_lower(c: char) -> bool {
+    return c >= 'a' && c <= 'z'
+}

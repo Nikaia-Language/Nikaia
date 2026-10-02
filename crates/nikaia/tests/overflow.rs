@@ -535,7 +535,8 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
              }\n    \
              let last = xs[xs.len() - 1]\n    \
              let short = xs.len() < 2\n    \
-             println(f\"{sum} {last} {short} {xs.len()}\")\n\
+             let fits = 1 + xs.len() < 5\n    \
+             println(f\"{sum} {last} {short} {fits} {xs.len()}\")\n\
          }\n",
     );
 
@@ -544,6 +545,8 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
     assert!(rust.contains("nikaia_std::index::at(i)"), "{rust}");
     // The left of a comparison is parenthesised, or Rust reads `i64<2>`.
     assert!(rust.contains("(xs.len() as i64) < 2"), "{rust}");
+    // And so is a sum that ends in one (#125).
+    assert!(rust.contains("(1 + xs.len() as i64) < 5"), "{rust}");
 
     let binary = dir.join("program");
     let compiled = common::compile(
@@ -563,7 +566,10 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
     let ran = std::process::Command::new(&binary)
         .output()
         .expect("run it");
-    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "60 30 false 3");
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "60 30 false true 3"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

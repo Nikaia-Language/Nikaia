@@ -2011,6 +2011,179 @@ fn a_param(name: &str, ty: Ty) -> (String, Ty) { (name.to_owned(), ty) }
 
 fn trimmed(written: &str) -> String { written.trim().to_owned() }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spelled {
+    pub text: String,
+    pub borrows_said: bool,
+    pub mutates_said: bool,
+}
+
+pub fn spell(text: &str, key: &str, borrows: &Vec<String>, mutates: bool) -> Spelled {
+    let c: Vec<char> = nikaia_std::list::chars(text.trim().chars());
+    let mut declared: Vec<String> = vec![];
+    let mut open: i64 = 0;
+    if (c.len() as i64) > 0 && *nikaia_std::index::get(&c, 0) == '[' {
+        let close = matching(&c, 1, '[', ']');
+        if close < 0 { return as_written(text); }
+        for entry in split_args(&slice(&c, 1, close)) {
+            let entry = trimmed(&entry);
+            if (entry.len() as i64) > 0 { declared.push(entry); }
+        }
+        open = close + 1;
+        while open < c.len() as i64 && (*nikaia_std::index::get(&c, nikaia_std::index::at(open))).is_whitespace() { open += 1; }
+    }
+    if open >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(open)) != '(' { return as_written(text); }
+    let close = matching(&c, open + 1, '(', ')');
+    if close < 0 { return as_written(text); }
+    let inside: Vec<char> = nikaia_std::list::chars(slice(&c, open + 1, close).chars());
+    let mut result = slice(&c, close + 1, c.len() as i64);
+    let semicolon = top_level_semicolon(&inside);
+    let positional = if semicolon < 0 { slice(&inside, 0, inside.len() as i64) } else { slice(&inside, 0, semicolon) };
+    let mut parameters: Vec<String> = vec![];
+    for part in split_args(&positional) {
+        let part = trimmed(&part);
+        if (part.len() as i64) > 0 { parameters.push(part); }
+    }
+    let mut mutates_said = false;
+    let mut written_parameters: Vec<String> = vec![];
+    for k in 0..parameters.len() as i64 {
+        if k == 0 && !is_named(nikaia_std::index::get(&parameters, 0)) {
+            written_parameters.push(receiver(nikaia_std::index::get(&parameters, 0), key, mutates));
+            mutates_said = mutates;
+        } else { written_parameters.push((*nikaia_std::index::get(&parameters, nikaia_std::index::at(k))).to_owned()); }
+    }
+    let mut borrows_said = false;
+    if (borrows.len() as i64) > 0 && (word_starts(&result, "ref").len() as i64) > 0 {
+        let pointed = joined_by(borrows, " | ");
+        result = replace_ref(&result, &format!("ref({})", pointed));
+        borrows_said = true;
+    }
+    let mut seen: Vec<String> = vec![];
+    for entry in declared.iter() { seen.push(before_colon(entry)); }
+    let mut body = joined_by(&written_parameters, ", ");
+    if semicolon >= 0 {
+        let options = trimmed(&slice(&inside, semicolon + 1, inside.len() as i64));
+        body = format!("{}; {}", body, options);
+    }
+    for variable in variables(&format!("{}{}", body, result)) {
+        if !seen.contains(&variable) {
+            seen.push(variable.to_owned());
+            declared.push(variable.to_owned());
+        }
+    }
+    let mut before: String = String::from("");
+    if (declared.len() as i64) > 0 {
+        let names = joined_by(&declared, ", ");
+        before = format!("[{}]", names);
+    }
+    Spelled { text: without_dollars(&format!("{}({}){}", before, body, result)), borrows_said, mutates_said }
+}
+
+fn as_written(text: &str) -> Spelled { Spelled { text: text.to_owned(), borrows_said: false, mutates_said: false } }
+
+fn receiver(written: &str, key: &str, mutates: bool) -> String {
+    let has_owner = owner_of(key).is_some();
+    let owner = nikaia_std::index::or(owner_of(key), || "".into());
+    let viewed = after_prefix(written, "ref ");
+    if viewed.is_some() && has_owner && nikaia_std::index::or(viewed.as_deref(), || "") == owner {
+        if mutates { return String::from("ref mut self"); }
+        return String::from("ref self");
+    }
+    if viewed.is_none() && has_owner && written == owner && !mutates { return String::from("self"); }
+    if mutates { return format!("mut self: {}", written); }
+    format!("self: {}", written)
+}
+
+fn is_named(part: &str) -> bool {
+    let mut rest = trimmed(part);
+    while rest.starts_with("mut ") { rest = from_char(&rest, 4); }
+    let c: Vec<char> = nikaia_std::list::chars(rest.chars());
+    let mut end: i64 = 0;
+    while end < c.len() as i64 && is_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
+    if end == 0 || !(is_lower(*nikaia_std::index::get(&c, 0)) || *nikaia_std::index::get(&c, 0) == '_') { return false; }
+    let after = trimmed_start(&slice(&c, end, c.len() as i64));
+    after.starts_with(":") && !after.starts_with("::")
+}
+
+fn matching(c: &[char], from: i64, open: char, close: char) -> i64 {
+    let mut depth = 0;
+    for at in from..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == open { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == close {
+            if depth == 0 { return at; }
+            depth -= 1;
+        }
+    }
+    -1
+}
+
+fn top_level_semicolon(c: &[char]) -> i64 {
+    let mut depth = 0;
+    for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '[' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '(' { depth += 1; } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ']' || *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ')' { if depth > 0 { depth -= 1; } } else if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ';' && depth == 0 { return at; } }
+    -1
+}
+
+fn word_starts(text: &str, word: &str) -> Vec<i64> {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    let mut starts: Vec<i64> = vec![];
+    let mut at = find_text(&c, 0, word);
+    while at >= 0 {
+        let free_before = at == 0 || !(is_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(at - 1))) || *nikaia_std::index::get(&c, nikaia_std::index::at(at - 1)) == '$');
+        let blank_after = (at + w.len() as i64) < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at + w.len() as i64)) == ' ';
+        if free_before && blank_after { starts.push(at); }
+        at = find_text(&c, at + 1, word);
+    }
+    starts
+}
+
+fn replace_ref(text: &str, by: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let mut out: String = String::from("");
+    let mut from: i64 = 0;
+    for at in word_starts(text, "ref") {
+        out.push_str(&slice(&c, from, at));
+        out.push_str(by);
+        from = at + 3;
+    }
+    out.push_str(&slice(&c, from, c.len() as i64));
+    out
+}
+
+fn variables(text: &str) -> Vec<String> {
+    let c: Vec<char> = nikaia_std::list::chars(text.chars());
+    let mut out: Vec<String> = vec![];
+    for at in 0..c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == '$' {
+            let mut end = at + 1;
+            while end < c.len() as i64 && is_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
+            let name = slice(&c, at + 1, end);
+            if (name.len() as i64) > 0 && !out.contains(&name) { out.push(name); }
+        }
+    }
+    out
+}
+
+fn joined_by(parts: &Vec<String>, between: &str) -> String {
+    let mut out: String = String::from("");
+    for k in 0..parts.len() as i64 {
+        if k > 0 { out.push_str(between); }
+        out.push_str(nikaia_std::index::get(&parts, nikaia_std::index::at(k)));
+    }
+    out
+}
+
+fn without_dollars(text: &str) -> String {
+    let mut out: String = String::from("");
+    for c in text.chars() { if c != '$' { out.push(c); } }
+    out
+}
+
+fn trimmed_start(written: &str) -> String { written.trim_start().to_owned() }
+
+fn is_word_char(c: char) -> bool { is_lower(c) || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' }
+
+fn is_lower(c: char) -> bool { c >= 'a' && c <= 'z' }
+
 
 // --- locks.nika ---
 
@@ -5307,7 +5480,7 @@ pub mod http1 {
 }
 pub mod ledger {
     #[allow(unused_imports)]
-    pub use super::{LedgerLine, Refused, LedgerText, LedgerValue, unquote, list, read, touch_of, held_of, class_of, variant_of, signature_of, Spelling, SignatureText, spelled_signature};
+    pub use super::{LedgerLine, Refused, LedgerText, LedgerValue, unquote, list, read, touch_of, held_of, class_of, variant_of, signature_of, Spelling, SignatureText, spelled_signature, Spelled, spell};
 }
 pub mod locks {
     #[allow(unused_imports)]

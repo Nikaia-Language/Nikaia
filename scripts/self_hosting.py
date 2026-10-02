@@ -32,7 +32,7 @@ COMPILER_NIKA = {
     "rust.nika": "describe: reading a crate's Rust (ADR-195)",
     "fixed.nika": "fixed: FNV-1a and CHD (0.0.250)",
     "template.nika": "emit::template: the HTML scan (0.0.252)",
-    "ledger.nika": "contracts: reading a ledger back, whole (0.0.258, 0.0.292)",
+    "ledger.nika": "contracts: reading a ledger back, whole, and writing a signature in its spelling (0.0.258, 0.0.292, 0.0.333)",
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
     "ast.nika": "ast: the syntax tree (ADR-252, 0.0.275)",
     "fold.nika": "fold: a constant's value (ADR-252 D6, 0.0.278)",
