@@ -901,3 +901,122 @@ fn a_branch_that_continues_takes_its_takings_with_it() {
     );
     assert!(outer.iter().any(|f| f.code == "NK2105"), "{outer:#?}");
 }
+
+/// **Found moving the compiler's `views` into Nikaia** (#125), four programs
+/// the checker accepted and `rustc` refused. A list grows at a position written
+/// as an `i64` (`Vec::insert` had no entry, so nothing converted it); a part
+/// of a tuple compares with a lent `String` (the part was untyped, so neither
+/// side was known to be the value); a `match` over a name a `match` lent
+/// copies the number it binds out (the name is a reference below); and a list
+/// of text is joined without being taken to pause (`Vec::join` had no entry).
+#[test]
+fn a_position_a_tuple_part_a_lent_name_and_a_join() {
+    runs(
+        "views-move",
+        "enum E {\n\
+         \x20   Name(i64),\n\
+         \x20   Nothing,\n\
+         }\n\
+         \n\
+         enum S {\n\
+         \x20   Set { target: E, value: i64 },\n\
+         \x20   Skip,\n\
+         }\n\
+         \n\
+         fn twice(n: i64) -> i64 {\n\
+         \x20   return n * 2\n\
+         }\n\
+         \n\
+         fn total(stmts: ref Vec[S]) -> i64 {\n\
+         \x20   let mut sum = 0\n\
+         \x20   for i in 0..<stmts.len() {\n\
+         \x20       match stmts[i] {\n\
+         \x20           S::Set { target, value } => {\n\
+         \x20               match target {\n\
+         \x20                   E::Name(n) => {\n\
+         \x20                       sum = sum + twice(n) + value\n\
+         \x20                   }\n\
+         \x20                   E::Nothing => {}\n\
+         \x20               }\n\
+         \x20           }\n\
+         \x20           S::Skip => {}\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return sum\n\
+         }\n\
+         \n\
+         fn position(borrows: ref Vec[String], params: ref Vec[(String, i64)]) -> i64 {\n\
+         \x20   for borrowed in borrows {\n\
+         \x20       for i in 0..<params.len() {\n\
+         \x20           if params[i].0 == borrowed {\n\
+         \x20               return params[i].1\n\
+         \x20           }\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return -1\n\
+         }\n\
+         \n\
+         fn ordered(found: ref Vec[i64]) -> Vec[i64] {\n\
+         \x20   let mut out: Vec[i64] = []\n\
+         \x20   for n in found {\n\
+         \x20       let mut at = out.len()\n\
+         \x20       while at > 0 && out[at - 1] > n {\n\
+         \x20           at = at - 1\n\
+         \x20       }\n\
+         \x20       out.insert(at, n)\n\
+         \x20   }\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn joined(parts: ref Vec[i64]) -> String sync {\n\
+         \x20   let mut written: Vec[String] = []\n\
+         \x20   for part in parts {\n\
+         \x20       written.push(f\"{part}\")\n\
+         \x20   }\n\
+         \x20   return written.join(\", \")\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let stmts: Vec[S] = [S::Set { target: E::Name(4), value: 1 }, S::Skip]\n\
+         \x20   let mut params: Vec[(String, i64)] = []\n\
+         \x20   params.push((\"a\".clone(), 1))\n\
+         \x20   params.push((\"b\".clone(), 2))\n\
+         \x20   let borrows: Vec[String] = [\"b\"]\n\
+         \x20   println(f\"{total(stmts)} {position(borrows, params)} {joined(ordered([3, 1, 2]))}\")\n\
+         }\n",
+        "9 2 1, 2, 3\n",
+    );
+}
+
+/// **A view of what does not copy, kept where a value is wanted, is refused
+/// here** rather than by `rustc` (found moving the compiler's `views` into
+/// Nikaia, #125): `for p in found { out.push(p) }` lends each element, and
+/// a `Vec[P]` keeps a `P` of its own. Text had this sentence already
+/// (ADR-225 D2); every other type reached the language below.
+#[test]
+fn a_lent_element_kept_whole_is_refused() {
+    let found = findings(
+        "struct P {\n\
+         \x20   n: i64,\n\
+         \x20   s: String,\n\
+         }\n\
+         \n\
+         fn pushed(found: ref Vec[P]) -> Vec[P] {\n\
+         \x20   let mut out: Vec[P] = []\n\
+         \x20   for p in found {\n\
+         \x20       out.push(p)\n\
+         \x20   }\n\
+         \x20   return out\n\
+         }\n\
+         \n\
+         fn main() { }\n",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1102"
+            && f.message.contains("`Vec::push` expects `value` to be `P`")
+            && f.help
+                .as_deref()
+                .is_some_and(|help| help.contains(".clone()"))),
+        "{found:#?}"
+    );
+}

@@ -359,3 +359,31 @@ fn two_tools_that_declare_one_name_are_refused() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A constant another tool declares is read like a function it declares**
+/// (ADR-047 D1, ADR-261): each file is checked with the others beside it, and
+/// only its own `comptime`s were bound - so `TEXT` from `ty.nika` was
+/// `NK1117` in `views.nika` (found moving the compiler's `views` into Nikaia,
+/// #125).
+#[test]
+fn a_constant_another_tool_declares_is_read() {
+    let dir = std::env::temp_dir().join(format!("nikaia-tools-constant-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a directory to work in");
+    std::fs::write(
+        dir.join("a.nika"),
+        "pub comptime WORD: ref String = \"String\"\n",
+    )
+    .expect("write a");
+    std::fs::write(
+        dir.join("b.nika"),
+        "pub fn written() -> String {\n\
+         \x20   let mut out: String = \"ref \"\n\
+         \x20   out.push_str(WORD)\n\
+         \x20   return out\n\
+         }\n",
+    )
+    .expect("write b");
+    let lowered = sysroot::lower_tools(&dir).expect("one namespace, constants too");
+    assert!(lowered.contains("out.push_str(WORD)"), "{lowered}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

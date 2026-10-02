@@ -3604,6 +3604,21 @@ impl<'a> Checker<'a> {
         self.collect_copies();
     }
 
+    /// **A view of a value that copies**, for an argument handed where the
+    /// value is wanted (ADR-233 D4): a number, a `bool` or a `char`, and
+    /// beside them a type that is one by declaration - the unit's own that
+    /// derive `Copy`, and a described Rust type whose ledger says `copies`
+    /// (ADR-252 D4.3). `for name in names` over a `ref Vec[Symbol]` binds a
+    /// view of each `Symbol`, and handing one to `resolve` was refused as a
+    /// mismatch although the handle is a `u32` the ledger says copies.
+    fn a_view_that_copies(&self, ty: &Ty) -> bool {
+        copies_as_a_view(ty)
+            || matches!(ty, Ty::Named { name, args, view: true }
+                if args.is_empty()
+                    && (self.checked.copies.contains(name)
+                        || self.library.types.get(name).is_some_and(|contract| contract.copies)))
+    }
+
     /// **Which declared types derive `Copy`**
     /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1,
     /// [`Checked::copies`]).
@@ -9928,13 +9943,17 @@ impl<'a> Checker<'a> {
                 // item.node` for a lent `item` is a place behind a reference
                 // below, and a pattern that binds a part of it moved it out -
                 // `rustc`'s *cannot move out of `item.node`*. Its parts are
-                // views here, so the emitter matches `&item.node`.
+                // views here, so the emitter matches `&item.node`. **And one
+                // reached through the brackets of a view** is the same place:
+                // `match block.stmts[i].node` over a `ref Block` bound its
+                // parts by reference below while they were values here (found
+                // moving the compiler's `views` into Nikaia, #125).
                 let through_a_view = {
                     let mut root = &**value;
-                    while let Expr::Field { base, .. } = root {
+                    while let Expr::Field { base, .. } | Expr::Index { base, .. } = root {
                         root = base;
                     }
-                    matches!(&**value, Expr::Field { .. })
+                    matches!(&**value, Expr::Field { .. } | Expr::Index { .. })
                         && matches!(root, Expr::Variable(name)
                             if self.binding(self.parsed.text(*name))
                                 .is_some_and(|local| local.lent || local.ty.is_a_view()))
@@ -9948,6 +9967,21 @@ impl<'a> Checker<'a> {
                         // copies is copied out at the head of the arm.
                         view_of(&typed)
                     }
+                    false => typed,
+                };
+                // **And so is a name lent to this function's walk**
+                // (`Local::lent`): `target` bound by `Stmt::Assign { target,
+                // .. }` over a lent statement is a reference below whatever
+                // its type says, so `match target { Expr::Variable(name) =>
+                // … }` binds a `&Symbol` there. Read as the view it is, a part
+                // that copies is copied out at the head of the arm - it was
+                // handed on as the reference, and `rustc` answered *expected
+                // `Symbol`, found `&Symbol`* (found moving the compiler's
+                // `views` into Nikaia, #125).
+                let lent_name = matches!(&**value, Expr::Variable(name)
+                    if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent));
+                let typed = match lent_name && !typed.is_a_view() && self.takes_away(&typed) {
+                    true => view_of(&typed),
                     false => typed,
                 };
                 // **A `match` is a condition too** (ADR-111 D4).
@@ -10809,6 +10843,20 @@ impl<'a> Checker<'a> {
                 if let Ty::Nullable(_) = &on {
                     self.reaches_into_a_nullable(&on, Reached::Field(&field), span);
                     return Ty::Unknown;
+                }
+                // **A tuple's part is the type written at its position**:
+                // `params[i].0` over a `Vec[(String, i64)]` is a `String`.
+                // It was nothing, so a comparison with a lent `String` could
+                // not tell which side was the value, and `rustc` answered
+                // *can't compare `String` with `&String`* about a generated
+                // file - found moving the compiler's `views` into Nikaia
+                // (#125).
+                if let Ty::Tuple(parts) = &on {
+                    return field
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|at| parts.get(at).cloned())
+                        .unwrap_or(Ty::Unknown);
                 }
                 let Ty::Named { name: ty, .. } = &on else {
                     return Ty::Unknown;
@@ -13741,7 +13789,7 @@ impl<'a> Checker<'a> {
             // what a lambda `sort_by_key` hands a `ref i64` meets first.
             // A **name**: what an operator makes of a view is a value below
             // whatever this checker calls it, and a `*` on it is not Rust.
-            if copies_as_a_view(found)
+            if self.a_view_that_copies(found)
                 && unviewed(found) == *want
                 && matches!(given.get(at), Some(Expr::Variable(_)))
             {
@@ -13996,6 +14044,10 @@ impl<'a> Checker<'a> {
             ) || (at == 0 && is_a_lookup(key));
             let kept = !lent;
             let Some(found) = found.get(at) else { continue };
+            if generic && kept && self.a_view_of_what_does_not_copy(found, want) {
+                self.a_view_kept_whole(key, name, found, want, span);
+                continue;
+            }
             if !generic || !kept || !views_into_text(found, want) {
                 continue;
             }
@@ -14020,6 +14072,54 @@ impl<'a> Checker<'a> {
                 },
             );
         }
+    }
+
+    /// **A view of a value that does not copy, where the receiver keeps the
+    /// value** (found moving the compiler's `views` into Nikaia, #125): `for p
+    /// in found { out.push(p) }` lends each element, so `p` is a `ref P`, and a
+    /// `Vec[P]` keeps a `P` of its own. The signature says `$T`, which a view
+    /// fits, and the call reached `rustc` as *expected `P`, found `&P`* about
+    /// a file nobody wrote (Part III C.1). Text has its own sentence above; a
+    /// view of what copies is copied out at the call (ADR-233 D4).
+    fn a_view_of_what_does_not_copy(&self, found: &Ty, want: &Ty) -> bool {
+        let (
+            Ty::Named {
+                name: viewed,
+                args: viewed_args,
+                view: true,
+            },
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            },
+        ) = (found, want)
+        else {
+            return false;
+        };
+        viewed == name
+            && viewed_args == args
+            && !matches!(ty::base(name), "String" | "str")
+            && !self.copied(want)
+            && !self.checked.copies.contains(name)
+    }
+
+    /// The refusal [`Checker::a_view_of_what_does_not_copy`] answers with.
+    fn a_view_kept_whole(&mut self, key: &str, name: &str, found: &Ty, want: &Ty, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!(
+                "`{key}` expects `{name}` to be `{want}` here, but you're passing `{found}`."
+            ),
+            notes: vec![
+                format!("This is a view: it points into a `{want}` that something else owns."),
+                format!("`{key}` keeps its `{name}` after the call returns, so it needs a `{want}` of its own."),
+            ],
+            help: Some("Write `.clone()` to copy it here.".to_string()),
+            labels: Vec::new(),
+        });
     }
 
     /// Whether parameter `at` of a function this program declares is text both
@@ -20833,6 +20933,27 @@ impl<'a> Checker<'a> {
         // there is not — which says nothing, and is what a name whose value
         // this walk has not reached yet honestly is. The binding below shadows
         // it with the answer.
+        // **And every constant another file of the package declares**
+        // (ADR-047 D1): one namespace holds them as it holds the functions
+        // and the types, so `TEXT` from `ty.nika` is read in `views.nika` -
+        // where it was `NK1117`, *isn't declared anywhere* (found moving the
+        // compiler's `views` into Nikaia, #125). Its declared type, read in
+        // its own file; its value is that file's to check.
+        for other in self.beside {
+            if std::ptr::eq(*other, self.parsed) {
+                continue;
+            }
+            for item in &other.program.items {
+                let Item::Comptime { name, ty, .. } = &item.node else {
+                    continue;
+                };
+                let declared = ty
+                    .as_ref()
+                    .map(|ty| Ty::from_ast(other, ty))
+                    .unwrap_or(Ty::Unknown);
+                self.bind_with(other.text(*name).to_string(), declared, None);
+            }
+        }
         for item in &self.parsed.program.items {
             let Item::Comptime { name, ty, .. } = &item.node else {
                 continue;
@@ -21728,6 +21849,7 @@ const COUNTS: &[(&str, usize)] = &[
     ("Seq::nth", 0),
     ("Vec::chunks", 0),
     ("Vec::windows", 0),
+    ("Vec::insert", 0),
 ];
 
 /// **What a sequence entry's result is as a whole**

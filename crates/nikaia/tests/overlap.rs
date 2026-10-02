@@ -250,9 +250,11 @@ fn an_uncaught_failure_in_a_branch_fails_the_block() {
     let rust = lower(source);
     // Wrapped all or none, with the error type named rather than inferred - an
     // `async` block with a `?` and nothing to infer from is "type annotations
-    // needed" about a file nobody wrote.
+    // needed" about a file nobody wrote. **The one the reads throw**, since a
+    // tuple's part is typed (0.0.355): `r.0.len()` was a method on nothing
+    // known, which left `main`'s errors open and named the catch-all.
     assert!(
-        rust.contains("Ok::<_, Box<dyn std::error::Error>>("),
+        rust.contains("Ok::<_, nikaia_std::error::Thrown<io::IoError>>("),
         "{rust}"
     );
     // **One outcome out of the branches'**, in `std`

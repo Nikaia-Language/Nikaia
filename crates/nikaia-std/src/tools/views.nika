@@ -1,0 +1,1205 @@
+// crates/nikaia-std/src/tools/views.nika
+//
+// Where a naked view parameter's view ends up - `NK2302`. Moved from the
+// compiler's `views` (ADR-250, #125); the reasoning below is that module's.
+//
+// A view (`ref String`, `ref Array[u8]`, `ref T`) is a slice of a buffer
+// somebody else owns (Part I, 6.6). A struct that holds one says so in its own
+// declaration, and therefore *carries* the buffer it points into wherever it
+// goes - which is what makes `examples/1brc.nika` free. A parameter written as
+// a view on its own has been told nothing of the kind, so a function that takes
+// one and **stores it** - into a field of its subject, into a struct it hands
+// back - is asking to keep something past the only moment it was given.
+//
+// **Fail-closed on "is it stored"** (ADR-010 D1): where a carrier of the view
+// is handed to a call on the subject, or on a field of the subject whose
+// declared type holds a view, this walk cannot see whether the callee keeps
+// it, so it counts as stored. **But the domain is narrow on purpose**: the only
+// destinations are the ones whose buffer is known *not* to be the parameter's
+// own - a field reached from `self` that holds a view, a field of a struct or
+// enum the function builds that holds one, the result where it holds a view
+// the language below would tie to something else, and a task's body. A local
+// is never a destination, because deciding one needs to know which buffer each
+// local views.
+//
+// **A destination that already names the buffer** (ADR-008 D1): where the
+// destination is a field of the subject, or of a struct built inside an `impl`
+// whose target holds a view, the parameter is written as a view of that buffer
+// rather than refused - `Stored.carried`, which the emitter reads. The refusal
+// is what is left where the chain runs out.
+//
+// One forward pass, no reassignment tracking, names only. A name that ever
+// carries the view keeps carrying it.
+
+use std::collections
+
+/// One naked view parameter, and the place its view ends up.
+pub struct Stored {
+    /// The statement that stores it - what the caret goes under.
+    pub span: Span,
+    /// The parameter, as the source names it.
+    pub param: String,
+    /// The parameter's declared type, as the source writes it.
+    pub ty: String,
+    /// The function or method it belongs to.
+    pub function: String,
+    /// The `impl` target, where the function is a method of one.
+    pub subject: String?,
+    /// Where the view goes.
+    pub into: Destination,
+    /// Whether the destination's own buffer already names this view and the
+    /// emitter has that buffer in hand where the parameter is written. False is
+    /// a refusal.
+    pub carried: bool,
+    /// The byte the function starts at, which is how the emitter finds the
+    /// parameter again.
+    pub method: u32,
+    /// The parameter's interned name, for the same reason.
+    pub symbol: winnow_grammar::Symbol,
+    /// Where the view is carried by a struct **parameter** rather than the
+    /// subject: that parameter, whose buffer the view is written as a view of.
+    pub carrier: winnow_grammar::Symbol?,
+}
+
+/// The kind of place a stored view reaches.
+pub enum Destination {
+    /// A field whose declared type holds a view. `owner` declares it.
+    Field { owner: String, field: String, ty: String },
+    /// The subject itself: a call on `self`, whose end is not visible here.
+    Subject { owner: String },
+    /// The result, and the result holds a view of a buffer that is not this
+    /// parameter's.
+    Returned { ty: String },
+    /// A task's body. It outlives the call whatever it does with the view.
+    Task,
+    /// A field of a **parameter** whose struct holds views: `s.label = name`
+    /// in `fn relabel(mut s: Summary, name: ref String)`.
+    ParamField { param: winnow_grammar::Symbol, owner: String, field: String, ty: String },
+}
+
+/// What the compiler hands the walk: the interner and the two ledgers, in one
+/// struct so its declaration says whose data the views are.
+pub struct Asked {
+    pub names: ref winnow_grammar::InternerContext,
+    pub own: ref Ledger,
+    pub library: ref Ledger,
+}
+
+// Everything about the unit that does not change from one function to the
+// next.
+struct Unit {
+    borrowing: collections::BTreeSet[String],
+    fields: collections::BTreeMap[String, Vec[(String, Type)]],
+}
+
+// The walk, for one parameter of one function.
+struct Here {
+    subject: Type?,
+    subject_fields: Vec[(String, Type)],
+    // The parameters and their written types.
+    declared: Vec[(winnow_grammar::Symbol, Type)],
+    // The declared result, where handing the view back would be storing it.
+    result: Type?,
+    // The declared result's name, where the result holds a view and can only
+    // point into this parameter's buffer.
+    ours: String?,
+    // Names that may carry this parameter's view. Monotone.
+    carriers: collections::BTreeSet[String],
+    found: Vec[(Span, Destination)],
+}
+
+// What the receiver of a call is rooted in.
+enum Root {
+    Subject,
+    SubjectField(String),
+    Param(winnow_grammar::Symbol),
+    ParamField(winnow_grammar::Symbol, String),
+    Elsewhere,
+}
+
+/// Every naked view parameter in this unit whose view is stored, in source
+/// order. `own_buffer` says whether a `let`'s value is a buffer of its own
+/// (ADR-209 §6) - the compiler's `tether` answers it.
+pub fn views_stored(asked: ref Asked, items: ref Vec[Spanned[Item]], own_buffer: fn(ref Expr) -> bool sync) -> Vec[Stored] {
+    let unit = Unit { borrowing: borrowing_types(asked.names, items), fields: view_fields(asked.names, items) }
+    let mut found: Vec[Stored] = []
+    let nothing: Type? = null
+    for item in items {
+        match item.node {
+            Item::Fn { .. } => scan(unit, asked, nothing, item.span.start, item.node, own_buffer, found),
+            Item::Impl { target, methods, .. } => {
+                let subject: Type? = target.clone()
+                for method in methods {
+                    scan(unit, asked, subject, method.span.start, method.node, own_buffer, found)
+                }
+            }
+            else => {}
+        }
+    }
+    return in_source_order(found)
+}
+
+/// The refusals: every stored naked view whose destination names no buffer.
+pub fn views_checked(asked: ref Asked, items: ref Vec[Spanned[Item]], own_buffer: fn(ref Expr) -> bool sync) -> Vec[Finding] {
+    let mut out: Vec[Finding] = []
+    for stored in views_stored(asked, items, own_buffer) {
+        if !stored.carried {
+            out.push(finding(stored))
+        }
+    }
+    return out
+}
+
+// By the byte the statement starts at; equal ones keep their order.
+fn in_source_order(found: Vec[Stored]) -> Vec[Stored] {
+    let mut out: Vec[Stored] = []
+    for stored in found {
+        let mut at = out.len()
+        while at > 0 && out[at - 1].span.start > stored.span.start {
+            at -= 1
+        }
+        out.insert(at, stored.clone())
+    }
+    return out
+}
+
+// What one refusal says (Part III C.2): the headline says what is wrong, the
+// notes say why, and the help is the shape that works, written out.
+fn finding(stored: ref Stored) -> Finding {
+    let param = stored.param.clone()
+    let written = stored.ty.clone()
+    let function = stored.function.clone()
+    let where_it_goes = match stored.into {
+        Destination::Field { owner, field, .. } => f"`{owner}.{field}`",
+        Destination::ParamField { owner, field, .. } => f"`{owner}.{field}`",
+        Destination::Subject { owner } => f"`{owner}`, through a call on it",
+        Destination::Returned { .. } => "the value this function returns",
+        Destination::Task => "a task, which goes on running after the call",
+    }
+    let why = match stored.into {
+        Destination::ParamField { owner, field, .. } => f"`{owner}.{field}` belongs to a struct that was passed in, and this function stores into more than one such struct, so it's unclear whose data `{param}` points into.",
+        Destination::Field { owner, field, ty } => f"`{owner}.{field}` is a `{ty}`, so it points into some data, but `{param}: {written}` doesn't say whose.",
+        Destination::Subject { owner } => f"A call on `{owner}` might keep what it's given, and nothing says it doesn't, so `{param}` counts as kept.",
+        Destination::Returned { ty } => f"The result is a `{ty}`, which holds a view, and this function takes views of other data besides `{param}`, so it's unclear which one the result points into.",
+        Destination::Task => "A task keeps running after the call that started it, so anything it looks at has to live longer than the call.",
+    }
+    let of = of_what(stored.subject, function)
+    let mut help: String = "Put the view in a struct and pass the struct, so its declaration says whose data it is (like `Reading` in `examples/1brc.nika`):\n           struct Held { "
+    help.push_str(ref f"{param}: {written}")
+    help.push_str(" }\n           …\n           fn ")
+    help.push_str(ref f"{function}(…, held: Held)")
+    help.push_str(" { … held.")
+    help.push_str(ref param)
+    help.push_str(" … }\n       Or keep a copy of the text with `.clone()`, which costs one allocation.")
+    return refusal("NK2302", stored.span.clone(), f"{of} keeps `{param}` after this call, but `{param}: {written}` doesn't say whose data it points into.", [f"It's stored in {where_it_goes}.", why], help)
+}
+
+// `Subject.function`, or the function alone.
+fn of_what(subject: ref String?, function: ref String) -> String {
+    let owner = subject ?? return f"`{function}`"
+    return f"`{owner}.{function}`"
+}
+
+// The structs and enums that hold a view, directly or through another such
+// type - the emitter's `borrowing_structs`.
+fn borrowing_types(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> collections::BTreeSet[String] {
+    let mut types_of: Vec[(String, Vec[Type])] = []
+    let mut borrowing: collections::BTreeSet[String] = collections::BTreeSet()
+    for item in items {
+        match item.node {
+            Item::Enum { name, variants, .. } => {
+                let mut types: Vec[Type] = []
+                for variant in variants {
+                    match variant.fields {
+                        VariantFields::Unit => {}
+                        VariantFields::Tuple(written) => {
+                            for ty in written {
+                                types.push(ty.clone())
+                            }
+                        }
+                        VariantFields::Named(declared) => {
+                            for field in declared {
+                                types.push(field.ty.clone())
+                            }
+                        }
+                    }
+                }
+                a_shape(names.resolve(name).clone(), types, borrowing, types_of)
+            }
+            Item::Struct { name, fields, .. } => {
+                let mut types: Vec[Type] = []
+                for field in fields {
+                    types.push(field.ty.clone())
+                }
+                a_shape(names.resolve(name).clone(), types, borrowing, types_of)
+            }
+            else => {}
+        }
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, types) in types_of {
+            if !borrowing.contains(name) && any_names_borrowing(names, types, borrowing) {
+                borrowing.insert(name.clone())
+                changed = true
+            }
+        }
+    }
+    return borrowing
+}
+
+fn a_shape(name: String, types: Vec[Type], mut borrowing: collections::BTreeSet[String], mut types_of: Vec[(String, Vec[Type])]) {
+    for ty in types {
+        if holds_view(ty) {
+            borrowing.insert(name.clone())
+        }
+    }
+    types_of.push((name, types))
+}
+
+fn any_names_borrowing(names: ref winnow_grammar::InternerContext, types: ref Vec[Type], borrowing: ref collections::BTreeSet[String]) -> bool {
+    for ty in types {
+        if names_borrowing(names, ty, borrowing) {
+            return true
+        }
+    }
+    return false
+}
+
+// Whether a type is, or holds, a view.
+fn holds_view(ty: ref Type) -> bool {
+    if ty.is_view {
+        return true
+    }
+    for inner in ty.generics {
+        if holds_view(inner) {
+            return true
+        }
+    }
+    return false
+}
+
+// Whether a type names a type that holds a view.
+fn names_borrowing(names: ref winnow_grammar::InternerContext, ty: ref Type, borrowing: ref collections::BTreeSet[String]) -> bool {
+    if borrowing.contains(names.resolve(ty.name)) {
+        return true
+    }
+    for inner in ty.generics {
+        if names_borrowing(names, inner, borrowing) {
+            return true
+        }
+    }
+    return false
+}
+
+// Whether a type brings a buffer of its own: a view, or a type that holds one.
+fn brings_buffer(unit: ref Unit, asked: ref Asked, ty: ref Type) -> bool {
+    return holds_view(ty) || names_borrowing(asked.names, ty, unit.borrowing)
+}
+
+// Every struct's and enum's fields, by the name that declares them; an enum's
+// variants are flattened into it.
+fn view_fields(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> collections::BTreeMap[String, Vec[(String, Type)]] {
+    let mut out: collections::BTreeMap[String, Vec[(String, Type)]] = collections::BTreeMap()
+    for item in items {
+        match item.node {
+            Item::Struct { name, fields, .. } => {
+                let mut declared: Vec[(String, Type)] = []
+                for field in fields {
+                    declared.push((names.resolve(field.name).clone(), field.ty.clone()))
+                }
+                out.insert(names.resolve(name).clone(), declared)
+            }
+            Item::Enum { name, variants, .. } => {
+                let mut carried: Vec[(String, Type)] = []
+                for variant in variants {
+                    match variant.fields {
+                        VariantFields::Unit => {}
+                        VariantFields::Tuple(written) => {
+                            for i in 0..<written.len() {
+                                carried.push((f"{i}", written[i].clone()))
+                            }
+                        }
+                        VariantFields::Named(declared) => {
+                            for field in declared {
+                                carried.push((names.resolve(field.name).clone(), field.ty.clone()))
+                            }
+                        }
+                    }
+                }
+                out.insert(names.resolve(name).clone(), carried)
+            }
+            else => {}
+        }
+    }
+    return out
+}
+
+/// A type as the source writes it, for a message to quote back: `ref X` is a
+/// view of an `X` (ADR-184 D1), and a view of `str` is a view of text (D2).
+pub fn written_type(names: ref winnow_grammar::InternerContext, ty: ref Type) -> String {
+    let mut out: String = ""
+    if ty.is_view {
+        out.push_str("ref ")
+        if ty.is_mut {
+            out.push_str("mut ")
+        }
+    }
+    let mut parts: Vec[String] = []
+    for inner in ty.generics {
+        parts.push(written_type(names, inner))
+    }
+    let joined = parts.join(", ")
+    if ty.is_tuple {
+        out.push_str(ref f"({joined})")
+        return out
+    }
+    let name = names.resolve(ty.name)
+    if ty.is_view && name == "str" {
+        out.push_str(TEXT)
+    } else {
+        out.push_str(name)
+    }
+    if parts.len() > 0 {
+        out.push_str(ref f"[{joined}]")
+    }
+    return out
+}
+
+// One function or method, asked about each of its naked view parameters.
+fn scan(unit: ref Unit, asked: ref Asked, target: ref Type?, method: u32, item: ref Item, own_buffer: fn(ref Expr) -> bool sync, mut out: Vec[Stored]) {
+    match item {
+        Item::Fn { name, receiver, args, config, ret_type, body, .. } => {
+            // A parameter and an option are the same thing here: both arrive
+            // from the caller and both are written with a type (Part I, 5.1).
+            let mut declared: Vec[(winnow_grammar::Symbol, Type)] = []
+            for arg in args {
+                declared.push((arg.name, arg.ty.clone()))
+            }
+            for option in config {
+                declared.push((option.name, option.ty.clone()))
+            }
+            let mut any_view = false
+            for (_, ty) in declared {
+                if ty.is_view {
+                    any_view = true
+                }
+            }
+            if !any_view {
+                return
+            }
+            // The language below ties an elided result to the subject where
+            // there is one, and otherwise to the single input that has a
+            // buffer.
+            let mut sources: Vec[String] = []
+            for (param, ty) in declared {
+                if brings_buffer(unit, asked, ty) {
+                    sources.push(asked.names.resolve(param).clone())
+                }
+            }
+            let subject_is_a_source = takes_a_view_of_itself(receiver)
+            let result_holds_view = buffered(unit, asked, ret_type)
+            let subject_names_a_buffer = named_in(asked, target, unit.borrowing)
+            let subject_name = text_of(asked, target)
+            let function = function_name(asked.names, name)
+            let subject_fields = fields_of_type(unit, asked, target)
+            for (param, ty) in declared {
+                if !ty.is_view {
+                    continue
+                }
+                let param_name = asked.names.resolve(param).clone()
+                let result_is_ours = !subject_is_a_source && sources.len() == 1 && sources[0] == param_name
+                let hands_back = result_holds_view && !result_is_ours
+                let mut carriers: collections::BTreeSet[String] = collections::BTreeSet()
+                carriers.insert(param_name.clone())
+                let mut here = Here { subject: target?.clone(), subject_fields: subject_fields.clone(), declared: declared.clone(), result: if hands_back { ret_type?.clone() } else { null }, ours: if result_holds_view && result_is_ours { text_of(asked, ret_type) } else { null }, carriers: carriers, found: [] }
+                walk_block(unit, asked, body, true, own_buffer, here)
+                one_answer(asked, here, param, Scanned { param: param_name, ty: written_type(asked.names, ty), function: function.clone(), subject: subject_name?.clone(), method: method, names_a_buffer: subject_names_a_buffer }, out)
+            }
+        }
+        else => {}
+    }
+}
+
+// What the function says about itself, for the answer.
+struct Scanned {
+    param: String,
+    ty: String,
+    function: String,
+    subject: String?,
+    method: u32,
+    names_a_buffer: bool,
+}
+
+// **One answer per parameter**, because one signature is what gets written:
+// the parameter is lowered with the buffer named only if *every* destination
+// is one that buffer covers. A single destination it does not cover is a
+// refusal, and that one is what the caret goes under. A field of one struct
+// parameter is covered the same way, by that parameter's buffer - where the
+// subject names none, and every such field is the same parameter's.
+fn one_answer(asked: ref Asked, here: ref Here, symbol: winnow_grammar::Symbol, signed: Scanned, mut out: Vec[Stored]) {
+    let mut carriers: collections::BTreeSet[String] = collections::BTreeSet()
+    let mut carrier: winnow_grammar::Symbol? = null
+    for (_, into) in here.found {
+        match into {
+            Destination::ParamField { param, .. } => {
+                if carriers.insert(asked.names.resolve(param).clone()) && carrier == null {
+                    carrier = param
+                }
+            }
+            else => {}
+        }
+    }
+    let one_carrier = carriers.len() == 1 && !signed.names_a_buffer
+    let mut unreached: Vec[(Span, Destination)] = []
+    let mut reached: Vec[(Span, Destination)] = []
+    for (span, into) in here.found {
+        if covered_by_the_subject(signed.names_a_buffer, into) || (one_carrier && a_param_field(into)) {
+            reached.push((span.clone(), into.clone()))
+        } else {
+            unreached.push((span.clone(), into.clone()))
+        }
+    }
+    let carried = unreached.len() == 0
+    let candidates = if carried { reached } else { unreached }
+    if candidates.len() == 0 {
+        return
+    }
+    let mut best = 0
+    for i in 1..<candidates.len() {
+        let rank_i = rank(candidates[i].1)
+        let rank_best = rank(candidates[best].1)
+        if rank_i < rank_best || (rank_i == rank_best && candidates[i].0.start < candidates[best].0.start) {
+            best = i
+        }
+    }
+    out.push(Stored { span: candidates[best].0.clone(), param: signed.param, ty: signed.ty, function: signed.function, subject: signed.subject, into: candidates[best].1.clone(), carried: carried, method: signed.method, symbol: symbol, carrier: if one_carrier && carried { carrier } else { null } })
+}
+
+fn a_param_field(into: ref Destination) -> bool {
+    return match into {
+        Destination::ParamField { .. } => true,
+        else => false,
+    }
+}
+
+// Whether the subject's own buffer already covers this destination: a field
+// of the subject, and a call on the subject, once the subject names a buffer
+// at all. The result is not.
+fn covered_by_the_subject(subject_names_a_buffer: bool, into: ref Destination) -> bool {
+    return subject_names_a_buffer && match into {
+        Destination::Field { .. } => true,
+        Destination::Subject { .. } => true,
+        else => false,
+    }
+}
+
+// How much a destination says about where the view went, lowest first.
+fn rank(into: ref Destination) -> i64 {
+    return match into {
+        Destination::Field { .. } => 0,
+        Destination::Subject { .. } => 1,
+        Destination::Task => 2,
+        Destination::Returned { .. } => 3,
+        Destination::ParamField { .. } => 0,
+    }
+}
+
+fn takes_a_view_of_itself(receiver: ref Receiver?) -> bool {
+    let taken = receiver ?? return false
+    return taken.is_ref
+}
+
+fn buffered(unit: ref Unit, asked: ref Asked, ty: ref Type?) -> bool {
+    return brings_buffer(unit, asked, ty ?? return false)
+}
+
+fn named_in(asked: ref Asked, ty: ref Type?, borrowing: ref collections::BTreeSet[String]) -> bool {
+    let named = ty ?? return false
+    return borrowing.contains(asked.names.resolve(named.name))
+}
+
+fn text_of(asked: ref Asked, ty: ref Type?) -> String? {
+    let named = ty ?? return null
+    return asked.names.resolve(named.name).clone()
+}
+
+// Part I 4.2's anonymous constructor is `new`.
+fn function_name(names: ref winnow_grammar::InternerContext, name: winnow_grammar::Symbol?) -> String {
+    let named = name ?? return "new"
+    return names.resolve(named).clone()
+}
+
+fn fields_of_type(unit: ref Unit, asked: ref Asked, ty: ref Type?) -> Vec[(String, Type)] {
+    let named = ty ?? return []
+    return unit.fields[asked.names.resolve(named.name)]?.clone() ?? []
+}
+
+// `tail` says whether the last statement of this block is the function's
+// result - true for the body itself and false inside a loop or a lambda.
+fn walk_block(unit: ref Unit, asked: ref Asked, block: ref Block, tail: bool, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    let count = block.stmts.len()
+    for i in 0..<count {
+        let returning = tail && i + 1 == count
+        let span = block.stmts[i].span.clone()
+        match block.stmts[i].node {
+            // **Every name**, because a view carried into a tuple reaches each
+            // part of it (ADR-098). **A buffer of its own carries no view of
+            // the parameter** (ADR-209 §6).
+            Stmt::Let { names, value, .. } => {
+                if mentions(unit, asked, here, value) && !own_buffer(value) {
+                    for name in names {
+                        here.carriers.insert(asked.names.resolve(name).clone())
+                    }
+                }
+                stores(unit, asked, value, span, own_buffer, here)
+            }
+            Stmt::Comptime { name, value, .. } => {
+                if mentions(unit, asked, here, value) {
+                    here.carriers.insert(asked.names.resolve(name).clone())
+                }
+                stores(unit, asked, value, span, own_buffer, here)
+            }
+            Stmt::Assign { target, value, .. } => {
+                if mentions(unit, asked, here, value) {
+                    match target {
+                        Expr::Variable(name) => {
+                            here.carriers.insert(asked.names.resolve(name).clone())
+                        }
+                        else => assigned(unit, asked, target, span, here),
+                    }
+                }
+                stores(unit, asked, target, span, own_buffer, here)
+                stores(unit, asked, value, span, own_buffer, here)
+            }
+            Stmt::Return(value) => returned_maybe(unit, asked, value, span, own_buffer, here),
+            Stmt::Expr(expr) => {
+                if returning {
+                    returned(unit, asked, expr, span, here)
+                    handed_back(unit, asked, expr, span, own_buffer, here)
+                } else {
+                    stores(unit, asked, expr, span, own_buffer, here)
+                }
+            }
+            Stmt::For { bindings, iter, body } => {
+                if mentions(unit, asked, here, iter) {
+                    for binding in bindings {
+                        here.carriers.insert(asked.names.resolve(binding).clone())
+                    }
+                }
+                stores(unit, asked, iter, span, own_buffer, here)
+                walk_block(unit, asked, body, false, own_buffer, here)
+            }
+            Stmt::While { cond, body } => {
+                stores(unit, asked, cond, span, own_buffer, here)
+                walk_block(unit, asked, body, false, own_buffer, here)
+            }
+            // Neither stores anything and neither carries a value.
+            Stmt::Break => {}
+            Stmt::Continue => {}
+        }
+    }
+}
+
+fn returned_maybe(unit: ref Unit, asked: ref Asked, value: ref Expr?, span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    let handed = value ?? return
+    returned(unit, asked, handed, span, here)
+    handed_back(unit, asked, handed, span, own_buffer, here)
+}
+
+// **A literal of the result, handed back**, where the result can only point
+// into this parameter's buffer: its fields are what the signature says the
+// result views, so they are no store. What stands inside them is still asked.
+fn handed_back(unit: ref Unit, asked: ref Asked, value: ref Expr, span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    match value {
+        Expr::StructLit { name, .. } => {
+            if ours_is(asked, here.ours, name) {
+                descend(unit, asked, value, span, own_buffer, here)
+            } else {
+                stores(unit, asked, value, span, own_buffer, here)
+            }
+        }
+        else => stores(unit, asked, value, span, own_buffer, here),
+    }
+}
+
+fn ours_is(asked: ref Asked, ours: ref String?, name: winnow_grammar::Symbol) -> bool {
+    let named = ours ?? return false
+    return named == asked.names.resolve(name)
+}
+
+// `self.label = name`, and the deeper forms of it.
+fn assigned(unit: ref Unit, asked: ref Asked, target: ref Expr, span: ref Span, mut here: Here) {
+    match root(unit, asked, here, target) {
+        Root::SubjectField(field) => field_of_subject(unit, asked, field, span, here),
+        Root::Subject => subject_destination(unit, asked, span, here),
+        Root::ParamField(param, field) => field_of_param(unit, asked, param, field, span, here),
+        Root::Param(_) => {}
+        Root::Elsewhere => {}
+    }
+}
+
+// The struct a parameter's declared type names, where that struct holds views
+// and the parameter is not itself a view.
+fn a_struct_parameter(unit: ref Unit, asked: ref Asked, here: ref Here, name: winnow_grammar::Symbol) -> String? {
+    let wanted = asked.names.resolve(name)
+    for (declared, ty) in here.declared {
+        if asked.names.resolve(declared) == wanted {
+            let owner = asked.names.resolve(ty.name)
+            if !ty.is_view && unit.borrowing.contains(owner) {
+                return owner.clone()
+            }
+            return null
+        }
+    }
+    return null
+}
+
+// A store into the field `field` of the parameter `param`.
+fn field_of_param(unit: ref Unit, asked: ref Asked, param: winnow_grammar::Symbol, field: ref String, span: ref Span, mut here: Here) {
+    let owner = a_struct_parameter(unit, asked, here, param) ?? return
+    let declared = unit.fields[owner]?.clone() ?? []
+    for (name, ty) in declared {
+        if name == field {
+            if brings_buffer(unit, asked, ty) {
+                here.found.push((span.clone(), Destination::ParamField { param: param, owner: owner, field: field.clone(), ty: written_type(asked.names, ty) }))
+            }
+            return
+        }
+    }
+}
+
+// A value handed back, where the result holds a view of another buffer.
+fn returned(unit: ref Unit, asked: ref Asked, value: ref Expr, span: ref Span, mut here: Here) {
+    let result = here.result?.clone() ?? return
+    if !mentions(unit, asked, here, value) {
+        return
+    }
+    // **A call says which of its arguments its result may point into**, and a
+    // carrier that is none of them does not reach the result through it.
+    if hands_back_another_buffer(unit, asked, here, value) {
+        return
+    }
+    here.found.push((span.clone(), Destination::Returned { ty: written_type(asked.names, result) }))
+}
+
+// Whether this expression is a call whose result points into something that
+// is **not** a carrier of the view (`returns = "borrows(a | b)"`, ADR-098).
+// Everything unwritten reads as *nobody said*, where the refusal stands
+// (ADR-010 D1).
+fn hands_back_another_buffer(unit: ref Unit, asked: ref Asked, here: ref Here, value: ref Expr) -> bool {
+    return match value {
+        Expr::MethodCall { receiver, method, args, .. } => a_method_borrows_elsewhere(unit, asked, here, receiver, method, args),
+        Expr::SafeMethod { receiver, method, args, .. } => a_method_borrows_elsewhere(unit, asked, here, receiver, method, args),
+        // A free call names its callee with a bare name or a path; anything
+        // else is code decided at run time, which no column describes.
+        Expr::Call { func, args, .. } => match func {
+            Expr::Variable(name) => borrows_elsewhere(unit, asked, here, asked.names.resolve(name), null, args),
+            Expr::Path(parts) => borrows_elsewhere(unit, asked, here, joined_path(asked, parts), null, args),
+            else => false,
+        },
+        else => false,
+    }
+}
+
+fn a_method_borrows_elsewhere(unit: ref Unit, asked: ref Asked, here: ref Here, receiver: ref Expr, method: winnow_grammar::Symbol, args: ref Vec[Expr]) -> bool {
+    let ty = type_of(unit, asked, here, receiver) ?? return false
+    let subject = asked.names.resolve(ty.name)
+    let name = asked.names.resolve(method)
+    let on: Expr? = receiver.clone()
+    return borrows_elsewhere(unit, asked, here, f"{subject}::{name}", on, args)
+}
+
+fn joined_path(asked: ref Asked, parts: ref Vec[winnow_grammar::Symbol]) -> String {
+    let mut written: Vec[String] = []
+    for part in parts {
+        written.push(asked.names.resolve(part).clone())
+    }
+    return written.join("::")
+}
+
+fn borrows_elsewhere(unit: ref Unit, asked: ref Asked, here: ref Here, key: ref String, receiver: ref Expr?, args: ref Vec[Expr]) -> bool {
+    let contract = asked.own.functions[key]?.clone() ?? asked.library.functions[key]?.clone() ?? return false
+    let signature = contract.signature?.clone() ?? return false
+    // A column nothing wrote says nothing.
+    if contract.borrows.len() == 0 {
+        return false
+    }
+    // **The receiver is a position too**, and `self` is what names it.
+    let takes_a_receiver = signature.takes_a_receiver()
+    for borrowed in contract.borrows {
+        if borrowed == "self" {
+            if !receiver_clear(unit, asked, here, receiver) {
+                return false
+            }
+            continue
+        }
+        let mut at = -1
+        for i in 0..<signature.params.len() {
+            if at < 0 && signature.params[i].0 == borrowed {
+                at = i
+            }
+        }
+        if at < 0 {
+            return false
+        }
+        if takes_a_receiver {
+            at -= 1
+        }
+        if at < 0 || at >= args.len() {
+            return false
+        }
+        if mentions(unit, asked, here, args[at]) {
+            return false
+        }
+    }
+    return true
+}
+
+// A free function with a `self` in its column is a ledger this walk does not
+// understand.
+fn receiver_clear(unit: ref Unit, asked: ref Asked, here: ref Here, receiver: ref Expr?) -> bool {
+    let on = receiver ?? return false
+    return !mentions(unit, asked, here, on)
+}
+
+// The declared type of a receiver, where the source wrote one down: the
+// subject, a field of the subject, and a parameter.
+fn type_of(unit: ref Unit, asked: ref Asked, here: ref Here, receiver: ref Expr) -> Type? {
+    return match receiver {
+        Expr::Variable(name) => variable_type(asked, here, asked.names.resolve(name)),
+        Expr::Field { base, name } => field_type(unit, asked, here, base, asked.names.resolve(name)),
+        else => null,
+    }
+}
+
+fn variable_type(asked: ref Asked, here: ref Here, name: ref String) -> Type? {
+    if name == "self" {
+        return here.subject?.clone()
+    }
+    for (param, ty) in here.declared {
+        if asked.names.resolve(param) == name {
+            return ty.clone()
+        }
+    }
+    return null
+}
+
+fn field_type(unit: ref Unit, asked: ref Asked, here: ref Here, base: ref Expr, name: ref String) -> Type? {
+    let fields = fields_reached(unit, asked, here, base) ?? return null
+    for (field, ty) in fields {
+        if field == name {
+            return ty.clone()
+        }
+    }
+    return null
+}
+
+fn fields_reached(unit: ref Unit, asked: ref Asked, here: ref Here, base: ref Expr) -> Vec[(String, Type)]? {
+    if is_self(asked, base) {
+        return here.subject_fields.clone()
+    }
+    let ty = type_of(unit, asked, here, base) ?? return null
+    return unit.fields[asked.names.resolve(ty.name)]?.clone()
+}
+
+fn is_self(asked: ref Asked, expr: ref Expr) -> bool {
+    return match expr {
+        Expr::Variable(name) => asked.names.resolve(name) == "self",
+        else => false,
+    }
+}
+
+// Every store inside one expression.
+fn stores(unit: ref Unit, asked: ref Asked, expr: ref Expr, span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    match expr {
+        // A store that may not happen is still a store: a `?.` changes only
+        // whether the view gets there.
+        Expr::MethodCall { receiver, args, config, .. } => {
+            handed_to(unit, asked, receiver, args, config, span, here)
+            descend(unit, asked, expr, span, own_buffer, here)
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            handed_to(unit, asked, receiver, args, config, span, here)
+            descend(unit, asked, expr, span, own_buffer, here)
+        }
+        Expr::StructLit { name, fields } => {
+            let owner = asked.names.resolve(name).clone()
+            if unit.borrowing.contains(owner) {
+                let declared = unit.fields[owner]?.clone() ?? []
+                for init in fields {
+                    a_field_built(unit, asked, owner, declared, init, span, here)
+                }
+            }
+            descend(unit, asked, expr, span, own_buffer, here)
+        }
+        Expr::Spawn { body, .. } => {
+            if mentions(unit, asked, here, body) {
+                here.found.push((span.clone(), Destination::Task))
+            }
+            descend(unit, asked, expr, span, own_buffer, here)
+        }
+        else => descend(unit, asked, expr, span, own_buffer, here),
+    }
+}
+
+// A carrier handed to a call on the subject, or on a field of it.
+fn handed_to(unit: ref Unit, asked: ref Asked, receiver: ref Expr, args: ref Vec[Expr], config: ref Vec[ConfigArg], span: ref Span, mut here: Here) {
+    let mut handed_over = false
+    for arg in args {
+        if mentions(unit, asked, here, arg) {
+            handed_over = true
+        }
+    }
+    for setting in config {
+        if mentions(unit, asked, here, setting.value) {
+            handed_over = true
+        }
+    }
+    if !handed_over {
+        return
+    }
+    match root(unit, asked, here, receiver) {
+        Root::SubjectField(field) => field_of_subject(unit, asked, field, span, here),
+        Root::Subject => subject_destination(unit, asked, span, here),
+        else => {}
+    }
+}
+
+// One field of a struct literal of a type that holds views.
+fn a_field_built(unit: ref Unit, asked: ref Asked, owner: ref String, declared: ref Vec[(String, Type)], init: ref FieldInit, span: ref Span, mut here: Here) {
+    let field = asked.names.resolve(init.name).clone()
+    // `Reading { name, temp }` - the shorthand names a variable spelled like
+    // the field.
+    let mentioned = value_mentions(unit, asked, here, init.value, field)
+    if !mentioned {
+        return
+    }
+    for (name, ty) in declared {
+        if name == field {
+            if brings_buffer(unit, asked, ty) {
+                here.found.push((span.clone(), Destination::Field { owner: owner.clone(), field: field, ty: written_type(asked.names, ty) }))
+            }
+            return
+        }
+    }
+}
+
+fn value_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, value: ref Expr?, field: ref String) -> bool {
+    let written = value ?? return here.carriers.contains(field)
+    return mentions(unit, asked, here, written)
+}
+
+// A call on the subject itself, whose end this walk does not see - unless the
+// subject cannot hold a view at all: a `struct` whose every field is a
+// number, a flag or owned text has nowhere to keep one.
+fn subject_destination(unit: ref Unit, asked: ref Asked, span: ref Span, mut here: Here) {
+    let owner = text_of(asked, here.subject) ?? return
+    let known = unit.fields.contains_key(owner)
+    let mut can_hold = false
+    for (_, ty) in here.subject_fields {
+        if brings_buffer(unit, asked, ty) {
+            can_hold = true
+        }
+    }
+    if known && !can_hold {
+        return
+    }
+    here.found.push((span.clone(), Destination::Subject { owner: owner }))
+}
+
+// A store into the field `field` of the subject, where that field holds a
+// view.
+fn field_of_subject(unit: ref Unit, asked: ref Asked, field: ref String, span: ref Span, mut here: Here) {
+    let mut written: String? = null
+    for (name, ty) in here.subject_fields {
+        if written == null && name == field && brings_buffer(unit, asked, ty) {
+            written = written_type(asked.names, ty)
+        }
+        if name == field {
+            break
+        }
+    }
+    let ty = written ?? return
+    let owner = text_of(asked, here.subject) ?? return
+    here.found.push((span.clone(), Destination::Field { owner: owner, field: field.clone(), ty: ty }))
+}
+
+// What a call's receiver is rooted in.
+fn root(unit: ref Unit, asked: ref Asked, here: ref Here, expr: ref Expr) -> Root {
+    return match expr {
+        Expr::Variable(name) => a_variable_root(unit, asked, here, name),
+        // The outer field sits inside the root one, so the root field is what
+        // carries the buffer.
+        Expr::Field { base, name } => match root(unit, asked, here, base) {
+            Root::Subject => Root::SubjectField(asked.names.resolve(name).clone()),
+            Root::Param(param) => Root::ParamField(param, asked.names.resolve(name).clone()),
+            Root::SubjectField(field) => Root::SubjectField(field),
+            Root::ParamField(param, field) => Root::ParamField(param, field),
+            Root::Elsewhere => Root::Elsewhere,
+        },
+        Expr::MethodCall { receiver, .. } => root(unit, asked, here, receiver),
+        Expr::SafeMethod { receiver, .. } => root(unit, asked, here, receiver),
+        Expr::Index { base, .. } => root(unit, asked, here, base),
+        Expr::Try(inner) => root(unit, asked, here, inner),
+        else => Root::Elsewhere,
+    }
+}
+
+fn a_variable_root(unit: ref Unit, asked: ref Asked, here: ref Here, name: winnow_grammar::Symbol) -> Root {
+    if asked.names.resolve(name) == "self" {
+        return Root::Subject
+    }
+    if a_struct_parameter(unit, asked, here, name) != null {
+        return Root::Param(name)
+    }
+    return Root::Elsewhere
+}
+
+// Whether a carrier of the view appears anywhere in this expression. By name,
+// and nothing more: over-reporting is the fail-closed direction, and the
+// destination's declared type keeps it from mattering.
+fn mentions(unit: ref Unit, asked: ref Asked, here: ref Here, node: ref Expr) -> bool {
+    return match node {
+        Expr::Variable(name) => here.carriers.contains(asked.names.resolve(name)),
+        Expr::MethodCall { receiver, args, config, .. } => mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
+        Expr::SafeMethod { receiver, args, config, .. } => mentions(unit, asked, here, receiver) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
+        Expr::Call { func, args, config } => mentions(unit, asked, here, func) || any_mentions(unit, asked, here, args) || config_mentions(unit, asked, here, config),
+        Expr::Field { base, .. } => mentions(unit, asked, here, base),
+        Expr::SafeField { base, .. } => mentions(unit, asked, here, base),
+        Expr::Index { base, index } => mentions(unit, asked, here, base) || mentions(unit, asked, here, index),
+        Expr::Binary { lhs, rhs, .. } => mentions(unit, asked, here, lhs) || mentions(unit, asked, here, rhs),
+        Expr::Unary { expr, .. } => mentions(unit, asked, here, expr),
+        Expr::Try(inner) => mentions(unit, asked, here, inner),
+        Expr::Throw(inner) => mentions(unit, asked, here, inner),
+        Expr::Cast { expr, .. } => mentions(unit, asked, here, expr),
+        Expr::Spawn { body, .. } => mentions(unit, asked, here, body),
+        Expr::Coalesce { value, fallback } => mentions(unit, asked, here, value) || mentions(unit, asked, here, fallback),
+        Expr::Range { start, end, .. } => mentions(unit, asked, here, start) || mentions(unit, asked, here, end),
+        Expr::Tuple(parts) => any_mentions(unit, asked, here, parts),
+        Expr::ListLit { items, .. } => any_mentions(unit, asked, here, items),
+        Expr::Return(value) => maybe_mentions(unit, asked, here, value),
+        Expr::StructLit { fields, .. } => fields_mention(unit, asked, here, fields),
+        // A copy carries what it did not name (ADR-118 D3).
+        Expr::With { base, fields, .. } => mentions(unit, asked, here, base) || fields_mention(unit, asked, here, fields),
+        Expr::Match { value, arms } => mentions(unit, asked, here, value) || arms_mention(unit, asked, here, arms),
+        Expr::If { cond, then_branch, else_branch } => mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, then_branch) || maybe_block_mentions(unit, asked, here, else_branch),
+        Expr::Block(block) => block_mentions(unit, asked, here, block),
+        Expr::Unsafe(block) => block_mentions(unit, asked, here, block),
+        Expr::Overlap(block) => block_mentions(unit, asked, here, block),
+        Expr::Closure { body, .. } => block_mentions(unit, asked, here, body),
+        // An arm holds both: what is raced is an expression, and what runs if
+        // it wins is a block (ADR-148 D1).
+        Expr::Select(arms) => select_mentions(unit, asked, here, arms),
+        Expr::TryCatch { expr, handler } => mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler),
+        Expr::Break => false,
+        Expr::Continue => false,
+        Expr::Asm { .. } => false,
+        Expr::Dsl { .. } => false,
+        Expr::Path(_) => false,
+        Expr::LitInt { .. } => false,
+        Expr::LitFloat(_) => false,
+        Expr::LitStr { .. } => false,
+        Expr::LitInterpolated { .. } => false,
+        Expr::LitChar(_) => false,
+        Expr::LitBool(_) => false,
+        // `null` holds nothing, so it borrows nothing.
+        Expr::LitNull => false,
+    }
+}
+
+fn any_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, exprs: ref Vec[Expr]) -> bool {
+    for expr in exprs {
+        if mentions(unit, asked, here, expr) {
+            return true
+        }
+    }
+    return false
+}
+
+fn config_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, config: ref Vec[ConfigArg]) -> bool {
+    for setting in config {
+        if mentions(unit, asked, here, setting.value) {
+            return true
+        }
+    }
+    return false
+}
+
+fn fields_mention(unit: ref Unit, asked: ref Asked, here: ref Here, fields: ref Vec[FieldInit]) -> bool {
+    for field in fields {
+        if maybe_mentions(unit, asked, here, field.value) {
+            return true
+        }
+    }
+    return false
+}
+
+fn arms_mention(unit: ref Unit, asked: ref Asked, here: ref Here, arms: ref Vec[MatchArm]) -> bool {
+    for arm in arms {
+        if mentions(unit, asked, here, arm.body) {
+            return true
+        }
+    }
+    return false
+}
+
+fn select_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, arms: ref Vec[SelectArm]) -> bool {
+    for arm in arms {
+        if mentions(unit, asked, here, arm.value) || block_mentions(unit, asked, here, arm.body) {
+            return true
+        }
+    }
+    return false
+}
+
+fn maybe_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, expr: ref Expr?) -> bool {
+    return mentions(unit, asked, here, expr ?? return false)
+}
+
+fn maybe_block_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, block: ref Block?) -> bool {
+    return block_mentions(unit, asked, here, block ?? return false)
+}
+
+fn block_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, block: ref Block) -> bool {
+    for stmt in block.stmts {
+        if statement_mentions(unit, asked, here, stmt.node) {
+            return true
+        }
+    }
+    return false
+}
+
+fn statement_mentions(unit: ref Unit, asked: ref Asked, here: ref Here, stmt: ref Stmt) -> bool {
+    return match stmt {
+        Stmt::Let { value, .. } => mentions(unit, asked, here, value),
+        Stmt::Comptime { value, .. } => mentions(unit, asked, here, value),
+        Stmt::Expr(expr) => mentions(unit, asked, here, expr),
+        Stmt::Return(value) => maybe_mentions(unit, asked, here, value),
+        Stmt::Assign { target, value, .. } => mentions(unit, asked, here, target) || mentions(unit, asked, here, value),
+        Stmt::For { iter, body, .. } => mentions(unit, asked, here, iter) || block_mentions(unit, asked, here, body),
+        Stmt::While { cond, body } => mentions(unit, asked, here, cond) || block_mentions(unit, asked, here, body),
+        Stmt::Break => false,
+        Stmt::Continue => false,
+    }
+}
+
+// The sub-expressions of `expr`, for `stores` to recurse into. A lambda's
+// trailing expression is the lambda's result, not the function's.
+fn descend(unit: ref Unit, asked: ref Asked, node: ref Expr, span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    match node {
+        Expr::MethodCall { receiver, args, config, .. } => {
+            stores(unit, asked, receiver, span, own_buffer, here)
+            stores_all(unit, asked, args, span, own_buffer, here)
+            stores_config(unit, asked, config, span, own_buffer, here)
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            stores(unit, asked, receiver, span, own_buffer, here)
+            stores_all(unit, asked, args, span, own_buffer, here)
+            stores_config(unit, asked, config, span, own_buffer, here)
+        }
+        Expr::Call { func, args, config } => {
+            stores(unit, asked, func, span, own_buffer, here)
+            stores_all(unit, asked, args, span, own_buffer, here)
+            stores_config(unit, asked, config, span, own_buffer, here)
+        }
+        Expr::Field { base, .. } => stores(unit, asked, base, span, own_buffer, here),
+        Expr::SafeField { base, .. } => stores(unit, asked, base, span, own_buffer, here),
+        Expr::Index { base, index } => {
+            stores(unit, asked, base, span, own_buffer, here)
+            stores(unit, asked, index, span, own_buffer, here)
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            stores(unit, asked, lhs, span, own_buffer, here)
+            stores(unit, asked, rhs, span, own_buffer, here)
+        }
+        Expr::Unary { expr, .. } => stores(unit, asked, expr, span, own_buffer, here),
+        Expr::Try(inner) => stores(unit, asked, inner, span, own_buffer, here),
+        Expr::Throw(inner) => stores(unit, asked, inner, span, own_buffer, here),
+        Expr::Cast { expr, .. } => stores(unit, asked, expr, span, own_buffer, here),
+        Expr::Spawn { body, .. } => stores(unit, asked, body, span, own_buffer, here),
+        Expr::Coalesce { value, fallback } => {
+            stores(unit, asked, value, span, own_buffer, here)
+            stores(unit, asked, fallback, span, own_buffer, here)
+        }
+        Expr::Range { start, end, .. } => {
+            stores(unit, asked, start, span, own_buffer, here)
+            stores(unit, asked, end, span, own_buffer, here)
+        }
+        Expr::Tuple(parts) => stores_all(unit, asked, parts, span, own_buffer, here),
+        Expr::ListLit { items, .. } => stores_all(unit, asked, items, span, own_buffer, here),
+        Expr::Return(value) => stores_maybe(unit, asked, value, span, own_buffer, here),
+        Expr::StructLit { fields, .. } => stores_fields(unit, asked, fields, span, own_buffer, here),
+        Expr::With { base, fields, .. } => {
+            stores(unit, asked, base, span, own_buffer, here)
+            stores_fields(unit, asked, fields, span, own_buffer, here)
+        }
+        Expr::Match { value, arms } => {
+            stores(unit, asked, value, span, own_buffer, here)
+            for arm in arms {
+                stores(unit, asked, arm.body, span, own_buffer, here)
+            }
+        }
+        Expr::If { cond, then_branch, else_branch } => {
+            stores(unit, asked, cond, span, own_buffer, here)
+            walk_block(unit, asked, then_branch, false, own_buffer, here)
+            walk_maybe_block(unit, asked, else_branch, own_buffer, here)
+        }
+        Expr::Block(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Unsafe(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Overlap(block) => walk_block(unit, asked, block, false, own_buffer, here),
+        Expr::Closure { body, .. } => walk_block(unit, asked, body, false, own_buffer, here),
+        Expr::Select(arms) => {
+            for arm in arms {
+                stores(unit, asked, arm.value, span, own_buffer, here)
+            }
+            for arm in arms {
+                walk_block(unit, asked, arm.body, false, own_buffer, here)
+            }
+        }
+        Expr::TryCatch { expr, handler } => {
+            stores(unit, asked, expr, span, own_buffer, here)
+            walk_block(unit, asked, handler, false, own_buffer, here)
+        }
+        Expr::Break => {}
+        Expr::Continue => {}
+        Expr::Asm { .. } => {}
+        Expr::Dsl { .. } => {}
+        Expr::Path(_) => {}
+        Expr::Variable(_) => {}
+        Expr::LitInt { .. } => {}
+        Expr::LitFloat(_) => {}
+        Expr::LitStr { .. } => {}
+        Expr::LitInterpolated { .. } => {}
+        Expr::LitChar(_) => {}
+        Expr::LitBool(_) => {}
+        Expr::LitNull => {}
+    }
+}
+
+fn stores_all(unit: ref Unit, asked: ref Asked, exprs: ref Vec[Expr], span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    for expr in exprs {
+        stores(unit, asked, expr, span, own_buffer, here)
+    }
+}
+
+fn stores_config(unit: ref Unit, asked: ref Asked, config: ref Vec[ConfigArg], span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    for setting in config {
+        stores(unit, asked, setting.value, span, own_buffer, here)
+    }
+}
+
+fn stores_fields(unit: ref Unit, asked: ref Asked, fields: ref Vec[FieldInit], span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    for field in fields {
+        stores_maybe(unit, asked, field.value, span, own_buffer, here)
+    }
+}
+
+fn stores_maybe(unit: ref Unit, asked: ref Asked, expr: ref Expr?, span: ref Span, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    stores(unit, asked, expr ?? return, span, own_buffer, here)
+}
+
+fn walk_maybe_block(unit: ref Unit, asked: ref Asked, block: ref Block?, own_buffer: fn(ref Expr) -> bool sync, mut here: Here) {
+    walk_block(unit, asked, block ?? return, false, own_buffer, here)
+}

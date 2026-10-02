@@ -60,6 +60,7 @@ COMPILER_NIKA = {
     "parse_notes.nika": "parser: a parse error's reading, the text half (0.0.347)",
     "diffs.nika": "project: what changed in a ledger, and an output test's difference (0.0.350)",
     "types.nika": "types: a name declared twice, a bound naming no trait, a type nothing declares (0.0.354)",
+    "views.nika": "views: where a naked view parameter's view ends up, NK2302 and the buffer the emitter names (0.0.355)",
 }
 
 
