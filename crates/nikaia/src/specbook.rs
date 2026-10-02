@@ -105,94 +105,36 @@ pub fn blocks(dir: &Path) -> Vec<Block> {
             .expect("utf-8 file name")
             .to_string();
         let text = std::fs::read_to_string(&page).expect("read a page");
-        let lines: Vec<&str> = text.split('\n').collect();
-        let mut at = 0;
-        while at < lines.len() {
-            if lines[at].trim() != "```nika" {
-                at += 1;
-                continue;
-            }
-            let start = at + 1;
-            let mut end = start;
-            while end < lines.len() && lines[end].trim() != "```" {
-                end += 1;
-            }
-            let code = lines[start..end].join("\n");
+        // **The scan is Nikaia** (`tools/specbook.nika`, #125).
+        for block in nikaia_std::tools::specbook::blocks_in(&text) {
             found.push(Block {
                 file: name.clone(),
-                line: start + 1,
-                discusses_a_refusal: discusses_a_refusal(&code),
-                sketch: is_a_sketch(&code),
-                code,
+                line: block.line as usize,
+                discusses_a_refusal: block.discusses_a_refusal,
+                sketch: block.sketch,
+                code: block.code,
             });
-            at = end + 1;
         }
     }
     found
-}
-
-/// Whether the page is talking about a refusal in this block.
-///
-/// Read off the block's own text rather than off a marker somebody has to
-/// remember to add: a page that discusses a refusal names the code, says
-/// *"Invalid"*, or says *"error"* — in either language, since Part I is written
-/// in both.
-fn discusses_a_refusal(code: &str) -> bool {
-    const MARKS: &[&str] = &[
-        "error[NK",
-        "// invalid",
-        "// ungültig",
-        "// fehler",
-        "// error",
-        "// compiler error",
-        "refused",
-        "does not parse",
-    ];
-    let lower = code.to_lowercase();
-    MARKS.iter().any(|m| lower.contains(m))
-        || lower
-            .split_whitespace()
-            .any(|w| w.starts_with("nk1") || w.starts_with("nk2"))
-}
-
-/// Whether an elision stands where code would.
-///
-/// `...args` is not one: three dots against a name are the typed spread of
-/// [ADR-007](../../../docs/specification/adr/adr-007.md) D5, which a driver
-/// writes as code.
-fn is_a_sketch(code: &str) -> bool {
-    code.contains('…')
-        || code.match_indices("...").any(|(at, _)| {
-            !code[at + 3..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_alphabetic() || c == '_')
-        })
 }
 
 /// The readings a block can have, best-case first is **not** the order: each is
 /// tried and the furthest wins, because a block that parses as written may still
 /// be a body that would check if it had a function around it.
 pub fn readings(code: &str) -> Vec<(&'static str, String)> {
-    let mut all = vec![("as written", code.to_string())];
-    if code.contains("fn main") {
-        return all;
-    }
-    all.push((
-        "items and a main",
-        format!("{}\n\nfn main() {{\n}}\n", code.trim_end()),
-    ));
-    all.push(("a body", wrapped(code)));
-    // **Items, then statements** — the shape a chapter uses most: a `use` or a
-    // `struct` at the top and then the lines that exercise it. Neither reading
-    // above can take it, and it is not a defect in the page.
-    if let Some((head, tail)) = split_at_the_first_statement(code) {
-        all.push((
-            "items, then a body",
-            format!("{head}\n\n{}", wrapped(&tail)),
-        ));
-    }
-    all
+    nikaia_std::tools::specbook::readings(code)
+        .into_iter()
+        .map(|reading| {
+            let name = match reading.name.as_str() {
+                "as written" => "as written",
+                "items and a main" => "items and a main",
+                "a body" => "a body",
+                _ => "items, then a body",
+            };
+            (name, reading.source)
+        })
+        .collect()
 }
 
 /// The one reading by the name [`verdicts`] recorded it under.
@@ -206,59 +148,6 @@ pub fn reading(code: &str, name: &str) -> Option<String> {
         .into_iter()
         .find(|(n, _)| *n == name)
         .map(|(_, source)| source)
-}
-
-fn wrapped(body: &str) -> String {
-    let indented: Vec<String> = body
-        .trim_end()
-        .split('\n')
-        .map(|l| match l.trim().is_empty() {
-            true => String::new(),
-            false => format!("    {l}"),
-        })
-        .collect();
-    format!("fn main() {{\n{}\n}}\n", indented.join("\n"))
-}
-
-/// Split a block into its leading items and the statements after them.
-///
-/// Brace depth rather than a parser, because this runs on text that may not
-/// parse at all — which is the case it exists for. A line at depth zero that
-/// starts with an item keyword, a comment, or nothing extends the head; the
-/// first line at depth zero that does not is where the body begins.
-fn split_at_the_first_statement(code: &str) -> Option<(String, String)> {
-    const ITEMS: &[&str] = &[
-        "use ",
-        "struct ",
-        "enum ",
-        "impl ",
-        "trait ",
-        "fn ",
-        "grammar ",
-        "const ",
-        "comptime ",
-        "pub ",
-    ];
-    let lines: Vec<&str> = code.trim_end().split('\n').collect();
-    let mut head = 0;
-    let mut depth: i32 = 0;
-    for (at, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if depth == 0 {
-            let carries_on = trimmed.is_empty()
-                || trimmed.starts_with("//")
-                || ITEMS.iter().any(|k| trimmed.starts_with(k));
-            if !carries_on {
-                break;
-            }
-            head = at + 1;
-        }
-        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
-    }
-    match head > 0 && head < lines.len() {
-        true => Some((lines[..head].join("\n"), lines[head..].join("\n"))),
-        false => None,
-    }
 }
 
 /// Take every block as far as it goes.
@@ -366,20 +255,24 @@ pub fn report(dir: &Path) -> String {
 /// Trimmed and cut, because this is an anchor and not the content: a long line
 /// would put the interesting part of the report off the edge of a terminal.
 fn opening(code: &str) -> String {
-    let line = code
-        .split('\n')
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("(empty)");
-    match line.chars().count() > 56 {
-        true => format!("{}…", line.chars().take(55).collect::<String>()),
-        false => line.to_string(),
-    }
+    nikaia_std::tools::specbook::opening(code)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_a_sketch;
+    use nikaia_std::tools::specbook::{discusses_a_refusal, is_a_sketch};
+
+    /// **A diagnostic's name is a mark** (#125): the text is lowered before
+    /// it is asked, and the Rust asked it for `error[NK` in capitals, so the
+    /// mark never matched and `// without throws: error[NK2701]` read as a
+    /// page discussing nothing.
+    #[test]
+    fn a_named_diagnostic_is_a_refusal_discussed() {
+        assert!(discusses_a_refusal(
+            "fn tally() -> i64 throws {   // without `throws`: error[NK2701]"
+        ));
+        assert!(!discusses_a_refusal("fn tally() -> i64 throws {"));
+    }
 
     #[test]
     fn a_spread_is_code_and_an_elision_is_a_sketch() {

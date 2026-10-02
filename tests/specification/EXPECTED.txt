@@ -21,7 +21,7 @@
 10-nikaia-light.md #21 refused (a body) [NK1117]  let mut first_even = 0 - 1
 10-nikaia-light.md #22 refused (a body) [about-a-refusal NK1117,NK1132]  for x in xs {
 10-nikaia-light.md #23 refused (a body) [NK1117]  for p in paths {
-10-nikaia-light.md #24 lowered (as written)  use std::io
+10-nikaia-light.md #24 lowered (as written) [about-a-refusal]  use std::io
 10-nikaia-light.md #25 lowered (a body)  let mut n = 0
 10-nikaia-light.md #26 lowered (a body)  let value = 2
 10-nikaia-light.md #27 refused (a body) [NK1117,NK1181]  match step {

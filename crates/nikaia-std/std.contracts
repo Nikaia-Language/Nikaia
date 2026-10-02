@@ -2032,6 +2032,15 @@ sync = true
 touches = []
 signature = "(self) -> bool"
 
+# **Asked for by `tools/specbook.nika`** (0.0.344): three dots against a name
+# are a typed spread, not an elision.
+# Whether the character is a letter, as Unicode counts them.
+[fn."char::is_alphabetic"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> bool"
+
 # The character in lower case where it is an ASCII letter, and itself
 # otherwise.
 [fn."char::to_ascii_lowercase"]

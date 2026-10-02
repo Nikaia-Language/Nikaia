@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.344] — 2026-10-02
+
+**The specification's blocks are read in Nikaia** (#125, ADR-250). The text
+half of `specbook` - a page's ```nika blocks, whether the page is
+discussing a refusal in one, whether an elision stands where code would, the
+programs a block can be read as, and the line a report names it by - moved
+into `tools/specbook.nika`. Reading the pages and taking each reading through
+the compiler stay Rust. 13.0 % of the toolchain is Nikaia, up from 12.7 %.
+
+- **Found moving it** (ADR-250 D3): the text was lowered before it was asked
+  for its marks, and one mark - `error[NK` - was written in capitals, so it
+  never matched. Part I 7.1's `// without throws: error[NK2701]` is a page
+  discussing a refusal, and `tests/specification/EXPECTED.txt` says so now -
+  the one line of it that moved. `char::is_alphabetic` has an entry in
+  `std`'s ledger, which the elision test asks.
+
 ## [0.0.343] — 2026-10-02
 
 **`sync` reads a body off the walk in Nikaia** (#125, ADR-250). Both of
