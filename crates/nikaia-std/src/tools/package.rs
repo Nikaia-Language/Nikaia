@@ -399,6 +399,10 @@ pub fn callee_of(names: &winnow_grammar::InternerContext, expr: &Expr, own: &Led
         Expr::Dsl { .. } => return Some(Callee::Opaque(None)),
         _ => return None,
     };
+    callee_named(names, name, own, library, items)
+}
+
+pub fn callee_named(names: &winnow_grammar::InternerContext, name: String, own: &Ledger, library: &Ledger, items: &Vec<Spanned<Item>>) -> Option<Callee> {
     if own.functions.contains_key(&name) { return Some(Callee::Own(name)); }
     let constructed = format!("{}::new", name);
     if own.functions.contains_key(&constructed) { return Some(Callee::Own(constructed)); }
@@ -1305,6 +1309,7 @@ pub enum Seen {
     Call { name: String, wrote: Option<Wrote>, span: Span },
     Name(String),
     Spawn,
+    Opaque,
 }
 
 pub fn written_in(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
@@ -1386,7 +1391,8 @@ fn expression_paths(expr: &Expr, span: &Span, names: &winnow_grammar::InternerCo
             let name = *name;
             if found.with_names { found.seen.push(Seen::Name(names.resolve(name).to_owned())); }
         },
-        Expr::Spawn { .. } => { if found.with_names { found.seen.push(Seen::Spawn); } },
+        Expr::Spawn { .. } => found.seen.push(Seen::Spawn),
+        Expr::Dsl { .. } => found.seen.push(Seen::Opaque),
         Expr::Call { func, args, config } => {
             let func = nikaia_std::boxed::open(func);
             a_named_call(func, args, span, names, root_at, found);
@@ -1525,23 +1531,17 @@ fn named_at(name: String, span: &Span) -> Seen { Seen::Path { name, span: span.c
 fn a_named_call(func: &Expr, args: &Vec<Expr>, span: &Span, names: &winnow_grammar::InternerContext, root_at: &impl Fn(&str) -> i64, found: &mut Walked) {
     let name = match func {
         Expr::Variable(name) => { let name = *name; names.resolve(name).to_owned() },
-        Expr::Path(segments) => call_path(segments, names),
+        Expr::Path(segments) => written_path(names, segments),
         _ => String::from(""),
     };
-    if (name.len() as i64) == 0 { return; }
+    if (name.len() as i64) == 0 {
+        found.seen.push(Seen::Opaque);
+        return;
+    }
     let at = root_at(&name);
     let mut wrote: Option<Wrote> = None;
     if at >= 0 && at < args.len() as i64 { wrote = written_root(names, nikaia_std::index::get(&args, nikaia_std::index::at(at))); }
     found.seen.push(Seen::Call { name, wrote, span: span.clone() });
-}
-
-fn call_path(segments: &Vec<winnow_grammar::Symbol>, names: &winnow_grammar::InternerContext) -> String {
-    let mut name: String = String::from("");
-    for k in 0..segments.len() as i64 {
-        if k > 0 { name.push_str("::"); }
-        name.push_str(names.resolve(*nikaia_std::index::get(&segments, nikaia_std::index::at(k))));
-    }
-    name
 }
 
 
@@ -6436,7 +6436,7 @@ pub mod ast {
 }
 pub mod calls {
     #[allow(unused_imports)]
-    pub use super::{Callee, callee_of};
+    pub use super::{Callee, callee_of, callee_named};
 }
 pub mod crossing {
     #[allow(unused_imports)]

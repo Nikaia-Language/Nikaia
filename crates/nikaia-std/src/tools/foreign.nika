@@ -36,10 +36,13 @@ pub enum Seen {
     Call { name: String, wrote: Wrote?, span: Span },
     /// A bare name, where the walk was asked for them.
     Name(String),
-    /// A `spawn`, where the walk was asked for names: its body runs later and
-    /// elsewhere, and the walk does not descend into it, so a reader of names
-    /// knows there are some it did not see.
+    /// A `spawn`: its body runs later and elsewhere, and the walk does not
+    /// descend into it, so a reader of names knows there are some it did not
+    /// see, and a reader of calls one it cannot name.
     Spawn,
+    /// Something else that runs what nobody can name: a `dsl` statement, or a
+    /// call of something that is not a name (`calls::callee_of`'s `Opaque`).
+    Opaque,
 }
 
 /// Every qualified name `program` writes and every call it makes by name, in
@@ -167,11 +170,8 @@ fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::I
                 found.seen.push(Seen::Name(names.resolve(name).clone()))
             }
         }
-        Expr::Spawn { .. } => {
-            if found.with_names {
-                found.seen.push(Seen::Spawn)
-            }
-        }
+        Expr::Spawn { .. } => found.seen.push(Seen::Spawn),
+        Expr::Dsl { .. } => found.seen.push(Seen::Opaque),
         Expr::Call { func, args, config } => {
             a_named_call(func, args, span, names, root_at, found)
             expression_paths(func, span, names, unaliased, holes_of, root_at, found)
@@ -357,10 +357,11 @@ fn named_at(name: String, span: ref Span) -> Seen {
 fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref winnow_grammar::InternerContext, root_at: fn(ref String) -> i64 sync, mut found: Walked) {
     let name = match func {
         Expr::Variable(name) => names.resolve(name).clone(),
-        Expr::Path(segments) => call_path(segments, names),
+        Expr::Path(segments) => written_path(names, segments),
         else => "",
     }
     if name.len() == 0 {
+        found.seen.push(Seen::Opaque)
         return
     }
     let at = root_at(name)
@@ -369,16 +370,4 @@ fn a_named_call(func: ref Expr, args: ref Vec[Expr], span: ref Span, names: ref 
         wrote = written_root(names, args[at])
     }
     found.seen.push(Seen::Call { name: name, wrote: wrote, span: span.clone() })
-}
-
-// `fs::Root::Dir` as written, every segment as it stands.
-fn call_path(segments: ref Vec[winnow_grammar::Symbol], names: ref winnow_grammar::InternerContext) -> String {
-    let mut name: String = ""
-    for k in 0..<segments.len() {
-        if k > 0 {
-            name.push_str("::")
-        }
-        name.push_str(names.resolve(segments[k]))
-    }
-    return name
 }

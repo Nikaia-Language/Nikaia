@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.342] — 2026-10-02
+
+**What a body touches is read off the walk in Nikaia** (#125, ADR-250).
+`contracts::touch`'s own walk is gone: it reads the calls of a body off
+`tools/foreign.nika`'s walk, which now says where a `spawn`, a `dsl`
+statement or a call of something that is not a name stands (`Seen::Opaque`,
+`Seen::Spawn`), and resolves each call by name with `calls::callee_named` -
+`callee_of` with the expression already read, the one resolution every
+analysis shares (ADR-028). Six readers of the tree share one walk now, and
+`foreign.nika`'s copy of `calls.nika`'s `written_path` is gone. Every ledger
+the suite writes is what it was.
+
 ## [0.0.341] — 2026-10-02
 
 **What a body throws is walked in Nikaia** (#125, ADR-250). `contracts::throws`'
