@@ -5,7 +5,7 @@
 // step by step - a few arithmetic operations per step, and no search.
 
 use crate::lia::{Lin, query_cases};
-use crate::{Budget, Certificate, Query, Step, Unknown};
+use crate::{Budget, Certificate, Model, Query, Step, Unknown};
 
 /// Why a certificate does not show what it claims.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,4 +78,14 @@ pub fn verify(query: &Query<'_>, certificate: &Certificate) -> Result<(), Reject
         }
     }
     Ok(())
+}
+
+/// Whether `model` makes every fact of the query true and its goal false.
+pub fn verify_model(query: &Query<'_>, model: &Model) -> bool {
+    let arena = query.arena;
+    query
+        .facts
+        .iter()
+        .all(|f| arena.bool_value(*f, &model.values) == Some(true))
+        && arena.bool_value(query.goal, &model.values) == Some(false)
 }

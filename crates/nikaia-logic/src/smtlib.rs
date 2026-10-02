@@ -20,7 +20,7 @@ pub fn write(query: &Query<'_>) -> String {
     let arena = query.arena;
     let mut names = BTreeSet::new();
     for id in query.facts.iter().chain([&query.goal]) {
-        variables(arena, *id, &mut names);
+        arena.variables(*id, &mut names);
     }
     let mut out = String::from("(set-logic QF_LIA)\n");
     for name in &names {
@@ -32,33 +32,6 @@ pub fn write(query: &Query<'_>) -> String {
     let _ = writeln!(out, "(assert (not {}))", term(arena, query.goal));
     out.push_str("(check-sat)\n");
     out
-}
-
-fn variables(arena: &Arena, id: TermId, names: &mut BTreeSet<String>) {
-    match arena.get(id) {
-        Term::Var(name) => {
-            names.insert(name.clone());
-        }
-        Term::Bool(_) | Term::Int(_) => {}
-        Term::Neg(a) | Term::Not(a) => variables(arena, *a, names),
-        Term::Add(a, b)
-        | Term::Sub(a, b)
-        | Term::Mul(a, b)
-        | Term::Le(a, b)
-        | Term::Lt(a, b)
-        | Term::Ge(a, b)
-        | Term::Gt(a, b)
-        | Term::Eq(a, b)
-        | Term::Ne(a, b) => {
-            variables(arena, *a, names);
-            variables(arena, *b, names);
-        }
-        Term::And(parts) | Term::Or(parts) => {
-            for p in parts {
-                variables(arena, *p, names);
-            }
-        }
-    }
 }
 
 /// A name as an SMT-LIB symbol: bare where it may be, quoted otherwise -

@@ -12,7 +12,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    Answer, Arena, Budget, Certificate, Query, Refutation, Solver, Step, Term, TermId, Unknown,
+    Answer, Arena, Budget, Certificate, Model, Query, Refutation, Solver, Step, Term, TermId,
+    Unknown, verify_model,
 };
 
 /// Fourier-Motzkin elimination with integer tightening.
@@ -29,13 +30,49 @@ impl Solver for FourierMotzkin {
         for case in cases {
             match contradictory(case, budget) {
                 Ok(refutation) => refutations.push(refutation),
-                Err(why) => return Answer::Unknown(why),
+                Err(Open::Consistent(Some(values))) => {
+                    return refuted(query, values)
+                        .map_or(Answer::Unknown(Unknown::NoContradiction), |model| {
+                            Answer::Refuted { model }
+                        });
+                }
+                Err(Open::Consistent(None)) => {
+                    return Answer::Unknown(Unknown::NoContradiction);
+                }
+                Err(Open::Unknown(why)) => return Answer::Unknown(why),
             }
         }
         Answer::Proved {
             certificate: Certificate { cases: refutations },
         }
     }
+}
+
+/// A case's values made a model of the whole query: every variable the query
+/// reads is given - zero where the case did not mention it - and the model is
+/// checked by evaluating the query, so a fault in the back-substitution is an
+/// *unknown*, never a wrong model.
+fn refuted(query: &Query<'_>, mut values: BTreeMap<String, i128>) -> Option<Model> {
+    let mut names = BTreeSet::new();
+    for id in query.facts.iter().chain([&query.goal]) {
+        query.arena.variables(*id, &mut names);
+    }
+    for name in names {
+        values.entry(name).or_insert(0);
+    }
+    let model = Model { values };
+    verify_model(query, &model).then_some(model)
+}
+
+/// How a case ended that is not a contradiction.
+#[derive(Debug)]
+enum Open {
+    /// The elimination ran out of variables without one: the bounds are
+    /// consistent over the rationals, with integer values where back-
+    /// substitution found them.
+    Consistent(Option<BTreeMap<String, i128>>),
+    /// The solver could not tell.
+    Unknown(Unknown),
 }
 
 /// The query's facts and its goal's negation, as a disjunction of conjunctions
@@ -290,8 +327,10 @@ type Held = (Lin, usize);
 /// Every bound the elimination holds remembers the step that made it, so the
 /// contradiction it ends on can be traced back to the case's own bounds, and
 /// only the steps on that trace are kept.
-fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Unknown> {
+fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Open> {
     let mut steps: Vec<Step> = Vec::new();
+    // Each elimination's name and the bounds that held it, for values later.
+    let mut rounds: Vec<(String, Vec<Lin>)> = Vec::new();
     let mut bounds: Vec<Held> = bounds
         .into_iter()
         .enumerate()
@@ -327,11 +366,12 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Unknow
                 .count();
             up * down
         }) else {
-            return Err(Unknown::NoContradiction);
+            return Err(Open::Consistent(back_substituted(&rounds)));
         };
         let (with, without): (Vec<Held>, Vec<Held>) = bounds
             .into_iter()
             .partition(|(b, _)| b.terms.contains_key(&name));
+        rounds.push((name.clone(), with.iter().map(|(b, _)| b.clone()).collect()));
         let (up, down): (Vec<Held>, Vec<Held>) =
             with.into_iter().partition(|(b, _)| b.terms[&name] > 0);
         let mut next = without;
@@ -341,10 +381,10 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Unknow
                 let b = -d.terms[&name];
                 // b·u + a·d cancels `name`; both are `<= 0`, so is the sum.
                 let (Some(left), Some(right)) = (u.scale(b), d.scale(a)) else {
-                    return Err(Unknown::Overflow);
+                    return Err(Open::Unknown(Unknown::Overflow));
                 };
                 let Some(sum) = left.add(&right) else {
-                    return Err(Unknown::Overflow);
+                    return Err(Open::Unknown(Unknown::Overflow));
                 };
                 steps.push(Step::Combine {
                     left: *u_step,
@@ -354,12 +394,52 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Unknow
                 });
                 next.push(tightened(sum, &mut steps));
                 if next.len() > budget.bounds {
-                    return Err(Unknown::TooManyBounds);
+                    return Err(Open::Unknown(Unknown::TooManyBounds));
                 }
             }
         }
         bounds = next;
     }
+}
+
+/// Integer values for the eliminated names, last eliminated first: each one
+/// as near to zero as the bounds that held it allow, given the values of the
+/// names eliminated after it. `None` where a name's bounds leave no integer.
+fn back_substituted(rounds: &[(String, Vec<Lin>)]) -> Option<BTreeMap<String, i128>> {
+    let mut values: BTreeMap<String, i128> = BTreeMap::new();
+    for (name, bounds) in rounds.iter().rev() {
+        let (mut low, mut high): (Option<i128>, Option<i128>) = (None, None);
+        for bound in bounds {
+            // k·name + rest <= 0
+            let k = bound.terms[name];
+            let mut rest = bound.constant;
+            for (other, c) in &bound.terms {
+                if other != name {
+                    rest = rest.checked_add(c.checked_mul(*values.get(other)?)?)?;
+                }
+            }
+            if k > 0 {
+                // name <= floor(-rest / k)
+                let limit = rest.checked_neg()?.div_euclid(k);
+                high = Some(high.map_or(limit, |h| h.min(limit)));
+            } else {
+                // name >= ceil(rest / -k)
+                let limit = rest
+                    .checked_neg()?
+                    .div_euclid(k.checked_neg()?)
+                    .checked_neg()?;
+                low = Some(low.map_or(limit, |l| l.max(limit)));
+            }
+        }
+        let value = match (low, high) {
+            (Some(l), Some(h)) if l > h => return None,
+            (Some(l), _) if l > 0 => l,
+            (_, Some(h)) if h < 0 => h,
+            _ => 0,
+        };
+        values.insert(name.clone(), value);
+    }
+    Some(values)
 }
 
 /// The bound the last step made, tightened to the integers - with a step of

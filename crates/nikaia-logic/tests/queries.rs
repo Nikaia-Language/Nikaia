@@ -2,8 +2,8 @@
 //! terms, and the reference solver's answer. Nothing here knows Nikaia.
 
 use nikaia_logic::{
-    Answer, Arena, Budget, Certificate, FourierMotzkin, Query, Rejected, Solver, Step, TermId,
-    Unknown, smtlib, verify,
+    Answer, Arena, Budget, Certificate, FourierMotzkin, Model, Query, Rejected, Solver, Step,
+    TermId, Unknown, smtlib, verify, verify_model,
 };
 
 /// The solver's answer, with a *proved* one's certificate checked: every proof
@@ -11,10 +11,22 @@ use nikaia_logic::{
 fn check(arena: &Arena, facts: &[TermId], goal: TermId) -> Answer {
     let query = Query { arena, facts, goal };
     let answer = FourierMotzkin.check(&query, &Budget::default());
-    if let Answer::Proved { certificate } = &answer {
-        assert_eq!(verify(&query, certificate), Ok(()), "{certificate:#?}");
+    match &answer {
+        Answer::Proved { certificate } => {
+            assert_eq!(verify(&query, certificate), Ok(()), "{certificate:#?}");
+        }
+        Answer::Refuted { model } => assert!(verify_model(&query, model), "{model:#?}"),
+        Answer::Unknown(_) => {}
     }
     answer
+}
+
+fn refuted(values: &[(&str, i128)]) -> Answer {
+    Answer::Refuted {
+        model: Model {
+            values: values.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
+        },
+    }
 }
 
 fn proved(answer: &Answer) -> bool {
@@ -30,11 +42,9 @@ fn a_constant_argument_proves_a_bound() {
     let goal = a.gt(x, one);
     assert!(proved(&check(&a, &[fact], goal)));
 
+    // x = 5 does not prove x > 5, and the model says why.
     let too_much = a.gt(x, five);
-    assert_eq!(
-        check(&a, &[fact], too_much),
-        Answer::Unknown(Unknown::NoContradiction)
-    );
+    assert_eq!(check(&a, &[fact], too_much), refuted(&[("x", 5)]));
 }
 
 /// A guard's fact - `n >= 3` after `return 0 if n < 3` - proves `n - 1 > 1`.
@@ -47,11 +57,9 @@ fn a_guard_proves_what_follows_it() {
     let less = a.sub(n, one);
     let goal = a.gt(less, one);
     assert!(proved(&check(&a, &[guard], goal)));
-    // Without the guard nothing shows it.
-    assert_eq!(
-        check(&a, &[], goal),
-        Answer::Unknown(Unknown::NoContradiction)
-    );
+    // Without the guard nothing shows it: n = 0 is the value nearest zero
+    // that makes `n - 1 > 1` false.
+    assert_eq!(check(&a, &[], goal), refuted(&[("n", 0)]));
 }
 
 /// Integers, not rationals: `2x = 1` has no solution, so it proves anything.
@@ -250,4 +258,32 @@ fn a_benchmark_style_script_is_read() {
         smtlib::read("(assert (> 1 0)"),
         Err(smtlib::ReadError::Syntax(_))
     ));
+}
+
+/// **A model is the nearest to zero the bounds allow, and it is checked**
+/// (ADR-265 D3, D4): back-substitution through two eliminations, a value
+/// pushed off zero by a bound, and one forced by a chain.
+#[test]
+fn a_model_is_found_through_the_eliminations() {
+    let mut a = Arena::new();
+    let (x, y, three, ten) = (a.var("x"), a.var("y"), a.int(3), a.int(10));
+    // x >= 3, y >= x + 3; the goal y > 10 is false at x = 3, y = 6.
+    let low = a.ge(x, three);
+    let step = a.add(x, three);
+    let above = a.ge(y, step);
+    let goal = a.gt(y, ten);
+    assert_eq!(
+        check(&a, &[low, above], goal),
+        refuted(&[("x", 3), ("y", 6)])
+    );
+
+    // Integers matter: 2x = 2y + 1 has no integer solution, so nothing is
+    // false - the facts prove anything.
+    let (two, one) = (a.int(2), a.int(1));
+    let twice_x = a.mul(two, x);
+    let twice_y = a.mul(two, y);
+    let odd = a.add(twice_y, one);
+    let parity = a.eq(twice_x, odd);
+    let falsum = a.bool(false);
+    assert!(proved(&check(&a, &[parity], falsum)));
 }

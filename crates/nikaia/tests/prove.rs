@@ -427,3 +427,100 @@ fn a_shadowing_binding_is_not_a_contradiction() {
         held(source)
     );
 }
+
+/// The program's warnings with one code.
+fn warned(source: &str, code: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger");
+    nikaia::check::check(&parsed, &own, &library)
+        .findings
+        .into_iter()
+        .filter(|f| f.severity == nikaia::check::Severity::Warning && f.code == code)
+        .collect()
+}
+
+/// **ADR-264 D8: a claim the facts rule out is a warning with values**, and
+/// stays a check. Shown false only where it is false every time it is
+/// reached - proved so, certificate and all - with a model of what is known
+/// for the values.
+#[test]
+fn a_claim_false_every_time_it_is_reached_is_a_warning_with_values() {
+    let source = "fn twice(n: i64) -> i64 {\n\
+                  \x20   return 0 if n < 0\n\
+                  \x20   let m = n * 2\n\
+                  \x20   assert(m < 0)\n\
+                  \x20   return m\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   let blank = 2\n\
+                  \x20   assert(blank + 1 == 4)\n\
+                  \x20   println(f\"{twice(3)}\")\n\
+                  }\n";
+    let found = warned(source, "NK1207");
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert_eq!(
+        found[0].message,
+        "`m < 0` is false every time it is reached."
+    );
+    assert!(found[0].notes[0].ends_with("`m` is 0."), "{found:#?}");
+    assert_eq!(
+        found[1].message,
+        "`blank + 1 == 4` is false every time it is reached."
+    );
+    assert!(found[1].notes[0].ends_with("`blank` is 2."), "{found:#?}");
+    // Both stay checks: a warning is not a proof of anything.
+    assert!(
+        held(source)
+            .iter()
+            .all(|h| matches!(h, nikaia::prove::Held::AtRunTime(why) if why.starts_with("it is false every time"))),
+        "{:#?}",
+        held(source)
+    );
+}
+
+/// **A call that breaks a precondition every time** is the warning at the
+/// call, with the parameter the precondition reads as this call gives it.
+#[test]
+fn a_call_that_always_breaks_a_precondition_is_a_warning() {
+    let found = warned(
+        "fn percent(part: i64, whole: i64) -> i64 {\n\
+         \x20   assert(whole > 0)\n\
+         \x20   return part * 100 / whole\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let none = 0\n\
+         \x20   println(f\"{percent(1, none)}\")\n\
+         }\n",
+        "NK1207",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(
+        found[0].message,
+        "This call breaks `percent`'s precondition `whole > 0` every time it is reached."
+    );
+    assert_eq!(found[0].notes[0], "Here `whole` is 0.");
+}
+
+/// **No warning where a claim is only not proved**: `y > 0` after
+/// `let y = x * 2` can hold, and a value of `x` the facts allow is not a value
+/// the program is shown to reach.
+#[test]
+fn a_claim_that_can_hold_is_not_warned_about() {
+    let source = "fn f(x: i64) -> i64 {\n\
+                  \x20   let y = x * 2\n\
+                  \x20   assert(y > 0)\n\
+                  \x20   return y\n\
+                  }\n\
+                  \n\
+                  fn g(n: i64) -> i64 {\n\
+                  \x20   return f(n)\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{f(1)} {g(2)}\")\n\
+                  }\n";
+    assert!(warned(source, "NK1207").is_empty());
+}

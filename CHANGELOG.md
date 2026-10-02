@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.359] — 2026-10-02
+
+**A claim the facts rule out is a warning with values** (ADR-264 D8; step 3
+of ADR-265 D8). The solver answers *refuted* with a model - found by
+back-substitution through its eliminations, each value as near to zero as its
+bounds allow, and checked by evaluating the query. The prover warns, `NK1207`,
+where it proves, with a checked certificate, that what is known before a
+claim rules it out: the claim is false every time it is reached, and a model
+of what is known gives its names' values. The same at a call that breaks its
+callee's precondition every time, with the parameter's value as the call
+gives it. The claim stays a check; `--asserts` says why, with the values.
+
+- **Only where it is false every time.** The facts are true but not all that
+  is true, so a value they allow need not be one the program reaches; a claim
+  that is only not proved is not warned about, and `tests/prove.rs` holds
+  that too.
+
 ## [0.0.358] — 2026-10-02
 
 **Two of the compiler's messages are Nikaia** (#125, ADR-250). A backend

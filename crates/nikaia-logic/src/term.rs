@@ -157,4 +157,74 @@ impl Arena {
             _ => None,
         }
     }
+
+    /// Every variable `id` reads, added to `names`.
+    pub fn variables(&self, id: TermId, names: &mut std::collections::BTreeSet<String>) {
+        match self.get(id) {
+            Term::Var(name) => {
+                names.insert(name.clone());
+            }
+            Term::Bool(_) | Term::Int(_) => {}
+            Term::Neg(a) | Term::Not(a) => self.variables(*a, names),
+            Term::Add(a, b)
+            | Term::Sub(a, b)
+            | Term::Mul(a, b)
+            | Term::Le(a, b)
+            | Term::Lt(a, b)
+            | Term::Ge(a, b)
+            | Term::Gt(a, b)
+            | Term::Eq(a, b)
+            | Term::Ne(a, b) => {
+                self.variables(*a, names);
+                self.variables(*b, names);
+            }
+            Term::And(parts) | Term::Or(parts) => {
+                for p in parts {
+                    self.variables(*p, names);
+                }
+            }
+        }
+    }
+
+    /// An integer term's value under `values`, where it has one: every
+    /// variable it reads is given, and nothing leaves `i128`.
+    pub fn int_value(
+        &self,
+        id: TermId,
+        values: &std::collections::BTreeMap<String, i128>,
+    ) -> Option<i128> {
+        let v = |id: &TermId| self.int_value(*id, values);
+        match self.get(id) {
+            Term::Int(n) => Some(*n),
+            Term::Var(name) => values.get(name).copied(),
+            Term::Neg(a) => v(a)?.checked_neg(),
+            Term::Add(a, b) => v(a)?.checked_add(v(b)?),
+            Term::Sub(a, b) => v(a)?.checked_sub(v(b)?),
+            Term::Mul(a, b) => v(a)?.checked_mul(v(b)?),
+            _ => None,
+        }
+    }
+
+    /// A Boolean term's value under `values`, where it has one.
+    pub fn bool_value(
+        &self,
+        id: TermId,
+        values: &std::collections::BTreeMap<String, i128>,
+    ) -> Option<bool> {
+        let i = |id: &TermId| self.int_value(*id, values);
+        let b = |id: &TermId| self.bool_value(*id, values);
+        match self.get(id) {
+            Term::Bool(x) => Some(*x),
+            Term::Not(a) => Some(!b(a)?),
+            Term::And(parts) => parts.iter().try_fold(true, |acc, p| Some(acc & b(p)?)),
+            Term::Or(parts) => parts.iter().try_fold(false, |acc, p| Some(acc | b(p)?)),
+            Term::Le(x, y) => Some(i(x)? <= i(y)?),
+            Term::Lt(x, y) => Some(i(x)? < i(y)?),
+            Term::Ge(x, y) => Some(i(x)? >= i(y)?),
+            Term::Gt(x, y) => Some(i(x)? > i(y)?),
+            Term::Eq(x, y) => Some(i(x)? == i(y)?),
+            Term::Ne(x, y) => Some(i(x)? != i(y)?),
+            _ => None,
+        }
+    }
 }

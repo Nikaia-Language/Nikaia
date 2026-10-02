@@ -22,7 +22,7 @@ mod lia;
 pub mod smtlib;
 mod term;
 
-pub use certificate::{Rejected, verify};
+pub use certificate::{Rejected, verify, verify_model};
 pub use lia::FourierMotzkin;
 pub use term::{Arena, Term, TermId};
 
@@ -34,12 +34,14 @@ pub struct Query<'a> {
     pub goal: TermId,
 }
 
-/// What a solver answers (ADR-265 D3). A *refuted* answer, with the values
-/// that make the goal false, comes with ADR-264 D8.
+/// What a solver answers (ADR-265 D3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     /// The facts imply the goal, and the certificate shows why.
     Proved { certificate: Certificate },
+    /// The facts do not imply the goal: here are values for every variable of
+    /// the query under which every fact holds and the goal does not.
+    Refuted { model: Model },
     /// The solver could not tell, and why.
     Unknown(Unknown),
 }
@@ -121,4 +123,14 @@ pub enum Step {
         right: usize,
         by_right: i128,
     },
+}
+
+/// Values that make a query's facts true and its goal false (ADR-265 D3).
+/// [`verify_model`] checks one by evaluating the query, so it need not be
+/// trusted either. Among the models a solver could give it gives the same one
+/// on every run: the first case that has one, and in it each variable as near
+/// to zero as its bounds allow (D4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Model {
+    pub values: std::collections::BTreeMap<String, i128>,
 }

@@ -29,7 +29,9 @@
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
-use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId, verify};
+use nikaia_logic::{
+    Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId, verify, verify_model,
+};
 
 use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::{Finding, Severity};
@@ -362,7 +364,7 @@ impl<'a> Prover<'a> {
                 ty,
                 value,
             } => {
-                self.expr(value, scope, &nested);
+                self.expr(value, span, scope, &nested);
                 let tainted = self.tainted(value, scope);
                 let value_lin = lin(&mut self.arena, self.parsed, value, scope);
                 for name in names {
@@ -420,13 +422,13 @@ impl<'a> Prover<'a> {
                 false
             }
             Stmt::Comptime { name, value, .. } => {
-                self.expr(value, scope, &nested);
+                self.expr(value, span, scope, &nested);
                 scope.rebind(&self.arena, self.parsed.text(*name));
                 false
             }
             Stmt::Assign { target, value, .. } => {
-                self.expr(target, scope, &nested);
-                self.expr(value, scope, &nested);
+                self.expr(target, span, scope, &nested);
+                self.expr(value, span, scope, &nested);
                 if let Expr::Variable(name) = target {
                     let name = self.parsed.text(*name).to_string();
                     let tainted = self.tainted(value, scope);
@@ -442,7 +444,7 @@ impl<'a> Prover<'a> {
                 iter,
                 body,
             } => {
-                self.expr(iter, scope, &nested);
+                self.expr(iter, span, scope, &nested);
                 let tainted = self.tainted(iter, scope);
                 let mut inner = scope.clone();
                 for binding in bindings {
@@ -483,7 +485,7 @@ impl<'a> Prover<'a> {
                 false
             }
             Stmt::While { cond, body } => {
-                self.expr(cond, scope, &nested);
+                self.expr(cond, span, scope, &nested);
                 let mut inner = scope.clone();
                 if let Some(holds) = claim(&mut self.arena, self.parsed, cond, &inner) {
                     inner.facts.push(holds);
@@ -493,7 +495,7 @@ impl<'a> Prover<'a> {
             }
             Stmt::Return(value) => {
                 if let Some(value) = value {
-                    self.expr(value, scope, &nested);
+                    self.expr(value, span, scope, &nested);
                 }
                 true
             }
@@ -517,7 +519,7 @@ impl<'a> Prover<'a> {
                         .claims
                         .contains(&(span.at(), crate::check::argument_shape(&args[0]))) =>
             {
-                self.expr(&args[0], scope, &nested);
+                self.expr(&args[0], span, scope, &nested);
                 self.an_assert(&args[0], span, scope, at);
                 false
             }
@@ -526,7 +528,7 @@ impl<'a> Prover<'a> {
                 then_branch,
                 else_branch,
             } => {
-                self.expr(cond, scope, &nested);
+                self.expr(cond, span, scope, &nested);
                 let holds = claim(&mut self.arena, self.parsed, cond, scope);
                 let fails = holds.map(|h| self.arena.not(h));
                 let mut then_scope = scope.clone();
@@ -563,18 +565,18 @@ impl<'a> Prover<'a> {
                 false
             }
             Expr::Throw(value) => {
-                self.expr(value, scope, &nested);
+                self.expr(value, span, scope, &nested);
                 true
             }
             Expr::Return(value) => {
                 if let Some(value) = &**value {
-                    self.expr(value, scope, &nested);
+                    self.expr(value, span, scope, &nested);
                 }
                 true
             }
             Expr::Break | Expr::Continue => true,
             other => {
-                self.expr(other, scope, &nested);
+                self.expr(other, span, scope, &nested);
                 false
             }
         }
@@ -659,9 +661,39 @@ impl<'a> Prover<'a> {
             return;
         }
 
-        // **Neither proved nor refused: checked where it is reached** (D4).
+        // **Neither proved nor refused: checked where it is reached** (D4) -
+        // and where what is known before it rules the claim out, the author
+        // is told, with values (ADR-264 D8).
+        let refuted = match claim {
+            Some(claim) if !self.collecting => self.refutes(&scope.facts, claim),
+            _ => None,
+        };
+        if let Some(values) = &refuted {
+            let written = crate::check::written(self.parsed, cond);
+            self.out.findings.push(Finding {
+                severity: Severity::Warning,
+                span,
+                code: "NK1207",
+                message: format!("`{written}` is false every time it is reached."),
+                notes: vec![
+                    format!(
+                        "What is known before it rules the claim out: {}.",
+                        shown(values)
+                    ),
+                    "It is checked when the program runs, and stops it there.".to_string(),
+                ],
+                help: Some(
+                    "If the claim is right, the code before it is wrong; if the code is right, \
+                     the claim is."
+                        .to_string(),
+                ),
+                labels: Vec::new(),
+            });
+        }
         let why = if let Some(rejected) = rejected {
             rejected
+        } else if let Some(values) = &refuted {
+            format!("it is false every time it is reached ({})", shown(values))
         } else if claim.is_none() {
             "it is not a comparison of whole numbers the prover reads".to_string()
         } else if only_params && let Some(no) = at.no_precondition {
@@ -682,7 +714,7 @@ impl<'a> Prover<'a> {
     /// Walk an expression for what it calls: a call to a function with a
     /// precondition proves it here (D5), a function with one is not handed on
     /// as a value, and a nested block is walked with what it may know.
-    fn expr(&mut self, expr: &Expr, scope: &Scope, at: &Where) {
+    fn expr(&mut self, expr: &Expr, span: Span, scope: &Scope, at: &Where) {
         let parsed = self.parsed;
         let mut calls: Vec<(String, Vec<Expr>)> = Vec::new();
         let mut values: Vec<String> = Vec::new();
@@ -704,7 +736,7 @@ impl<'a> Prover<'a> {
                 continue;
             }
             if let Some(pre) = self.preconditions.get(&callee).cloned() {
-                self.a_call(&callee, &pre, &args, scope);
+                self.a_call(&callee, &pre, &args, span, scope);
             }
         }
         // **A function with a precondition handed on as a value** is called
@@ -764,7 +796,14 @@ impl<'a> Prover<'a> {
     }
 
     /// A call to a function with a precondition (D5).
-    fn a_call(&mut self, callee: &str, pre: &Precondition, args: &[Expr], scope: &Scope) {
+    fn a_call(
+        &mut self,
+        callee: &str,
+        pre: &Precondition,
+        args: &[Expr],
+        span: Span,
+        scope: &Scope,
+    ) {
         if self.collecting {
             return;
         }
@@ -794,6 +833,49 @@ impl<'a> Prover<'a> {
             let proved = goal.is_some_and(|g| self.proves(&scope.facts, g).is_ok());
             if proved {
                 continue;
+            }
+            // **A call that breaks the precondition every time** (ADR-264
+            // D8): what is known at the call rules it out. The values shown
+            // are the parameters', as this call gives them.
+            if let Some(goal) = goal
+                && let Some(values) = self.refutes(&scope.facts, goal)
+            {
+                // The precondition's own names: a parameter it reads, or the
+                // length of one.
+                let mentioned = names_in(self.parsed, claim);
+                let given: BTreeMap<String, i128> = with
+                    .iter()
+                    .filter(|(name, _)| {
+                        mentioned.contains(*name)
+                            || name
+                                .strip_suffix(".len()")
+                                .is_some_and(|base| mentioned.contains(base))
+                    })
+                    .filter_map(|(name, term)| {
+                        Some((name.clone(), self.arena.int_value((*term)?, &values)?))
+                    })
+                    .collect();
+                let written = crate::check::written(self.parsed, claim);
+                self.out.findings.push(Finding {
+                    severity: Severity::Warning,
+                    span,
+                    code: "NK1207",
+                    message: format!(
+                        "This call breaks `{callee}`'s precondition `{written}` every time it is \
+                         reached."
+                    ),
+                    notes: vec![
+                        format!("Here {}.", shown(&given)),
+                        "The precondition is checked at the call when the program runs, and \
+                         stops it there."
+                            .to_string(),
+                    ],
+                    help: Some(format!(
+                        "Pass `{callee}` arguments for which `{written}` holds, or check them \
+                         with a guard before the call."
+                    )),
+                    labels: Vec::new(),
+                });
             }
             // **Not proved: the call carries the check** (D5), with the
             // arguments in place of the parameters - where every argument is
@@ -849,8 +931,39 @@ impl<'a> Prover<'a> {
                     "the solver's proof did not check ({why:?}), which is a fault of the compiler"
                 ))
             }),
-            Answer::Unknown(_) => Err(None),
+            Answer::Refuted { .. } | Answer::Unknown(_) => Err(None),
         }
+    }
+
+    /// The values that show a claim false every time it is reached
+    /// (ADR-264 D8): the solver proves, with a checked certificate, that the
+    /// facts rule the claim out - so it is false in every state the program
+    /// reaches it in - and a model of the facts, checked by evaluating it,
+    /// gives values for the claim's names. A model alone would not do: the
+    /// facts are true but not all that is true, so a value they allow need not
+    /// be one the program reaches. `None` where either is missing.
+    fn refutes(&mut self, facts: &[TermId], claim: TermId) -> Option<BTreeMap<String, i128>> {
+        let negation = self.arena.not(claim);
+        self.proves(facts, negation).ok()?;
+        let falsum = self.arena.bool(false);
+        let query = Query {
+            arena: &self.arena,
+            facts,
+            goal: falsum,
+        };
+        let Answer::Refuted { model } = FourierMotzkin.check(&query, &Budget::default()) else {
+            return None;
+        };
+        if !verify_model(&query, &model) {
+            return None;
+        }
+        let mut names = BTreeSet::new();
+        self.arena.variables(claim, &mut names);
+        let values: BTreeMap<String, i128> = names
+            .into_iter()
+            .filter_map(|n| Some((n.clone(), *model.values.get(&n)?)))
+            .collect();
+        Some(values)
     }
 
     fn function_named(&self, name: &str) -> Option<&'a Item> {
@@ -934,6 +1047,18 @@ fn with_arguments(
     }
     let mut condition = claim.clone();
     replace(parsed, &mut condition, arguments).then_some(condition)
+}
+
+/// Values as a reader writes them: `` `x` is 5, `xs.len()` is 0 ``.
+fn shown(values: &BTreeMap<String, i128>) -> String {
+    if values.is_empty() {
+        return "no value of its own; the claim is false as written".to_string();
+    }
+    values
+        .iter()
+        .map(|(name, value)| format!("`{name}` is {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// `"A method can't …"` as the rest of a sentence.
