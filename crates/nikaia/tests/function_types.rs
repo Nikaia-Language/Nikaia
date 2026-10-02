@@ -177,6 +177,22 @@ fn a_run_parameter_lowers_to_a_closure_argument() {
     assert!(rust.contains("fn on_tick(handler: &impl Fn())"), "{rust}");
 }
 
+/// **A run parameter's call hands back what its type says** (#125): typed as
+/// nothing, `name.contains` on its result resolved to no method, which is read
+/// as one that may pause, and `has` came out `async` with nothing in it that
+/// pauses.
+#[test]
+fn a_run_parameters_result_is_its_declared_type() {
+    let source = "fn has(f: fn(ref String) -> String sync, s: ref String) -> bool {\n\
+                  \x20   let name = f(s)\n\
+                  \x20   return name.contains(\"::\")\n\
+                  }\n\
+                  fn main() { println(f\"{has(fn(x) { x.clone() }, \"a::b\")}\") }\n";
+    let rust = lowered(source);
+    assert!(rust.contains("\nfn has("), "{rust}");
+    assert_eq!(ran("run-result", source).trim(), "true");
+}
+
 /// **And `throws` puts the same `Result` on the closure's result** that a
 /// `throws` function's own declaration puts on its (Part I 7.1), which is what
 /// makes a lambda that fails fit it.

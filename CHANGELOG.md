@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.334] — 2026-10-02
+
+**The first walk of the tree in Nikaia** (#125, ADR-250). `foreign`'s walk -
+every qualified name a unit writes, for `NK2504`/`NK2505` and for `nikaia
+describe` - moved into `tools/foreign.nika`: every item, statement and
+expression, read the way `contracts::sync`'s walk reads them, a hole of a
+literal included. What a literal's holes are and what a file's alias stands
+for are the compiler's to answer, handed in as two functions (`holes_of`,
+`unaliased`), because a template's holes are parsed out of its text. 11.1 % of
+the toolchain is Nikaia, up from 10.6 %.
+
+- **Found moving it, fixed in the compiler** (ADR-250 D3): a parameter of code
+  run in place, called, was typed as nothing - so `let name = f(s)` left
+  `name.contains("::")` unresolved, an unresolved method is read as one that
+  may pause, and the function came out `async` with nothing in it that
+  pauses. The call hands back what the parameter's type says now
+  (`tests/function_types.rs`).
+
 ## [0.0.333] — 2026-10-02
 
 **A signature is written in the ledger's spelling by Nikaia** (#125, ADR-250).

@@ -13294,6 +13294,17 @@ impl<'a> Checker<'a> {
             // whether it can **fail**, either
             // ([ADR-091](../../docs/specification/adr/adr-091.md)).
             self.guard_has_no_answer();
+            // **A parameter of code, run in place, hands back what its type
+            // says.** Typed as nothing, `let name = f(s)` left `name.contains`
+            // unresolved, and an unresolved method is read as one that may
+            // pause - so the function came out `async` with nothing in it that
+            // pauses (found moving `foreign`'s walk into Nikaia, #125).
+            if let Expr::Variable(_) = func
+                && self.run_code.contains(&name)
+                && let Some(Ty::Fn { result, .. }) = self.lookup(&name)
+            {
+                return (*result).unwrap_or_else(|| Ty::named("()"));
+            }
             return Ty::Unknown;
         };
         self.reachable(&name, contract, span);
