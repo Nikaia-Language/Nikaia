@@ -113,291 +113,23 @@ use crate::parser::Parsed;
 
 use super::{Ledger, ty::Ty};
 
-/// Plain data: a value of one of these carries nothing that a second thread
-/// could be wrong about.
-const PLAIN: &[&str] = &[
-    "bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16",
-    "u32", "u64", "u128", "usize", "f32", "f64",
-];
+/// **The verdict is written in Nikaia** (`tools/threads.nika`, #125): what a
+/// type is (`Crossing`), why a refusal is one (`Refusal`), where the value is
+/// going (`Going`, here `Destination`), and the walk through the ledgers that
+/// answers it - plain data, containers, the lock family whose answer is the
+/// destination's, and a described type's own word or fields.
+pub use nikaia_std::tools::threads::{Crossing, Going as Destination, Refusal};
 
-/// A container is whatever it holds: it may cross exactly when every one of its
-/// arguments may.
-///
-/// **`Shared` is in this list since
-/// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6**, and that is the
-/// whole of step 1. It used to be the one type the records made `MayNot`,
-/// because D3 expanded it from `user_parallelism` - a plain count at `no`, an
-/// atomic one at `yes` - and a verdict that may not consult the switch has to
-/// take the worse of the two settings for a type whose expansion moves with it.
-/// D6 stopped the expansion moving, which is what let it into this list. ADR-061
-/// D2 lets the expansion move again at `no` - every count is plain there - and
-/// the row stays, because what it moved to is the setting where **nothing
-/// crosses**: one thread of the user's, the runtime's own threads carrying no
-/// code they wrote, and D1 refusing a `Shared` to code nothing describes. So the
-/// verdict is answered by what the `Shared` holds at both settings, and at each
-/// of them the count underneath is one that suffices for what can actually
-/// happen there.
-///
-/// Which is also why the single-column invariant in the module header matters
-/// here rather than being a note for later. An atomic count may cross only
-/// where the value under it may both **move** to another thread and be **looked
-/// at** from one - `Arc<T>` in the language below - and that is exactly the
-/// property every name in [`PLAIN`] and this list is required to have.
-/// **The two ends of a channel are in this list since
-/// [ADR-149](../../../../docs/specification/adr/adr-149.md) D4**, and that is
-/// where that decision is built: *the value type must cross, checked where `tx`
-/// moves into a `spawn`*. Being a container is the whole of it — the crossing
-/// analysis already asks the question at a move, so nothing about channels had
-/// to be written anywhere else.
-///
-/// They meet the invariant above: what is under either end is an `Arc` over a
-/// lock, which may both move to another thread and be looked at from one
-/// exactly when the value it carries may.
-const CONTAINERS: &[&str] = &[
-    "BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Receiver", "Result", "Sender",
-    "Shared", "Vec",
-];
-
-/// A lock: the one family whose answer depends on where the value is going
-/// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D2, D3).
-///
-/// Both names, because the question is about the lock in either: `SharedMut[T]`
-/// is a count around a lock and `Locked[T]` is the lock on its own, for a field.
-/// They are **not two spellings of one type** - that was refused by
-/// [ADR-064](../../../../docs/specification/adr/adr-064.md) D3 - but they answer
-/// alike here, because what this asks about is what they have in common. The
-/// count plays no part: which one a value gets follows this answer rather than
-/// making it ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7).
-///
-/// Into our own code a lock is answered **by what it holds**, like a container:
-/// a lock does not make its contents crossable, and Group B's transitivity is
-/// the whole rule. Into code nothing describes it is refused.
-///
-/// **Specified ahead of the compiler**, like everything else about these two
-/// types: neither is a type the backend can lower
-/// ([ADR-039](../../../../docs/specification/adr/adr-039.md) §4), so a program
-/// that writes one as an annotation reaches this verdict and then fails to emit.
-/// The verdict is still the thing worth having early - it is what a library's
-/// signature is written against.
-/// **And `Shared` joined them**
-/// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1), for the
-/// sentence that was already the lock's reason: *a Rust library has one
-/// signature*. When [ADR-037](../../../../docs/specification/adr/adr-037.md) D6
-/// made the count atomic at both settings there was one representation to write
-/// down and nothing to refuse; D7's per-value inference brought the second one
-/// back, so a `Shared[Conn]` is an `Rc` for one value and an `Arc` for another
-/// **in the same program** - and no foreign signature can name both.
-const CHOSEN: &[&str] = &["Locked", "SharedMut", "Shared"];
-
-/// Where a value is going. The second half of the question this file answers
-/// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Destination {
-    /// Our own code on a thread of our own: the body of a `spawn`ed task
-    /// (Part II, 11.2), and the closure statement overlapping builds
-    /// ([ADR-033](../../../../docs/specification/adr/adr-033.md)).
-    ///
-    /// One answer, two reasons, which is what makes it switch-independent
-    /// (D2): at `user_parallelism = yes` a real operating-system lock is
-    /// underneath and several threads are what it is for; at `no` the task is
-    /// interleaved on the same thread, so nothing crosses at all.
-    Ours,
-    /// Code nothing written down describes, which may do anything with what it
-    /// is given - including putting it on a thread of its own
-    /// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D7).
-    Foreign,
+/// The refused part and the field it was found in, where the answer is a
+/// refusal - the two halves `tools/threads.nika` answers one at a time,
+/// because a nullable pair is not a type Part I 2.3 writes.
+pub trait CrossingOps {
+    fn refused(&self) -> Option<(String, Option<String>)>;
 }
 
-/// How far into a type this walks before giving up. A struct that holds itself
-/// through a container is a shape the ledger can hold, and this must terminate
-/// on one.
-const DEPTH: usize = 16;
-
-/// **Why** a value may not cross — the word [`Crossing::MayNot`]'s own note
-/// asked for the day the arm had a second producer.
-///
-/// That note said it plainly: *"the day there is a second the arm has to carry
-/// **which** — a refusal whose sentence is about a lock would be wrong about
-/// anything else"*. There are three producers now, they print three different
-/// sentences, and one of them —
-/// [`Refusal::Lock`](Refusal::Lock) — is the one
-/// [ADR-039](../../../../docs/specification/adr/adr-039.md) D6 gives its own
-/// code to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Refusal {
-    /// A lock: `SharedMut[T]` or `Locked[T]` at a foreign destination
-    /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D3). The one
-    /// `NK2503` is about, and the only one it is about.
-    Lock,
-    /// A shared count: a `Shared[T]` at a foreign destination holding nothing a
-    /// lock refuses first
-    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1).
-    ///
-    /// The lock's own reason and not a lock: which count a value gets is chosen
-    /// per value ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7),
-    /// so a `Shared[Conn]` is one representation for one value and another for
-    /// the next **in the same program**, and no signature outside this language
-    /// can name both.
-    Count,
-    /// A described type that says outright that it may not cross
-    /// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1). Nothing
-    /// about locks or counts is claimed: a ledger said so in one line, and the
-    /// sentence a reader gets has to say that rather than invent a reason.
-    Said,
-}
-
-/// What crossing a thread would mean for a value of one type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Crossing {
-    /// Every part of it may cross, and this compiler can see every part.
-    May,
-    /// A part of it may not, and the records say which.
-    ///
-    /// **Its one producer is a lock at a foreign destination**
-    /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D3). `Shared`
-    /// used to be the producer and stopped being one when
-    /// [ADR-037](../../../../docs/specification/adr/adr-037.md) D6 gave it one
-    /// representation at both settings; the arm then stood empty, and the lock is
-    /// the occupant ADR-037 D6's own coda named as the candidate.
-    ///
-    /// So `NK2502` fires on a program this language can write and `NK2501` no
-    /// longer does: the two codes stopped sharing one verdict the day the
-    /// destination entered it.
-    ///
-    /// **And the day there was a second producer arrived**, which is what
-    /// [`Refusal`] is: the arm carries *which*, because
-    /// [`Crossing::note`] and [`Crossing::way_out`] were written for a lock and
-    /// would be wrong about anything else. Three producers, three sentences,
-    /// and `NK2503` reads the word rather than guessing from the type's name.
-    MayNot {
-        /// The part the answer is about - the whole type where the type itself
-        /// is the problem, and the field's type where a field is.
-        part: String,
-        /// The **field** it was found in, where it was found in one: `None` for
-        /// the value itself and `Some("counts")` for a field.
-        ///
-        /// The bare name and not a sentence, because two readers want it: the
-        /// note prints prose around it, and `NK2503`'s way out writes a path a
-        /// program can paste (`state.counts.get()`).
-        at: Option<String>,
-        /// Why - the word that decides the sentence and the code.
-        why: Refusal,
-    },
-    /// Nothing written down decides it. **Not permission** (ADR-010 D1).
-    Undecided {
-        /// The part nothing is written down about.
-        part: String,
-    },
-}
-
-impl Crossing {
-    /// Whether a value of the type may cross - which is true of [`Crossing::May`]
-    /// and of nothing else.
-    pub fn may(&self) -> bool {
-        matches!(self, Crossing::May)
-    }
-
-    /// The refusal, where the answer is one.
-    pub fn refused(&self) -> Option<(&str, Option<&str>)> {
-        match self {
-            Crossing::MayNot { part, at, .. } => Some((part, at.as_deref())),
-            _ => None,
-        }
-    }
-
-    /// **Why** it is refused, where it is - the word `NK2503` reads to know
-    /// whether the refusal is its own ([ADR-039](../../../../docs/specification/adr/adr-039.md)
-    /// D6).
-    pub fn why(&self) -> Option<Refusal> {
-        match self {
-            Crossing::MayNot { why, .. } => Some(*why),
-            _ => None,
-        }
-    }
-
-    /// One concrete way out, as Part III C.2 requires of every diagnostic.
-    /// `None` where there is nothing to get out of.
-    ///
-    /// The remedy is the one ADR-045 D3 names, and it is not "don't do that": the
-    /// caller opens the lock and hands the **value inside it** over, so the called
-    /// code sees an ordinary number or connection and no lock at all. That is the
-    /// shape already settled for an ordinary function
-    /// ([ADR-042](../../../../docs/specification/adr/adr-042.md) D1, D2,
-    /// Part I 6.2), so nothing new has to be learned to follow it.
-    pub fn way_out(&self) -> Option<String> {
-        Some(match self.why()? {
-            Refusal::Lock => {
-                "Open the lock here and pass the value inside it, so the called code gets an \
-                 ordinary value and no lock."
-                    .to_string()
-            }
-            // ADR-061 D1's own words: *the way out is to pass what is inside*,
-            // a view or a copy. A library that means to keep what it is given
-            // puts it in a hull of its own anyway.
-            Refusal::Count => {
-                "Pass what the shared value holds, a view or a copy, instead of the shared \
-                 value itself."
-                    .to_string()
-            }
-            // Nothing is known about *why* the ledger said no, so the way out
-            // may not pretend to be a repair: what a reader can always do is
-            // keep the value here and hand over what the call actually needs.
-            Refusal::Said => {
-                "Keep it here, and pass the call only what it needs from it.".to_string()
-            }
-        })
-    }
-
-    /// One line saying why a value of this type may not cross, for a
-    /// diagnostic's note. `None` where it may.
-    ///
-    /// Part III C.2: no Rust vocabulary, and the sentence has to mean something
-    /// to a reader who has never heard of a reference count either.
-    ///
-    /// **The `MayNot` sentence says that the answer was chosen**, because ADR-045
-    /// D3 asks it to: at `user_parallelism = yes` the crossing would in fact be
-    /// safe, and the cautious answer is taken anyway so that a library written at
-    /// one setting stays usable at the other. Anyone who trips over this in two
-    /// years should be able to see from the message that it was a decision and
-    /// not an oversight.
-    pub fn note(&self) -> Option<String> {
-        match self {
-            Crossing::May => None,
-            Crossing::MayNot {
-                part,
-                at,
-                why: Refusal::Lock,
-            } => Some(format!(
-                "`{part}`{} holds a lock, and a lock can't be passed to code the compiler knows \
-                 nothing about.",
-                held(at)
-            )),
-            // ADR-061 D1. The sentence is the lock's reason without the lock:
-            // one representation cannot be named from outside, because there
-            // is not one.
-            Crossing::MayNot {
-                part,
-                at,
-                why: Refusal::Count,
-            } => Some(format!(
-                "`{part}`{} is shared, and how a shared value is counted is decided per value, \
-                 so code outside Nikaia can't be written to handle it.",
-                held(at)
-            )),
-            // ADR-123 D1: a line in a ledger, repeated rather than interpreted.
-            Crossing::MayNot {
-                part,
-                at,
-                why: Refusal::Said,
-            } => Some(format!(
-                "`{part}`{} is described as a value that can't move to another thread.",
-                held(at)
-            )),
-            Crossing::Undecided { part } => Some(format!(
-                "Nothing says whether `{part}` can move to another thread, so the compiler \
-                 assumes it can't."
-            )),
-        }
+impl CrossingOps for Crossing {
+    fn refused(&self) -> Option<(String, Option<String>)> {
+        self.refused_part().map(|part| (part, self.refused_at()))
     }
 }
 
@@ -428,39 +160,24 @@ pub fn names_used_in_stmt(parsed: &Parsed, stmt: &crate::ast::Stmt) -> BTreeSet<
 }
 
 /// Which of a task body's **own** bindings are held across a pause
-/// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §2 D6).
-///
-/// A task's body is an `async` block below, and a value bound inside it and
-/// still live at a suspension point further down is held **inside the future**.
-/// The pool's starter asks for `Send` of that whole future, so such a value
-/// crosses a thread exactly as a captured one does — which is why the same
-/// verdict is asked of it.
-///
-/// Everything is a byte position and the rule is one line: **bound before a
-/// pause, and named after it.** `named` is the *last* place each name was
-/// mentioned, so a name read once, before the pause, is not held.
-///
-/// **Live is over-approximated** and Rust's own answer is narrower — a value
-/// whose last use is inside a branch the pause is not in, say. That would be a
-/// *correct program refused* if a refusal stood on this alone. It does not:
-/// what refuses is [`crossing`]'s `MayNot`, which is a claim about a **type**
-/// and never `Undecided`'s silence, so a name this is too generous about is
-/// refused only where a value of its type could not have crossed from
-/// anywhere.
+/// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §2 D6): bound
+/// before a pause, and named after it (`tools/threads.nika`). Everything is a
+/// byte position; `named` is the *last* place each name was mentioned.
 pub fn held_across_a_pause(
     bound: &[(String, usize)],
     pauses: &[usize],
     named: &std::collections::BTreeMap<String, usize>,
 ) -> BTreeSet<String> {
-    bound
+    let bound: Vec<(String, i64)> = bound
         .iter()
-        .filter(|(name, at)| {
-            pauses
-                .iter()
-                .any(|pause| pause > at && named.get(name).is_some_and(|last| last > pause))
-        })
-        .map(|(name, _)| name.clone())
-        .collect()
+        .map(|(name, at)| (name.clone(), *at as i64))
+        .collect();
+    let pauses: Vec<i64> = pauses.iter().map(|at| *at as i64).collect();
+    let named: std::collections::BTreeMap<String, i64> = named
+        .iter()
+        .map(|(name, at)| (name.clone(), *at as i64))
+        .collect();
+    nikaia_std::tools::threads::held_across_a_pause(&bound, &pauses, &named)
 }
 
 /// Whether a value of `ty` may go to `into`.
@@ -469,265 +186,19 @@ pub fn held_across_a_pause(
 /// hold the fields of every type that is written down (ADR-024), which is what
 /// makes this **structural and transitive** as Group B requires - a struct with
 /// one lock field is no more crossable than the lock itself.
-///
-/// `into` is the destination (ADR-045 D1) and reaches exactly one row of the
-/// table, [`CHOSEN`]. Every other answer is the same wherever the value is going,
-/// which is why the parameter is threaded through the walk rather than asked
-/// before it: a lock four fields deep is still a lock.
 pub fn crossing(ty: &Ty, own: &Ledger, library: &Ledger, into: Destination) -> Crossing {
-    let mut seen = BTreeSet::new();
-    walk(ty, own, library, into, &mut seen, DEPTH)
+    nikaia_std::tools::threads::crossing(
+        ty,
+        &nikaia_std::tools::threads::Walking { own, library, into },
+    )
 }
 
-fn walk(
-    ty: &Ty,
-    own: &Ledger,
-    library: &Ledger,
-    into: Destination,
-    seen: &mut BTreeSet<String>,
-    depth: usize,
-) -> Crossing {
-    if depth == 0 {
-        return Crossing::Undecided { part: ty.text() };
-    }
-    match ty {
-        // The absence of a claim, and a claim is what this would need.
-        Ty::Unknown => Crossing::Undecided {
-            part: "?".to_string(),
-        },
-        // **A count crosses** ([ADR-152](../../../../docs/specification/adr/adr-152.md)
-        // D1): it is a number the compiler knows, it is part of the *type* and
-        // not part of the value, and there is nothing of it at run time to go
-        // anywhere. An `Array[T, N]` therefore crosses exactly when its `T`
-        // does, which is D2's *it copies as its elements do* read one layer up.
-        Ty::Count(_) => Crossing::May,
-        // **What the C boundary lends does not cross**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): it
-        // lives for the call, and a thread outlives one. Undecided rather than
-        // refused, which is this file's polarity: what it names is the part it
-        // cannot answer for, and a boundary type is the caller's own for
-        // exactly one call.
-        Ty::Pointed { .. } => Crossing::Undecided { part: ty.text() },
-        // A library signature's variable that nothing bound. `substitute` turns
-        // a bound one into the type it bound to before this is ever asked, so
-        // one that arrives here is the absence of an answer (ADR-031).
-        Ty::Var { .. } => Crossing::Undecided { part: ty.text() },
-        // A lambda is its captures, and nothing writes those down.
-        Ty::Fn { .. } => Crossing::Undecided { part: ty.text() },
-        // **A produced sequence is the thing it is walking**
-        // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1), and
-        // nothing says what that is: `keys()` holds a borrow of the map,
-        // `chars()` one of the string, and a `map` holds the lambda's captures
-        // beside whichever of those it was built on. So the answer is the
-        // absence of one, which is not permission (ADR-010 D1) - the same
-        // silence a lambda gets one line up, and for the same reason.
-        //
-        // `Par[T]` is not louder: what `par_iter` hands back crosses by
-        // construction, but the type says nothing about it and a claim nobody
-        // wrote is not one to read.
-        Ty::Seq { .. } => Crossing::Undecided { part: ty.text() },
-        // **A `T?` crosses exactly as its `T` does**, because that is what it
-        // lowers to: an `Option<T>` is `Send` when `T` is, and it holds one `T`
-        // or nothing. Neither answer is changed by the emptiness.
-        Ty::Nullable(inner) => walk(inner, own, library, into, seen, depth - 1),
-        // `()` holds nothing, so there is nothing to be wrong about; a pair is
-        // its parts.
-        Ty::Tuple(parts) => join(
-            parts
-                .iter()
-                .map(|p| walk(p, own, library, into, seen, depth - 1)),
-        ),
-        Ty::Named { name, args, .. } => {
-            if PLAIN.contains(&super::ty::base(name)) {
-                // A plain type with arguments is not the plain type: `String[T]`
-                // is a name this compiler does not know.
-                return match args.is_empty() {
-                    true => Crossing::May,
-                    false => Crossing::Undecided { part: ty.text() },
-                };
-            }
-            if CONTAINERS.contains(&super::ty::base(name)) {
-                // A container with no arguments said nothing about what it
-                // holds, and what it holds is the whole question.
-                let inside = match args.is_empty() {
-                    true => Crossing::Undecided { part: ty.text() },
-                    false => join(
-                        args.iter()
-                            .map(|a| walk(a, own, library, into, seen, depth - 1)),
-                    ),
-                };
-                // **`Shared` is in both lists, and the container row answered
-                // first** ([ADR-061](../../../../docs/specification/adr/adr-061.md)
-                // D1). Its row in [`CHOSEN`] was therefore unreachable: a
-                // `Shared[String]` into code nothing describes came back `May`,
-                // which is the opposite of what D1 decided. Measured, not read:
-                // `only_a_lock_is_refused_at_either_destination` asserted the
-                // wrong half of it and passed.
-                //
-                // The contents answer **first** all the same, because where
-                // there is a lock inside, the lock is the better sentence and
-                // the one with a code of its own. D1 is what is left when
-                // nothing inside refuses.
-                if matches!(into, Destination::Foreign)
-                    && CHOSEN.contains(&name.as_str())
-                    && inside.refused().is_none()
-                {
-                    return Crossing::MayNot {
-                        part: ty.text(),
-                        at: None,
-                        why: Refusal::Count,
-                    };
-                }
-                return inside;
-            }
-            // **The one row the destination reaches** (ADR-045 D2, D3). Into our
-            // own code a lock is a container: it may go where what it holds may
-            // go, and it makes nothing crossable that was not. Into code nothing
-            // describes it may not go at all - the conservative answer, taken at
-            // both settings on purpose, and the sentence in `note` says so.
-            if CHOSEN.contains(&name.as_str()) {
-                return match (into, args.is_empty()) {
-                    (Destination::Foreign, _) => Crossing::MayNot {
-                        part: ty.text(),
-                        at: None,
-                        why: Refusal::Lock,
-                    },
-                    // A lock with no arguments said nothing about what it holds,
-                    // exactly as a bare container does.
-                    (Destination::Ours, true) => Crossing::Undecided { part: ty.text() },
-                    (Destination::Ours, false) => join(
-                        args.iter()
-                            .map(|a| walk(a, own, library, into, seen, depth - 1)),
-                    ),
-                };
-            }
-            let Some(contract) = described(name, own, library) else {
-                return Crossing::Undecided { part: ty.text() };
-            };
-            // A type whose parts are Rust says so in one line, exactly as a
-            // Rust function says `sync = true` about a body this compiler does
-            // not read. The claim is about the type and not about its
-            // arguments, which is why a `crosses` type with arguments is not
-            // read further: nothing in `std` has one, and the day something
-            // does, it is the arguments that want a rule.
-            //
-            // **And `crosses = false` is the row the destination's refusals
-            // were built for** ([ADR-123](../../../../docs/specification/adr/adr-123.md)
-            // D1): before it there was no way for a described type to answer
-            // *may not*, so `NK2501` and `NK2502` had nothing to fire on.
-            //
-            // It answers with **or without** arguments, and the asymmetry with
-            // `May` above is the polarity and not an oversight: a promise is
-            // withheld where the claim might not reach (a `T` the line did not
-            // speak about), and a restriction is kept where it might
-            // (ADR-010 D1). Nothing a value of such a type is wrapped in makes
-            // it crossable.
-            if contract.crosses.may_not() {
-                return Crossing::MayNot {
-                    part: ty.text(),
-                    at: None,
-                    why: Refusal::Said,
-                };
-            }
-            if contract.crosses.may() && args.is_empty() {
-                return Crossing::May;
-            }
-            Some(contract.fields.as_slice())
-                .filter(|fields| !fields.is_empty())
-                .map(|fields| {
-                    // A type that holds itself is answered by its other fields:
-                    // the cycle adds no new part to be wrong about, and walking
-                    // it again would not terminate.
-                    if !seen.insert(name.clone()) {
-                        return Crossing::May;
-                    }
-                    let answer = join(fields.iter().map(|field| {
-                        name_the_field(
-                            &field.name,
-                            walk(&field.ty, own, library, into, seen, depth - 1),
-                        )
-                    }));
-                    seen.remove(name);
-                    answer
-                })
-                .unwrap_or_else(|| Crossing::Undecided { part: ty.text() })
-        }
-    }
-}
-
-/// What the ledgers say about a type, by the name a program writes.
-///
-/// The program's own ledger first, then `std`'s - the order every other
-/// resolution in this compiler uses. A library writes the module in front of a
-/// type (`fs::Mapped`) and a signature does not carry one, so the suffix is what
-/// matches: name-for-name resolution (ADR-011 D2), as everywhere else.
-///
-/// **A type with no fields recorded is not a type with no fields.** `fs::Mapped`
-/// has an entry and an empty `fields`, because its fields are Rust. So an empty
-/// list is answered as "nothing is written down" rather than as "it holds
-/// nothing", and `crosses` is the line that answers for such a type.
-fn described<'a>(
-    name: &str,
-    own: &'a Ledger,
-    library: &'a Ledger,
-) -> Option<&'a crate::contracts::TypeContract> {
-    let suffix = format!("::{name}");
-    [own, library].into_iter().find_map(|ledger| {
-        ledger.types.get(name).or_else(|| {
-            ledger
-                .types
-                .iter()
-                .find(|(key, _)| key.ends_with(&suffix))
-                .map(|(_, contract)| contract)
-        })
-    })
-}
-
-/// Say which field an answer came from, where it is not `May`.
-///
-/// The **innermost** one, because a field already named is not renamed on the
-/// way out: `a.b.c` where the lock is `c`'s reports `c`, which is the field a
-/// reader can look at.
-fn name_the_field(field: &str, answer: Crossing) -> Crossing {
-    match answer {
-        Crossing::MayNot {
-            part,
-            at: None,
-            why,
-        } => Crossing::MayNot {
-            part,
-            at: Some(field.to_string()),
-            why,
-        },
-        other => other,
-    }
-}
-
-/// The clause a note puts between the part and its verb, for a field that has
-/// a name and for one that is the value itself.
-fn held(at: &Option<String>) -> String {
-    match at {
-        Some(field) => format!(", which its field `{field}` holds,"),
-        None => String::new(),
-    }
-}
-
-/// The worst answer of several, with `MayNot` worse than `Undecided`.
-///
-/// A refusal a reader can act on beats an admission of ignorance, which is
-/// ADR-033 D9's rule for the ordering report applied to the same kind of choice:
-/// of two true answers, print the one somebody can do something about.
-fn join(answers: impl Iterator<Item = Crossing>) -> Crossing {
-    let mut worst = Crossing::May;
-    for answer in answers {
-        match (&worst, &answer) {
-            (Crossing::MayNot { .. }, _) => return worst,
-            (_, Crossing::MayNot { .. }) => worst = answer,
-            (Crossing::May, Crossing::Undecided { .. }) => worst = answer,
-            _ => {}
-        }
-    }
-    worst
+/// The worst of several answers, as the walk joins them.
+#[cfg(test)]
+fn join(answers: Vec<Crossing>) -> Crossing {
+    answers
+        .into_iter()
+        .fold(Crossing::May, nikaia_std::tools::threads::worst_of)
 }
 
 #[cfg(test)]
@@ -862,7 +333,7 @@ mod tests {
         // lock is what the answer is about.
         assert_eq!(
             foreign("Shared[Locked[i32]]").refused(),
-            Some(("Locked[i32]", None))
+            Some(("Locked[i32]".to_string(), None))
         );
 
         // Everything that is neither a lock nor a shared count answers the same
@@ -903,7 +374,7 @@ mod tests {
         // A lock inside one is still the lock's refusal, by its own name.
         let inside = foreign("Shared[Locked[i32]]");
         assert_eq!(inside.why(), Some(Refusal::Lock));
-        assert_eq!(inside.refused(), Some(("Locked[i32]", None)));
+        assert_eq!(inside.refused(), Some(("Locked[i32]".to_string(), None)));
 
         // The sentence is the lock's reason without the lock, and it carries
         // neither the word `lock` nor any Rust in it (Part III, C.2).
@@ -938,7 +409,8 @@ mod tests {
                 let answer = crossing(&Ty::named(name), &own, &library, into);
                 assert!(
                     answer.refused().is_none()
-                        || CHOSEN.contains(&crate::contracts::ty::base(name)),
+                        || ["Locked", "SharedMut", "Shared"]
+                            .contains(&crate::contracts::ty::base(name)),
                     "`{name}` into {into:?}: {answer:?}"
                 );
             }
@@ -963,7 +435,10 @@ mod tests {
             at: Some("hits".to_string()),
             why: Refusal::Lock,
         };
-        assert_eq!(refused.refused(), Some(("Locked[i32]", Some("hits"))));
+        assert_eq!(
+            refused.refused(),
+            Some(("Locked[i32]".to_string(), Some("hits".to_string())))
+        );
         assert_eq!(refused.why(), Some(Refusal::Lock));
         let note = refused.note().expect("a refusal has a note");
         assert!(note.contains("`Locked[i32]`"), "{note}");
@@ -1079,7 +554,7 @@ mod tests {
             let refused = crossing(&Ty::named(ty), &own, &library, Destination::Foreign);
             assert_eq!(
                 refused.refused(),
-                Some(("Locked[i64]", Some("hits"))),
+                Some(("Locked[i64]".to_string(), Some("hits".to_string()))),
                 "{ty} into code nothing describes"
             );
             assert_eq!(refused.why(), Some(Refusal::Lock), "{ty}");
@@ -1158,10 +633,10 @@ mod tests {
             vec![refused.clone(), unknown.clone()],
             vec![Crossing::May, unknown.clone(), refused.clone()],
         ] {
-            assert_eq!(join(order.into_iter()), refused);
+            assert_eq!(join(order), refused);
         }
         // …and an undecided part still beats a `May` one.
-        assert_eq!(join([Crossing::May, unknown.clone()].into_iter()), unknown);
+        assert_eq!(join(vec![Crossing::May, unknown.clone()]), unknown);
     }
 
     /// `std`'s own opaque types are undecided and not refused: their fields are

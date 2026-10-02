@@ -1041,3 +1041,29 @@ fn splitting_at_most_n_times_is_sync() {
         "fs::read\n",
     );
 }
+
+/// **`BTreeSet::remove` is described** (found moving `contracts::send` into
+/// Nikaia, #125): nothing was, so a walk that marks a name and takes the mark
+/// off again was taken to pause and lowered `async`.
+#[test]
+fn taking_a_value_out_of_a_set_is_sync() {
+    runs(
+        "set-remove",
+        "use std::collections\n\
+         \n\
+         fn visit(mut seen: collections::BTreeSet[String], name: ref String) -> bool sync {\n\
+         \x20   if !seen.insert(name.clone()) {\n\
+         \x20       return false\n\
+         \x20   }\n\
+         \x20   let was = seen.remove(name)\n\
+         \x20   return was\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut seen: collections::BTreeSet[String] = collections::BTreeSet()\n\
+         \x20   let name: String = \"a\"\n\
+         \x20   println(f\"{visit(seen, name)} {seen.len()}\")\n\
+         }\n",
+        "true 0\n",
+    );
+}

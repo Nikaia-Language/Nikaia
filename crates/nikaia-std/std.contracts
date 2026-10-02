@@ -1128,6 +1128,15 @@ touches = []
 keeps = ["value"]
 signature = "[T](mut self: ref collections::BTreeSet[T], value: T) -> bool"
 
+# Take a value out of the set, and say whether it was there (0.0.361: without
+# an entry a `.remove(…)` resolved to nothing and read as a call that may
+# pause - found moving `contracts::send` into Nikaia).
+[fn."collections::BTreeSet::remove"]
+pub = true
+sync = true
+touches = []
+signature = "[T](mut self: ref collections::BTreeSet[T], value: ?) -> bool"
+
 # Whether the set holds this value.
 [fn."collections::BTreeSet::contains"]
 pub = true

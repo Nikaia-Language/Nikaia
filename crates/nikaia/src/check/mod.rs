@@ -32,6 +32,7 @@ use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
 use crate::contracts::SignatureOps;
+use crate::contracts::send::CrossingOps;
 use crate::contracts::ty::TyOps;
 use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
