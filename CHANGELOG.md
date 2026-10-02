@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.350] — 2026-10-02
+
+**What changed is said in Nikaia** (#125, ADR-250). `project`'s
+`changed_lines` - the lines of a ledger a `--locked` build or a stale check
+finds different from the committed one, each under its entry - and the line
+half of `difference` - what an output test prints between the output it
+expected and the one it got, two lines of context around each run - moved
+into `tools/diffs.nika`; whether the bytes are text at all is still asked
+in Rust. `tests/diffs.rs` holds both, which nothing tested directly before.
+13.9 % of the toolchain is Nikaia, up from 13.7 %.
+
 ## [0.0.349] — 2026-10-02
 
 **A claim the compiler cannot prove is checked when the program runs**

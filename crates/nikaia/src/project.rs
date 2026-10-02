@@ -1641,40 +1641,7 @@ pub fn write_ledger(path: &Path, ledger: &str, locked: bool) -> Result<()> {
 /// and leaves you to find out what. 13.5 asks this diff to narrate a cause; it
 /// cannot do that without saying whose contract moved.
 pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut entry: Option<&str> = None;
-    let mut named: Option<&str> = None;
-
-    for line in ledger.lines() {
-        if line.starts_with('[') {
-            entry = Some(line);
-            named = None;
-        }
-        if line.is_empty() || line.starts_with('#') || committed.lines().any(|c| c == line) {
-            continue;
-        }
-        match entry.filter(|e| *e != line) {
-            // A line inside an entry, under the entry's name - printed once,
-            // however many of its lines changed.
-            Some(entry) => {
-                if named != Some(entry) {
-                    out.push(format!("  {entry}"));
-                    named = Some(entry);
-                }
-                out.push(format!("      {line}"));
-            }
-            // The line *is* the entry - a whole contract that is new - or it is
-            // a header line, which belongs to no entry. Either way it names
-            // itself, and an entry that has named itself must not be named
-            // again by the lines that follow it.
-            None => {
-                out.push(format!("  {line}"));
-                named = entry;
-            }
-        }
-    }
-
-    out
+    nikaia_std::tools::diffs::changed_lines(ledger, committed)
 }
 
 /// Which of the three explanations a run was asked for
@@ -2909,62 +2876,8 @@ fn difference(expected: &[u8], produced: &[u8]) -> String {
     else {
         return "  the bytes differ, and they are not text\n".to_string();
     };
-    let a: Vec<&str> = expected.lines().collect();
-    let b: Vec<&str> = produced.lines().collect();
-    if a == b {
-        return "  the same lines; they differ in the line break at the end\n".to_string();
-    }
-    // A table the size of both texts; past this, the two are shown whole.
-    if (a.len() + 1) * (b.len() + 1) > 4_000_000 {
-        return format!("  expected:\n{expected}\n  produced:\n{produced}\n");
-    }
-    let mut common = vec![vec![0u32; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            common[i][j] = match a[i] == b[j] {
-                true => common[i + 1][j + 1] + 1,
-                false => common[i + 1][j].max(common[i][j + 1]),
-            };
-        }
-    }
-    // (' ', '-' or '+', the line)
-    let mut steps: Vec<(char, &str)> = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() || j < b.len() {
-        if i < a.len() && j < b.len() && a[i] == b[j] {
-            steps.push((' ', a[i]));
-            i += 1;
-            j += 1;
-        } else if j < b.len() && (i == a.len() || common[i][j + 1] >= common[i + 1][j]) {
-            steps.push(('+', b[j]));
-            j += 1;
-        } else {
-            steps.push(('-', a[i]));
-            i += 1;
-        }
-    }
-    const CONTEXT: usize = 2;
-    let near: Vec<bool> = (0..steps.len())
-        .map(|at| {
-            let from = at.saturating_sub(CONTEXT);
-            let to = (at + CONTEXT + 1).min(steps.len());
-            steps[from..to].iter().any(|(mark, _)| *mark != ' ')
-        })
-        .collect();
-    let mut out = String::new();
-    let mut skipped = false;
-    for ((mark, line), shown) in steps.iter().zip(&near) {
-        if !shown {
-            skipped = true;
-            continue;
-        }
-        if skipped {
-            out.push_str("  …\n");
-            skipped = false;
-        }
-        out.push_str(&format!("{mark} {line}\n"));
-    }
-    out
+    // **The lines are Nikaia's** (`tools/diffs.nika`, #125).
+    nikaia_std::tools::diffs::differing_lines(expected, produced)
 }
 
 /// What `--bless` did with one output test.
