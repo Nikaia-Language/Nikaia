@@ -11672,7 +11672,22 @@ impl<'a> Checker<'a> {
                         .is_some_and(|local| self.map_views.contains(&local.id)),
                     _ => false,
                 };
+                // **A fallback that jumps takes its takings with it**
+                // (ADR-213 D4), as a branch that leaves does: `let c = f(k) ??
+                // return Refused(k)` hands `k` over only on the path that
+                // leaves, so a use of `k` on the next line is no use after it -
+                // it was `NK2105` (found moving `contracts::order`'s walk into
+                // Nikaia, #125).
+                let from = self.taken_so_far();
                 let other = self.expr(fallback, span);
+                self.a_branch_that_leaves(
+                    from,
+                    matches!(
+                        &**fallback,
+                        Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
+                    ),
+                    span,
+                );
                 // **A name on the left of `??` is taken where the answer is
                 // kept and lent where it is only read** (ADR-259 D1), which is
                 // the rule an argument follows (ADR-094 D1). Which one is known
