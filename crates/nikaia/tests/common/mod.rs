@@ -142,7 +142,7 @@ pub fn externs() -> Vec<String> {
 
 /// **The programs a corpus sweep reads in `dir`**: every `.nika` directly in
 /// it, and the one file of each package there whose `src/` holds one
-/// ([ADR-245](../../../../docs/specification/adr/adr-245.md) D8 moved most of
+/// ([ADR-264](../../../../docs/specification/adr/adr-264.md) D13 moved most of
 /// `examples/` into packages of a file each, with their output tests beside
 /// them). A package of several files is not a standalone program - one of
 /// its files names types another declares - and is left to the test that

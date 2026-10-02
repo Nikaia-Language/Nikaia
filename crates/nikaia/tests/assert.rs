@@ -1,7 +1,7 @@
-//! **`assert`, a claim** ([ADR-245](../../../docs/specification/adr/adr-245.md)
+//! **`assert`, a claim** ([ADR-264](../../../docs/specification/adr/adr-264.md)
 //! D2, D3): a prelude function the compiler knows, whose condition changes
 //! nothing. Outside a test it is proved while the program is built
-//! ([ADR-256](../../../docs/specification/adr/adr-256.md)); a program runs
+//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4); a program runs
 //! here at both settings of `user_parallelism`.
 
 mod common;
@@ -90,7 +90,7 @@ fn refused(source: &str, code: &str) -> Vec<String> {
 }
 
 /// **Claims the prover holds change nothing**
-/// ([ADR-256](../../../docs/specification/adr/adr-256.md) D1): the program
+/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D4): the program
 /// runs to its end, at both settings, and no check was written for any of
 /// them.
 #[test]
@@ -114,8 +114,9 @@ fn claims_the_compiler_proves_let_the_program_run() {
     assert_eq!(stdout, "all held 0\n");
 }
 
-/// **A false claim never reaches the program** (ADR-256 D1): it is refused
-/// while the program is built. What a false claim says when it *runs* is a
+/// **A false claim never reaches the program**: it is refused while the
+/// program is built - today, until ADR-264 D4 and D8 (a warning, and a check
+/// at run time) are built. What a false claim says when it *runs* is a
 /// test's (`nikaia_test.rs`), the one place an `assert` is still a check.
 #[test]
 fn a_false_claim_is_refused_before_the_program_runs() {
@@ -212,8 +213,8 @@ fn a_program_may_declare_its_own_assert() {
     assert_eq!(stdout, "mine: false\n");
 }
 
-/// **`--asserts` names every claim and how it is held** (D6): proved, or a
-/// precondition its callers prove (ADR-256 D3).
+/// **`--asserts` names every claim and how it is held** (D7): proved, or a
+/// precondition its callers prove (ADR-264 D5).
 #[test]
 fn asserts_reports_every_claim() {
     let source = "fn half(n: i64) -> i64 sync {\n\

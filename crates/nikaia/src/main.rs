@@ -113,8 +113,7 @@ pub struct Cli {
     /// Print every `assert`, and for each what became of it: proved while the
     /// program was built, a precondition its callers prove, checked by a test
     /// when it runs, or refused
-    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D6,
-    /// [ADR-256](../../../docs/specification/adr/adr-256.md)).
+    /// ([ADR-264](../../../docs/specification/adr/adr-264.md) D7).
     ///
     /// The report is here so that a reader can see what the prover did with
     /// each claim, and ask why one was not proved.
@@ -232,7 +231,7 @@ pub enum Command {
         args: Vec<String>,
     },
     /// Run the project's `test` blocks, each in a process of its own
-    /// ([ADR-245](../../../docs/specification/adr/adr-245.md) D1, D7).
+    /// ([ADR-264](../../../docs/specification/adr/adr-264.md) D1, D12).
     ///
     /// The program is built once with its tests compiled in; each test then
     /// runs by itself, and a failing one does not stop the others.
@@ -596,7 +595,7 @@ fn drive(args: &Cli, project: &Project, subcommand: &str, program_args: &[String
     )
 }
 
-/// `nikaia test` ([ADR-245](../../docs/specification/adr/adr-245.md) D1, D7,
+/// `nikaia test` ([ADR-264](../../docs/specification/adr/adr-264.md) D1, D12,
 /// D8): the test build and the program, each once per setting asked for, then
 /// every test run against them.
 fn test_command(

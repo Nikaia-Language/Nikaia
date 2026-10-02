@@ -8,7 +8,7 @@
 // markup the program built itself.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-245 D8).
+// what it prints against `tests/` (ADR-264 D13).
 
 use std::html
 

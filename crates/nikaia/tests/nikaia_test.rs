@@ -1,5 +1,5 @@
-//! **`nikaia test`** ([ADR-245](../../../docs/specification/adr/adr-245.md) D1,
-//! D7): `test "name" { … }` blocks in any file of a package, compiled only by
+//! **`nikaia test`** ([ADR-264](../../../docs/specification/adr/adr-264.md) D1,
+//! D12): `test "name" { … }` blocks in any file of a package, compiled only by
 //! this command, each run in a process of its own - at the project's setting,
 //! or at both with `--both-settings`. Driven through the real binary, because
 //! the command, the build and the runner are the thing under test.
@@ -161,7 +161,7 @@ fn a_test_is_checked_by_the_test_build_and_by_nothing_else() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **An output test is three files and no code** (D8): `tests/NAME.stdout`,
+/// **An output test is three files and no code** (D13): `tests/NAME.stdout`,
 /// and beside it what the program is given. The program is built as every
 /// other build builds it, run with the arguments and the input, and passes
 /// where it ends successfully and prints exactly the file. A `test` block in

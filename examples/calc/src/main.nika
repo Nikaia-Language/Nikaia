@@ -7,7 +7,7 @@
 // tuple pattern in `match`, and `catch` on a parse that fails.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-245 D8) and runs the `test` blocks
+// what it prints against `tests/` (ADR-264 D13) and runs the `test` blocks
 // at the end of this file.
 
 use std::cli
@@ -91,7 +91,7 @@ fn main() throws {
     println(f"{source} = {value}")
 }
 
-// **What the grammar promises, as tests** (ADR-245 D1): `nikaia test` runs
+// **What the grammar promises, as tests** (ADR-264 D1): `nikaia test` runs
 // each in a process of its own, and `nikaia build` leaves them out.
 
 test "multiplication binds tighter than addition" {

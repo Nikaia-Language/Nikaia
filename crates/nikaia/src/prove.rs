@@ -1,21 +1,22 @@
 // crates/nikaia/src/prove.rs
 //
 // Every `assert` outside a `test` block, proved while the program is built
-// ([ADR-256](../../docs/specification/adr/adr-256.md)).
+// ([ADR-264](../../docs/specification/adr/adr-264.md)).
 //
-// **What it reads** (D5): comparisons of whole numbers built from names,
+// **What it reads** (D9): comparisons of whole numbers built from names,
 // literals, `+`, `-` and a `*` by a constant, joined with `&&`, `||` and `!`.
 // A name is a variable of the proof only where it is an immutable binding of a
 // whole-number type; anything else makes the claim one this prover cannot
-// read, and that is a refusal, never a guess.
+// read, and that is never a guess. Today it is a refusal: D4's check at run
+// time for a claim that is not proved is not built yet.
 //
-// **What it knows** (D5): the branch an `if` is in, what a branch that always
+// **What it knows** (D9): the branch an `if` is in, what a branch that always
 // leaves has ruled out — `return … if c` is exactly that
 // ([ADR-255](../../docs/specification/adr/adr-255.md)) — a `for` over a
-// range, a `let`'s value, the function's preconditions (D3) and every claim
+// range, a `let`'s value, the function's preconditions (D5) and every claim
 // proved before.
 //
-// **How** (D6): a claim is proved when every case of its negation, joined with
+// **How** (D10): a claim is proved when every case of its negation, joined with
 // the facts, has no integer solution. Fourier-Motzkin elimination over the
 // rationals decides that from one side: where it finds a contradiction there is
 // none over the rationals, so none over the integers; each derived bound is
@@ -36,16 +37,17 @@ use crate::check::{Finding, Severity};
 use crate::contracts::{Ledger, Provenance};
 use crate::parser::Parsed;
 
-/// How the compiler holds one `assert` (ADR-256 D1-D3).
+/// How the compiler holds one `assert` (ADR-264 D4-D5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Held {
-    /// In a `test` block: the test's verdict, checked when it runs (D2).
+    /// In a `test` block: the test's verdict, checked when it runs (D11).
     ByTheTest,
     /// Proved from what precedes it; no check is emitted.
     Proved,
-    /// The precondition of the named function: its callers prove it (D3).
+    /// The precondition of the named function: its callers prove it (D5).
     Precondition(String),
-    /// Neither; the program is refused (`NK1202`).
+    /// Neither; the program is refused (`NK1202`). D4 makes this a check at
+    /// run time, and keeps the refusal only for D6; not built yet.
     Refused,
 }
 
@@ -69,7 +71,7 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
         out: Proved::default(),
         in_test: false,
     };
-    // Pass 1: which parameter claims are preconditions (D3). A function's own
+    // Pass 1: which parameter claims are preconditions (D5). A function's own
     // preconditions depend only on its own body.
     prover.every_body();
     let preconditions = std::mem::take(&mut prover.preconditions);
@@ -112,7 +114,7 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
 }
 
 /// A function's precondition: the claims its callers prove about its
-/// parameters (D3).
+/// parameters (D5).
 #[derive(Debug, Clone)]
 struct Precondition {
     claims: Vec<Expr>,
@@ -232,7 +234,7 @@ impl<'a> Prover<'a> {
         };
         let own = name.map(|n| self.parsed.text(n).to_string());
         // A `test` block `nikaia test` has already turned into a function is
-        // still a test (D2).
+        // still a test (D11).
         let was_a_test = own
             .as_deref()
             .is_some_and(crate::modules::is_a_test_function);
@@ -509,7 +511,7 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// An `assert` (D1-D4).
+    /// An `assert` (D4-D6, D11).
     fn an_assert(&mut self, cond: &Expr, span: Span, scope: &mut Scope, at: &Where) {
         let key = (span.at(), crate::check::argument_shape(cond));
         if self.in_test {
@@ -527,7 +529,7 @@ impl<'a> Prover<'a> {
         }
 
         // **A claim about parameters the body cannot prove is its callers'**
-        // (D3), where it can be: at the top of a free function, naming only
+        // (D5), where it can be: at the top of a free function, naming only
         // parameters.
         let names = names_in(self.parsed, cond);
         let only_params = !names.is_empty() && names.iter().all(|n| at.params.contains(n));
@@ -612,7 +614,7 @@ impl<'a> Prover<'a> {
     }
 
     /// Walk an expression for what it calls: a call to a function with a
-    /// precondition proves it here (D3), a function with one is not handed on
+    /// precondition proves it here (D5), a function with one is not handed on
     /// as a value, and a nested block is walked with what it may know.
     fn expr(&mut self, expr: &Expr, span: Span, scope: &Scope, at: &Where) {
         let parsed = self.parsed;
@@ -705,7 +707,7 @@ impl<'a> Prover<'a> {
         }
     }
 
-    /// A call to a function with a precondition (D3).
+    /// A call to a function with a precondition (D5).
     fn a_call(
         &mut self,
         callee: &str,
@@ -1099,9 +1101,9 @@ fn negated(op: BinaryOp) -> BinaryOp {
     }
 }
 
-/// How many cases a proof may split into before it gives up (D6).
+/// How many cases a proof may split into before it gives up (D10).
 const CASES: usize = 256;
-/// How many bounds an elimination may hold before it gives up (D6).
+/// How many bounds an elimination may hold before it gives up (D10).
 const BOUNDS: usize = 4096;
 
 /// Whether `facts` rule out `negation`: every case of the two together is

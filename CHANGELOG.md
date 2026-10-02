@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.348] — 2026-10-02
+
+**An `assert` is a contract: proved where the compiler can, checked where it
+cannot** (ADR-264). The two records on `test` and `assert` are withdrawn and
+replaced by one. The first made an `assert` a claim the compiler proves,
+refutes or checks at run time; the second took the run-time row away outside
+a test, so a claim the prover could not read refused the program. With a
+prover that reads linear whole-number arithmetic and nothing else, that kept
+every invariant about fields, matches, lists and calls unwritable - including
+the ones the compiler's own Rust states with `unreachable!`, which self-hosting
+has to carry into Nikaia as something. ADR-264 keeps everything else of both:
+`test` blocks, `nikaia test`, output tests, the pure condition, preconditions,
+the refusal of a claim about data from outside the program (a guard's job),
+and the prover. What changes is D4: a claim that is not proved is checked
+where it is reached, and stops the program when false; a proof only removes
+the check. `--asserts` (D7) is how a reader finds the claims still checked.
+
+- **Not built yet**: D4's check for an unproved claim and D5's at a call -
+  such a claim is still refused (`NK1202`-`NK1204`) -, D7's reasons and
+  count, and D8's refutation. Part III 14.2, the index and the code's
+  citations say so.
+
 ## [0.0.347] — 2026-10-02
 
 **A parse error's reading is Nikaia, the text half** (#125, ADR-250). What

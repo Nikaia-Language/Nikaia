@@ -18,7 +18,7 @@
 // keys that are views into a string rather than copies, and `?.` with `??`.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-245 D8).
+// what it prints against `tests/` (ADR-264 D13).
 
 use std::io
 use std::cli

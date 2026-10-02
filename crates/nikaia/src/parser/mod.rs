@@ -1487,7 +1487,7 @@ grammar! {
           | d:doc_here t:test_item -> { Spanned::documented(t, Span::from(_span), d) }
 
         // **`test "name" { … }`**
-        // ([ADR-245](../../../../docs/specification/adr/adr-245.md) D1): where a
+        // ([ADR-264](../../../../docs/specification/adr/adr-264.md) D1): where a
         // `fn` may stand, seeing what the package sees. Compiled only by
         // `nikaia test` - `modules` leaves it out of every other build.
         rule test_item -> Item =
@@ -4003,7 +4003,7 @@ grammar! {
           // `tests/` or in the three pages writes it as a name.
           | KW_SELECT -> { 0 }
           // **`test`, with its construct**
-          // ([ADR-245](../../../../docs/specification/adr/adr-245.md) D1).
+          // ([ADR-264](../../../../docs/specification/adr/adr-264.md) D1).
           // Measured when the record was written: no name in the tree's
           // `.nika` files is `test`.
           | KW_TEST -> { 0 }

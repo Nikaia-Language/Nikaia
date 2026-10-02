@@ -66,7 +66,7 @@ fn no_program_in_the_repository_has_a_type_error() {
         let mut paths: Vec<PathBuf> = nika(&dir);
         assert!(!paths.is_empty(), "nothing to check in {}", dir.display());
         // **An example that is a package of one file** is checked as one
-        // (ADR-245 D8 moved eight of them into packages). A package of several
+        // (ADR-264 D13 moved eight of them into packages). A package of several
         // is checked with its siblings by the test that builds it; alone, one
         // of its files names types another declares.
         for entry in std::fs::read_dir(&dir).expect("read the directory") {
@@ -1612,7 +1612,7 @@ fn a_word_this_language_does_not_know_is_refused() {
     assert_eq!(code, "NK1117");
     assert!(message.contains("_000"), "{message}");
     // **`assert` left this list with its construct**
-    // ([ADR-245](../../../docs/specification/adr/adr-245.md) D2): it is a
+    // ([ADR-264](../../../docs/specification/adr/adr-264.md) D2): it is a
     // function now, and the statement form Part III 14.1 used to write is the
     // name alone - which is told how the call is written.
     let (code, message) = one("fn main() {\n    let c = true\n    assert c\n}");

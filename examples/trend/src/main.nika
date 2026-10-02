@@ -13,7 +13,7 @@
 // from the back with `rev`, and a range used as a value.
 //
 // A package: `nikaia run` in this directory runs it, and `nikaia test` checks
-// what it prints against `tests/` (ADR-245 D8).
+// what it prints against `tests/` (ADR-264 D13).
 
 fn main() {
     let readings = [12, 14, 13, 17, 19, 18, 22, 25, 24, 28]

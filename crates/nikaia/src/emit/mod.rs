@@ -1550,7 +1550,7 @@ struct Emitter<'p> {
     wrapped: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// `check::Checked::compared_views` (0.0.238).
     compared_views: std::collections::BTreeSet<(usize, String)>,
-    /// `check::Checked::claims` ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
+    /// `check::Checked::claims` ([ADR-264](../../docs/specification/adr/adr-264.md) D2).
     claims: std::collections::BTreeMap<(usize, String), crate::check::Claim>,
     /// Which of the arguments `args` is writing go into a boxed part of a
     /// variant ([ADR-246](../../docs/specification/adr/adr-246.md) D3): set
@@ -8674,7 +8674,7 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        // **An `assert` is a claim checked here** (ADR-245 D2, D4): nothing
+        // **An `assert` is a claim checked here** (ADR-264 D2, D4): nothing
         // proves one yet, so each is a test at run time, and the failure is
         // written with what only this compiler knew - the claim as written
         // and its operands by name. The condition changes nothing (D3), which
@@ -8687,7 +8687,7 @@ impl<'p> Emitter<'p> {
                 .get(&(flow.statement, crate::check::argument_shape(condition)))
         {
             // **A claim held before the program runs costs nothing when it
-            // does** ([ADR-256](../../docs/specification/adr/adr-256.md) D1,
+            // does** ([ADR-264](../../docs/specification/adr/adr-264.md) D4,
             // D3): only a test's `assert` is still a check.
             if matches!(
                 claim.held,

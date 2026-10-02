@@ -345,7 +345,7 @@ signature = "(path: ?, root: ref fs::Root, data: ?; append: bool = false, create
 # A false claim stops the program, as `panic` does, and says the claim as it
 # was written and the value of each operand of its comparison. The condition
 # may not pause, fail, touch anything or change a value, so that the compiler
-# can later prove it and leave the check out (ADR-245).
+# can later prove it and leave the check out (ADR-264).
 [fn."assert"]
 pub = true
 sync = true

@@ -5,7 +5,7 @@
 //! what the specification forgot. Only the first kind can be checked.
 //!
 //! **The examples check themselves**
-//! ([ADR-245](../../../docs/specification/adr/adr-245.md) D8,
+//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D13,
 //! [ADR-247](../../../docs/specification/adr/adr-247.md)): each is a package
 //! whose `tests/` says what it must print and write - `NAME.stdout`,
 //! `NAME.out/`, with `NAME.in/`, `.args` and `.stdin` as what it is given - and
@@ -93,7 +93,7 @@ fn no_example_is_neither_run_nor_declared() {
             assert!(
                 known,
                 "examples/{name}/ checks nothing: give it an output test \
-                 (`tests/NAME.stdout` or `tests/NAME.out/`, ADR-245 D8, ADR-247), \
+                 (`tests/NAME.stdout` or `tests/NAME.out/`, ADR-264 D13, ADR-247), \
                  or add the directory to DIRECTORIES_CHECKED_ELSEWHERE with the \
                  test that checks it"
             );
@@ -110,7 +110,7 @@ fn no_example_is_neither_run_nor_declared() {
         assert!(
             known,
             "examples/{name} is a loose file no test runs: make it a package with \
-             an output test (ADR-245 D8), or add it to SPECIFICATION_LEVEL with its \
+             an output test (ADR-264 D13), or add it to SPECIFICATION_LEVEL with its \
              gaps in examples/README.md"
         );
     }
@@ -119,7 +119,7 @@ fn no_example_is_neither_run_nor_declared() {
 }
 
 /// **An example that is a package with output tests checks itself**
-/// ([ADR-245](../../../docs/specification/adr/adr-245.md) D8): its expected
+/// ([ADR-264](../../../docs/specification/adr/adr-264.md) D13): its expected
 /// output is `tests/NAME.stdout` beside it, and whatever `test` blocks it
 /// writes are its own.
 fn checks_itself(dir: &Path) -> bool {
@@ -137,7 +137,7 @@ fn checks_itself(dir: &Path) -> bool {
 /// **Every example package passes `nikaia test`, at both settings** - which
 /// runs its output tests against the program and its `test` blocks against
 /// the test build, and fails an outcome that differs between the settings
-/// (ADR-245 D7). Run in a copy, because a project build writes `target/`
+/// (ADR-264 D12). Run in a copy, because a project build writes `target/`
 /// into the project, and the examples are the repository's.
 #[test]
 fn every_example_package_passes_its_own_tests() {

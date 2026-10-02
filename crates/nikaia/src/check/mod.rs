@@ -200,15 +200,16 @@ pub struct StoredCode {
     pub free: BTreeSet<String>,
 }
 
-/// **One `assert`** ([ADR-245](../../docs/specification/adr/adr-245.md) D2):
+/// **One `assert`** ([ADR-264](../../docs/specification/adr/adr-264.md) D2):
 /// what its failure says, which only the compiler knows - the claim as it was
 /// written, and the operands of its comparison by the names they were written
 /// with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Claim {
-    /// How the compiler holds it ([ADR-256](../../docs/specification/adr/adr-256.md)):
+    /// How the compiler holds it ([ADR-264](../../docs/specification/adr/adr-264.md)):
     /// only a test's claim is checked when it runs, and the emitter writes
-    /// nothing for any other.
+    /// nothing for any other - because D4's second row, a check for a claim
+    /// that is not proved, is not built yet, and such a claim is refused.
     pub held: Option<crate::prove::Held>,
     /// `assert(blank == 1; message: "…")`, rewritten from the tree.
     pub written: String,
@@ -849,9 +850,9 @@ pub struct Checked {
     /// view (`*c`).
     pub compared_views: BTreeSet<(usize, String)>,
     /// **Every `assert`, and what its failure shows**
-    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), by statement
+    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D2), by statement
     /// and the shape of its condition, and how each is held
-    /// ([ADR-256](../../docs/specification/adr/adr-256.md)).
+    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D4).
     pub claims: BTreeMap<(usize, String), Claim>,
     /// The call arguments the compiler writes a **`&mut`** for
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D3), keyed as
@@ -1351,8 +1352,9 @@ fn walked<'a>(
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
-    // **Every `assert` outside a test is proved, or the program is refused**
-    // ([ADR-256](../../docs/specification/adr/adr-256.md)). After the walk,
+    // **Every `assert` outside a test is proved where it can be**
+    // ([ADR-264](../../docs/specification/adr/adr-264.md) D4); until D4's
+    // check for an unproved claim is built, one is refused. After the walk,
     // because the checker is what decided which calls are the prelude's.
     let keys: BTreeSet<(usize, String)> = checker.checked.claims.keys().cloned().collect();
     let proved = crate::prove::prove(parsed, library, &keys);
@@ -5687,7 +5689,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether a call is to the **prelude's `assert`**
-    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D2), and not to a
+    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D2), and not to a
     /// name the program declared itself.
     fn the_prelude_assert(&self, func: &Expr) -> bool {
         matches!(func, Expr::Variable(name) if self.parsed.text(*name) == ASSERT)
@@ -5695,7 +5697,7 @@ impl<'a> Checker<'a> {
             && !self.own.functions.contains_key(ASSERT)
     }
 
-    /// **`assert(cond; message: …)`** ([ADR-245](../../docs/specification/adr/adr-245.md)
+    /// **`assert(cond; message: …)`** ([ADR-264](../../docs/specification/adr/adr-264.md)
     /// D2, D3): one `bool`, one option, and a condition that changes nothing.
     ///
     /// Typed here and not through [`Checker::call`], because what the
@@ -5871,7 +5873,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The free calls and the forms in a claim that are not a read
-    /// ([ADR-245](../../docs/specification/adr/adr-245.md) D3). Methods are
+    /// ([ADR-264](../../docs/specification/adr/adr-264.md) D3). Methods are
     /// the frame's; this is what the tree says.
     fn a_claim_reaches(&self, condition: &Expr, not_pure: &mut Vec<String>) {
         let mut found: Vec<String> = Vec::new();
@@ -9668,7 +9670,7 @@ impl<'a> Checker<'a> {
                         self.a_sequence_is_taken(name, &ty, span);
                         ty
                     }
-                    // **`assert` is called** (ADR-245 D2): the statement
+                    // **`assert` is called** (ADR-264 D2): the statement
                     // form Part III 14.1 used to write, `assert c`, is the
                     // name alone and then `c`, and the name is only ever the
                     // head of a call.
@@ -22581,10 +22583,10 @@ fn unviewed(ty: &Ty) -> Ty {
     }
 }
 
-/// **`--asserts`** ([ADR-245](../../docs/specification/adr/adr-245.md) D6):
+/// **`--asserts`** ([ADR-264](../../docs/specification/adr/adr-264.md) D7):
 /// every `assert` of one file, by line, and how the compiler holds it: proved,
-/// a precondition its callers prove, a test's check, or refused
-/// ([ADR-256](../../docs/specification/adr/adr-256.md)).
+/// a precondition its callers prove, a test's check, or refused (until
+/// D4's run-time check is built).
 pub fn claims_report(
     parsed: &Parsed,
     source: &str,
@@ -22640,11 +22642,11 @@ fn is_a_literal_other_than(expr: &Expr, kind: &str) -> bool {
     }
 }
 
-/// The prelude's claim ([ADR-245](../../docs/specification/adr/adr-245.md) D2).
+/// The prelude's claim ([ADR-264](../../docs/specification/adr/adr-264.md) D2).
 pub const ASSERT: &str = "assert";
 
 /// Why a call cannot stand in an `assert`'s condition, or nothing where it can
-/// ([ADR-245](../../docs/specification/adr/adr-245.md) D3): it may pause, may
+/// ([ADR-264](../../docs/specification/adr/adr-264.md) D3): it may pause, may
 /// fail, touches something or changes a value. A `touches` nobody wrote is not
 /// an answer, and counts as touching.
 fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
@@ -22668,7 +22670,7 @@ fn not_pure_because(contract: &FnContract) -> Option<&'static str> {
 
 /// **An expression as it was written**, near enough, rewritten from the tree:
 /// the parser keeps no text, and an `assert`'s failure names its condition
-/// ([ADR-245](../../docs/specification/adr/adr-245.md) D2). What this does not
+/// ([ADR-264](../../docs/specification/adr/adr-264.md) D2). What this does not
 /// spell out it writes as `…`, which a reader recognises and nothing parses.
 /// A pattern's path as the source wrote it, with `(…)` or `{ … }` where it
 /// takes a variant apart.

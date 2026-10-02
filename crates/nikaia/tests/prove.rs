@@ -1,6 +1,6 @@
 //! **Every `assert` outside a test is proved while the program is built**
-//! ([ADR-256](../../../docs/specification/adr/adr-256.md)), or the program is
-//! refused. A proved claim leaves nothing behind in the emitted Rust.
+//! ([ADR-264](../../../docs/specification/adr/adr-264.md) D4), or - until
+//! D4's check at run time is built - the program is refused. A proved claim leaves nothing behind in the emitted Rust.
 
 mod common;
 
@@ -59,7 +59,7 @@ fn ran(purpose: &str, source: &str) -> (String, String) {
     (String::from_utf8_lossy(&out.stdout).to_string(), rust)
 }
 
-/// **D1, D5: a guard proves what follows it, and the proof costs nothing.**
+/// **D4, D9: a guard proves what follows it, and the proof costs nothing.**
 /// `return 250 if speed > 250` leaves `speed <= 250` (ADR-255).
 #[test]
 fn a_guard_proves_the_claim_after_it_and_no_check_is_emitted() {
@@ -79,7 +79,7 @@ fn a_guard_proves_the_claim_after_it_and_no_check_is_emitted() {
     assert!(!rust.contains("assertion_failed"), "{rust}");
 }
 
-/// **D5: the facts the prover reads** - an `if`'s branch, a `let`'s value, a
+/// **D9: the facts the prover reads** - an `if`'s branch, a `let`'s value, a
 /// `for` over a range, `!=` ruled out by a guard, and integer tightening
 /// (`x >= 5` proves `x > 4`).
 #[test]
@@ -108,7 +108,8 @@ fn branches_lets_ranges_and_guards_are_facts() {
     assert!(codes(source).is_empty(), "{:#?}", findings(source));
 }
 
-/// **D1: a claim nothing shows is refused**, and the message says what to do.
+/// **A claim nothing shows is refused**, and the message says what to do -
+/// until ADR-264 D4's check at run time is built.
 #[test]
 fn a_claim_nothing_shows_is_refused() {
     let refusal = the_one(
@@ -139,7 +140,8 @@ fn a_claim_nothing_shows_is_refused() {
     );
 }
 
-/// **D5: a claim the prover cannot read is refused, not guessed.**
+/// **D9: a claim the prover cannot read is not guessed** - it is refused,
+/// until ADR-264 D4's check at run time is built.
 #[test]
 fn a_claim_outside_what_the_prover_reads_is_refused() {
     let refusal = the_one(
@@ -155,7 +157,7 @@ fn a_claim_outside_what_the_prover_reads_is_refused() {
     );
 }
 
-/// **D3: a claim about parameters is the caller's to prove**: a literal
+/// **D5: a claim about parameters is the caller's to prove**: a literal
 /// argument proves it, a guard proves it, and a call that shows nothing is
 /// `NK1203` - at the call.
 #[test]
@@ -200,8 +202,9 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     );
 }
 
-/// **D3: where a precondition cannot be carried yet**, the claim is refused
+/// **D5: where a precondition cannot be carried yet**, the claim is refused
 /// with the reason: a `pub fn`, a method, and a function handed on as a value.
+/// D5 checks it in the body instead; not built yet.
 #[test]
 fn a_precondition_is_refused_where_it_cannot_be_carried() {
     let public = the_one(
@@ -241,7 +244,7 @@ fn a_precondition_is_refused_where_it_cannot_be_carried() {
     );
 }
 
-/// **D4: a claim about data from outside the program** is refused with where
+/// **D6: a claim about data from outside the program** is refused with where
 /// it came from, and proved once a guard has checked it.
 #[test]
 fn data_from_outside_is_checked_by_a_guard_and_not_asserted() {
@@ -281,7 +284,7 @@ fn data_from_outside_is_checked_by_a_guard_and_not_asserted() {
     );
 }
 
-/// **D2: a test's `assert` is the test's verdict**, checked when it runs and
+/// **D11: a test's `assert` is the test's verdict**, checked when it runs and
 /// never refused for want of a proof.
 #[test]
 fn a_tests_claim_is_not_the_provers() {
@@ -302,7 +305,7 @@ fn a_tests_claim_is_not_the_provers() {
     );
 }
 
-/// **A list's length is a number the prover reads** (ADR-256 D5, 0.0.273):
+/// **A list's length is a number the prover reads** (ADR-264 D9, 0.0.273):
 /// `xs.len()` of a binding that does not change, never negative, known for a
 /// literal, and carried into a callee's precondition.
 #[test]
