@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.368] — 2026-10-02
+
+**The solver splits where a branch needs it** (ADR-265 D4, D5). It took a
+query's disjunctions apart up front, every combination a case: nine `!=` -
+nine guards `return … if x == k` - were 512 cases, past the budget of 256, and
+the claim stayed checked at run time.
+
+- **Splitting on demand**: a branch is refuted first and split only where it
+  is consistent, on the open disjunction with the fewest alternatives. A
+  refutation that did not need the alternative it was given answers for the
+  whole disjunction, and the search jumps back to the last split it relied on.
+- **What every alternative says**: a bound each alternative of a disjunction
+  holds on one form, with the weakest constant, holds without a split.
+  `z' = z + 1 || z' = z + 2` gives `z' >= z + 1`; a path of twenty such steps
+  is one refutation instead of 2^20.
+- **The certificate is the split tree** (`Certificate::Refuted` or
+  `Certificate::Split { disjunction, cases }`), over atoms and disjunctions
+  numbered as the query writes them; the checker numbers them itself and
+  rejects a split that leaves an alternative out (`Rejected::Cases`) or names
+  one the branch has not open (`Rejected::NotOpen`). The budget counts the
+  branches looked at, each one elimination: 1024.
+- **Alethe follows**: the export searches depth first in the same way, and
+  proves what every alternative says by one `la_generic` lemma per
+  alternative and a resolution.
+- Fourier-Motzkin keeps one bound per form, the strongest, and sorts without
+  formatting: about seven times faster on the measured queries.
+- **Measured**: of 29 stress queries (guards, unrelated disjunctions, `+1 or
+  +2` paths, parity), 9 were answered before and 28 now; the one left needs
+  4096 branches. The 353 queries of the prover's tests give the same answers.
+  Every certificate is checked, every Alethe proof - 201 - is `valid` under
+  Carcara, and z3 agrees with every answer.
+
 ## [0.0.367] — 2026-10-02
 
 **The solver's numbers are `i64`** (ADR-265 D2, D8). `nikaia-logic` held its

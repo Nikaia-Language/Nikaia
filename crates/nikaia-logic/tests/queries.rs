@@ -2,8 +2,8 @@
 //! terms, and the reference solver's answer. Nothing here knows Nikaia.
 
 use nikaia_logic::{
-    Answer, Arena, Budget, Certificate, FourierMotzkin, Model, Query, Rejected, Solver, Step,
-    TermId, Unknown, smtlib, verify, verify_model,
+    Answer, Arena, Budget, Certificate, FourierMotzkin, Model, Query, Refutation, Rejected, Solver,
+    Step, TermId, Unknown, smtlib, verify, verify_model,
 };
 
 /// The solver's answer, with a *proved* one's certificate checked: every proof
@@ -86,21 +86,25 @@ fn a_product_of_variables_is_outside_the_theory() {
     );
 }
 
-/// **The budget is counted in cases, and the answer depends on it alone**
-/// (D4): a goal that splits into more cases than allowed is unknown, the
-/// same at every run.
+/// **The budget bounds the work** (D4): a goal whose proof needs more
+/// branches than allowed is unknown, the same at every run. Ten numbers, each
+/// `-1` or `1`, never add up to `1` - but only every one of the 1024 ways of
+/// choosing them shows it.
 #[test]
 fn the_budget_bounds_the_work() {
     let mut a = Arena::new();
-    let zero = a.int(0);
+    let (zero, one, minus) = (a.int(0), a.int(1), a.int(-1));
     let mut facts = Vec::new();
+    let mut sum = zero;
     for k in 0..10 {
         let x = a.var(&format!("x{k}"));
-        facts.push(a.ne(x, zero));
+        let (low, high, nonzero) = (a.ge(x, minus), a.le(x, one), a.ne(x, zero));
+        facts.push(a.and(vec![low, high, nonzero]));
+        sum = a.add(sum, x);
     }
-    let goal = a.bool(true);
+    let goal = a.ne(sum, one);
     let tight = Budget {
-        cases: 16,
+        cases: 64,
         ..Budget::default()
     };
     let query = Query {
@@ -116,6 +120,13 @@ fn the_budget_bounds_the_work() {
         FourierMotzkin.check(&query, &tight),
         FourierMotzkin.check(&query, &tight)
     );
+}
+
+fn steps(certificate: &mut Certificate) -> &mut Vec<Step> {
+    match certificate {
+        Certificate::Refuted(refutation) => &mut refutation.steps,
+        Certificate::Split { .. } => panic!("no split was expected"),
+    }
 }
 
 /// **The checker trusts nothing it is handed** (ADR-265 D5): a certificate
@@ -139,15 +150,15 @@ fn a_forged_certificate_is_rejected() {
     assert_eq!(verify(&query, &certificate), Ok(()));
 
     // No refutation at all.
-    let empty = Certificate { cases: Vec::new() };
+    let empty = Certificate::Refuted(Refutation { steps: Vec::new() });
     assert!(matches!(
         verify(&query, &empty),
-        Err(Rejected::TooFewCases { found: 0 })
+        Err(Rejected::NotAContradiction { case: 0 })
     ));
 
-    // A bound the case does not have.
+    // An atom the branch does not hold.
     let mut missing = certificate.clone();
-    missing.cases[0].steps[0] = Step::Hypothesis(99);
+    steps(&mut missing)[0] = Step::Hypothesis(99);
     assert!(matches!(
         verify(&query, &missing),
         Err(Rejected::Reference { .. })
@@ -155,7 +166,7 @@ fn a_forged_certificate_is_rejected() {
 
     // A multiplier that flips a bound.
     let mut flipped = certificate.clone();
-    for step in &mut flipped.cases[0].steps {
+    for step in steps(&mut flipped) {
         if let Step::Combine { by_left, .. } = step {
             *by_left = -*by_left;
         }
@@ -167,13 +178,21 @@ fn a_forged_certificate_is_rejected() {
 
     // Only the hypotheses: no contradiction is derived.
     let mut short = certificate.clone();
-    short.cases[0]
-        .steps
-        .retain(|s| matches!(s, Step::Hypothesis(_)));
+    steps(&mut short).retain(|s| matches!(s, Step::Hypothesis(_)));
     assert!(matches!(
         verify(&query, &short),
         Err(Rejected::NotAContradiction { .. })
     ));
+
+    // A split of a disjunction the query does not have.
+    let split = Certificate::Split {
+        disjunction: 0,
+        cases: vec![certificate.clone(), certificate.clone()],
+    };
+    assert_eq!(
+        verify(&query, &split),
+        Err(Rejected::NotOpen { disjunction: 0 })
+    );
 
     // A true certificate for another query does not carry over.
     let too_much = a.gt(x, five);
@@ -398,4 +417,147 @@ fn a_step_that_leaves_i64_is_unknown_and_never_wrong() {
     let answer = check(&a, &[first, second], falsum);
     assert!(!proved(&answer), "{answer:?}");
     assert_eq!(answer, Answer::Unknown(Unknown::Overflow), "{answer:?}");
+}
+
+/// How many refutations a certificate holds, and whether it splits at all.
+fn leaves(certificate: &Certificate) -> usize {
+    match certificate {
+        Certificate::Refuted(_) => 1,
+        Certificate::Split { cases, .. } => cases.iter().map(leaves).sum(),
+    }
+}
+
+fn certificate(answer: Answer) -> Certificate {
+    match answer {
+        Answer::Proved { certificate } => certificate,
+        other => panic!("not proved: {other:?}"),
+    }
+}
+
+/// **A disjunction is split where a branch needs it** (D4): thirty-two
+/// guards `return … if x == k` leave `x != 0`, …, `x != 31`, which with
+/// `0 <= x <= 32` prove `x == 32`. Taken apart up front that is 2^33 cases;
+/// split on demand, each split has one alternative refuted at once.
+#[test]
+fn guards_are_split_on_demand() {
+    let mut a = Arena::new();
+    let x = a.var("x");
+    let (zero, top) = (a.int(0), a.int(32));
+    let mut facts = vec![a.ge(x, zero), a.le(x, top)];
+    for k in 0..32 {
+        let k = a.int(k);
+        facts.push(a.ne(x, k));
+    }
+    let goal = a.eq(x, top);
+    let proof = certificate(check(&a, &facts, goal));
+    assert!(leaves(&proof) <= 2 * 33 + 2, "{}", leaves(&proof));
+    // The Alethe proof is searched the same way.
+    let query = Query {
+        arena: &a,
+        facts: &facts,
+        goal,
+    };
+    alethe_checked(&query);
+
+    // Without the guard on 31, `x` may be 31: the model says so.
+    let mut fewer = facts.clone();
+    fewer.remove(2 + 31);
+    assert_eq!(check(&a, &fewer, goal), refuted(&[("x", 31)]));
+}
+
+/// **A split that was not needed is dropped** (D4): `y != 0` for twenty
+/// names says nothing about `x`, and the proof of `x > 3` from `x > 5` does
+/// not split one of them.
+#[test]
+fn a_disjunction_the_proof_does_not_need_is_not_split() {
+    let mut a = Arena::new();
+    let (x, zero, three, five) = (a.var("x"), a.int(0), a.int(3), a.int(5));
+    let mut facts = Vec::new();
+    for k in 0..20 {
+        let y = a.var(&format!("y{k}"));
+        facts.push(a.ne(y, zero));
+    }
+    facts.push(a.gt(x, five));
+    let goal = a.gt(x, three);
+    let proof = certificate(check(&a, &facts, goal));
+    assert!(matches!(proof, Certificate::Refuted(_)), "{proof:?}");
+}
+
+/// **What every alternative says holds without a split**: a path of twenty
+/// steps, each `+1` or `+2`, ends at least twenty past where it began. Each
+/// step's two alternatives agree on `z' >= z + 1`, and that is the proof - one
+/// refutation, where the cases would be 2^20.
+#[test]
+fn what_every_alternative_says_needs_no_split() {
+    let mut a = Arena::new();
+    let (one, two) = (a.int(1), a.int(2));
+    let mut z = a.var("z0");
+    let zero = a.int(0);
+    let mut facts = vec![a.eq(z, zero)];
+    for k in 1..=20 {
+        let next = a.var(&format!("z{k}"));
+        let (by_one, by_two) = (a.add(z, one), a.add(z, two));
+        let (step_one, step_two) = (a.eq(next, by_one), a.eq(next, by_two));
+        facts.push(a.or(vec![step_one, step_two]));
+        z = next;
+    }
+    let twenty = a.int(20);
+    let goal = a.ge(z, twenty);
+    let proof = certificate(check(&a, &facts, goal));
+    assert_eq!(leaves(&proof), 1, "{proof:?}");
+    // In Alethe each step's agreement is a lemma per alternative, resolved.
+    let query = Query {
+        arena: &a,
+        facts: &facts,
+        goal,
+    };
+    alethe_checked(&query);
+
+    // Forty is not reached on every path, and the model takes `+1` each time.
+    let forty = a.int(40);
+    let far = a.ge(z, forty);
+    assert!(matches!(check(&a, &facts, far), Answer::Refuted { .. }));
+}
+
+/// **A split must answer every alternative** (D5): a certificate that drops
+/// one is rejected, and so is one that splits a disjunction twice.
+#[test]
+fn a_split_that_leaves_an_alternative_out_is_rejected() {
+    let mut a = Arena::new();
+    let (x, zero, one, minus) = (a.var("x"), a.int(0), a.int(1), a.int(-1));
+    let facts = [a.ne(x, zero), a.ge(x, minus), a.le(x, one)];
+    let (low, high) = (a.eq(x, minus), a.eq(x, one));
+    let goal = a.or(vec![low, high]);
+    let query = Query {
+        arena: &a,
+        facts: &facts,
+        goal,
+    };
+    let proof = certificate(check(&a, &facts, goal));
+    let Certificate::Split { disjunction, cases } = &proof else {
+        panic!("`x != 0` is split: {proof:?}");
+    };
+    assert_eq!(verify(&query, &proof), Ok(()));
+
+    let short = Certificate::Split {
+        disjunction: *disjunction,
+        cases: cases[..1].to_vec(),
+    };
+    assert_eq!(
+        verify(&query, &short),
+        Err(Rejected::Cases {
+            expected: 2,
+            found: 1
+        })
+    );
+    let twice = Certificate::Split {
+        disjunction: *disjunction,
+        cases: vec![proof.clone(), proof.clone()],
+    };
+    assert_eq!(
+        verify(&query, &twice),
+        Err(Rejected::NotOpen {
+            disjunction: *disjunction
+        })
+    );
 }

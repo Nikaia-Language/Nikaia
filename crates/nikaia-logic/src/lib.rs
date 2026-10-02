@@ -11,11 +11,12 @@
 // * An **answer** depends on the query and a budget counted in units of work,
 //   never on time or on how many threads ran it (D4).
 // * The first solver is the **reference**: Fourier-Motzkin elimination with
-//   integer tightening, over linear integer arithmetic.
+//   integer tightening, over linear integer arithmetic, splitting a
+//   disjunction only where a branch needs it.
 // * A *proved* answer carries a **certificate** that [`verify`] checks without
 //   trusting the solver that made it (D5).
 // * A query can be written as **SMT-LIB 2**, and read back from it, so that
-//   another solver can be asked the same question, and a one-case proof as
+//   another solver can be asked the same question, and a proof as
 //   **Alethe**, so that another checker can check it (D6).
 
 pub mod alethe;
@@ -56,7 +57,7 @@ pub enum Unknown {
     OutsideTheTheory,
     /// A coefficient left the range the solver computes in.
     Overflow,
-    /// The query split into more cases than the budget allows.
+    /// The search looked at more branches than the budget allows.
     TooManyCases,
     /// An elimination held more bounds than the budget allows.
     TooManyBounds,
@@ -69,7 +70,7 @@ pub enum Unknown {
 /// (ADR-265 D4): never seconds, so that an answer is the same on any machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
-    /// How many cases the query may split into.
+    /// How many branches the search may look at, each one elimination.
     pub cases: usize,
     /// How many bounds one elimination may hold.
     pub bounds: usize,
@@ -78,7 +79,7 @@ pub struct Budget {
 impl Default for Budget {
     fn default() -> Budget {
         Budget {
-            cases: 256,
+            cases: 1024,
             bounds: 4096,
         }
     }
@@ -91,18 +92,23 @@ pub trait Solver {
 
 /// **Why a goal holds, in a form a small checker can follow** (ADR-265 D5).
 ///
-/// The facts and the goal's negation split into cases - every way the goal
-/// could be false - and each case gets a [`Refutation`]: a derivation of a
-/// bound `c <= 0` with `c > 0` from the case's own bounds. The cases are not
-/// in the certificate; [`verify`] computes them from the query, so a
-/// certificate cannot leave one out.
+/// The facts and the goal's negation are atoms `lin <= 0` and disjunctions,
+/// numbered in the order the query writes them. A certificate is a tree: a
+/// [`Refutation`] of the atoms a branch holds, or a split of one disjunction
+/// the branch has not split yet, with a certificate for each alternative.
+/// The atoms and disjunctions are not in the certificate; [`verify`] computes
+/// them from the query, so a split cannot leave an alternative out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Certificate {
-    pub cases: Vec<Refutation>,
+pub enum Certificate {
+    Refuted(Refutation),
+    Split {
+        disjunction: usize,
+        cases: Vec<Certificate>,
+    },
 }
 
-/// One case's contradiction: steps, each making a bound `lin <= 0` from the
-/// case's bounds or from earlier steps. The last step's bound has no
+/// One branch's contradiction: steps, each making a bound `lin <= 0` from the
+/// atoms the branch holds or from earlier steps. The last step's bound has no
 /// variables and a positive constant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refutation {
@@ -114,7 +120,7 @@ pub struct Refutation {
 /// by its coefficients' common factor with the constant rounded up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// The case's `n`th bound.
+    /// The query's `n`th atom, which the branch holds.
     Hypothesis(usize),
     /// An earlier step's bound tightened to the integers.
     Tighten(usize),
@@ -130,7 +136,7 @@ pub enum Step {
 /// Values that make a query's facts true and its goal false (ADR-265 D3).
 /// [`verify_model`] checks one by evaluating the query, so it need not be
 /// trusted either. Among the models a solver could give it gives the same one
-/// on every run: the first case that has one, and in it each variable as near
+/// on every run: the first branch of the search that has one, and in it each variable as near
 /// to zero as its bounds allow (D4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
