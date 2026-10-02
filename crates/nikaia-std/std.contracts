@@ -2222,6 +2222,16 @@ sync = true
 touches = []
 signature = "(self: ref String, sep: ?) -> Seq[ref(self) String] sync ends"
 
+# **At most `n` pieces** (0.0.358). Nothing described it, so a function that
+# split a name once was taken to pause and lowered `async` (found moving
+# `NK2202`'s message into Nikaia). The last piece is the rest of the text,
+# separators and all; each piece is a view into it.
+[fn."str::splitn"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, n: i64, sep: ?) -> Seq[ref(self) String] sync ends"
+
 # The words of the text - the pieces between runs of white space - each a view
 # into it.
 [fn."str::split_whitespace"]
