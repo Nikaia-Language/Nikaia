@@ -2930,6 +2930,189 @@ fn choices(words: &[String]) -> String {
 }
 
 
+// --- names.nika ---
+
+pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
+    match expr {
+        Expr::Variable(name) => {
+            let name = *name;
+            out.insert(words.resolve(name).to_owned());
+        },
+        Expr::Path(segments) => { if (segments.len() as i64) > 0 { out.insert(words.resolve(*nikaia_std::index::get(&segments, 0)).to_owned()); } },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            names_in(func, words, out);
+            for arg in args.iter() { names_in(arg, words, out); }
+            for setting in config.iter() { names_in(&setting.value, words, out); }
+        },
+        Expr::MethodCall { receiver, method, args, config } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            names_in(receiver, words, out);
+            out.insert(words.resolve(method).to_owned());
+            for arg in args.iter() { names_in(arg, words, out); }
+            for setting in config.iter() { names_in(&setting.value, words, out); }
+        },
+        Expr::SafeMethod { receiver, method, args, config } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            names_in(receiver, words, out);
+            out.insert(words.resolve(method).to_owned());
+            for arg in args.iter() { names_in(arg, words, out); }
+            for setting in config.iter() { names_in(&setting.value, words, out); }
+        },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); names_in(base, words, out) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); names_in(base, words, out) },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            names_in(lhs, words, out);
+            names_in(rhs, words, out);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); names_in(expr, words, out) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); names_in(inner, words, out) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); names_in(expr, words, out) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            names_in(base, words, out);
+            names_in(index, words, out);
+        },
+        Expr::Tuple(parts) => { for part in parts.iter() { names_in(part, words, out); } },
+        Expr::ListLit { items, .. } => { for item in items.iter() { names_in(item, words, out); } },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            names_in(value, words, out);
+            names_in(fallback, words, out);
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            names_in(start, words, out);
+            names_in(end, words, out);
+        },
+        Expr::StructLit { name, fields } => {
+            let name = *name;
+            out.insert(words.resolve(name).to_owned());
+            for field in fields.iter() {
+                out.insert(words.resolve(field.name).to_owned());
+                maybe_names_in((field.value).as_ref(), words, out);
+            }
+        },
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            names_in(base, words, out);
+            for field in fields.iter() {
+                out.insert(words.resolve(field.name).to_owned());
+                maybe_names_in((field.value).as_ref(), words, out);
+            }
+        },
+        Expr::Block(block) => names_in_block(block, words, out),
+        Expr::Unsafe(block) => names_in_block(block, words, out),
+        Expr::Overlap(block) => names_in_block(block, words, out),
+        Expr::Closure { body, .. } => names_in_block(body, words, out),
+        Expr::Select(arms) => {
+            for arm in arms.iter() {
+                a_symbol(arm.binding, words, out);
+                names_in(&arm.value, words, out);
+                names_in_block(&arm.body, words, out);
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            names_in(cond, words, out);
+            names_in_block(then_branch, words, out);
+            maybe_names_in_block((else_branch).as_ref(), words, out);
+        },
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            names_in(value, words, out);
+            for arm in arms.iter() {
+                match &arm.pattern {
+                    MatchPattern::Literal(pattern) => names_in(pattern, words, out),
+                    _ => { },
+                }
+                names_in(&arm.body, words, out);
+            }
+        },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); names_in(body, words, out) },
+        Expr::Throw(thrown) => { let thrown = nikaia_std::boxed::open(thrown); names_in(thrown, words, out) },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); maybe_names_in((value).as_ref(), words, out) },
+        Expr::Break => { },
+        Expr::Continue => { },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            names_in(expr, words, out);
+            names_in_block(handler, words, out);
+        },
+        Expr::LitInterpolated { parts } => {
+            for part in parts.iter() {
+                match part {
+                    FPart::Hole { expr, .. } => names_in(expr, words, out),
+                    FPart::Text(_) => { },
+                }
+            }
+        },
+        Expr::Dsl { target, context, content } => {
+            let context = *context; let target = *target;
+            out.insert(words.resolve(target).to_owned());
+            a_symbol(context, words, out);
+            words_of(content, out);
+        },
+        Expr::Asm { bindings, code } => {
+            for binding in bindings.iter() { out.insert(words.resolve(binding.variable).to_owned()); }
+            words_of(code, out);
+        },
+        Expr::LitInt { .. } => { },
+        Expr::LitFloat(_) => { },
+        Expr::LitBool(_) => { },
+        Expr::LitNull => { },
+        Expr::LitChar(_) => { },
+        Expr::LitStr { .. } => { },
+    }
+}
+
+pub fn names_in_block(block: &Block, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
+    for stmt in block.stmts.iter() {
+        match &stmt.node {
+            Stmt::Let { value, .. } => names_in(value, words, out),
+            Stmt::Comptime { value, .. } => names_in(value, words, out),
+            Stmt::Expr(value) => names_in(value, words, out),
+            Stmt::Assign { target, value, .. } => {
+                names_in(target, words, out);
+                names_in(value, words, out);
+            },
+            Stmt::For { iter, body, .. } => {
+                names_in(iter, words, out);
+                names_in_block(body, words, out);
+            },
+            Stmt::While { cond, body } => {
+                names_in(cond, words, out);
+                names_in_block(body, words, out);
+            },
+            Stmt::Return(value) => maybe_names_in((value).as_ref(), words, out),
+            Stmt::Break => { },
+            Stmt::Continue => { },
+        }
+    }
+}
+
+fn maybe_names_in(expr: Option<&Expr>, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) { names_in(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, words, out); }
+
+fn maybe_names_in_block(block: Option<&Block>, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) { names_in_block(match block { Some(__nikaia_value) => __nikaia_value, None => return }, words, out); }
+
+fn a_symbol(name: Option<winnow_grammar::Symbol>, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
+    let named = match name { Some(__nikaia_value) => __nikaia_value, None => return };
+    out.insert(words.resolve(named).to_owned());
+}
+
+fn words_of(text: &str, out: &mut collections::BTreeSet<String>) {
+    let mut word: String = String::from("");
+    for c in text.chars() {
+        if c.is_alphanumeric() || c == '_' { word.push(c); } else {
+            if (word.len() as i64) > 0 { out.insert(word.to_owned()); }
+            word = String::from("");
+        }
+    }
+    if (word.len() as i64) > 0 { out.insert(word); }
+}
+
+
 // --- paths.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6072,6 +6255,10 @@ pub mod locks {
 pub mod manifest {
     #[allow(unused_imports)]
     pub use super::{Switch, known, build_key, targets, codegen_keys, codegen_table, codegen_key, DependencyShape, dependency, crate_name};
+}
+pub mod names {
+    #[allow(unused_imports)]
+    pub use super::{names_in, names_in_block};
 }
 pub mod paths {
     #[allow(unused_imports)]

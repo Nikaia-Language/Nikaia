@@ -1,0 +1,246 @@
+// crates/nikaia-std/src/tools/names.nika
+//
+// **Every name an expression mentions** (ADR-033 D9), for the compiler's
+// `contracts::order` - whether two statements may change places - and for
+// `contracts::send`, which asks the same of a task's body. Moved from Rust
+// (ADR-250, #125).
+//
+// **Deliberately over-approximate**: a field access `a.b` contributes `a`, a
+// method's name and a struct's field names are counted too, and a name that
+// happens to be a function's rather than a variable's is in the answer. Each
+// makes the answer "keep the order", which is the safe direction.
+//
+// **Total, with no `else` arm**, and that is load-bearing rather than tidy:
+// this is asked about a `catch` handler as well as about a value, and a
+// handler holds whatever anyone writes. A variant walked past silently would
+// be a dependency the analysis could not see, the one direction it may never
+// fail in (D9's first row). Where names cannot be found structurally - inside
+// a `dsl` body, inside `asm` - every word of the raw text counts as one.
+
+use std::collections
+
+/// Every name `expr` mentions, added to `out`.
+pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    match expr {
+        Expr::Variable(name) => {
+            out.insert(words.resolve(name).clone())
+        }
+        Expr::Path(segments) => {
+            if segments.len() > 0 {
+                out.insert(words.resolve(segments[0]).clone())
+            }
+        }
+        Expr::Call { func, args, config } => {
+            names_in(func, words, out)
+            for arg in args {
+                names_in(arg, words, out)
+            }
+            for setting in config {
+                names_in(setting.value, words, out)
+            }
+        }
+        // **A `?.m()` reads every name a `.m()` does.** Whether the call
+        // happens is a question about the receiver's value; which names it
+        // reads is the same question either way. What stands after a call's
+        // `;` reads names like anything else - a DSL's deferred parameters
+        // arrive there (ADR-007 D5).
+        Expr::MethodCall { receiver, method, args, config } => {
+            names_in(receiver, words, out)
+            out.insert(words.resolve(method).clone())
+            for arg in args {
+                names_in(arg, words, out)
+            }
+            for setting in config {
+                names_in(setting.value, words, out)
+            }
+        }
+        Expr::SafeMethod { receiver, method, args, config } => {
+            names_in(receiver, words, out)
+            out.insert(words.resolve(method).clone())
+            for arg in args {
+                names_in(arg, words, out)
+            }
+            for setting in config {
+                names_in(setting.value, words, out)
+            }
+        }
+        Expr::Field { base, .. } => names_in(base, words, out),
+        Expr::SafeField { base, .. } => names_in(base, words, out),
+        Expr::Binary { lhs, rhs, .. } => {
+            names_in(lhs, words, out)
+            names_in(rhs, words, out)
+        }
+        Expr::Unary { expr, .. } => names_in(expr, words, out),
+        Expr::Try(inner) => names_in(inner, words, out),
+        Expr::Cast { expr, .. } => names_in(expr, words, out),
+        Expr::Index { base, index } => {
+            names_in(base, words, out)
+            names_in(index, words, out)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                names_in(part, words, out)
+            }
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                names_in(item, words, out)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            names_in(value, words, out)
+            names_in(fallback, words, out)
+        }
+        Expr::Range { start, end, .. } => {
+            names_in(start, words, out)
+            names_in(end, words, out)
+        }
+        Expr::StructLit { name, fields } => {
+            out.insert(words.resolve(name).clone())
+            for field in fields {
+                out.insert(words.resolve(field.name).clone())
+                maybe_names_in(field.value, words, out)
+            }
+        }
+        // **`with` names its operand too** - the fields it does not write
+        // come from there, so a read of the copy is a read of the value it
+        // copied (ADR-118 D3).
+        Expr::With { base, fields, .. } => {
+            names_in(base, words, out)
+            for field in fields {
+                out.insert(words.resolve(field.name).clone())
+                maybe_names_in(field.value, words, out)
+            }
+        }
+        Expr::Block(block) => names_in_block(block, words, out),
+        Expr::Unsafe(block) => names_in_block(block, words, out),
+        Expr::Overlap(block) => names_in_block(block, words, out),
+        Expr::Closure { body, .. } => names_in_block(body, words, out),
+        // **Both halves of every arm**, and the binding too: a name an arm
+        // binds is read inside its body, and this counts what a value
+        // reaches rather than what it declares.
+        Expr::Select(arms) => {
+            for arm in arms {
+                a_symbol(arm.binding, words, out)
+                names_in(arm.value, words, out)
+                names_in_block(arm.body, words, out)
+            }
+        }
+        Expr::If { cond, then_branch, else_branch } => {
+            names_in(cond, words, out)
+            names_in_block(then_branch, words, out)
+            maybe_names_in_block(else_branch, words, out)
+        }
+        Expr::Match { value, arms } => {
+            names_in(value, words, out)
+            for arm in arms {
+                match arm.pattern {
+                    MatchPattern::Literal(pattern) => names_in(pattern, words, out),
+                    else => {}
+                }
+                names_in(arm.body, words, out)
+            }
+        }
+        Expr::Spawn { body, .. } => names_in(body, words, out),
+        Expr::Throw(thrown) => names_in(thrown, words, out),
+        Expr::Return(value) => maybe_names_in(value, words, out),
+        Expr::Break => {}
+        Expr::Continue => {}
+        Expr::TryCatch { expr, handler } => {
+            names_in(expr, words, out)
+            names_in_block(handler, words, out)
+        }
+        // The holes of an `f"…"` are the grammar's (ADR-262 D2), walked like
+        // any other expression. A `dsl` body is a foreign syntax whose
+        // actions are Nikaia too: every word in its raw text counts, which
+        // finds every name they could hold and a good many they could not.
+        Expr::LitInterpolated { parts } => {
+            for part in parts {
+                match part {
+                    FPart::Hole { expr, .. } => names_in(expr, words, out),
+                    FPart::Text(_) => {}
+                }
+            }
+        }
+        Expr::Dsl { target, context, content } => {
+            out.insert(words.resolve(target).clone())
+            a_symbol(context, words, out)
+            words_of(content, out)
+        }
+        Expr::Asm { bindings, code } => {
+            for binding in bindings {
+                out.insert(words.resolve(binding.variable).clone())
+            }
+            words_of(code, out)
+        }
+        // A value with no name in it, and the only arms that may say nothing.
+        Expr::LitInt { .. } => {}
+        Expr::LitFloat(_) => {}
+        Expr::LitBool(_) => {}
+        Expr::LitNull => {}
+        Expr::LitChar(_) => {}
+        Expr::LitStr { .. } => {}
+    }
+}
+
+/// Every name the statements of a block mention. The names a statement
+/// *binds* are left out: a `let` inside a block introduces a name rather than
+/// reading one, so counting it would only refuse pairs that have nothing to do
+/// with each other.
+pub fn names_in_block(block: ref Block, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { value, .. } => names_in(value, words, out),
+            Stmt::Comptime { value, .. } => names_in(value, words, out),
+            Stmt::Expr(value) => names_in(value, words, out),
+            Stmt::Assign { target, value, .. } => {
+                names_in(target, words, out)
+                names_in(value, words, out)
+            }
+            Stmt::For { iter, body, .. } => {
+                names_in(iter, words, out)
+                names_in_block(body, words, out)
+            }
+            Stmt::While { cond, body } => {
+                names_in(cond, words, out)
+                names_in_block(body, words, out)
+            }
+            Stmt::Return(value) => maybe_names_in(value, words, out),
+            // Neither mentions a name, so neither contributes one.
+            Stmt::Break => {}
+            Stmt::Continue => {}
+        }
+    }
+}
+
+fn maybe_names_in(expr: ref Expr?, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    names_in(expr ?? return, words, out)
+}
+
+fn maybe_names_in_block(block: ref Block?, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    names_in_block(block ?? return, words, out)
+}
+
+fn a_symbol(name: winnow_grammar::Symbol?, words: ref winnow_grammar::InternerContext, mut out: collections::BTreeSet[String]) {
+    let named = name ?? return
+    out.insert(words.resolve(named).clone())
+}
+
+// Every word of a piece of raw text, for the places a name cannot be found by
+// walking. Over-approximate by construction, which is the safe direction.
+fn words_of(text: ref String, mut out: collections::BTreeSet[String]) {
+    let mut word: String = ""
+    for c in text.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c)
+        } else {
+            if word.len() > 0 {
+                out.insert(word.clone())
+            }
+            word = ""
+        }
+    }
+    if word.len() > 0 {
+        out.insert(word)
+    }
+}
