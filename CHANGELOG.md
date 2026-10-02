@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.338] — 2026-10-02
+
+**Every name an expression mentions is Nikaia** (#125, ADR-250).
+`contracts::order`'s `names_in` and `names_in_block` - what decides whether
+two statements may change places (ADR-033 D9), and what `contracts::send`
+asks of a task's body - moved into `tools/names.nika`, whole: still total,
+with an arm for every variant of the tree and no `else`, which Nikaia's
+`NK1151` holds the way Rust's exhaustiveness held the Rust. Every ledger and
+every refusal the suite meets is what it was. 12.2 % of the toolchain is
+Nikaia, up from 11.8 %.
+
 ## [0.0.337] — 2026-10-02
 
 **`locks` reads a body with the walk in Nikaia** (#125, ADR-250). The walk of
