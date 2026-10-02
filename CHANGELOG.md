@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.357] — 2026-10-02
+
+**A proof comes with a certificate, and the prover checks it** (ADR-265 D5,
+D6; step 2 of D8). Fourier-Motzkin hands back, for every case of a proved
+query, the derivation of its contradiction - the case's own bounds, positive
+combinations, and integer tightening - kept to the steps it needs.
+`nikaia_logic::verify` computes the query's cases itself, so a certificate
+cannot leave one out, and replays each step. The prover checks every
+certificate before it leaves a check out; one that does not check keeps the
+check, and `--asserts` names it as a fault of the compiler.
+
+- **SMT-LIB 2 at the edge**: `smtlib::write` gives any query as a `QF_LIA`
+  script - `unsat` where it is proved - and `smtlib::read` takes the part of
+  SMT-LIB 2 the sorts cover back. Neither is on the prover's path.
+- **Cross-checked against z3 5.1.0**, on the 353 queries the prover's tests
+  ask: each of the 179 it proves is `unsat`, each of the 174 it leaves
+  unknown is `sat`.
+- Not yet: an Alethe export of a certificate (D6), and models for a refuted
+  query (ADR-264 D8).
+
 ## [0.0.356] — 2026-10-02
 
 **A finding's layout is Nikaia** (#125, ADR-250). The shape every message a

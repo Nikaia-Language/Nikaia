@@ -12,10 +12,17 @@
 //   never on time or on how many threads ran it (D4).
 // * The first solver is the **reference**: Fourier-Motzkin elimination with
 //   integer tightening, over linear integer arithmetic.
+// * A *proved* answer carries a **certificate** that [`verify`] checks without
+//   trusting the solver that made it (D5).
+// * A query can be written as **SMT-LIB 2**, and read back from it, so that
+//   another solver can be asked the same question (D6).
 
+mod certificate;
 mod lia;
+pub mod smtlib;
 mod term;
 
+pub use certificate::{Rejected, verify};
 pub use lia::FourierMotzkin;
 pub use term::{Arena, Term, TermId};
 
@@ -31,8 +38,8 @@ pub struct Query<'a> {
 /// that make the goal false, comes with ADR-264 D8.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
-    /// The facts imply the goal.
-    Proved,
+    /// The facts imply the goal, and the certificate shows why.
+    Proved { certificate: Certificate },
     /// The solver could not tell, and why.
     Unknown(Unknown),
 }
@@ -76,4 +83,42 @@ impl Default for Budget {
 /// A decision procedure (ADR-265 D1).
 pub trait Solver {
     fn check(&self, query: &Query<'_>, budget: &Budget) -> Answer;
+}
+
+/// **Why a goal holds, in a form a small checker can follow** (ADR-265 D5).
+///
+/// The facts and the goal's negation split into cases - every way the goal
+/// could be false - and each case gets a [`Refutation`]: a derivation of a
+/// bound `c <= 0` with `c > 0` from the case's own bounds. The cases are not
+/// in the certificate; [`verify`] computes them from the query, so a
+/// certificate cannot leave one out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Certificate {
+    pub cases: Vec<Refutation>,
+}
+
+/// One case's contradiction: steps, each making a bound `lin <= 0` from the
+/// case's bounds or from earlier steps. The last step's bound has no
+/// variables and a positive constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refutation {
+    pub steps: Vec<Step>,
+}
+
+/// One step of a [`Refutation`]. Each is sound over the integers: a
+/// non-negative combination of bounds `<= 0` is one, and so is a bound divided
+/// by its coefficients' common factor with the constant rounded up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// The case's `n`th bound.
+    Hypothesis(usize),
+    /// An earlier step's bound tightened to the integers.
+    Tighten(usize),
+    /// `by_left · left + by_right · right`, both multipliers positive.
+    Combine {
+        left: usize,
+        by_left: i128,
+        right: usize,
+        by_right: i128,
+    },
 }

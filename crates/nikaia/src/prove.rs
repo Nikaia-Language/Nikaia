@@ -29,7 +29,7 @@
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
-use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId};
+use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId, verify};
 
 use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::{Finding, Severity};
@@ -588,12 +588,16 @@ impl<'a> Prover<'a> {
             return;
         }
         let claim = claim(&mut self.arena, self.parsed, cond, scope);
-        if let Some(claim) = claim
-            && self.proves(&scope.facts, claim)
-        {
-            scope.facts.push(claim);
-            self.out.held.insert(key, Held::Proved);
-            return;
+        let mut rejected = None;
+        if let Some(claim) = claim {
+            match self.proves(&scope.facts, claim) {
+                Ok(()) => {
+                    scope.facts.push(claim);
+                    self.out.held.insert(key, Held::Proved);
+                    return;
+                }
+                Err(why) => rejected = why,
+            }
         }
 
         // **A claim about parameters the body cannot prove is its callers'**
@@ -656,7 +660,9 @@ impl<'a> Prover<'a> {
         }
 
         // **Neither proved nor refused: checked where it is reached** (D4).
-        let why = if claim.is_none() {
+        let why = if let Some(rejected) = rejected {
+            rejected
+        } else if claim.is_none() {
             "it is not a comparison of whole numbers the prover reads".to_string()
         } else if only_params && let Some(no) = at.no_precondition {
             format!(
@@ -785,7 +791,7 @@ impl<'a> Prover<'a> {
                 }
             }
             let goal = substituted(&mut self.arena, self.parsed, claim, &with);
-            let proved = goal.is_some_and(|g| self.proves(&scope.facts, g));
+            let proved = goal.is_some_and(|g| self.proves(&scope.facts, g).is_ok());
             if proved {
                 continue;
             }
@@ -826,14 +832,25 @@ impl<'a> Prover<'a> {
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
-    /// ([ADR-265](../../docs/specification/adr/adr-265.md) D3, D4).
-    fn proves(&self, facts: &[TermId], goal: TermId) -> bool {
+    /// ([ADR-265](../../docs/specification/adr/adr-265.md) D3, D4), whose
+    /// certificate is checked before a check is left out (D5). The reference
+    /// solver's word would be enough; checking it costs a replay of a few
+    /// steps, and a solver fault becomes a check at run time instead of a
+    /// claim nobody holds. `Err(Some(_))` says the certificate was rejected.
+    fn proves(&self, facts: &[TermId], goal: TermId) -> Result<(), Option<String>> {
         let query = Query {
             arena: &self.arena,
             facts,
             goal,
         };
-        FourierMotzkin.check(&query, &Budget::default()) == Answer::Proved
+        match FourierMotzkin.check(&query, &Budget::default()) {
+            Answer::Proved { certificate } => verify(&query, &certificate).map_err(|why| {
+                Some(format!(
+                    "the solver's proof did not check ({why:?}), which is a fault of the compiler"
+                ))
+            }),
+            Answer::Unknown(_) => Err(None),
+        }
     }
 
     fn function_named(&self, name: &str) -> Option<&'a Item> {

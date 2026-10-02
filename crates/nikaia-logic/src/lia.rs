@@ -11,7 +11,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{Answer, Arena, Budget, Query, Solver, Term, TermId, Unknown};
+use crate::{
+    Answer, Arena, Budget, Certificate, Query, Refutation, Solver, Step, Term, TermId, Unknown,
+};
 
 /// Fourier-Motzkin elimination with integer tightening.
 #[derive(Debug, Default, Clone, Copy)]
@@ -19,34 +21,40 @@ pub struct FourierMotzkin;
 
 impl Solver for FourierMotzkin {
     fn check(&self, query: &Query<'_>, budget: &Budget) -> Answer {
-        let mut all = Vec::with_capacity(query.facts.len() + 1);
-        for fact in query.facts {
-            match formula(query.arena, *fact, true) {
-                Ok(f) => all.push(f),
+        let cases = match query_cases(query, budget) {
+            Ok(cases) => cases,
+            Err(why) => return Answer::Unknown(why),
+        };
+        let mut refutations = Vec::with_capacity(cases.len());
+        for case in cases {
+            match contradictory(case, budget) {
+                Ok(refutation) => refutations.push(refutation),
                 Err(why) => return Answer::Unknown(why),
             }
         }
-        match formula(query.arena, query.goal, false) {
-            Ok(f) => all.push(f),
-            Err(why) => return Answer::Unknown(why),
+        Answer::Proved {
+            certificate: Certificate { cases: refutations },
         }
-        let Some(cases) = cases(&Formula::And(all), budget) else {
-            return Answer::Unknown(Unknown::TooManyCases);
-        };
-        for case in cases {
-            if let Err(why) = contradictory(case, budget) {
-                return Answer::Unknown(why);
-            }
-        }
-        Answer::Proved
     }
+}
+
+/// The query's facts and its goal's negation, as a disjunction of conjunctions
+/// of bounds: every way the goal could be false. The solver and the checker
+/// both start here, so a certificate is about the same cases the solver saw.
+pub(crate) fn query_cases(query: &Query<'_>, budget: &Budget) -> Result<Vec<Vec<Lin>>, Unknown> {
+    let mut all = Vec::with_capacity(query.facts.len() + 1);
+    for fact in query.facts {
+        all.push(formula(query.arena, *fact, true)?);
+    }
+    all.push(formula(query.arena, query.goal, false)?);
+    cases(&Formula::And(all), budget).ok_or(Unknown::TooManyCases)
 }
 
 /// `Σ coefficient·name + constant`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Lin {
-    terms: BTreeMap<String, i128>,
-    constant: i128,
+pub(crate) struct Lin {
+    pub(crate) terms: BTreeMap<String, i128>,
+    pub(crate) constant: i128,
 }
 
 impl Lin {
@@ -64,7 +72,7 @@ impl Lin {
         }
     }
 
-    fn add(&self, other: &Lin) -> Option<Lin> {
+    pub(crate) fn add(&self, other: &Lin) -> Option<Lin> {
         let mut out = self.clone();
         for (name, k) in &other.terms {
             let entry = out.terms.entry(name.clone()).or_insert(0);
@@ -77,7 +85,7 @@ impl Lin {
         Some(out)
     }
 
-    fn scale(&self, k: i128) -> Option<Lin> {
+    pub(crate) fn scale(&self, k: i128) -> Option<Lin> {
         if k == 0 {
             return Some(Lin::constant(0));
         }
@@ -103,7 +111,7 @@ impl Lin {
 
     /// Divide through by the coefficients' common factor and round the bound
     /// towards the integers: `2x + 3 <= 0` is `x + 2 <= 0` over the integers.
-    fn tightened(mut self) -> Lin {
+    pub(crate) fn tightened(mut self) -> Lin {
         let g = self.terms.values().fold(0i128, |g, k| gcd(g, k.abs()));
         if g > 1 {
             for k in self.terms.values_mut() {
@@ -272,43 +280,63 @@ fn cases(formula: &Formula, budget: &Budget) -> Option<Vec<Vec<Lin>>> {
     }
 }
 
-/// Fourier-Motzkin with integer tightening: `Ok` where the bounds, all
-/// `<= 0`, have no integer solution, and why not where it cannot tell.
-fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<(), Unknown> {
-    let mut bounds: Vec<Lin> = bounds.into_iter().map(Lin::tightened).collect();
+/// A bound the elimination holds, and the step that made it.
+type Held = (Lin, usize);
+
+/// Fourier-Motzkin with integer tightening: where the bounds, all `<= 0`,
+/// have no integer solution, the derivation of `c <= 0` with `c > 0` that
+/// shows it (ADR-265 D5); why not where it cannot tell.
+///
+/// Every bound the elimination holds remembers the step that made it, so the
+/// contradiction it ends on can be traced back to the case's own bounds, and
+/// only the steps on that trace are kept.
+fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<Refutation, Unknown> {
+    let mut steps: Vec<Step> = Vec::new();
+    let mut bounds: Vec<Held> = bounds
+        .into_iter()
+        .enumerate()
+        .map(|(i, bound)| {
+            steps.push(Step::Hypothesis(i));
+            tightened(bound, &mut steps)
+        })
+        .collect();
     loop {
         // A bound with no variables left is a verdict: `c <= 0`.
-        if bounds.iter().any(|b| b.terms.is_empty() && b.constant > 0) {
-            return Ok(());
+        if let Some((_, step)) = bounds
+            .iter()
+            .find(|(b, _)| b.terms.is_empty() && b.constant > 0)
+        {
+            return Ok(traced(steps, *step));
         }
-        bounds.retain(|b| !b.terms.is_empty());
-        bounds.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
-        bounds.dedup();
+        bounds.retain(|(b, _)| !b.terms.is_empty());
+        bounds.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+        bounds.dedup_by(|later, earlier| later.0 == earlier.0);
         let names: BTreeSet<String> = bounds
             .iter()
-            .flat_map(|b| b.terms.keys().cloned())
+            .flat_map(|(b, _)| b.terms.keys().cloned())
             .collect();
         // Eliminate the name whose elimination makes the fewest new bounds.
         let Some(name) = names.into_iter().min_by_key(|name| {
             let up = bounds
                 .iter()
-                .filter(|b| b.terms.get(name).is_some_and(|k| *k > 0))
+                .filter(|(b, _)| b.terms.get(name).is_some_and(|k| *k > 0))
                 .count();
             let down = bounds
                 .iter()
-                .filter(|b| b.terms.get(name).is_some_and(|k| *k < 0))
+                .filter(|(b, _)| b.terms.get(name).is_some_and(|k| *k < 0))
                 .count();
             up * down
         }) else {
             return Err(Unknown::NoContradiction);
         };
-        let (with, without): (Vec<Lin>, Vec<Lin>) = bounds
+        let (with, without): (Vec<Held>, Vec<Held>) = bounds
             .into_iter()
-            .partition(|b| b.terms.contains_key(&name));
-        let (up, down): (Vec<Lin>, Vec<Lin>) = with.into_iter().partition(|b| b.terms[&name] > 0);
+            .partition(|(b, _)| b.terms.contains_key(&name));
+        let (up, down): (Vec<Held>, Vec<Held>) =
+            with.into_iter().partition(|(b, _)| b.terms[&name] > 0);
         let mut next = without;
-        for u in &up {
-            for d in &down {
+        for (u, u_step) in &up {
+            for (d, d_step) in &down {
                 let a = u.terms[&name];
                 let b = -d.terms[&name];
                 // b·u + a·d cancels `name`; both are `<= 0`, so is the sum.
@@ -318,7 +346,13 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<(), Unknown> {
                 let Some(sum) = left.add(&right) else {
                     return Err(Unknown::Overflow);
                 };
-                next.push(sum.tightened());
+                steps.push(Step::Combine {
+                    left: *u_step,
+                    by_left: b,
+                    right: *d_step,
+                    by_right: a,
+                });
+                next.push(tightened(sum, &mut steps));
                 if next.len() > budget.bounds {
                     return Err(Unknown::TooManyBounds);
                 }
@@ -326,6 +360,62 @@ fn contradictory(bounds: Vec<Lin>, budget: &Budget) -> Result<(), Unknown> {
         }
         bounds = next;
     }
+}
+
+/// The bound the last step made, tightened to the integers - with a step of
+/// its own where tightening changed it.
+fn tightened(bound: Lin, steps: &mut Vec<Step>) -> Held {
+    let made = steps.len() - 1;
+    let tight = bound.clone().tightened();
+    if tight == bound {
+        (bound, made)
+    } else {
+        steps.push(Step::Tighten(made));
+        (tight, steps.len() - 1)
+    }
+}
+
+/// Only the steps `last` was derived from, in their order, renumbered.
+fn traced(steps: Vec<Step>, last: usize) -> Refutation {
+    let mut needed = vec![false; steps.len()];
+    needed[last] = true;
+    for at in (0..=last).rev() {
+        if !needed[at] {
+            continue;
+        }
+        match steps[at] {
+            Step::Hypothesis(_) => {}
+            Step::Tighten(from) => needed[from] = true,
+            Step::Combine { left, right, .. } => {
+                needed[left] = true;
+                needed[right] = true;
+            }
+        }
+    }
+    let mut renumbered = vec![usize::MAX; steps.len()];
+    let mut kept = Vec::new();
+    for (at, step) in steps.into_iter().enumerate().take(last + 1) {
+        if !needed[at] {
+            continue;
+        }
+        renumbered[at] = kept.len();
+        kept.push(match step {
+            Step::Hypothesis(i) => Step::Hypothesis(i),
+            Step::Tighten(from) => Step::Tighten(renumbered[from]),
+            Step::Combine {
+                left,
+                by_left,
+                right,
+                by_right,
+            } => Step::Combine {
+                left: renumbered[left],
+                by_left,
+                right: renumbered[right],
+                by_right,
+            },
+        });
+    }
+    Refutation { steps: kept }
 }
 
 #[cfg(test)]
@@ -341,6 +431,29 @@ mod tests {
 
     fn contradicts(bounds: Vec<Lin>) -> bool {
         contradictory(bounds, &Budget::default()).is_ok()
+    }
+
+    #[test]
+    fn a_refutation_keeps_only_the_steps_it_needs() {
+        // x <= 5, an unrelated y <= 0, and x >= 6: the y bound is not traced.
+        let refutation = contradictory(
+            vec![le(&[("x", 1)], -5), le(&[("y", 1)], 0), le(&[("x", -1)], 6)],
+            &Budget::default(),
+        )
+        .expect("contradictory");
+        assert_eq!(
+            refutation.steps,
+            [
+                Step::Hypothesis(0),
+                Step::Hypothesis(2),
+                Step::Combine {
+                    left: 0,
+                    by_left: 1,
+                    right: 1,
+                    by_right: 1
+                },
+            ]
+        );
     }
 
     #[test]
