@@ -3537,6 +3537,189 @@ fn stands_at(c: &[char], at: i64, w: &[char]) -> bool {
 }
 
 
+// --- render.nika ---
+
+#[derive(Debug, Clone)]
+pub struct Marked {
+    pub span: Span,
+    pub word: String,
+    pub text: String,
+    pub main: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Shown {
+    pub warning: bool,
+    pub code: String,
+    pub message: String,
+    pub notes: Vec<String>,
+    pub help: Option<String>,
+    pub span: Span,
+    pub labels: Vec<Marked>,
+}
+
+#[derive(Debug, Clone)]
+struct Placed {
+    line: i64,
+    column: i64,
+    width: i64,
+    label: Marked,
+}
+
+pub fn rendered(shown: &Shown, path: &str, source: &str) -> String {
+    let chars: Vec<char> = nikaia_std::list::chars(source.chars());
+    let lines: Vec<&str> = source.split("\n").collect::<Vec<_>>();
+    let mut labels: Vec<Marked> = shown.labels.to_owned();
+    if (labels.len() as i64) == 0 { labels.push(Marked { span: shown.span.clone(), word: String::from(""), text: String::from(""), main: true }); }
+    let mut placed: Vec<Placed> = vec![];
+    for label in labels.iter() {
+        let at = line_column(&chars, label.span.start);
+        let text = line_of(&lines, at.0);
+        let found = if (label.word.len() as i64) == 0 { (at.1, spanned_width(&chars, &label.span)) } else { word_in(&text, at.1, &label.word) };
+        placed.push(Placed { line: at.0, column: found.0, width: found.1, label: label.clone() });
+    }
+    let placed = in_order(&placed);
+    let mut line: i64 = -1;
+    let mut column: i64 = -1;
+    for one in placed.iter() {
+        if line < 0 && one.label.main {
+            line = one.line;
+            column = one.column;
+        }
+    }
+    if line < 0 {
+        let at = line_column(&chars, shown.span.start);
+        line = at.0;
+        column = at.1;
+    }
+    let mut gutter: i64 = 1;
+    for one in placed.iter() {
+        let digits = format!("{}", one.line).len() as i64;
+        if digits > gutter { gutter = digits; }
+    }
+    let mut bar = spaces(gutter + 1);
+    bar.push_str(" |");
+    let level = if shown.warning { "warning" } else { "error" };
+    let mut out = headed(level, &shown.code);
+    out.push_str(": ");
+    out.push_str(&said(&shown.message));
+    out.push('\n');
+    out.push_str(&spaces(gutter + 1));
+    out.push_str(&format!("--> {}:{}:{}", path, line, column));
+    out.push('\n');
+    out.push_str(&bar);
+    out.push('\n');
+    let mut shown_line: i64 = -1;
+    for one in placed.iter() {
+        if shown_line != one.line {
+            if shown_line >= 0 && one.line - shown_line > 1 {
+                out.push_str(&spaces(gutter + 2));
+                out.push_str("...");
+                out.push('\n');
+            }
+            out.push(' ');
+            out.push_str(&right_aligned(&format!("{}", one.line), gutter));
+            out.push_str(" | ");
+            out.push_str(&line_of(&lines, one.line).trim_end());
+            out.push('\n');
+            shown_line = one.line;
+        }
+        let mark = if one.label.main { "^" } else { "-" };
+        let mut marked = bar.to_owned();
+        marked.push(' ');
+        marked.push_str(&spaces(one.column - 1));
+        marked.push_str(&mark.repeat(nikaia_std::count::of(one.width)));
+        marked.push(' ');
+        marked.push_str(&one.label.text);
+        out.push_str(&marked.trim_end());
+        out.push('\n');
+    }
+    out.push_str(&bar);
+    out.push('\n');
+    let indent = spaces(gutter + 2);
+    for note in shown.notes.iter() {
+        out.push_str(&indent);
+        out.push_str("= note: ");
+        out.push_str(&said(note));
+        out.push('\n');
+    }
+    out.push_str(&helped(&indent, (shown.help).as_deref()));
+    out
+}
+
+fn helped(indent: &str, help: Option<&str>) -> String {
+    let given = match help { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    format!("{}= help: {}\n", indent, said(given))
+}
+
+fn in_order(placed: &Vec<Placed>) -> Vec<Placed> {
+    let mut out: Vec<Placed> = vec![];
+    for one in placed.iter() {
+        let mut at = out.len() as i64;
+        while at > 0 && (nikaia_std::index::get(&out, nikaia_std::index::at(at - 1)).line > one.line || nikaia_std::index::get(&out, nikaia_std::index::at(at - 1)).line == one.line && nikaia_std::index::get(&out, nikaia_std::index::at(at - 1)).column > one.column) { at -= 1; }
+        out.insert(nikaia_std::count::of(at), one.clone());
+    }
+    out
+}
+
+fn line_of(lines: &Vec<&str>, line: i64) -> String {
+    if line < 1 || line > lines.len() as i64 { return String::from(""); }
+    (*nikaia_std::index::get(&lines, nikaia_std::index::at(line - 1))).to_owned()
+}
+
+fn line_column(chars: &Vec<char>, offset: u32) -> (i64, i64) {
+    let wanted = offset as i64;
+    let mut bytes: i64 = 0;
+    let mut line = 1;
+    let mut column = 1;
+    for c in chars.iter() {
+        let c = nikaia_std::num::value(c);
+        if bytes >= wanted { break; }
+        bytes += utf8_width(c);
+        if c == '\n' {
+            line += 1;
+            column = 1;
+        } else { column += 1; }
+    }
+    (line, column)
+}
+
+fn spanned_width(chars: &Vec<char>, span: &Span) -> i64 {
+    let start = span.start as i64;
+    let end = span.end as i64;
+    let mut bytes: i64 = 0;
+    let mut covered: String = String::from("");
+    for c in chars.iter() {
+        let c = nikaia_std::num::value(c);
+        if bytes >= end { break; }
+        if bytes >= start {
+            if c == '\n' { break; }
+            covered.push(c);
+        }
+        bytes += utf8_width(c);
+    }
+    let width = covered.trim_end().chars().count() as i64;
+    if width < 1 { return 1; }
+    width
+}
+
+fn utf8_width(c: char) -> i64 {
+    let point = c as u32;
+    if point < 128u32 { return 1; }
+    if point < 2048u32 { return 2; }
+    if point < 65536u32 { return 3; }
+    4
+}
+
+fn spaces(n: i64) -> String { " ".repeat(nikaia_std::count::of(n)) }
+
+fn right_aligned(text: &str, width: i64) -> String {
+    let mut out = spaces(width - text.len() as i64);
+    out.push_str(&text);
+    out
+}
+
+
 // --- rust.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8229,6 +8412,10 @@ pub mod parse_notes {
 pub mod paths {
     #[allow(unused_imports)]
     pub use super::{Export, Named, after, module_of, joined, exported, named, bases, split_top_level};
+}
+pub mod render {
+    #[allow(unused_imports)]
+    pub use super::{Marked, Shown, rendered};
 }
 pub mod rust {
     #[allow(unused_imports)]

@@ -478,3 +478,62 @@ fn a_rustc_message_is_put_in_the_programs_words() {
         "`HashMap<K, V>` in `Locked<T>`"
     );
 }
+
+/// **The layout of a finding is written in Nikaia** (`tools/render.nika`,
+/// #125), and a span is in bytes where a column is in characters: on a line
+/// with `ü` before the place, the caret stands under the word and the header
+/// counts what an editor counts. Two labels, `-` and `^`, the lines between
+/// them elided, the notes and the help as sentences.
+#[test]
+fn a_finding_is_laid_out_in_characters() {
+    let source = "fn main() {\n    let grüße = 0\n    println(grüße)\n    \n    grüße += 1\n}\n";
+    let declared = source.find("let grüße").expect("declared");
+    let changed = source.find("grüße +=").expect("changed");
+    let finding = nikaia::check::Finding {
+        severity: nikaia::check::Severity::Error,
+        span: nikaia::ast::Span::new(changed, changed + "grüße += 1".len()),
+        code: "NK1139",
+        message: "you're changing `grüße`, but it wasn't declared as mutable".to_string(),
+        notes: vec!["a name is fixed unless it says `mut`".to_string()],
+        help: Some("add `mut` where it's declared".to_string()),
+        labels: vec![
+            nikaia::check::Label {
+                span: nikaia::ast::Span::new(declared, declared + "let grüße = 0".len()),
+                word: "grüße".to_string(),
+                text: "declared here without `mut`".to_string(),
+                main: false,
+            },
+            nikaia::check::Label {
+                span: nikaia::ast::Span::new(changed, changed + "grüße += 1".len()),
+                word: "grüße".to_string(),
+                text: "changed here".to_string(),
+                main: true,
+            },
+        ],
+    };
+    assert_eq!(
+        diagnostics::render_finding(&finding, "app.nika", source),
+        "error[NK1139]: You're changing `grüße`, but it wasn't declared as mutable.\n\
+         \x20 --> app.nika:5:5\n\
+         \x20  |\n\
+         \x202 |     let grüße = 0\n\
+         \x20  |         ----- declared here without `mut`\n\
+         \x20  ...\n\
+         \x205 |     grüße += 1\n\
+         \x20  |     ^^^^^ changed here\n\
+         \x20  |\n\
+         \x20  = note: A name is fixed unless it says `mut`.\n\
+         \x20  = help: Add `mut` where it's declared.\n"
+    );
+    // A finding that names no place is marked where it stands, as wide as
+    // its first line.
+    let unlabelled = nikaia::check::Finding {
+        labels: Vec::new(),
+        ..finding
+    };
+    let said = diagnostics::render_finding(&unlabelled, "app.nika", source);
+    assert!(
+        said.contains(" 5 |     grüße += 1\n   |     ^^^^^^^^^^\n"),
+        "{said}"
+    );
+}
