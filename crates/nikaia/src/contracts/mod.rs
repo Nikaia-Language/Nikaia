@@ -31,7 +31,6 @@ pub mod locks;
 pub mod order;
 pub mod send;
 pub mod sharing;
-pub mod spelling;
 pub mod sync;
 pub mod tether;
 pub mod throws;
@@ -1353,7 +1352,12 @@ impl LedgerOps for Ledger {
             // written only where the signature has no place for them - a
             // result with no `ref` in it, a function with no receiver.
             let spelled = contract.signature.as_ref().map(|signature| {
-                spelling::spell(&signature.text(), name, &contract.borrows, contract.mutates)
+                nikaia_std::tools::ledger::spell(
+                    &signature.text(),
+                    name,
+                    &contract.borrows,
+                    contract.mutates,
+                )
             });
             let (borrows_said, mutates_said) = spelled
                 .as_ref()

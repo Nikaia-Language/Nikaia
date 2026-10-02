@@ -11657,6 +11657,18 @@ impl<'p> Emitter<'p> {
     /// Asked in one place because the alternative is parenthesising always, and a
     /// parenthesis nobody needs is a Rust warning about a file nobody wrote
     /// (Part III, C.1).
+    /// Whether `expr` is written ending in `as T`: a conversion, or an
+    /// operation whose right operand is written bare and ends in one.
+    fn ends_in_a_cast(&self, expr: &Expr, flow: Flow<'_>) -> bool {
+        match expr {
+            Expr::Binary { op, rhs, .. } => match &**rhs {
+                Expr::Binary { op: inner, .. } if precedence(*inner) < precedence(*op) + 1 => false,
+                rhs => self.ends_in_a_cast(rhs, flow),
+            },
+            _ => self.emits_as_cast(expr, flow),
+        }
+    }
+
     fn emits_as_cast(&self, expr: &Expr, flow: Flow<'_>) -> bool {
         match expr {
             Expr::Cast { .. } => true,
@@ -11703,7 +11715,14 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         let parenthesise = match expr {
-            Expr::Binary { op, .. } => precedence(*op) < needs,
+            // **A sum that ends in a conversion** reads the same way at the
+            // left of a comparison: `at + w.len() as i64 < n` is `i64<n>` to
+            // Rust as much as the conversion alone is (found moving
+            // `contracts::spelling` into Nikaia, #125).
+            Expr::Binary { op, .. } => {
+                precedence(*op) < needs
+                    || (needs == precedence(BinaryOp::Lt) && self.ends_in_a_cast(expr, flow))
+            }
             // **An operand that comes out as a conversion**, in the two
             // positions where Rust reads it wrongly without parentheses.
             //

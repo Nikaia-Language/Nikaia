@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.333] — 2026-10-02
+
+**A signature is written in the ledger's spelling by Nikaia** (#125, ADR-250).
+`contracts::spelling` moved into `tools/ledger.nika` as `spell`, beside
+`spelled_signature` that reads the spelling back, so both directions of
+ADR-251 D4 are one file of Nikaia; the Rust module is gone. Every ledger the
+suite writes is byte for byte what it was. 10.6 % of the toolchain is Nikaia
+(`scripts/self_hosting.py`), up from 10.2 %.
+
+- **Found moving it, fixed in the compiler** (ADR-250 D3): a sum that ends in a
+  conversion, at the left of a comparison, was emitted bare -
+  `at + w.len() as i64 < n`, which Rust reads as `i64<n>` and refuses. The
+  emitter parenthesised a conversion standing there alone and not one ending
+  an operation; it asks how the operand's text *ends* now.
+
 ## [0.0.332] — 2026-10-02
 
 **A caret on a token that is not a word stays where the parser stopped.** The
