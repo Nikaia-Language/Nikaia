@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.346] — 2026-10-02
+
+**How a message is set down is Nikaia** (#125, ADR-250). `diagnostics`'
+`said` - a message as a sentence, capital and full stop (Part III C.2) -,
+`headed` - `error[NK1102]` - and `word_in` - the column a finding's word
+stands at on its line, and how wide it is - moved into
+`tools/rustc_words.nika` beside the rewriting of `rustc`'s words. Every
+message the suite renders, the error corpus's among them, is what it was.
+13.3 % of the toolchain is Nikaia, up from 13.2 %.
+
 ## [0.0.345] — 2026-10-02
 
 **A `rustc` message is put in the program's words by Nikaia** (#125,

@@ -4044,6 +4044,51 @@ fn replaced(text: &str, from: &str, to: &str) -> String {
     out
 }
 
+pub fn said(text: &str) -> String {
+    let c: Vec<char> = nikaia_std::list::chars(text.trim_end().chars());
+    if (c.len() as i64) == 0 { return String::from(""); }
+    let mut first: String = String::from("");
+    first.push(*nikaia_std::index::get(&c, 0));
+    let mut out = first.to_uppercase();
+    for k in 1..c.len() as i64 { out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
+    let last = *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 1));
+    let mut closed = last == '.' || last == '?' || last == '!' || last == ':';
+    if (c.len() as i64) >= 2 && last == ')' && (*nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 2)) == '.' || *nikaia_std::index::get(&c, nikaia_std::index::at(c.len() as i64 - 2)) == '?') { closed = true; }
+    let break_at = find_last(&c, '\n');
+    if break_at >= 0 && break_at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(break_at + 1)) == ' ' { closed = true; }
+    if !closed { out.push('.'); }
+    out
+}
+
+pub fn headed(level: &str, code: &str) -> String {
+    if (code.len() as i64) == 0 { return level.to_owned(); }
+    format!("{}[{}]", level, code)
+}
+
+pub fn word_in(line: &str, column: i64, word: &str) -> (i64, i64) {
+    let c: Vec<char> = nikaia_std::list::chars(line.chars());
+    let w: Vec<char> = nikaia_std::list::chars(word.chars());
+    if (w.len() as i64) == 0 { return (column, 1); }
+    let starts_wordy = a_wordy_char(*nikaia_std::index::get(&w, 0));
+    let ends_wordy = a_wordy_char(*nikaia_std::index::get(&w, nikaia_std::index::at(w.len() as i64 - 1)));
+    let mut from = column - 1;
+    if from < 0 { from = 0; }
+    if from > c.len() as i64 { from = c.len() as i64; }
+    for start in [from, 0] {
+        let mut at = find_text(&c, start, word);
+        while at >= 0 {
+            let free_before = !starts_wordy || at == 0 || !a_wordy_char(*nikaia_std::index::get(&c, nikaia_std::index::at(at - 1)));
+            let after = at + w.len() as i64;
+            let free_after = !ends_wordy || after >= c.len() as i64 || !a_wordy_char(*nikaia_std::index::get(&c, nikaia_std::index::at(after)));
+            if free_before && free_after { return (at + 1, w.len() as i64); }
+            at = find_text(&c, at + w.len() as i64, word);
+        }
+    }
+    (column, 1)
+}
+
+fn a_wordy_char(c: char) -> bool { c.is_alphanumeric() || c == '_' }
+
 
 // --- signature.nika ---
 
@@ -6755,7 +6800,7 @@ pub mod rust {
 }
 pub mod rustc_words {
     #[allow(unused_imports)]
-    pub use super::{in_this_language, is_rust_internal, both_sides_the_same};
+    pub use super::{in_this_language, is_rust_internal, both_sides_the_same, said, headed, word_in};
 }
 pub mod signature {
     #[allow(unused_imports)]
