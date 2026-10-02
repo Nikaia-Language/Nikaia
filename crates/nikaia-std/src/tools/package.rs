@@ -6980,6 +6980,305 @@ fn renamed_result(result: Option<&Ty>, renames: &collections::BTreeMap<String, S
 }
 
 
+// --- types.nika ---
+
+const SHAPE_BOUNDS: [&str; 2] = ["Struct", "Enum"];
+
+const BUILT_IN: [&str; 26] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"];
+
+const STD_MODULES: [&str; 7] = ["cli", "collections", "channel", "foreign", "fs", "io", "time"];
+
+pub fn types_checked(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, own: &Ledger, library: &Ledger, declared: &collections::BTreeSet<String>, impl_parameters: &Vec<Vec<String>>) -> Vec<Finding> {
+    let mut found: Vec<Finding> = vec![];
+    declared_once_in(names, items, &mut found);
+    let known = known_names(own, library, declared);
+    let traits = known_traits(names, items, own, library);
+    for k in 0..items.len() as i64 {
+        let mut here = known.to_owned();
+        for parameter in generic_names(names, &nikaia_std::index::get(&items, nikaia_std::index::at(k)).node) { here.insert(parameter); }
+        for parameter in (*nikaia_std::index::get(&impl_parameters, nikaia_std::index::at(k))).iter() { here.insert(parameter.to_owned()); }
+        bounds_of(names, &nikaia_std::index::get(&items, nikaia_std::index::at(k)).node, &traits, &nikaia_std::index::get(&items, nikaia_std::index::at(k)).span, &mut found);
+        item_types(names, &nikaia_std::index::get(&items, nikaia_std::index::at(k)).node, &here, &nikaia_std::index::get(&items, nikaia_std::index::at(k)).span, &mut found);
+    }
+    found
+}
+
+fn known_traits(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, own: &Ledger, library: &Ledger) -> collections::BTreeSet<String> {
+    let mut known: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for shape in SHAPE_BOUNDS.iter() {
+        let shape = *shape;
+        known.insert(shape.to_owned());
+    }
+    for (key, _) in own.traits.iter() { with_its_last_segment(key, &mut known); }
+    for (key, _) in library.traits.iter() { with_its_last_segment(key, &mut known); }
+    for item in items.iter() {
+        match &item.node {
+            Item::Trait { name, .. } => {
+                let name = *name;
+                known.insert(names.resolve(name).to_owned());
+            },
+            _ => { },
+        }
+    }
+    known
+}
+
+fn with_its_last_segment(key: &str, known: &mut collections::BTreeSet<String>) {
+    known.insert(key.to_owned());
+    let c: Vec<char> = nikaia_std::list::chars(key.chars());
+    let mut last: i64 = -1;
+    for at in 0..c.len() as i64 { if at + 1 < c.len() as i64 && *nikaia_std::index::get(&c, nikaia_std::index::at(at)) == ':' && *nikaia_std::index::get(&c, nikaia_std::index::at(at + 1)) == ':' { last = at; } }
+    if last >= 0 { known.insert(slice(&c, last + 2, c.len() as i64)); }
+}
+
+fn known_names(own: &Ledger, library: &Ledger, declared: &collections::BTreeSet<String>) -> collections::BTreeSet<String> {
+    let mut known: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for name in BUILT_IN.iter() {
+        let name = *name;
+        known.insert(name.to_owned());
+    }
+    for (key, _) in library.types.iter() { known.insert(key.to_owned()); }
+    for (key, _) in own.types.iter() { with_its_last_segment(key, &mut known); }
+    for name in declared.iter() { known.insert(name.to_owned()); }
+    known
+}
+
+fn generic_names(names: &winnow_grammar::InternerContext, item: &Item) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    match item {
+        Item::Fn { generics, .. } => { for parameter in generics.iter() { out.push(names.resolve(parameter.name).to_owned()); } },
+        Item::Struct { generics, .. } => { for parameter in generics.iter() { out.push(names.resolve(parameter.name).to_owned()); } },
+        _ => { },
+    }
+    out
+}
+
+fn bounds_of(names: &winnow_grammar::InternerContext, item: &Item, traits: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) {
+    match item {
+        Item::Fn { generics, .. } => bounds_in(names, generics, traits, span, out),
+        Item::Struct { generics, .. } => bounds_in(names, generics, traits, span, out),
+        _ => { },
+    }
+}
+
+fn bounds_in(names: &winnow_grammar::InternerContext, generics: &Vec<GenericParam>, traits: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) {
+    for parameter in generics.iter() {
+        for bound in parameter.bounds.iter() {
+            let name = names.resolve(bound.to_owned()).to_owned();
+            if !name.contains("::") && !traits.contains(&name) { out.push(refusal("NK1135", span.clone(), format!("There's no trait called `{}`.", name), vec![String::from("A bound names a trait the caller's type has to implement, and no trait by this name is declared.")], format!("Declare `{}` with `trait`, or remove the bound. (Without a bound, the value can only be moved and passed on.)", name))); }
+        }
+    }
+}
+
+fn declared_once_in(names: &winnow_grammar::InternerContext, items: &Vec<Spanned<Item>>, out: &mut Vec<Finding>) {
+    let mut seen: collections::BTreeMap<String, String> = collections::BTreeMap::new();
+    for item in items.iter() {
+        let kind = kind_declared(&item.node);
+        if (kind.len() as i64) == 0 { continue; }
+        let name = name_declared(names, &item.node);
+        if (name.len() as i64) == 0 { continue; }
+        let earlier: Option<String> = match *nikaia_std::index::get(&seen, &name) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        };
+        if earlier.is_none() {
+            seen.insert(name, kind);
+            continue;
+        }
+        let first = match earlier { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let kinds = if first == kind { format!("both times as a `{}`", first) } else { format!("once as a `{}` and once as a `{}`", first, kind) };
+        out.push(refusal("NK1148", item.span.clone(), format!("`{}` is declared twice in this file, {}.", name, kinds), vec![String::from("A name means one thing, so there's never a question of which declaration wins. All files of a package share their names for the same reason.")], format!("Rename one of the two. (A `struct`'s name is already its constructor, so `{}` can't also be a function.)", name)));
+    }
+}
+
+fn kind_declared(item: &Item) -> String {
+    match item {
+        Item::Fn { name, .. } => { let name = *name; if name.is_some() { String::from("fn") } else { String::from("") } },
+        Item::Struct { .. } => String::from("struct"),
+        Item::Enum { .. } => String::from("enum"),
+        Item::Trait { .. } => String::from("trait"),
+        Item::Grammar(_) => String::from("grammar"),
+        _ => String::from(""),
+    }
+}
+
+fn name_declared(names: &winnow_grammar::InternerContext, item: &Item) -> String {
+    match item {
+        Item::Fn { name, .. } => { let name = *name; a_symbols_text(names, name) },
+        Item::Struct { name, .. } => { let name = *name; names.resolve(name).to_owned() },
+        Item::Enum { name, .. } => { let name = *name; names.resolve(name).to_owned() },
+        Item::Trait { name, .. } => { let name = *name; names.resolve(name).to_owned() },
+        Item::Grammar(def) => names.resolve(def.name).to_owned(),
+        _ => String::from(""),
+    }
+}
+
+fn a_symbols_text(names: &winnow_grammar::InternerContext, name: Option<winnow_grammar::Symbol>) -> String {
+    let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    names.resolve(symbol).to_owned()
+}
+
+fn item_types(names: &winnow_grammar::InternerContext, item: &Item, known: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) {
+    match item {
+        Item::Fn { args, ret_type, body, .. } => {
+            for arg in args.iter() { written_at(names, &arg.ty, known, true, span, out); }
+            maybe_written(names, (ret_type).as_ref(), known, span, out);
+            block_types(names, body, known, out);
+        },
+        Item::Struct { fields, .. } => { for field in fields.iter() { written_at(names, &field.ty, known, false, span, out); } },
+        Item::Enum { variants, .. } => {
+            for variant in variants.iter() {
+                match &variant.fields {
+                    VariantFields::Unit => { },
+                    VariantFields::Tuple(parts) => { for ty in parts.iter() { written_at(names, ty, known, false, span, out); } },
+                    VariantFields::Named(fields) => { for field in fields.iter() { written_at(names, &field.ty, known, false, span, out); } },
+                }
+            }
+        },
+        Item::Extern { declarations, .. } => {
+            for declaration in declarations.iter() {
+                for arg in declaration.node.args.iter() { written_foreign(names, &arg.ty, known, true, &declaration.span, out); }
+                maybe_written_foreign(names, (declaration.node.ret_type).as_ref(), known, &declaration.span, out);
+            }
+        },
+        Item::Trait { methods, .. } => {
+            for method in methods.iter() {
+                let mut here = known.to_owned();
+                for parameter in method.node.generics.iter() { here.insert(names.resolve(parameter.name).to_owned()); }
+                for arg in method.node.args.iter() { written_at(names, &arg.ty, &here, true, &method.span, out); }
+                maybe_written(names, (method.node.ret_type).as_ref(), &here, &method.span, out);
+            }
+        },
+        Item::Impl { methods, .. } => {
+            for method in methods.iter() {
+                let mut here = known.to_owned();
+                for parameter in generic_names(names, &method.node) { here.insert(parameter); }
+                item_types(names, &method.node, &here, &method.span, out);
+            }
+        },
+        _ => { },
+    }
+}
+
+fn maybe_written(names: &winnow_grammar::InternerContext, ty: Option<&Type>, known: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) { written_at(names, match ty { Some(__nikaia_value) => __nikaia_value, None => return }, known, false, span, out); }
+
+fn maybe_written_foreign(names: &winnow_grammar::InternerContext, ty: Option<&Type>, known: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) { written_foreign(names, match ty { Some(__nikaia_value) => __nikaia_value, None => return }, known, false, span, out); }
+
+fn block_types(names: &winnow_grammar::InternerContext, block: &Block, known: &collections::BTreeSet<String>, out: &mut Vec<Finding>) {
+    for stmt in block.stmts.iter() {
+        match &stmt.node {
+            Stmt::Let { ty, value, .. } => {
+                maybe_written(names, (ty).as_ref(), known, &stmt.span, out);
+                blocks_types(names, value, known, out);
+            },
+            Stmt::Comptime { value, .. } => blocks_types(names, value, known, out),
+            Stmt::Expr(value) => blocks_types(names, value, known, out),
+            Stmt::Return(value) => blocks_types(names, match value { Some(__nikaia_value) => __nikaia_value, None => continue }, known, out),
+            Stmt::Assign { target, value, .. } => {
+                blocks_types(names, target, known, out);
+                blocks_types(names, value, known, out);
+            },
+            Stmt::For { body, .. } => block_types(names, body, known, out),
+            Stmt::While { body, .. } => block_types(names, body, known, out),
+            _ => { },
+        }
+    }
+}
+
+fn blocks_types(names: &winnow_grammar::InternerContext, expr: &Expr, known: &collections::BTreeSet<String>, out: &mut Vec<Finding>) {
+    match expr {
+        Expr::Block(block) => block_types(names, block, known, out),
+        Expr::Unsafe(block) => block_types(names, block, known, out),
+        Expr::Overlap(block) => block_types(names, block, known, out),
+        Expr::Closure { body, .. } => block_types(names, body, known, out),
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            blocks_types(names, func, known, out);
+            for arg in args.iter() { blocks_types(names, arg, known, out); }
+            for setting in config.iter() { blocks_types(names, &setting.value, known, out); }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            blocks_types(names, receiver, known, out);
+            for arg in args.iter() { blocks_types(names, arg, known, out); }
+            for setting in config.iter() { blocks_types(names, &setting.value, known, out); }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            blocks_types(names, receiver, known, out);
+            for arg in args.iter() { blocks_types(names, arg, known, out); }
+            for setting in config.iter() { blocks_types(names, &setting.value, known, out); }
+        },
+        Expr::If { then_branch, else_branch, .. } => {
+            block_types(names, then_branch, known, out);
+            block_types(names, match else_branch { Some(__nikaia_value) => __nikaia_value, None => return }, known, out);
+        },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            blocks_types(names, expr, known, out);
+            block_types(names, handler, known, out);
+        },
+        Expr::Match { arms, .. } => { for arm in arms.iter() { blocks_types(names, &arm.body, known, out); } },
+        Expr::Select(arms) => { for arm in arms.iter() { block_types(names, &arm.body, known, out); } },
+        _ => { },
+    }
+}
+
+fn written_foreign(names: &winnow_grammar::InternerContext, ty: &Type, known: &collections::BTreeSet<String>, a_parameter: bool, span: &Span, out: &mut Vec<Finding>) {
+    if ty.is_slice && (ty.generics.len() as i64) > 0 {
+        written_at(names, nikaia_std::index::get(&ty.generics, 0), known, false, span, out);
+        return;
+    }
+    written_at_the_boundary(names, ty, known, a_parameter, true, span, out);
+}
+
+fn written_at(names: &winnow_grammar::InternerContext, ty: &Type, known: &collections::BTreeSet<String>, a_parameter: bool, span: &Span, out: &mut Vec<Finding>) { written_at_the_boundary(names, ty, known, a_parameter, false, span, out); }
+
+fn written_at_the_boundary(names: &winnow_grammar::InternerContext, ty: &Type, known: &collections::BTreeSet<String>, a_parameter: bool, at_c: bool, span: &Span, out: &mut Vec<Finding>) {
+    if ty.is_mut && !at_c {
+        out.push(refusal("NK1158", span.clone(), String::from("`&mut` can only be used when talking to C."), vec![String::from("`&mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it.")], String::from("Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.")));
+        return;
+    }
+    let name = names.resolve(ty.name).to_owned();
+    if !a_parameter && !ty.is_view && !ty.is_slice && ty.count.is_none() && (ty.generics.len() as i64) == 1 && name == "Array" {
+        let element = names.resolve(nikaia_std::index::get(&ty.generics, 0).name).to_owned();
+        out.push(refusal("NK1182", span.clone(), format!("`Array[{}]` needs a length here.", element), vec![format!("`Array[{}]` without a length only works for a parameter, where each call supplies the length. A field or a result has no call to take it from.", element)], format!("Use `Vec[{}]` for a list that can grow, `ref Array[{}]` to look at elements something else keeps, or `Array[{}, N]` to write the length down.", element, element, element)));
+        return;
+    }
+    if ty.count.is_some() { return; }
+    if ty.is_slice {
+        for argument in ty.generics.iter() { written_at(names, argument, known, false, span, out); }
+        return;
+    }
+    if !ty.is_tuple && (*ty.code).is_none() && !known.contains(&name) && !name.contains("::") { out.push(nothing_declares(&name, known, span)); }
+    for argument in ty.generics.iter() { written_at(names, argument, known, false, span, out); }
+    maybe_written(names, (*ty.code).as_ref().and_then(|__nikaia_it| (*__nikaia_it.result).as_ref()), known, span, out);
+}
+
+fn nothing_declares(name: &str, known: &collections::BTreeSet<String>, span: &Span) -> Finding {
+    let module = std_module_of(name, known);
+    if (module.len() as i64) > 0 { return refusal("NK1135", span.clone(), format!("`{}` needs its module in front of it.", name), vec![format!("Its full name is `{}::{}`: a type from a module is written with the module's name.", module, name)], format!("Write `use std::{}` at the top of the file, and `{}::{}` here.", module, module, name)); }
+    refusal("NK1135", span.clone(), format!("There's no type called `{}`.", name), vec![String::from("A type is either built in, declared in your program with `struct` or `enum`, provided by `std`, or a type parameter.")], format!("Check the spelling, or declare `{}` with `struct` or `enum`.", name))
+}
+
+fn std_module_of(name: &str, known: &collections::BTreeSet<String>) -> String {
+    let ending = format!("::{}", name);
+    for key in known.iter() {
+        if key.ends_with(&ending) {
+            let c: Vec<char> = nikaia_std::list::chars(key.chars());
+            let at = find_text(&c, 0, "::");
+            let module = slice(&c, 0, at);
+            for one in STD_MODULES.iter() {
+                let one = *one;
+                if module == one { return module; }
+            }
+            return String::from("");
+        }
+    }
+    String::from("")
+}
+
+
 pub mod ast {
     #[allow(unused_imports)]
     pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
@@ -7095,4 +7394,8 @@ pub mod trust {
 pub mod ty {
     #[allow(unused_imports)]
     pub use super::{Ty, Shape, ENDS, SIZED, REPLAYS, SEQ, PAR, PAUSES, ARRAY, TEXT, TEXT_VIEW, text, parse, split_args, a_view_of, Provenance, Sync, Lock, Crosses, Threads, Touch, State, Held, Count, Class, FieldContract, VariantContract, ConfigContract, Signature, FnContract, TypeContract, Ledger, Notes, SEEN, bind, substitute, qualify, renamed};
+}
+pub mod types {
+    #[allow(unused_imports)]
+    pub use super::{types_checked};
 }

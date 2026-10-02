@@ -1,0 +1,422 @@
+// crates/nikaia-std/src/tools/types.nika
+//
+// Part I 2.2 and Part III C.1: **a type nothing declares is refused here
+// rather than lowered** (ADR-096), and the names a file declares are declared
+// once (`NK1148`). Moved from the compiler's `types` (ADR-250, #125). What the
+// file declares as types and what an `impl`'s target makes a type parameter
+// are the compiler's `contracts`' answers, handed in.
+
+use std::collections
+
+// The bounds `T: Struct` and `T: Enum` name a shape, not a trait.
+comptime SHAPE_BOUNDS: Array[ref String, 2] = ["Struct", "Enum"]
+
+// Types every program has without declaring them.
+comptime BUILT_IN: Array[ref String, 26] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "str", "Self", "Vec", "Shared", "SharedMut", "Locked", "TaskHandle", "Array", "Bytes"]
+
+// The modules of `std` a type may live in.
+comptime STD_MODULES: Array[ref String, 7] = ["cli", "collections", "channel", "foreign", "fs", "io", "time"]
+
+/// Every name declared twice, every bound naming no trait, and every written
+/// type nothing declares. `declared` is the types the file declares;
+/// `impl_parameters` holds, beside each item, what an `impl`'s target makes a
+/// type parameter (empty for every other item).
+pub fn types_checked(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], own: ref Ledger, library: ref Ledger, declared: ref collections::BTreeSet[String], impl_parameters: ref Vec[Vec[String]]) -> Vec[Finding] {
+    let mut found: Vec[Finding] = []
+    declared_once_in(names, items, found)
+    let known = known_names(own, library, declared)
+    let traits = known_traits(names, items, own, library)
+    for k in 0..<items.len() {
+        let mut here = known.clone()
+        for parameter in generic_names(names, items[k].node) {
+            here.insert(parameter)
+        }
+        for parameter in impl_parameters[k] {
+            here.insert(parameter.clone())
+        }
+        bounds_of(names, items[k].node, traits, items[k].span, found)
+        item_types(names, items[k].node, here, items[k].span, found)
+    }
+    return found
+}
+
+// Every trait a bound may name: the shapes, the traits a ledger knows - by
+// key and by its last segment - and the ones this file declares.
+fn known_traits(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], own: ref Ledger, library: ref Ledger) -> collections::BTreeSet[String] {
+    let mut known: collections::BTreeSet[String] = collections::BTreeSet()
+    for shape in SHAPE_BOUNDS {
+        known.insert(shape.clone())
+    }
+    for (key, _) in own.traits {
+        with_its_last_segment(key, known)
+    }
+    for (key, _) in library.traits {
+        with_its_last_segment(key, known)
+    }
+    for item in items {
+        match item.node {
+            Item::Trait { name, .. } => {
+                known.insert(names.resolve(name).clone())
+            }
+            else => {}
+        }
+    }
+    return known
+}
+
+// `key`, and what stands after its last `::`.
+fn with_its_last_segment(key: ref String, mut known: collections::BTreeSet[String]) {
+    known.insert(key.clone())
+    let c: Vec[char] = key.chars().collect()
+    let mut last = -1
+    for at in 0..<c.len() {
+        if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
+            last = at
+        }
+    }
+    if last >= 0 {
+        known.insert(slice(c, last + 2, c.len()))
+    }
+}
+
+// Every name a written type may be: built in, a type of `std`, a type a
+// ledger of this package knows - by key and by its last segment - and the
+// types this file declares.
+fn known_names(own: ref Ledger, library: ref Ledger, declared: ref collections::BTreeSet[String]) -> collections::BTreeSet[String] {
+    let mut known: collections::BTreeSet[String] = collections::BTreeSet()
+    for name in BUILT_IN {
+        known.insert(name.clone())
+    }
+    for (key, _) in library.types {
+        known.insert(key.clone())
+    }
+    for (key, _) in own.types {
+        with_its_last_segment(key, known)
+    }
+    for name in declared {
+        known.insert(name.clone())
+    }
+    return known
+}
+
+// The type parameters a function or a struct declares.
+fn generic_names(names: ref winnow_grammar::InternerContext, item: ref Item) -> Vec[String] {
+    let mut out: Vec[String] = []
+    match item {
+        Item::Fn { generics, .. } => {
+            for parameter in generics {
+                out.push(names.resolve(parameter.name).clone())
+            }
+        }
+        Item::Struct { generics, .. } => {
+            for parameter in generics {
+                out.push(names.resolve(parameter.name).clone())
+            }
+        }
+        else => {}
+    }
+    return out
+}
+
+// A bound with no `::` in it names a trait this file can see.
+fn bounds_of(names: ref winnow_grammar::InternerContext, item: ref Item, traits: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    match item {
+        Item::Fn { generics, .. } => bounds_in(names, generics, traits, span, out),
+        Item::Struct { generics, .. } => bounds_in(names, generics, traits, span, out),
+        else => {}
+    }
+}
+
+fn bounds_in(names: ref winnow_grammar::InternerContext, generics: ref Vec[GenericParam], traits: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    for parameter in generics {
+        for bound in parameter.bounds {
+            let name = names.resolve(bound.clone()).clone()
+            if !name.contains("::") && !traits.contains(name) {
+                out.push(refusal("NK1135", span.clone(), f"There's no trait called `{name}`.", ["A bound names a trait the caller's type has to implement, and no trait by this name is declared."], f"Declare `{name}` with `trait`, or remove the bound. (Without a bound, the value can only be moved and passed on.)"))
+            }
+        }
+    }
+}
+
+// **A name means one thing** (`NK1148`): a `fn`, a `struct`, an `enum`, a
+// `trait` and a `grammar` declare a name, and the second declaration of one
+// is refused where it stands.
+fn declared_once_in(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], mut out: Vec[Finding]) {
+    let mut seen: collections::BTreeMap[String, String] = collections::BTreeMap()
+    for item in items {
+        let kind = kind_declared(item.node)
+        if kind.len() == 0 {
+            continue
+        }
+        let name = name_declared(names, item.node)
+        if name.len() == 0 {
+            continue
+        }
+        let earlier: String? = seen[name]?.clone()
+        if earlier == null {
+            seen.insert(name, kind)
+            continue
+        }
+        let first = earlier ?? continue
+        let kinds = if first == kind { f"both times as a `{first}`" } else { f"once as a `{first}` and once as a `{kind}`" }
+        out.push(refusal("NK1148", item.span.clone(), f"`{name}` is declared twice in this file, {kinds}.", ["A name means one thing, so there's never a question of which declaration wins. All files of a package share their names for the same reason."], f"Rename one of the two. (A `struct`'s name is already its constructor, so `{name}` can't also be a function.)"))
+    }
+}
+
+// What an item declares a name as, or nothing.
+fn kind_declared(item: ref Item) -> String {
+    return match item {
+        Item::Fn { name, .. } => if name != null { "fn" } else { "" },
+        Item::Struct { .. } => "struct",
+        Item::Enum { .. } => "enum",
+        Item::Trait { .. } => "trait",
+        Item::Grammar(_) => "grammar",
+        else => "",
+    }
+}
+
+// The name an item declares, or nothing.
+fn name_declared(names: ref winnow_grammar::InternerContext, item: ref Item) -> String {
+    return match item {
+        Item::Fn { name, .. } => a_symbols_text(names, name),
+        Item::Struct { name, .. } => names.resolve(name).clone(),
+        Item::Enum { name, .. } => names.resolve(name).clone(),
+        Item::Trait { name, .. } => names.resolve(name).clone(),
+        Item::Grammar(def) => names.resolve(def.name).clone(),
+        else => "",
+    }
+}
+
+// What a name that may be missing says, or nothing.
+fn a_symbols_text(names: ref winnow_grammar::InternerContext, name: winnow_grammar::Symbol?) -> String {
+    let symbol = name ?? return ""
+    return names.resolve(symbol).clone()
+}
+
+// Every type an item writes.
+fn item_types(names: ref winnow_grammar::InternerContext, item: ref Item, known: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    match item {
+        Item::Fn { args, ret_type, body, .. } => {
+            for arg in args {
+                written_at(names, arg.ty, known, true, span, out)
+            }
+            maybe_written(names, ret_type, known, span, out)
+            block_types(names, body, known, out)
+        }
+        Item::Struct { fields, .. } => {
+            for field in fields {
+                written_at(names, field.ty, known, false, span, out)
+            }
+        }
+        Item::Enum { variants, .. } => {
+            for variant in variants {
+                match variant.fields {
+                    VariantFields::Unit => {}
+                    VariantFields::Tuple(parts) => {
+                        for ty in parts {
+                            written_at(names, ty, known, false, span, out)
+                        }
+                    }
+                    VariantFields::Named(fields) => {
+                        for field in fields {
+                            written_at(names, field.ty, known, false, span, out)
+                        }
+                    }
+                }
+            }
+        }
+        Item::Extern { declarations, .. } => {
+            for declaration in declarations {
+                for arg in declaration.node.args {
+                    written_foreign(names, arg.ty, known, true, declaration.span, out)
+                }
+                maybe_written_foreign(names, declaration.node.ret_type, known, declaration.span, out)
+            }
+        }
+        Item::Trait { methods, .. } => {
+            for method in methods {
+                let mut here = known.clone()
+                for parameter in method.node.generics {
+                    here.insert(names.resolve(parameter.name).clone())
+                }
+                for arg in method.node.args {
+                    written_at(names, arg.ty, here, true, method.span, out)
+                }
+                maybe_written(names, method.node.ret_type, here, method.span, out)
+            }
+        }
+        Item::Impl { methods, .. } => {
+            for method in methods {
+                let mut here = known.clone()
+                for parameter in generic_names(names, method.node) {
+                    here.insert(parameter)
+                }
+                item_types(names, method.node, here, method.span, out)
+            }
+        }
+        else => {}
+    }
+}
+
+fn maybe_written(names: ref winnow_grammar::InternerContext, ty: ref Type?, known: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    written_at(names, ty ?? return, known, false, span, out)
+}
+
+fn maybe_written_foreign(names: ref winnow_grammar::InternerContext, ty: ref Type?, known: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    written_foreign(names, ty ?? return, known, false, span, out)
+}
+
+// The types a body writes on its `let`s, its nested blocks included.
+fn block_types(names: ref winnow_grammar::InternerContext, block: ref Block, known: ref collections::BTreeSet[String], mut out: Vec[Finding]) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { ty, value, .. } => {
+                maybe_written(names, ty, known, stmt.span, out)
+                blocks_types(names, value, known, out)
+            }
+            Stmt::Comptime { value, .. } => blocks_types(names, value, known, out),
+            Stmt::Expr(value) => blocks_types(names, value, known, out),
+            Stmt::Return(value) => blocks_types(names, value ?? continue, known, out),
+            Stmt::Assign { target, value, .. } => {
+                blocks_types(names, target, known, out)
+                blocks_types(names, value, known, out)
+            }
+            Stmt::For { body, .. } => block_types(names, body, known, out),
+            Stmt::While { body, .. } => block_types(names, body, known, out),
+            else => {}
+        }
+    }
+}
+
+// The blocks an expression holds, a lambda passed as an argument included.
+fn blocks_types(names: ref winnow_grammar::InternerContext, expr: ref Expr, known: ref collections::BTreeSet[String], mut out: Vec[Finding]) {
+    match expr {
+        Expr::Block(block) => block_types(names, block, known, out),
+        Expr::Unsafe(block) => block_types(names, block, known, out),
+        Expr::Overlap(block) => block_types(names, block, known, out),
+        Expr::Closure { body, .. } => block_types(names, body, known, out),
+        Expr::Call { func, args, config } => {
+            blocks_types(names, func, known, out)
+            for arg in args {
+                blocks_types(names, arg, known, out)
+            }
+            for setting in config {
+                blocks_types(names, setting.value, known, out)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            blocks_types(names, receiver, known, out)
+            for arg in args {
+                blocks_types(names, arg, known, out)
+            }
+            for setting in config {
+                blocks_types(names, setting.value, known, out)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            blocks_types(names, receiver, known, out)
+            for arg in args {
+                blocks_types(names, arg, known, out)
+            }
+            for setting in config {
+                blocks_types(names, setting.value, known, out)
+            }
+        }
+        Expr::If { then_branch, else_branch, .. } => {
+            block_types(names, then_branch, known, out)
+            block_types(names, else_branch ?? return, known, out)
+        }
+        Expr::TryCatch { expr, handler } => {
+            blocks_types(names, expr, known, out)
+            block_types(names, handler, known, out)
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                blocks_types(names, arm.body, known, out)
+            }
+        }
+        Expr::Select(arms) => {
+            for arm in arms {
+                block_types(names, arm.body, known, out)
+            }
+        }
+        else => {}
+    }
+}
+
+// A type written at the C boundary: a slice is its element, and a `&mut`
+// the boundary's own is checked as the type it points at.
+fn written_foreign(names: ref winnow_grammar::InternerContext, ty: ref Type, known: ref collections::BTreeSet[String], a_parameter: bool, span: ref Span, mut out: Vec[Finding]) {
+    if ty.is_slice && ty.generics.len() > 0 {
+        written_at(names, ty.generics[0], known, false, span, out)
+        return
+    }
+    written_at_the_boundary(names, ty, known, a_parameter, true, span, out)
+}
+
+// One written type, and the types inside it. A parameter is the one place an
+// `Array[T]` with no length may stand: each call supplies the length.
+fn written_at(names: ref winnow_grammar::InternerContext, ty: ref Type, known: ref collections::BTreeSet[String], a_parameter: bool, span: ref Span, mut out: Vec[Finding]) {
+    written_at_the_boundary(names, ty, known, a_parameter, false, span, out)
+}
+
+// The same, where `at_c` says the type stands at the C boundary: a `&mut`
+// there is the boundary's own, and checked as the type it points at.
+fn written_at_the_boundary(names: ref winnow_grammar::InternerContext, ty: ref Type, known: ref collections::BTreeSet[String], a_parameter: bool, at_c: bool, span: ref Span, mut out: Vec[Finding]) {
+    if ty.is_mut && !at_c {
+        out.push(refusal("NK1158", span.clone(), "`&mut` can only be used when talking to C.", ["`&mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it."], "Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`."))
+        return
+    }
+    let name = names.resolve(ty.name).clone()
+    if !a_parameter && !ty.is_view && !ty.is_slice && ty.count == null && ty.generics.len() == 1 && name == "Array" {
+        let element = names.resolve(ty.generics[0].name).clone()
+        out.push(refusal("NK1182", span.clone(), f"`Array[{element}]` needs a length here.", [f"`Array[{element}]` without a length only works for a parameter, where each call supplies the length. A field or a result has no call to take it from."], f"Use `Vec[{element}]` for a list that can grow, `ref Array[{element}]` to look at elements something else keeps, or `Array[{element}, N]` to write the length down."))
+        return
+    }
+    if ty.count != null {
+        return
+    }
+    if ty.is_slice {
+        for argument in ty.generics {
+            written_at(names, argument, known, false, span, out)
+        }
+        return
+    }
+    if !ty.is_tuple && ty.code == null && !known.contains(name) && !name.contains("::") {
+        out.push(nothing_declares(name, known, span))
+    }
+    for argument in ty.generics {
+        written_at(names, argument, known, false, span, out)
+    }
+    maybe_written(names, ty.code?.result, known, span, out)
+}
+
+// `NK1135` for a type, and where a module of `std` has one by the name, the
+// module it is in.
+fn nothing_declares(name: ref String, known: ref collections::BTreeSet[String], span: ref Span) -> Finding {
+    let module = std_module_of(name, known)
+    if module.len() > 0 {
+        return refusal("NK1135", span.clone(), f"`{name}` needs its module in front of it.", [f"Its full name is `{module}::{name}`: a type from a module is written with the module's name."], f"Write `use std::{module}` at the top of the file, and `{module}::{name}` here.")
+    }
+    return refusal("NK1135", span.clone(), f"There's no type called `{name}`.", ["A type is either built in, declared in your program with `struct` or `enum`, provided by `std`, or a type parameter."], f"Check the spelling, or declare `{name}` with `struct` or `enum`.")
+}
+
+// The module of the first known key ending in `::name`, where that module is
+// one of `std`'s; otherwise nothing.
+fn std_module_of(name: ref String, known: ref collections::BTreeSet[String]) -> String {
+    let ending = f"::{name}"
+    for key in known {
+        if key.ends_with(ref ending) {
+            let c: Vec[char] = key.chars().collect()
+            let at = find_text(c, 0, "::")
+            let module = slice(c, 0, at)
+            for one in STD_MODULES {
+                if module == one {
+                    return module
+                }
+            }
+            return ""
+        }
+    }
+    return ""
+}

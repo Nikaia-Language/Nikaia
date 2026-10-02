@@ -821,3 +821,83 @@ fn an_argument_for_a_mut_parameter_is_its_type() {
         "{found:#?}"
     );
 }
+
+/// **A read through the brackets that jumps where nothing is there binds a
+/// view** (#125): `let first = seen[name] ?? return …` is the `Some` of a
+/// `get` below, a `&String` or a `&i64`, and comparing it with a value of its
+/// own reached `rustc` as `&String == String`. It is read as a `for` binding
+/// is now.
+#[test]
+fn a_bracket_read_with_a_jump_compares_with_a_value() {
+    runs(
+        "bracket-jump",
+        "use std::collections\n\
+         \n\
+         fn same(seen: ref collections::BTreeMap[String, String], name: ref String) -> bool {\n\
+         \x20   let kind: String = \"fn\"\n\
+         \x20   let first = seen[name] ?? return false\n\
+         \x20   return first == kind\n\
+         }\n\
+         \n\
+         fn counted(counts: ref collections::BTreeMap[String, i64], name: ref String, n: i64) -> bool {\n\
+         \x20   let count = counts[name] ?? return false\n\
+         \x20   return count == n\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut seen: collections::BTreeMap[String, String] = collections::BTreeMap()\n\
+         \x20   seen.insert(\"a\", \"fn\")\n\
+         \x20   println(same(seen, \"a\"))\n\
+         \x20   println(same(seen, \"b\"))\n\
+         \x20   let mut counts: collections::BTreeMap[String, i64] = collections::BTreeMap()\n\
+         \x20   counts.insert(\"a\", 3)\n\
+         \x20   println(counted(counts, \"a\", 3))\n\
+         }\n",
+        "true\nfalse\ntrue\n",
+    );
+}
+
+/// **A branch that ends in `continue` takes its takings with it** (#125), as
+/// one that ends in `return` does (ADR-213 D4): `kept.push(name)` then
+/// `continue` was refused with `NK2105` for the `println(name)` after the
+/// `if`, which no path that pushed reaches. A name from outside the loop is
+/// still refused, by the loop's own rule.
+#[test]
+fn a_branch_that_continues_takes_its_takings_with_it() {
+    runs(
+        "continue-takes",
+        "fn keep(names: ref Vec[String]) -> i64 {\n\
+         \x20   let mut kept: Vec[String] = []\n\
+         \x20   for one in names {\n\
+         \x20       let name = one.clone()\n\
+         \x20       if name.len() > 3 {\n\
+         \x20           kept.push(name)\n\
+         \x20           continue\n\
+         \x20       }\n\
+         \x20       println(name)\n\
+         \x20   }\n\
+         \x20   return kept.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let xs: Vec[String] = [\"ab\", \"abcd\"]\n\
+         \x20   println(keep(xs))\n\
+         }\n",
+        "ab\n1\n",
+    );
+    let outer = findings(
+        "fn outer(names: ref Vec[String]) -> i64 {\n\
+         \x20   let mut kept: Vec[String] = []\n\
+         \x20   let first: String = \"x\"\n\
+         \x20   for one in names {\n\
+         \x20       if one.len() > 3 {\n\
+         \x20           kept.push(first)\n\
+         \x20           continue\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return kept.len()\n\
+         }\n\
+         fn main() { }\n",
+    );
+    assert!(outer.iter().any(|f| f.code == "NK2105"), "{outer:#?}");
+}
