@@ -526,34 +526,7 @@ pub fn a_stale_boundary(
 /// cost a reader a remedy they can follow. A note is suppressed for naming
 /// something unreachable, never for sounding foreign.
 fn is_rust_internal(note: &str) -> bool {
-    const ATTRIBUTES: [&str; 4] = ["#[deny(", "#[warn(", "#[allow(", "#[forbid("];
-    const TOOLING: [&str; 4] = [
-        "Cargo.toml",
-        "cargo add",
-        "RUST_BACKTRACE",
-        "rustc --explain",
-    ];
-    const NOT_OFFERED: [&str; 6] = [
-        "consider using the type `u32`",
-        "consider using the type `u64`",
-        "consider using the type `usize`",
-        // Part I 3.5: `x?.field` is an `Option::map`, so reusing `x` afterwards
-        // is a move error - which the language below is right to hold
-        // ([ADR-005](../../../../docs/specification/adr/adr-005.md)), and the
-        // headline *"use of moved value"* names the program's own variable on
-        // the program's own line. What it hangs three notes on is
-        // `Option::<T>::map` and the way out of it: `.as_ref()`, `.as_mut()`,
-        // and `clone`. **All three name the shape this compiler emitted**, and
-        // none of them is a thing a `.nika` file can write
-        // ([ADR-052](../../../../docs/specification/adr/adr-052.md) §4).
-        "consider calling `.as_ref()`",
-        "consider calling `.as_mut()`",
-        "you can `clone` the value and consume it",
-    ];
-
-    ATTRIBUTES.iter().any(|a| note.contains(a))
-        || TOOLING.iter().any(|t| note.contains(t))
-        || NOT_OFFERED.iter().any(|t| note.contains(t))
+    nikaia_std::tools::rustc_words::is_rust_internal(note)
 }
 
 /// **A name this compiler substituted on the way out, put back on the way in.**
@@ -608,113 +581,16 @@ fn is_rust_internal(note: &str) -> bool {
 /// own business (two types of one name, from two crates), and one that only
 /// *became* that way is this compiler's.
 fn both_sides_the_same(message: &str) -> Option<String> {
-    let expected = backticked_after(message, "expected ")?;
-    let found = backticked_after(message, "found ")?;
-    match expected == found {
-        true => Some(expected),
-        false => None,
-    }
+    nikaia_std::tools::rustc_words::both_sides_the_same(message)
 }
 
-/// What stands between the first pair of backticks after `word`.
-fn backticked_after(message: &str, word: &str) -> Option<String> {
-    let rest = &message[message.find(word)? + word.len()..];
-    let open = rest.find('`')? + 1;
-    let close = rest[open..].find('`')? + open;
-    Some(rest[open..close].to_string())
-}
-
-/// `Rc<T>` and `Arc<T>` are both `Shared[T]`, which is the word the program
-/// wrote ([ADR-056](../../../../docs/specification/adr/adr-056.md) D1).
-///
-/// The brackets are matched rather than searched for, so a nested type comes
-/// through whole: `Rc<Vec<Conn>>` is `Shared[Vec<Conn>]`, and the inner one is
-/// then substituted by the same pass over the result.
-fn shared_names(message: &str) -> String {
-    const HULLS: [&str; 6] = [
-        "std::rc::Rc<",
-        "alloc::rc::Rc<",
-        "std::sync::Arc<",
-        "alloc::sync::Arc<",
-        "Rc<",
-        "Arc<",
-    ];
-
-    let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    'outer: while !rest.is_empty() {
-        for hull in HULLS {
-            if rest.starts_with(hull) {
-                // A bare `Rc<` must not eat the tail of `MyRc<`: a hull is a
-                // name, so what stands in front of it may not be one.
-                let bare = !hull.contains("::");
-                let preceded_by_a_name = bare
-                    && out
-                        .chars()
-                        .next_back()
-                        .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':');
-                if !preceded_by_a_name && let Some(inner) = balanced(&rest[hull.len()..]) {
-                    out.push_str("Shared[");
-                    out.push_str(&shared_names(inner));
-                    out.push(']');
-                    rest = &rest[hull.len() + inner.len() + 1..];
-                    continue 'outer;
-                }
-            }
-        }
-        let step = rest.chars().next().map(char::len_utf8).unwrap_or(1);
-        out.push_str(&rest[..step]);
-        rest = &rest[step..];
-    }
-    out
-}
-
-/// What stands before the `>` that closes the `<` already consumed.
-fn balanced(rest: &str) -> Option<&str> {
-    let mut depth = 1usize;
-    for (at, c) in rest.char_indices() {
-        match c {
-            '<' => depth += 1,
-            '>' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&rest[..at]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
+/// A `rustc` message with every name this compiler substituted put back:
+/// `Rc<T>` and `Arc<T>` as `Shared[T]`, the lock's shapes as `Locked`, a
+/// trusted map as `HashMap`, `Option::map` as the `?.` the program wrote
+/// ([ADR-056](../../../../docs/specification/adr/adr-056.md) D1). **Written in
+/// Nikaia** (`tools/rustc_words.nika`, #125).
 fn in_this_language(message: &str) -> String {
-    shared_names(message)
-        // **The lock's two shapes are one written name**
-        // ([ADR-057](../../../../docs/specification/adr/adr-057.md)), so they go
-        // back like every other substitution (ADR-056 D1) - and where a message
-        // names both, the collapse is caught by the comparison that catches
-        // every other one.
-        .replace("nikaia_std::lock::Crossing", "Locked")
-        .replace("nikaia_std::lock::Local", "Locked")
-        .replace("lock::Crossing", "Locked")
-        .replace("lock::Local", "Locked")
-        .replace("Crossing<", "Locked<")
-        .replace("Local<", "Locked<")
-        .replace(", BuildHasherDefault<FxHasher>>", ">")
-        .replace("nikaia_std::hash::TrustedMap", "HashMap")
-        .replace("nikaia_std::hash::TrustedSet", "HashSet")
-        .replace("TrustedMap", "HashMap")
-        .replace("TrustedSet", "HashSet")
-        .replace(
-            "`Option::<T>::map` takes ownership of the receiver `self`",
-            "`?.` over a member that is not copied takes the value it reaches through \
-",
-        )
-        .replace(
-            "`Option::<T>::and_then` takes ownership of the receiver `self`",
-            "`?.` over a member that is not copied takes the value it reaches through \
-",
-        )
+    nikaia_std::tools::rustc_words::in_this_language(message)
 }
 
 /// Render a diagnostic the way a compiler does: the place, the message, the

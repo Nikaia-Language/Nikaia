@@ -1,0 +1,164 @@
+// crates/nikaia-std/src/tools/rustc_words.nika
+//
+// **A `rustc` message in the words the program wrote** (Part III C.1,
+// ADR-056), for the compiler's `diagnostics`: a message the language below
+// wrote about the generated Rust names the shapes this compiler chose -
+// `Rc<T>`, `TrustedMap`, `lock::Crossing`, `Option::map` - and the reader
+// wrote `Shared[T]`, `HashMap`, `Locked[T]`, `?.`. Every substitution is put
+// back, with no list of the ones that are allowed to be (ADR-056 D1); a
+// message that only *became* "expected `A`, found `A`" on the way is this
+// compiler's defect and is reported as one (D2). Moved from Rust (ADR-250,
+// #125).
+
+/// A message in this language: every name this compiler substituted on the
+/// way out, put back.
+pub fn in_this_language(message: ref String) -> String {
+    let mut out = shared_names(message)
+    // **The lock's two shapes are one written name** (ADR-057), so they go
+    // back like every other substitution.
+    out = replaced(out, "nikaia_std::lock::Crossing", "Locked")
+    out = replaced(out, "nikaia_std::lock::Local", "Locked")
+    out = replaced(out, "lock::Crossing", "Locked")
+    out = replaced(out, "lock::Local", "Locked")
+    out = replaced(out, "Crossing<", "Locked<")
+    out = replaced(out, "Local<", "Locked<")
+    out = replaced(out, ", BuildHasherDefault<FxHasher>>", ">")
+    out = replaced(out, "nikaia_std::hash::TrustedMap", "HashMap")
+    out = replaced(out, "nikaia_std::hash::TrustedSet", "HashSet")
+    out = replaced(out, "TrustedMap", "HashMap")
+    out = replaced(out, "TrustedSet", "HashSet")
+    // **And one that is a translation rather than a name** (ADR-189): `x?.f`
+    // over a member that is not copied lowers to `Option::map`, which takes
+    // its receiver by value. The explanation is the part a reader needs, and
+    // the spelling is put back as the one the program wrote.
+    out = replaced(out, "`Option::<T>::map` takes ownership of the receiver `self`", "`?.` over a member that is not copied takes the value it reaches through ")
+    out = replaced(out, "`Option::<T>::and_then` takes ownership of the receiver `self`", "`?.` over a member that is not copied takes the value it reaches through ")
+    return out
+}
+
+/// Whether a note names something a `.nika` file cannot reach: an attribute,
+/// Cargo's tooling, or a remedy that is a shape this compiler emitted. **A
+/// note is suppressed for naming something unreachable, never for sounding
+/// foreign**: *"prefix it with an underscore"* works in Nikaia, and stays.
+pub fn is_rust_internal(note: ref String) -> bool {
+    for internal in ["#[deny(", "#[warn(", "#[allow(", "#[forbid(", "Cargo.toml", "cargo add", "RUST_BACKTRACE", "rustc --explain", "consider using the type `u32`", "consider using the type `u64`", "consider using the type `usize`", "consider calling `.as_ref()`", "consider calling `.as_mut()`", "you can `clone` the value and consume it"] {
+        if note.contains(internal) {
+            return true
+        }
+    }
+    return false
+}
+
+/// The type an `expected … found …` names on both sides, where both are the
+/// same: a message naming one thing twice cannot be about the program.
+pub fn both_sides_the_same(message: ref String) -> String? {
+    let expected = backticked_after(message, "expected ") ?? return null
+    let found = backticked_after(message, "found ") ?? return null
+    if expected == found {
+        return expected
+    }
+    return null
+}
+
+// What stands between the first pair of backticks after `word`.
+fn backticked_after(message: ref String, word: ref String) -> String? {
+    let c: Vec[char] = message.chars().collect()
+    let w: Vec[char] = word.chars().collect()
+    let at = find_text(c, 0, word)
+    if at < 0 {
+        return null
+    }
+    let open = find(c, at + w.len(), '`')
+    if open < 0 {
+        return null
+    }
+    let close = find(c, open + 1, '`')
+    if close < 0 {
+        return null
+    }
+    return slice(c, open + 1, close)
+}
+
+// `Rc<T>` and `Arc<T>` are both `Shared[T]`, the word the program wrote
+// (ADR-056 D1). The brackets are matched rather than searched for, so a
+// nested type comes through whole, and the inner one is substituted by the
+// same pass over it.
+fn shared_names(message: ref String) -> String {
+    let c: Vec[char] = message.chars().collect()
+    let mut out: String = ""
+    let mut last = ' '
+    let mut at = 0
+    while at < c.len() {
+        let mut taken = false
+        for hull in ["std::rc::Rc<", "alloc::rc::Rc<", "std::sync::Arc<", "alloc::sync::Arc<", "Rc<", "Arc<"] {
+            if !taken && begins_at(c, at, hull) {
+                // A bare `Rc<` must not eat the tail of `MyRc<`: a hull is a
+                // name, so what stands in front of it may not be one.
+                let preceded_by_a_name = !hull.contains("::") && at > 0 && (last.is_alphanumeric() || last == '_' || last == ':')
+                let h: Vec[char] = hull.chars().collect()
+                let close = closing_angle(c, at + h.len())
+                if !preceded_by_a_name && close >= 0 {
+                    out.push_str("Shared[")
+                    out.push_str(ref shared_names(slice(c, at + h.len(), close)))
+                    out.push(']')
+                    last = ']'
+                    at = close + 1
+                    taken = true
+                }
+            }
+        }
+        if !taken {
+            out.push(c[at])
+            last = c[at]
+            at += 1
+        }
+    }
+    return out
+}
+
+// Where the `>` stands that closes the `<` already read, or -1.
+fn closing_angle(c: ref Array[char], from: i64) -> i64 {
+    let mut depth = 1
+    for at in from..<c.len() {
+        if c[at] == '<' {
+            depth += 1
+        } else if c[at] == '>' {
+            depth -= 1
+            if depth == 0 {
+                return at
+            }
+        }
+    }
+    return -1
+}
+
+// Whether `word` stands in `c` at `at`.
+fn begins_at(c: ref Array[char], at: i64, word: ref String) -> bool {
+    let w: Vec[char] = word.chars().collect()
+    if at + w.len() > c.len() {
+        return false
+    }
+    for k in 0..<w.len() {
+        if c[at + k] != w[k] {
+            return false
+        }
+    }
+    return true
+}
+
+// `text` with every `from` written `to`, left to right.
+fn replaced(text: ref String, from: ref String, to: ref String) -> String {
+    let c: Vec[char] = text.chars().collect()
+    let f: Vec[char] = from.chars().collect()
+    let mut out: String = ""
+    let mut at = 0
+    let mut next = find_text(c, 0, from)
+    while next >= 0 {
+        out.push_str(ref slice(c, at, next))
+        out.push_str(to)
+        at = next + f.len()
+        next = find_text(c, at, from)
+    }
+    out.push_str(ref slice(c, at, c.len()))
+    return out
+}
