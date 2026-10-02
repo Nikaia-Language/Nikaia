@@ -32,7 +32,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Block, Expr, Item, Span, Stmt, Type};
+use crate::ast::{Expr, Span};
 use crate::check::{Finding, Severity};
 use crate::parser::Parsed;
 
@@ -52,10 +52,8 @@ pub fn head_of(name: &str) -> &str {
 /// segment further.
 pub fn qualified_names(parsed: &Parsed) -> BTreeMap<String, Span> {
     let mut out: BTreeMap<String, Span> = BTreeMap::new();
-    for item in &parsed.program.items {
-        item_names(parsed, &item.node, &item.span, &mut |name: &str, span| {
-            out.entry(name.to_string()).or_insert_with(|| *span);
-        });
+    for (name, span) in written(parsed) {
+        out.entry(name).or_insert(span);
     }
     out
 }
@@ -78,23 +76,16 @@ pub fn check(
     }
     let mut first: BTreeMap<String, Span> = BTreeMap::new();
     let mut stale: BTreeMap<String, Span> = BTreeMap::new();
-    for item in &parsed.program.items {
-        item_names(
-            parsed,
-            &item.node,
-            &item.span,
-            &mut |name: &str, span: &Span| {
-                let crate_name = head_of(name);
-                if !declared.contains(crate_name) {
-                    return;
-                }
-                if !described.contains(crate_name) {
-                    first.entry(crate_name.to_string()).or_insert_with(|| *span);
-                } else if moved.contains_key(crate_name) {
-                    stale.entry(crate_name.to_string()).or_insert_with(|| *span);
-                }
-            },
-        );
+    for (name, span) in written(parsed) {
+        let crate_name = head_of(&name);
+        if !declared.contains(crate_name) {
+            continue;
+        }
+        if !described.contains(crate_name) {
+            first.entry(crate_name.to_string()).or_insert(span);
+        } else if moved.contains_key(crate_name) {
+            stale.entry(crate_name.to_string()).or_insert(span);
+        }
     }
     first
         .into_iter()
@@ -169,86 +160,16 @@ fn undescribed(crate_name: &str, span: &Span) -> Finding {
     }
 }
 
-/// The first segment of every qualified name an item writes, with the span the
-/// message should carry.
-fn item_names(parsed: &Parsed, item: &Item, span: &Span, found: &mut impl FnMut(&str, &Span)) {
-    match item {
-        Item::Fn {
-            args,
-            ret_type,
-            body,
-            ..
-        } => {
-            for arg in args {
-                ty_names(parsed, &arg.ty, span, found);
-            }
-            if let Some(ret) = ret_type {
-                ty_names(parsed, ret, span, found);
-            }
-            block_names(parsed, body, found);
-        }
-        Item::Struct { fields, .. } => {
-            for field in fields {
-                ty_names(parsed, &field.ty, span, found);
-            }
-        }
-        Item::Impl { methods, .. } => {
-            for method in methods {
-                item_names(parsed, &method.node, &method.span, found);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn block_names(parsed: &Parsed, block: &Block, found: &mut impl FnMut(&str, &Span)) {
-    for stmt in &block.stmts {
-        if let Stmt::Let { ty: Some(ty), .. } = &stmt.node {
-            ty_names(parsed, ty, &stmt.span, found);
-        }
-        crate::contracts::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::Path(segments) = expr
-                && let Some(head) = segments.first()
-            {
-                // `unaliased`, because a file may write its own word for a
-                // package (ADR-046 D3) - and the manifest key is the only
-                // name the declaration has.
-                // **The whole name and not its head**, because two
-                // readers want it: the refusal takes the word in front
-                // (`head_of`) and the describer takes the name after it.
-                let head = parsed.unaliased(parsed.text(*head));
-                let rest: Vec<String> = segments
-                    .iter()
-                    .skip(1)
-                    .map(|s| parsed.text(*s).to_string())
-                    .collect();
-                let name = match rest.is_empty() {
-                    true => head.to_string(),
-                    false => format!("{head}::{}", rest.join("::")),
-                };
-                found(&name, &stmt.span);
-            }
-        });
-        crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
-            block_names(parsed, inner, found)
-        });
-    }
-}
-
-/// A written type may name a crate too - `hyper_shim::Handle` in a parameter is
-/// as much a reach across the boundary as a call is, and it is the one the
-/// crossing rules are about.
-fn ty_names(parsed: &Parsed, ty: &Type, span: &Span, found: &mut impl FnMut(&str, &Span)) {
-    let name = parsed.unaliased(parsed.text(ty.name));
-    if name.contains("::") {
-        found(&name, span);
-    }
-    for argument in &ty.generics {
-        ty_names(parsed, argument, span, found);
-    }
-    if let Some(code) = &*ty.code
-        && let Some(result) = &*code.result
-    {
-        ty_names(parsed, result, span, found);
-    }
+/// **Every qualified name the unit writes, by the walk in Nikaia**
+/// (`tools/foreign.nika`, #125), in the order it meets them. What the holes
+/// of a literal are, and what a file's alias stands for, are this compiler's
+/// to answer: a template's holes are parsed out of its text, and the aliases
+/// are the parse's.
+fn written(parsed: &Parsed) -> Vec<(String, Span)> {
+    nikaia_std::tools::foreign::written_names(
+        &parsed.program,
+        &parsed.interner,
+        &|name: &str| parsed.unaliased(name),
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+    )
 }

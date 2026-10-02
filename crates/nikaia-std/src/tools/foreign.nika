@@ -1,0 +1,296 @@
+// crates/nikaia-std/src/tools/foreign.nika
+//
+// **Every qualified name a unit writes** (ADR-104 D1, D2), for the compiler's
+// `foreign`: the refusal of a call into a crate nothing describes (`NK2504`,
+// `NK2505`) asks which crates a program reaches into, and `nikaia describe`
+// asks which names of one it reaches. Moved from Rust (ADR-250, #125).
+//
+// **The first walk of the tree in Nikaia.** It reads every item, every
+// statement and every expression the way `contracts::sync`'s walk does - the
+// expressions of a statement without its nested blocks, then the blocks, each
+// read with its own statement's span - and a hole of a literal is an
+// expression of its statement like any other. What the holes of a literal are
+// is the compiler's to say (`holes_of`): an `f"…"`'s are its parts, a
+// template's are parsed out of its text, which only the compiler's parser can.
+// A package's alias is resolved by the compiler too (`unaliased`, ADR-046 D3),
+// because the manifest key is the only name the declaration has.
+
+/// Every qualified name `program` writes, beside the span of the item or
+/// statement it is written in, in the order the walk meets them: a written
+/// type with a `::` in it, and every path an expression holds - its head with
+/// the file's alias resolved, the segments after it as written.
+pub fn written_names(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> Vec[(String, Span)] {
+    let mut found: Vec[(String, Span)] = []
+    for item in program.items {
+        item_names(item.node, item.span, names, unaliased, holes_of, found)
+    }
+    return found
+}
+
+fn item_names(item: ref Item, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    match item {
+        Item::Fn { args, ret_type, body, .. } => {
+            for arg in args {
+                type_names(arg.ty, span, names, unaliased, found)
+            }
+            maybe_type_names(ret_type, span, names, unaliased, found)
+            block_names(body, names, unaliased, holes_of, found)
+        }
+        Item::Struct { fields, .. } => {
+            for field in fields {
+                type_names(field.ty, span, names, unaliased, found)
+            }
+        }
+        Item::Impl { methods, .. } => {
+            for method in methods {
+                item_names(method.node, method.span, names, unaliased, holes_of, found)
+            }
+        }
+        else => {}
+    }
+}
+
+// A written type may name a crate too - `hyper_shim::Handle` in a parameter is
+// as much a reach across the boundary as a call is, and it is the one the
+// crossing rules are about.
+fn type_names(ty: ref Type, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Vec[(String, Span)]) {
+    let name = unaliased(names.resolve(ty.name))
+    if name.contains("::") {
+        found.push(named_at(name, span))
+    }
+    for argument in ty.generics {
+        type_names(argument, span, names, unaliased, found)
+    }
+    maybe_type_names(ty.code?.result, span, names, unaliased, found)
+}
+
+fn maybe_type_names(ty: ref Type?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, mut found: Vec[(String, Span)]) {
+    type_names(ty ?? return, span, names, unaliased, found)
+}
+
+// A block's statements: a `let`'s written type, the paths each statement's
+// expressions hold, and then the blocks inside it.
+fn block_names(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { ty, .. } => maybe_type_names(ty, stmt.span, names, unaliased, found),
+            else => {}
+        }
+        statement_paths(stmt.node, stmt.span, names, unaliased, holes_of, found)
+        statement_blocks(stmt.node, names, unaliased, holes_of, found)
+    }
+}
+
+// Every expression a statement holds, without descending into nested blocks -
+// those are walked separately, so that each keeps its own statement's span.
+fn statement_paths(stmt: ref Stmt, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    match stmt {
+        Stmt::Let { value, .. } => expression_paths(value, span, names, unaliased, holes_of, found),
+        Stmt::Comptime { value, .. } => expression_paths(value, span, names, unaliased, holes_of, found),
+        Stmt::Assign { target, value, .. } => {
+            expression_paths(target, span, names, unaliased, holes_of, found)
+            expression_paths(value, span, names, unaliased, holes_of, found)
+        }
+        Stmt::For { iter, .. } => expression_paths(iter, span, names, unaliased, holes_of, found),
+        Stmt::While { cond, .. } => expression_paths(cond, span, names, unaliased, holes_of, found),
+        Stmt::Return(value) => maybe_expression_paths(value, span, names, unaliased, holes_of, found),
+        Stmt::Expr(value) => expression_paths(value, span, names, unaliased, holes_of, found),
+        else => {}
+    }
+}
+
+fn maybe_expression_paths(expr: ref Expr?, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    expression_paths(expr ?? return, span, names, unaliased, holes_of, found)
+}
+
+// Every path inside an expression, the holes of a literal included, and not
+// inside the bodies of nested blocks.
+fn expression_paths(expr: ref Expr, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    for hole in holes_of(expr) {
+        expression_paths(hole, span, names, unaliased, holes_of, found)
+    }
+    match expr {
+        Expr::Path(segments) => {
+            if segments.len() > 0 {
+                found.push(named_at(path_name(segments, names, unaliased), span))
+            }
+        }
+        Expr::Call { func, args, config } => {
+            expression_paths(func, span, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_paths(arg, span, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_paths(setting.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            expression_paths(receiver, span, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_paths(arg, span, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_paths(setting.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            expression_paths(receiver, span, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_paths(arg, span, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_paths(setting.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            expression_paths(lhs, span, names, unaliased, holes_of, found)
+            expression_paths(rhs, span, names, unaliased, holes_of, found)
+        }
+        Expr::Unary { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, found),
+        Expr::Try(inner) => expression_paths(inner, span, names, unaliased, holes_of, found),
+        Expr::Throw(inner) => expression_paths(inner, span, names, unaliased, holes_of, found),
+        Expr::Cast { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, found),
+        Expr::Field { base, .. } => expression_paths(base, span, names, unaliased, holes_of, found),
+        Expr::SafeField { base, .. } => expression_paths(base, span, names, unaliased, holes_of, found),
+        Expr::Index { base, index } => {
+            expression_paths(base, span, names, unaliased, holes_of, found)
+            expression_paths(index, span, names, unaliased, holes_of, found)
+        }
+        Expr::Range { start, end, .. } => {
+            expression_paths(start, span, names, unaliased, holes_of, found)
+            expression_paths(end, span, names, unaliased, holes_of, found)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                expression_paths(part, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            expression_paths(value, span, names, unaliased, holes_of, found)
+            expression_paths(fallback, span, names, unaliased, holes_of, found)
+        }
+        Expr::TryCatch { expr, .. } => expression_paths(expr, span, names, unaliased, holes_of, found),
+        Expr::If { cond, .. } => expression_paths(cond, span, names, unaliased, holes_of, found),
+        Expr::Match { value, arms } => {
+            expression_paths(value, span, names, unaliased, holes_of, found)
+            for arm in arms {
+                maybe_expression_paths(arm.guard, span, names, unaliased, holes_of, found)
+                expression_paths(arm.body, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                maybe_expression_paths(field.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                expression_paths(item, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::With { base, fields, .. } => {
+            expression_paths(base, span, names, unaliased, holes_of, found)
+            for field in fields {
+                maybe_expression_paths(field.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::Return(value) => maybe_expression_paths(value, span, names, unaliased, holes_of, found),
+        Expr::Select(arms) => {
+            for arm in arms {
+                expression_paths(arm.value, span, names, unaliased, holes_of, found)
+            }
+        }
+        else => {}
+    }
+}
+
+// Every block a statement holds.
+fn statement_blocks(stmt: ref Stmt, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    match stmt {
+        Stmt::For { body, .. } => block_names(body, names, unaliased, holes_of, found),
+        Stmt::While { body, .. } => block_names(body, names, unaliased, holes_of, found),
+        Stmt::Let { value, .. } => expression_blocks(value, names, unaliased, holes_of, found),
+        Stmt::Comptime { value, .. } => expression_blocks(value, names, unaliased, holes_of, found),
+        Stmt::Expr(value) => expression_blocks(value, names, unaliased, holes_of, found),
+        Stmt::Assign { target, value, .. } => {
+            expression_blocks(target, names, unaliased, holes_of, found)
+            expression_blocks(value, names, unaliased, holes_of, found)
+        }
+        Stmt::Return(value) => {
+            expression_blocks(value ?? return, names, unaliased, holes_of, found)
+        }
+        else => {}
+    }
+}
+
+// Every block an expression holds, the body of a lambda passed as an argument
+// included: a trailing lambda runs during the call it is given to.
+fn expression_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut found: Vec[(String, Span)]) {
+    match expr {
+        Expr::Block(block) => block_names(block, names, unaliased, holes_of, found),
+        Expr::Unsafe(block) => block_names(block, names, unaliased, holes_of, found),
+        Expr::Overlap(block) => block_names(block, names, unaliased, holes_of, found),
+        Expr::Closure { body, .. } => block_names(body, names, unaliased, holes_of, found),
+        Expr::Call { func, args, config } => {
+            expression_blocks(func, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_blocks(arg, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_blocks(setting.value, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            expression_blocks(receiver, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_blocks(arg, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_blocks(setting.value, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            expression_blocks(receiver, names, unaliased, holes_of, found)
+            for arg in args {
+                expression_blocks(arg, names, unaliased, holes_of, found)
+            }
+            for setting in config {
+                expression_blocks(setting.value, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::If { then_branch, else_branch, .. } => {
+            block_names(then_branch, names, unaliased, holes_of, found)
+            block_names(else_branch ?? return, names, unaliased, holes_of, found)
+        }
+        Expr::TryCatch { expr, handler } => {
+            expression_blocks(expr, names, unaliased, holes_of, found)
+            block_names(handler, names, unaliased, holes_of, found)
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                expression_blocks(arm.body, names, unaliased, holes_of, found)
+            }
+        }
+        Expr::Select(arms) => {
+            for arm in arms {
+                block_names(arm.body, names, unaliased, holes_of, found)
+            }
+        }
+        else => {}
+    }
+}
+
+// `h::serve_once` as `hyper_shim::serve_once`: the head with the file's alias
+// resolved, the rest as written.
+fn path_name(segments: ref Vec[winnow_grammar::Symbol], names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync) -> String {
+    let mut name = unaliased(names.resolve(segments[0]))
+    for k in 1..<segments.len() {
+        let segment = names.resolve(segments[k])
+        name = f"{name}::{segment}"
+    }
+    return name
+}
+
+fn named_at(name: String, span: ref Span) -> (String, Span) {
+    return (name, span.clone())
+}
