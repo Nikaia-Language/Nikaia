@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.337] — 2026-10-02
+
+**`locks` reads a body with the walk in Nikaia** (#125, ADR-250). The walk of
+`tools/foreign.nika` takes one block as well as a whole program
+(`seen_in`), and `contracts::locks` reads the free calls of each function's
+body and each grammar action off it - its own walk and `free_call` are gone.
+Three readers of the tree now share one walk (`foreign`, `--trust`, `locks`);
+every ledger the suite writes is what it was.
+
 ## [0.0.336] — 2026-10-02
 
 **`--trust` reads the program with the walk in Nikaia** (#125, ADR-250). The

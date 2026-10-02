@@ -41,6 +41,14 @@ pub fn written_in(program: ref Program, names: ref winnow_grammar::InternerConte
     return found
 }
 
+/// The same walk over one block - a function's body, a grammar's action -
+/// for a reader that asks about one function at a time (`contracts::locks`).
+pub fn seen_in(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync) -> Vec[Seen] {
+    let mut found: Vec[Seen] = []
+    block_names(block, names, unaliased, holes_of, root_at, found)
+    return found
+}
+
 fn item_names(item: ref Item, span: ref Span, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, root_at: fn(ref String) -> i64 sync, mut found: Vec[Seen]) {
     match item {
         Item::Fn { args, ret_type, body, .. } => {

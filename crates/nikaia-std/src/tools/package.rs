@@ -1305,6 +1305,12 @@ pub fn written_in(program: &Program, names: &winnow_grammar::InternerContext, un
     found
 }
 
+pub fn seen_in(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
+    let mut found: Vec<Seen> = vec![];
+    block_names(block, names, unaliased, holes_of, root_at, &mut found);
+    found
+}
+
 fn item_names(item: &Item, span: &Span, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, root_at: &impl Fn(&str) -> i64, found: &mut Vec<Seen>) {
     match item {
         Item::Fn { args, ret_type, body, .. } => {
@@ -6049,7 +6055,7 @@ pub mod fold {
 }
 pub mod foreign {
     #[allow(unused_imports)]
-    pub use super::{Seen, written_in};
+    pub use super::{Seen, written_in, seen_in};
 }
 pub mod http1 {
     #[allow(unused_imports)]
