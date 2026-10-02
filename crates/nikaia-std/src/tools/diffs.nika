@@ -1,0 +1,146 @@
+// crates/nikaia-std/src/tools/diffs.nika
+//
+// **What changed, said line by line**, for the compiler's `project`: the
+// lines of a ledger a `--locked` build or a stale check found different from
+// the committed one, and the difference between the output a test expected
+// and the output it produced. Moved from Rust (ADR-250, #125).
+
+/// The lines of `ledger` the committed text does not have, each under the
+/// entry it belongs to - named once, however many of its lines changed. A
+/// line that *is* an entry - a whole contract that is new - or a header line
+/// names itself. Blank lines and comments are not changes.
+pub fn changed_lines(ledger: ref String, committed: ref String) -> Vec[String] {
+    let mut kept: Vec[String] = []
+    for line in committed.lines() {
+        kept.push(line.clone())
+    }
+    let mut out: Vec[String] = []
+    let mut entry: String = ""
+    let mut named: String = ""
+    for line in ledger.lines() {
+        if line.starts_with("[") {
+            entry = line.clone()
+            named = ""
+        }
+        if line.len() == 0 || line.starts_with("#") || kept.contains(line) {
+            continue
+        }
+        if entry.len() > 0 && entry != line {
+            if named != entry {
+                out.push(f"  {entry}")
+                named = entry.clone()
+            }
+            out.push(f"      {line}")
+        } else {
+            out.push(f"  {line}")
+            named = entry.clone()
+        }
+    }
+    return out
+}
+
+/// The difference between two texts, as the lines a reader needs: every
+/// line that differs, marked `-` where only the expected text has it and `+`
+/// where only the produced one does, with two lines of context around each
+/// run and `…` for what lies between. Two texts too large to compare line by
+/// line are shown whole.
+pub fn differing_lines(expected: ref String, produced: ref String) -> String {
+    let mut a: Vec[String] = []
+    for line in expected.lines() {
+        a.push(line.clone())
+    }
+    let mut b: Vec[String] = []
+    for line in produced.lines() {
+        b.push(line.clone())
+    }
+    if same_lines(a, b) {
+        return "  the same lines; they differ in the line break at the end\n"
+    }
+    // A table the size of both texts; past this, the two are shown whole.
+    if (a.len() + 1) * (b.len() + 1) > 4000000 {
+        return f"  expected:\n{expected}\n  produced:\n{produced}\n"
+    }
+    // The longest common run from each pair of positions on.
+    let mut common: Vec[Vec[i64]] = []
+    for _i in 0..<a.len() + 1 {
+        let mut row: Vec[i64] = []
+        for _j in 0..<b.len() + 1 {
+            row.push(0)
+        }
+        common.push(row)
+    }
+    let mut i = a.len() - 1
+    while i >= 0 {
+        let mut j = b.len() - 1
+        while j >= 0 {
+            if a[i] == b[j] {
+                common[i][j] = common[i + 1][j + 1] + 1
+            } else if common[i + 1][j] >= common[i][j + 1] {
+                common[i][j] = common[i + 1][j]
+            } else {
+                common[i][j] = common[i][j + 1]
+            }
+            j -= 1
+        }
+        i -= 1
+    }
+    // Each step: ' ', '-' or '+', and its line.
+    let mut marks: Vec[char] = []
+    let mut lines: Vec[String] = []
+    let mut x = 0
+    let mut y = 0
+    while x < a.len() || y < b.len() {
+        if x < a.len() && y < b.len() && a[x] == b[y] {
+            marks.push(' ')
+            lines.push(a[x].clone())
+            x += 1
+            y += 1
+        } else if y < b.len() && (x == a.len() || common[x][y + 1] >= common[x + 1][y]) {
+            marks.push('+')
+            lines.push(b[y].clone())
+            y += 1
+        } else {
+            marks.push('-')
+            lines.push(a[x].clone())
+            x += 1
+        }
+    }
+    let mut out: String = ""
+    let mut skipped = false
+    for at in 0..<marks.len() {
+        let mut near = false
+        let from = if at >= 2 { at - 2 } else { 0 }
+        let to = if at + 3 < marks.len() { at + 3 } else { marks.len() }
+        for k in from..<to {
+            if marks[k] != ' ' {
+                near = true
+            }
+        }
+        if !near {
+            skipped = true
+            continue
+        }
+        if skipped {
+            out.push_str("  …\n")
+            skipped = false
+        }
+        out.push(marks[at])
+        out.push(' ')
+        out.push_str(ref lines[at])
+        out.push('\n')
+    }
+    return out
+}
+
+// Whether two lists of lines are the same.
+fn same_lines(a: ref Vec[String], b: ref Vec[String]) -> bool {
+    if a.len() != b.len() {
+        return false
+    }
+    for k in 0..<a.len() {
+        if a[k] != b[k] {
+            return false
+        }
+    }
+    return true
+}

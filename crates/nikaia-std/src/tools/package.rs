@@ -637,6 +637,106 @@ pub fn type_entry(fields: &Vec<String>, derives: &collections::BTreeSet<String>)
 }
 
 
+// --- diffs.nika ---
+
+pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
+    let mut kept: Vec<String> = vec![];
+    for line in committed.lines() { kept.push(line.to_owned()); }
+    let mut out: Vec<String> = vec![];
+    let mut entry: String = String::from("");
+    let mut named: String = String::from("");
+    for line in ledger.lines() {
+        if line.starts_with("[") {
+            entry = line.to_owned();
+            named = String::from("");
+        }
+        if (line.len() as i64) == 0 || line.starts_with("#") || nikaia_std::list::contains(&kept, line) { continue; }
+        if (entry.len() as i64) > 0 && entry != line {
+            if named != entry {
+                out.push(format!("  {}", entry));
+                named = entry.to_owned();
+            }
+            out.push(format!("      {}", line));
+        } else {
+            out.push(format!("  {}", line));
+            named = entry.to_owned();
+        }
+    }
+    out
+}
+
+pub fn differing_lines(expected: &str, produced: &str) -> String {
+    let mut a: Vec<String> = vec![];
+    for line in expected.lines() { a.push(line.to_owned()); }
+    let mut b: Vec<String> = vec![];
+    for line in produced.lines() { b.push(line.to_owned()); }
+    if same_lines(&a, &b) { return String::from("  the same lines; they differ in the line break at the end\n"); }
+    if (a.len() as i64 + 1) * (b.len() as i64 + 1) > 4000000 { return format!("  expected:\n{}\n  produced:\n{}\n", expected, produced); }
+    let mut common: Vec<Vec<i64>> = vec![];
+    for _i in 0..a.len() as i64 + 1 {
+        let mut row: Vec<i64> = vec![];
+        for _j in 0..b.len() as i64 + 1 { row.push(0); }
+        common.push(row);
+    }
+    let mut i = a.len() as i64 - 1;
+    while i >= 0 {
+        let mut j = b.len() as i64 - 1;
+        while j >= 0 {
+            if *nikaia_std::index::get(&a, nikaia_std::index::at(i)) == *nikaia_std::index::get(&b, nikaia_std::index::at(j)) { { let __nikaia_stored = *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(i + 1)), nikaia_std::index::at(j + 1)) + 1; nikaia_std::index::set(&mut common[nikaia_std::index::at(i)], nikaia_std::index::at(j), __nikaia_stored); } } else if *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(i + 1)), nikaia_std::index::at(j)) >= *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(i)), nikaia_std::index::at(j + 1)) { { let __nikaia_stored = *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(i + 1)), nikaia_std::index::at(j)); nikaia_std::index::set(&mut common[nikaia_std::index::at(i)], nikaia_std::index::at(j), __nikaia_stored); } } else { { let __nikaia_stored = *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(i)), nikaia_std::index::at(j + 1)); nikaia_std::index::set(&mut common[nikaia_std::index::at(i)], nikaia_std::index::at(j), __nikaia_stored); } }
+            j -= 1;
+        }
+        i -= 1;
+    }
+    let mut marks: Vec<char> = vec![];
+    let mut lines: Vec<String> = vec![];
+    let mut x: i64 = 0;
+    let mut y: i64 = 0;
+    while x < a.len() as i64 || y < b.len() as i64 {
+        if x < a.len() as i64 && y < b.len() as i64 && *nikaia_std::index::get(&a, nikaia_std::index::at(x)) == *nikaia_std::index::get(&b, nikaia_std::index::at(y)) {
+            marks.push(' ');
+            lines.push((*nikaia_std::index::get(&a, nikaia_std::index::at(x))).to_owned());
+            x += 1;
+            y += 1;
+        } else if y < b.len() as i64 && (x == a.len() as i64 || *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(x)), nikaia_std::index::at(y + 1)) >= *nikaia_std::index::get(nikaia_std::index::get(&common, nikaia_std::index::at(x + 1)), nikaia_std::index::at(y))) {
+            marks.push('+');
+            lines.push((*nikaia_std::index::get(&b, nikaia_std::index::at(y))).to_owned());
+            y += 1;
+        } else {
+            marks.push('-');
+            lines.push((*nikaia_std::index::get(&a, nikaia_std::index::at(x))).to_owned());
+            x += 1;
+        }
+    }
+    let mut out: String = String::from("");
+    let mut skipped = false;
+    for at in 0..marks.len() as i64 {
+        let mut near = false;
+        let from = if at >= 2 { at - 2 } else { 0 };
+        let to = if at + 3 < marks.len() as i64 { at + 3 } else { marks.len() as i64 };
+        for k in from..to { if *nikaia_std::index::get(&marks, nikaia_std::index::at(k)) != ' ' { near = true; } }
+        if !near {
+            skipped = true;
+            continue;
+        }
+        if skipped {
+            out.push_str("  …\n");
+            skipped = false;
+        }
+        out.push(*nikaia_std::index::get(&marks, nikaia_std::index::at(at)));
+        out.push(' ');
+        out.push_str(nikaia_std::index::get(&lines, nikaia_std::index::at(at)));
+        out.push('\n');
+    }
+    out
+}
+
+fn same_lines(a: &Vec<String>, b: &Vec<String>) -> bool {
+    if (a.len() as i64) != b.len() as i64 { return false; }
+    for k in 0..a.len() as i64 { if *nikaia_std::index::get(&a, nikaia_std::index::at(k)) != *nikaia_std::index::get(&b, nikaia_std::index::at(k)) { return false; } }
+    true
+}
+
+
 // --- dsl.nika ---
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
@@ -6891,6 +6991,10 @@ pub mod calls {
 pub mod crossing {
     #[allow(unused_imports)]
     pub use super::{crosses, plainly_sendable, is_plain, generic_of, bounds_send, a_list, reaches_a_thread, the_crates_own, promise_lines, thread_lines, type_entry};
+}
+pub mod diffs {
+    #[allow(unused_imports)]
+    pub use super::{changed_lines, differing_lines};
 }
 pub mod dsl {
     #[allow(unused_imports)]
