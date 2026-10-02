@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.351] — 2026-10-02
+
+**ADR-265: the prover is a frontend, a logic and a solver.** The owner asked
+for a layer between the prover and its solver, so that the solver can serve
+other problems and languages, and for a check that nothing in it stands in
+the way of the plan: a solver written in Nikaia that outdoes others on
+parallelism and performance. The record cuts `prove.rs` into the walk over
+the tree and a dependency-free `nikaia-logic` crate, and fixes the promises a
+later solver needs: terms by id in an immutable arena, self-contained queries
+without SMT-LIB's assertion stack, answers that depend on a budget counted in
+work and never on time or threads, certificates so that a fast solver need
+not be trusted, and SMT-LIB 2 only as an export and import. Within a query,
+parallelism splits into deterministic cubes or shares learned facts at
+epochs fixed by work counts; a certificate is per theory and small, with
+Alethe as an export. Not built.
+
 ## [0.0.350] — 2026-10-02
 
 **What changed is said in Nikaia** (#125, ADR-250). `project`'s
