@@ -27,9 +27,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::sync::{Reached, reached, visit_expr, visit_stmt, visit_stmt_blocks};
+use super::sync::{Reached, reached};
 use super::{FnContract, Ledger, UNNAMED_ERROR};
-use crate::ast::{Block, Expr, Item};
+use crate::ast::{Expr, Item};
 use crate::check::MethodCalls;
 use crate::parser::Parsed;
 
@@ -150,8 +150,18 @@ fn contrib_of(
         None => own_name,
     };
 
-    let mut contrib = Contrib::default();
-    collect(parsed, body, own, library, false, &mut contrib);
+    // **The walk is Nikaia** (`tools/throws.nika`, #125); what a call
+    // resolves to is `sync`'s single answer (ADR-028), handed in.
+    let thrown = nikaia_std::tools::throws::thrown_by(
+        body,
+        &parsed.interner,
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        &|expr: &Expr| contribution(parsed, expr, own, library),
+    );
+    let mut contrib = Contrib {
+        direct: thrown.direct,
+        calls: thrown.calls,
+    };
 
     // What the walk above left to somebody else: this function's method calls,
     // as the type checker resolved them (ADR-028). Merged rather than
@@ -188,123 +198,36 @@ fn contrib_of(
     Some((key, contrib))
 }
 
-fn collect(
+/// What one expression contributes to the function it stands in, as `sync`'s
+/// resolution answers it: a function of this package it calls, the errors a
+/// library's ledger names for its callee, or `?` for a call nobody can name.
+///
+/// A library names its errors in its own ledger, or does not; `std` does not,
+/// and ADR-020 D5 has its Rust failures written by hand. A call nobody can
+/// name can fail, and reading *I cannot see it* as *it does not fail* is the
+/// one direction ADR-010 D1 calls a vulnerability generator. A method call is
+/// answered per function by the type checker, and merged in by `contrib_of` -
+/// `sync`'s own arrangement, and the point of ADR-028's single resolution.
+fn contribution(
     parsed: &Parsed,
-    block: &Block,
+    expr: &Expr,
     own: &Ledger,
     library: &Ledger,
-    in_a_handler: bool,
-    into: &mut Contrib,
-) {
-    for stmt in &block.stmts {
-        // **The handlers written in this statement**, so the walk into them
-        // knows where it is.
-        let mut handlers: Vec<*const Block> = Vec::new();
-        // **What a handler catches and does not pass on is not the
-        // function's** (Part I 7.1): a call in the guarded half of a `catch`
-        // whose handler never writes `throw error` fails into the handler and
-        // nowhere else. Counted, `x = rule(t) catch { throw Mine }` made the
-        // function throw the parse's error as well as its own - a sum of two
-        // for a body that raises one (found moving the ledger's reader onto
-        // grammars).
-        let mut caught: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::TryCatch {
-                expr: guarded,
-                handler,
-            } = expr
-            {
-                handlers.push(handler as *const Block);
-                if !passes_on(parsed, handler) {
-                    visit_expr(parsed, guarded, &mut |inner| {
-                        caught.insert(inner as *const Expr as usize);
-                    });
-                }
-            }
-        });
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if caught.contains(&(expr as *const Expr as usize)) {
-                return;
-            }
-            // **`throw error` in a handler passes the caught error on**
-            // (ADR-157 D2): its types are the guarded expression's, which the
-            // call there already contributed. Read as a value this compiler
-            // cannot name, it added `"?"` and the function's sum fell back to
-            // the unnamed error - found the day a `match` arm that is not a
-            // block was walked at all (issue #171).
-            if in_a_handler
-                && let Expr::Throw(thrown) = expr
-                && matches!(&**thrown, Expr::Variable(name) if parsed.text(*name) == "error")
-            {
-                return;
-            }
-            if let Expr::Throw(thrown) = expr {
-                match error_type(parsed, thrown) {
-                    Some(name) => into.direct.insert(name),
-                    // `throw` reached something this compiler cannot name -
-                    // a value from a call, say. It fails; with what is the
-                    // absence of a claim rather than an answer.
-                    None => into.direct.insert(UNNAMED_ERROR.to_string()),
-                };
-                return;
-            }
-            match reached(parsed, expr, own, library) {
-                Some(Reached::Own(name)) => {
-                    into.calls.insert(name);
-                }
-                Some(Reached::Library { key, .. }) => {
-                    // A library names its errors in its own ledger, or does not.
-                    // `std` does not: its failures are the Rust ones below, and
-                    // ADR-020 D5 has those entries written by hand.
-                    if let Some(FnContract {
-                        fails_with: throws, ..
-                    }) = library.functions.get(&key)
-                    {
-                        for error in throws {
-                            into.direct.insert(error.clone());
-                        }
-                    }
-                }
-                // A call nobody can name. It can fail, and treating "I cannot
-                // see it" as "it does not fail" is the one direction ADR-010 D1
-                // calls a vulnerability generator.
-                Some(Reached::Opaque(_)) => {
-                    into.direct.insert(UNNAMED_ERROR.to_string());
-                }
-                // Answered per function by the type checker, and merged in by
-                // `contrib_of` once this walk is done - which is `sync`'s own
-                // arrangement, and the point of ADR-028's single resolution.
-                // An answer it could not find still arrives as `"?"`, so this
-                // is no less pessimistic than the `Opaque` line above; it is
-                // only less pessimistic about calls the compiler *can* name.
-                Some(Reached::Method) => {}
-                None => {}
-            }
-        });
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            let handler = in_a_handler || handlers.contains(&(inner as *const Block));
-            collect(parsed, inner, own, library, handler, into)
-        });
-    }
-}
-
-/// Whether a handler passes what it caught on: `throw error` anywhere in it
-/// (ADR-157 D2).
-fn passes_on(parsed: &Parsed, handler: &Block) -> bool {
-    let mut found = false;
-    for stmt in &handler.stmts {
-        visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::Throw(thrown) = expr
-                && matches!(&**thrown, Expr::Variable(name) if parsed.text(*name) == "error")
-            {
-                found = true;
-            }
-        });
-        visit_stmt_blocks(&stmt.node, &mut |inner| {
-            found |= passes_on(parsed, inner);
-        });
-    }
-    found
+) -> nikaia_std::tools::throws::Contribution {
+    let (call, errors) = match reached(parsed, expr, own, library) {
+        Some(Reached::Own(name)) => (Some(name), Vec::new()),
+        Some(Reached::Library { key, .. }) => (
+            None,
+            library
+                .functions
+                .get(&key)
+                .map(|contract| contract.fails_with.clone())
+                .unwrap_or_default(),
+        ),
+        Some(Reached::Opaque(_)) => (None, vec![UNNAMED_ERROR.to_string()]),
+        Some(Reached::Method) | None => (None, Vec::new()),
+    };
+    nikaia_std::tools::throws::Contribution { call, errors }
 }
 
 /// The type a `throw` raises: `tools/throws.nika` answers it (#125).

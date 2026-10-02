@@ -128,3 +128,285 @@ fn struct_type(written: ref String) -> String {
     }
     return ty
 }
+
+// ---------------------------------------------------------------------------
+// **What a function throws itself, and whom it calls** - the walk, moved from
+// the compiler's `contracts::throws` (#125). What a call resolves to is the
+// compiler's to say (`contribution_of`): `sync`'s single resolution (ADR-028),
+// handed in as an answer per expression, as the holes of a literal are.
+
+/// What one function contributes to its own error set before its callees are
+/// taken into account: what it names in a `throw` (`?` where it cannot be
+/// named), and the functions of this package it calls.
+pub struct Thrown {
+    pub direct: collections::BTreeSet[String],
+    pub calls: collections::BTreeSet[String],
+    /// Whether a `throw error` stood anywhere in what was walked: a handler
+    /// that has one passes what it caught on (ADR-157 D2).
+    passes_on: bool,
+}
+
+/// What an expression contributes, as the compiler resolved it: a function of
+/// this package it calls, or the errors a ledger names for a callee outside
+/// it (`?` for a call nobody can name), or neither.
+pub struct Contribution {
+    pub call: String?,
+    pub errors: Vec[String],
+}
+
+/// What a function's body throws itself, and whom in this package it calls.
+pub fn thrown_by(body: ref Block, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync) -> Thrown {
+    let mut out = Thrown { direct: collections::BTreeSet(), calls: collections::BTreeSet(), passes_on: false }
+    thrown_in_block(body, names, holes_of, contribution_of, false, out)
+    return out
+}
+
+// Each statement's expressions, then the blocks it holds - each with whether
+// it is the handler of a `catch`, which is where `throw error` passes on what
+// the guarded half threw rather than naming something new.
+fn thrown_in_block(block: ref Block, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, mut out: Thrown) {
+    for stmt in block.stmts {
+        match stmt.node {
+            Stmt::Let { value, .. } => thrown_in(value, names, holes_of, contribution_of, in_a_handler, false, out),
+            Stmt::Comptime { value, .. } => thrown_in(value, names, holes_of, contribution_of, in_a_handler, false, out),
+            Stmt::Expr(value) => thrown_in(value, names, holes_of, contribution_of, in_a_handler, false, out),
+            Stmt::Return(value) => thrown_in(value ?? continue, names, holes_of, contribution_of, in_a_handler, false, out),
+            Stmt::Assign { target, value, .. } => {
+                thrown_in(target, names, holes_of, contribution_of, in_a_handler, false, out)
+                thrown_in(value, names, holes_of, contribution_of, in_a_handler, false, out)
+            }
+            Stmt::For { iter, .. } => thrown_in(iter, names, holes_of, contribution_of, in_a_handler, false, out),
+            Stmt::While { cond, .. } => thrown_in(cond, names, holes_of, contribution_of, in_a_handler, false, out),
+            else => {}
+        }
+        match stmt.node {
+            Stmt::For { body, .. } => thrown_in_block(body, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::While { body, .. } => thrown_in_block(body, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::Let { value, .. } => thrown_in_blocks(value, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::Comptime { value, .. } => thrown_in_blocks(value, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::Expr(value) => thrown_in_blocks(value, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::Return(value) => thrown_in_blocks(value ?? continue, names, holes_of, contribution_of, in_a_handler, out),
+            Stmt::Assign { target, value, .. } => {
+                thrown_in_blocks(target, names, holes_of, contribution_of, in_a_handler, out)
+                thrown_in_blocks(value, names, holes_of, contribution_of, in_a_handler, out)
+            }
+            else => {}
+        }
+    }
+}
+
+// Every expression inside one, the holes of a literal included, and not the
+// bodies of nested blocks. **What a handler catches and does not pass on is
+// not the function's** (Part I 7.1): everything in the guarded half of a
+// `catch` whose handler never writes `throw error` is `caught`, and fails into
+// the handler and nowhere else.
+fn thrown_in(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, caught: bool, mut out: Thrown) {
+    a_contribution(expr, names, contribution_of, in_a_handler, caught, out)
+    for hole in holes_of(expr) {
+        thrown_in(hole, names, holes_of, contribution_of, in_a_handler, caught, out)
+    }
+    match expr {
+        Expr::Call { func, args, config } => {
+            thrown_in(func, names, holes_of, contribution_of, in_a_handler, caught, out)
+            for arg in args {
+                thrown_in(arg, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+            for setting in config {
+                thrown_in(setting.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            thrown_in(receiver, names, holes_of, contribution_of, in_a_handler, caught, out)
+            for arg in args {
+                thrown_in(arg, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+            for setting in config {
+                thrown_in(setting.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            thrown_in(receiver, names, holes_of, contribution_of, in_a_handler, caught, out)
+            for arg in args {
+                thrown_in(arg, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+            for setting in config {
+                thrown_in(setting.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            thrown_in(lhs, names, holes_of, contribution_of, in_a_handler, caught, out)
+            thrown_in(rhs, names, holes_of, contribution_of, in_a_handler, caught, out)
+        }
+        Expr::Unary { expr, .. } => thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Try(inner) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Throw(inner) => thrown_in(inner, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Cast { expr, .. } => thrown_in(expr, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Field { base, .. } => thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::SafeField { base, .. } => thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Index { base, index } => {
+            thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out)
+            thrown_in(index, names, holes_of, contribution_of, in_a_handler, caught, out)
+        }
+        Expr::Range { start, end, .. } => {
+            thrown_in(start, names, holes_of, contribution_of, in_a_handler, caught, out)
+            thrown_in(end, names, holes_of, contribution_of, in_a_handler, caught, out)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                thrown_in(part, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            thrown_in(fallback, names, holes_of, contribution_of, in_a_handler, caught, out)
+        }
+        Expr::TryCatch { expr, handler } => {
+            let into_the_handler = caught || !passes_on(handler, names, holes_of, contribution_of)
+            thrown_in(expr, names, holes_of, contribution_of, in_a_handler, into_the_handler, out)
+        }
+        Expr::If { cond, .. } => thrown_in(cond, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Match { value, arms } => {
+            thrown_in(value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            for arm in arms {
+                maybe_thrown_in(arm.guard, names, holes_of, contribution_of, in_a_handler, caught, out)
+                thrown_in(arm.body, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                maybe_thrown_in(field.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                thrown_in(item, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::With { base, fields, .. } => {
+            thrown_in(base, names, holes_of, contribution_of, in_a_handler, caught, out)
+            for field in fields {
+                maybe_thrown_in(field.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        Expr::Return(value) => thrown_in(value ?? return, names, holes_of, contribution_of, in_a_handler, caught, out),
+        Expr::Select(arms) => {
+            for arm in arms {
+                thrown_in(arm.value, names, holes_of, contribution_of, in_a_handler, caught, out)
+            }
+        }
+        else => {}
+    }
+}
+
+fn maybe_thrown_in(expr: ref Expr?, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, caught: bool, mut out: Thrown) {
+    thrown_in(expr ?? return, names, holes_of, contribution_of, in_a_handler, caught, out)
+}
+
+// Every block an expression holds, the body of a lambda passed as an argument
+// included - and a `catch`'s handler, walked as one.
+fn thrown_in_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, mut out: Thrown) {
+    match expr {
+        Expr::Block(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Unsafe(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Overlap(block) => thrown_in_block(block, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Closure { body, .. } => thrown_in_block(body, names, holes_of, contribution_of, in_a_handler, out),
+        Expr::Call { func, args, config } => {
+            thrown_in_blocks(func, names, holes_of, contribution_of, in_a_handler, out)
+            for arg in args {
+                thrown_in_blocks(arg, names, holes_of, contribution_of, in_a_handler, out)
+            }
+            for setting in config {
+                thrown_in_blocks(setting.value, names, holes_of, contribution_of, in_a_handler, out)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            thrown_in_blocks(receiver, names, holes_of, contribution_of, in_a_handler, out)
+            for arg in args {
+                thrown_in_blocks(arg, names, holes_of, contribution_of, in_a_handler, out)
+            }
+            for setting in config {
+                thrown_in_blocks(setting.value, names, holes_of, contribution_of, in_a_handler, out)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            thrown_in_blocks(receiver, names, holes_of, contribution_of, in_a_handler, out)
+            for arg in args {
+                thrown_in_blocks(arg, names, holes_of, contribution_of, in_a_handler, out)
+            }
+            for setting in config {
+                thrown_in_blocks(setting.value, names, holes_of, contribution_of, in_a_handler, out)
+            }
+        }
+        Expr::If { then_branch, else_branch, .. } => {
+            thrown_in_block(then_branch, names, holes_of, contribution_of, in_a_handler, out)
+            thrown_in_block(else_branch ?? return, names, holes_of, contribution_of, in_a_handler, out)
+        }
+        Expr::TryCatch { expr, handler } => {
+            thrown_in_blocks(expr, names, holes_of, contribution_of, in_a_handler, out)
+            thrown_in_block(handler, names, holes_of, contribution_of, true, out)
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                thrown_in_blocks(arm.body, names, holes_of, contribution_of, in_a_handler, out)
+            }
+        }
+        Expr::Select(arms) => {
+            for arm in arms {
+                thrown_in_block(arm.body, names, holes_of, contribution_of, in_a_handler, out)
+            }
+        }
+        else => {}
+    }
+}
+
+// What one expression contributes. **`throw error` in a handler passes the
+// caught error on** (ADR-157 D2): its types are the guarded expression's,
+// which the call there already contributed - read as a value nobody can name
+// it added `?`, and the function's sum fell back to the unnamed error. Noted
+// wherever it stands, caught or not, for `passes_on`.
+fn a_contribution(expr: ref Expr, names: ref winnow_grammar::InternerContext, contribution_of: fn(ref Expr) -> Contribution sync, in_a_handler: bool, caught: bool, mut out: Thrown) {
+    let passing = the_caught_error(expr, names)
+    if passing {
+        out.passes_on = true
+    }
+    if caught || (in_a_handler && passing) {
+        return
+    }
+    match expr {
+        // A `throw` that reached something this compiler cannot name - a
+        // value from a call, say - fails; with what is the absence of a claim
+        // rather than an answer.
+        Expr::Throw(thrown) => {
+            out.direct.insert(error_type(names, thrown) ?? "?")
+        }
+        else => {
+            let given = contribution_of(expr)
+            let call = given.call ?? ""
+            if call.len() > 0 {
+                out.calls.insert(call)
+            }
+            for error in given.errors {
+                out.direct.insert(error.clone())
+            }
+        }
+    }
+}
+
+// `throw error`, the caught error handed on.
+fn the_caught_error(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> bool {
+    return match expr {
+        Expr::Throw(thrown) => match thrown {
+            Expr::Variable(name) => names.resolve(name) == "error",
+            else => false,
+        },
+        else => false,
+    }
+}
+
+// Whether a handler passes what it caught on: `throw error` anywhere in it
+// (ADR-157 D2).
+fn passes_on(handler: ref Block, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync) -> bool {
+    let mut seen = Thrown { direct: collections::BTreeSet(), calls: collections::BTreeSet(), passes_on: false }
+    thrown_in_block(handler, names, holes_of, contribution_of, false, seen)
+    return seen.passes_on
+}
