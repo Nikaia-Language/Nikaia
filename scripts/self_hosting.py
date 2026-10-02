@@ -21,6 +21,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "crates" / "nikaia" / "src"
+# The prover's logic layer is toolchain Rust too (ADR-265 D1): moved out of
+# `crates/nikaia/src`, it would otherwise leave the count without anything
+# having become Nikaia.
+LOGIC = ROOT / "crates" / "nikaia-logic" / "src"
 TOOLS = ROOT / "crates" / "nikaia-std" / "src" / "tools"
 
 # The toolchain's Nikaia, and the Rust module each one took the place of or
@@ -77,7 +81,7 @@ def code_lines(path):
 
 
 def measure():
-    rust = sum(code_lines(p) for p in sorted(RUST.rglob("*.rs")))
+    rust = sum(code_lines(p) for p in sorted([*RUST.rglob("*.rs"), *LOGIC.rglob("*.rs")]))
     nika = {name: code_lines(TOOLS / name) for name in COMPILER_NIKA}
     total = rust + sum(nika.values())
     share = 100.0 * sum(nika.values()) / total if total else 0.0
@@ -93,7 +97,7 @@ def main():
     if "--share" in sys.argv[1:]:
         print(f"{share:.1f} %")
         return
-    print(f"{'Rust, crates/nikaia/src':<44} {rust:>7}")
+    print(f"{'Rust, crates/nikaia{,-logic}/src':<44} {rust:>7}")
     for name, what in COMPILER_NIKA.items():
         print(f"{'Nikaia, ' + name:<44} {nika[name]:>7}   {what}")
     print(f"{'Nikaia in all':<44} {sum(nika.values()):>7}   {share:.1f} % of the toolchain")

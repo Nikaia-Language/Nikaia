@@ -438,6 +438,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nikaia-logic",
  "nikaia-std",
  "orchestrator",
  "serde_json",
@@ -446,6 +447,10 @@ dependencies = [
  "winnow 0.7.15",
  "winnow-grammar",
 ]
+
+[[package]]
+name = "nikaia-logic"
+version = "0.1.0"
 
 [[package]]
 name = "nikaia-std"

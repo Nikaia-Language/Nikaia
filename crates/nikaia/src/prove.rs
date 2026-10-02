@@ -16,13 +16,10 @@
 // range, a `let`'s value, the function's preconditions (D5) and every claim
 // proved before.
 //
-// **How** (D10): a claim is proved when every case of its negation, joined with
-// the facts, has no integer solution. Fourier-Motzkin elimination over the
-// rationals decides that from one side: where it finds a contradiction there is
-// none over the rationals, so none over the integers; each derived bound is
-// tightened to the integers on the way, which is what lets `x < 5` and
-// `x > 4` contradict. It may fail to find a contradiction that exists — then
-// the claim is checked at run time — and never finds one that does not.
+// **How** (D10) is not decided here: each claim is a query to `nikaia-logic`
+// ([ADR-265](../../docs/specification/adr/adr-265.md)) - its facts and its
+// goal as terms - and the reference solver there answers it. This file is the
+// frontend: it knows the program, and what an answer means for it.
 //
 // **Soundness around bindings.** A fact names variables by their name, so a
 // name bound again drops every fact that mentions it, and a block whose
@@ -31,6 +28,8 @@
 
 use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
+
+use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId};
 
 use crate::ast::{BinaryOp, Block, Expr, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::{Finding, Severity};
@@ -99,6 +98,7 @@ pub fn prove(parsed: &Parsed, library: &Ledger, claims: &BTreeSet<(usize, String
         collecting: true,
         out: Proved::default(),
         in_test: false,
+        arena: Arena::new(),
     };
     // Pass 1: which parameter claims are preconditions (D5). A function's own
     // preconditions depend only on its own body.
@@ -176,6 +176,8 @@ struct Prover<'a> {
     collecting: bool,
     out: Proved,
     in_test: bool,
+    /// Every term the walk builds, facts and claims alike (ADR-265 D2).
+    arena: Arena,
 }
 
 /// What a body may know at one point.
@@ -188,32 +190,39 @@ struct Scope {
     /// Names bound anywhere in this body, so a callee's name that a local
     /// shadows is not the callee.
     locals: BTreeSet<String>,
-    facts: Vec<Formula>,
+    facts: Vec<TermId>,
 }
 
 impl Scope {
     /// `name` is bound again: nothing known about the old binding holds.
-    fn rebind(&mut self, name: &str) {
+    fn rebind(&mut self, arena: &Arena, name: &str) {
         let length = length_of(name);
         self.ints.remove(name);
         self.ints.remove(&length);
         self.tainted.remove(name);
         self.locals.insert(name.to_string());
         self.facts
-            .retain(|fact| !fact.mentions(name) && !fact.mentions(&length));
+            .retain(|fact| !arena.mentions(*fact, name) && !arena.mentions(*fact, &length));
     }
 
     /// `name` is a list or text that does not change, so `name.len()` is a
     /// variable of the proof: a length is never negative, and a literal's is
     /// known.
-    fn has_length(&mut self, name: &str, known: Option<i128>) {
+    fn has_length(&mut self, arena: &mut Arena, name: &str, known: Option<i128>) {
         let length = length_of(name);
         self.ints.insert(length.clone());
-        self.facts.push(Formula::le(Lin::var(&length).neg()));
+        let (len, zero) = (arena.var(&length), arena.int(0));
+        self.facts.push(arena.ge(len, zero));
         if let Some(n) = known {
-            self.facts
-                .push(Formula::eq(Lin::var(&length).add_const(-n)));
+            let n = arena.int(n);
+            self.facts.push(arena.eq(len, n));
         }
+    }
+
+    /// `name` is a whole number that is never negative.
+    fn not_negative(&mut self, arena: &mut Arena, name: &str) {
+        let (n, zero) = (arena.var(name), arena.int(0));
+        self.facts.push(arena.ge(n, zero));
     }
 
     /// A block whose bindings this walk cannot see: no facts, no variables.
@@ -298,11 +307,11 @@ impl<'a> Prover<'a> {
                 scope.ints.insert(arg_name.clone());
                 params.insert(arg_name.clone());
                 if ty.starts_with('u') {
-                    scope.facts.push(Formula::le(Lin::var(&arg_name).neg()));
+                    scope.not_negative(&mut self.arena, &arg_name);
                 }
             }
             if !arg.mutable && has_a_length(ty) {
-                scope.has_length(&arg_name, None);
+                scope.has_length(&mut self.arena, &arg_name, None);
                 params.insert(arg_name.clone());
             }
         }
@@ -355,10 +364,10 @@ impl<'a> Prover<'a> {
             } => {
                 self.expr(value, scope, &nested);
                 let tainted = self.tainted(value, scope);
-                let value_lin = lin(self.parsed, value, scope);
+                let value_lin = lin(&mut self.arena, self.parsed, value, scope);
                 for name in names {
                     let name = self.parsed.text(*name).to_string();
-                    scope.rebind(&name);
+                    scope.rebind(&self.arena, &name);
                     if tainted {
                         scope.tainted.insert(name.clone());
                     }
@@ -372,9 +381,14 @@ impl<'a> Prover<'a> {
                     });
                     if let Some(value_lin) = value_lin {
                         scope.ints.insert(name.clone());
-                        let difference = Lin::var(&name).sub(&value_lin);
-                        if let Some(difference) = difference {
-                            scope.facts.push(Formula::eq(difference));
+                        // **A value that reads the name it shadows** -
+                        // `let x = x + 1` - is about the old binding, which a
+                        // fact names the same way: `x = x + 1` would be a
+                        // contradiction, and from it everything follows. The
+                        // name is a whole number; nothing more is known.
+                        if !self.arena.mentions(value_lin, &name) {
+                            let named = self.arena.var(&name);
+                            scope.facts.push(self.arena.eq(named, value_lin));
                         }
                     } else if typed_whole {
                         scope.ints.insert(name.clone());
@@ -383,18 +397,22 @@ impl<'a> Prover<'a> {
                         && self.parsed.text(t.name).starts_with('u')
                         && scope.ints.contains(&name)
                     {
-                        scope.facts.push(Formula::le(Lin::var(&name).neg()));
+                        scope.not_negative(&mut self.arena, &name);
                     }
                     match value {
                         Expr::ListLit { items, .. } => {
-                            scope.has_length(&name, i128::try_from(items.len()).ok());
+                            scope.has_length(
+                                &mut self.arena,
+                                &name,
+                                i128::try_from(items.len()).ok(),
+                            );
                         }
-                        Expr::LitStr { .. } => scope.has_length(&name, None),
+                        Expr::LitStr { .. } => scope.has_length(&mut self.arena, &name, None),
                         _ if ty
                             .as_ref()
                             .is_some_and(|t| has_a_length(self.parsed.text(t.name))) =>
                         {
-                            scope.has_length(&name, None)
+                            scope.has_length(&mut self.arena, &name, None)
                         }
                         _ => {}
                     }
@@ -403,7 +421,7 @@ impl<'a> Prover<'a> {
             }
             Stmt::Comptime { name, value, .. } => {
                 self.expr(value, scope, &nested);
-                scope.rebind(self.parsed.text(*name));
+                scope.rebind(&self.arena, self.parsed.text(*name));
                 false
             }
             Stmt::Assign { target, value, .. } => {
@@ -412,7 +430,7 @@ impl<'a> Prover<'a> {
                 if let Expr::Variable(name) = target {
                     let name = self.parsed.text(*name).to_string();
                     let tainted = self.tainted(value, scope);
-                    scope.rebind(&name);
+                    scope.rebind(&self.arena, &name);
                     if tainted {
                         scope.tainted.insert(name);
                     }
@@ -429,7 +447,7 @@ impl<'a> Prover<'a> {
                 let mut inner = scope.clone();
                 for binding in bindings {
                     let name = self.parsed.text(*binding).to_string();
-                    inner.rebind(&name);
+                    inner.rebind(&self.arena, &name);
                     if tainted {
                         inner.tainted.insert(name);
                     }
@@ -442,19 +460,23 @@ impl<'a> Prover<'a> {
                         inclusive,
                     },
                 ) = (bindings.as_slice(), iter)
-                    && let (Some(low), Some(high)) =
-                        (lin(self.parsed, start, scope), lin(self.parsed, end, scope))
+                    && let (Some(low), Some(high)) = (
+                        lin(&mut self.arena, self.parsed, start, scope),
+                        lin(&mut self.arena, self.parsed, end, scope),
+                    )
                 {
                     let name = self.parsed.text(*only).to_string();
                     inner.ints.insert(name.clone());
-                    let n = Lin::var(&name);
-                    // low <= n, and n <= high (inclusive) or n <= high - 1.
-                    if let Some(below) = low.sub(&n) {
-                        inner.facts.push(Formula::le(below));
-                    }
-                    let last = if *inclusive { high } else { high.add_const(-1) };
-                    if let Some(above) = n.sub(&last) {
-                        inner.facts.push(Formula::le(above));
+                    // low <= n, and n <= high (inclusive) or n < high - unless
+                    // a bound reads the name it shadows, as `let` above.
+                    if !self.arena.mentions(low, &name) && !self.arena.mentions(high, &name) {
+                        let n = self.arena.var(&name);
+                        inner.facts.push(self.arena.le(low, n));
+                        inner.facts.push(if *inclusive {
+                            self.arena.le(n, high)
+                        } else {
+                            self.arena.lt(n, high)
+                        });
                     }
                 }
                 self.block(body, &mut inner, &nested);
@@ -463,7 +485,7 @@ impl<'a> Prover<'a> {
             Stmt::While { cond, body } => {
                 self.expr(cond, scope, &nested);
                 let mut inner = scope.clone();
-                if let Some(holds) = formula(self.parsed, cond, &inner, true) {
+                if let Some(holds) = claim(&mut self.arena, self.parsed, cond, &inner) {
                     inner.facts.push(holds);
                 }
                 self.block(body, &mut inner, &nested);
@@ -505,18 +527,18 @@ impl<'a> Prover<'a> {
                 else_branch,
             } => {
                 self.expr(cond, scope, &nested);
-                let holds = formula(self.parsed, cond, scope, true);
-                let fails = formula(self.parsed, cond, scope, false);
+                let holds = claim(&mut self.arena, self.parsed, cond, scope);
+                let fails = holds.map(|h| self.arena.not(h));
                 let mut then_scope = scope.clone();
                 if let Some(holds) = &holds {
-                    then_scope.facts.push(holds.clone());
+                    then_scope.facts.push(*holds);
                 }
                 let then_leaves = self.block(then_branch, &mut then_scope, &nested);
                 let else_leaves = match else_branch {
                     Some(block) => {
                         let mut else_scope = scope.clone();
                         if let Some(fails) = &fails {
-                            else_scope.facts.push(fails.clone());
+                            else_scope.facts.push(*fails);
                         }
                         self.block(block, &mut else_scope, &nested)
                     }
@@ -565,12 +587,11 @@ impl<'a> Prover<'a> {
             self.out.held.insert(key, Held::ByTheTest);
             return;
         }
-        let claim = formula(self.parsed, cond, scope, true);
-        let negation = formula(self.parsed, cond, scope, false);
-        if let (Some(claim), Some(negation)) = (&claim, &negation)
-            && proves(&scope.facts, negation)
+        let claim = claim(&mut self.arena, self.parsed, cond, scope);
+        if let Some(claim) = claim
+            && self.proves(&scope.facts, claim)
         {
-            scope.facts.push(claim.clone());
+            scope.facts.push(claim);
             self.out.held.insert(key, Held::Proved);
             return;
         }
@@ -594,7 +615,7 @@ impl<'a> Prover<'a> {
                     .or_insert_with(|| Precondition { claims: Vec::new() });
                 entry.claims.push(cond.clone());
             }
-            scope.facts.push(claim.clone());
+            scope.facts.push(*claim);
             self.out
                 .held
                 .insert(key, Held::Precondition(function.clone(), 0));
@@ -719,7 +740,7 @@ impl<'a> Prover<'a> {
                 Some(params) => {
                     let mut inner = scope.clone();
                     for param in params {
-                        inner.rebind(param);
+                        inner.rebind(&self.arena, param);
                     }
                     inner
                 }
@@ -749,21 +770,22 @@ impl<'a> Prover<'a> {
             .map(|p| self.parsed.text(p.name).to_string())
             .collect();
         for claim in &pre.claims {
-            let mut with: BTreeMap<String, Option<Lin>> = BTreeMap::new();
+            let mut with: BTreeMap<String, Option<TermId>> = BTreeMap::new();
             for (param, arg) in params.iter().zip(args) {
-                with.insert(param.clone(), lin(self.parsed, arg, scope));
+                with.insert(param.clone(), lin(&mut self.arena, self.parsed, arg, scope));
                 // A list handed over carries its length: `p.len()` in the
                 // callee's claim is the argument's.
                 if let Expr::Variable(name) = arg {
                     let length = length_of(self.parsed.text(*name));
-                    with.insert(
-                        length_of(param),
-                        scope.ints.contains(&length).then(|| Lin::var(&length)),
-                    );
+                    let known = scope
+                        .ints
+                        .contains(&length)
+                        .then(|| self.arena.var(&length));
+                    with.insert(length_of(param), known);
                 }
             }
-            let negation = substituted(self.parsed, claim, &with, false);
-            let proved = negation.as_ref().is_some_and(|n| proves(&scope.facts, n));
+            let goal = substituted(&mut self.arena, self.parsed, claim, &with);
+            let proved = goal.is_some_and(|g| self.proves(&scope.facts, g));
             if proved {
                 continue;
             }
@@ -773,7 +795,7 @@ impl<'a> Prover<'a> {
             // once more for the check changes nothing.
             let arguments: BTreeMap<String, Expr> =
                 params.iter().cloned().zip(args.iter().cloned()).collect();
-            let condition = negation
+            let condition = goal
                 .is_some()
                 .then(|| with_arguments(self.parsed, claim, &arguments))
                 .flatten();
@@ -801,6 +823,17 @@ impl<'a> Prover<'a> {
                 });
             }
         }
+    }
+
+    /// Whether the facts prove the goal: one query to the reference solver
+    /// ([ADR-265](../../docs/specification/adr/adr-265.md) D3, D4).
+    fn proves(&self, facts: &[TermId], goal: TermId) -> bool {
+        let query = Query {
+            arena: &self.arena,
+            facts,
+            goal,
+        };
+        FourierMotzkin.check(&query, &Budget::default()) == Answer::Proved
     }
 
     fn function_named(&self, name: &str) -> Option<&'a Item> {
@@ -923,137 +956,43 @@ fn names_in(parsed: &Parsed, expr: &Expr) -> BTreeSet<String> {
     names
 }
 
-// --- The theory: linear integer arithmetic ---------------------------------
+// --- A program's numbers as terms -----------------------------------------
 
-/// `Σ coefficient·name + constant`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Lin {
-    terms: BTreeMap<String, i128>,
-    constant: i128,
+/// What a name in a claim stands for: a variable of the proof, or a term
+/// already built - an argument in place of a parameter.
+enum Leaf {
+    Name(String),
+    Term(TermId),
 }
 
-impl Lin {
-    fn constant(c: i128) -> Lin {
-        Lin {
-            terms: BTreeMap::new(),
-            constant: c,
-        }
-    }
-
-    fn var(name: &str) -> Lin {
-        Lin {
-            terms: BTreeMap::from([(name.to_string(), 1)]),
-            constant: 0,
-        }
-    }
-
-    fn add(&self, other: &Lin) -> Option<Lin> {
-        let mut out = self.clone();
-        for (name, k) in &other.terms {
-            let entry = out.terms.entry(name.clone()).or_insert(0);
-            *entry = entry.checked_add(*k)?;
-            if *entry == 0 {
-                out.terms.remove(name);
-            }
-        }
-        out.constant = out.constant.checked_add(other.constant)?;
-        Some(out)
-    }
-
-    fn scale(&self, k: i128) -> Option<Lin> {
-        if k == 0 {
-            return Some(Lin::constant(0));
-        }
-        let mut terms = BTreeMap::new();
-        for (name, c) in &self.terms {
-            terms.insert(name.clone(), c.checked_mul(k)?);
-        }
-        Some(Lin {
-            terms,
-            constant: self.constant.checked_mul(k)?,
-        })
-    }
-
-    fn neg(&self) -> Lin {
-        self.scale(-1).unwrap_or_else(|| self.clone())
-    }
-
-    fn sub(&self, other: &Lin) -> Option<Lin> {
-        self.add(&other.scale(-1)?)
-    }
-
-    fn add_const(&self, c: i128) -> Lin {
-        let mut out = self.clone();
-        out.constant = out.constant.saturating_add(c);
-        out
-    }
-
-    /// Divide through by the coefficients' common factor and round the bound
-    /// towards the integers: `2x + 3 <= 0` is `x + 2 <= 0` over the integers.
-    fn tightened(mut self) -> Lin {
-        let g = self.terms.values().fold(0i128, |g, k| gcd(g, k.abs()));
-        if g > 1 {
-            for k in self.terms.values_mut() {
-                *k /= g;
-            }
-            // ceil(constant / g)
-            self.constant = self.constant.div_euclid(g)
-                + if self.constant.rem_euclid(g) == 0 {
-                    0
-                } else {
-                    1
-                };
-        }
-        self
-    }
-}
-
-fn gcd(a: i128, b: i128) -> i128 {
-    if b == 0 { a } else { gcd(b, a % b) }
-}
-
-/// A formula over `lin <= 0` atoms, with negation already pushed inward.
-#[derive(Debug, Clone)]
-enum Formula {
-    True,
-    False,
-    /// `lin <= 0`.
-    Le(Lin),
-    And(Vec<Formula>),
-    Or(Vec<Formula>),
-}
-
-impl Formula {
-    fn le(lin: Lin) -> Formula {
-        Formula::Le(lin)
-    }
-
-    fn eq(lin: Lin) -> Formula {
-        Formula::And(vec![Formula::Le(lin.clone()), Formula::Le(lin.neg())])
-    }
-
-    fn mentions(&self, name: &str) -> bool {
-        match self {
-            Formula::True | Formula::False => false,
-            Formula::Le(lin) => lin.terms.contains_key(name),
-            Formula::And(parts) | Formula::Or(parts) => parts.iter().any(|p| p.mentions(name)),
-        }
-    }
-}
-
-/// A whole-number expression, where it is one this prover reads.
-fn lin(parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<Lin> {
-    lin_with(parsed, expr, &|name| {
-        scope.ints.contains(name).then(|| Lin::var(name))
+/// A whole-number expression, where it is one this prover reads (ADR-264 D9).
+fn lin(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+    lin_with(arena, parsed, expr, &|name| {
+        scope
+            .ints
+            .contains(name)
+            .then(|| Leaf::Name(name.to_string()))
     })
 }
 
-fn lin_with(parsed: &Parsed, expr: &Expr, var: &dyn Fn(&str) -> Option<Lin>) -> Option<Lin> {
+fn leaf(arena: &mut Arena, leaf: Leaf) -> TermId {
+    match leaf {
+        Leaf::Name(name) => arena.var(&name),
+        Leaf::Term(term) => term,
+    }
+}
+
+fn lin_with(
+    arena: &mut Arena,
+    parsed: &Parsed,
+    expr: &Expr,
+    var: &dyn Fn(&str) -> Option<Leaf>,
+) -> Option<TermId> {
     match expr {
         Expr::LitInt { value, negative } => {
-            Some(Lin::constant(crate::ast::int_value(*value, *negative)))
+            Some(arena.int(crate::ast::int_value(*value, *negative)))
         }
-        Expr::Variable(name) => var(parsed.text(*name)),
+        Expr::Variable(name) => Some(leaf(arena, var(parsed.text(*name))?)),
         // `xs.len()` of a list that does not change is a variable of its own.
         Expr::MethodCall {
             receiver,
@@ -1061,21 +1000,26 @@ fn lin_with(parsed: &Parsed, expr: &Expr, var: &dyn Fn(&str) -> Option<Lin>) -> 
             args,
             ..
         } if args.is_empty() && parsed.text(*method) == "len" => match &**receiver {
-            Expr::Variable(name) => var(&length_of(parsed.text(*name))),
+            Expr::Variable(name) => Some(leaf(arena, var(&length_of(parsed.text(*name)))?)),
             _ => None,
         },
         Expr::Unary {
             op: UnaryOp::Neg,
             expr,
-        } => Some(lin_with(parsed, expr, var)?.neg()),
+        } => {
+            let a = lin_with(arena, parsed, expr, var)?;
+            Some(arena.neg(a))
+        }
         Expr::Binary { op, lhs, rhs, .. } => {
-            let l = lin_with(parsed, lhs, var)?;
-            let r = lin_with(parsed, rhs, var)?;
+            let l = lin_with(arena, parsed, lhs, var)?;
+            let r = lin_with(arena, parsed, rhs, var)?;
             match op {
-                BinaryOp::Add => l.add(&r),
-                BinaryOp::Sub => l.sub(&r),
-                BinaryOp::Mul if l.terms.is_empty() => r.scale(l.constant),
-                BinaryOp::Mul if r.terms.is_empty() => l.scale(r.constant),
+                BinaryOp::Add => Some(arena.add(l, r)),
+                BinaryOp::Sub => Some(arena.sub(l, r)),
+                // Linear: one side of a product is a constant.
+                BinaryOp::Mul if arena.constant(l).is_some() || arena.constant(r).is_some() => {
+                    Some(arena.mul(l, r))
+                }
                 _ => None,
             }
         }
@@ -1083,56 +1027,50 @@ fn lin_with(parsed: &Parsed, expr: &Expr, var: &dyn Fn(&str) -> Option<Lin>) -> 
     }
 }
 
-/// The claim `expr` as a formula, or its negation where `holds` is false.
-fn formula(parsed: &Parsed, expr: &Expr, scope: &Scope, holds: bool) -> Option<Formula> {
-    formula_with(
-        parsed,
-        expr,
-        &|name| scope.ints.contains(name).then(|| Lin::var(name)),
-        holds,
-    )
+/// The claim `expr` as a term, where it is one this prover reads.
+fn claim(arena: &mut Arena, parsed: &Parsed, expr: &Expr, scope: &Scope) -> Option<TermId> {
+    claim_with(arena, parsed, expr, &|name| {
+        scope
+            .ints
+            .contains(name)
+            .then(|| Leaf::Name(name.to_string()))
+    })
 }
 
 /// A callee's claim with the call's arguments in place of its parameters.
 fn substituted(
+    arena: &mut Arena,
     parsed: &Parsed,
     expr: &Expr,
-    with: &BTreeMap<String, Option<Lin>>,
-    holds: bool,
-) -> Option<Formula> {
-    formula_with(
-        parsed,
-        expr,
-        &|name| with.get(name).cloned().flatten(),
-        holds,
-    )
+    with: &BTreeMap<String, Option<TermId>>,
+) -> Option<TermId> {
+    claim_with(arena, parsed, expr, &|name| {
+        with.get(name).copied().flatten().map(Leaf::Term)
+    })
 }
 
-fn formula_with(
+fn claim_with(
+    arena: &mut Arena,
     parsed: &Parsed,
     expr: &Expr,
-    var: &dyn Fn(&str) -> Option<Lin>,
-    holds: bool,
-) -> Option<Formula> {
+    var: &dyn Fn(&str) -> Option<Leaf>,
+) -> Option<TermId> {
     match expr {
-        Expr::LitBool(b) => Some(if *b == holds {
-            Formula::True
-        } else {
-            Formula::False
-        }),
+        Expr::LitBool(b) => Some(arena.bool(*b)),
         Expr::Unary {
             op: UnaryOp::Not,
             expr,
-        } => formula_with(parsed, expr, var, !holds),
+        } => {
+            let a = claim_with(arena, parsed, expr, var)?;
+            Some(arena.not(a))
+        }
         Expr::Binary { op, lhs, rhs, .. } => match op {
             BinaryOp::And | BinaryOp::Or => {
-                let l = formula_with(parsed, lhs, var, holds)?;
-                let r = formula_with(parsed, rhs, var, holds)?;
-                let conjunction = matches!(op, BinaryOp::And) == holds;
-                Some(if conjunction {
-                    Formula::And(vec![l, r])
-                } else {
-                    Formula::Or(vec![l, r])
+                let l = claim_with(arena, parsed, lhs, var)?;
+                let r = claim_with(arena, parsed, rhs, var)?;
+                Some(match op {
+                    BinaryOp::And => arena.and(vec![l, r]),
+                    _ => arena.or(vec![l, r]),
                 })
             }
             BinaryOp::Lt
@@ -1141,194 +1079,19 @@ fn formula_with(
             | BinaryOp::Ge
             | BinaryOp::Eq
             | BinaryOp::Ne => {
-                let a = lin_with(parsed, lhs, var)?;
-                let b = lin_with(parsed, rhs, var)?;
-                let op = if holds { *op } else { negated(*op) };
-                let a_minus_b = a.sub(&b)?;
-                let b_minus_a = b.sub(&a)?;
+                let a = lin_with(arena, parsed, lhs, var)?;
+                let b = lin_with(arena, parsed, rhs, var)?;
                 Some(match op {
-                    // a < b  is  a - b + 1 <= 0 over the integers.
-                    BinaryOp::Lt => Formula::Le(a_minus_b.add_const(1)),
-                    BinaryOp::Le => Formula::Le(a_minus_b),
-                    BinaryOp::Gt => Formula::Le(b_minus_a.add_const(1)),
-                    BinaryOp::Ge => Formula::Le(b_minus_a),
-                    BinaryOp::Eq => Formula::eq(a_minus_b),
-                    _ => Formula::Or(vec![
-                        Formula::Le(a_minus_b.add_const(1)),
-                        Formula::Le(b_minus_a.add_const(1)),
-                    ]),
+                    BinaryOp::Lt => arena.lt(a, b),
+                    BinaryOp::Le => arena.le(a, b),
+                    BinaryOp::Gt => arena.gt(a, b),
+                    BinaryOp::Ge => arena.ge(a, b),
+                    BinaryOp::Eq => arena.eq(a, b),
+                    _ => arena.ne(a, b),
                 })
             }
             _ => None,
         },
         _ => None,
-    }
-}
-
-fn negated(op: BinaryOp) -> BinaryOp {
-    match op {
-        BinaryOp::Lt => BinaryOp::Ge,
-        BinaryOp::Le => BinaryOp::Gt,
-        BinaryOp::Gt => BinaryOp::Le,
-        BinaryOp::Ge => BinaryOp::Lt,
-        BinaryOp::Eq => BinaryOp::Ne,
-        _ => BinaryOp::Eq,
-    }
-}
-
-/// How many cases a proof may split into before it gives up (D10).
-const CASES: usize = 256;
-/// How many bounds an elimination may hold before it gives up (D10).
-const BOUNDS: usize = 4096;
-
-/// Whether `facts` rule out `negation`: every case of the two together is
-/// contradictory.
-fn proves(facts: &[Formula], negation: &Formula) -> bool {
-    let mut all = facts.to_vec();
-    all.push(negation.clone());
-    let Some(cases) = cases(&Formula::And(all)) else {
-        return false;
-    };
-    cases.into_iter().all(contradictory)
-}
-
-/// The formula as a disjunction of conjunctions of bounds, or `None` past
-/// [`CASES`].
-fn cases(formula: &Formula) -> Option<Vec<Vec<Lin>>> {
-    match formula {
-        Formula::True => Some(vec![Vec::new()]),
-        Formula::False => Some(Vec::new()),
-        Formula::Le(lin) => Some(vec![vec![lin.clone()]]),
-        Formula::Or(parts) => {
-            let mut out = Vec::new();
-            for part in parts {
-                out.extend(cases(part)?);
-                if out.len() > CASES {
-                    return None;
-                }
-            }
-            Some(out)
-        }
-        Formula::And(parts) => {
-            let mut out: Vec<Vec<Lin>> = vec![Vec::new()];
-            for part in parts {
-                let each = cases(part)?;
-                let mut next = Vec::new();
-                for left in &out {
-                    for right in &each {
-                        let mut both = left.clone();
-                        both.extend(right.iter().cloned());
-                        next.push(both);
-                        if next.len() > CASES {
-                            return None;
-                        }
-                    }
-                }
-                out = next;
-            }
-            Some(out)
-        }
-    }
-}
-
-/// Fourier-Motzkin with integer tightening: whether the bounds, all `<= 0`,
-/// have no integer solution. `false` where it cannot tell.
-fn contradictory(bounds: Vec<Lin>) -> bool {
-    let mut bounds: Vec<Lin> = bounds.into_iter().map(Lin::tightened).collect();
-    loop {
-        // A bound with no variables left is a verdict: `c <= 0`.
-        if bounds.iter().any(|b| b.terms.is_empty() && b.constant > 0) {
-            return true;
-        }
-        bounds.retain(|b| !b.terms.is_empty());
-        bounds.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
-        bounds.dedup();
-        let names: BTreeSet<String> = bounds
-            .iter()
-            .flat_map(|b| b.terms.keys().cloned())
-            .collect();
-        // Eliminate the name whose elimination makes the fewest new bounds.
-        let Some(name) = names.into_iter().min_by_key(|name| {
-            let up = bounds
-                .iter()
-                .filter(|b| b.terms.get(name).is_some_and(|k| *k > 0))
-                .count();
-            let down = bounds
-                .iter()
-                .filter(|b| b.terms.get(name).is_some_and(|k| *k < 0))
-                .count();
-            up * down
-        }) else {
-            return false;
-        };
-        let (with, without): (Vec<Lin>, Vec<Lin>) = bounds
-            .into_iter()
-            .partition(|b| b.terms.contains_key(&name));
-        let (up, down): (Vec<Lin>, Vec<Lin>) = with.into_iter().partition(|b| b.terms[&name] > 0);
-        let mut next = without;
-        for u in &up {
-            for d in &down {
-                let a = u.terms[&name];
-                let b = -d.terms[&name];
-                // b·u + a·d cancels `name`; both are `<= 0`, so is the sum.
-                let (Some(left), Some(right)) = (u.scale(b), d.scale(a)) else {
-                    return false;
-                };
-                let Some(sum) = left.add(&right) else {
-                    return false;
-                };
-                next.push(sum.tightened());
-                if next.len() > BOUNDS {
-                    return false;
-                }
-            }
-        }
-        bounds = next;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn le(terms: &[(&str, i128)], constant: i128) -> Lin {
-        Lin {
-            terms: terms.iter().map(|(n, k)| (n.to_string(), *k)).collect(),
-            constant,
-        }
-    }
-
-    #[test]
-    fn a_bound_and_its_opposite_contradict() {
-        // x - 5 <= 0 and 6 - x <= 0: x <= 5 and x >= 6.
-        assert!(contradictory(vec![
-            le(&[("x", 1)], -5),
-            le(&[("x", -1)], 6)
-        ]));
-        // x <= 5 and x >= 5 is x = 5: no contradiction.
-        assert!(!contradictory(vec![
-            le(&[("x", 1)], -5),
-            le(&[("x", -1)], 5)
-        ]));
-    }
-
-    #[test]
-    fn integer_tightening_finds_what_the_rationals_miss() {
-        // 2x <= 1 and 2x >= 1 has x = 1/2 over the rationals and nothing over
-        // the integers.
-        assert!(contradictory(vec![
-            le(&[("x", 2)], -1),
-            le(&[("x", -2)], 1)
-        ]));
-    }
-
-    #[test]
-    fn a_chain_of_bounds_is_followed() {
-        // a <= b, b <= c, c < a.
-        assert!(contradictory(vec![
-            le(&[("a", 1), ("b", -1)], 0),
-            le(&[("b", 1), ("c", -1)], 0),
-            le(&[("c", 1), ("a", -1)], 1),
-        ]));
     }
 }

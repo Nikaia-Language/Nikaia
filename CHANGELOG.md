@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.353] — 2026-10-02
+
+**The prover asks `nikaia-logic`** (ADR-265 D1-D4, step 1 of D8). A crate with
+no dependencies now holds the logic layer: terms by `u32` id in an arena
+(`TermId`, `Arena`), a self-contained `Query` of facts and a goal, an
+`Answer` of *proved* or *unknown* with the reason, a `Budget` counted in cases
+and bounds, the `Solver` trait, and Fourier-Motzkin as the reference solver.
+`prove.rs` is the frontend: it walks the program and builds terms, and asks
+one query per claim. What a program sees is unchanged, and the suite holds it.
+
+- **Fixed - a false `assert` could be "proved"**: `let x = x + 1` was taken
+  as the fact `x = x + 1`, a contradiction from which every later claim
+  followed, so its check was left out. The same for `for i in 0..<i`. A value
+  or a range that reads the name it binds now adds no fact about it. The fault
+  was in the prover since the MVP; `tests/prove.rs` holds it.
+- `nikaia-logic` is in the compiler's fingerprint for the cache key, in the
+  floor check, and counted as toolchain Rust by `scripts/self_hosting.py`, so
+  moving code out of `crates/nikaia/src` does not raise the share.
+- `crates/nikaia-logic/tests/queries.rs` asks the solver directly, `f(5)`
+  against `x > 1` among them.
+
 ## [0.0.352] — 2026-10-02
 
 **ADR-266: a written `assert` is a published contract.** The owner's answer

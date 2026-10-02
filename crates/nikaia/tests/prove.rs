@@ -402,3 +402,28 @@ fn a_lambda_sees_the_facts_around_it_and_not_through_its_parameters() {
         held(shadowed)
     );
 }
+
+/// **A binding that reads the name it shadows teaches nothing about the new
+/// one** (0.0.353): `let x = x + 1` was taken as the fact `x = x + 1`, which
+/// is a contradiction, so every claim after it was "proved" and its check left
+/// out - a false `assert` included. The same for a range that reads its own
+/// binding.
+#[test]
+fn a_shadowing_binding_is_not_a_contradiction() {
+    let source = "fn main() {\n\
+                  \x20   let x = 1\n\
+                  \x20   let x = x + 1\n\
+                  \x20   assert(x == 0)\n\
+                  \x20   let i = 3\n\
+                  \x20   for i in 0..<i {\n\
+                  \x20       assert(i > 5)\n\
+                  \x20   }\n\
+                  }\n";
+    assert!(
+        held(source)
+            .iter()
+            .all(|h| matches!(h, nikaia::prove::Held::AtRunTime(_))),
+        "{:#?}",
+        held(source)
+    );
+}

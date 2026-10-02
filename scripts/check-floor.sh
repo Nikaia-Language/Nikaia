@@ -12,7 +12,7 @@ rustup toolchain install "$floor" --profile minimal
 # `--target-dir` and not `CARGO_TARGET_DIR`: the variable is inherited by
 # every process the tests start, and a project build honours it - so the
 # tests that check where the compiled `std` goes looked in the wrong place.
-cargo +"$floor" test --release --no-fail-fast --target-dir target/floor -p nikaia -p nikaia-std
+cargo +"$floor" test --release --no-fail-fast --target-dir target/floor -p nikaia -p nikaia-std -p nikaia-logic
 # Every crate under crates/unsafe/ says the same floor, and builds on it.
 for dir in crates/unsafe/*/; do
     grep -q "^rust-version = \"$floor\"" "$dir/Cargo.toml" || {
@@ -21,7 +21,7 @@ for dir in crates/unsafe/*/; do
     }
     (cd "$dir" && cargo +"$floor" test --all-features --quiet --target-dir ../../../target/floor-unsafe)
 done
-for manifest in crates/nikaia/Cargo.toml crates/nikaia-std/Cargo.toml crates/orchestrator/Cargo.toml; do
+for manifest in crates/nikaia/Cargo.toml crates/nikaia-std/Cargo.toml crates/nikaia-logic/Cargo.toml crates/orchestrator/Cargo.toml; do
     grep -q "^rust-version = \"$floor\"" "$manifest" || {
         echo "$manifest does not say rust-version = \"$floor\""
         exit 1

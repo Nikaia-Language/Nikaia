@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/orchestrator",
     "crates/nikaia",
+    "crates/nikaia-logic",
     "crates/nikaia-std",
     "benches/overlap",
     "benches/refcount",
@@ -19,6 +20,7 @@ exclude = ["crates/unsafe"]
 [workspace.dependencies]
 orchestrator = { path = "crates/orchestrator" }
 nikaia-std = { path = "crates/nikaia-std" }
+nikaia-logic = { path = "crates/nikaia-logic" }
 # `rayon`: `parse_<rule>_pieces` runs the pieces of a `par_fold` on rayon's
 # pool. It is the runtime of every generated program, and it is set here rather
 # than on `nikaia-std` alone so that one build never holds two differently
