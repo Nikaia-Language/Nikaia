@@ -1,0 +1,220 @@
+// crates/nikaia-std/src/tools/order.nika
+//
+// **Whether two statements have to keep the order they were written in**
+// (ADR-033, Part I 8.1.1): the verdict half of the compiler's
+// `contracts::order`, moved from Rust (ADR-250, #125). What stays Rust is the
+// walk that reduces a statement to an `Operation`, or says why it could not.
+//
+// The rule is one sentence - *two operations whose touch sets are disjoint
+// have no order between them* - and it says "no" for every reason it can think
+// of, and for every reason it cannot (ADR-033 D4). Every refusal is either a
+// real dependency or an admission of ignorance, and the two are deliberately
+// worth the same; the reason is the whole point (D9).
+
+use std::collections
+
+/// One statement, reduced to what deciding an order needs.
+pub struct Operation {
+    /// The name it binds, where it binds one.
+    pub binds: String?,
+    /// Every name its value mentions: a statement that mentions what the one
+    /// before it bound is a data dependency, and nothing else is consulted.
+    pub mentions: collections::BTreeSet[String],
+    /// What the call it performs reaches, as the ledger describes it with the
+    /// call's own arguments filled in.
+    pub reaches: Vec[Reached],
+    /// The ledger key of the call, for a diagnostic that wants to name it.
+    pub callee: String,
+}
+
+/// A statement, reduced - or the reason it could not be.
+pub enum Accounted {
+    Operation(Operation),
+    /// It performs nothing at all: a loop, an `if`, an assignment, a
+    /// `return`, a `let` of a value that calls nothing.
+    NotAnOperation,
+    /// It performs something this analysis will not take apart, named so the
+    /// report says *which* thing.
+    Opaque(String),
+    /// Its `catch` handler can leave the function (ADR-034).
+    DivertingHandler,
+    /// It can fail and nothing catches the failure (ADR-034 D2).
+    UncaughtFailure(String),
+    /// Nothing describes what the call reaches, so it reaches everything (D4).
+    NoTouches(String),
+    /// Something describes what the call reaches, in a word this compiler does
+    /// not know - refused, because an unknown kind would be disjoint from
+    /// every kind there is.
+    UnknownResource { callee: String, kind: String },
+    /// What it hands back may not cross a thread, or nothing written down says
+    /// it may (ADR-005 §1 Group B).
+    MayNotCross { callee: String, crossing: Crossing },
+    /// A value that is not a literal, which this increment will not send to
+    /// another thread - D9's "implementation limit, not a language question".
+    NonLiteralArgument(String),
+}
+
+impl Accounted {
+    /// One line, for a report a person reads - and, where there is one, the
+    /// way out.
+    pub fn why(ref self) -> String {
+        return match self {
+            Accounted::Operation(_) => "it is an operation",
+            Accounted::NotAnOperation => "one of them performs no operation at all",
+            Accounted::Opaque(what) => f"one of them holds {what}",
+            Accounted::DivertingHandler => "its `catch` can leave the function, so the next statement might never run. Make the handler return a value instead, and check it afterwards",
+            Accounted::UncaughtFailure(name) => f"`{name}` can fail and nothing catches it, so the next statement might never run. `catch` it into a value, and check it afterwards",
+            Accounted::NoTouches(name) => f"nothing says what `{name}` touches, so it might touch anything",
+            Accounted::UnknownResource { callee, kind } => unknown_resource(callee, kind),
+            Accounted::MayNotCross { callee, crossing } => may_not_cross(callee, crossing),
+            Accounted::NonLiteralArgument(name) => f"`{name}` isn't a literal, and only literals can be sent to another thread",
+        }
+    }
+}
+
+fn unknown_resource(callee: ref String, kind: ref String) -> String {
+    let article = an_or_a(kind)
+    return f"`{callee}` says it touches {article} `{kind}`, which this version of Nikaia doesn't know, so it might touch anything"
+}
+
+fn may_not_cross(callee: ref String, crossing: ref Crossing) -> String {
+    let note = crossing.note() ?? "It can't."
+    return f"what `{callee}` returns would have to move to another thread. {note}"
+}
+
+/// Why two statements keep their order, or that they need not.
+pub enum Verdict {
+    /// They meet on nothing and neither waits for the other.
+    Overlap,
+    /// The later uses what the earlier bound.
+    DataDependency(String),
+    /// Both bind the same name, so the order decides which value survives.
+    Shadowed(String),
+    /// Their touch sets meet on something one of them writes. `unnameable`
+    /// says the resource has no name because this compiler could not read
+    /// one, rather than because the kind has only one of it.
+    SameResource { kind: String, named: String?, unnameable: bool },
+    /// Their touch sets meet on two resources named differently that may be
+    /// the same thing - `stdout` and `stderr` under `2>&1`.
+    SameDestination { one: String, other: String },
+    /// One of them is not a statement this analysis can account for at all.
+    NotAccountedFor,
+}
+
+impl Verdict {
+    pub fn is_overlap(ref self) -> bool {
+        return match self {
+            Verdict::Overlap => true,
+            else => false,
+        }
+    }
+
+    /// One line, for a report a person reads.
+    pub fn why(ref self) -> String {
+        return match self {
+            Verdict::Overlap => "they meet on nothing",
+            Verdict::DataDependency(name) => f"the second uses `{name}`",
+            Verdict::Shadowed(name) => f"both bind `{name}`",
+            Verdict::SameResource { kind, named, unnameable } => same_resource(kind, named, unnameable),
+            Verdict::SameDestination { one, other } => f"one touches {one} and the other {other}, which might be the same place. Use `seq` to run them in order",
+            Verdict::NotAccountedFor => "the compiler can't tell what one of them does",
+        }
+    }
+}
+
+fn same_resource(kind: ref String, named: ref String?, unnameable: bool) -> String {
+    if named != null {
+        let name = named ?? ""
+        return f"both reach {kind} `{name}`, and one writes it"
+    }
+    if unnameable {
+        return f"both touch a {kind} the compiler can't name, and one writes to it"
+    }
+    return f"both touch {kind}, and one writes to it"
+}
+
+/// Whether `later` may run at the same time as `earlier`, and why not: a
+/// **data** dependency first, then two bindings of one name, then an
+/// **effect** dependency, where their touch sets meet on something one of
+/// them writes.
+pub fn verdict(earlier: ref Operation, later: ref Operation) -> Verdict {
+    let bound = written_or_nothing(earlier.binds)
+    if earlier.binds != null && later.mentions.contains(bound) {
+        return Verdict::DataDependency(bound.clone())
+    }
+    // Two `let`s of the same name would make the order decide which value
+    // survives. The parser allows shadowing, so this is reachable.
+    if earlier.binds != null && earlier.binds == later.binds {
+        return Verdict::Shadowed(bound.clone())
+    }
+    for a in earlier.reaches {
+        for b in later.reaches {
+            if a.conflicts_with(b) {
+                return conflict(a, b)
+            }
+        }
+    }
+    return Verdict::Overlap
+}
+
+// Two kinds that conflict at all are two names for what may be one thing; one
+// kind is one resource, and the named half is the more useful one to print.
+fn conflict(a: ref Reached, b: ref Reached) -> Verdict {
+    if a.kind != b.kind {
+        return Verdict::SameDestination { one: a.kind.clone(), other: b.kind.clone() }
+    }
+    let named = readable_name(a) ?? readable_name(b) ?? return Verdict::SameResource { kind: a.kind.clone(), named: null, unnameable: a.unknown || b.unknown }
+    return Verdict::SameResource { kind: a.kind.clone(), named: named, unnameable: false }
+}
+
+// The name a reached resource was given, where it was readable.
+fn readable_name(reached: ref Reached) -> String? {
+    if reached.unknown {
+        return null
+    }
+    return reached.named?.clone()
+}
+
+/// Whether a whole **run** of operations may run as one group, and why not
+/// (ADR-033 §6). **Every pair, not every adjacent pair**: disjointness is not
+/// transitive, and believing it would overlap a read of a file with the write
+/// of it. The pair named is the earliest.
+pub fn group_verdict(run: ref Vec[Operation]) -> Verdict {
+    for i in 0..<run.len() {
+        for j in (i + 1)..<run.len() {
+            let found = verdict(run[i], run[j])
+            if !found.is_overlap() {
+                return found
+            }
+        }
+    }
+    return Verdict::Overlap
+}
+
+/// How many operations from the front of `run` may go together: the longest
+/// **prefix** every member of which meets every other on nothing, and `0`
+/// where that is fewer than two - a group is a run the emitter replaces in
+/// place, so leaving one out of the middle would reorder the rest.
+pub fn group_of(run: ref Vec[Operation]) -> i64 {
+    let mut taken = if run.len() > 0 { 1 } else { 0 }
+    while taken < run.len() {
+        if !fits_with_the_front(run, taken) {
+            break
+        }
+        taken += 1
+    }
+    if taken < 2 {
+        return 0
+    }
+    return taken
+}
+
+// Whether the operation at `at` meets every one before it on nothing.
+fn fits_with_the_front(run: ref Vec[Operation], at: i64) -> bool {
+    for i in 0..<at {
+        if !verdict(run[i], run[at]).is_overlap() {
+            return false
+        }
+    }
+    return true
+}

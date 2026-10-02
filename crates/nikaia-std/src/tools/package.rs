@@ -3305,6 +3305,136 @@ fn words_of(text: &str, out: &mut collections::BTreeSet<String>) {
 }
 
 
+// --- order.nika ---
+
+#[derive(Debug, Clone)]
+pub struct Operation {
+    pub binds: Option<String>,
+    pub mentions: collections::BTreeSet<String>,
+    pub reaches: Vec<Reached>,
+    pub callee: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum Accounted {
+    Operation(Operation),
+    NotAnOperation,
+    Opaque(String),
+    DivertingHandler,
+    UncaughtFailure(String),
+    NoTouches(String),
+    UnknownResource { callee: String, kind: String },
+    MayNotCross { callee: String, crossing: Crossing },
+    NonLiteralArgument(String),
+}
+
+impl Accounted {
+    pub fn why(&self) -> String {
+        match self {
+            Accounted::Operation(_) => String::from("it is an operation"),
+            Accounted::NotAnOperation => String::from("one of them performs no operation at all"),
+            Accounted::Opaque(what) => format!("one of them holds {}", what),
+            Accounted::DivertingHandler => String::from("its `catch` can leave the function, so the next statement might never run. Make the handler return a value instead, and check it afterwards"),
+            Accounted::UncaughtFailure(name) => format!("`{}` can fail and nothing catches it, so the next statement might never run. `catch` it into a value, and check it afterwards", name),
+            Accounted::NoTouches(name) => format!("nothing says what `{}` touches, so it might touch anything", name),
+            Accounted::UnknownResource { callee, kind } => unknown_resource(callee, kind),
+            Accounted::MayNotCross { callee, crossing } => may_not_cross(callee, crossing),
+            Accounted::NonLiteralArgument(name) => format!("`{}` isn't a literal, and only literals can be sent to another thread", name),
+        }
+    }
+}
+
+fn unknown_resource(callee: &str, kind: &str) -> String {
+    let article = an_or_a(kind);
+    format!("`{}` says it touches {} `{}`, which this version of Nikaia doesn't know, so it might touch anything", callee, article, kind)
+}
+
+fn may_not_cross(callee: &str, crossing: &Crossing) -> String {
+    let note = nikaia_std::index::or(crossing.note(), || "It can't.".into());
+    format!("what `{}` returns would have to move to another thread. {}", callee, note)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    Overlap,
+    DataDependency(String),
+    Shadowed(String),
+    SameResource { kind: String, named: Option<String>, unnameable: bool },
+    SameDestination { one: String, other: String },
+    NotAccountedFor,
+}
+
+impl Verdict {
+    pub fn is_overlap(&self) -> bool { matches!(self, Verdict::Overlap) }
+    pub fn why(&self) -> String {
+        match self {
+            Verdict::Overlap => String::from("they meet on nothing"),
+            Verdict::DataDependency(name) => format!("the second uses `{}`", name),
+            Verdict::Shadowed(name) => format!("both bind `{}`", name),
+            Verdict::SameResource { kind, named, unnameable } => { let unnameable = *unnameable; same_resource(kind, (named).as_deref(), unnameable) },
+            Verdict::SameDestination { one, other } => format!("one touches {} and the other {}, which might be the same place. Use `seq` to run them in order", one, other),
+            Verdict::NotAccountedFor => String::from("the compiler can't tell what one of them does"),
+        }
+    }
+}
+
+fn same_resource(kind: &str, named: Option<&str>, unnameable: bool) -> String {
+    if named.is_some() {
+        let name = nikaia_std::index::or(named, || "");
+        return format!("both reach {} `{}`, and one writes it", kind, name);
+    }
+    if unnameable { return format!("both touch a {} the compiler can't name, and one writes to it", kind); }
+    format!("both touch {}, and one writes to it", kind)
+}
+
+pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
+    let bound = written_or_nothing((earlier.binds).as_deref());
+    if earlier.binds.is_some() && later.mentions.contains(&bound) { return Verdict::DataDependency(bound.to_owned()); }
+    if earlier.binds.is_some() && earlier.binds == later.binds { return Verdict::Shadowed(bound.to_owned()); }
+    for a in earlier.reaches.iter() { for b in later.reaches.iter() { if a.conflicts_with(b) { return conflict(a, b); } } }
+    Verdict::Overlap
+}
+
+fn conflict(a: &Reached, b: &Reached) -> Verdict {
+    if a.kind != b.kind { return Verdict::SameDestination { one: a.kind.to_owned(), other: b.kind.to_owned() }; }
+    let named = match readable_name(a) { Some(__nikaia_value) => __nikaia_value, None => match readable_name(b) { Some(__nikaia_value) => __nikaia_value, None => return Verdict::SameResource { kind: a.kind.to_owned(), named: None, unnameable: a.unknown || b.unknown } } };
+    Verdict::SameResource { kind: a.kind.to_owned(), named: Some(named), unnameable: false }
+}
+
+fn readable_name(reached: &Reached) -> Option<String> {
+    if reached.unknown { return None; }
+    match reached.named.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }
+}
+
+pub fn group_verdict(run: &Vec<Operation>) -> Verdict {
+    for i in 0..run.len() as i64 {
+        for j in i + 1..run.len() as i64 {
+            let found = verdict(nikaia_std::index::get(&run, nikaia_std::index::at(i)), nikaia_std::index::get(&run, nikaia_std::index::at(j)));
+            if !found.is_overlap() { return found; }
+        }
+    }
+    Verdict::Overlap
+}
+
+pub fn group_of(run: &Vec<Operation>) -> i64 {
+    let mut taken = if (run.len() as i64) > 0 { 1 } else { 0 };
+    while taken < run.len() as i64 {
+        if !fits_with_the_front(run, taken) { break; }
+        taken += 1;
+    }
+    if taken < 2 { return 0; }
+    taken
+}
+
+fn fits_with_the_front(run: &Vec<Operation>, at: i64) -> bool {
+    for i in 0..at { if !verdict(nikaia_std::index::get(&run, nikaia_std::index::at(i)), nikaia_std::index::get(&run, nikaia_std::index::at(at))).is_overlap() { return false; } }
+    true
+}
+
+
 // --- parse_notes.nika ---
 
 pub fn previous_token(source: &str, end: i64) -> String {
@@ -8747,6 +8877,10 @@ pub mod manifest {
 pub mod names {
     #[allow(unused_imports)]
     pub use super::{names_in, names_in_block, names_in_statement};
+}
+pub mod order {
+    #[allow(unused_imports)]
+    pub use super::{Operation, Accounted, Verdict, verdict, group_verdict, group_of};
 }
 pub mod parse_notes {
     #[allow(unused_imports)]
