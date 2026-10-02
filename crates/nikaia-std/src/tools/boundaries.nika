@@ -1,0 +1,109 @@
+// crates/nikaia-std/src/tools/boundaries.nika
+//
+// **A boundary mismatch the backend reports is said as a stale ledger**
+// (ADR-100 D6, ADR-237 D2). Moved from the compiler's `diagnostics` (ADR-250,
+// #125).
+//
+// A program never meets a `Result` or a future: both are this compiler's
+// lowering of `throws` and of a pause, written off what a ledger says. So
+// where the backend says *is not a future*, *the `?` operator can only be
+// applied to values that implement `Try`*, or names a `Result`, the lowering
+// believed a ledger the code below does not match - and where the program
+// calls across a boundary, that boundary's ledger is the one to name.
+//
+// Which one: the boundary the line itself calls, else one whose sources moved
+// since it was described, else the only one the file calls at all. Where none
+// of the three answers, the message is left as it is - it is then this
+// compiler's defect and is reported as the backend said it (Part III C.1).
+//
+// The backend's own words are kept, as a note: this is a translation, and a
+// reader who has to check it needs what it was translated from.
+
+/// A package this program depends on, or a Rust crate it describes, by the
+/// word a call writes in front of `::`.
+pub struct Boundary {
+    pub word: String,
+    /// A described crate, rather than a package with a ledger of its own.
+    pub described: bool,
+    /// The crate's files that changed since it was described.
+    pub moved: Vec[String],
+}
+
+/// What the backend reported, as far as the question needs it.
+pub struct Reported {
+    pub level: String,
+    pub message: String,
+    /// What it wrote under the caret, where it wrote anything.
+    pub label: String?,
+    pub notes: Vec[String],
+}
+
+/// The message said as the stale ledger it is, or nothing where it is not
+/// one. `on_the_line` is the text the message points at, where it points
+/// anywhere.
+pub fn restated(reported: ref Reported, on_the_line: ref String?, source: ref String, boundaries: ref Vec[Boundary]) -> Reported? {
+    if reported.level != "error" {
+        return null
+    }
+    let label = written_or_nothing(reported.label)
+    let joined = reported.notes.join(" ")
+    let all_of_it = f"{reported.message} {label} {joined}"
+    let the_shape = all_of_it.contains("is not a future") || all_of_it.contains("can only be applied to values that implement `Try`") || all_of_it.contains("`Result<") || all_of_it.contains("enum `Result`")
+    if !the_shape {
+        return null
+    }
+    let at = the_boundary(on_the_line, source, boundaries)
+    if at < 0 {
+        return null
+    }
+    let boundary = boundaries[at].clone()
+    let word = boundary.word.clone()
+    let below = if label.len() > 0 { f"{reported.message} - {label}" } else { reported.message.clone() }
+    let mut notes: Vec[String] = [f"The Rust compiler said: {below}"]
+    if boundary.moved.len() > 0 {
+        let moved = boundary.moved.join(", ")
+        notes.push(f"`{word}`'s {moved} changed since it was described.")
+    }
+    let message = if boundary.described { f"The description of `{word}` doesn't match the crate." } else { f"The ledger of `{word}` doesn't match its sources." }
+    if boundary.described {
+        notes.push(f"help: Run `nikaia describe {word}` again, and review what changed in `contracts/{word}.contracts`.")
+    } else {
+        notes.push(f"help: Build `{word}` again: `nikaia build` without `--locked` rebuilds its ledger from its sources.")
+    }
+    for note in reported.notes {
+        notes.push(note.clone())
+    }
+    return Reported { level: reported.level.clone(), message: message, label: reported.label?.clone(), notes: notes }
+}
+
+// The text, or nothing.
+fn written_or_nothing(text: ref String?) -> String {
+    let written = text ?? return ""
+    return written.clone()
+}
+
+// Which boundary to name, by its place in the list, or -1: the one the line
+// calls, else one whose sources moved that the file calls, else the only one
+// the file calls at all.
+fn the_boundary(on_the_line: ref String?, source: ref String, boundaries: ref Vec[Boundary]) -> i64 {
+    let line = written_or_nothing(on_the_line)
+    let mut in_the_file: Vec[i64] = []
+    for at in 0..<boundaries.len() {
+        let called = f"{boundaries[at].word}::"
+        if on_the_line != null && line.contains(ref called) {
+            return at
+        }
+        if source.contains(ref called) {
+            in_the_file.push(at)
+        }
+    }
+    for at in in_the_file {
+        if boundaries[at].moved.len() > 0 {
+            return at
+        }
+    }
+    if in_the_file.len() == 1 {
+        return in_the_file[0]
+    }
+    return -1
+}

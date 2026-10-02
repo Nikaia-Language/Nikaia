@@ -1020,3 +1020,24 @@ fn a_lent_element_kept_whole_is_refused() {
         "{found:#?}"
     );
 }
+
+/// **`str::splitn` is described** (found moving `NK2202`'s message into
+/// Nikaia, #125): nothing was, so a function that split a name once was taken
+/// to pause, and its count is an `i64` the lowering converts, as `chunks`'
+/// is (ADR-212 D5).
+#[test]
+fn splitting_at_most_n_times_is_sync() {
+    runs(
+        "splitn",
+        "fn head(name: ref String, n: i64) -> String sync {\n\
+         \x20   let parts: Vec[ref String] = name.splitn(n, \"::\").collect()\n\
+         \x20   return parts[parts.len() - 1].clone()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let name: String = \"std::fs::read\"\n\
+         \x20   println(head(name, 2))\n\
+         }\n",
+        "fs::read\n",
+    );
+}

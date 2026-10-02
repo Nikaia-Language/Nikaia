@@ -379,103 +379,40 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
 /// ([ADR-237](../../../../docs/specification/adr/adr-237.md) D2): a package
 /// this program depends on, or a Rust crate it describes, by the word a call
 /// writes in front of `::`.
-#[derive(Debug, Clone)]
-pub struct Boundary {
-    pub word: String,
-    /// A described crate, rather than a package with a ledger of its own.
-    pub described: bool,
-    /// The crate's files that changed since it was described.
-    pub moved: Vec<String>,
-}
+pub use nikaia_std::tools::boundaries::Boundary;
 
 /// **A boundary mismatch the backend reports is said as a stale ledger**
 /// ([ADR-100](../../../../docs/specification/adr/adr-100.md) D6,
-/// [ADR-237](../../../../docs/specification/adr/adr-237.md) D2).
-///
-/// A program never meets a `Result` or a future: both are this compiler's
-/// lowering of `throws` and of a pause, written off what a ledger says. So
-/// where the backend says *is not a future*, *the `?` operator can only be
-/// applied to values that implement `Try`*, or names a `Result`, the lowering
-/// believed a ledger the code below does not match - and where the program
-/// calls across a boundary, that boundary's ledger is the one to name.
-///
-/// Which one: the boundary the line itself calls, else one whose sources moved
-/// since it was described, else the only one the file calls at all. Where none
-/// of the three answers, the message is left as it is - it is then this
-/// compiler's defect and is reported as the backend said it (Part III C.1).
-///
-/// The backend's own words are kept, as a note: this is a translation, and a
-/// reader who has to check it needs what it was translated from.
+/// [ADR-237](../../../../docs/specification/adr/adr-237.md) D2). Which
+/// boundary, and what the message becomes, is **`tools/boundaries.nika`**'s
+/// answer (#125); where it has none, the message is left as the backend said
+/// it - this compiler's defect, reported as such (Part III C.1).
 pub fn a_stale_boundary(
     diagnostic: &mut Diagnostic,
     source: &str,
     boundaries: &[Boundary],
 ) -> bool {
-    if diagnostic.level != "error" {
-        return false;
-    }
-    let said = format!(
-        "{} {} {}",
-        diagnostic.message,
-        diagnostic.label.as_deref().unwrap_or_default(),
-        diagnostic.notes.join(" ")
-    );
-    let the_shape = said.contains("is not a future")
-        || said.contains("can only be applied to values that implement `Try`")
-        || said.contains("`Result<")
-        || said.contains("enum `Result`");
-    if !the_shape {
-        return false;
-    }
-    let called = |word: &str| format!("{word}::");
+    let reported = nikaia_std::tools::boundaries::Reported {
+        level: diagnostic.level.clone(),
+        message: diagnostic.message.clone(),
+        label: diagnostic.label.clone(),
+        notes: diagnostic.notes.clone(),
+    };
     let on_the_line = diagnostic
         .location
         .as_ref()
         .and_then(|at| source.get(at.span.bytes()))
-        .and_then(|text| boundaries.iter().find(|b| text.contains(&called(&b.word))));
-    let in_the_file: Vec<&Boundary> = boundaries
-        .iter()
-        .filter(|b| source.contains(&called(&b.word)))
-        .collect();
-    let boundary = on_the_line
-        .or_else(|| in_the_file.iter().copied().find(|b| !b.moved.is_empty()))
-        .or(match in_the_file.as_slice() {
-            [only] => Some(*only),
-            _ => None,
-        });
-    let Some(boundary) = boundary else {
+        .map(str::to_string);
+    let Some(restated) = nikaia_std::tools::boundaries::restated(
+        &reported,
+        on_the_line.as_deref(),
+        source,
+        &boundaries.to_vec(),
+    ) else {
         return false;
     };
-    let word = &boundary.word;
-    let below = match &diagnostic.label {
-        Some(label) if !label.is_empty() => format!("{} - {label}", diagnostic.message),
-        _ => diagnostic.message.clone(),
-    };
-    let mut notes = vec![format!("The Rust compiler said: {below}")];
-    if !boundary.moved.is_empty() {
-        notes.push(format!(
-            "`{word}`'s {} changed since it was described.",
-            boundary.moved.join(", ")
-        ));
-    }
-    match boundary.described {
-        true => {
-            diagnostic.message = format!("The description of `{word}` doesn't match the crate.");
-            notes.push(format!(
-                "help: Run `nikaia describe {word}` again, and review what changed in \
-                 `contracts/{word}.contracts`."
-            ));
-        }
-        false => {
-            diagnostic.message = format!("The ledger of `{word}` doesn't match its sources.");
-            notes.push(format!(
-                "help: Build `{word}` again: `nikaia build` without `--locked` rebuilds its \
-                 ledger from its sources."
-            ));
-        }
-    }
-    notes.append(&mut diagnostic.notes);
-    diagnostic.notes = notes;
+    diagnostic.message = restated.message;
+    diagnostic.notes = restated.notes;
     true
 }
 
@@ -733,107 +670,26 @@ pub fn render(diagnostic: &Diagnostic, path: &str, source: &str, generated_path:
     out
 }
 
-/// A finding of the compiler's own, reported the way it reports rustc's.
-///
-/// The `.nika` file, the line it is about with a caret under it, then the
-/// reasons and a way out. `--explain` has shown rustc's diagnostics in this
-/// shape since ADR-012; a rule the compiler checks itself should not look
-/// different from one it relays.
+/// A finding of the compiler's own, reported the way it reports rustc's:
+/// `NK2202`, a `sync` promise something in the body breaks. What it says -
+/// a construct that waits, a call `std` or this program says can pause, or a
+/// call another package never promised - is **`tools/render.nika`**'s
+/// (`paused`, #125).
 pub fn render_sync_violation(
     violation: &crate::contracts::sync::Violation,
     path: &str,
     source: &str,
 ) -> String {
-    if violation.unpromised {
-        return render_finding(&unpromised_call(violation), path, source);
-    }
-    let ledger = if violation.from_library {
-        "`std`"
-    } else {
-        "this program"
-    };
-    let mut notes =
-        vec!["A `sync` function promises that it never pauses and does no I/O.".to_string()];
-    // **A construct has no ledger entry to name**
-    // ([ADR-163](../../../docs/specification/adr/adr-163.md) D1): an `overlap`
-    // and a `select` hand their branches to the executor and park until they
-    // answer, which is the pause. Saying *carries no `sync`* about one would
-    // send a reader looking for an entry that does not exist.
-    notes.push(match violation.construct {
-        true => format!(
-            "{} `{}` block waits for its branches to finish, which is a pause.",
-            said(crate::check::an_or_a(&violation.callee)),
-            violation.callee
-        ),
-        false => format!("`{}` isn't declared `sync` in {ledger}.", violation.callee),
-    });
-    let finding = crate::check::Finding {
-        severity: crate::check::Severity::Error,
+    let pause = nikaia_std::tools::render::Pause {
         span: violation.span,
-        code: "NK2202",
-        message: match violation.construct {
-            true => format!(
-                "`{}` is `{}`, but it contains {} `{}` block, which can pause.",
-                violation.caller,
-                violation.promise,
-                crate::check::an_or_a(&violation.callee),
-                violation.callee
-            ),
-            false => format!(
-                "`{}` is `{}`, but it calls `{}`, which can pause.",
-                violation.caller, violation.promise, violation.callee
-            ),
-        },
-        notes,
-        help: Some(format!(
-            "Remove `{}` from `{}`, or move the call out of it.",
-            violation.promise, violation.caller
-        )),
-        labels: vec![crate::check::Label {
-            span: violation.span,
-            word: violation.callee.clone(),
-            text: "this can pause".to_string(),
-            main: true,
-        }],
+        caller: violation.caller.clone(),
+        promise: violation.promise.clone(),
+        callee: violation.callee.clone(),
+        from_library: violation.from_library,
+        unpromised: violation.unpromised,
+        construct: violation.construct,
     };
-    render_finding(&finding, path, source)
-}
-
-/// **`NK2202` for a call the callee never promised** ([ADR-244](../../../docs/specification/adr/adr-244.md)
-/// D1): another package's function that does not pause today and whose source
-/// does not say `sync`. Saying *which can pause* would be false, and would
-/// send the reader looking for a pause; what is missing is a word in the other
-/// package, and that is what the message names.
-pub fn unpromised_call(violation: &crate::contracts::sync::Violation) -> crate::check::Finding {
-    let (package, function) = violation
-        .callee
-        .split_once("::")
-        .unwrap_or(("its package", violation.callee.as_str()));
-    crate::check::Finding {
-        severity: crate::check::Severity::Error,
-        span: violation.span,
-        code: "NK2202",
-        message: format!(
-            "`{}` is `{}`, but it calls `{}`, which doesn't promise that it never pauses.",
-            violation.caller, violation.promise, violation.callee
-        ),
-        notes: vec![format!(
-            "`{}` is `{package}`'s, and its source doesn't say `sync`. That its body \
-                 doesn't pause today is not a promise another package can rely on.",
-            violation.callee
-        )],
-        help: Some(format!(
-            "Write `sync` after the result of `{function}` in `{package}`, or remove `{}` \
-             from `{}`.",
-            violation.promise, violation.caller
-        )),
-        labels: vec![crate::check::Label {
-            span: violation.span,
-            word: violation.callee.clone(),
-            text: "doesn't promise `sync`".to_string(),
-            main: true,
-        }],
-    }
+    nikaia_std::tools::render::rendered(&nikaia_std::tools::render::paused(&pause), path, source)
 }
 
 /// One of the type checker's findings, on the `.nika` line it is about.
@@ -962,6 +818,41 @@ mod stale_boundaries {
         assert_eq!(
             on_fremd.message,
             "The description of `fremd` doesn't match the crate."
+        );
+    }
+
+    /// **Off the line, a boundary whose sources moved is named first**, and
+    /// what moved is said; else the only one the file calls. Written in
+    /// Nikaia since 0.0.358 (`tools/boundaries.nika`).
+    #[test]
+    fn off_the_line_the_moved_or_the_only_boundary() {
+        let source = "let n = util::count()\nlet m = fremd::drei()\nlet k = n + m\n";
+        let mut moved = boundary("fremd", true);
+        moved.moved = vec!["src/lib.rs".to_string()];
+        let boundaries = [boundary("util", false), moved];
+        let mut off = an_error("cannot add `{integer}` to `Result<i64, String>`", 44..49);
+        assert!(a_stale_boundary(&mut off, source, &boundaries));
+        assert_eq!(
+            off.message,
+            "The description of `fremd` doesn't match the crate."
+        );
+        assert!(
+            off.notes
+                .iter()
+                .any(|note| note == "`fremd`'s src/lib.rs changed since it was described."),
+            "{off:#?}"
+        );
+
+        let only = [boundary("util", false)];
+        let mut alone = an_error("`i64` is not a future", 44..49);
+        assert!(a_stale_boundary(
+            &mut alone,
+            "let n = util::count()\nlet k = n\n",
+            &only
+        ));
+        assert_eq!(
+            alone.message,
+            "The ledger of `util` doesn't match its sources."
         );
     }
 

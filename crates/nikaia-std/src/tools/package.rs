@@ -380,6 +380,71 @@ pub enum ConfigZone {
 }
 
 
+// --- boundaries.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Boundary {
+    pub word: String,
+    pub described: bool,
+    pub moved: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    pub level: String,
+    pub message: String,
+    pub label: Option<String>,
+    pub notes: Vec<String>,
+}
+
+pub fn restated(reported: &Reported, on_the_line: Option<&str>, source: &str, boundaries: &Vec<Boundary>) -> Option<Reported> {
+    if reported.level != "error" { return None; }
+    let label = written_or_nothing((reported.label).as_deref());
+    let joined = reported.notes.join(" ");
+    let all_of_it = format!("{} {} {}", reported.message, label, joined);
+    let the_shape = all_of_it.contains("is not a future") || all_of_it.contains("can only be applied to values that implement `Try`") || all_of_it.contains("`Result<") || all_of_it.contains("enum `Result`");
+    if !the_shape { return None; }
+    let at = the_boundary(on_the_line, source, boundaries);
+    if at < 0 { return None; }
+    let boundary = (*nikaia_std::index::get(&boundaries, nikaia_std::index::at(at))).clone();
+    let word = boundary.word.to_owned();
+    let below = if (label.len() as i64) > 0 { format!("{} - {}", reported.message, label) } else { reported.message.to_owned() };
+    let mut notes: Vec<String> = vec![format!("The Rust compiler said: {}", below)];
+    if (boundary.moved.len() as i64) > 0 {
+        let moved = boundary.moved.join(", ");
+        notes.push(format!("`{}`'s {} changed since it was described.", word, moved));
+    }
+    let message = if boundary.described { format!("The description of `{}` doesn't match the crate.", word) } else { format!("The ledger of `{}` doesn't match its sources.", word) };
+    if boundary.described { notes.push(format!("help: Run `nikaia describe {}` again, and review what changed in `contracts/{}.contracts`.", word, word)); } else { notes.push(format!("help: Build `{}` again: `nikaia build` without `--locked` rebuilds its ledger from its sources.", word)); }
+    for note in reported.notes.iter() { notes.push(note.to_owned()); }
+    Some(Reported { level: reported.level.to_owned(), message, label: match reported.label.as_ref() {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, notes })
+}
+
+fn written_or_nothing(text: Option<&str>) -> String {
+    let written = match text { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    written.to_owned()
+}
+
+fn the_boundary(on_the_line: Option<&str>, source: &str, boundaries: &Vec<Boundary>) -> i64 {
+    let line = written_or_nothing(on_the_line);
+    let mut in_the_file: Vec<i64> = vec![];
+    for at in 0..boundaries.len() as i64 {
+        let called = format!("{}::", nikaia_std::index::get(&boundaries, nikaia_std::index::at(at)).word);
+        if on_the_line.is_some() && line.contains(&called) { return at; }
+        if source.contains(&called) { in_the_file.push(at); }
+    }
+    for at in in_the_file.iter() {
+        let at = nikaia_std::num::value(at);
+        if (nikaia_std::index::get(&boundaries, nikaia_std::index::at(at)).moved.len() as i64) > 0 { return at; }
+    }
+    if (in_the_file.len() as i64) == 1 { return *nikaia_std::index::get(&in_the_file, 0); }
+    -1
+}
+
+
 // --- calls.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3717,6 +3782,50 @@ fn right_aligned(text: &str, width: i64) -> String {
     let mut out = spaces(width - text.len() as i64);
     out.push_str(&text);
     out
+}
+
+#[derive(Debug, Clone)]
+pub struct Pause {
+    pub span: Span,
+    pub caller: String,
+    pub promise: String,
+    pub callee: String,
+    pub from_library: bool,
+    pub unpromised: bool,
+    pub construct: bool,
+}
+
+pub fn paused(pause: &Pause) -> Shown {
+    let caller = pause.caller.to_owned();
+    let promise = pause.promise.to_owned();
+    let callee = pause.callee.to_owned();
+    if pause.unpromised {
+        let split = package_and_function(&callee);
+        let package = &split.0;
+        let function = &split.1;
+        return Shown { warning: false, code: String::from("NK2202"), message: format!("`{}` is `{}`, but it calls `{}`, which doesn't promise that it never pauses.", caller, promise, callee), notes: vec![format!("`{}` is `{}`'s, and its source doesn't say `sync`. That its body doesn't pause today is not a promise another package can rely on.", callee, package)], help: Some(format!("Write `sync` after the result of `{}` in `{}`, or remove `{}` from `{}`.", function, package, promise, caller)), span: pause.span.clone(), labels: vec![Marked { span: pause.span.clone(), word: callee.to_owned(), text: String::from("doesn't promise `sync`"), main: true }] };
+    }
+    let ledger = if pause.from_library { "`std`" } else { "this program" };
+    let article = an_or_a(&callee);
+    let mut notes: Vec<String> = vec![String::from("A `sync` function promises that it never pauses and does no I/O.")];
+    if pause.construct {
+        let capital = said(&article);
+        notes.push(format!("{} `{}` block waits for its branches to finish, which is a pause.", capital, callee));
+    } else { notes.push(format!("`{}` isn't declared `sync` in {}.", callee, ledger)); }
+    let message = if pause.construct { format!("`{}` is `{}`, but it contains {} `{}` block, which can pause.", caller, promise, article, callee) } else { format!("`{}` is `{}`, but it calls `{}`, which can pause.", caller, promise, callee) };
+    Shown { warning: false, code: String::from("NK2202"), message, notes, help: Some(format!("Remove `{}` from `{}`, or move the call out of it.", promise, caller)), span: pause.span.clone(), labels: vec![Marked { span: pause.span.clone(), word: callee.to_owned(), text: String::from("this can pause"), main: true }] }
+}
+
+fn package_and_function(callee: &str) -> (String, String) {
+    let parts: Vec<&str> = callee.splitn(2, "::").collect::<Vec<_>>();
+    if (parts.len() as i64) < 2 { return (String::from("its package"), callee.to_owned()); }
+    ((*nikaia_std::index::get(&parts, 0)).to_owned(), (*nikaia_std::index::get(&parts, 1)).to_owned())
+}
+
+pub fn an_or_a(word: &str) -> String {
+    let first: Vec<char> = nikaia_std::list::chars(word.chars());
+    if (first.len() as i64) > 0 && (*nikaia_std::index::get(&first, 0) == 'i' || *nikaia_std::index::get(&first, 0) == 'a' || *nikaia_std::index::get(&first, 0) == 'e' || *nikaia_std::index::get(&first, 0) == 'o' || *nikaia_std::index::get(&first, 0) == 'I' || *nikaia_std::index::get(&first, 0) == 'A' || *nikaia_std::index::get(&first, 0) == 'E' || *nikaia_std::index::get(&first, 0) == 'O') { return String::from("an"); }
+    String::from("a")
 }
 
 
@@ -8353,6 +8462,10 @@ pub mod ast {
     #[allow(unused_imports)]
     pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};
 }
+pub mod boundaries {
+    #[allow(unused_imports)]
+    pub use super::{Boundary, Reported, restated};
+}
 pub mod calls {
     #[allow(unused_imports)]
     pub use super::{Callee, callee_of, callee_named};
@@ -8415,7 +8528,7 @@ pub mod paths {
 }
 pub mod render {
     #[allow(unused_imports)]
-    pub use super::{Marked, Shown, rendered};
+    pub use super::{Marked, Shown, rendered, Pause, paused, an_or_a};
 }
 pub mod rust {
     #[allow(unused_imports)]

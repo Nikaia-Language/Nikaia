@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.358] — 2026-10-02
+
+**Two of the compiler's messages are Nikaia** (#125, ADR-250). A backend
+mismatch at a boundary said as the stale ledger it is (ADR-100 D6, ADR-237
+D2) - which package or described crate to name, and what the message and
+its notes become - moved into `tools/boundaries.nika`; `NK2202`, a `sync`
+promise something in the body breaks, into `tools/render.nika` beside the
+layout it is written in. 16.7 % of the toolchain is Nikaia.
+
+Found moving it, fixed in the compiler (ADR-250 D3): **`str::splitn` is
+described**. Nothing was, so a function that split a name once was taken to
+pause and lowered `async`; its count is an `i64` the lowering converts, as
+`chunks`' is (ADR-212 D5). `tests/defects_found_running.rs` holds it.
+
 ## [0.0.357] — 2026-10-02
 
 **A proof comes with a certificate, and the prover checks it** (ADR-265 D5,

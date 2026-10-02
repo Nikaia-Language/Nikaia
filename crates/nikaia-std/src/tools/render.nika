@@ -244,3 +244,69 @@ fn right_aligned(text: String, width: i64) -> String {
     out.push_str(ref text)
     return out
 }
+
+/// **A function that promises `sync` and can pause** - `NK2202`, from
+/// `contracts::sync`'s walk.
+pub struct Pause {
+    /// The call, or the construct, that pauses.
+    pub span: Span,
+    pub caller: String,
+    /// `sync`, or `sync(f)`.
+    pub promise: String,
+    pub callee: String,
+    /// The callee is `std`'s, not this program's.
+    pub from_library: bool,
+    /// Another package's function that does not pause today and whose source
+    /// does not say `sync` (ADR-244 D1).
+    pub unpromised: bool,
+    /// An `overlap` or a `select` block rather than a call (ADR-163 D1).
+    pub construct: bool,
+}
+
+/// What `NK2202` says. A construct has no ledger entry to name: an `overlap`
+/// and a `select` hand their branches to the executor and park until they
+/// answer, which is the pause. And a call the callee never promised is not one
+/// *which can pause* - what is missing is a word in the other package, and
+/// that is what the message names.
+pub fn paused(pause: ref Pause) -> Shown {
+    let caller = pause.caller.clone()
+    let promise = pause.promise.clone()
+    let callee = pause.callee.clone()
+    if pause.unpromised {
+        let split = package_and_function(callee)
+        let package = split.0
+        let function = split.1
+        return Shown { warning: false, code: "NK2202", message: f"`{caller}` is `{promise}`, but it calls `{callee}`, which doesn't promise that it never pauses.", notes: [f"`{callee}` is `{package}`'s, and its source doesn't say `sync`. That its body doesn't pause today is not a promise another package can rely on."], help: f"Write `sync` after the result of `{function}` in `{package}`, or remove `{promise}` from `{caller}`.", span: pause.span.clone(), labels: [Marked { span: pause.span.clone(), word: callee.clone(), text: "doesn't promise `sync`", main: true }] }
+    }
+    let ledger = if pause.from_library { "`std`" } else { "this program" }
+    let article = an_or_a(callee)
+    let mut notes: Vec[String] = ["A `sync` function promises that it never pauses and does no I/O."]
+    if pause.construct {
+        let capital = said(article)
+        notes.push(f"{capital} `{callee}` block waits for its branches to finish, which is a pause.")
+    } else {
+        notes.push(f"`{callee}` isn't declared `sync` in {ledger}.")
+    }
+    let message = if pause.construct { f"`{caller}` is `{promise}`, but it contains {article} `{callee}` block, which can pause." } else { f"`{caller}` is `{promise}`, but it calls `{callee}`, which can pause." }
+    return Shown { warning: false, code: "NK2202", message: message, notes: notes, help: f"Remove `{promise}` from `{caller}`, or move the call out of it.", span: pause.span.clone(), labels: [Marked { span: pause.span.clone(), word: callee.clone(), text: "this can pause", main: true }] }
+}
+
+// `pkg::f` as its package and its function; a name with no `::` is its
+// package's, unnamed.
+fn package_and_function(callee: ref String) -> (String, String) {
+    let parts: Vec[ref String] = callee.splitn(2, "::").collect()
+    if parts.len() < 2 {
+        return ("its package", callee.clone())
+    }
+    return (parts[0].clone(), parts[1].clone())
+}
+
+/// `an` before a word that starts with a vowel the way these names are
+/// written, `a` otherwise.
+pub fn an_or_a(word: ref String) -> String {
+    let first: Vec[char] = word.chars().collect()
+    if first.len() > 0 && (first[0] == 'i' || first[0] == 'a' || first[0] == 'e' || first[0] == 'o' || first[0] == 'I' || first[0] == 'A' || first[0] == 'E' || first[0] == 'O') {
+        return "an"
+    }
+    return "a"
+}
