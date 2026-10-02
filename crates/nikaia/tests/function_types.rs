@@ -193,6 +193,20 @@ fn a_run_parameters_result_is_its_declared_type() {
     assert_eq!(ran("run-result", source).trim(), "true");
 }
 
+/// **And what it takes as a view is lent to it** (#125): an owned `name`
+/// handed to a `fn(ref String)` gains the `&` a declared function's argument
+/// would, where it went below by value and `rustc` refused it.
+#[test]
+fn a_run_parameter_is_lent_what_it_takes_as_a_view() {
+    let source = "fn ask(f: fn(ref String) -> i64 sync) -> i64 {\n\
+                  \x20   let name: String = \"abc\"\n\
+                  \x20   return f(name)\n\
+                  }\n\
+                  fn main() { println(ask(fn(x) { x.len() })) }\n";
+    assert!(lowered(source).contains("f(&name)"), "{}", lowered(source));
+    assert_eq!(ran("run-lent", source).trim(), "3");
+}
+
 /// **And `throws` puts the same `Result` on the closure's result** that a
 /// `throws` function's own declaration puts on its (Part I 7.1), which is what
 /// makes a lambda that fails fit it.

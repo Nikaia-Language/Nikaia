@@ -339,6 +339,13 @@ pub fn lower_tools(dir: &Path) -> Result<String> {
                 .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
         );
     }
+    // **One package, one namespace** (ADR-047 D1), as a project's files are.
+    let files: Vec<(&Path, &crate::parser::Parsed)> = paths
+        .iter()
+        .map(PathBuf::as_path)
+        .zip(parsed.iter())
+        .collect();
+    crate::modules::declared_once(&files)?;
     let described =
         crate::contracts::Ledger::parse(TOOLS_DESCRIBED).context("the tools' described ledger")?;
     let mut library = crate::contracts::std_library();

@@ -13261,10 +13261,22 @@ impl<'a> Checker<'a> {
             true => None,
             false => self.resolve(&name),
         };
-        let expected: Vec<Ty> = resolved
+        let mut expected: Vec<Ty> = resolved
             .as_ref()
             .map(|(_, contract)| expected_arguments(contract))
             .unwrap_or_default();
+        // **A parameter of code, run in place, takes what its type says**
+        // (#125): `root_at(name)` for a `root_at: fn(ref String) -> i64` and
+        // an owned `name` is a view handed over, which the walk below writes
+        // the reference for - typed from nothing, the text went below by
+        // value and `rustc` refused it.
+        if resolved.is_none()
+            && matches!(func, Expr::Variable(_))
+            && self.run_code.contains(&name)
+            && let Some(Ty::Fn { params, .. }) = self.lookup(&name)
+        {
+            expected = params;
+        }
         // The same walk the method path uses, so the same questions are asked
         // in both - or `takes(self.name)` slips past `NK1131` while
         // `x.takes(self.name)` does not.
@@ -13343,8 +13355,24 @@ impl<'a> Checker<'a> {
             // pauses (found moving `foreign`'s walk into Nikaia, #125).
             if let Expr::Variable(_) = func
                 && self.run_code.contains(&name)
-                && let Some(Ty::Fn { result, .. }) = self.lookup(&name)
+                && let Some(Ty::Fn { params, result, .. }) = self.lookup(&name)
             {
+                // **And what it takes as a view is lent to it**: an owned
+                // argument for a `ref` parameter gains the `&` a declared
+                // function's would (`the_compiler_writes_the_reference`).
+                for (at, (given, wanted)) in args.iter().zip(&params).enumerate() {
+                    let had = found.get(at).cloned().unwrap_or(Ty::Unknown);
+                    if wanted.is_a_view()
+                        && !had.is_a_view()
+                        && !matches!(had, Ty::Unknown | Ty::Fn { .. })
+                    {
+                        self.checked
+                            .lent_args
+                            .entry((span.at(), name.clone(), at))
+                            .or_default()
+                            .insert(argument_shape(given));
+                    }
+                }
                 return (*result).unwrap_or_else(|| Ty::named("()"));
             }
             return Ty::Unknown;

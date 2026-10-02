@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Expr, Span};
 use crate::check::{Finding, Severity};
 use crate::parser::Parsed;
+pub(crate) use nikaia_std::tools::foreign::Seen;
 
 /// The crate word in front of a qualified name: `hyper_shim` of
 /// `hyper_shim::serve_once`, and the whole of a name with no `::` in it.
@@ -166,10 +167,23 @@ fn undescribed(crate_name: &str, span: &Span) -> Finding {
 /// to answer: a template's holes are parsed out of its text, and the aliases
 /// are the parse's.
 fn written(parsed: &Parsed) -> Vec<(String, Span)> {
-    nikaia_std::tools::foreign::written_names(
+    seen(parsed, &|_: &str| -1)
+        .into_iter()
+        .filter_map(|seen| match seen {
+            Seen::Path { name, span } => Some((name, span)),
+            Seen::Call { .. } => None,
+        })
+        .collect()
+}
+
+/// What the walk meets, paths and calls: `root_at` says where a callee's
+/// `root` parameter stands, for `--trust`, and `-1` where nobody asks.
+pub(crate) fn seen(parsed: &Parsed, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {
+    nikaia_std::tools::foreign::written_in(
         &parsed.program,
         &parsed.interner,
         &|name: &str| parsed.unaliased(name),
         &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        root_at,
     )
 }
