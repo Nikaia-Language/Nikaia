@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.341] — 2026-10-02
+
+**What a body throws is walked in Nikaia** (#125, ADR-250). `contracts::throws`'
+walk - what a function names in a `throw`, whom in its package it calls, and
+what a `catch` that does not pass its error on keeps from it (Part I 7.1,
+ADR-157 D2) - moved into `tools/throws.nika` beside the fixpoint it feeds
+(0.0.321). What a call resolves to stays the compiler's single answer
+(ADR-028), handed in per expression. The set of expressions the Rust kept by
+address to say *caught* is a mode the walk carries into a guarded half, and
+the handler blocks it kept by address are the ones a `catch` hands its
+handler to, which is the only place a handler stands. Every ledger the suite
+writes is what it was. 12.7 % of the toolchain is Nikaia, up from 12.2 %.
+
 ## [0.0.340] — 2026-10-02
 
 **Every name a statement mentions is Nikaia** (#125, ADR-250).
