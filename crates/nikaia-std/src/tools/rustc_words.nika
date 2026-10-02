@@ -162,3 +162,82 @@ fn replaced(text: ref String, from: ref String, to: ref String) -> String {
     out.push_str(ref slice(c, at, c.len()))
     return out
 }
+
+// ---------------------------------------------------------------------------
+// **How a message is set down** (Part III C.2), for every finding this
+// compiler renders, its own and the backend's.
+
+/// A message as a sentence: its first letter capital, and a full stop where
+/// it does not already end in one - or in a `?`, a `!`, a `:`, a closing
+/// bracket after either, or an indented line that a list ends with.
+pub fn said(text: ref String) -> String {
+    let c: Vec[char] = text.trim_end().chars().collect()
+    if c.len() == 0 {
+        return ""
+    }
+    let mut first: String = ""
+    first.push(c[0])
+    let mut out = first.to_uppercase()
+    for k in 1..<c.len() {
+        out.push(c[k])
+    }
+    let last = c[c.len() - 1]
+    let mut closed = last == '.' || last == '?' || last == '!' || last == ':'
+    if c.len() >= 2 && last == ')' && (c[c.len() - 2] == '.' || c[c.len() - 2] == '?') {
+        closed = true
+    }
+    let break_at = find_last(c, '\n')
+    if break_at >= 0 && break_at + 1 < c.len() && c[break_at + 1] == ' ' {
+        closed = true
+    }
+    if !closed {
+        out.push('.')
+    }
+    return out
+}
+
+/// `error[NK1102]`, or the level alone for a message that has no code.
+pub fn headed(level: ref String, code: ref String) -> String {
+    if code.len() == 0 {
+        return level.clone()
+    }
+    return f"{level}[{code}]"
+}
+
+/// The column `word` stands at in `line`, at or after `column`, and how wide
+/// it is, both in characters and the column 1-based. A whole word only at an
+/// edge that is a word character: `}` or a space has no word to be part of.
+/// Where it is not there, the column asked and one character.
+pub fn word_in(line: ref String, column: i64, word: ref String) -> (i64, i64) {
+    let c: Vec[char] = line.chars().collect()
+    let w: Vec[char] = word.chars().collect()
+    if w.len() == 0 {
+        return (column, 1)
+    }
+    let starts_wordy = a_wordy_char(w[0])
+    let ends_wordy = a_wordy_char(w[w.len() - 1])
+    let mut from = column - 1
+    if from < 0 {
+        from = 0
+    }
+    if from > c.len() {
+        from = c.len()
+    }
+    for start in [from, 0] {
+        let mut at = find_text(c, start, word)
+        while at >= 0 {
+            let free_before = !starts_wordy || at == 0 || !a_wordy_char(c[at - 1])
+            let after = at + w.len()
+            let free_after = !ends_wordy || after >= c.len() || !a_wordy_char(c[after])
+            if free_before && free_after {
+                return (at + 1, w.len())
+            }
+            at = find_text(c, at + w.len(), word)
+        }
+    }
+    return (column, 1)
+}
+
+fn a_wordy_char(c: char) -> bool {
+    return c.is_alphanumeric() || c == '_'
+}

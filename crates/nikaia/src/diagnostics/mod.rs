@@ -863,25 +863,7 @@ pub fn render_finding(finding: &crate::check::Finding, path: &str, source: &str)
 /// here, once, so that a message built from pieces reads like one written
 /// whole, whichever piece came first.
 pub fn said(text: &str) -> String {
-    let text = text.trim_end();
-    let mut chars = text.chars();
-    let mut out: String = match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => return String::new(),
-    };
-    // A sentence closed inside brackets is closed, and a message that ends in
-    // an indented line of code ends in code, which a full stop would change.
-    let closed = out.ends_with(['.', '?', '!', ':'])
-        || out.ends_with(".)")
-        || out.ends_with("?)")
-        || out
-            .rsplit('\n')
-            .next()
-            .is_some_and(|last| last.starts_with(' ') && out.contains('\n'));
-    if !closed {
-        out.push('.');
-    }
-    out
+    nikaia_std::tools::rustc_words::said(text)
 }
 
 /// **A finding that points at more than one place**, each underlined whole
@@ -996,10 +978,7 @@ fn spanned_width(source: &str, span: crate::ast::Span) -> usize {
 /// `error[NK1139]`, or `error` alone for a message that has no code: a parse
 /// error, which is about the text and not about anything the checker decided.
 fn headed(level: &str, code: &str) -> String {
-    match code.is_empty() {
-        true => level.to_string(),
-        false => format!("{level}[{code}]"),
-    }
+    nikaia_std::tools::rustc_words::headed(level, code)
 }
 
 /// Where `word` stands in `line` at or after 1-based `column`, as a whole
@@ -1010,27 +989,8 @@ fn headed(level: &str, code: &str) -> String {
 /// no word to be part of, and asking it for one sent the caret to the first
 /// such character on the line.
 fn word_in(line: &str, column: usize, word: &str) -> (usize, usize) {
-    let wordy = |c: char| c.is_alphanumeric() || c == '_';
-    let starts_wordy = word.chars().next().is_some_and(wordy);
-    let ends_wordy = word.chars().next_back().is_some_and(wordy);
-    let boundary = |c: Option<char>| c.is_none_or(|c| !wordy(c));
-    let from = line
-        .char_indices()
-        .nth(column.saturating_sub(1))
-        .map_or(line.len(), |(at, _)| at);
-    let found = [from, 0].into_iter().find_map(|start| {
-        line[start..]
-            .match_indices(word)
-            .map(|(at, _)| start + at)
-            .find(|&at| {
-                (!starts_wordy || boundary(line[..at].chars().next_back()))
-                    && (!ends_wordy || boundary(line[at + word.len()..].chars().next()))
-            })
-    });
-    match found {
-        Some(at) if !word.is_empty() => (line[..at].chars().count() + 1, word.chars().count()),
-        _ => (column, 1),
-    }
+    let (column, width) = nikaia_std::tools::rustc_words::word_in(line, column as i64, word);
+    (column as usize, width as usize)
 }
 
 /// Byte offset -> line and column, computed once per file.
