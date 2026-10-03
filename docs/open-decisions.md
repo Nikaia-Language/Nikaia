@@ -157,3 +157,28 @@ a loose file; (2) keep C.4's silence, and make ADR-005 D7's translation of
 **What this file recommends: (1).** In a project the set of heads is known, so
 refusing an unknown one is not a guess; `fortunes.nika` would write
 `use std::env`.
+
+### What a read of a map of `T?` values is
+
+**What is blocked.** A map may hold `T?` values — `BTreeMap[i64, Kind?]`
+with `m.insert(2, null)` compiles and runs (0.0.377). A read of it is then a
+`T?` of a `T?`: below, `Option<&Option<Kind>>`. `let found = m[2]` followed by
+`found == null` answers `false` for a key present with a `null` value, and
+`m[k] ?? null` has no lowering that gives back one `Kind?`. Part I 2.3 says
+`a?.b?.c` "never reaches through a nullable of a nullable" — for `?.`, and
+says nothing about a map read. Found moving `sharing`'s classes into Nikaia
+(#125), which now keeps only the classes that have a reason in its map
+instead.
+
+**Why it is the owner's.** Whether a stored `null` and an absent key are one
+answer is a decision about what the language means, not about its lowering.
+
+**The options.** (1) A map read of `T?` values is flattened, as `?.` is: an
+absent key and a stored `null` are both `null`, and the lowering reads
+`.and_then(…)`; (2) refuse `T?` as a map's value type, as `(A, B)?` is
+refused for a tuple, and send the program to a map of `T` plus a set of the
+keys whose value is absent; (3) keep the two answers apart and give the
+program a spelling to ask for each.
+
+**What this file recommends: (1).** It is the reading Part I already gives
+`?.`, and a program that wants the difference can keep a set beside the map.

@@ -1262,3 +1262,85 @@ fn a_maybe_compared_with_a_value_is_refused() {
     );
     assert!(found.is_empty(), "{found:#?}");
 }
+
+/// **A map read bound by `let`, a method's `ref String` parameter and a
+/// copy type handed on** (0.0.377), each found moving `sharing`'s classes
+/// into Nikaia (#125): `found ?? 0` over `let found = m[k]` was typed a
+/// `ref i64` and refused for an `-> i64` (`NK1104`); a `String` handed to
+/// `self.id(key)` for a `key: ref String` was `NK1102`, where the same call to a
+/// free function is lent; and `one.kind` of a `Kind?` taken from a lent `one`
+/// was refused as taken out of a loan (`NK2106`) though `Kind` copies.
+#[test]
+fn a_map_read_a_method_view_and_a_copy_handed_on() {
+    runs(
+        "map-read-method-view-copy",
+        "use std::collections\n\
+         enum Kind { A, B }\n\
+         struct Ids { index: collections::BTreeMap[String, i64] }\n\
+         impl Ids {\n\
+         \x20   fn id(ref mut self, key: ref String) -> i64 {\n\
+         \x20       let found = self.index[key]\n\
+         \x20       if found != null {\n\
+         \x20           return found ?? 0\n\
+         \x20       }\n\
+         \x20       let fresh = self.index.len()\n\
+         \x20       self.index.insert(key.clone(), fresh)\n\
+         \x20       return fresh\n\
+         \x20   }\n\
+         \x20   fn of(ref mut self, a: ref String, b: ref String) -> i64 {\n\
+         \x20       let key = f\"{a}::{b}\"\n\
+         \x20       return self.id(key)\n\
+         \x20   }\n\
+         }\n\
+         struct Pair { kind: Kind?, n: i64 }\n\
+         fn keep(mut m: collections::BTreeMap[i64, Kind?], pairs: ref Vec[Pair]) {\n\
+         \x20   for one in pairs {\n\
+         \x20       m.insert(one.n, one.kind)\n\
+         \x20   }\n\
+         }\n\
+         fn main() {\n\
+         \x20   let mut ids = Ids { index: collections::BTreeMap() }\n\
+         \x20   let mut m: collections::BTreeMap[i64, Kind?] = collections::BTreeMap()\n\
+         \x20   keep(m, [Pair { kind: Kind::A, n: 1 }, Pair { kind: null, n: 2 }])\n\
+         \x20   println(f\"{ids.of(\"x\", \"y\")} {ids.of(\"x\", \"z\")} {ids.of(\"x\", \"y\")} {m.len()}\")\n\
+         }\n",
+        "0 1 0 2\n",
+    );
+}
+
+/// **A lent copy parameter compared with a value, a value into a map of
+/// `T?`, a fallback that may be absent too, and a removal by a number**
+/// (0.0.377), each reaching `rustc` as a file nobody wrote: *can't compare
+/// `&Kind` with `Kind`*; *mismatched types* for a `Some(…)` never written;
+/// `*index::get(…).or_else(…)`, whose `*` took the whole chain; and
+/// `remove(root)` with no `&`. Found moving `sharing`'s classes into Nikaia
+/// (#125).
+#[test]
+fn a_lent_copy_a_map_of_maybes_and_a_removal() {
+    runs(
+        "lent-copy-maybe-map-removal",
+        "use std::collections\n\
+         enum Kind { A, B }\n\
+         fn named(k: Kind, other: bool) -> String? {\n\
+         \x20   if k != Kind::A || !other {\n\
+         \x20       return null\n\
+         \x20   }\n\
+         \x20   return \"a\"\n\
+         }\n\
+         fn either(m: ref collections::BTreeMap[i64, i64], at: i64, maybe: i64?) -> i64? {\n\
+         \x20   return m[at] ?? maybe\n\
+         }\n\
+         fn main() {\n\
+         \x20   let mut kinds: collections::BTreeMap[i64, Kind?] = collections::BTreeMap()\n\
+         \x20   kinds.insert(1, Kind::B)\n\
+         \x20   kinds.insert(2, null)\n\
+         \x20   let mut m: collections::BTreeMap[i64, i64] = collections::BTreeMap()\n\
+         \x20   m.insert(2, 5)\n\
+         \x20   m.insert(4, 6)\n\
+         \x20   let gone: i64 = 4\n\
+         \x20   m.remove(gone)\n\
+         \x20   println(f\"{named(Kind::A, true) ?? \"-\"} {named(Kind::B, true) ?? \"-\"} {kinds.len()} {either(m, 2, null) ?? 0} {either(m, 3, 7) ?? 0} {either(m, 4, null) ?? 0}\")\n\
+         }\n",
+        "a - 2 5 7 0\n",
+    );
+}

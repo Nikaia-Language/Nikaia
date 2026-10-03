@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.377] — 2026-10-03
+
+**The sharing classes are decided in Nikaia** (#125, ADR-250). The
+union-find over `Shared` handles, what forced a class atomic, the
+duplications and the copies out of a lock, the atomic floor for a slot another
+file owns (`Fallback::ForeignFile`) and reading every handle's count, reason
+and lock off the classes (ADR-037 D7, ADR-238 D2) moved into
+`tools/sharing.nika` as a `Slots` record. The walk over the bodies stays in
+Rust and fills it. 18.7 % of the toolchain is Nikaia.
+
+The move found seven defects, fixed in the compiler (ADR-250 D3):
+
+* **`let found = m[k]` then `found ?? 0`** was typed a `ref i64` and refused
+  for an `-> i64` (`NK1104`): a view of a number beside a value is the number
+  (ADR-233 D4), as `m[k] ?? 0` already was.
+* **A `String` handed to a method's `ref String` parameter** was `NK1102`
+  where the same call to a free function is lent: a parameter *declared* a
+  view is lent at a method too (ADR-094 D1). A `ref` written at a method call
+  stays the program's own, as Part III's `NK1137` says.
+* **A copy type of this package handed on** — a `Kind?` taken from a lent
+  value, a `Count` declared in another file — was refused as taken
+  (`NK2106`, `NK2105`).
+* **A lent copy parameter compared with a value** — `k == Kind::A` for a
+  `k: Kind` the body only reads — was *can't compare `&Kind` with `Kind`*
+  below.
+* **A plain value into a map of `T?`**, `m.insert(1, Kind::B)`, had no
+  `Some(…)` written.
+* **`m[k] ?? maybe`**, a fallback that may be absent too, lowered to
+  `*index::get(…).or_else(…)`, whose `*` took the whole chain; it is
+  `index::or_maybe` now, which copies a view of a copy value out as
+  `index::or` does.
+* **`m.remove(k)`** for a number key had no `&`: a removal is a lookup.
+
+What a read of a map of `T?` values is - a stored `null` beside an absent
+key - is a question for the owner (`docs/open-decisions.md`).
+
 ## [0.0.376] — 2026-10-03
 
 **What a keep asks of a type, a method and a ledger is Nikaia** (#125,

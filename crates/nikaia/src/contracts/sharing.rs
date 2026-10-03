@@ -109,9 +109,6 @@ use crate::contracts::ty::TyOps;
 /// The name of the slot standing for what a function hands back.
 const RESULT: &str = "<result>";
 
-/// The pseudo-function every `<struct>.<field>` slot is filed under.
-const FIELDS: &str = "<field>";
-
 /// Methods that run their lambda on a thread the program asked for.
 ///
 /// A closed list for the same reason `send::PLAIN` is one: a name this file does
@@ -126,9 +123,9 @@ pub use nikaia_std::tools::sharing::{
     Decision, Fallback, Sharing, every_fallback, lock_name, rust_name,
 };
 use nikaia_std::tools::sharing::{
-    by_value_shared, declared_field_type, every_count_plain, handed_on_to, held_that_does_not_copy,
-    holds_a_word, holds_shared, is_hull, literal_type, published_reason, shared_fields, slot,
-    split_slot, unseen,
+    FIELDS, Slots, by_value_shared, decided, declared_field_type, every_count_plain, handed_on_to,
+    held_that_does_not_copy, holds_shared, is_hull, literal_type, published_reason, shared_fields,
+    slot, split_slot, unseen,
 };
 use nikaia_std::tools::views::Asked;
 
@@ -309,50 +306,15 @@ struct Analysis<'a> {
     parsed: &'a Parsed,
     own: &'a Ledger,
     library: &'a Ledger,
-    /// Everything **this file** declares that a slot can belong to: its structs,
-    /// its functions, and its methods under `Type::method`.
-    ///
-    /// What it is for is the other side of it: a slot whose owner is not in here
-    /// belongs to another file, and this run cannot see what that file decided
-    /// about it ([`Fallback::ForeignFile`]).
-    declared_here: BTreeSet<String>,
-    /// Every `Shared` handle: its slot key, and what was written about it.
-    handles: BTreeMap<String, Handle>,
-    /// Union-find over slot keys, by index into `parent`.
-    index: BTreeMap<String, usize>,
-    parent: Vec<usize>,
-    /// What forced a slot's class to be atomic.
-    forced: Vec<(String, String, Option<Fallback>)>,
-    /// Where a second handle on a slot's allocation is made
-    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D5): the slot
-    /// key, and what a reader is told about the place.
-    duplicated: Vec<(String, String)>,
+    /// Every `Shared` handle and the classes it joins, with what forced a
+    /// class atomic and where a handle is duplicated or copied out:
+    /// `tools/sharing.nika`'s record, which this walk fills.
+    slots: Slots,
     /// The names bound to a walk that runs in parallel
     /// ([ADR-235](../../../../docs/specification/adr/adr-235.md) D1), so a walk
     /// chained onto the name is one too. Over-approximate - a name is never
     /// taken out - which is this file's safe direction.
     parallel_names: BTreeSet<String>,
-    /// The slots a door over several locks names
-    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md) D2): an
-    /// `access_all` or an `update_all` holds each lock across the block, and a
-    /// compare-and-swap cannot be held, so their classes keep the lock.
-    held_together: Vec<String>,
-    /// Where a `get` copies a value that does not copy cheaply out of its
-    /// lock, by slot (ADR-238 D3).
-    copies: Vec<(String, String)>,
-}
-
-struct Handle {
-    function: String,
-    value: String,
-    ty: Ty,
-    /// A slot that stands for a struct's field or a function's result rather
-    /// than for something a person wrote. Not reported, but classes join
-    /// through it.
-    internal: bool,
-    /// A position a **caller** meets - a parameter, or the result. What the
-    /// ledger's summary is about.
-    position: bool,
 }
 
 impl<'a> Analysis<'a> {
@@ -361,170 +323,33 @@ impl<'a> Analysis<'a> {
             parsed,
             own,
             library,
-            declared_here: declared_here(parsed),
-            handles: BTreeMap::new(),
-            index: BTreeMap::new(),
-            parent: Vec::new(),
-            forced: Vec::new(),
-            duplicated: Vec::new(),
+            slots: Slots::new(declared_here(parsed)),
             parallel_names: BTreeSet::new(),
-            held_together: Vec::new(),
-            copies: Vec::new(),
         }
     }
 
-    /// **A slot another file owns keeps the atomic floor**
-    /// ([`Fallback::ForeignFile`]).
-    ///
-    /// This analysis runs once per **file**, and a package of several files is
-    /// several runs of it. A slot whose owner another file declares is therefore
-    /// one neither run sees the whole of: the declaring file sees the slot and
-    /// not this value, this one the value and not what the slot was decided to
-    /// be. Measured, both halves in one generated file - a public field:
-    ///
-    /// ```text
-    /// pub db: std::sync::Arc<Conn>,      // decided where `Pool` is declared
-    /// let c: std::rc::Rc<Conn> = …       // decided here
-    /// ```
-    ///
-    /// and, in exactly the same way, a **public parameter**: `hold(c)` where
-    /// `hold` is declared in another file expects an `Arc` and is handed an `Rc`.
-    /// `rustc` refused both, about a file nobody wrote (Part III, C.1).
-    ///
-    /// One place rather than one per site, because a slot is created wherever a
-    /// struct is built, a field is read or assigned, a call is made and a result
-    /// is bound - and a rule that has to be remembered at five sites is one that
-    /// will be forgotten at the sixth. Here every slot that exists is asked once,
-    /// after the walk and before the classes are read off, so a slot no future
-    /// site thought about is covered by having been created at all.
-    ///
-    /// The declaring file forces the same slot itself wherever it is published -
-    /// a public field, a public signature - so for the shapes this is about the
-    /// two runs agree by both refusing to lower. Where it does not, this file
-    /// cannot name the owner either, so the caution costs nothing.
-    fn foreign_slots_hold_the_floor(&mut self) {
-        // Over the **union-find** and not over `handles`: a slot another file owns
-        // has no handle in this run - nothing here declared it - and joining to
-        // it is the only trace of it there is. `main::c` joined to `hold::c` was
-        // exactly that case, and reading `handles` missed it.
-        let foreign: Vec<(String, String)> = self
-            .index
-            .keys()
-            .filter_map(|key| {
-                let (owner, slot) = match key.strip_prefix(&format!("{FIELDS}::")) {
-                    // `<field>::Pool.db` - the owner is the struct.
-                    Some(field) => (
-                        field.rsplit_once('.').map_or(field, |(owner, _)| owner),
-                        field,
-                    ),
-                    // `hold::c`, `Counter::record::hits` - the owner is
-                    // everything before the last `::`.
-                    None => match key.rsplit_once("::") {
-                        Some((owner, _)) => (owner, key.as_str()),
-                        None => return None,
-                    },
-                };
-                match self.declared_here.contains(owner) {
-                    true => None,
-                    false => Some((key.clone(), slot.to_string())),
-                }
-            })
-            .collect();
+    // --- collecting, into the classes ------------------------------------
 
-        for (key, slot) in foreign {
-            self.forced.push((
-                key,
-                format!(
-                    "`{slot}` belongs to another file of this package, and that file's own pass \
-                     decides its count - this one reads only one of the two"
-                ),
-                Some(Fallback::ForeignFile),
-            ));
-        }
-    }
-
-    // --- union-find ------------------------------------------------------
-
-    fn id(&mut self, key: &str) -> usize {
-        if let Some(found) = self.index.get(key) {
-            return *found;
-        }
-        let fresh = self.parent.len();
-        self.parent.push(fresh);
-        self.index.insert(key.to_string(), fresh);
-        fresh
-    }
-
-    fn root(&mut self, mut at: usize) -> usize {
-        while self.parent[at] != at {
-            let up = self.parent[at];
-            self.parent[at] = self.parent[up];
-            at = self.parent[at];
-        }
-        at
-    }
-
-    /// Two handles on one allocation, which therefore share one count.
     fn join(&mut self, left: &str, right: &str) {
-        let (left, right) = (self.id(left), self.id(right));
-        let (left, right) = (self.root(left), self.root(right));
-        if left != right {
-            self.parent[left] = right;
-        }
+        self.slots.join(left, right);
     }
-
-    // --- collecting ------------------------------------------------------
 
     fn note(&mut self, function: &str, value: &str, ty: Ty, internal: bool, position: bool) {
-        let key = slot(function, value);
-        self.id(&key);
-        self.handles.entry(key).or_insert(Handle {
-            function: function.to_string(),
-            value: value.to_string(),
-            ty,
-            internal,
-            position,
-        });
+        self.slots.note(function, value, ty, internal, position);
     }
 
-    /// This slot's class must be atomic, and this is what forced it.
-    ///
-    /// **The slot is created if it does not exist yet, and that is not a
-    /// detail.** A `<struct>.<field>` slot is forced by the function that
-    /// crosses with the struct and joined by the function that builds one, and
-    /// nothing says which of the two the walk reaches first. Guarding this on
-    /// "the slot is already known" made the answer depend on the order the
-    /// functions are written in - which is a fail-*open* bug, the one direction
-    /// this analysis may never fail in. Union-find does not care about the
-    /// order; only a guard here could.
-    ///
-    /// **So there is no guard here, and none may be added.** The same applies to
-    /// every other spelling of "only if we have seen it": a fail-closed analysis
-    /// fails open through a guard added for tidiness, not through a missing
-    /// crossing (`docs/history/rc-or-arc.md` §8).
+    /// This slot's class must be atomic, and this is what forced it. The slot
+    /// is made where it does not exist yet, and no guard may be added
+    /// (`docs/history/rc-or-arc.md` §8).
     fn force(&mut self, function: &str, value: &str, why: String, fallback: Option<Fallback>) {
-        let key = slot(function, value);
-        self.id(&key);
-        self.forced.push((key, why, fallback));
+        self.slots.force(function, value, why, fallback);
     }
 
     /// A second handle on this slot's allocation is made here
-    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D1).
-    ///
-    /// **Only where the handle is handed on by value.** A borrow duplicates
-    /// nothing - that is D1's own correction, and what it decides is whether a
-    /// function that only *uses* a shared value touches the count. So a
-    /// `&Shared[T]` parameter never reaches here.
-    ///
-    /// Recorded rather than acted on: which count a class gets is decided by where
-    /// the value **crosses** and not by how many handles there are, so this
-    /// changes no verdict. It is what `--sharing` prints beside the count, because
-    /// D1 leaves the place the atomic instruction is paid unwritten in the source
-    /// (D5).
+    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D1), only
+    /// where the handle is handed on by value.
     fn duplicates(&mut self, function: &str, value: &str, site: String) {
-        let key = slot(function, value);
-        self.id(&key);
-        self.duplicated.push((key, site));
+        self.slots.duplicates(function, value, site);
     }
 
     fn function(&mut self, item: &Item, target: Option<&str>) {
@@ -983,7 +808,7 @@ impl<'a> Analysis<'a> {
                 if matches!(callee.as_deref(), Some("access_all" | "update_all")) {
                     for arg in args {
                         if let Some((handle, _)) = self.names_a_handle(arg, scope) {
-                            self.held_together.push(slot(function, &handle));
+                            self.slots.held_together.push(slot(function, &handle));
                         }
                     }
                 }
@@ -1015,7 +840,7 @@ impl<'a> Analysis<'a> {
                     && let Some((handle, ty)) = self.names_a_handle(receiver, scope)
                     && let Some(held) = held_that_does_not_copy(&ty)
                 {
-                    self.copies.push((
+                    self.slots.copies.push((
                         slot(function, &handle),
                         format!("`{handle}.get()` copies the whole `{held}` out of the lock"),
                     ));
@@ -1281,149 +1106,9 @@ impl<'a> Analysis<'a> {
     // --- colouring -------------------------------------------------------
 
     /// One pass over the seeds, then one answer per handle - and the summary.
+    /// What every handle got, read off the classes.
     fn decide(mut self) -> Sharing {
-        self.foreign_slots_hold_the_floor();
-        let mut atomic: BTreeMap<usize, (String, Option<Fallback>)> = BTreeMap::new();
-        let forced_seen = self.forced.clone();
-        for (key, why, fallback) in std::mem::take(&mut self.forced) {
-            let id = self.id(&key);
-            let root = self.root(id);
-            let entry = atomic.entry(root).or_insert((why.clone(), fallback));
-            // Of two reasons, print the one that is a crossing rather than an
-            // admission of ignorance: ADR-033 D9's rule, that of two true
-            // answers the useful one is the one somebody can act on.
-            if entry.1.is_some() && fallback.is_none() {
-                *entry = (why, fallback);
-            }
-        }
-
-        // Where the second handles are made, gathered per slot before the answer is
-        // read off. A duplication is a fact about a **slot** and not about a class:
-        // two handles on one allocation are handed on in different places, and a
-        // reader wants the place beside the name they wrote.
-        let mut duplicated: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (key, site) in std::mem::take(&mut self.duplicated) {
-            let sites = duplicated.entry(key).or_default();
-            if !sites.contains(&site) {
-                sites.push(site);
-            }
-        }
-
-        // **Which crossing classes are a word** (ADR-238 D2): every handle a
-        // `SharedMut` of a word-sized value, the crossing a proven one and not
-        // the floor's, and no door over several locks among them.
-        let mut floor: BTreeSet<usize> = BTreeSet::new();
-        for (key, _, fallback) in &forced_seen {
-            if fallback.is_some() {
-                let id = self.id(key);
-                floor.insert(self.root(id));
-            }
-        }
-        let mut held: BTreeSet<usize> = BTreeSet::new();
-        for key in std::mem::take(&mut self.held_together) {
-            let id = self.id(&key);
-            held.insert(self.root(id));
-        }
-        let mut words: BTreeMap<usize, bool> = BTreeMap::new();
-        for key in self.handles.keys().cloned().collect::<Vec<_>>() {
-            let id = self.id(&key);
-            let root = self.root(id);
-            let word = holds_a_word(&self.handles[&key].ty);
-            let entry = words.entry(root).or_insert(true);
-            *entry = *entry && word;
-        }
-
-        let mut copied_out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (key, site) in std::mem::take(&mut self.copies) {
-            let sites = copied_out.entry(key).or_default();
-            if !sites.contains(&site) {
-                sites.push(site);
-            }
-        }
-
-        let keys: Vec<String> = self.handles.keys().cloned().collect();
-        let mut decisions = Vec::new();
-        let mut counts: BTreeMap<String, Count> = BTreeMap::new();
-        let mut classes: BTreeMap<String, BTreeMap<usize, Class>> = BTreeMap::new();
-        for key in keys {
-            let id = self.id(&key);
-            let root = self.root(id);
-            let answer = atomic.get(&root).cloned();
-            let handle = &self.handles[&key];
-            let a_word = words.get(&root) == Some(&true);
-            let (count, why, fallback) = match answer {
-                Some((why, None)) if a_word && !floor.contains(&root) && !held.contains(&root) => {
-                    (Count::Word, Some(why), None)
-                }
-                Some((why, fallback)) => (Count::Atomic, Some(why), fallback),
-                None => (Count::Plain, None, None),
-            };
-            if handle.position {
-                let entry = classes
-                    .entry(handle.function.clone())
-                    .or_default()
-                    .entry(root)
-                    .or_insert(Class {
-                        members: Vec::new(),
-                        count,
-                    });
-                entry.members.push(handle.value.clone());
-                entry.count = entry.count.join(count);
-            }
-            counts.insert(key.clone(), count);
-            if !handle.internal {
-                decisions.push(Decision {
-                    function: handle.function.clone(),
-                    value: handle.value.clone(),
-                    ty: handle.ty.text(),
-                    count,
-                    why,
-                    fallback,
-                    duplications: duplicated.get(&key).cloned().unwrap_or_default(),
-                    copied_out: copied_out.get(&key).cloned().unwrap_or_default(),
-                    kept_its_lock: match (count, a_word) {
-                        (Count::Atomic, true) if held.contains(&root) => Some(
-                            "a word, but a door over several locks takes it, and a \
-                             compare-and-swap cannot be held, so it keeps its lock"
-                                .to_string(),
-                        ),
-                        (Count::Atomic, true) => Some(
-                            "a word, but the floor answered for it rather than a crossing, \
-                             so it keeps its lock"
-                                .to_string(),
-                        ),
-                        _ => None,
-                    },
-                });
-            }
-        }
-
-        let summaries = classes
-            .into_iter()
-            .map(|(function, roots)| {
-                let mut found: Vec<Class> = roots
-                    .into_values()
-                    .map(|mut class| {
-                        class.members.sort();
-                        class.members.dedup();
-                        class
-                    })
-                    .collect();
-                // The order the derive gave while `Class` was Rust: the members,
-                // then the count's rank (ADR-204 §4 leaves a declared type no
-                // order of its own, so the key is written here).
-                found.sort_by(|a, b| {
-                    (&a.members, a.count.rank()).cmp(&(&b.members, b.count.rank()))
-                });
-                (function, found)
-            })
-            .collect();
-
-        Sharing {
-            decisions,
-            summaries,
-            counts,
-        }
+        decided(&mut self.slots)
     }
 }
 

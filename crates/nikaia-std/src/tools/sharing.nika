@@ -408,3 +408,338 @@ pub fn lock_name(count: Count) -> String {
         Count::Atomic => "nikaia_std::lock::Crossing",
     }
 }
+
+// ---------------------------------------------------------------------------
+// **The classes, and what each one gets** (ADR-037 D7): every `Shared`
+// handle the walk found, joined into allocation classes by a union-find, with
+// what forced a class atomic. The walk over the bodies stays Rust and fills
+// this record; reading the answer off it is here.
+
+/// The pseudo-function every `<struct>.<field>` slot is filed under.
+pub comptime FIELDS: ref String = "<field>"
+
+/// One `Shared` handle, and what was written about it.
+pub struct Handle {
+    pub function: String,
+    pub value: String,
+    pub ty: Ty,
+    /// A slot that stands for a struct's field or a function's result rather
+    /// than for something a person wrote: not reported, but classes join
+    /// through it.
+    pub internal: bool,
+    /// A position a **caller** meets - a parameter, or the result: what the
+    /// ledger's summary is about.
+    pub position: bool,
+}
+
+/// What forced a slot's class to be atomic.
+pub struct Forced {
+    pub key: String,
+    pub why: String,
+    pub fallback: Fallback?,
+}
+
+/// The handles of one file, joined into classes.
+pub struct Slots {
+    /// Everything this file declares that a slot can belong to: a slot whose
+    /// owner is not in here belongs to another file (`Fallback::ForeignFile`).
+    pub declared_here: collections::BTreeSet[String],
+    pub handles: collections::BTreeMap[String, Handle],
+    /// Union-find over slot keys, by index into `parent`.
+    pub index: collections::BTreeMap[String, i64],
+    pub parent: Vec[i64],
+    pub forced: Vec[Forced],
+    /// Where a second handle on a slot's allocation is made (ADR-040 D5):
+    /// the slot key, and what a reader is told about the place.
+    pub duplicated: Vec[(String, String)],
+    /// The slots a door over several locks names (ADR-238 D2): a
+    /// compare-and-swap cannot be held, so their classes keep the lock.
+    pub held_together: Vec[String],
+    /// Where a `get` copies a value that does not copy cheaply out of its
+    /// lock, by slot (ADR-238 D3).
+    pub copies: Vec[(String, String)],
+}
+
+impl Slots {
+    pub fn new(declared_here: collections::BTreeSet[String]) -> Slots {
+        return Slots { declared_here: declared_here, handles: collections::BTreeMap(), index: collections::BTreeMap(), parent: [], forced: [], duplicated: [], held_together: [], copies: [] }
+    }
+
+    /// The slot's number in the union-find, made where it has none.
+    pub fn id(ref mut self, key: ref String) -> i64 {
+        let found = self.index[key]
+        if found != null {
+            return found ?? 0
+        }
+        let fresh = self.parent.len()
+        self.parent.push(fresh)
+        self.index.insert(key.clone(), fresh)
+        return fresh
+    }
+
+    /// The class a slot's number is in.
+    pub fn root(ref mut self, start: i64) -> i64 {
+        let mut at = start
+        while self.parent[at] != at {
+            let up = self.parent[at]
+            self.parent[at] = self.parent[up]
+            at = self.parent[at]
+        }
+        return at
+    }
+
+    /// The class a slot is in, by its key.
+    pub fn class_of(ref mut self, key: ref String) -> i64 {
+        let id = self.id(key)
+        return self.root(id)
+    }
+
+    /// Two handles on one allocation, which therefore share one count.
+    pub fn join(ref mut self, left: ref String, right: ref String) {
+        let one = self.class_of(left)
+        let other = self.class_of(right)
+        if one != other {
+            self.parent[one] = other
+        }
+    }
+
+    /// A handle the walk met.
+    pub fn note(ref mut self, function: ref String, value: ref String, ty: Ty, internal: bool, position: bool) {
+        let key = slot(function, value)
+        self.id(key)
+        if !self.handles.contains_key(key) {
+            self.handles.insert(key.clone(), Handle { function: function.clone(), value: value.clone(), ty: ty, internal: internal, position: position })
+        }
+    }
+
+    /// This slot's class must be atomic, and this is what forced it. **The
+    /// slot is made where it does not exist yet, and no guard may be added**:
+    /// the answer may not depend on the order the walk reaches the functions
+    /// in (`docs/history/rc-or-arc.md` §8).
+    pub fn force(ref mut self, function: ref String, value: ref String, why: String, fallback: Fallback?) {
+        let key = slot(function, value)
+        self.id(key)
+        self.forced.push(Forced { key: key, why: why, fallback: fallback })
+    }
+
+    /// A second handle on this slot's allocation is made here (ADR-040 D1),
+    /// where the handle is handed on by value.
+    pub fn duplicates(ref mut self, function: ref String, value: ref String, site: String) {
+        let key = slot(function, value)
+        self.id(key)
+        self.duplicated.push((key, site))
+    }
+
+    /// **A slot another file owns keeps the atomic floor**
+    /// (`Fallback::ForeignFile`): this analysis runs once per file, and
+    /// neither run sees the whole of such a slot. Asked of every slot the
+    /// union-find knows, because a slot another file owns has no handle here
+    /// and joining to it is the only trace of it there is.
+    fn foreign_slots_hold_the_floor(ref mut self) {
+        let field_prefix = f"{FIELDS}::"
+        let mut foreign: Vec[(String, String)] = []
+        for key in self.index.keys() {
+            if !key.contains("::") {
+                continue
+            }
+            let mut owner = before_last(key, "::")
+            let mut named = key.clone()
+            if key.starts_with(ref field_prefix) {
+                let parts: Vec[ref String] = key.splitn(2, "::").collect()
+                named = parts[1].clone()
+                owner = before_last(named, ".")
+            }
+            if !self.declared_here.contains(owner) {
+                foreign.push((key.clone(), named))
+            }
+        }
+        for (key, named) in foreign {
+            let why = f"`{named}` belongs to another file of this package, and that file's own pass decides its count - this one reads only one of the two"
+            self.forced.push(Forced { key: key.clone(), why: why, fallback: Fallback::ForeignFile })
+        }
+    }
+}
+
+// Everything before the last `separator`, or the whole text where there is none.
+fn before_last(text: ref String, separator: ref String) -> String {
+    let parts: Vec[ref String] = text.split(separator).collect()
+    if parts.len() < 2 {
+        return text.clone()
+    }
+    let mut kept: Vec[String] = []
+    for i in 0..<(parts.len() - 1) {
+        kept.push(parts[i].clone())
+    }
+    return kept.join(separator)
+}
+
+/// What every handle of one file got: the classes read off the union-find,
+/// the reason beside every atomic one, and the per-function summary.
+pub fn decided(mut slots: Slots) -> Sharing {
+    slots.foreign_slots_hold_the_floor()
+    // Of two reasons, the one that is a crossing rather than an admission of
+    // ignorance: ADR-033 D9, of two true answers the one somebody can act on.
+    let mut why_of: collections::BTreeMap[i64, String] = collections::BTreeMap()
+    // The rows of `Fallback` the classes' reasons are, where they are one.
+    let mut fallback_of: collections::BTreeMap[i64, Fallback] = collections::BTreeMap()
+    // The classes the floor answered for (ADR-238 D2).
+    let mut floor: collections::BTreeSet[i64] = collections::BTreeSet()
+    let forced = slots.forced.clone()
+    for one in forced {
+        let root = slots.class_of(one.key)
+        if one.fallback != null {
+            floor.insert(root)
+        }
+        if !why_of.contains_key(root) || (fallback_of.contains_key(root) && one.fallback == null) {
+            why_of.insert(root, one.why.clone())
+            set_fallback(fallback_of, root, one.fallback)
+        }
+    }
+    let mut held: collections::BTreeSet[i64] = collections::BTreeSet()
+    let together = slots.held_together.clone()
+    for key in together {
+        held.insert(slots.class_of(key))
+    }
+    let keys: Vec[String] = handle_keys(slots)
+    // A class is a word where every handle in it is a `SharedMut` of one.
+    let mut not_a_word: collections::BTreeSet[i64] = collections::BTreeSet()
+    for key in keys {
+        let root = slots.class_of(key)
+        if !holds_a_word(handle_type(slots, key)) {
+            not_a_word.insert(root)
+        }
+    }
+    let duplicated = sites_by_slot(slots.duplicated)
+    let copied_out = sites_by_slot(slots.copies)
+
+    let mut decisions: Vec[Decision] = []
+    let mut counts: collections::BTreeMap[String, Count] = collections::BTreeMap()
+    let mut classes: collections::BTreeMap[String, collections::BTreeMap[i64, Class]] = collections::BTreeMap()
+    for key in keys {
+        let root = slots.class_of(key)
+        let handle = slots.handles[key]?.clone() ?? continue
+        let a_word = !not_a_word.contains(root)
+        let mut count = Count::Plain
+        let mut why: String? = null
+        let mut fallback: Fallback? = null
+        if why_of.contains_key(root) {
+            why = why_of[root]?.clone()
+            fallback = fallback_of[root] ?? null
+            count = Count::Atomic
+            if fallback == null && a_word && !floor.contains(root) && !held.contains(root) {
+                count = Count::Word
+            }
+        }
+        if handle.position {
+            put_in_class(classes, handle.function, root, handle.value, count)
+        }
+        counts.insert(key.clone(), count)
+        if !handle.internal {
+            decisions.push(Decision { function: handle.function.clone(), value: handle.value.clone(), ty: handle.ty.text(), count: count, why: why, fallback: fallback, duplications: duplicated[key]?.clone() ?? [], copied_out: copied_out[key]?.clone() ?? [], kept_its_lock: lock_kept(count, a_word, held.contains(root)) })
+        }
+    }
+
+    let mut summaries: collections::BTreeMap[String, Vec[Class]] = collections::BTreeMap()
+    for (function, roots) in classes {
+        let mut found: Vec[Class] = []
+        for (_, class) in roots {
+            found.push(Class { members: sorted_once(class.members), count: class.count })
+        }
+        summaries.insert(function.clone(), in_class_order(found))
+    }
+    return Sharing { decisions: decisions, summaries: summaries, counts: counts }
+}
+
+// The row a class's reason is, or none where the reason is a crossing.
+fn set_fallback(mut fallback_of: collections::BTreeMap[i64, Fallback], root: i64, fallback: Fallback?) {
+    fallback_of.remove(root)
+    let row = fallback ?? return
+    fallback_of.insert(root, row)
+}
+
+fn handle_keys(slots: ref Slots) -> Vec[String] {
+    let mut keys: Vec[String] = []
+    for key in slots.handles.keys() {
+        keys.push(key.clone())
+    }
+    return keys
+}
+
+fn handle_type(slots: ref Slots, key: ref String) -> Ty {
+    let handle = slots.handles[key] ?? return Ty::Unknown
+    return handle.ty.clone()
+}
+
+// The places recorded against each slot, each once, in the order met.
+fn sites_by_slot(pairs: ref Vec[(String, String)]) -> collections::BTreeMap[String, Vec[String]] {
+    let mut out: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for (key, site) in pairs {
+        let mut sites = out[key]?.clone() ?? []
+        if !sites.contains(site) {
+            sites.push(site.clone())
+        }
+        out.insert(key.clone(), sites)
+    }
+    return out
+}
+
+fn put_in_class(mut classes: collections::BTreeMap[String, collections::BTreeMap[i64, Class]], function: ref String, root: i64, member: ref String, count: Count) {
+    let mut roots = classes[function]?.clone() ?? collections::BTreeMap()
+    let mut class = roots[root]?.clone() ?? Class { members: [], count: count }
+    class.members.push(member.clone())
+    class.count = class.count.join(count)
+    roots.insert(root, class)
+    classes.insert(function.clone(), roots)
+}
+
+// Why a word-sized value that crosses kept its lock (ADR-238 D2).
+fn lock_kept(count: Count, a_word: bool, held_together: bool) -> String? {
+    if count != Count::Atomic || !a_word {
+        return null
+    }
+    if held_together {
+        return "a word, but a door over several locks takes it, and a compare-and-swap cannot be held, so it keeps its lock"
+    }
+    return "a word, but the floor answered for it rather than a crossing, so it keeps its lock"
+}
+
+// The members in their order, each once.
+fn sorted_once(members: ref Vec[String]) -> Vec[String] {
+    let mut sorted = members.clone()
+    sorted.sort()
+    let mut out: Vec[String] = []
+    for one in sorted {
+        if out.len() == 0 || out[out.len() - 1] != one {
+            out.push(one.clone())
+        }
+    }
+    return out
+}
+
+// The classes by their members, then by the count's rank: the order the
+// derive gave while `Class` was Rust (ADR-204 §4 leaves a declared type no
+// order of its own, so the key is written here).
+fn in_class_order(classes: Vec[Class]) -> Vec[Class] {
+    let mut out: Vec[Class] = []
+    for class in classes {
+        let mut at = out.len()
+        while at > 0 && class_before(class, out[at - 1]) {
+            at -= 1
+        }
+        out.insert(at, class.clone())
+    }
+    return out
+}
+
+fn class_before(a: ref Class, b: ref Class) -> bool {
+    let shorter = if a.members.len() < b.members.len() { a.members.len() } else { b.members.len() }
+    for i in 0..<shorter {
+        if a.members[i] != b.members[i] {
+            return a.members[i] < b.members[i]
+        }
+    }
+    if a.members.len() != b.members.len() {
+        return a.members.len() < b.members.len()
+    }
+    return a.count.rank() < b.count.rank()
+}
