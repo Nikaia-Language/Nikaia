@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.380] — 2026-10-03
+
+**A map of `T?` values reads one `T?`, and writing `null` stores it**
+([ADR-273](docs/specification/adr/adr-273.md), the owner's decision on the
+question `open-decisions.md` held). Flat, as in Kotlin, TypeScript and Dart,
+where the nullable cannot nest - which Part I 2.3 already says of this
+language. `m[k]` and `m.get(k)` on a map of `T?` are one `T?`: a key that is
+absent and a key that holds `null` both answer `null`, and `contains_key`
+tells them apart (D1). `m[k] = null` stores `null` and `remove` removes - not
+Swift's `= nil` (D2). The read stays a view, `Option<&T>` below, through the
+new `nikaia_std::index::flat` (D3). It was an `Option<&Option<T>>`: a stored
+`null` read as present, and `m[k] ?? null` and a `ref T?` argument did not
+compile.
+
+**A map's read kept as a `T?` of its own** (D4), for every map: `let k:
+Kind? = m[1]` and `kept.push(m[1])` copy the value out where it copies, and are
+refused (`NK1102`) with `m[k]?.clone()` where it does not. Both reached `rustc`
+as *mismatched types*. With them, found writing the record's tests:
+
+* **A map's read handed to a `ref T?` parameter** was written
+  `(*get(…)).as_ref()`, an `Option<&&T>`: the read is that option already, and
+  text is read as `str`.
+* **`k ?? Kind::B` for a `k: ref Kind?`** of a type this package declares
+  that copies was refused (`NK1185`) as a view beside a value; it is the copy,
+  as for a number.
+
 ## [0.0.379] — 2026-10-03
 
 **What a file declares, and whether its `use` lines may name what they name,

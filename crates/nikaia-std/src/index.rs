@@ -504,6 +504,14 @@ where
     value.or(fallback)
 }
 
+/// **A read of a map whose values are `T?` is one `T?`**
+/// ([ADR-273](../../../docs/specification/adr/adr-273.md) D3): the map answers
+/// `Option<&Option<T>>`, and a stored `None` and an absent key are both
+/// `None` here. Still a view of what the map keeps: nothing is copied.
+pub fn flat<T>(read: Option<&Option<T>>) -> Option<&T> {
+    read.and_then(Option::as_ref)
+}
+
 /// What `??` does where the fallback **may be absent too** (Part I 3.5): the
 /// first that has a value, and an option still. `m[k] ?? maybe` reads the map
 /// as `Option<&V>` beside an `Option<V>`, which `or_else` cannot join - and

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.379 (Draft)
+**Version:** 0.0.380 (Draft)
 **Date:** 2026-10-03
 
 ---
@@ -927,6 +927,7 @@ let shown = nickname ?? name ?? "Guest"
 
 **The result of a `?.` is a `T?`.** Where the member is itself a `T?`, the
 result is flattened: `a?.b?.c` never reaches through a nullable of a nullable.
+A read of a map whose values are `T?` is flattened the same way (4.5).
 The compiler decides which case applies from the declared type.
 
 **`?.` through a type that cannot be absent is refused** with `NK1121`. A type
@@ -1156,7 +1157,15 @@ use std::collections
     written-out form (`NK1162`).
 
     The value reached is a **view** of the map where it does not copy, and
-    `m[k] ?? 0` on a map of numbers is the number. A map whose keys it
+    `m[k] ?? 0` on a map of numbers is the number. Kept where a `T?` of its
+    own is wanted - `let k: Kind? = m[1]` - a value that copies is copied out,
+    and one that does not is written `m[k]?.clone()`.
+
+    **A map of `T?` values reads one `T?`**, as `?.` does (2.3): a key that
+    is absent and a key that holds `null` both answer `null`, and
+    `m.contains_key(k)` tells them apart. `m[k] = null` **stores** `null` - the
+    key is there afterwards - and `m.remove(k)` removes it
+    ([ADR-273](adr/adr-273.md)). A map whose keys it
     **owns** — a `HashMap[String, V]`, a `HashMap[i64, V]` — takes a key
     written into it as its own and is lent one it is read with; `m[k] ?? "-"`
     over a map of text is a view of text.
