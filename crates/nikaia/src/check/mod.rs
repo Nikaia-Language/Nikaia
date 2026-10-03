@@ -19852,37 +19852,10 @@ impl<'a> Checker<'a> {
     /// path missing from the list, and *add the line* is not the answer to a
     /// build run with the reads switched off.
     fn a_file_this_build_may_not_read(&mut self, path: &str, why: &Denied, span: &Span) {
-        let (note, way_out) = match why {
-            Denied::NoList => (
-                "A build reads no files unless it's given a list of the files it may read."
-                    .to_string(),
-                "Pass `--allow-read-from-list=<file>`, and put this path in that file.".to_string(),
-            ),
-            Denied::NotListed { list } => (
-                format!(
-                    "`{list}` is the list of files this build may read, and `{path}` isn't \
-                     in it."
-                ),
-                format!("Add `{path}` as a line in `{list}`."),
-            ),
-            Denied::OutsideTheRoot => (
-                "A build only reads files inside the project, and this path is absolute \
-                 or climbs out with `..`."
-                    .to_string(),
-                "Write the path relative to the project root.".to_string(),
-            ),
-            Denied::Unreadable { because } => (
-                format!("`{path}` is in the list, but it couldn't be read: {because}"),
-                "Add the file, or remove its line from the list.".to_string(),
-            ),
-            Denied::NotText => (
-                format!(
-                    "`{path}` isn't text. A file read at build time becomes a `&str`, so \
-                     it has to be UTF-8."
-                ),
-                "Read a text file here. Other files can't be read at build time yet.".to_string(),
-            ),
-        };
+        let (note, way_out) = (
+            nikaia_std::tools::assets::why_not_read(why, path),
+            nikaia_std::tools::assets::way_out_of_a_read(why, path),
+        );
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,

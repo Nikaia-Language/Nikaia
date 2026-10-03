@@ -47,25 +47,9 @@ use anyhow::{Context, Result};
 /// declares the name is refused rather than shadowing it.
 pub const ASSET: &str = "asset";
 
-/// Why a read was refused. Each is a sentence the checker writes, because the
-/// reason and the way out are not the same for any two of them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Denied {
-    /// [D1](../../../docs/specification/adr/adr-072.md): no list is in effect,
-    /// so the whole class is off.
-    NoList,
-    /// [D3](../../../docs/specification/adr/adr-072.md): a list is in effect
-    /// and this path is not in it.
-    NotListed { list: String },
-    /// A path that leaves the project root, by `..` or by being absolute.
-    OutsideTheRoot,
-    /// The list named it, and the file is not there or cannot be read.
-    Unreadable { because: String },
-    /// Read, and not text. What crosses from build time to run time is a
-    /// `&str` ([ADR-079](../../../docs/specification/adr/adr-079.md) D1), and
-    /// bytes that are not UTF-8 are not that.
-    NotText,
-}
+/// Why a read was refused, the list's own syntax, whether a path leaves the
+/// root and the entries nothing read: `tools/assets.nika` (ADR-250, #125).
+pub use nikaia_std::tools::assets::Denied;
 
 /// The list itself: a file that names files.
 #[derive(Debug, Clone)]
@@ -94,15 +78,7 @@ impl Allowlist {
     /// The same, from the text — which is what the tests read and what keeps
     /// the parsing one function rather than two.
     pub fn entries(text: &str) -> BTreeSet<String> {
-        text.lines()
-            .map(|line| match line.split_once('#') {
-                Some((before, _)) => before,
-                None => line,
-            })
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect()
+        nikaia_std::tools::assets::allowlist_entries(text)
     }
 }
 
@@ -219,17 +195,10 @@ impl Reads {
     /// opposite of that. A `..` and an absolute path are the two shapes that
     /// leave, and both are visible in the literal.
     fn under_the_root(&self, path: &str) -> Option<PathBuf> {
-        let written = Path::new(path);
-        if written.is_absolute() {
-            return None;
+        match nikaia_std::tools::assets::leaves_the_root(path) || Path::new(path).is_absolute() {
+            true => None,
+            false => Some(self.root.join(path)),
         }
-        if written
-            .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir))
-        {
-            return None;
-        }
-        Some(self.root.join(written))
     }
 
     /// What this build read, for the cache's asset dimension
@@ -255,12 +224,7 @@ impl Reads {
         let Some(list) = &self.list else {
             return Vec::new();
         };
-        let taken = self.taken();
-        list.allowed
-            .iter()
-            .filter(|entry| !taken.contains_key(*entry))
-            .cloned()
-            .collect()
+        nikaia_std::tools::assets::unused_entries(&list.allowed, &self.taken())
     }
 }
 

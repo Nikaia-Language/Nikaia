@@ -1,0 +1,95 @@
+// crates/nikaia-std/src/tools/assets.nika
+//
+// The files a build may read while it builds (ADR-072, ADR-116 D2) - what the
+// compiler's `assets` decides about a list and a path without touching a
+// file, moved from Rust (ADR-250, #125). Reading the files, the lock that
+// records what was read and the digest stay Rust.
+//
+// A build given no list reads nothing (D1); a file is named in three places,
+// and a read missing any of them is refused (D3); the literal is not computed
+// and there are no patterns (D4, D5).
+
+use std::collections
+
+/// Why a read was refused. Each is a sentence the checker writes, because the
+/// reason and the way out are not the same for any two of them.
+pub enum Denied {
+    /// D1: no list is in effect, so the whole class is off.
+    NoList,
+    /// D3: a list is in effect and this path is not in it.
+    NotListed { list: String },
+    /// A path that leaves the project root, by `..` or by being absolute.
+    OutsideTheRoot,
+    /// The list named it, and the file is not there or cannot be read.
+    Unreadable { because: String },
+    /// Read, and not text: what crosses from build time to run time is a
+    /// `&str` (ADR-079 D1).
+    NotText,
+}
+
+/// The paths a list names: one per line, `#` begins a comment, blank lines
+/// are nothing (D2).
+pub fn allowlist_entries(text: ref String) -> collections::BTreeSet[String] {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    for line in text.lines() {
+        let parts: Vec[ref String] = line.split("#").collect()
+        let entry = parts[0].trim()
+        if entry.len() > 0 {
+            out.insert(entry.clone())
+        }
+    }
+    return out
+}
+
+/// Whether a path would leave the project root: it is absolute, or a part
+/// of it is `..`. **Lexical**, for the reason D4 gives about the literal: what
+/// a reader can decide by looking at the line is the property protected, and a
+/// link resolved behind their back is the opposite of that.
+pub fn leaves_the_root(path: ref String) -> bool {
+    if path.starts_with("/") {
+        return true
+    }
+    for part in path.split("/") {
+        if part == ".." {
+            return true
+        }
+    }
+    return false
+}
+
+/// **The entries nothing read** (D8): a list that may hold names nothing uses
+/// decays into everything ever needed, which is how an allowlist stops being
+/// read.
+pub fn unused_entries(allowed: ref collections::BTreeSet[String], taken: ref collections::BTreeMap[String, String]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for entry in allowed {
+        if !taken.contains_key(entry) {
+            out.push(entry.clone())
+        }
+    }
+    return out
+}
+
+/// What `NK1175` notes about a refused read (ADR-072 D1, D3).
+pub fn why_not_read(why: ref Denied, path: ref String) -> String {
+    return match why {
+        Denied::NoList => "A build reads no files unless it's given a list of the files it may read.",
+        Denied::NotListed { list } => f"`{list}` is the list of files this build may read, and `{path}` isn't in it.",
+        Denied::OutsideTheRoot => "A build only reads files inside the project, and this path is absolute or climbs out with `..`.",
+        Denied::Unreadable { because } => f"`{path}` is in the list, but it couldn't be read: {because}",
+        Denied::NotText => f"`{path}` isn't text. A file read at build time becomes a `&str`, so it has to be UTF-8.",
+    }
+}
+
+/// The way out of a refused read that can actually be taken (Part III C.2):
+/// *add the flag* is not the answer to a path missing from the list, and *add
+/// the line* is not the answer to a build run with the reads switched off.
+pub fn way_out_of_a_read(why: ref Denied, path: ref String) -> String {
+    return match why {
+        Denied::NoList => "Pass `--allow-read-from-list=<file>`, and put this path in that file.",
+        Denied::NotListed { list } => f"Add `{path}` as a line in `{list}`.",
+        Denied::OutsideTheRoot => "Write the path relative to the project root.",
+        Denied::Unreadable { .. } => "Add the file, or remove its line from the list.",
+        Denied::NotText => "Read a text file here. Other files can't be read at build time yet.",
+    }
+}

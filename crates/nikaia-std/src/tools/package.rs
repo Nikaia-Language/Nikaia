@@ -11,6 +11,60 @@ use nikaia_std::fs;
 #[allow(unused_imports)]
 use nikaia_std::text;
 
+// --- assets.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Denied {
+    NoList,
+    NotListed { list: String },
+    OutsideTheRoot,
+    Unreadable { because: String },
+    NotText,
+}
+
+pub fn allowlist_entries(text: &str) -> collections::BTreeSet<String> {
+    let mut out: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split("#").collect::<Vec<_>>();
+        let entry = (*nikaia_std::index::get(&parts, 0)).trim();
+        if !entry.is_empty() { out.insert(entry.to_owned()); }
+    }
+    out
+}
+
+pub fn leaves_the_root(path: &str) -> bool {
+    if path.starts_with("/") { return true; }
+    for part in path.split("/") { if part == ".." { return true; } }
+    false
+}
+
+pub fn unused_entries(allowed: &collections::BTreeSet<String>, taken: &collections::BTreeMap<String, String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for entry in allowed.iter() { if !taken.contains_key(entry) { out.push(entry.to_owned()); } }
+    out
+}
+
+pub fn why_not_read(why: &Denied, path: &str) -> String {
+    match why {
+        Denied::NoList => String::from("A build reads no files unless it's given a list of the files it may read."),
+        Denied::NotListed { list } => format!("`{}` is the list of files this build may read, and `{}` isn't in it.", list, path),
+        Denied::OutsideTheRoot => String::from("A build only reads files inside the project, and this path is absolute or climbs out with `..`."),
+        Denied::Unreadable { because } => format!("`{}` is in the list, but it couldn't be read: {}", path, because),
+        Denied::NotText => format!("`{}` isn't text. A file read at build time becomes a `&str`, so it has to be UTF-8.", path),
+    }
+}
+
+pub fn way_out_of_a_read(why: &Denied, path: &str) -> String {
+    match why {
+        Denied::NoList => String::from("Pass `--allow-read-from-list=<file>`, and put this path in that file."),
+        Denied::NotListed { list } => format!("Add `{}` as a line in `{}`.", path, list),
+        Denied::OutsideTheRoot => String::from("Write the path relative to the project root."),
+        Denied::Unreadable { .. } => String::from("Add the file, or remove its line from the list."),
+        Denied::NotText => String::from("Read a text file here. Other files can't be read at build time yet."),
+    }
+}
+
+
 // --- ast.nika ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10483,6 +10537,10 @@ fn stores_maybe(unit: &Unit, asked: &Asked<'_>, expr: Option<&Expr>, span: &Span
 fn walk_maybe_block(unit: &Unit, asked: &Asked<'_>, block: Option<&Block>, own_buffer: &impl Fn(&Expr) -> bool, here: &mut Here) { walk_block(unit, asked, match block { Some(__nikaia_value) => __nikaia_value, None => return }, false, own_buffer, here); }
 
 
+pub mod assets {
+    #[allow(unused_imports)]
+    pub use super::{Denied, allowlist_entries, leaves_the_root, unused_entries, why_not_read, way_out_of_a_read};
+}
 pub mod ast {
     #[allow(unused_imports)]
     pub use super::{Span, Spanned, Program, Item, Block, Stmt, Expr, FPart, Type, ExternMember, OpaqueType, Code, EnumVariant, VariantFields, SelectArm, MatchArm, MatchPattern, GenericParam, TraitMethod, FnArg, ConfigArg, ConfigParam, FieldDef, AsmBinding, FieldInit, UnaryOp, BinaryOp, GrammarDef, GrammarRule, FrameAttr, GrammarAlt, Pattern, Repeat, FoldSpec, Receiver, FnParams, ConfigZone, LONGEST_SOURCE, offset};

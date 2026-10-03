@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.389] — 2026-10-03
+
+**What a build may read is decided in Nikaia** (#125, ADR-250). What the
+compiler's `assets` decides about a list and a path without touching a file
+moved into `tools/assets.nika`: why a read is refused (`Denied`) and the
+sentence and way out `NK1175` gives for each reason (ADR-072 D1, D3), the
+allowlist's own lines (D2), a path that leaves the project root by `..` or by
+being absolute - decided lexically, as the line reads (D4) - and the entries
+nothing read (D8). Reading the files, the lock that records what was read and
+the digest stay Rust. 19.0 % of the toolchain is Nikaia.
+
 ## [0.0.388] — 2026-10-03
 
 **A lowercase `par_fold` rule skips no whitespace, and 1BRC is 10.8 % fewer
