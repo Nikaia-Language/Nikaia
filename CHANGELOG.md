@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.393] — 2026-10-03
+
+**What a grammar matched, what a callee promises and how often a loop turns,
+measured and proposed** (ADR-276, open). The checks left in 1BRC's
+`TENTHS` - `value * 10 + digit_value(d)` over `digit{1,2}` - stay because the
+walk of ADR-271 does not enter a grammar's actions, reads nothing across a
+call (`std.contracts` has not one `ensures`), and forgets what a loop changes
+at its head. They cost 4.8 instructions a row (1.0 %). Read over the corpus,
+these three facts unblock few of the 106 overflow sites the walk does not
+prove; an upper bound on a length, values in lists of lists and fields of
+`self` block many more (`solver-workload.md` §8.4), and ADR-276 §7 leaves them
+open. No tool found derives facts from a text grammar; SPARK's two automatic
+rules - an expression body is a postcondition, a short counted loop is
+unrolled - are what the proposal transfers. Nothing in the compiler changed.
+
 ## [0.0.392] — 2026-10-03
 
 **The encoder a grammar run prints its result with is written in Nikaia**
