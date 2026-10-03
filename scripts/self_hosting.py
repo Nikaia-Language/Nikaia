@@ -67,6 +67,7 @@ COMPILER_NIKA = {
     "order.nika": "contracts::order: a statement reduced to an operation or the reason it cannot be, and whether two statements, or a run of them, keep their order, and the `--overlaps` report (0.0.362-0.0.364)",
     "tether.nika": "contracts::tether: the states a signature's views solve to, a parse that views its input, a body that makes a buffer of its own (0.0.374)",
     "sharing.nika": "contracts::sharing: the reasons a count stays atomic, the decisions and their report, the slot keys, what holds a `Shared` and what a hull lowers to (0.0.375)",
+    "keep.nika": "contracts::keep: which types hold a view and why one cannot go into a handle, the methods that keep, drop, take or own, the keeping method's key, a callee's and a local's name (0.0.376)",
 }
 
 

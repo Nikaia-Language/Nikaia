@@ -1,0 +1,307 @@
+// crates/nikaia-std/src/tools/keep.nika
+//
+// Where a buffer lives once views of it outlive the scope that made it
+// (ADR-209, Part I 6.6) - the questions the compiler's `contracts::keep` asks
+// of a type, a method's name and a ledger, moved from Rust (ADR-250, #125).
+// What stays Rust is the walk that follows views by origin and the plan it
+// decides, whose statement numbers are `usize` doors this language does not
+// have.
+//
+// **It errs towards a keep, never towards a refusal**: a destination whose
+// type nothing here can read holds a view.
+
+use std::collections
+
+/// What a whole unit says about views: which types hold one, and what the
+/// structs among them are made of.
+pub struct KeepContext {
+    /// Every struct or enum that holds a view.
+    pub borrowing: collections::BTreeSet[String],
+    /// Every struct, by its name.
+    pub structs: collections::BTreeMap[String, DeclaredStruct],
+}
+
+/// One struct as a unit declares it: whether it has type parameters, and its
+/// fields.
+pub struct DeclaredStruct {
+    pub generic: bool,
+    pub fields: Vec[(String, Type)],
+}
+
+impl KeepContext {
+    /// One unit's declarations.
+    pub fn of(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> KeepContext {
+        let mut structs: collections::BTreeMap[String, DeclaredStruct] = collections::BTreeMap()
+        for item in items {
+            match item.node {
+                Item::Struct { name, generics, fields, .. } => {
+                    let mut written: Vec[(String, Type)] = []
+                    for field in fields {
+                        written.push((names.resolve(field.name).clone(), field.ty.clone()))
+                    }
+                    structs.insert(names.resolve(name).clone(), DeclaredStruct { generic: generics.len() > 0, fields: written })
+                }
+                else => {}
+            }
+        }
+        return KeepContext { borrowing: borrowing_types(names, items), structs: structs }
+    }
+
+    /// Why a value of this type **cannot** be carried into a handle, or
+    /// nothing where it can (ADR-221 D3): every view in it is text, or a list
+    /// or a nullable of one, or a struct made only of such fields. That is
+    /// what `tether::Rebase` is written for, and the one property `Holding`
+    /// needs beyond it - covariance - holds for every such struct.
+    pub fn not_held(ref self, names: ref winnow_grammar::InternerContext, ty: ref Type, mut seen: Vec[String]) -> String? {
+        let name = names.resolve(ty.name)
+        if ty.is_view {
+            if name == "String" && ty.generics.len() == 0 {
+                return null
+            }
+            return f"a view of `{name}` rather than of text"
+        }
+        if ty.is_tuple && self.carries(names, ty) {
+            return "a tuple of views"
+        }
+        if self.structs.contains_key(name) && self.borrowing.contains(name) {
+            return self.struct_not_held(names, name, seen)
+        }
+        if !self.carries(names, ty) {
+            return null
+        }
+        if name == "Vec" || name == "List" {
+            for argument in ty.generics {
+                let why = self.not_held(names, argument, seen)
+                if why != null {
+                    return why
+                }
+            }
+            return null
+        }
+        return f"a `{name}` of views"
+    }
+
+    /// `not_held` for a struct, by its name.
+    pub fn struct_not_held(ref self, names: ref winnow_grammar::InternerContext, name: ref String, mut seen: Vec[String]) -> String? {
+        let declared = self.structs[name] ?? return null
+        if declared.generic {
+            return f"`{name}`, a struct of views with type parameters"
+        }
+        for one in seen {
+            if one == name {
+                return null
+            }
+        }
+        seen.push(name.clone())
+        for (field, ty) in declared.fields {
+            let why = self.not_held(names, ty, seen)
+            if why != null {
+                let held = why ?? ""
+                return f"`{name}.{field}`, which holds {held}"
+            }
+        }
+        return null
+    }
+
+    /// Whether a written type holds a view: it is one, or names a type that
+    /// holds one, or an argument of it does.
+    pub fn carries(ref self, names: ref winnow_grammar::InternerContext, ty: ref Type) -> bool {
+        if ty.is_view || self.borrowing.contains(names.resolve(ty.name)) {
+            return true
+        }
+        for argument in ty.generics {
+            if self.carries(names, argument) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// The struct of views a written type names, outermost first.
+pub fn struct_in(names: ref winnow_grammar::InternerContext, ty: ref Type, borrowing: ref collections::BTreeSet[String]) -> String? {
+    let name = names.resolve(ty.name)
+    if borrowing.contains(name) {
+        return name.clone()
+    }
+    for argument in ty.generics {
+        let found = struct_in(names, argument, borrowing)
+        if found != null {
+            return found
+        }
+    }
+    return null
+}
+
+/// Whether a written type names a struct of views anywhere in it.
+pub fn names_a_struct_of_views(names: ref winnow_grammar::InternerContext, ty: ref Type, borrowing: ref collections::BTreeSet[String]) -> bool {
+    if borrowing.contains(names.resolve(ty.name)) {
+        return true
+    }
+    for argument in ty.generics {
+        if names_a_struct_of_views(names, argument, borrowing) {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether a ledger type holds a view anywhere in it - and a type nobody
+/// worked out may.
+pub fn a_ledger_type_with_a_view(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { view, args, .. } => view || any_with_a_view(args),
+        Ty::Nullable(inner) => a_ledger_type_with_a_view(inner),
+        Ty::Tuple(parts) => any_with_a_view(parts),
+        Ty::Unknown => true,
+        else => false,
+    }
+}
+
+fn any_with_a_view(types: ref Vec[Ty]) -> bool {
+    for one in types {
+        if a_ledger_type_with_a_view(one) {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether a contract takes a keep from its caller: some position of it is
+/// tethered.
+pub fn takes_a_keep(contract: ref FnContract) -> bool {
+    for held in contract.views {
+        if held.state == State::Tethered {
+            return true
+        }
+    }
+    return false
+}
+
+/// The ledger key of a method that takes a keep: `self.load(…)` inside its
+/// `impl`, or a name only one keeping function in the ledger has. One answer
+/// for the plan and for the emitter, so the call and its keep cannot part.
+pub fn keeping_method_key(ledger: ref Ledger, target: ref String?, on_self: bool, method: ref String) -> String? {
+    if on_self && target != null {
+        let owner = target ?? ""
+        let key = f"{owner}::{method}"
+        let contract = ledger.functions[key] ?? return null
+        if takes_a_keep(contract) {
+            return key
+        }
+        return null
+    }
+    let suffix = f"::{method}"
+    let mut found: String? = null
+    for (key, contract) in ledger.functions {
+        if key.ends_with(ref suffix) && takes_a_keep(contract) {
+            if found != null {
+                return null
+            }
+            found = key.clone()
+        }
+    }
+    return found
+}
+
+/// The name a call's callee is written as. `unaliased` resolves a package's
+/// alias (ADR-046 D3).
+pub fn written_callee(names: ref winnow_grammar::InternerContext, func: ref Expr, unaliased: fn(ref String) -> String sync) -> String? {
+    return match func {
+        Expr::Variable(name) => names.resolve(name).clone(),
+        Expr::Path(segments) => unaliased(joined_segments(segments, names)),
+        else => null,
+    }
+}
+
+/// The local an expression is rooted in: `xs`, `self.items`, `m[k]`.
+pub fn root_of(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> String? {
+    return match expr {
+        Expr::Variable(name) => names.resolve(name).clone(),
+        Expr::Field { base, .. } => root_of(names, base),
+        Expr::Index { base, .. } => root_of(names, base),
+        Expr::SafeField { base, .. } => root_of(names, base),
+        Expr::Unary { expr, .. } => root_of(names, expr),
+        else => null,
+    }
+}
+
+/// The local a removal takes an element out of: `kept.remove(0)`,
+/// `kept.pop()`, and the same under `?` or a `catch`.
+pub fn taken_from(names: ref winnow_grammar::InternerContext, value: ref Expr) -> String? {
+    return match value {
+        Expr::MethodCall { receiver, method, .. } => if hands_back_what_it_removes(names.resolve(method)) { root_of(names, receiver) } else { null },
+        Expr::Try(inner) => taken_from(names, inner),
+        Expr::TryCatch { expr, .. } => taken_from(names, expr),
+        else => null,
+    }
+}
+
+// Methods whose result is a value of its own, not a view of the receiver.
+comptime OWNED: Array[ref String, 14] = ["to_owned", "clone_text", "len", "is_empty", "count", "starts_with", "ends_with", "contains", "contains_key", "parse", "to_uppercase", "to_lowercase", "join", "repeat"]
+
+// Methods that keep what they are given in their receiver.
+comptime KEEPS: Array[ref String, 6] = ["push", "insert", "extend", "append", "push_front", "push_back"]
+
+// Methods that drop entries from their receiver.
+comptime SHEDS: Array[ref String, 9] = ["clear", "remove", "drain", "pop", "truncate", "retain", "pop_front", "pop_back", "take"]
+
+// Methods that hand back the element they remove.
+comptime TAKES: Array[ref String, 6] = ["remove", "pop", "pop_front", "pop_back", "swap_remove", "take"]
+
+/// A method whose result is a value of its own, not a view of the receiver.
+pub fn hands_back_its_own(method: ref String) -> bool {
+    for one in OWNED {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method that keeps what it is given in its receiver.
+pub fn keeps_what_it_is_given(method: ref String) -> bool {
+    for one in KEEPS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method that drops entries from its receiver.
+pub fn drops_entries(method: ref String) -> bool {
+    for one in SHEDS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method that hands back the element it removes.
+pub fn hands_back_what_it_removes(method: ref String) -> bool {
+    for one in TAKES {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A sentence's first letter made a capital.
+pub fn capitalised(text: ref String) -> String {
+    let mut out: String = ""
+    let mut first = true
+    for c in text.chars() {
+        if first {
+            let mut letter: String = ""
+            letter.push(c)
+            out.push_str(ref letter.to_uppercase())
+            first = false
+        } else {
+            out.push(c)
+        }
+    }
+    return out
+}

@@ -55,6 +55,15 @@ use crate::parser::Parsed;
 
 use super::Ledger;
 use super::tether::{Buffer, RESULT, State};
+/// What a whole unit says about views, which types hold one and what the
+/// structs among them are made of, with the questions asked of a type, a
+/// method's name and a ledger: `tools/keep.nika` (ADR-250, #125).
+use nikaia_std::tools::keep::KeepContext as Context;
+pub use nikaia_std::tools::keep::takes_a_keep;
+use nikaia_std::tools::keep::{
+    a_ledger_type_with_a_view, capitalised, drops_entries, hands_back_its_own,
+    keeps_what_it_is_given, names_a_struct_of_views, struct_in, taken_from,
+};
 
 /// A source, by the statement it stands in and - for a call - the callee:
 /// what the emitter has in hand where it writes either.
@@ -271,15 +280,9 @@ fn keeping_positions(plan: &Plan) -> BTreeSet<String> {
         .collect()
 }
 
-/// Whether a contract takes a keep from its caller: some position of it is
-/// tethered.
-pub fn takes_a_keep(contract: &super::FnContract) -> bool {
-    contract.views.iter().any(|h| h.state == State::Tethered)
-}
-
 /// Every function of one unit, planned against the ledger as it stands.
 pub fn plans(parsed: &Parsed, ledger: &Ledger, library: &Ledger) -> Vec<Plan> {
-    let context = Context::of(parsed);
+    let context = Context::of(&parsed.interner, &parsed.program.items);
     let mut out = Vec::new();
     for item in &parsed.program.items {
         match &item.node {
@@ -304,107 +307,6 @@ pub fn plans(parsed: &Parsed, ledger: &Ledger, library: &Ledger) -> Vec<Plan> {
         }
     }
     out
-}
-
-/// What a whole unit says about views: which types hold one, and what the
-/// structs among them are made of.
-struct Context {
-    borrowing: BTreeSet<String>,
-    /// Every struct: whether it has type parameters, and its fields.
-    structs: BTreeMap<String, (bool, Vec<(String, Type)>)>,
-}
-
-impl Context {
-    fn of(parsed: &Parsed) -> Context {
-        let borrowing = crate::emit::borrowing_structs(parsed)
-            .into_iter()
-            .map(|s| parsed.text(s).to_string())
-            .collect();
-        let structs = parsed
-            .program
-            .items
-            .iter()
-            .filter_map(|item| match &item.node {
-                Item::Struct {
-                    name,
-                    generics,
-                    fields,
-                    ..
-                } => Some((
-                    parsed.text(*name).to_string(),
-                    (
-                        !generics.is_empty(),
-                        fields
-                            .iter()
-                            .map(|f| (parsed.text(f.name).to_string(), f.ty.clone()))
-                            .collect(),
-                    ),
-                )),
-                _ => None,
-            })
-            .collect();
-        Context { borrowing, structs }
-    }
-
-    /// Why a value of this type **cannot** be carried into a handle, or
-    /// `None` where it can (ADR-221 D3): every view in it is text, or a list or
-    /// a nullable of one, or a struct made only of such fields. That is what
-    /// `tether::Rebase` is written for, and the one property `Holding` needs
-    /// beyond it - covariance - holds for every such struct.
-    fn not_held(&self, parsed: &Parsed, ty: &Type, seen: &mut Vec<String>) -> Option<String> {
-        let name = parsed.text(ty.name);
-        if ty.is_view {
-            return match name == "String" && ty.generics.is_empty() {
-                true => None,
-                false => Some(format!("a view of `{name}` rather than of text")),
-            };
-        }
-        if ty.is_tuple && self.carries(parsed, ty) {
-            return Some("a tuple of views".to_string());
-        }
-        if self.structs.contains_key(name) && self.borrowing.contains(name) {
-            return self.struct_not_held(parsed, name, seen);
-        }
-        if !self.carries(parsed, ty) {
-            return None;
-        }
-        match name {
-            "Vec" | "List" => ty
-                .generics
-                .iter()
-                .find_map(|g| self.not_held(parsed, g, seen)),
-            _ => Some(format!("a `{name}` of views")),
-        }
-    }
-
-    /// [`Context::not_held`] for a struct, by its name.
-    fn struct_not_held(
-        &self,
-        parsed: &Parsed,
-        name: &str,
-        seen: &mut Vec<String>,
-    ) -> Option<String> {
-        let (generic, fields) = self.structs.get(name)?;
-        if *generic {
-            return Some(format!("`{name}`, a struct of views with type parameters"));
-        }
-        if seen.iter().any(|s| s == name) {
-            return None;
-        }
-        seen.push(name.to_string());
-        fields.iter().find_map(|(field, ty)| {
-            self.not_held(parsed, ty, seen)
-                .map(|why| format!("`{name}.{field}`, which holds {why}"))
-        })
-    }
-
-    /// Whether a written type holds a view: it is one, or names a type that
-    /// holds one, or an argument of it does.
-    fn carries(&self, parsed: &Parsed, ty: &Type) -> bool {
-        ty.is_view
-            || self.borrowing.contains(parsed.text(ty.name))
-            || ty.generics.iter().any(|g| self.carries(parsed, g))
-    }
 }
 
 /// One local, as far as this walk needs it.
@@ -514,7 +416,7 @@ fn plan(
                 origins: BTreeSet::new(),
                 ty: Some(arg.ty.clone()),
                 parameter: true,
-                keeps: arg.mutable && context.carries(parsed, &arg.ty),
+                keeps: arg.mutable && context.carries(&parsed.interner, &arg.ty),
                 buffer: false,
                 text: false,
             },
@@ -556,7 +458,7 @@ fn plan(
         last_seen: BTreeMap::new(),
         result_carries: ret_type
             .as_ref()
-            .is_some_and(|t| context.carries(parsed, t)),
+            .is_some_and(|t| context.carries(&parsed.interner, t)),
     };
     let result_carries = walk.result_carries;
     // Twice, so that an origin a loop's later statement gives a local reaches
@@ -731,7 +633,7 @@ impl Walk<'_> {
                 // **An element taken out of a keeper** stays what it was in
                 // there (ADR-221 D3).
                 if let [name] = names.as_slice()
-                    && let Some(from) = taken_from(self.parsed, value)
+                    && let Some(from) = taken_from(&self.parsed.interner, value)
                 {
                     self.taken.insert(self.parsed.text(*name).to_string(), from);
                 }
@@ -868,13 +770,13 @@ impl Walk<'_> {
             } => {
                 let method_name = self.parsed.text(*method).to_string();
                 if let Some(root) = root_of(self.parsed, receiver) {
-                    if SHEDS.contains(&method_name.as_str()) {
+                    if drops_entries(&method_name) {
                         self.sheds
                             .entry(root.clone())
                             .or_default()
                             .push(self.path.clone());
                     }
-                    if KEEPS.contains(&method_name.as_str()) {
+                    if keeps_what_it_is_given(&method_name) {
                         let mut origins = BTreeSet::new();
                         for (at, arg) in args.iter().enumerate() {
                             let of = match self.is_the_buffer(arg) {
@@ -1057,7 +959,7 @@ impl Walk<'_> {
                 let name = self.parsed.text(*method).to_string();
                 // **A removal is a removal wherever it stands** - `let old =
                 // kept.remove(0)` drops the entry as surely as a statement does.
-                if SHEDS.contains(&name.as_str())
+                if drops_entries(&name)
                     && let Some(root) = root_of(self.parsed, receiver)
                 {
                     self.sheds.entry(root).or_default().push(self.path.clone());
@@ -1066,8 +968,7 @@ impl Walk<'_> {
                 if let Some(callee) = self.keeping_method(receiver, &name) {
                     out.extend(self.call_source(&callee));
                 }
-                if OWNED.contains(&name.as_str()) || (name == "clone" && self.copies_text(receiver))
-                {
+                if hands_back_its_own(&name) || (name == "clone" && self.copies_text(receiver)) {
                     for arg in args {
                         let _ = self.origins(arg);
                     }
@@ -1132,7 +1033,7 @@ impl Walk<'_> {
                         .signature
                         .as_ref()
                         .and_then(|s| s.result.as_ref())
-                        .is_some_and(|ty| !ty_holds_view(ty));
+                        .is_some_and(|ty| !a_ledger_type_with_a_view(ty));
                     if owned {
                         return out;
                     }
@@ -1295,103 +1196,19 @@ pub fn keeping_method_key(
     on_self: bool,
     method: &str,
 ) -> Option<String> {
-    if let (true, Some(target)) = (on_self, target) {
-        let key = format!("{target}::{method}");
-        return ledger
-            .functions
-            .get(&key)
-            .filter(|c| takes_a_keep(c))
-            .map(|_| key);
-    }
-    let suffix = format!("::{method}");
-    let mut found = ledger
-        .functions
-        .iter()
-        .filter(|(k, c)| k.ends_with(&suffix) && takes_a_keep(c))
-        .map(|(k, _)| k.clone());
-    let first = found.next()?;
-    found.next().is_none().then_some(first)
-}
-
-/// Methods whose result is a value of its own, not a view of the receiver.
-const OWNED: &[&str] = &[
-    "to_owned",
-    "clone_text",
-    "len",
-    "is_empty",
-    "count",
-    "starts_with",
-    "ends_with",
-    "contains",
-    "contains_key",
-    "parse",
-    "to_uppercase",
-    "to_lowercase",
-    "join",
-    "repeat",
-];
-
-/// Methods that keep what they are given in their receiver.
-const KEEPS: &[&str] = &[
-    "push",
-    "insert",
-    "extend",
-    "append",
-    "push_front",
-    "push_back",
-];
-
-/// Methods that drop entries from their receiver.
-const SHEDS: &[&str] = &[
-    "clear",
-    "remove",
-    "drain",
-    "pop",
-    "truncate",
-    "retain",
-    "pop_front",
-    "pop_back",
-    "take",
-];
-
-/// Whether a ledger type holds a view anywhere in it.
-fn ty_holds_view(ty: &super::ty::Ty) -> bool {
-    match ty {
-        super::ty::Ty::Named { view, args, .. } => *view || args.iter().any(ty_holds_view),
-        super::ty::Ty::Nullable(inner) => ty_holds_view(inner),
-        super::ty::Ty::Tuple(parts) => parts.iter().any(ty_holds_view),
-        super::ty::Ty::Unknown => true,
-        _ => false,
-    }
+    nikaia_std::tools::keep::keeping_method_key(ledger, target, on_self, method)
 }
 
 /// The name a call's callee is written as.
 pub fn callee_name(parsed: &Parsed, func: &Expr) -> Option<String> {
-    match func {
-        Expr::Variable(name) => Some(parsed.text(*name).to_string()),
-        Expr::Path(segments) => Some(
-            parsed.unaliased(
-                &segments
-                    .iter()
-                    .map(|s| parsed.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ),
-        ),
-        _ => None,
-    }
+    nikaia_std::tools::keep::written_callee(&parsed.interner, func, &|path: &str| {
+        parsed.unaliased(path)
+    })
 }
 
 /// The local an expression is rooted in: `xs`, `self.items`, `m[k]`.
 pub fn root_of(parsed: &Parsed, expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Variable(name) => Some(parsed.text(*name).to_string()),
-        Expr::Field { base, .. } | Expr::Index { base, .. } | Expr::SafeField { base, .. } => {
-            root_of(parsed, base)
-        }
-        Expr::Unary { expr, .. } => root_of(parsed, expr),
-        _ => None,
-    }
+    nikaia_std::tools::keep::root_of(&parsed.interner, expr)
 }
 
 /// Every name an expression mentions, lambdas and blocks included - and a
@@ -1559,11 +1376,12 @@ fn decide(
     // **Which keepers hold structs** (ADR-221 D4): read through the handle.
     for keeper in &plan.element_keepers {
         let written = walk_local_type(&walk, keeper)
-            .is_some_and(|ty| names_a_struct_of_views(parsed, &ty, context));
+            .is_some_and(|ty| names_a_struct_of_views(&parsed.interner, &ty, &context.borrowing));
         if written || walk.struct_puts.contains_key(keeper) {
             plan.struct_keepers.insert(keeper.clone());
             let named = walk.struct_puts.get(keeper).cloned().or_else(|| {
-                walk_local_type(&walk, keeper).and_then(|ty| struct_in(parsed, &ty, context))
+                walk_local_type(&walk, keeper)
+                    .and_then(|ty| struct_in(&parsed.interner, &ty, &context.borrowing))
             });
             if let Some(name) = named {
                 plan.keeper_structs.insert(keeper.clone(), name);
@@ -1603,11 +1421,11 @@ fn walk_refusals(
     // sequence's - each said by name rather than handed to `rustc`.
     for keeper in &plan.element_keepers {
         let written = walk_local_type(walk, keeper)
-            .and_then(|ty| context.not_held(parsed, &ty, &mut Vec::new()));
+            .and_then(|ty| context.not_held(&parsed.interner, &ty, &mut Vec::new()));
         let put = walk
             .struct_puts
             .get(keeper)
-            .and_then(|name| context.struct_not_held(parsed, name, &mut Vec::new()));
+            .and_then(|name| context.struct_not_held(&parsed.interner, name, &mut Vec::new()));
         let sequence = walk_local_type(walk, keeper)
             .is_none_or(|ty| matches!(parsed.text(ty.name), "Vec" | "List" | "VecDeque" | "Deque"));
         // **One message for one container**: where it is not a list, that is
@@ -1636,48 +1454,6 @@ fn walk_refusals(
         }
     }
     out
-}
-
-/// The struct of views a written type names, outermost first.
-fn struct_in(parsed: &Parsed, ty: &Type, context: &Context) -> Option<String> {
-    let name = parsed.text(ty.name);
-    if context.borrowing.contains(name) {
-        return Some(name.to_string());
-    }
-    ty.generics
-        .iter()
-        .find_map(|g| struct_in(parsed, g, context))
-}
-
-/// The local a removal takes an element out of: `kept.remove(0)`,
-/// `kept.pop()`, and the same under `?` or a `catch`.
-fn taken_from(parsed: &Parsed, value: &Expr) -> Option<String> {
-    match value {
-        Expr::MethodCall {
-            receiver, method, ..
-        } if TAKES.contains(&parsed.text(*method)) => root_of(parsed, receiver),
-        Expr::Try(inner) | Expr::TryCatch { expr: inner, .. } => taken_from(parsed, inner),
-        _ => None,
-    }
-}
-
-/// Methods that hand back the element they remove.
-const TAKES: &[&str] = &[
-    "remove",
-    "pop",
-    "pop_front",
-    "pop_back",
-    "swap_remove",
-    "take",
-];
-
-/// Whether a written type names a struct of views anywhere in it.
-fn names_a_struct_of_views(parsed: &Parsed, ty: &Type, context: &Context) -> bool {
-    context.borrowing.contains(parsed.text(ty.name))
-        || ty
-            .generics
-            .iter()
-            .any(|g| names_a_struct_of_views(parsed, g, context))
 }
 
 fn element_refusal(
@@ -1720,14 +1496,6 @@ fn refusal(source: &Source, what: &str, why: &str, help: &str) -> crate::check::
         notes: vec![why.to_string()],
         help: Some(help.to_string()),
         labels: Vec::new(),
-    }
-}
-
-fn capitalised(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
     }
 }
 
