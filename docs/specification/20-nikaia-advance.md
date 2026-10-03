@@ -128,7 +128,7 @@ Keys are text; a key of any other type is refused with `NK1170`, and a key
 written twice with `NK1169`. **A value may be a `struct` or an `enum` this
 program declares**, and what the program reads is a **view** of the row, which
 lives in the binary. `TABLE.get(k)?.field ?? …` reaches a field of one (2.3). A
-list of text crosses as an array of views, `[ref String; N]`.
+list of text crosses as an array of views, `Array[ref String, N]`.
 
 **Reading a file while the program is built.** A build given no allowlist reads
 nothing. A file the build reads is named three times: in the source, as the
@@ -204,8 +204,8 @@ unrolled, once for the program, for the types actually used, as `--overlaps`,
 syntax for it. A function that walks a shape and is **never called** has a line
 of its own.
 
-`macro`, `quote` and `with` are reserved words; a program may not use them as
-names.
+`with` is a reserved word (Part I 2.1); `macro` and `quote` are ordinary names,
+and a program may use them as names.
 
 Capturing an *expression* as a tree is not part of the language. A query is
 written in the database's own SQL and checked by the driver while the program is
@@ -237,41 +237,52 @@ The `dsl` keyword embeds **foreign syntax** in a Nikaia file: SQL, HTML, regex, 
 `meta::column(name, type)` gives a grammar control over the statement's result type. The compiler builds the row type from the declared columns, one typed field per column, as it builds the parameter type from the holes. A database driver's grammar reads the statement and the schema and declares one column per result column. The schema is a build-time argument of the block, `dsl sqlite(schema: app) { … } eod`, resolved from a `comptime` value. A column the schema lacks is refused by the grammar at the query, while the program is built. The compiler does not understand SQL; the driver owns the grammar, and a vendor's database is a package.
 
 **Example: Embedding SQL**
-SQL written in a `dsl` block is verified while the program is built.
+SQL written in a `dsl` block is verified while the program is built, against the
+schema the connection is typed by ([ADR-299](adr/adr-299.md)).
 
 ```nika
-use nikaia_sql
+use sqlite                                // a driver package, not `std`
 
-fn query_users(db: Shared[nikaia_sql::Database], min_age: i32) {
-    // 1. Define the statement.
-    // The compiler parses this SQL, sees ':target_age' (a parameter hole
-    // declared by the grammar) and generates a specialized shadow type.
-    let query = dsl mysql {
-        SELECT name, email
-        FROM users
-        WHERE age >= :target_age
+let app = comptime asset("schema.sql")    // the schema, read while building
+
+fn query_users(min_age: i32) {
+    let db = sqlite::open("app.db"; schema: app)   // typed by its schema
+
+    // 1. The driver's grammar parses this SQL while the program is built,
+    //    checks it against the schema, sees ':target_age' (a parameter hole)
+    //    and declares the result columns; the compiler derives the row type.
+    let query = dsl sqlite(schema: app) {
+        SELECT name, email FROM users WHERE age >= :target_age
     } eod
 
-    // 2. Execute with typed parameters.
-    // Subject: the connection; after the `;`, the statement's parameters
-    // (Part I 5.1, ADR-254). Omitting 'target_age' is a compile error - the
-    // compiler knows the statement needs it, because it parsed the statement.
+    // 2. Subject: the connection; after the `;`, the statement's parameters
+    //    (Part I 5.1). Omitting 'target_age' is a compile error.
     let users = query.execute(db; target_age: min_age)
+    for u in users { println(u.email ?? "-") }
 }
 ```
 
-A library accepts those parameters with the **typed spread**:
+`execute` hands back a `Seq` of the derived row, so `u.email` is checked; a
+statement handed a connection opened for another schema is refused at the call
+([ADR-299](adr/adr-299.md) D7-D11). A database driver writes no `execute` of its
+own: it implements `std::db`'s `Connection` trait, and the compiler turns each
+row into the row type it derived (D8). *Decided, not built yet:* the schema
+argument, `meta::column`, the derived row, the typed connection and the `sqlite`
+driver package.
+
+Every other DSL a library drives accepts its parameters with the **typed
+spread**:
 
 ```nika
-impl SqlParser {
-    // Subject: self (the parsed statement) ; Config: the DSL's parameters
-    pub fn execute(self; ...args: Self::dsl) -> Vec[Row] throws {
-        return self.conn.query(self.sql, args.values())
+impl Template {
+    // Subject: self (the parsed block) ; Config: the DSL's parameters
+    pub fn prepare(ref self; ...args: Self::dsl) -> Self::dsl {
+        return args
     }
 }
 ```
 
-`Self::dsl` is the constraint that ties these named arguments to this grammar. The compiler monomorphizes `args` per DSL string and allocates it on the stack. There is no heap traffic per query.
+`Self::dsl` is the constraint that ties these named arguments to this grammar. The compiler monomorphizes `args` per DSL string and allocates it on the stack. There is no heap traffic per call.
 
 **What the call site is checked against.** The statement's parameters are read
 out of the body as written. A call that omits one is refused with `NK1112`. A
@@ -308,9 +319,9 @@ A Nikaia parser never copies the source text. A grammar picks per rule between t
 
 *Identifiers and keywords are interned symbols.* The parser **interns** an identifier: each distinct spelling is stored once in a shared table, and the parser yields a small `Symbol` handle. Comparing two identifiers is an integer comparison.
 
-*Bulk text is a tethered slice.* String literals, comments, doc text and DSL bodies are not interned. The parser yields **slices** into the original buffer. Whether a slice stays a plain reference or becomes a **tether**, a handle on the source buffer plus a position, follows Part I 6.6: transient is a borrow, escaping is a tether. A token that lives and dies inside the scope holding the source text costs nothing. A token that outlives that scope is tethered automatically. An AST handed back to a caller keeps its source alive; the handle sits on the AST, not on each of its tokens.
+*Bulk text is a tethered slice.* String literals, comments, doc text and DSL bodies are not interned. The parser yields **slices** into the original buffer. Whether a slice stays a plain reference or becomes a **tether**, the source buffer moved into a keep and the slice a plain reference, follows Part I 6.6: transient is a borrow, escaping is a tether. A token that lives and dies inside the scope holding the source text costs nothing. A token that outlives that scope is tethered automatically. An AST handed back to a caller keeps its source alive; the caller's frame keeps the buffer, and no token carries a handle.
 
-**The source text cannot be freed while any token still points into it.** User code does not manage the relationship and meets no error about it. The cost is one shared handle per *container*, and nothing for a token that never escapes.
+**The source text cannot be freed while any token still points into it.** User code does not manage the relationship and meets no error about it. The cost is nothing where a frame outlives the tokens, one count where a task keeps them, and nothing for a token that never escapes.
 
 **What a rule is called, when it fails where it began**
 
@@ -364,7 +375,7 @@ A bare `@frame` takes the boundary from the rule's trailing literal. A frame tha
 
 **The declaration is checked, and a pattern is never rewritten.** The boundary may not appear *inside* a frame. The compiler walks everything the rule can reach, and each element that consumes input is one of two things:
 
-* **Safe:** a literal without the boundary in it; a built-in that cannot produce it (`digit1`, `ident`); lookahead; an `until(…)` whose terminator *covers* the boundary, as `NAME` above does with `frame_end`.
+* **Safe:** a literal without the boundary in it; a built-in that cannot produce it (`digit`, `ident`); lookahead; an `until(…)` whose terminator *covers* the boundary, as `NAME` above does with `frame_end`.
 * **Rejected**, with the rule and the pattern named: a literal that contains the boundary; a built-in that can consume it (`any`, `multispace0`); a syntactic rule; an `until(…)` that does not cover the boundary, where the message says what to add; and `recover(…)`. A grammar recovers per frame instead: `(item | until(frame_end)) frame_end`.
 
 Nothing here changes what a pattern means. `until(";")` consumes up to the next `;` wherever it is written; inside a frame the compiler refuses it and names what to write. The parser generated for a rule is the same whether or not a frame reaches it.
@@ -407,7 +418,8 @@ A rule may take arguments and be used as `list(pair, ",")` is.
 
 **An action may not pause.** A call that can pause is refused where it stands
 with `NK2209`. A fold's `init`, `step` and `merge` are action code. An action
-may **fail**, which is what a `pub` rule's `throws` is about. A grammar may be
+may **fail**, which is what a `pub` rule's `throws` is about: an entry throws
+`ParseError`, which carries the parser's rendered message and nothing else. A grammar may be
 entered from a body that pauses; what is refused is a pause *inside* the parse.
 
 **An entry is therefore `sync`**, and `nikaia.contracts` says so. A function
@@ -452,6 +464,8 @@ and `rule WS = "" { }` skips nothing.
 | `fail("message")` | never; fails with the message | — |
 | `recover(p, sync)` | `p`, and where `p` fails, skips to `sync` and reports the failure without stopping the parse | `p`'s value or the report |
 | `list(item, sep)` | `item`, separated by `sep`, zero or more | a list |
+| `fold(p, init, step)` | `p` repeated, each value folded into an accumulator started from `init`; nothing is collected | the accumulator |
+| `par_fold(F, init, step, merge)` | `fold` over the `@frame` rule `F`, cut into pieces and joined with `merge`; the whole body of its rule (10.7) | the accumulator |
 
 **Names for failures.** `rule expr -> Expr # "expression" = …` names the rule
 for the message where it fails at its own start, in place of the list of what
@@ -633,7 +647,7 @@ checker has proved is enough, and a caller that can awaits it.
 ### 12.2. The Dual Nature of the Lock
 To share data that changes, a program uses **`SharedMut[T]`**: several owners, one value, and the lock inside the type (Part I 6.2). A program makes one by calling it: `let counter = SharedMut(0)`. `Shared[Locked[T]]` is refused, and the message names `SharedMut[T]`. `Locked[T]` is the same lock on its own, for individually locked fields inside a shared structure. Everything in this section is about the lock and holds for both.
 
-**The name says what the program gets, not what is underneath.** `SharedMut[T]` means *several own it and any of them may change it*. Which shapes carry that is the compiler's decision, made per value as the owner count is. Below, it is a count around a lock, and the pair belongs to the build option.
+**The name says what the program gets, not what is underneath.** `SharedMut[T]` means *several own it and any of them may change it*. Which shapes carry that is the compiler's decision, made per value as the owner count is. Below, it is a count around a lock. At `user_parallelism = no` the pair is always the cheap one; at `yes` it is decided per value.
 
 **The counter below may go into a task of the program's own, and not into foreign code.** The answer is about the **lock**, not the owner count (Part I 6.2), and it depends on where the value goes. Into a task of the program's own: yes, at both values of the option. Into code nothing written down describes: no, at both values of the option (Part III C.5).
 
@@ -643,7 +657,7 @@ To share data that changes, a program uses **`SharedMut[T]`**: several owners, o
 * **Purpose:** the check catches a **logical deadlock**: task A locks data and waits for the network, task B tries to lock the same data. 12.3 refuses that nesting when the program is compiled, so the check is self-control of the refusal rather than error handling (below).
 
 **At `user_parallelism = yes`:**
-* **Implementation:** an OS-level **mutex**.
+* **Implementation:** decided per value: an OS-level **mutex** where something may cross a thread with the value, an atomic word for a number, `bool` or `char` that crosses and no door over several locks names, and the cell above where nothing crosses.
 * **Cost:** atomic operations.
 * **Purpose:** it protects against **memory corruption**. Two threads cannot write to the same memory address at the same time.
 
@@ -689,7 +703,7 @@ A retry is a loop and a `catch`. `Overtaken` carries nothing. A caller that want
 **The `sync` Rule (No Pausing While Holding a Lock)**
 A program may not pause while it holds a lock. Nikaia rules it out **at compile time**:
 
-> **`update`, `access` and `access_all` require a lambda that is `sync` and touches no lock, at both values of `user_parallelism`.**
+> **`update`, `access`, `access_all` and `update_all` require a lambda that is `sync` and touches no lock, at both values of `user_parallelism`.**
 
 A `sync` lambda (12.1) never pauses. A lambda that touches no lock cannot take a second one (12.3). **These are two conditions and not one**: `sync` answers the first, and `touches`, the fourth derived column (13.5), answers the second. A `println` inside a door fails the second and not the first: it takes standard output's own lock while the door's lock is open. **`get` and `set` need no condition: while the lock is open in either of them, no user code runs.** Inside a door, a call that pauses is refused with `NK2202`, a call that takes a lock, directly or through a chain of calls, with `NK2203`, and I/O that does neither with `NK2201`:
 
@@ -751,7 +765,7 @@ let account_b = SharedMut(Account(…))
 // Taking one lock inside another is what creates the inconsistent order
 // this section is about — a single door (12.2) is of course fine.
 // account_a.access fn(from) {
-//     account_b.update fn(to) { … }
+//     account_b.update fn(mut to) { … }
 // }
 
 // Atomic Locking (Deadlock Proof)
@@ -779,7 +793,7 @@ writes several, one `mut` each. A door takes two locks at a time: a door handed
 one lock, or a block that does not name one value per lock, is refused with
 `NK1124`. Neither name is a keyword.
 
-**How the compiler sees a chain.** A block calls a function, which calls another, and the third opens a lock. Every function therefore carries a second derived property beside `sync` (12.1): **whether it touches a lock.** The property is inferred over the same call graph and never written by hand. Inside a blocking door (`update`, `access`, `access_all`), a call to anything that carries it is refused. That catches chains and self-calls.
+**How the compiler sees a chain.** A block calls a function, which calls another, and the third opens a lock. Every function therefore carries a second derived property beside `sync` (12.1): **whether it touches a lock.** The property is inferred over the same call graph and never written by hand. Inside a blocking door (`update`, `access`, `access_all`, `update_all`), a call to anything that carries it is refused. That catches chains and self-calls.
 
 **The property is coarse.** It says *a lock*, never *which* lock.
 
@@ -805,7 +819,7 @@ select {
 
 `select` and `overlap` are a **pair**: both start every branch at once; `overlap` keeps every result, `select` keeps the first. A block needs at least two arms and at most eight.
 
-**What "cleaned up" means.** The losing task stops at its current pause point and its values are torn down. A resource with a pausable `cleanup` (Part I 6.4) is not awaited by the *winner*. The runtime **adopts** such `cleanup` runs and finishes them in the background ("parked cleanup"). The program does not exit before parked cleanups are done, bounded by the runtime configuration `cleanup-deadline` (Part III 13.3). An error from a parked cleanup is reported through the runtime's error hook.
+**What "cleaned up" means.** The losing task stops at its current pause point and its values are torn down. A resource with a pausable `cleanup` (Part I 6.4) is not awaited by the *winner*. The runtime **adopts** such `cleanup` runs and finishes them in the background ("parked cleanup"). The program does not exit before parked cleanups are done, bounded by the runtime configuration `cleanup-deadline` (Part III 13.3b). An error from a parked cleanup has no caller and is said on standard error.
 
 ### 12.5. Channels (Message Passing)
 Nikaia offers **message passing** beside shared memory. A channel is `std`'s and not the language's. A channel is **bounded**; there is no `unbounded()`, and a capacity below one is refused. `send` pauses when the channel is full, so a `sync` body cannot send on one, and the ledger's column says so. `recv` hands back a `T?`; `null` means every sender is gone. The value type must `crosses`, checked where `tx` moves into the `spawn` as any move is.
@@ -831,7 +845,7 @@ let msg = rx.recv() // Waits (non-blocking yield) for the message
 let pixels = [/* 1 million pixels */]
 
 // The compiler splits the array into chunks and distributes them
-// across all cores. The closure must be 'sync'.
+// across all cores. The closure may not pause (NK2209) or change a name outside it (NK2107).
 // Methods chained with trailing lambdas. A block ends at its `}`, so the chain
 // continues after it and means what it reads as.
 let bright_pixels = pixels.par_iter()
@@ -863,7 +877,7 @@ task::scope fn(s) {
 **One rule differs with `user_parallelism`.** The scope's promise holds only where the runtime can wait the tasks out:
 
 * **At `no`:** everything runs on one thread, and the runtime owns every task. When a scope ends, including when an error tears it down early, the runtime collects its tasks *before* the function's variables disappear. **A scoped task may do anything, including I/O.**
-* **At `yes`:** tasks run on other CPU cores *in parallel*, and the scope keeps its promise only for tasks that finish on their own. **At `yes`, a scoped task must be `sync`**: pure computation, no I/O, no pausing, the same rule as `par_iter` (12.6).
+* **At `yes`:** tasks run on other CPU cores *in parallel*, and the scope keeps its promise only for tasks that finish on their own. **At `yes`, a scoped task must be `sync`**: it never pauses (12.1), the same rule as `par_iter` (12.6).
 
 A task that needs I/O is a background task, not a scoped one. A program starts it with `spawn` (the task takes ownership, Part I 8.3) and collects the result through its handle. A scoped task that can pause is refused with `NK2102` where tasks run in parallel:
 

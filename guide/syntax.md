@@ -33,7 +33,7 @@ There are no semicolons at the end of lines. A comment is `//` or `/* … */`.
 
 | Type | What it is |
 | :--- | :--- |
-| `i64`, `i32`, `u8` | integers. `i64` is the everyday one, and every length and index is one |
+| `i64`, `i32`, `u8`, `u64`, `u32` | integers. `i64` is the everyday one, and every length and index is one |
 | `f64` | a floating-point number |
 | `bool` | `true` or `false` |
 | `char` | one Unicode character, `'a'` |
@@ -57,7 +57,7 @@ println("braces in a plain string are just braces: {name}")
 can be written as they are.
 
 You never choose between a string type and a string-slice type. There is one `String`,
-and whether a value is a copy or a view into text that already exists is the compiler's
+and whether a value is text of its own or a view into text that already exists is the compiler's
 decision.
 
 📖 **Specification:** [Part I, §2.5 Strings, plain and interpolated](../docs/specification/10-nikaia-light.md#25-strings-plain-and-interpolated)
@@ -314,7 +314,7 @@ pub struct Item { pub name: String, pub count: i64 }
 
 ```nika
 // file: src/main.nika
-use std::fs            // another package: every name from it keeps its prefix
+use std::fs            // a standard-library module: every name from it keeps its prefix
 
 fn main() {
     let item = Item { name: "apples", count: 3 }   // same package: no `use` at all
