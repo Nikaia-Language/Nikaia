@@ -15627,7 +15627,12 @@ impl<'a> Checker<'a> {
         let Ty::Nullable(inner) = left else {
             return None;
         };
-        if !self.takes_away(&inner.unseen()) {
+        // **A value that is a word by its kind is copied; anything else is
+        // lent** ([ADR-274](../../docs/specification/adr/adr-274.md) D1): a
+        // copy type made of parts - a struct, a tuple, an array, an enum with
+        // a payload - is lent as a type that moves is, so a large one is not
+        // copied at every read.
+        if !self.takes_away(&inner.unseen()) && self.a_word_by_its_kind(&inner.unseen()) {
             return None;
         }
         let text = matches!(inner.as_ref(), Ty::Named { name, args, view: false }
@@ -15648,6 +15653,31 @@ impl<'a> Checker<'a> {
             _ => false,
         };
         fallback_is_viewable.then_some(if text { ".as_deref()" } else { ".as_ref()" })
+    }
+
+    /// **A type whose value is one machine word or less by what kind of type
+    /// it is** ([ADR-274](../../docs/specification/adr/adr-274.md) D1): a
+    /// number, a `bool`, a `char`, an enum of this program whose variants hold
+    /// nothing, and a type the library's ledger says copies. No size is
+    /// computed: a type made of parts is never one.
+    fn a_word_by_its_kind(&self, ty: &Ty) -> bool {
+        let Ty::Named {
+            name,
+            args,
+            view: false,
+        } = ty
+        else {
+            return false;
+        };
+        args.is_empty()
+            && (is_number(name)
+                || matches!(name.as_str(), "bool" | "char")
+                || (self.enums.contains_key(name)
+                    && self
+                        .enum_payloads
+                        .get(name)
+                        .is_none_or(|parts| parts.is_empty()))
+                || crate::contracts::keeps::a_ledger_copies(ty, &[self.library]))
     }
 
     /// **A `??` in a position that only reads it lends its left side**

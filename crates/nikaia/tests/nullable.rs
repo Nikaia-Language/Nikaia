@@ -1562,12 +1562,8 @@ fn main() {
 "#;
     let lowered = lowered(source);
     assert!(lowered.contains("user.as_deref()"), "{lowered}");
-    // `Row` copies, so `r ?? spare` is the copy rather than a loan (0.0.377):
-    // `r` is still there afterwards either way.
-    assert!(
-        lowered.contains("nikaia_std::index::or(r, || spare"),
-        "{lowered}"
-    );
+    // `Row` is a struct: lent whatever it copies (ADR-274 D1).
+    assert!(lowered.contains("r.as_ref(), || &spare"), "{lowered}");
     assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
     assert_eq!(
         ran("coalesce-lends", source),
@@ -1769,4 +1765,54 @@ fn a_name_bound_to_a_map_read_is_read_as_one() {
         ran("map-read-bound", &source("found?.clone() ?? []")).trim(),
         "3 tokio::spawn x"
     );
+}
+
+/// **A value that is a word by its kind is copied, a type made of parts is
+/// lent** ([ADR-274](../../../docs/specification/adr/adr-274.md) D1), where
+/// `??`'s answer is only read: an enum whose variants hold nothing is copied
+/// as a number is, and a struct that copies - 64 bytes of it here - is lent,
+/// not copied at every read.
+#[test]
+fn a_word_by_its_kind_is_copied_and_a_struct_is_lent() {
+    let source = r#"
+enum Kind { A, B }
+struct Grid { cells: Array[f64, 8] }
+fn named(k: ref Kind) -> String {
+    return match k {
+        Kind::A => "a",
+        Kind::B => "b",
+    }
+}
+fn total(g: ref Grid) -> f64 {
+    let mut sum = 0.0
+    for c in g.cells {
+        sum += c
+    }
+    return sum
+}
+fn kind_of(n: i64) -> Kind? {
+    if n > 0 {
+        return Kind::A
+    }
+    return null
+}
+fn grid_of(n: i64) -> Grid? {
+    if n > 0 {
+        return Grid { cells: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] }
+    }
+    return null
+}
+fn main() {
+    let kind = kind_of(0)
+    let found = grid_of(1)
+    let spare = Grid { cells: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] }
+    println(named(kind ?? Kind::B))
+    println(f"{total(found ?? spare)}")
+    println(f"{kind == null} {found == null}")
+}
+"#;
+    let lowered = lowered(source);
+    assert!(lowered.contains("found.as_ref(), || &spare"), "{lowered}");
+    assert!(!lowered.contains("kind.as_ref()"), "{lowered}");
+    assert_eq!(ran("word-or-parts", source), "b\n8\ntrue false\n");
 }
