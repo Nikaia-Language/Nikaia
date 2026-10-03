@@ -1410,111 +1410,15 @@ fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
         })
 }
 
-/// One escape, read off the characters after the `\`, or what is wrong with it.
+/// An escape the set does not name, as it is written, and why.
 ///
 /// **The one table, with two readers**
 /// ([ADR-188](../../docs/specification/adr/adr-188.md) D2): [`decoded`] turns a
 /// literal into a value at build time, and `Checker::an_escape_nothing_names`
-/// refuses a literal the set does not cover. Two walks would be two sets, and
-/// the second would drift into refusing something the first accepts - which is
-/// a correct program refused, the one thing this compiler may never do
-/// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
-///
-/// The set is **Rust's**, and that is describing rather than deciding
-/// ([ADR-188](../../docs/specification/adr/adr-188.md) D1): a `.nika` literal
-/// is written into the generated file verbatim, so what a `\` means is already
-/// the language below's answer. This reads it back out so that a refusal can be
-/// in this compiler's words.
-fn one_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<char, Refused> {
-    let mut written = String::from("\\");
-    let Some(c) = chars.next() else {
-        return Err(Refused {
-            written,
-            why: "a `\\` at the end of a literal escapes nothing",
-        });
-    };
-    written.push(c);
-    match c {
-        'n' => Ok('\n'),
-        'r' => Ok('\r'),
-        't' => Ok('\t'),
-        '0' => Ok('\0'),
-        '\\' => Ok('\\'),
-        '\'' => Ok('\''),
-        '"' => Ok('"'),
-        // `\x41`, which Rust limits to the ASCII range inside a string.
-        'x' => {
-            for _ in 0..2 {
-                match chars.next() {
-                    Some(digit) => written.push(digit),
-                    None => {
-                        return Err(Refused {
-                            written,
-                            why: "`\\x` takes exactly two hexadecimal digits",
-                        });
-                    }
-                }
-            }
-            let digits = &written[2..];
-            match u8::from_str_radix(digits, 16).ok().filter(u8::is_ascii) {
-                Some(byte) => Ok(char::from(byte)),
-                None => Err(Refused {
-                    written,
-                    why: "`\\x` takes two hexadecimal digits naming a byte below `\\x80`",
-                }),
-            }
-        }
-        // `\u{…}`, up to six digits.
-        'u' => {
-            if chars.peek() != Some(&'{') {
-                return Err(Refused {
-                    written,
-                    why: "`\\u` takes its digits in braces, as `\\u{1F600}`",
-                });
-            }
-            written.push(chars.next().expect("peeked"));
-            loop {
-                match chars.next() {
-                    Some('}') => {
-                        written.push('}');
-                        break;
-                    }
-                    Some(digit) => written.push(digit),
-                    None => {
-                        return Err(Refused {
-                            written,
-                            why: "`\\u{` is never closed",
-                        });
-                    }
-                }
-            }
-            let digits = &written[3..written.len() - 1];
-            match u32::from_str_radix(digits, 16)
-                .ok()
-                .and_then(char::from_u32)
-            {
-                Some(c) => Ok(c),
-                None => Err(Refused {
-                    written,
-                    why: "`\\u{…}` takes up to six hexadecimal digits naming a character",
-                }),
-            }
-        }
-        _ => Err(Refused {
-            written,
-            why: "no escape starts with that character",
-        }),
-    }
-}
-
-/// An escape the set does not name, as it is written, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refused {
-    /// The escape exactly as the literal writes it, `\` and all.
-    pub written: String,
-    /// One clause, said in this compiler's words rather than the backend's.
-    pub why: &'static str,
-}
+/// refuses a literal the set does not cover. Both read
+/// `crates/nikaia-std/src/tools/escapes.nika`, where the table is Nikaia
+/// ([ADR-250](../../docs/specification/adr/adr-250.md), #125).
+pub use nikaia_std::tools::escapes::NotAnEscape as Refused;
 
 /// The escapes this language has, as a reader of a diagnostic wants them
 /// ([Part I 2.5](../../docs/specification/10-nikaia-light.md)).
@@ -1523,22 +1427,18 @@ pub struct Refused {
 /// it, and a set written twice is a set that disagrees with itself.
 pub const ESCAPES: &str = "\\n \\r \\t \\0 \\\\ \\' \\\" \\xNN \\u{…}";
 
+/// Which numbers name a character: Unicode's table, handed to the Nikaia walk.
+fn char_of(n: i64) -> Option<char> {
+    u32::try_from(n).ok().and_then(char::from_u32)
+}
+
 /// The first escape in a literal that this language's set does not name.
 ///
 /// **Reads the same table [`decoded`] does**, which is what makes a refusal
 /// here safe: everything this returns `Some` for is something `decoded`
 /// returns `None` for, and `rustc` refuses in its own words.
 pub fn an_escape_nothing_names(literal: &str) -> Option<Refused> {
-    let mut chars = literal.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            continue;
-        }
-        if let Err(refused) = one_escape(&mut chars) {
-            return Some(refused);
-        }
-    }
-    None
+    nikaia_std::tools::escapes::an_escape_nothing_names(literal, &char_of)
 }
 
 /// **What a written string literal means** — the value behind the spelling.
@@ -1546,57 +1446,22 @@ pub fn an_escape_nothing_names(literal: &str) -> Option<Refused> {
 /// The parser keeps a literal's escapes (`STR_CHAR` takes `\` and any
 /// character) and the emitter hands the text to `rustc` unchanged, so **this
 /// language's escapes are Rust's**, decided by what that compiler accepts
-/// rather than by a page here. Measured: `println("a\qb")` is *unknown
-/// character escape: `q`* — on the `.nika` line, which is
-/// [ADR-012](../../../docs/specification/adr/adr-012.md)'s source map working,
-/// and in `rustc`'s vocabulary, which is issue #197's.
-///
-/// So this is a **faithful reading** and not a second definition. `None` where
-/// the escape is one `rustc` would reject: that program does not compile either
-/// way, and the evaluator says *cannot evaluate* rather than inventing a
-/// meaning for it.
+/// rather than by a page here. So this is a **faithful reading** and not a
+/// second definition. `None` where the escape is one `rustc` would reject:
+/// that program does not compile either way, and the evaluator says *cannot
+/// evaluate* rather than inventing a meaning for it.
 ///
 /// [`written`] is the inverse, and `crates/nikaia/tests/build_time.rs` holds
 /// the pair to the only standard that settles it: the same literal, read at
 /// build time and at run time, printing the same bytes.
 pub fn decoded(literal: &str) -> Option<String> {
-    let mut out = String::with_capacity(literal.len());
-    let mut chars = literal.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        // **The same walk the refusal reads** (ADR-188 D2). This used to hold
-        // its own copy of the table, and a second copy is a second set: the
-        // `None` here and the refusal there would drift, and the one that
-        // drifted open would refuse a literal this one decodes.
-        out.push(one_escape(&mut chars).ok()?);
-    }
-    Some(out)
+    nikaia_std::tools::escapes::decoded(literal, &char_of)
 }
 
 /// The inverse of [`decoded`]: a value, spelled as a literal `rustc` reads.
-///
-/// **Total rather than minimal.** Every control character is written as an
-/// escape rather than passed through, because a literal is going into a
-/// generated file that a person may open: a bell in the middle of a `const` is
-/// the sort of thing that makes a reader doubt the file rather than the value.
+/// Every control character is written as an escape.
 pub fn written(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
-            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+    nikaia_std::tools::escapes::as_a_literal(text)
 }
 
 /// Whether a touch is the build's own parameters

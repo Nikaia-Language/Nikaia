@@ -13095,7 +13095,7 @@ impl<'a> Checker<'a> {
             code: "NK1184",
             message: format!("`{}` isn't an escape Nikaia knows.", refused.written),
             notes: vec![
-                format!("{}.", sentence(refused.why)),
+                format!("{}.", sentence(&refused.why)),
                 format!("The escapes are: {}.", crate::build_time::ESCAPES),
             ],
             // **Two ways out, and which one is offered is read off the

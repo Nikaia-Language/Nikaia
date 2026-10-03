@@ -1,0 +1,271 @@
+// crates/nikaia-std/src/tools/escapes.nika
+//
+// What the `\` in a written string literal means (ADR-188) - the table the
+// compiler's `build_time` reads a literal through, moved from Rust (ADR-250,
+// #125). Evaluating at build time stays Rust.
+//
+// **The one table, with two readers** (ADR-188 D2): `decoded` turns a literal
+// into a value at build time, and `an_escape_nothing_names` refuses a literal
+// the set does not cover. Two walks would be two sets, and the second would
+// drift into refusing something the first accepts - a correct program refused,
+// the one thing this compiler may never do (Part III C.4).
+//
+// The set is **Rust's**, and that is describing rather than deciding (D1): a
+// `.nika` literal is written into the generated file verbatim, so what a `\`
+// means is the language below's answer, read back out so that a refusal can
+// be in this compiler's words. Its digits are read as `rustc` reads them: hex
+// digits only, `\x` exactly two below `\x80`, `\u{…}` one to six with `_`
+// between them.
+//
+// A number becomes a character through `char_of`, which the caller hands in:
+// which numbers name a character is Unicode's table, not this one.
+
+/// An escape the set does not name, as it is written, and why.
+pub struct NotAnEscape {
+    /// The escape exactly as the literal writes it, `\` and all.
+    pub written: String,
+    /// One clause, said in this compiler's words rather than the backend's.
+    pub why: String,
+}
+
+// What one escape reads as: the character it means and where the literal
+// goes on after it, or why it means none.
+enum Escape {
+    Means { value: char, next: i64 },
+    Nothing { refused: NotAnEscape },
+}
+
+comptime HEX: ref String = "0123456789abcdef"
+
+/// The first escape in a literal that this language's set does not name.
+/// **Reads the same table `decoded` does**: everything this names is
+/// something `decoded` answers `null` for, and `rustc` refuses in its own
+/// words.
+pub fn an_escape_nothing_names(literal: ref String, char_of: fn(i64) -> char? sync) -> NotAnEscape? {
+    let c: Vec[char] = literal.chars().collect()
+    let mut at = 0
+    while at < c.len() {
+        if c[at] != '\\' {
+            at += 1
+            continue
+        }
+        match one_escape(c, at + 1, char_of) {
+            Escape::Means { next, .. } => {
+                at = next
+            }
+            Escape::Nothing { refused } => {
+                return refused
+            }
+        }
+    }
+    return null
+}
+
+/// **What a written string literal means** - the value behind the spelling,
+/// or `null` where an escape is one `rustc` would reject: that program does
+/// not compile either way, and the evaluator says *cannot evaluate* rather
+/// than inventing a meaning for it.
+pub fn decoded(literal: ref String, char_of: fn(i64) -> char? sync) -> String? {
+    let c: Vec[char] = literal.chars().collect()
+    let mut out: String = ""
+    let mut at = 0
+    while at < c.len() {
+        if c[at] != '\\' {
+            out.push(c[at])
+            at += 1
+            continue
+        }
+        match one_escape(c, at + 1, char_of) {
+            Escape::Means { value, next } => {
+                out.push(value)
+                at = next
+            }
+            Escape::Nothing { .. } => {
+                return null
+            }
+        }
+    }
+    return out
+}
+
+/// The inverse of `decoded`: a value, spelled as a literal `rustc` reads.
+/// **Total rather than minimal**: every control character is written as an
+/// escape, because the literal goes into a generated file a person may open,
+/// and a bell in the middle of a `const` makes a reader doubt the file.
+pub fn as_a_literal(text: ref String) -> String {
+    let mut out: String = ""
+    for c in text.chars() {
+        if c == '"' {
+            out.push_str("\\\"")
+        } else if c == '\\' {
+            out.push_str("\\\\")
+        } else if c == '\n' {
+            out.push_str("\\n")
+        } else if c == '\r' {
+            out.push_str("\\r")
+        } else if c == '\t' {
+            out.push_str("\\t")
+        } else if c == '\0' {
+            out.push_str("\\0")
+        } else if a_control_character(c) {
+            out.push_str("\\u{")
+            out.push_str(hex_of(c as i64))
+            out.push('}')
+        } else {
+            out.push(c)
+        }
+    }
+    return out
+}
+
+// One escape, read off the characters from `at`, just after the `\`.
+fn one_escape(c: ref Vec[char], at: i64, char_of: fn(i64) -> char? sync) -> Escape {
+    let mut written: String = "\\"
+    if at >= c.len() {
+        return not_an_escape(written, "a `\\` at the end of a literal escapes nothing")
+    }
+    let first = c[at]
+    written.push(first)
+    if first == 'x' {
+        return a_byte(c, at + 1, written, char_of)
+    }
+    if first == 'u' {
+        return a_character(c, at + 1, written, char_of)
+    }
+    let value = named_escape(first) ?? return not_an_escape(written, "no escape starts with that character")
+    return Escape::Means { value: value, next: at + 1 }
+}
+
+// `\x41`, which Rust limits to the ASCII range inside a string.
+fn a_byte(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64) -> char? sync) -> Escape {
+    let mut written = so_far.clone()
+    let mut end = from
+    while end < from + 2 && end < c.len() {
+        written.push(c[end])
+        end += 1
+    }
+    if end < from + 2 {
+        return not_an_escape(written, "`\\x` takes exactly two hexadecimal digits")
+    }
+    let high = hex_digit(c[from]) ?? 128
+    let low = hex_digit(c[from + 1]) ?? 128
+    let why = "`\\x` takes two hexadecimal digits naming a byte below `\\x80`"
+    let value = high * 16 + low
+    if value >= 128 {
+        return not_an_escape(written, why)
+    }
+    let byte = char_of(value) ?? return not_an_escape(written, why)
+    return Escape::Means { value: byte, next: end }
+}
+
+// `\u{…}`: one to six hexadecimal digits in braces, with `_` allowed between
+// them, naming a character.
+fn a_character(c: ref Vec[char], from: i64, so_far: ref String, char_of: fn(i64) -> char? sync) -> Escape {
+    let mut written = so_far.clone()
+    if from >= c.len() || c[from] != '{' {
+        return not_an_escape(written, "`\\u` takes its digits in braces, as `\\u{1F600}`")
+    }
+    written.push('{')
+    let mut end = from + 1
+    let mut closed = false
+    while end < c.len() && !closed {
+        written.push(c[end])
+        closed = c[end] == '}'
+        end += 1
+    }
+    if !closed {
+        return not_an_escape(written, "`\\u{` is never closed")
+    }
+    let why = "`\\u{…}` takes up to six hexadecimal digits naming a character"
+    let value = code_point(c, from + 1, end - 1) ?? return not_an_escape(written, why)
+    let named = char_of(value) ?? return not_an_escape(written, why)
+    return Escape::Means { value: named, next: end }
+}
+
+// The number the digits between `from` and `to` write, as `rustc` reads a
+// `\u{…}`: at least one digit, at most six, and an `_` anywhere but first.
+fn code_point(c: ref Vec[char], from: i64, to: i64) -> i64? sync {
+    if from >= to || c[from] == '_' {
+        return null
+    }
+    let mut value = 0
+    let mut digits = 0
+    let mut at = from
+    while at < to {
+        if c[at] != '_' {
+            let digit = hex_digit(c[at]) ?? return null
+            value = value * 16 + digit
+            digits += 1
+        }
+        at += 1
+    }
+    if digits > 6 {
+        return null
+    }
+    return value
+}
+
+// The escapes written as one character after the `\`: what each means.
+fn named_escape(c: char) -> char? sync {
+    if c == 'n' {
+        return '\n'
+    }
+    if c == 'r' {
+        return '\r'
+    }
+    if c == 't' {
+        return '\t'
+    }
+    if c == '0' {
+        return '\0'
+    }
+    if c == '\\' || c == '\'' || c == '"' {
+        return c
+    }
+    return null
+}
+
+fn hex_digit(c: char) -> i64? sync {
+    if c >= '0' && c <= '9' {
+        return c as i64 - 48
+    }
+    if c >= 'a' && c <= 'f' {
+        return c as i64 - 87
+    }
+    if c >= 'A' && c <= 'F' {
+        return c as i64 - 55
+    }
+    return null
+}
+
+// A number in lowercase hexadecimal, without leading zeros.
+fn hex_of(n: i64) -> String {
+    if n == 0 {
+        return "0"
+    }
+    let digits: Vec[char] = HEX.chars().collect()
+    let mut backwards: Vec[char] = []
+    let mut rest = n
+    while rest > 0 {
+        backwards.push(digits[rest % 16])
+        rest /= 16
+    }
+    let mut out: String = ""
+    let mut i = backwards.len()
+    while i > 0 {
+        i -= 1
+        out.push(backwards[i])
+    }
+    return out
+}
+
+// Unicode's control characters, the `Cc` category: `U+0000` to `U+001F`
+// and `U+007F` to `U+009F`.
+fn a_control_character(c: char) -> bool sync {
+    let n = c as i64
+    return n < 32 || (n >= 127 && n <= 159)
+}
+
+fn not_an_escape(written: ref String, why: ref String) -> Escape {
+    return Escape::Nothing { refused: NotAnEscape { written: written.clone(), why: why.clone() } }
+}
