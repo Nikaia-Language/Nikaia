@@ -22,11 +22,7 @@ comptime COPIED: Array[ref String, 18] = ["i8", "i16", "i32", "i64", "isize", "u
 /// it. A method's inferred lending waits on the emitter knowing which entry a
 /// call goes to (ADR-028).
 pub fn lends_in(contract: ref FnContract, at: i64, copying: ref Vec[ref Ledger]) -> bool {
-    return lends_from(contract.signature, contract.keeps, at, copying)
-}
-
-fn lends_from(written: ref Signature?, keeps: ref Vec[String], at: i64, copying: ref Vec[ref Ledger]) -> bool {
-    let signature = written ?? return false
+    let signature = contract.signature ?? return false
     let mut position = 0
     for (name, ty) in signature.params {
         if position == at {
@@ -36,7 +32,7 @@ fn lends_from(written: ref Signature?, keeps: ref Vec[String], at: i64, copying:
             if ty.is_a_view() {
                 return true
             }
-            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !keeps.contains(name)
+            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !contract.keeps.contains(name)
         }
         position += 1
     }

@@ -8666,6 +8666,14 @@ impl<'p> Emitter<'p> {
             {
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
+                // **A loan on the left is opened, and the answer is a view**
+                // ([ADR-275](../../docs/specification/adr/adr-275.md) D1).
+                if let Some(opened) = self
+                    .lent_coalesces
+                    .get(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    out.push(opened);
+                }
                 out.push(" { Some(__nikaia_value) => __nikaia_value, None => ");
                 self.expr(out, fallback, depth, flow)?;
                 out.push(" }");

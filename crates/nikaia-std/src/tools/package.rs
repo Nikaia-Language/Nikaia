@@ -3167,16 +3167,14 @@ fn is_lower(c: char) -> bool { c >= 'a' && c <= 'z' }
 
 const COPIED: [&str; 18] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "Duration", "Shared", "SharedMut", "Locked"];
 
-pub fn lends_in(contract: &FnContract, at: i64, copying: &[&Ledger]) -> bool { lends_from((contract.signature).as_ref(), &contract.keeps, at, copying) }
-
-fn lends_from(written: Option<&Signature>, keeps: &[String], at: i64, copying: &[&Ledger]) -> bool {
-    let signature = match written { Some(__nikaia_value) => __nikaia_value, None => return false };
+pub fn lends_in(contract: &FnContract, at: i64, copying: &[&Ledger]) -> bool {
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
     let mut position: i64 = 0;
     for (name, ty) in signature.params.iter() {
         if position == at {
             if nikaia_std::list::contains(&signature.mutable, name) || name == "self" { return false; }
             if ty.is_a_view() { return true; }
-            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !nikaia_std::list::contains(&keeps, name);
+            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !nikaia_std::list::contains(&contract.keeps, name);
         }
         position += 1;
     }
