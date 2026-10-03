@@ -324,6 +324,19 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
 /// offers - `tools::ty::Ty`, `tools::ledger::read` - so a Rust caller still
 /// says which file a name is in, and the name is one name underneath.
 pub fn lower_tools(dir: &Path) -> Result<String> {
+    lower_tools_at(
+        dir,
+        crate::emit::Build {
+            target: crate::emit::Target::X86_64Linux,
+            ..crate::emit::Build::default()
+        },
+    )
+}
+
+/// The same at a given build: the package is lowered once and linked into
+/// programs built at either setting of `user_parallelism`, so a test lowers
+/// it at both and compares (ADR-002 D4).
+pub fn lower_tools_at(dir: &Path, build: crate::emit::Build) -> Result<String> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
         .with_context(|| format!("reading {}", dir.display()))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -393,8 +406,9 @@ pub fn lower_tools(dir: &Path) -> Result<String> {
                 }
             );
         }
-        let lowered = crate::emit::emit_std_items_against(unit, &beside, &own, &described)
-            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        let lowered =
+            crate::emit::emit_std_items_against_at(unit, &beside, &own, &described, build)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         // **One preamble for the package**: a `use std::…` is the file's
         // import of a `std` module, and one namespace imports it once.
         let mut body = String::new();

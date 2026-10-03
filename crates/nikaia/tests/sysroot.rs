@@ -93,13 +93,18 @@ fn stds_nikaia_half_lowers_the_same_at_both_switches() {
     let sequential = Build::parse("x86_64-linux", "no", "yes").expect("a switch that exists");
     let concurrent = Build::parse("x86_64-linux", "yes", "yes").expect("a switch that exists");
 
-    let mut modules = sysroot.std_modules().expect("std's Nikaia modules");
-    modules.extend(
-        sysroot
-            .tool_modules()
-            .expect("the toolchain's Nikaia modules"),
+    // **The toolchain's files are one package** (ADR-286 D1) and are lowered
+    // as one, each with the others beside it: a code parameter handed to a
+    // function of another file is lent there, and read alone it would be a
+    // callee nobody can see. So the package is compared as it is lowered.
+    let tools = sysroot.tools_dir();
+    assert_eq!(
+        sysroot::lower_tools_at(&tools, sequential).expect("the tools lower at `no`"),
+        sysroot::lower_tools_at(&tools, concurrent).expect("the tools lower at `yes`"),
+        "the toolchain's Nikaia package lowers differently at the two settings of \
+         `user_parallelism`, and it is lowered once for both (ADR-002 D4).",
     );
-    for nika in modules {
+    for nika in sysroot.std_modules().expect("std's Nikaia modules") {
         let source = std::fs::read_to_string(&nika).expect("the source reads");
         let parsed = nikaia::parser::parse_to_ast(&source).expect("std's Nikaia half parses");
         let at_no = emit::emit_program(&parsed, sequential).expect("lowers at `no`");

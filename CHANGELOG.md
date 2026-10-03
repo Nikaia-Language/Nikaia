@@ -14,8 +14,14 @@ the free calls by `tools/foreign.nika`'s walk - a function field's stored code
 as a node of its own (ADR-230 D1), a `pub` grammar rule walked over every
 action of its grammar (ADR-296 D24), and the types a unit declares, so that a
 variant reads as a value. Handing in each unit and writing the answer into the
-ledger stay Rust; the lock suites pass unchanged. 20.1 % of the toolchain is
-Nikaia.
+ledger stay Rust; the lock suites pass unchanged.
+
+The walk is the first tools file to hand a code parameter to a function of
+another file (`foreign.nika`'s walk), and that showed the guard of ADR-002 D4
+comparing the tools one file at a time: read alone, the callee is one nobody
+can see, so the parameter read as kept and lowered differently per switch. The
+package is lowered as one (ADR-286 D1), so the guard now compares the package
+as it is lowered, at both settings. 20.1 % of the toolchain is Nikaia.
 
 ## [0.0.394] — 2026-10-03
 
