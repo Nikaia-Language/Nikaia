@@ -177,8 +177,9 @@ fn a_claim_outside_what_the_prover_reads_is_checked() {
 }
 
 /// **D5: a claim about parameters is the caller's to prove**: a literal
-/// argument proves it, a guard proves it, and a call that shows nothing
-/// checks it - at the call, with its arguments in place of the parameters.
+/// argument proves it, a guard proves it, and a call that shows nothing and
+/// cannot carry it back - inside a loop (D16) - checks it at the call, with
+/// its arguments in place of the parameters.
 #[test]
 fn a_parameter_claim_is_a_precondition_the_caller_proves() {
     let (out, rust) = ran(
@@ -209,7 +210,11 @@ fn a_parameter_claim_is_a_precondition_the_caller_proves() {
          }\n\
          \n\
          fn report(done: i64, total: i64) -> i64 {\n\
-         \x20   return percent(done, total)\n\
+         \x20   let mut sum = 0\n\
+         \x20   for k in 0..<1 {\n\
+         \x20       sum = percent(done, total)\n\
+         \x20   }\n\
+         \x20   return sum\n\
          }\n\
          \n\
          fn main() {\n\
@@ -353,8 +358,9 @@ fn a_length_is_a_variable_of_the_proof() {
                   }\n";
     assert!(codes(source).is_empty(), "{:#?}", findings(source));
 
-    // And a call that shows nothing about the length checks it, with the
-    // argument's length in place of the parameter's.
+    // And a call that shows nothing about the length, inside a loop where it
+    // cannot be carried back, checks it with the argument's length in place
+    // of the parameter's.
     let (out, rust) = ran(
         "prove-length-call",
         "fn first(xs: Vec[i64]) -> i64 {\n\
@@ -363,7 +369,11 @@ fn a_length_is_a_variable_of_the_proof() {
          }\n\
          \n\
          fn use_it(ys: Vec[i64]) -> i64 {\n\
-         \x20   return first(ys)\n\
+         \x20   let mut r = 0\n\
+         \x20   for k in 0..<1 {\n\
+         \x20       r = first(ys)\n\
+         \x20   }\n\
+         \x20   return r\n\
          }\n\
          \n\
          fn main() {\n\
@@ -540,6 +550,175 @@ fn a_claim_that_can_hold_is_not_warned_about() {
                   \x20   println(f\"{f(1)} {g(2)}\")\n\
                   }\n";
     assert!(warned(source, "NK1207").is_empty());
+}
+
+/// **ADR-269 D15 through a call: a callee's precondition this function
+/// cannot show is its callers'**, carried back to its entry as an `assert`
+/// of it at the call would be - across two functions here - so the caller
+/// that breaks it is the one told, with its values and the `assert` it
+/// came from, and the calls in between need no check of their own.
+#[test]
+fn a_callee_precondition_is_carried_back_through_the_call() {
+    let source = "fn percent(part: i64, whole: i64) -> i64 {\n\
+                  \x20   assert(whole > 0)\n\
+                  \x20   return part * 100 / whole\n\
+                  }\n\
+                  \n\
+                  fn half(x: i64) -> i64 {\n\
+                  \x20   return percent(1, x - 2)\n\
+                  }\n\
+                  \n\
+                  fn twice(y: i64) -> i64 {\n\
+                  \x20   return half(y + 1)\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{twice(1)} {half(5)}\")\n\
+                  }\n";
+    let found = warned(source, "NK1207");
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(
+        found[0].message,
+        "This call breaks `twice`'s precondition `y + 1 - 2 > 0` every time it is reached."
+    );
+    assert_eq!(
+        found[0].notes[..2],
+        [
+            "Here `y` is 1.".to_string(),
+            "The precondition is `assert(whole > 0)` in `percent`, carried back to `twice`'s \
+             entry."
+                .to_string()
+        ]
+    );
+
+    // Where every caller proves it, nothing is checked but the entries.
+    let (out, rust) = ran(
+        "prove-carried-through-calls",
+        "fn percent(part: i64, whole: i64) -> i64 {\n\
+         \x20   assert(whole > 0)\n\
+         \x20   return part * 100 / whole\n\
+         }\n\
+         \n\
+         fn half(x: i64) -> i64 {\n\
+         \x20   return percent(1, x - 2)\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{half(4)} {half(102)}\")\n\
+         }\n",
+    );
+    assert_eq!(out, "50 1\n");
+    assert_eq!(call_checks(&rust), 0, "{rust}");
+    assert!(rust.contains("percent__unchecked(1, x - 2)"), "{rust}");
+}
+
+/// **A call that comes back to its own function is not carried back**:
+/// recursion would grow the precondition by one claim a turn. The call is
+/// proved or checked where it stands, and the walk ends.
+#[test]
+fn a_recursive_call_is_not_carried_back() {
+    let source = "fn down(n: i64) -> i64 {\n\
+                  \x20   assert(n >= 0)\n\
+                  \x20   return 0 if n == 0\n\
+                  \x20   return down(n - 1)\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{down(3)}\")\n\
+                  }\n";
+    assert!(warned(source, "NK1207").is_empty());
+    assert_eq!(
+        held(source),
+        [nikaia::prove::Held::Precondition("down".to_string(), 0)]
+    );
+}
+
+/// **ADR-269 D8 for a claim false for some of the values that reach it**:
+/// where what is known pins every name the claim depends on - a range's
+/// counter, what a `let` computed from it - a value that breaks it is one the
+/// program reaches, and the warning shows it.
+#[test]
+fn a_claim_false_for_a_value_that_reaches_it_is_a_warning_with_values() {
+    let source = "fn percent(part: i64, whole: i64) -> i64 {\n\
+                  \x20   assert(whole > 0)\n\
+                  \x20   return part * 100 / whole\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   for i in 0..<10 {\n\
+                  \x20       println(f\"{percent(1, i)}\")\n\
+                  \x20   }\n\
+                  \x20   let n = 8\n\
+                  \x20   for k in 0..<n {\n\
+                  \x20       let j = k * 2\n\
+                  \x20       assert(j < 14)\n\
+                  \x20       println(f\"{j}\")\n\
+                  \x20   }\n\
+                  }\n";
+    let found = warned(source, "NK1207");
+    assert_eq!(found.len(), 2, "{found:#?}");
+    assert_eq!(
+        found[0].message,
+        "This call breaks `percent`'s precondition `whole > 0` when `i` is 0."
+    );
+    assert_eq!(found[0].notes[0], "Then `whole` is 0.");
+    assert_eq!(
+        found[1].message,
+        "`j < 14` is false when `j` is 14, `k` is 7, `n` is 8."
+    );
+    // Still a check: a warning proves nothing.
+    assert!(
+        held(source).iter().any(|h| matches!(
+            h,
+            nikaia::prove::Held::AtRunTime(why) if why.starts_with("it is false when")
+        )),
+        "{:#?}",
+        held(source)
+    );
+}
+
+/// **No warning where the facts are weaker than what reaches**: a `break`
+/// before the call ends the loop before the value that would break it, a
+/// guard rules it out, a loop over a parameter's range runs for whatever the
+/// callers pass, and a condition the prover cannot read decides which turns
+/// reach the call.
+#[test]
+fn a_value_the_facts_allow_but_nothing_shows_reaches_is_not_warned_about() {
+    let source = "fn percent(part: i64, whole: i64) -> i64 {\n\
+                  \x20   assert(whole > 0)\n\
+                  \x20   return part * 100 / whole\n\
+                  }\n\
+                  \n\
+                  fn over(n: i64) -> i64 {\n\
+                  \x20   let mut sum = 0\n\
+                  \x20   for i in 0..<n {\n\
+                  \x20       sum += percent(1, i)\n\
+                  \x20   }\n\
+                  \x20   return sum\n\
+                  }\n\
+                  \n\
+                  fn odd(x: i64) -> bool {\n\
+                  \x20   return x % 2 == 1\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   for i in 0..<10 {\n\
+                  \x20       break if i == 0\n\
+                  \x20       println(f\"{percent(1, i - 1)}\")\n\
+                  \x20   }\n\
+                  \x20   for i in 0..<10 {\n\
+                  \x20       continue if i == 0\n\
+                  \x20       println(f\"{percent(1, i)}\")\n\
+                  \x20   }\n\
+                  \x20   for i in 0..<10 {\n\
+                  \x20       if odd(i) {\n\
+                  \x20           println(f\"{percent(1, i - 1)}\")\n\
+                  \x20       }\n\
+                  \x20   }\n\
+                  \x20   println(f\"{over(0)}\")\n\
+                  }\n";
+    let found = warned(source, "NK1207");
+    assert!(found.is_empty(), "{found:#?}");
 }
 
 /// **ADR-269 D15: a claim is carried back to the entry.** A parameter changed

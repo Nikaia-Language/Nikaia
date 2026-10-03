@@ -177,7 +177,9 @@ fn a_computed_precondition_fails_at_the_call() {
 }
 
 /// **A call that does not prove a precondition checks it, and its failure
-/// names the call** (ADR-269 D5): the caller broke the contract.
+/// names the call** (ADR-269 D5): the caller broke the contract. `report`
+/// cannot show `total > 0` either, so the claim is carried back to its entry
+/// (D15) and the call that fails is `main`'s, which passed the `0`.
 #[test]
 fn a_broken_precondition_names_the_caller() {
     let (ok, stdout, stderr) = outcome(
@@ -199,8 +201,11 @@ fn a_broken_precondition_names_the_caller() {
     assert!(!ok, "{stdout}");
     assert_eq!(stdout, "25\n");
     assert!(
-        stderr.contains("claims.nika:7")
-            && stderr.contains("precondition of `percent`: `whole > 0`"),
+        stderr.contains("claims.nika:12")
+            && stderr.contains(
+                "precondition of `report`: `total > 0`, from `assert(whole > 0)` in `percent`"
+            )
+            && stderr.contains("total is 0"),
         "{stderr}"
     );
 }
