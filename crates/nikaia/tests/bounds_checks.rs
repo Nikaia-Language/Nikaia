@@ -273,19 +273,18 @@ fn main() {
 #[test]
 fn the_option_is_read_and_a_wrong_word_is_refused() {
     use nikaia::project::optimizations;
-    assert_eq!(optimizations("").unwrap(), BoundsChecks::Kept);
+    let bounds = |words: &str| optimizations(words).unwrap().0;
+    assert_eq!(bounds(""), BoundsChecks::Kept);
+    assert_eq!(bounds("remove-bounds-checks:basic"), BoundsChecks::Basic);
     assert_eq!(
-        optimizations("remove-bounds-checks:basic").unwrap(),
-        BoundsChecks::Basic
-    );
-    assert_eq!(
-        optimizations("remove-bounds-checks:basic, remove-bounds-checks:aggressive").unwrap(),
+        bounds("remove-bounds-checks:basic, remove-bounds-checks:aggressive"),
         BoundsChecks::Aggressive
     );
     let level = optimizations("remove-bounds-checks:all").unwrap_err();
     assert!(level.to_string().contains("`off`, `basic` or `aggressive`"));
     let name = optimizations("inline:aggressive").unwrap_err();
     assert!(name.to_string().contains("remove-bounds-checks"));
+    assert!(name.to_string().contains("remove-overflow-checks"));
     let bare = optimizations("remove-bounds-checks").unwrap_err();
     assert!(bare.to_string().contains("needs a level"));
 }

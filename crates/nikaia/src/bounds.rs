@@ -20,6 +20,13 @@
 //! What either finds is a set of index nodes, by the address of the indexed
 //! expression ([`crate::check::value_node`] of the `base`), which the emitter
 //! reads where it writes an index of a list.
+//!
+//! **`--optimization=remove-overflow-checks:aggressive`**
+//! ([ADR-272](../../docs/specification/adr/adr-272.md) D1) asks the same walk
+//! whether a `+`, `-` or `*` stays inside its type, and the walk knows more
+//! than ADR-271 gave it: a bound on **every value a list holds**, the join of
+//! what each write puts in, proved where it is written (D2); `x % n` (D3); and
+//! the length a loop that pushes once per turn leaves (D4).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -61,15 +68,62 @@ impl BoundsChecks {
     }
 }
 
-/// The index nodes whose check is proved unnecessary at `level`.
+/// How hard the compiler works to drop an overflow check (ADR-272 D1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub enum OverflowChecks {
+    /// Every `+`, `-` and `*` is checked: the default.
+    #[default]
+    Kept,
+    /// Every one the walk proves stays inside its type is not.
+    Aggressive,
+}
+
+impl OverflowChecks {
+    /// The word after `remove-overflow-checks:`. There is no `basic`: the one
+    /// shape a walk without a solver would prove is the one LLVM proves.
+    pub fn parse(word: &str) -> Option<OverflowChecks> {
+        match word {
+            "off" => Some(OverflowChecks::Kept),
+            "aggressive" => Some(OverflowChecks::Aggressive),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OverflowChecks::Kept => "off",
+            OverflowChecks::Aggressive => "aggressive",
+        }
+    }
+}
+
+/// What the walk proved: index nodes ([`crate::check::value_node`] of the
+/// indexed `base`) and arithmetic operators (by the byte their operator
+/// starts at).
+#[derive(Debug, Default)]
+pub struct Proven {
+    pub indices: HashSet<usize>,
+    pub arithmetic: HashSet<usize>,
+}
+
+/// The index nodes whose check is proved unnecessary at `level`, and the
+/// arithmetic whose overflow check is at `overflow`.
 ///
 /// `lengths` are the receivers of the `x.len()` calls that count a `std`
 /// list, text or map ([`crate::check::Checked::std_lengths`]): only those are
 /// numbers of a proof, because a `len()` a program writes for its own type
-/// may say anything.
-pub fn proven(parsed: &Parsed, level: BoundsChecks, lengths: &BTreeSet<usize>) -> HashSet<usize> {
-    let mut out = HashSet::new();
-    if level == BoundsChecks::Kept {
+/// may say anything. `arithmetic` is every `+`, `-` and `*` whose two sides
+/// are one whole-number type, with that type
+/// ([`crate::check::Checked::arithmetic`]): only those may be proved.
+pub fn proven(
+    parsed: &Parsed,
+    level: BoundsChecks,
+    overflow: OverflowChecks,
+    lengths: &BTreeSet<usize>,
+    arithmetic: &BTreeMap<usize, String>,
+) -> Proven {
+    let mut out = Proven::default();
+    if level == BoundsChecks::Kept && overflow == OverflowChecks::Kept {
         return out;
     }
     let mut functions: HashMap<String, Vec<bool>> = HashMap::new();
@@ -117,38 +171,78 @@ pub fn proven(parsed: &Parsed, level: BoundsChecks, lengths: &BTreeSet<usize>) -
         let Item::Fn { args, body, .. } = &item.node else {
             continue;
         };
-        basic_block(parsed, body, &mut Vec::new(), &mut out);
-        if level == BoundsChecks::Aggressive {
-            let mut walk = Walk {
-                parsed,
-                lengths,
-                functions: &functions,
-                changing_methods: &changing_methods,
-                arena: Arena::new(),
-                proven: &mut out,
-                pinned: pinned_in(parsed, body),
-                nonnegative: HashSet::new(),
-            };
-            let mut facts = Facts::default();
-            for arg in args {
-                let name = parsed.text(arg.name).to_string();
-                let ty = parsed.text(arg.ty.name);
-                if arg.ty.generics.is_empty() && is_whole_number(ty) {
-                    facts.ints.insert(name.clone());
-                    if ty.starts_with('u') {
-                        walk.at_least_zero(&mut facts, &name);
-                    }
-                }
-                if is_a_list(ty) {
-                    let length = length_of(&name);
-                    walk.at_least_zero(&mut facts, &length);
-                }
-            }
-            walk.nonnegative = crate::emit::nonnegative_names(body)
+        if level >= BoundsChecks::Basic {
+            basic_block(parsed, body, &mut Vec::new(), &mut out.indices);
+        }
+        if level < BoundsChecks::Aggressive && overflow == OverflowChecks::Kept {
+            continue;
+        }
+        let pinned = pinned_in(parsed, body);
+        let shape = Shape::of(parsed, args, body, &pinned, &functions, &changing_methods);
+        let mut walk = Walk {
+            parsed,
+            lengths,
+            functions: &functions,
+            changing_methods: &changing_methods,
+            arena: Arena::new(),
+            proven: Proven::default(),
+            pinned,
+            nonnegative: crate::emit::nonnegative_names(body)
                 .into_iter()
                 .map(|s| parsed.text(s).to_string())
-                .collect();
-            walk.block(body, &mut facts);
+                .collect(),
+            arithmetic,
+            shape,
+            assumed: HashMap::new(),
+            written: HashMap::new(),
+            poisoned: HashSet::new(),
+            collecting: false,
+        };
+        // **A bound on a list's values is an invariant, found and then
+        // checked** (ADR-272 D2): each pass reads the bounds the last one
+        // found, and the last pass keeps only those every write is proved
+        // to stay within, assuming all of them. Reads before the writes they
+        // depend on, and writes that depend on each other, are why one pass
+        // is not enough; a bound that only holds by assuming itself larger
+        // is dropped.
+        //
+        // The passes that only collect prove nothing. The pass that checks
+        // proves too, and when it keeps every bound it assumed, what it proved
+        // stands.
+        let mut settled = false;
+        if !walk.shape.roots.is_empty() {
+            walk.collecting = true;
+            for _ in 0..2 {
+                walk.pass(args, body);
+                walk.assumed = walk.found();
+            }
+            walk.collecting = false;
+            for _ in 0..4 {
+                walk.proven = Proven::default();
+                walk.pass(args, body);
+                let found = walk.found();
+                let before = walk.assumed.len();
+                walk.assumed
+                    .retain(|key, bound| found.get(key).is_some_and(|f| bound.holds(f)));
+                if walk.assumed.len() == before {
+                    settled = true;
+                    break;
+                }
+            }
+        }
+        if !settled {
+            if !walk.shape.roots.is_empty() {
+                walk.assumed.clear();
+            }
+            walk.proven = Proven::default();
+            walk.pass(args, body);
+        }
+        if level == BoundsChecks::Aggressive {
+            out.indices.extend(walk.proven.indices.iter().copied());
+        }
+        if overflow == OverflowChecks::Aggressive {
+            out.arithmetic
+                .extend(walk.proven.arithmetic.iter().copied());
         }
     }
     out
@@ -474,18 +568,425 @@ struct Walk<'a> {
     /// Methods of this program with a `mut` parameter.
     changing_methods: &'a HashSet<String>,
     arena: Arena,
-    proven: &'a mut HashSet<usize>,
+    proven: Proven,
     /// Names a lambda, a task or an `overlap` branch changes: they may change
     /// whenever one runs, so no fact is kept about them anywhere.
     pinned: HashSet<String>,
     /// Whole numbers that are never negative anywhere in the body
     /// (`crate::emit::nonnegative_names`).
     nonnegative: HashSet<String>,
+    /// [`proven`]'s `arithmetic`.
+    arithmetic: &'a BTreeMap<usize, String>,
+    /// What the body is, read once before any pass.
+    shape: Shape,
+    /// The bounds on lists' values this pass may read (ADR-272 D2), by key:
+    /// a list's name for its values, `name[]` for the values of the lists it
+    /// holds.
+    assumed: HashMap<String, Range>,
+    /// The join of what this pass saw written, by key.
+    written: HashMap<String, Range>,
+    /// Keys a write this pass put something unbounded in.
+    poisoned: HashSet<String>,
+    /// A pass that only finds bounds and proves nothing.
+    collecting: bool,
+}
+
+/// **A closed interval of whole numbers**, either end open where nothing is
+/// known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Range {
+    lo: Option<i64>,
+    hi: Option<i64>,
+}
+
+impl Range {
+    fn exactly(n: i64) -> Range {
+        Range {
+            lo: Some(n),
+            hi: Some(n),
+        }
+    }
+
+    fn of_type(ty: &str) -> Option<Range> {
+        let (lo, hi): (i128, i128) = match ty {
+            "i8" => (i8::MIN.into(), i8::MAX.into()),
+            "i16" => (i16::MIN.into(), i16::MAX.into()),
+            "i32" => (i32::MIN.into(), i32::MAX.into()),
+            "i64" | "isize" => (i64::MIN.into(), i64::MAX.into()),
+            "u8" => (0, u8::MAX.into()),
+            "u16" => (0, u16::MAX.into()),
+            "u32" => (0, u32::MAX.into()),
+            "u64" | "usize" => (0, u64::MAX.into()),
+            _ => return None,
+        };
+        // A bound past what an `i64` holds is no bound the proof can state;
+        // the nearer one is stronger, so claiming it is never wrong.
+        Some(Range {
+            lo: Some(lo.max(i64::MIN.into()) as i64),
+            hi: Some(hi.min(i64::MAX.into()) as i64),
+        })
+    }
+
+    /// Whether every number this one admits is one `other` admits too:
+    /// `self` holds what `other` claims.
+    fn holds(&self, other: &Range) -> bool {
+        let lo = match (self.lo, other.lo) {
+            (_, None) => self.lo.is_none(),
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => a <= b,
+        };
+        let hi = match (self.hi, other.hi) {
+            (_, None) => self.hi.is_none(),
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => a >= b,
+        };
+        lo && hi
+    }
+
+    fn join(&self, other: &Range) -> Range {
+        Range {
+            lo: self.lo.zip(other.lo).map(|(a, b)| a.min(b)),
+            hi: self.hi.zip(other.hi).map(|(a, b)| a.max(b)),
+        }
+    }
+
+    fn meet(&self, other: &Range) -> Range {
+        Range {
+            lo: match (self.lo, other.lo) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            },
+            hi: match (self.hi, other.hi) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            },
+        }
+    }
+
+    fn is_bounded(&self) -> bool {
+        self.lo.is_some() || self.hi.is_some()
+    }
+
+    fn add(&self, other: &Range) -> Range {
+        Range {
+            lo: self.lo.zip(other.lo).and_then(|(a, b)| a.checked_add(b)),
+            hi: self.hi.zip(other.hi).and_then(|(a, b)| a.checked_add(b)),
+        }
+    }
+
+    fn neg(&self) -> Range {
+        Range {
+            lo: self.hi.and_then(i64::checked_neg),
+            hi: self.lo.and_then(i64::checked_neg),
+        }
+    }
+
+    fn mul(&self, other: &Range) -> Range {
+        let (Some(a), Some(b), Some(c), Some(d)) = (self.lo, self.hi, other.lo, other.hi) else {
+            return Range { lo: None, hi: None };
+        };
+        let products = [
+            a.checked_mul(c),
+            a.checked_mul(d),
+            b.checked_mul(c),
+            b.checked_mul(d),
+        ];
+        if products.iter().any(Option::is_none) {
+            return Range { lo: None, hi: None };
+        }
+        let products = products.map(|p| p.unwrap_or_default());
+        Range {
+            lo: products.iter().min().copied(),
+            hi: products.iter().max().copied(),
+        }
+    }
 }
 
 impl Walk<'_> {
     fn text(&self, sym: winnow_grammar::Symbol) -> &str {
         self.parsed.text(sym)
+    }
+
+    /// One pass over the body: proofs into [`Self::proven`], what is
+    /// written into [`Self::written`].
+    fn pass(&mut self, args: &[crate::ast::FnArg], body: &Block) {
+        self.written.clear();
+        self.poisoned.clear();
+        let mut facts = Facts::default();
+        for arg in args {
+            let name = self.text(arg.name).to_string();
+            let ty = self.text(arg.ty.name).to_string();
+            if arg.ty.generics.is_empty() && is_whole_number(&ty) {
+                facts.ints.insert(name.clone());
+                if ty.starts_with('u') {
+                    self.at_least_zero(&mut facts, &name);
+                }
+            }
+            if is_a_list(&ty) {
+                let length = length_of(&name);
+                self.at_least_zero(&mut facts, &length);
+            }
+        }
+        self.block(body, &mut facts);
+    }
+
+    /// The bounds this pass found: every key written, none written
+    /// something unbounded.
+    fn found(&self) -> HashMap<String, Range> {
+        self.written
+            .iter()
+            .filter(|(key, bound)| bound.is_bounded() && !self.is_poisoned(key))
+            .map(|(key, bound)| (key.clone(), *bound))
+            .collect()
+    }
+
+    /// A key is out where it, or a list it is part of, was written something
+    /// unbounded: `xs.push(ys)` with `ys` unknown says nothing of `xs[]`.
+    fn is_poisoned(&self, key: &str) -> bool {
+        let mut at = key;
+        loop {
+            if self.poisoned.contains(at) {
+                return true;
+            }
+            match at.strip_suffix("[]") {
+                Some(shorter) => at = shorter,
+                None => return false,
+            }
+        }
+    }
+
+    /// **`value` is written into the list whose elements are `key`**
+    /// (ADR-272 D2): a number joins the key's bound, a list's items join
+    /// `key[]`'s, a list the walk knows joins its bound into `key[]`.
+    fn write(&mut self, key: &str, value: &Expr, facts: &Facts) {
+        if !self.shape.tracks(key) {
+            return;
+        }
+        let inner = format!("{key}[]");
+        if let Expr::ListLit { items, .. } = value {
+            for item in items {
+                self.write(&inner, item, facts);
+            }
+            return;
+        }
+        if let Some(range) = self.range(value, facts) {
+            self.join(key, range);
+            return;
+        }
+        if let Some(elements) = self.shape.elements_key(self.parsed, value) {
+            match self.assumed.get(&elements).copied() {
+                Some(bound) => self.join(&inner, bound),
+                None => {
+                    self.poisoned.insert(inner);
+                }
+            }
+            return;
+        }
+        self.poisoned.insert(key.to_string());
+    }
+
+    fn join(&mut self, key: &str, range: Range) {
+        if !range.is_bounded() {
+            self.poisoned.insert(key.to_string());
+            return;
+        }
+        let joined = match self.written.get(key) {
+            Some(was) => was.join(&range),
+            None => range,
+        };
+        self.written.insert(key.to_string(), joined);
+    }
+
+    /// Whether `goal` follows from what holds, on a certificate the checker
+    /// accepts.
+    fn proves(&self, facts: &Facts, goal: TermId) -> bool {
+        let query = Query {
+            arena: &self.arena,
+            facts: &facts.facts,
+            goal,
+        };
+        match FourierMotzkin.check(&query, &Budget::default()) {
+            Answer::Proved { certificate } => verify(&query, &certificate).is_ok(),
+            _ => false,
+        }
+    }
+
+    /// **What is known of a linear term, as constants**: a candidate from
+    /// interval propagation over the facts, as Wuffs bounds a value, each end
+    /// then confirmed by the solver on a certificate the checker accepts. An
+    /// end the solver does not confirm is open.
+    fn bounds_of(&mut self, term: TermId, facts: &Facts) -> Range {
+        if let Some(n) = self.arena.constant(term) {
+            return Range::exactly(n);
+        }
+        let Some(form) = linear_form(&self.arena, term) else {
+            return Range { lo: None, hi: None };
+        };
+        let known = propagate(&self.arena, &facts.facts);
+        let candidate = evaluate(&form, &known);
+        let mut confirmed = Range { lo: None, hi: None };
+        if let Some(hi) = candidate.hi {
+            let k = self.arena.int(hi);
+            let goal = self.arena.le(term, k);
+            if self.proves(facts, goal) {
+                confirmed.hi = Some(hi);
+            }
+        }
+        if let Some(lo) = candidate.lo {
+            let k = self.arena.int(lo);
+            let goal = self.arena.ge(term, k);
+            if self.proves(facts, goal) {
+                confirmed.lo = Some(lo);
+            }
+        }
+        confirmed
+    }
+
+    /// **The constants a whole number lies between**, where the walk can
+    /// tell: a linear term by the solver, and around it `%` (ADR-272 D3),
+    /// `>>`, `&`, a conversion, a truncation, and a value read out of a list
+    /// whose values are bounded (D2). `None` is "not a number the walk
+    /// knows", which is also what anything else is.
+    fn range(&mut self, expr: &Expr, facts: &Facts) -> Option<Range> {
+        if let Some(term) = self.lin(expr, facts) {
+            return Some(self.bounds_of(term, facts));
+        }
+        match expr {
+            Expr::Binary { op, lhs, rhs, .. } => match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
+                    let a = self.range(lhs, facts)?;
+                    let b = self.range(rhs, facts)?;
+                    Some(match op {
+                        BinaryOp::Add => a.add(&b),
+                        BinaryOp::Sub => a.add(&b.neg()),
+                        _ => a.mul(&b),
+                    })
+                }
+                // **`0 <= x % n < n`** where `x` is not negative and `n` is
+                // positive; `|x % n| < n` where only `n` is known.
+                BinaryOp::Rem => {
+                    let n = self.range(rhs, facts)?;
+                    let (Some(low), Some(high)) = (n.lo, n.hi) else {
+                        return None;
+                    };
+                    if low < 1 {
+                        return None;
+                    }
+                    let x = self.range(lhs, facts);
+                    Some(match x {
+                        Some(x) if x.lo.is_some_and(|l| l >= 0) => Range {
+                            lo: Some(0),
+                            hi: Some(x.hi.map_or(high - 1, |h| h.min(high - 1))),
+                        },
+                        _ => Range {
+                            lo: Some(-(high - 1)),
+                            hi: Some(high - 1),
+                        },
+                    })
+                }
+                BinaryOp::Shr => {
+                    let k = self.range(rhs, facts)?;
+                    let (Some(k), Some(same)) = (k.lo, k.hi) else {
+                        return None;
+                    };
+                    if k != same || !(0..64).contains(&k) {
+                        return None;
+                    }
+                    let x = self.range(lhs, facts)?;
+                    x.lo.filter(|l| *l >= 0)?;
+                    Some(Range {
+                        lo: x.lo.map(|l| l >> k),
+                        hi: x.hi.map(|h| h >> k),
+                    })
+                }
+                BinaryOp::BitAnd => {
+                    let mut mask = None;
+                    for side in [lhs, rhs] {
+                        if let Some(t) = self.lin(side, facts)
+                            && let Some(c) = self.arena.constant(t)
+                            && c >= 0
+                        {
+                            mask = Some(c);
+                        }
+                    }
+                    let mask = mask?;
+                    Some(Range {
+                        lo: Some(0),
+                        hi: Some(mask),
+                    })
+                }
+                _ => None,
+            },
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => self.range(expr, facts).map(|r| r.neg()),
+            // A conversion keeps its value or stops the program.
+            Expr::Cast { expr, ty } if ty.generics.is_empty() => {
+                let into = Range::of_type(self.text(ty.name))?;
+                Some(match self.range(expr, facts) {
+                    Some(r) => r.meet(&into),
+                    None => into,
+                })
+            }
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if args.is_empty() => {
+                let method = self.text(*method).to_string();
+                if method == "len" {
+                    return Some(Range {
+                        lo: Some(0),
+                        hi: None,
+                    });
+                }
+                let into = Range::of_type(method.strip_prefix("truncating_")?)?;
+                Some(match self.range(receiver, facts) {
+                    Some(r) if into.holds(&r) => r,
+                    _ => into,
+                })
+            }
+            Expr::Index { base, .. } => {
+                let key = self.shape.elements_key(self.parsed, base)?;
+                self.assumed.get(&key).copied()
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `expr`, an operation of type `ty`, stays inside it.
+    fn fits(&mut self, expr: &Expr, ty: &str, facts: &Facts) -> bool {
+        let Some(bounds) = Range::of_type(ty) else {
+            return false;
+        };
+        let (Some(lo), Some(hi)) = (bounds.lo, bounds.hi) else {
+            return false;
+        };
+        if let Some(term) = self.lin(expr, facts) {
+            let (low, high) = (self.arena.int(lo), self.arena.int(hi));
+            let above = self.arena.ge(term, low);
+            let below = self.arena.le(term, high);
+            let goal = self.arena.and(vec![above, below]);
+            return self.proves(facts, goal);
+        }
+        self.range(expr, facts).is_some_and(|r| bounds.holds(&r))
+    }
+
+    /// `name` lies within `range`, where it is a whole number.
+    fn bounded(&mut self, facts: &mut Facts, name: &str, range: Range) {
+        let n = self.arena.var(name);
+        if let Some(lo) = range.lo {
+            let lo = self.arena.int(lo);
+            let fact = self.arena.ge(n, lo);
+            self.push(facts, fact);
+        }
+        if let Some(hi) = range.hi {
+            let hi = self.arena.int(hi);
+            let fact = self.arena.le(n, hi);
+            self.push(facts, fact);
+        }
     }
 
     fn push(&self, facts: &mut Facts, fact: TermId) {
@@ -537,7 +1038,9 @@ impl Walk<'_> {
     fn after_change(&mut self, facts: &mut Facts, changed: &Changed) {
         for name in &changed.values {
             self.forget(facts, name);
-            if self.nonnegative.contains(name) && facts.ints.contains(name) {
+            if (self.nonnegative.contains(name) || self.shape.unsigned.contains(name))
+                && facts.ints.contains(name)
+            {
                 self.at_least_zero(facts, name);
             }
         }
@@ -554,6 +1057,9 @@ impl Walk<'_> {
             }
             Expr::Variable(name) => {
                 let name = self.text(*name).to_string();
+                if let Some(n) = self.shape.constants.get(&name) {
+                    return Some(self.arena.int(*n));
+                }
                 facts.ints.contains(&name).then(|| self.arena.var(&name))
             }
             Expr::MethodCall {
@@ -711,26 +1217,33 @@ impl Walk<'_> {
 
     /// Whether `0 <= index < list.len()` follows from what holds.
     fn inside(&mut self, list: &str, index: &Expr, facts: &Facts) -> bool {
-        if self.pinned.contains(list) {
+        if self.collecting || self.pinned.contains(list) {
             return false;
         }
-        let Some(at) = self.lin(index, facts) else {
-            return false;
-        };
         let length = length_of(list);
-        let (len, zero) = (self.arena.var(&length), self.arena.int(0));
+        let len = self.arena.var(&length);
+        let Some(at) = self.lin(index, facts) else {
+            // A position read out of a list whose values are bounded
+            // (ADR-272 D2), or one `%` keeps small (D3).
+            let Some(Range {
+                lo: Some(lo),
+                hi: Some(hi),
+            }) = self.range(index, facts)
+            else {
+                return false;
+            };
+            if lo < 0 {
+                return false;
+            }
+            let hi = self.arena.int(hi);
+            let goal = self.arena.lt(hi, len);
+            return self.proves(facts, goal);
+        };
+        let zero = self.arena.int(0);
         let low = self.arena.ge(at, zero);
         let high = self.arena.lt(at, len);
         let goal = self.arena.and(vec![low, high]);
-        let query = Query {
-            arena: &self.arena,
-            facts: &facts.facts,
-            goal,
-        };
-        match FourierMotzkin.check(&query, &Budget::default()) {
-            Answer::Proved { certificate } => verify(&query, &certificate).is_ok(),
-            _ => false,
-        }
+        self.proves(facts, goal)
     }
 
     /// A block; whether control never goes past its end.
@@ -770,9 +1283,15 @@ impl Walk<'_> {
             } => {
                 self.expr(value, facts);
                 let value_lin = self.lin(value, facts);
+                // **A number the walk bounds without a linear term**: a value
+                // read out of a list, a `%` (ADR-272 D2, D3).
+                let value_range = match value_lin {
+                    Some(_) => None,
+                    None => self.range(value, facts).filter(Range::is_bounded),
+                };
                 let whole = match ty {
                     Some(t) => t.generics.is_empty() && is_whole_number(self.text(t.name)),
-                    None => value_lin.is_some(),
+                    None => value_lin.is_some() || value_range.is_some(),
                 };
                 for name in names {
                     let name = self.text(*name).to_string();
@@ -796,8 +1315,18 @@ impl Walk<'_> {
                         {
                             self.at_least_zero(facts, &name);
                         }
+                        if let Some(range) = value_range {
+                            self.bounded(facts, &name, range);
+                        }
                     }
                     self.built(facts, &name, value);
+                    if self.shape.roots.contains(&name)
+                        && let Expr::ListLit { items, .. } = value
+                    {
+                        for item in items {
+                            self.write(&name, item, facts);
+                        }
+                    }
                 }
                 false
             }
@@ -814,6 +1343,12 @@ impl Walk<'_> {
             Stmt::Assign { target, op, value } => {
                 self.expr(value, facts);
                 self.place(target, facts);
+                if op.is_none()
+                    && let Expr::Index { base, .. } = target
+                    && let Some(key) = self.shape.elements_key(self.parsed, base)
+                {
+                    self.write(&key, value, facts);
+                }
                 if let Expr::Variable(name) = target {
                     let name = self.text(*name).to_string();
                     self.assign(facts, &name, *op, value);
@@ -849,7 +1384,17 @@ impl Walk<'_> {
                     self.forget(&mut inner, &name);
                     inner.ints.remove(&name);
                 }
-                if let Some((name, low, high, inclusive)) = range {
+                // `for x in xs`, where what `xs` holds is bounded (ADR-272 D2).
+                if let [only] = bindings.as_slice()
+                    && !matches!(iter, Expr::Range { .. })
+                    && let Some(key) = self.shape.elements_key(self.parsed, iter)
+                    && let Some(bound) = self.assumed.get(&key).copied()
+                {
+                    let name = self.text(*only).to_string();
+                    inner.ints.insert(name.clone());
+                    self.bounded(&mut inner, &name, bound);
+                }
+                if let Some((name, low, high, inclusive)) = range.clone() {
                     inner.ints.insert(name.clone());
                     let n = self.arena.var(&name);
                     // A bound is read once, before the first turn: it holds
@@ -879,7 +1424,48 @@ impl Walk<'_> {
                     }
                 }
                 self.block(body, &mut inner);
-                self.after_change(facts, &changed);
+                // **A loop that pushes once per turn adds its count to the
+                // length** (ADR-272 D4).
+                let filled = match &range {
+                    Some((_, Some(low), Some(high), inclusive)) => {
+                        let stable = changed
+                            .values
+                            .iter()
+                            .chain(changed.lengths.iter())
+                            .all(|c| {
+                                !self.arena.mentions(*low, c)
+                                    && !self.arena.mentions(*high, c)
+                                    && !self.arena.mentions(*low, &length_of(c))
+                                    && !self.arena.mentions(*high, &length_of(c))
+                            });
+                        let lists = match stable {
+                            true => filled_once(self.parsed, body, &self.pinned),
+                            false => Vec::new(),
+                        };
+                        let not_empty = self.arena.le(*low, *high);
+                        match !lists.is_empty() && self.proves(facts, not_empty) {
+                            true => {
+                                let one = self.arena.int(i64::from(*inclusive));
+                                let span = self.arena.sub(*high, *low);
+                                let count = self.arena.add(span, one);
+                                lists.into_iter().map(|l| (l, count)).collect()
+                            }
+                            false => Vec::new(),
+                        }
+                    }
+                    _ => Vec::new(),
+                };
+                let mut outer = Changed {
+                    values: changed.values.clone(),
+                    lengths: changed.lengths.clone(),
+                };
+                for (list, _) in &filled {
+                    outer.lengths.remove(list);
+                }
+                self.after_change(facts, &outer);
+                for (list, count) in filled {
+                    self.shift(facts, &length_of(&list), count);
+                }
                 false
             }
             Stmt::While { cond, body } => {
@@ -952,9 +1538,16 @@ impl Walk<'_> {
                 self.push(facts, fact);
             }
             _ => {
+                let range = match (op, value_lin) {
+                    (None, None) => self.range(value, facts),
+                    _ => None,
+                };
                 self.forget(facts, name);
-                if self.nonnegative.contains(name) {
+                if self.nonnegative.contains(name) || self.shape.unsigned.contains(name) {
                     self.at_least_zero(facts, name);
+                }
+                if let Some(range) = range {
+                    self.bounded(facts, name, range);
                 }
             }
         }
@@ -982,7 +1575,7 @@ impl Walk<'_> {
                 if let Expr::Variable(list) = &**base {
                     let list = self.text(*list).to_string();
                     if self.inside(&list, index, facts) {
-                        self.proven.insert(value_node(base));
+                        self.proven.indices.insert(value_node(base));
                     }
                 }
             }
@@ -1059,7 +1652,7 @@ impl Walk<'_> {
                 if let Expr::Variable(list) = &**base {
                     let list = self.text(*list).to_string();
                     if self.inside(&list, index, facts) {
-                        self.proven.insert(value_node(base));
+                        self.proven.indices.insert(value_node(base));
                     }
                 }
             }
@@ -1119,6 +1712,24 @@ impl Walk<'_> {
                 }
                 self.after_change(facts, &changed);
             }
+            // **An operation that stays inside its type** (ADR-272 D1): its
+            // operands first, in the order they run.
+            Expr::Binary {
+                op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul,
+                lhs,
+                rhs,
+                span,
+                ..
+            } => {
+                self.expr(lhs, facts);
+                self.expr(rhs, facts);
+                if !self.collecting
+                    && let Some(ty) = self.arithmetic.get(&span.at())
+                    && self.fits(expr, ty, facts)
+                {
+                    self.proven.arithmetic.insert(span.at());
+                }
+            }
             // Not entered: a lambda or a task may run at any later moment.
             Expr::Closure { .. } | Expr::Spawn { .. } | Expr::Overlap(_) | Expr::Select(_) => {}
             Expr::MethodCall {
@@ -1138,6 +1749,11 @@ impl Walk<'_> {
                     self.expr(arg, facts);
                 }
                 let method = self.text(*method).to_string();
+                if let Some(at) = writes_a_value(&method, args.len())
+                    && let Some(key) = self.shape.elements_key(self.parsed, receiver)
+                {
+                    self.write(&key, &args[at], facts);
+                }
                 if let Expr::Variable(name) = &**receiver {
                     let name = self.text(*name).to_string();
                     self.method(facts, &name, &method, args);
@@ -1322,6 +1938,76 @@ impl Changed {
     }
 }
 
+/// **The lists a loop's body pushes onto exactly once per turn** (ADR-272
+/// D4): one `xs.push(v)` among the body's own statements, nothing else that
+/// changes `xs`'s length or hands it on, and no way out of a turn before its
+/// end - no `break`, `continue`, `return`, `throw` or `?` anywhere in it.
+fn filled_once(parsed: &Parsed, body: &Block, pinned: &HashSet<String>) -> Vec<String> {
+    let mut leaves = false;
+    visit_stmts(body, &mut |stmt| {
+        if matches!(stmt, Stmt::Break | Stmt::Continue | Stmt::Return(_)) {
+            leaves = true;
+        }
+    });
+    visit_exprs(body, &mut |expr| {
+        if matches!(
+            expr,
+            Expr::Break | Expr::Continue | Expr::Return(_) | Expr::Throw(_) | Expr::Try(_)
+        ) {
+            leaves = true;
+        }
+    });
+    if leaves {
+        return Vec::new();
+    }
+    let mut pushed: HashMap<String, usize> = HashMap::new();
+    for stmt in &body.stmts {
+        if let Stmt::Expr(Expr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        }) = &stmt.node
+            && let (Expr::Variable(list), "push", [_]) =
+                (&**receiver, parsed.text(*method), args.as_slice())
+        {
+            *pushed.entry(parsed.text(*list).to_string()).or_default() += 1;
+        }
+    }
+    pushed
+        .into_iter()
+        .filter(|(list, count)| {
+            *count == 1 && !pinned.contains(list) && {
+                let mut changes = 0;
+                visit_exprs(body, &mut |expr| match expr {
+                    Expr::MethodCall {
+                        receiver, method, ..
+                    }
+                    | Expr::SafeMethod {
+                        receiver, method, ..
+                    } if matches!(&**receiver, Expr::Variable(n) if parsed.text(*n) == list)
+                        && !keeps_length(parsed.text(*method)) =>
+                    {
+                        changes += 1
+                    }
+                    Expr::Call { args, .. }
+                    | Expr::MethodCall { args, .. }
+                    | Expr::SafeMethod { args, .. }
+                        if args
+                            .iter()
+                            .any(|a| matches!(a, Expr::Variable(n) if parsed.text(*n) == list)) =>
+                    {
+                        changes += 2
+                    }
+                    _ => {}
+                });
+                changes == 1 && !rebinds(parsed, body, list)
+            }
+        })
+        .map(|(list, _)| list)
+        .collect()
+}
+
 /// `xs.len()` is about `xs`.
 fn base_of(name: &str) -> &str {
     name.strip_suffix(".len()").unwrap_or(name)
@@ -1401,6 +2087,448 @@ fn pinned_in(parsed: &Parsed, body: &Block) -> HashSet<String> {
         });
     }
     out
+}
+
+// --- interval propagation (ADR-272) ---------------------------------------------
+
+/// A linear term as coefficients by variable and a constant.
+type Form = (BTreeMap<String, i128>, i128);
+
+/// What propagation knows of each variable: its least and greatest value.
+type Known = HashMap<String, (Option<i128>, Option<i128>)>;
+
+/// `term` as a sum of variables times constants plus a constant, where it is
+/// one.
+fn linear_form(arena: &Arena, term: TermId) -> Option<Form> {
+    use nikaia_logic::Term;
+    Some(match arena.get(term) {
+        Term::Int(n) => (BTreeMap::new(), i128::from(*n)),
+        Term::Var(name) => (BTreeMap::from([(name.clone(), 1)]), 0),
+        Term::Add(a, b) | Term::Sub(a, b) => {
+            let sign = match arena.get(term) {
+                Term::Add(..) => 1,
+                _ => -1,
+            };
+            let (mut vars, k) = linear_form(arena, *a)?;
+            let (other, l) = linear_form(arena, *b)?;
+            for (name, c) in other {
+                *vars.entry(name).or_default() += sign * c;
+            }
+            (vars, k + sign * l)
+        }
+        Term::Neg(a) => negated(linear_form(arena, *a)?),
+        Term::Mul(a, b) => {
+            let (va, ka) = linear_form(arena, *a)?;
+            let (vb, kb) = linear_form(arena, *b)?;
+            match (va.is_empty(), vb.is_empty()) {
+                (true, _) => (vb.into_iter().map(|(n, c)| (n, c * ka)).collect(), ka * kb),
+                (_, true) => (va.into_iter().map(|(n, c)| (n, c * kb)).collect(), ka * kb),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn negated((vars, k): Form) -> Form {
+    (vars.into_iter().map(|(n, c)| (n, -c)).collect(), -k)
+}
+
+/// The comparisons a fact asserts, each as `form <= 0`.
+fn atoms(arena: &Arena, fact: TermId, out: &mut Vec<Form>) {
+    use nikaia_logic::Term;
+    let diff = |a: TermId, b: TermId| -> Option<Form> {
+        let (mut va, ka) = linear_form(arena, a)?;
+        let (vb, kb) = linear_form(arena, b)?;
+        for (n, c) in vb {
+            *va.entry(n).or_default() -= c;
+        }
+        Some((va, ka - kb))
+    };
+    match arena.get(fact) {
+        Term::And(parts) => parts.iter().for_each(|p| atoms(arena, *p, out)),
+        Term::Le(a, b) => out.extend(diff(*a, *b)),
+        // Over whole numbers `a < b` is `a - b + 1 <= 0`.
+        Term::Lt(a, b) => out.extend(diff(*a, *b).map(|(v, k)| (v, k + 1))),
+        Term::Ge(a, b) => out.extend(diff(*a, *b).map(negated)),
+        Term::Gt(a, b) => out.extend(diff(*a, *b).map(negated).map(|(v, k)| (v, k + 1))),
+        Term::Eq(a, b) => {
+            if let Some(d) = diff(*a, *b) {
+                out.push(negated(d.clone()));
+                out.push(d);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// **Bounds on each variable the facts imply**, by a few rounds of
+/// `c·x <= -k - (the least the other terms can be)`. Sound and not complete;
+/// the solver confirms each bound that is used.
+fn propagate(arena: &Arena, facts: &[TermId]) -> Known {
+    let mut all = Vec::new();
+    for fact in facts {
+        atoms(arena, *fact, &mut all);
+    }
+    let mut known = Known::new();
+    for _ in 0..4 {
+        let mut changed = false;
+        for (vars, k) in &all {
+            for (x, cx) in vars {
+                if *cx == 0 {
+                    continue;
+                }
+                let mut rest = Some(*k);
+                for (y, cy) in vars {
+                    if y == x {
+                        continue;
+                    }
+                    let (lo, hi) = known.get(y).copied().unwrap_or((None, None));
+                    let least = match *cy > 0 {
+                        true => lo.map(|l| cy * l),
+                        false => hi.map(|h| cy * h),
+                    };
+                    rest = rest.zip(least).and_then(|(r, l)| r.checked_add(l));
+                }
+                let Some(rest) = rest else { continue };
+                // cx·x <= -rest
+                let entry = known.entry(x.clone()).or_insert((None, None));
+                if *cx > 0 {
+                    let bound = (-rest).div_euclid(*cx);
+                    if entry.1.is_none_or(|h| bound < h) {
+                        entry.1 = Some(bound);
+                        changed = true;
+                    }
+                } else {
+                    // x >= rest / -cx, rounded up.
+                    let bound = -((-rest).div_euclid(-cx));
+                    if entry.0.is_none_or(|l| bound > l) {
+                        entry.0 = Some(bound);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    known
+}
+
+/// The interval a linear form takes over what is known of its variables.
+fn evaluate(form: &Form, known: &Known) -> Range {
+    let (vars, k) = form;
+    let (mut lo, mut hi) = (Some(*k), Some(*k));
+    for (x, c) in vars {
+        let (l, h) = known.get(x).copied().unwrap_or((None, None));
+        let (least, most) = match *c >= 0 {
+            true => (l.map(|l| c * l), h.map(|h| c * h)),
+            false => (h.map(|h| c * h), l.map(|l| c * l)),
+        };
+        lo = lo.zip(least).and_then(|(a, b)| a.checked_add(b));
+        hi = hi.zip(most).and_then(|(a, b)| a.checked_add(b));
+    }
+    Range {
+        lo: lo.and_then(|v| i64::try_from(v).ok()),
+        hi: hi.and_then(|v| i64::try_from(v).ok()),
+    }
+}
+
+// --- what a body is (ADR-272) ------------------------------------------------------
+
+/// **What the walk reads off a body once, before any pass.**
+#[derive(Default)]
+struct Shape {
+    /// Names bound once, to a literal, and never changed: their value.
+    constants: HashMap<String, i64>,
+    /// Names bound once with an unsigned type: never negative, whatever is
+    /// assigned to them, because an assignment that would make one negative
+    /// stops the program.
+    unsigned: HashSet<String>,
+    /// **Lists whose every write the walk sees** (ADR-272 D2): bound once in
+    /// the body to a literal, never assigned, handed on or captured, and
+    /// changed only by a method that writes what the walk can read
+    /// ([`writes_a_value`]) or that only keeps or removes values.
+    roots: HashSet<String>,
+    /// Names bound once, not `mut`, to a list of [`Self::roots`] or to an
+    /// element of one: the key of its elements.
+    aliases: HashMap<String, String>,
+}
+
+/// Methods that put one value into a list, and which argument it is.
+fn writes_a_value(method: &str, args: usize) -> Option<usize> {
+    match (method, args) {
+        ("push", 1) | ("fill", 1) => Some(0),
+        ("insert", 2) | ("resize", 2) => Some(1),
+        _ => None,
+    }
+}
+
+/// Methods that change a list without putting anything new in it.
+fn only_removes(method: &str) -> bool {
+    matches!(
+        method,
+        "pop" | "remove" | "swap_remove" | "clear" | "truncate" | "retain" | "dedup"
+    )
+}
+
+impl Shape {
+    fn of(
+        parsed: &Parsed,
+        args: &[crate::ast::FnArg],
+        body: &Block,
+        pinned: &HashSet<String>,
+        functions: &HashMap<String, Vec<bool>>,
+        changing_methods: &HashSet<String>,
+    ) -> Shape {
+        let text = |s: winnow_grammar::Symbol| parsed.text(s).to_string();
+        // How often each name is bound anywhere in the body, lambdas and
+        // patterns included: a name bound twice is not one thing.
+        let mut bound: HashMap<String, usize> = HashMap::new();
+        let mut bind = |name: String| *bound.entry(name).or_default() += 1;
+        for arg in args {
+            bind(text(arg.name));
+        }
+        visit_stmts(body, &mut |stmt| match stmt {
+            Stmt::Let { names, .. } => names.iter().for_each(|n| bind(text(*n))),
+            Stmt::Comptime { name, .. } => bind(text(*name)),
+            Stmt::For { bindings, .. } => bindings.iter().for_each(|n| bind(text(*n))),
+            _ => {}
+        });
+        visit_exprs(body, &mut |expr| match expr {
+            Expr::Closure { params, .. } => params.iter().for_each(|n| bind(text(*n))),
+            Expr::Match { arms, .. } => {
+                for arm in arms {
+                    pattern_symbols(&arm.pattern, &mut |n| bind(text(n)));
+                }
+            }
+            Expr::Select(arms) => {
+                for arm in arms {
+                    if let Some(n) = arm.binding {
+                        bind(text(n));
+                    }
+                }
+            }
+            // A `catch` block names the failure `error`.
+            Expr::TryCatch { .. } => bind("error".to_string()),
+            _ => {}
+        });
+        let once = |name: &str| bound.get(name) == Some(&1);
+
+        let mut shape = Shape::default();
+        for arg in args {
+            let name = text(arg.name);
+            if once(&name) && arg.ty.generics.is_empty() && is_unsigned(parsed.text(arg.ty.name)) {
+                shape.unsigned.insert(name);
+            }
+        }
+        visit_stmts(body, &mut |stmt| {
+            if let Stmt::Let {
+                names,
+                mutable,
+                ty,
+                value,
+            } = stmt
+                && let [only] = names.as_slice()
+            {
+                let name = text(*only);
+                if !once(&name) {
+                    return;
+                }
+                let whole = ty
+                    .as_ref()
+                    .is_none_or(|t| t.generics.is_empty() && is_whole_number(parsed.text(t.name)));
+                if let Some(t) = ty
+                    && t.generics.is_empty()
+                    && is_unsigned(parsed.text(t.name))
+                {
+                    shape.unsigned.insert(name.clone());
+                }
+                if !mutable
+                    && whole
+                    && let Expr::LitInt { value, negative } = value
+                    && let Ok(n) = i64::try_from(crate::ast::int_value(*value, *negative))
+                {
+                    shape.constants.insert(name.clone(), n);
+                }
+                if matches!(value, Expr::ListLit { .. }) {
+                    shape.roots.insert(name);
+                }
+            }
+        });
+        // Aliases, in two rounds: one may name another.
+        for _ in 0..2 {
+            visit_stmts(body, &mut |stmt| {
+                if let Stmt::Let {
+                    names,
+                    mutable: false,
+                    value,
+                    ..
+                } = stmt
+                    && let [only] = names.as_slice()
+                    && once(&text(*only))
+                    && !shape.roots.contains(&text(*only))
+                    && let Some(key) = shape.elements_key(parsed, value)
+                {
+                    shape.aliases.insert(text(*only), key);
+                }
+            });
+        }
+
+        // **What takes a list out of the walk's sight.**
+        let mut lost: HashSet<String> = HashSet::new();
+        for name in pinned {
+            lost.insert(name.clone());
+        }
+        // Anything a lambda, a task, an `overlap` branch or a `select` arm
+        // names: it may run whenever.
+        visit_exprs(body, &mut |expr| {
+            let deferred: Vec<Block> = match expr {
+                Expr::Closure { body, .. } | Expr::Overlap(body) => vec![body.clone()],
+                Expr::Spawn { body, .. } => vec![Block {
+                    stmts: vec![Spanned::new(Stmt::Expr((**body).clone()), Span::nowhere())],
+                }],
+                Expr::Select(arms) => arms.iter().map(|a| a.body.clone()).collect(),
+                _ => Vec::new(),
+            };
+            for block in &deferred {
+                visit_exprs(block, &mut |e| {
+                    if let Expr::Variable(n) = e {
+                        lost.insert(text(*n));
+                    }
+                });
+            }
+        });
+        visit_stmts(body, &mut |stmt| match stmt {
+            Stmt::Assign { target, op, .. } => {
+                // `xs = …` replaces the list, `xs.f = …` changes it, and
+                // `xs[i] op= v` writes a value the walk does not compute.
+                if (op.is_some() || !matches!(target, Expr::Index { .. }))
+                    && let Some(root) = root_name(parsed, target)
+                {
+                    lost.insert(root);
+                }
+            }
+            // A `mut` binding of a list, or of a part of it, may be changed
+            // where the walk does not look for it.
+            Stmt::Let {
+                mutable: true,
+                value,
+                ..
+            } => {
+                if let Some(root) = root_name(parsed, value) {
+                    lost.insert(root);
+                }
+            }
+            _ => {}
+        });
+        visit_exprs(body, &mut |expr| match expr {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            }
+            | Expr::SafeMethod {
+                receiver,
+                method,
+                args,
+                ..
+            } => {
+                let method = parsed.text(*method);
+                if let Some(root) = root_name(parsed, receiver)
+                    && writes_a_value(method, args.len()).is_none()
+                    && !only_removes(method)
+                    && !keeps_length(method)
+                {
+                    lost.insert(root);
+                }
+                for arg in args {
+                    if let Some(root) = root_name(parsed, arg)
+                        && (changing_methods.contains(method) || !keeps_length(method))
+                        && writes_a_value(method, args.len()).is_none()
+                    {
+                        lost.insert(root);
+                    }
+                }
+            }
+            Expr::Call { func, args, .. } => {
+                let callee = match &**func {
+                    Expr::Variable(name) => functions.get(parsed.text(*name)),
+                    _ => None,
+                };
+                for (at, arg) in args.iter().enumerate() {
+                    if let Some(root) = root_name(parsed, arg)
+                        && callee.is_none_or(|params| params.get(at).copied().unwrap_or(true))
+                    {
+                        lost.insert(root);
+                    }
+                }
+            }
+            _ => {}
+        });
+        // A name lost through an alias loses the list it names.
+        let through_aliases: Vec<String> = lost
+            .iter()
+            .filter_map(|n| shape.aliases.get(n))
+            .map(|key| key_root(key).to_string())
+            .collect();
+        lost.extend(through_aliases);
+        shape.roots.retain(|r| !lost.contains(r));
+        shape
+    }
+
+    /// The key of the elements of `expr`, a list: a root's name, an alias's
+    /// key, and `key[]` for an element of a list of lists.
+    fn elements_key(&self, parsed: &Parsed, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Variable(n) => {
+                let n = parsed.text(*n);
+                match self.roots.contains(n) {
+                    true => Some(n.to_string()),
+                    false => self.aliases.get(n).cloned(),
+                }
+            }
+            Expr::Index { base, .. } => self.elements_key(parsed, base).map(|k| format!("{k}[]")),
+            _ => None,
+        }
+    }
+
+    fn tracks(&self, key: &str) -> bool {
+        self.roots.contains(key_root(key))
+    }
+}
+
+/// `watched[][]` is about `watched`.
+fn key_root(key: &str) -> &str {
+    key.split('[').next().unwrap_or(key)
+}
+
+/// The variable an index, a field or a name is rooted in.
+fn root_name(parsed: &Parsed, expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Variable(n) => Some(parsed.text(*n).to_string()),
+        Expr::Index { base, .. } | Expr::Field { base, .. } => root_name(parsed, base),
+        _ => None,
+    }
+}
+
+/// Every symbol a pattern names, bound or not: counting too many makes a
+/// name look bound twice, which only costs a proof.
+fn pattern_symbols(pattern: &crate::ast::MatchPattern, f: &mut dyn FnMut(winnow_grammar::Symbol)) {
+    use crate::ast::MatchPattern;
+    match pattern {
+        MatchPattern::Path(segments) => segments.iter().for_each(|s| f(*s)),
+        MatchPattern::Tuple { parts, .. } => parts.iter().for_each(|p| pattern_symbols(p, f)),
+        MatchPattern::Named { bindings, .. } => bindings.iter().for_each(|s| f(*s)),
+        MatchPattern::Or(alternatives) => alternatives.iter().for_each(|p| pattern_symbols(p, f)),
+        _ => {}
+    }
+}
+
+fn is_unsigned(ty: &str) -> bool {
+    matches!(ty, "u8" | "u16" | "u32" | "u64" | "usize")
 }
 
 // --- walking the tree ---------------------------------------------------------

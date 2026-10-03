@@ -349,6 +349,43 @@ lower --no-cache`, release build, wall clock over three runs.
 Wall clock on a shared machine, so the corpus row says "not measurable" and
 the kernel row says "index-heavy code pays tens of milliseconds", no more.
 
+### 8.3 Built (0.0.386)
+
+ADR-272 as built, measured as §8.2 was: both options at `aggressive`,
+overflow checks on, fat LTO, against the same optimised `std`.
+
+| | `off` | `aggressive` |
+| :--- | ---: | ---: |
+| rows, n = 200 000 | 948.5 M | 946.7 M |
+| watch, n = 2 000 | 10.44 M | **9.41 M (−9.9 %)** |
+| bignum, n = 20 000 | 720.4 M | 720.3 M |
+
+The watch row is §8.2's upper bound exactly: every check it removed by hand
+is proved - `start + at`, `value[blocks[k]]`, `value[arena[…]]`,
+`arena[start + at]` - and 32 index sites are written without their check
+(22 under ADR-271 alone). All three print the same checksums at both levels.
+
+**What it costs**, `nikaia lower --no-cache`, release build:
+
+| | `off` | `aggressive` |
+| :--- | ---: | ---: |
+| the 46 standalone files, three runs | 0.65 - 0.71 s | 0.68 s |
+| `benches/solver-kernels.nika`, one lowering | 24 ms | 40 ms |
+
+Two changes brought the kernels there from a first build at 162 ms. A bound
+was first found by searching for the least constant the solver proves -
+about 30 queries a bound, 85 % of all queries; interval propagation finds the
+candidate and the solver confirms each end with one query, proving the same
+sites. And `emit::Needs::of`, which builds an emitter only to ask what a
+program needs, proved every check a second time; it now builds it with both
+options off.
+
+**1BRC gains nothing**, as expected: `examples/1brc.nika` over a million
+rows lowers to the same Rust at both levels. Its hot code is the grammar's
+actions, which the walk does not enter, and `+=` in `Stats::add`, which keeps
+its check (ADR-271 D5). All its overflow checks together cost 1.4 %
+(481.4 M against 474.6 M with `-C overflow-checks=off`).
+
 ## 9. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the

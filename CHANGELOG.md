@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.386] — 2026-10-03
+
+**What every write into a list keeps in bounds is known of every read from
+it** (ADR-272, accepted). `--optimization=remove-overflow-checks:aggressive`
+writes a `+`, `-` or `*` the solver proves inside its type as
+`<T>::wrapping_*`, with no `unsafe`; the checker records each operation's
+whole-number type so that the proof and the emitted operation agree on it.
+The walk of ADR-271 learned a bound on the values of every local list whose
+writes it all sees, found in two passes and kept only where every write is
+proved within it; `x % n`; the length a loop that pushes once per turn
+leaves; constants bound once; and that an unsigned name is never negative.
+A bound's constants come from interval propagation, each confirmed by the
+solver. The watch kernel goes from 10.44 M to 9.41 M instructions with
+overflow checks on (Rust by hand: 10.69 M), lowering it costs 16 ms more,
+and the rest of the corpus is within noise. `emit::Needs::of` no longer
+proves every check a second time. 1BRC gains nothing; `solver-workload.md`
+§8.3 says why.
+
 ## [0.0.385] — 2026-10-03
 
 **A borrowed left side of `??` beside a jump is a view wherever it stands**

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.385 (Draft)
+**Version:** 0.0.386 (Draft)
 **Date:** 2026-10-03
 
 ---
@@ -63,7 +63,7 @@ The manifest defines the project's metadata and the build options of Part I 1.2.
 
 The build options live in `[build]`. `--target` and `--user-parallelism` override `target` and `user-parallelism` for a single build. `reentrancy-check` is read from the manifest. A key `[build]` does not know fails the build.
 
-`optimization` names optimizations that change nothing a program means, as `NAME:LEVEL` words separated by commas. `--optimization=NAME:LEVEL` overrides it for a single build, and may be given more than once; a later word for a name wins. The one name is `remove-bounds-checks` ([ADR-271](adr/adr-271.md)): at `basic`, an index is written without its check inside a loop over the list's own length whose body cannot change that length; at `aggressive`, also wherever the solver proves `0 <= i < xs.len()` from the facts that hold there, with a certificate its checker accepts. The default is `off`. No level drops a check that is not proved, so a program stops at an index at every level where it stops at `off` (A.2). It is part of the build's cache key; `std` is lowered at `off`.
+`optimization` names optimizations that change nothing a program means, as `NAME:LEVEL` words separated by commas. `--optimization=NAME:LEVEL` overrides it for a single build, and may be given more than once; a later word for a name wins. The one name is `remove-bounds-checks` ([ADR-271](adr/adr-271.md)): at `basic`, an index is written without its check inside a loop over the list's own length whose body cannot change that length; at `aggressive`, also wherever the solver proves `0 <= i < xs.len()` from the facts that hold there, with a certificate its checker accepts. The other is `remove-overflow-checks` ([ADR-272](adr/adr-272.md)), whose one level besides `off` is `aggressive`: a `+`, `-` or `*` of one whole-number type is written without its overflow check where the solver proves it stays inside that type. Both read what every write into a local list puts in it as a bound on its values, `x % n` as below `n`, and the length a loop that pushes once per turn leaves. The default is `off`. No level drops a check that is not proved, so a program stops at an index or an overflow at every level where it stops at `off` (A.2). It is part of the build's cache key; `std` is lowered at `off`.
 
 The manifest carries what the **compiler** must know. How the program behaves on the machine it runs on — the number of I/O workers, the size of the pool for user code, the I/O mechanism, the shutdown drain — is runtime configuration (13.3b), read at startup by whoever runs the program.
 
