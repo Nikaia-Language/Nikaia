@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.406] — 2026-10-03
+
+**A ledger is written out in Nikaia** (Part III 13.5, ADR-294, #125).
+`nikaia.contracts`, the record beside it of what it was derived from
+(ADR-251 D1), a description's header (ADR-290 D5) and the `throws` list a
+diagnostic quotes move into `tools/ledger_text.nika`, beside `ledger.nika`,
+which reads the same format back. The files are written byte for byte as
+before. 27.0 % of the toolchain is Nikaia.
+
+**`str::replace` is described in `std`'s ledger.** Undescribed, a call of it
+was a method nothing describes, and every function around it was taken to
+pause (ADR-288's polarity).
+
 ## [0.0.405] — 2026-10-03
 
 **What a declared `String` is below is decided in Nikaia** (ADR-282,
