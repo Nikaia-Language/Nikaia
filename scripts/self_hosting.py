@@ -70,7 +70,7 @@ COMPILER_NIKA = {
     "keep.nika": "contracts::keep: which types hold a view and why one cannot go into a handle, the methods that keep, drop, take or own, the keeping method's key, a callee's and a local's name (0.0.376)",
     "modules.nika": "modules: the names a file declares, and the refusal for a `use` that names a path, a name twice, or a package the file cannot reach (0.0.379)",
     "tiers.nika": "text_tiers: what a method's name says about the text it hands back, and which containers text is followed into (0.0.383)",
-    "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384)",
+    "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384), and the least fixpoint of what each function keeps (0.0.399)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
     "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390), the walk of what a body does to its claim and the check of what a `sync` function may not call (0.0.398)",
     "escapes.nika": "build_time: what the `\\` in a written literal means, the escape nothing names, and a value spelled back as a literal (0.0.391)",

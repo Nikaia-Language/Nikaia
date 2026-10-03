@@ -3674,6 +3674,82 @@ fn any_moves(types: &[Ty]) -> bool {
     false
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Passed {
+    pub parameter: String,
+    pub callee: String,
+    pub at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uses {
+    pub kept: collections::BTreeSet<String>,
+    pub passed: Vec<Passed>,
+}
+
+pub fn kept_by(graph: &collections::BTreeMap<String, Uses>, own: &Ledger, library: &Ledger) -> collections::BTreeMap<String, collections::BTreeSet<String>> {
+    let mut kept: collections::BTreeMap<String, collections::BTreeSet<String>> = collections::BTreeMap::new();
+    for (name, uses) in graph.iter() { kept.insert(name.to_owned(), uses.kept.to_owned()); }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, uses) in graph.iter() {
+            for passed in uses.passed.iter() {
+                if keeps_already(&kept, name, &passed.parameter) { continue; }
+                if keeps_its(&passed.callee, passed.at, &kept, own, library) {
+                    add_kept(&mut kept, name, &passed.parameter);
+                    changed = true;
+                }
+            }
+        }
+    }
+    kept
+}
+
+fn keeps_already(kept: &collections::BTreeMap<String, collections::BTreeSet<String>>, name: &str, parameter: &str) -> bool {
+    let parameters = match *nikaia_std::index::get(&kept, name) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    parameters.contains(parameter)
+}
+
+fn add_kept(kept: &mut collections::BTreeMap<String, collections::BTreeSet<String>>, name: &str, parameter: &str) {
+    let mut parameters: collections::BTreeSet<String> = collections::BTreeSet::new();
+    if kept.contains_key(name) {
+        let held = match *nikaia_std::index::get(&kept, name) { Some(__nikaia_value) => __nikaia_value, None => return };
+        for one in held.iter() { parameters.insert(one.to_owned()); }
+    }
+    parameters.insert(parameter.to_owned());
+    kept.insert(name.to_owned(), parameters);
+}
+
+fn keeps_its(callee: &str, at: i64, settling: &collections::BTreeMap<String, collections::BTreeSet<String>>, own: &Ledger, library: &Ledger) -> bool {
+    if settling.contains_key(callee) {
+        let contract = match *nikaia_std::index::get(&own.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return true };
+        let parameter = match parameter_at(contract, at) { Some(__nikaia_value) => __nikaia_value, None => return true };
+        return keeps_already(settling, callee, &parameter);
+    }
+    if own.functions.contains_key(callee) {
+        let contract = match *nikaia_std::index::get(&own.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return true };
+        return keeps_at(contract, at);
+    }
+    let contract = match *nikaia_std::index::get(&library.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return true };
+    keeps_at(contract, at)
+}
+
+fn keeps_at(contract: &FnContract, at: i64) -> bool {
+    let parameter = match parameter_at(contract, at) { Some(__nikaia_value) => __nikaia_value, None => return true };
+    contract.keeps.contains(&parameter)
+}
+
+fn parameter_at(contract: &FnContract, at: i64) -> Option<String> {
+    let signature = match contract.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let mut position: i64 = 0;
+    for (name, _) in signature.params.iter() {
+        if position == at { return Some(name.to_owned()); }
+        position += 1;
+    }
+    None
+}
+
 
 // --- locks.nika ---
 
@@ -11693,7 +11769,7 @@ pub mod ledger {
 }
 pub mod lends {
     #[allow(unused_imports)]
-    pub use super::{lends_in, a_ledger_copies, moves};
+    pub use super::{lends_in, a_ledger_copies, moves, Passed, Uses, kept_by};
 }
 pub mod locks {
     #[allow(unused_imports)]

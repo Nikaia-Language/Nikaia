@@ -192,81 +192,34 @@ pub fn infer(
         }
     }
 
-    let mut kept: BTreeMap<String, BTreeSet<String>> = graph
-        .iter()
-        .map(|(name, uses)| (name.clone(), uses.kept.clone()))
+    // **The least fixpoint is Nikaia** (`tools/lends.nika`, #125): it starts
+    // from what each body keeps on its own evidence and adds what the callees
+    // it hands a parameter to keep, until nothing changes.
+    use nikaia_std::tools::lends::{Passed, Uses as Found, kept_by};
+    let found: BTreeMap<String, Found> = graph
+        .into_iter()
+        .map(|(name, uses)| {
+            let found = Found {
+                kept: uses.kept,
+                passed: uses
+                    .passed
+                    .into_iter()
+                    .map(|(parameter, callee, at)| Passed {
+                        parameter,
+                        callee,
+                        at: at as i64,
+                    })
+                    .collect(),
+            };
+            (name, found)
+        })
         .collect();
-
-    loop {
-        let mut changed = false;
-        for (name, uses) in &graph {
-            for (parameter, callee, at) in &uses.passed {
-                if kept[name].contains(parameter) {
-                    continue;
-                }
-                if keeps_its(callee, *at, &kept, ledger, library) {
-                    kept.get_mut(name)
-                        .expect("every caller is in the map")
-                        .insert(parameter.clone());
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
+    let kept = kept_by(&found, ledger, library);
     for (name, parameters) in kept {
         if let Some(contract) = ledger.functions.get_mut(&name) {
             contract.keeps = parameters.into_iter().collect();
         }
     }
-}
-
-/// Whether `callee` keeps whatever is passed in position `at`.
-///
-/// This package's own answer comes from the fixpoint in progress; anybody
-/// else's comes from their ledger, where **an absent `keeps` on a present entry
-/// means it keeps nothing** — `std.contracts`' own convention for `sync`, said
-/// once more for a second column. An entry that is *absent* is unknown, and
-/// unknown keeps.
-fn keeps_its(
-    callee: &str,
-    at: usize,
-    settling: &BTreeMap<String, BTreeSet<String>>,
-    ledger: &Ledger,
-    library: &Ledger,
-) -> bool {
-    let named = |contract: &super::FnContract| {
-        contract
-            .signature
-            .as_ref()
-            .and_then(|s| s.params.get(at))
-            .map(|(name, _)| name.clone())
-    };
-
-    if let Some(parameters) = settling.get(callee) {
-        let Some(contract) = ledger.functions.get(callee) else {
-            return true;
-        };
-        // A position the signature does not have is a call this walk read
-        // wrongly, and reading it wrongly is not a licence to assume.
-        return match named(contract) {
-            Some(parameter) => parameters.contains(&parameter),
-            None => true,
-        };
-    }
-
-    for source in [ledger, library] {
-        if let Some(contract) = source.functions.get(callee) {
-            return match named(contract) {
-                Some(parameter) => contract.keeps.contains(&parameter),
-                None => true,
-            };
-        }
-    }
-    true
 }
 
 /// One function's parameters, and what its body does with each.
