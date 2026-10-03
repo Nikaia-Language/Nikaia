@@ -9,6 +9,12 @@
 // the claim on reaching a function without it, until nothing changes. Mutual
 // recursion between pure functions keeps the claim; the walk is over a map in
 // key order, so the answer does not depend on the order things were declared.
+//
+// **The walk is here too** (0.0.398): what each body does to its own claim -
+// the calls `tools/foreign.nika`'s walk meets, each by `callee_named`, the type
+// checker's method calls merged in (ADR-288), a trait's and a grammar's entries
+// as leaves - and the check of what a `sync` function may not call. Handing in
+// each unit, the notes a build prints and writing the ledger stay Rust.
 
 use std::collections
 
@@ -127,4 +133,333 @@ fn reaches_one_that_pauses(calls: ref collections::BTreeSet[String], holds: ref 
         }
     }
     return false
+}
+
+// ---------------------------------------------------------------------------
+// The walk (ADR-288): what each body does to its own claim, and what a `sync`
+// function may not call
+// ---------------------------------------------------------------------------
+
+/// Where a function first pauses itself (ADR-288 D32): the statement, and what
+/// in it pauses.
+pub struct Site {
+    pub span: Span,
+    pub what: String,
+}
+
+/// One node of the graph: what the fixpoint reads, where the body first
+/// pauses itself - `null` where the pause is a method call the type checker
+/// resolved, or a function of the package it calls - and the unit it is
+/// written in, by its place in the list the walk was handed.
+pub struct SyncNode {
+    pub reach: SyncReach,
+    pub site: Site?,
+    pub unit: i64,
+}
+
+/// The graph the walk builds, with the type checker's method calls by the key
+/// it files each body's answers under (ADR-288), and the unit being walked.
+pub struct SyncGraph {
+    pub methods: collections::BTreeMap[String, MethodsCalled],
+    pub nodes: collections::BTreeMap[String, SyncNode],
+    pub unit: i64,
+}
+
+/// Every function, method, trait method and `pub` grammar rule of one unit,
+/// into `graph`, by the key the ledger records it under.
+pub fn unit_sync(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, own: ref Ledger, library: ref Ledger, mut graph: SyncGraph) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, args, body, .. } => {
+                let key = key_of_function(name, "", names)
+                let mut node = sync_node(seen_in(body, names, unaliased, holes_of, no_root, false), program, code_of(args, names), names, own, library, graph.unit)
+                sync_methods(graph.methods[key], own, library, node)
+                graph.nodes.insert(key, node)
+            }
+            Item::Impl { trait_name, target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, args, body, .. } => {
+                            let key = key_of_function(name, owner, names)
+                            let mut node = sync_node(seen_in(body, names, unaliased, holes_of, no_root, false), program, code_of(args, names), names, own, library, graph.unit)
+                            sync_methods(graph.methods[key], own, library, node)
+                            declared_by(trait_name, key_of_function(name, "", names), names, own, library, node)
+                            graph.nodes.insert(key, node)
+                        }
+                        else => {}
+                    }
+                }
+            }
+            // Kap 4.7: **a trait's methods are leaves**, and each one's
+            // `blocked` is the word it was written with (ADR-288 D24): a trait
+            // method reads like a function type, so without `sync` it may
+            // pause, and a body that calls it through a bound pauses with it.
+            // Inserted either way: a callee the graph does not hold reads as
+            // one that pauses.
+            Item::Trait { name, methods, .. } => {
+                let declaring = names.resolve(name).clone()
+                for method in methods {
+                    let key = f"{declaring}::{names.resolve(method.node.name)}"
+                    graph.nodes.insert(key, leaf(!method.node.is_sync))
+                }
+            }
+            // **A grammar's `pub` rules are leaves too, and they hold**
+            // (ADR-296 D35, D36): an action may not pause, so the entry is
+            // `sync` and a caller keeps its own claim.
+            Item::Grammar(def) => {
+                let named = names.resolve(def.name).clone()
+                for rule in def.rules {
+                    if rule.is_public {
+                        graph.nodes.insert(f"{named}::{names.resolve(rule.name)}", leaf(false))
+                    }
+                }
+            }
+            else => {}
+        }
+    }
+}
+
+fn leaf(blocked: bool) -> SyncNode {
+    return SyncNode { reach: SyncReach { blocked: blocked, calls: collections::BTreeSet(), through_code: collections::BTreeSet(), pauses_here: false }, site: null, unit: 0 }
+}
+
+// **A declaration is the wider claim, and its implementations carry it**
+// (ADR-288 D2): a trait method without `sync` hands back a future, so every
+// `impl` of it does whether or not its own body pauses. An edge, so the
+// fixpoint carries it the rest of the way - and only where a ledger declares
+// the trait: an edge to a name the graph has no entry for reads as *pauses*,
+// which would make every error type's methods `async`.
+fn declared_by(trait_name: ref winnow_grammar::Symbol?, method: ref String, names: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, mut node: SyncNode) {
+    let named = trait_name ?? return
+    let declared = f"{names.resolve(named)}::{method}"
+    if own.functions.contains_key(declared) || library.functions.contains_key(declared) {
+        node.reach.calls.insert(declared)
+    }
+}
+
+// **The parameters that are code, and whether each may pause** (ADR-277 D6,
+// D11): a call to one of these names is not a name nothing describes.
+fn code_of(args: ref Vec[FnArg], names: ref winnow_grammar::InternerContext) -> collections::BTreeMap[String, bool] {
+    let mut code: collections::BTreeMap[String, bool] = collections::BTreeMap()
+    for arg in args {
+        let declared = arg.ty.code ?? continue
+        code.insert(names.resolve(arg.name).clone(), !declared.is_sync)
+    }
+    return code
+}
+
+// What one body does to its own claim: the calls the walk met, each by the
+// one resolution every analysis shares (`callee_named`, ADR-288).
+fn sync_node(seen: ref Vec[Seen], program: ref Program, code: ref collections::BTreeMap[String, bool], names: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, unit: i64) -> SyncNode {
+    let mut node = SyncNode { reach: SyncReach { blocked: false, calls: collections::BTreeSet(), through_code: collections::BTreeSet(), pauses_here: false }, site: null, unit: unit }
+    for one in seen {
+        match one {
+            // An `overlap` and a `select` join on the executor (ADR-292 D16).
+            Seen::Joins { construct, span } => {
+                node.reach.blocked = true
+                first_site(span, f"an `{construct}` block", node)
+            }
+            Seen::Call { name, span, .. } => sync_call(callee_named(names, name.clone(), own, library, program.items), span, code, node),
+            Seen::Spawn { span } => sync_call(Callee::Opaque(null), span, code, node),
+            Seen::Opaque { span } => sync_call(Callee::Opaque(null), span, code, node),
+            else => {}
+        }
+    }
+    node.reach.pauses_here = node.site != null
+    return node
+}
+
+fn sync_call(callee: ref Callee?, span: ref Span, code: ref collections::BTreeMap[String, bool], mut node: SyncNode) {
+    let known = callee ?? return
+    match known {
+        Callee::Own(name) => {
+            node.reach.calls.insert(name.clone())
+        }
+        Callee::Library { key, never_pauses } => {
+            if !never_pauses {
+                node.reach.blocked = true
+                first_site(span, f"`{key}`", node)
+            }
+        }
+        Callee::Opaque(name) => opaque_call(name, span, code, node),
+        else => {}
+    }
+}
+
+// A name no ledger knows - unless it is a code parameter, whose lambda decides
+// (ADR-288 D29): one that may pause takes the claim away as `blocked` does, kept
+// apart so that a function whose only pausing is its lambdas' can be named.
+fn opaque_call(name: ref String?, span: ref Span, code: ref collections::BTreeMap[String, bool], mut node: SyncNode) {
+    if name == null {
+        node.reach.blocked = true
+        first_site(span, "something this compiler cannot see the end of", node)
+        return
+    }
+    let called = name ?? return
+    if code.contains_key(called) {
+        if code[called] ?? false {
+            first_site(span, f"`{called}`", node)
+            node.reach.through_code.insert(called.clone())
+        }
+        return
+    }
+    node.reach.blocked = true
+    first_site(span, f"`{called}`", node)
+}
+
+fn first_site(span: ref Span, what: ref String, mut node: SyncNode) {
+    if node.site == null {
+        node.site = Site { span: span.clone(), what: what.clone() }
+    }
+}
+
+// The method calls the type checker resolved (ADR-288), merged rather than
+// reconciled: one whose receiver is not known is enough, and a library
+// method that can pause - or one no ledger carries after all - blocks.
+fn sync_methods(resolved: ref MethodsCalled?, own: ref Ledger, library: ref Ledger, mut node: SyncNode) {
+    let known = resolved ?? return
+    if known.unseen {
+        node.reach.blocked = true
+    }
+    for callee in known.resolved {
+        if own.functions.contains_key(callee) {
+            node.reach.calls.insert(callee.clone())
+        } else if !never_pauses_in(library, callee) {
+            node.reach.blocked = true
+        }
+    }
+}
+
+fn never_pauses_in(library: ref Ledger, callee: ref String) -> bool {
+    let contract = library.functions[callee] ?? return false
+    return contract.sync_claim.is_sync()
+}
+
+/// One call that a `sync` function may not make: the statement it is in, the
+/// function and what it promised (`sync`, or `sync(f)`, ADR-288 D31), the
+/// callee as the ledger names it, whether a library's ledger answered, whether
+/// the callee never pauses and does not promise it (D28), and whether it is a
+/// construct rather than a function (ADR-292 D16).
+pub struct Violation {
+    pub span: Span,
+    pub caller: String,
+    pub promise: String,
+    pub callee: String,
+    pub from_library: bool,
+    pub unpromised: bool,
+    pub construct: bool,
+}
+
+// What a `sync` function promised, and the code parameters whose calls the
+// promise allows: one whose type says `sync` (Part I 5.4 C) and one `sync(f)`
+// names (ADR-288 D31) are the caller's to answer for.
+struct Promise {
+    caller: String,
+    promise: String,
+    allowed: collections::BTreeSet[String],
+}
+
+/// Every call a `sync` function of one unit makes that the ledgers say can
+/// pause, in the order the walk meets them.
+pub fn unit_violations(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, own: ref Ledger, library: ref Ledger) -> Vec[Violation] {
+    let mut found: Vec[Violation] = []
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, args, body, is_sync, sync_by, .. } => {
+                let promise = promise_of(key_of_function(name, "", names), args, is_sync, sync_by, names) ?? continue
+                violations_in(seen_in(body, names, unaliased, holes_of, no_root, false), promise, program, names, own, library, found)
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, args, body, is_sync, sync_by, .. } => {
+                            let promise = promise_of(key_of_function(name, owner, names), args, is_sync, sync_by, names) ?? continue
+                            violations_in(seen_in(body, names, unaliased, holes_of, no_root, false), promise, program, names, own, library, found)
+                        }
+                        else => {}
+                    }
+                }
+            }
+            else => {}
+        }
+    }
+    return found
+}
+
+fn promise_of(caller: ref String, args: ref Vec[FnArg], is_sync: bool, sync_by: ref Vec[winnow_grammar::Symbol], names: ref winnow_grammar::InternerContext) -> Promise? {
+    if !is_sync && sync_by.len() == 0 {
+        return null
+    }
+    let mut allowed: collections::BTreeSet[String] = collections::BTreeSet()
+    for arg in args {
+        let declared = arg.ty.code ?? continue
+        if declared.is_sync {
+            allowed.insert(names.resolve(arg.name).clone())
+        }
+    }
+    let mut named: Vec[String] = []
+    for one in sync_by {
+        let parameter = names.resolve(one).clone()
+        allowed.insert(parameter.clone())
+        named.push(parameter)
+    }
+    let mut promise: String = "sync"
+    if named.len() > 0 {
+        let joined = named.join(", ")
+        promise = f"sync({joined})"
+    }
+    return Promise { caller: caller.clone(), promise: promise, allowed: allowed }
+}
+
+fn violations_in(seen: ref Vec[Seen], promise: ref Promise, program: ref Program, names: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, mut found: Vec[Violation]) {
+    for one in seen {
+        match one {
+            Seen::Joins { construct, span } => found.push(violation(promise, span, construct, false, false, true)),
+            Seen::Call { name, span, .. } => {
+                // A code parameter the promise names is the caller's to keep.
+                if !name.contains("::") && promise.allowed.contains(name) {
+                    continue
+                }
+                pausing_call(callee_named(names, name.clone(), own, library, program.items), span, promise, own, found)
+            }
+            Seen::Spawn { span } => pausing_call(Callee::Opaque(null), span, promise, own, found),
+            Seen::Opaque { span } => pausing_call(Callee::Opaque(null), span, promise, own, found),
+            else => {}
+        }
+    }
+}
+
+fn pausing_call(callee: ref Callee?, span: ref Span, promise: ref Promise, own: ref Ledger, mut found: Vec[Violation]) {
+    let known = callee ?? return
+    match known {
+        Callee::Own(name) => {
+            let contract = own.functions[name] ?? return
+            if !contract.sync_claim.is_sync() {
+                found.push(violation(promise, span, name, false, unpromised(contract.sync_claim), false))
+            }
+        }
+        Callee::Library { key, never_pauses } => {
+            if !never_pauses {
+                found.push(violation(promise, span, key, true, false, false))
+            }
+        }
+        Callee::Opaque(name) => {
+            let called = name?.clone() ?? "something this compiler cannot resolve"
+            found.push(violation(promise, span, called, false, false, false))
+        }
+        else => {}
+    }
+}
+
+fn unpromised(claim: ref Sync) -> bool {
+    return match claim {
+        Sync::Unpromised => true,
+        else => false,
+    }
+}
+
+fn violation(promise: ref Promise, span: ref Span, callee: ref String, from_library: bool, unpromised: bool, construct: bool) -> Violation {
+    return Violation { span: span.clone(), caller: promise.caller.clone(), promise: promise.promise.clone(), callee: callee.clone(), from_library: from_library, unpromised: unpromised, construct: construct }
 }

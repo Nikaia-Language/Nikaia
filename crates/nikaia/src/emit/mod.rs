@@ -12676,6 +12676,14 @@ impl<'p> Emitter<'p> {
                 (Some(_), true) => Some(""),
                 (other, _) => other,
             };
+            // **A plain value put into the option is lent inside it**:
+            // `Some(&value)`, which reaches an `Option<&str>` from a `String`
+            // by the coercion the constructor's argument gets
+            // (`check::Checked::nullable_args`).
+            let inside_the_option = match before {
+                "Some(" => None,
+                _ => inside_the_option,
+            };
             let lend = lend && inside_the_option.is_none();
             if matches!(arg, Expr::LitNull) && inside_the_option.is_some() {
                 out.push("None");
