@@ -1,0 +1,25 @@
+# The hand-written ceiling for `examples/1brc.nika`: the same aggregation with
+# no parser framework under it.
+#
+# Two dependencies, and both are here because the *tuned* half would not be a
+# ceiling without them. A 1BRC entry maps the file and scans it with a vector
+# instruction; a tuned half that read the file into a `String` and called
+# `str::lines` would be measuring something nobody writes, and the comparison
+# would flatter the compiler. `std` reaches for the same two (`fs::map` is
+# `memmap2`, and `until(…)` is `memchr` underneath), so neither is a crate the
+# emitter does not already stand on.
+[package]
+name = "brc-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The mapping, as `std::fs::map` makes it - except that this half never
+# validates UTF-8, which is the one thing it is allowed to skip and `fs::map`
+# is not (ADR-016 D1).
+memmap2 = "0.9"
+# One searcher for the whole file. Building an AVX2 finder per line costs more
+# than scanning the thirteen bytes a line holds, which is how the first attempt
+# at the tuned half came out *slower* than the naive one.
+memchr = "2.7"

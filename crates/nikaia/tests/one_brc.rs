@@ -77,6 +77,30 @@ fn the_1brc_example_compiles_and_prints_what_the_benchmark_asks_for() {
         "{Bulawayo=8.9/15.5/22.1, Hamburg=-3.4/2.9/12.0, Palembang=38.8/38.8/38.8}"
     );
 
+    // 3b. The format is one measurement per line and nothing between them
+    // (`FILE` is lexical): a blank around a name is part of the name, and a
+    // blank line is not a measurement.
+    std::fs::write(&measurements, " Hamburg;1.0\nHamburg ;2.0\nHamburg;3.0\n")
+        .expect("write the input");
+    let blanks = Command::new(&binary)
+        .arg(&measurements)
+        .output()
+        .expect("run the compiled example");
+    assert_eq!(
+        String::from_utf8_lossy(&blanks.stdout).trim(),
+        "{ Hamburg=1.0/1.0/1.0, Hamburg=3.0/3.0/3.0, Hamburg =2.0/2.0/2.0}"
+    );
+    std::fs::write(&measurements, "Hamburg;1.0\n\nBulawayo;2.0\n").expect("write the input");
+    let blank_line = Command::new(&binary)
+        .arg(&measurements)
+        .output()
+        .expect("run the compiled example");
+    assert!(
+        !blank_line.status.success(),
+        "a blank line was taken for a measurement: {}",
+        String::from_utf8_lossy(&blank_line.stdout)
+    );
+
     // 4. And it says so when the file is not there, rather than panicking.
     let missing = Command::new(&binary)
         .arg(dir.join("not-a-file.txt"))

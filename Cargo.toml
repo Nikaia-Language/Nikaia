@@ -12,6 +12,7 @@ members = [
     "benches/handler",
     "benches/sendfile",
     "benches/envelope",
+    "benches/brc",
 ]
 # One crate per `unsafe` topic, each its own workspace with its own checks
 # (ADR-218). The crates here reach them as path dependencies.
@@ -28,7 +29,7 @@ nikaia-logic = { path = "crates/nikaia-logic" }
 # whatever is in the deps directory, and it has to be the same one. Pinned to a
 # commit rather than following `main`, so that a build is the build that was
 # measured and a parser change arrives as a reviewed bump.
-winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", rev = "27d2d3c8d1b7ea19a4b2587b70ee952cdd90d89c", version = "0.1.0", features = ["rayon"] }
+winnow-grammar = { git = "https://github.com/keywan-ghadami/winnow-grammar", rev = "28cf576f1ff2e20715ce0c4434543c19c85fb545", version = "0.1.0", features = ["rayon"] }
 winnow = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
