@@ -11297,16 +11297,16 @@ impl<'p> Emitter<'p> {
 
         // **The holes the grammar parsed** (ADR-309 D6), each by its place.
         for (hole, expr) in interpolated_holes(parts) {
-            let mut expr = expr.clone();
             // What the tier pass hands over inside it (ADR-229 D1), as every
-            // other reader of a hole sees it (`literal_expressions`).
-            if let Some(wraps) = self.parsed.hole_wraps.get(&hole) {
-                crate::text_tiers::wrap_hole(&mut expr, wraps);
-            }
+            // other reader of a hole sees it - and the node itself where it
+            // hands nothing, which is the one the checker read
+            // ([`hole_as_read`]).
+            let expr = hole_as_read(self.parsed, hole, expr);
+            let expr: &Expr = &expr;
             out.push(", ");
-            let hole = (flow.statement, crate::check::argument_shape(&expr));
+            let hole = (flow.statement, crate::check::argument_shape(expr));
             let outer = self.hole.replace(Some(hole));
-            let written = self.expr(out, &expr, depth, flow);
+            let written = self.expr(out, expr, depth, flow);
             self.hole.replace(outer);
             written?;
         }
@@ -13800,6 +13800,25 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
             .into_iter()
             .map(|hole| (hole, Vec::new()))
             .collect(),
+    }
+}
+
+/// **One hole of an `f"…"` as its readers read it**: the node in the tree,
+/// or a copy with what the tier pass hands over inside it (ADR-229 D1). The
+/// node itself wherever nothing is wrapped, so that what the checker records
+/// against a node's address is found by the emitter at the same address.
+pub(crate) fn hole_as_read<'a>(
+    parsed: &Parsed,
+    at: u32,
+    hole: &'a Expr,
+) -> std::borrow::Cow<'a, Expr> {
+    match parsed.hole_wraps.get(&at) {
+        Some(wraps) => {
+            let mut wrapped = hole.clone();
+            crate::text_tiers::wrap_hole(&mut wrapped, wraps);
+            std::borrow::Cow::Owned(wrapped)
+        }
+        None => std::borrow::Cow::Borrowed(hole),
     }
 }
 

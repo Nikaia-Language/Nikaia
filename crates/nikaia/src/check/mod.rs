@@ -13340,8 +13340,25 @@ impl<'a> Checker<'a> {
                 .collect(),
             _ => Vec::new(),
         };
-        let walked = crate::emit::literal_expressions_bound(self.parsed, literal);
+        // **An f-string's hole is read where it stands in the tree**, unless
+        // the tier pass wraps something inside it: what is recorded against a
+        // node - an unsigned literal's suffix, an index into a list - is keyed
+        // by its address ([`value_node`]), and a copy made here and another
+        // made by the emitter met only where the allocator happened to hand
+        // back the same address (found moving `sharing`'s walk into Nikaia,
+        // #125: `double(3000000000)` in a hole lost its `u32`).
+        let walked: Vec<(std::borrow::Cow<'_, Expr>, Vec<String>)> = match literal {
+            Expr::LitInterpolated { parts } => crate::emit::interpolated_holes(parts)
+                .into_iter()
+                .map(|(at, hole)| (crate::emit::hole_as_read(self.parsed, at, hole), Vec::new()))
+                .collect(),
+            _ => crate::emit::literal_expressions_bound(self.parsed, literal)
+                .into_iter()
+                .map(|(hole, bound)| (std::borrow::Cow::Owned(hole), bound))
+                .collect(),
+        };
         for (index, (hole, bound)) in walked.into_iter().enumerate() {
+            let hole: &Expr = &hole;
             let frame: Vec<Local> = bound
                 .into_iter()
                 // What the element's type is, is a question about the
@@ -13353,20 +13370,20 @@ impl<'a> Checker<'a> {
             // An f-string's holes, which the emitter walks the same way.
             let outer = match literal {
                 Expr::LitInterpolated { .. } => {
-                    self.hole.replace((span.at(), argument_shape(&hole)))
+                    self.hole.replace((span.at(), argument_shape(hole)))
                 }
                 _ => self.hole.clone(),
             };
-            let held = self.expr(&hole, span);
+            let held = self.expr(hole, span);
             // **A hole is formatted by reference** (ADR-279 D5): a `??` that
             // is the hole lends its left side, as a print call's argument does.
             if matches!(literal, Expr::LitInterpolated { .. }) {
-                self.a_pending_coalesce_is_lent(&hole, span);
+                self.a_pending_coalesce_is_lent(hole, span);
             }
             self.hole = outer;
             self.scope.pop();
             if let Some(spec) = specs.get(index) {
-                self.a_collection_in_a_hole(&hole, &held, spec.as_deref(), span);
+                self.a_collection_in_a_hole(hole, &held, spec.as_deref(), span);
             }
         }
     }

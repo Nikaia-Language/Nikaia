@@ -481,20 +481,37 @@ fn takes_its_receiver(contract: ref FnContract) -> bool {
 
 // An argument kept where any entry the bare method name could reach keeps
 // its position - one further along than its own, the receiver being the
-// callee's first parameter.
+// callee's first parameter. **A candidate of this package is asked through
+// the fixpoint**, as a free call is: its `keeps` column is what the fixpoint
+// is still filling, and read now it said *keeps nothing* for every method of
+// the package - `walk.slots.force(…, fallback)` lent a `fallback` that
+// `Slots::force` stores (found moving `sharing`'s walk into Nikaia, #125).
+// A library's candidates answer from their ledger, and no candidate at all
+// keeps (D2).
 fn keep_method_arguments(args: ref Vec[Expr], method: ref String, interner: ref winnow_grammar::InternerContext, context: ref KeepsBody, own: ref Ledger, library: ref Ledger, mut uses: Uses) {
+    let ours = candidate_keys(own, method)
     for k in 0..<args.len() {
         let name = part_of_a_parameter(args[k], interner, context) ?? continue
-        if any_candidate_keeps(own, library, method, k + 1) {
+        for key in ours {
+            uses.passed.push(Passed { parameter: name.clone(), callee: key.clone(), at: k + 1 })
+        }
+        let theirs = keeps_at_in(library, method, k + 1)
+        if theirs.hit || (ours.len() == 0 && !theirs.any) {
             uses.kept.insert(name)
         }
     }
 }
 
-fn any_candidate_keeps(own: ref Ledger, library: ref Ledger, method: ref String, at: i64) -> bool {
-    let ours = keeps_at_in(own, method, at)
-    let theirs = keeps_at_in(library, method, at)
-    return ours.hit || theirs.hit || (!ours.any && !theirs.any)
+// The keys of a ledger's candidates for a bare method name.
+fn candidate_keys(ledger: ref Ledger, method: ref String) -> Vec[String] {
+    let suffix = f"::{method}"
+    let mut keys: Vec[String] = []
+    for (key, contract) in ledger.functions {
+        if key.ends_with(ref suffix) && takes_self(contract) {
+            keys.push(key.clone())
+        }
+    }
+    return keys
 }
 
 // What the candidates of one ledger answer: whether there are any, and

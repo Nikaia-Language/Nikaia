@@ -542,3 +542,29 @@ fn a_parameter_written_mut_is_not_kept_for_being_changed() {
         keeps(source, "take")
     );
 }
+
+/// **A method of the program that keeps an argument keeps it for its caller
+/// too.** Its `keeps` column is what the fixpoint is still filling, so asked
+/// directly it said *keeps nothing* - and a parameter handed to it was lent,
+/// the declaration `&Option<Fallback>` handed where the method stores an
+/// `Option<Fallback>` (found moving `sharing`'s walk into Nikaia, #125).
+#[test]
+fn a_parameter_handed_to_a_method_of_the_program_that_keeps_it_is_kept() {
+    let source = "\
+struct Log { lines: Vec[String] }
+impl Log {
+    fn add(ref mut self, line: String) {
+        self.lines.push(line)
+    }
+}
+fn note(mut log: Log, line: String) {
+    log.add(line)
+}
+fn main() {
+    let mut log = Log { lines: [] }
+    note(log, \"a\")
+}
+";
+    assert_eq!(keeps(source, "Log::add"), vec!["line".to_string()]);
+    assert_eq!(keeps(source, "note"), vec!["line".to_string()]);
+}
