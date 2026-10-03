@@ -386,6 +386,30 @@ actions, which the walk does not enter, and `+=` in `Stats::add`, which keeps
 its check (ADR-306 D5). All its overflow checks together cost 1.4 %
 (481.4 M against 474.6 M with `-C overflow-checks=off`).
 
+### 8.4 What blocks an overflow proof in the corpus (0.0.393)
+
+For [ADR-314](specification/adr/adr-314.md). Every `+`, `-` and `*` of one
+whole-number type (`Checked::arithmetic`) in the 46 files that lower alone,
+lowered at `remove-overflow-checks:aggressive` with a temporary print at each
+site the walk tried: 129 sites, 23 proved. The other 106 were read one by one
+and sorted by the fact the proof lacked; the counts are by hand, so
+approximate:
+
+| what the proof lacks | sites |
+| :--- | ---: |
+| a bound on values in a list of lists (`d[i - 1][j] + 1`) | ~28 |
+| an upper bound on a length (`x.len() + 1`) | ~25 |
+| a field of `self` (`self.at + 1`) | ~12 |
+| a product or quotient of two unknowns (`i * i`) | ~12 |
+| recursion, an unbounded parameter (`indent + 1`) | ~6 |
+| a callee's result, a `char`'s range (`c as i32 - 48`) | few |
+
+Grammar actions are not in the 129: the walk does not enter them. 1BRC's
+`TENTHS` has three such sites; removing their checks by hand from the lowered
+Rust, callgrind over a million rows of `benches/brc`'s generator: 481.3 M
+instructions to 476.5 M, **4.8 a row (1.0 %)**. `examples/calc`'s actions
+compute on numbers read from the input and can overflow; no proof applies.
+
 ## 9. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the
