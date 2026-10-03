@@ -3,11 +3,12 @@
 // Kap 7.1: **which errors can leave a function** - the lattice of the
 // compiler's `contracts::throws`, moved from Rust (ADR-294, #125).
 //
-// **What moved is the fixpoint and what a `throw` names.** What stays Rust is
-// the walk that finds, per function, what it throws itself and whom it calls:
-// it is `sync`'s walk (ADR-288's single resolution), and it moves with it. The
-// compiler hands this module the two maps the walk builds and the ledger, and
-// writes back what it answers.
+// **The walk, the graph and the fixpoint.** Per `throws` function, what it
+// throws itself and whom in this package it calls: the body's walk is here,
+// what one expression reaches is `sync`'s single resolution (ADR-288), handed
+// in as `contribution_of`, and the method calls are the type checker's,
+// handed in as `MethodsCalled`. The compiler hands in each unit and writes
+// back what this answers.
 //
 // An error set is a **least** fixpoint, `sync`'s walk with the lattice turned
 // around: everyone starts with what they throw themselves and grows by what
@@ -15,6 +16,95 @@
 // the sets only grow, and there are finitely many names to grow by.
 
 use std::collections
+
+/// The name for an error nobody can name (ADR-280): what a call that cannot
+/// be seen contributes, because "I cannot see it" may never be read as "it
+/// does not fail" (ADR-010 D1).
+comptime UNNAMED: ref String = "?"
+
+/// The method calls of one body as the type checker resolved them
+/// (ADR-288): the entries reached, and whether something could not be seen
+/// - a call that did not resolve, or code handed in that may fail.
+pub struct MethodsCalled {
+    pub resolved: collections::BTreeSet[String],
+    pub unseen: bool,
+}
+
+/// The graph the walk builds - what each `throws` function throws itself and
+/// whom in this package it calls - with the type checker's method calls by
+/// the key it files each body's answers under: one record, because every
+/// function of a unit reads the one and writes the others.
+pub struct ThrowsGraph {
+    pub methods: collections::BTreeMap[String, MethodsCalled],
+    pub direct: collections::BTreeMap[String, collections::BTreeSet[String]],
+    pub calls: collections::BTreeMap[String, collections::BTreeSet[String]],
+}
+
+/// Every `throws` function and method of one unit, by the key the ledger
+/// records it under, into `graph`, which `error_sets` takes.
+pub fn unit_throws(program: ref Program, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, own: ref Ledger, library: ref Ledger, mut graph: ThrowsGraph) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, body, can_throw, .. } => {
+                if can_throw {
+                    let thrown = thrown_by(body, names, holes_of, contribution_of)
+                    with_methods(key_of_function(name, "", names), thrown, own, library, graph)
+                }
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, body, can_throw, .. } => {
+                            if can_throw {
+                                let thrown = thrown_by(body, names, holes_of, contribution_of)
+                                with_methods(key_of_function(name, owner, names), thrown, own, library, graph)
+                            }
+                        }
+                        else => {}
+                    }
+                }
+            }
+            else => {}
+        }
+    }
+}
+
+// What the walk left to somebody else: the body's method calls, merged rather
+// than reconciled - the walk skips method calls entirely and this covers those
+// and nothing else. A resolved callee of this package is a call; one of a
+// library brings what its ledger says it fails with; one no ledger carries
+// after all is `?`, as an unresolved one is.
+fn with_methods(key: ref String, thrown: ref Thrown, own: ref Ledger, library: ref Ledger, mut graph: ThrowsGraph) {
+    let mut named = thrown.direct.clone()
+    let mut called = thrown.calls.clone()
+    methods_into(graph.methods[key], own, library, named, called)
+    graph.direct.insert(key.clone(), named)
+    graph.calls.insert(key.clone(), called)
+}
+
+fn methods_into(resolved: ref MethodsCalled?, own: ref Ledger, library: ref Ledger, mut named: collections::BTreeSet[String], mut called: collections::BTreeSet[String]) {
+    let known = resolved ?? return
+    if known.unseen {
+        named.insert(UNNAMED.clone())
+    }
+    for callee in known.resolved {
+        if own.functions.contains_key(callee) {
+            called.insert(callee.clone())
+        } else {
+            for error in fails_with_of(library, callee) {
+                named.insert(error)
+            }
+        }
+    }
+}
+
+// What a library's ledger says a callee fails with, and `?` for one it does
+// not carry.
+fn fails_with_of(library: ref Ledger, callee: ref String) -> Vec[String] {
+    let contract = library.functions[callee] ?? return ["?"]
+    return contract.fails_with.clone()
+}
 
 /// What every `throws` function of the ledger fails with, by name: `direct`
 /// is what each throws itself (`"?"` where it cannot be named) and `calls`

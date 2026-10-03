@@ -6,9 +6,12 @@
 // order, and the fixpoint that gives every function the `touches` its body
 // earns.
 //
-// What stays Rust is reading a `touches` entry back, the list of kinds this
-// compiler knows, and the walk that finds what each body reaches and whom it
-// calls: it is `sync`'s walk (ADR-288), and it moves with it.
+// The walk that finds what each body reaches and whom it calls is here too
+// (ADR-288 D22): the calls are `tools/foreign.nika`'s walk, what each goes to
+// is `callee_named`, and a method call is the type checker's answer, handed
+// in. What stays Rust is reading a `touches` entry back, the list of kinds
+// this compiler knows, handing in each unit, and the order a set is written
+// in.
 
 use std::collections
 
@@ -124,4 +127,181 @@ pub fn touches_of(unknown: ref collections::BTreeMap[String, bool], outside: ref
         settled.insert(name.clone(), found)
     }
     return settled
+}
+
+/// What one body reaches, before the fixpoint joins it up (ADR-288 D22):
+/// whether something it calls is not accounted for - a name no ledger knows,
+/// a construct that runs something, a described callee whose own touch set is
+/// *"nobody said"* - what it reaches through callees a library describes, and
+/// the functions in this package it calls, whose claims its own rests on.
+pub struct Reach {
+    pub unknown: bool,
+    pub outside: Vec[Touch],
+    pub calls: collections::BTreeSet[String],
+}
+
+/// The graph the walk builds, with the type checker's method calls by the
+/// key it files each body's answers under (ADR-288) - one record, because
+/// every function of a unit reads the one and writes the other.
+pub struct TouchGraph {
+    pub methods: collections::BTreeMap[String, MethodsCalled],
+    pub reaches: collections::BTreeMap[String, Reach],
+}
+
+/// Every function, method and `pub` grammar rule of one unit, into `graph`.
+/// What a call by name goes to is `callee_named`, the one resolution every
+/// analysis shares (ADR-288); a method call is the type checker's answer.
+pub fn unit_touches(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, own: ref Ledger, library: ref Ledger, mut graph: TouchGraph) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, body, .. } => {
+                let key = key_of_function(name, "", names)
+                let mut reach = Reach { unknown: false, outside: [], calls: collections::BTreeSet() }
+                reached_by(seen_in(body, names, unaliased, holes_of, no_root, false), program, names, own, library, reach)
+                methods_reach(graph.methods[key], own, library, reach)
+                graph.reaches.insert(key, reach)
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, body, .. } => {
+                            let key = key_of_function(name, owner, names)
+                            let mut reach = Reach { unknown: false, outside: [], calls: collections::BTreeSet() }
+                            reached_by(seen_in(body, names, unaliased, holes_of, no_root, false), program, names, own, library, reach)
+                            methods_reach(graph.methods[key], own, library, reach)
+                            graph.reaches.insert(key, reach)
+                        }
+                        else => {}
+                    }
+                }
+            }
+            // **A `pub` rule is an entry, so it gets the walk too** (ADR-296
+            // D24). Its body is every action block in the grammar: which
+            // rules' actions run with it is the parser backend's question, so
+            // the grammar is the unit - the over-approximation ADR-292 D4
+            // asks for in this column.
+            Item::Grammar(def) => {
+                let mut whole = Reach { unknown: false, outside: [], calls: collections::BTreeSet() }
+                for rule in def.rules {
+                    for alt in rule.alts {
+                        let action = alt.action ?? continue
+                        reached_by(seen_in(action, names, unaliased, holes_of, no_root, false), program, names, own, library, whole)
+                    }
+                }
+                rules_into(def, names, whole, own, library, graph)
+            }
+            else => {}
+        }
+    }
+}
+
+/// The fixpoint over a graph the walk built (`touches_of`).
+pub fn touches_of_graph(graph: ref TouchGraph) -> collections::BTreeMap[String, Vec[Touch]] {
+    let mut unknown: collections::BTreeMap[String, bool] = collections::BTreeMap()
+    let mut outside: collections::BTreeMap[String, Vec[Touch]] = collections::BTreeMap()
+    let mut calls: collections::BTreeMap[String, collections::BTreeSet[String]] = collections::BTreeMap()
+    for (name, reach) in graph.reaches {
+        unknown.insert(name.clone(), reach.unknown)
+        outside.insert(name.clone(), reach.outside.clone())
+        calls.insert(name.clone(), reach.calls.clone())
+    }
+    return touches_of(unknown, outside, calls)
+}
+
+// Each `pub` rule of a grammar reaches what the whole grammar does, and the
+// method calls the type checker resolved under the rule's own key.
+fn rules_into(def: ref GrammarDef, names: ref winnow_grammar::InternerContext, whole: ref Reach, own: ref Ledger, library: ref Ledger, mut graph: TouchGraph) {
+    let named = names.resolve(def.name).clone()
+    for rule in def.rules {
+        if !rule.is_public {
+            continue
+        }
+        let key = f"{named}::{names.resolve(rule.name)}"
+        let mut reach = Reach { unknown: whole.unknown, outside: whole.outside.clone(), calls: whole.calls.clone() }
+        methods_reach(graph.methods[key], own, library, reach)
+        graph.reaches.insert(key, reach)
+    }
+}
+
+// What the calls the walk met reach: a function of this package is a call, a
+// library's brings its touch set, and a `spawn`, a `dsl` statement and a call
+// of something that is not a name are calls nobody can name.
+fn reached_by(seen: ref Vec[Seen], program: ref Program, names: ref winnow_grammar::InternerContext, own: ref Ledger, library: ref Ledger, mut reach: Reach) {
+    for one in seen {
+        match one {
+            Seen::Call { name, .. } => reached_call(callee_named(names, name.clone(), own, library, program.items), library, reach),
+            Seen::Spawn { .. } => {
+                reach.unknown = true
+            }
+            Seen::Opaque { .. } => {
+                reach.unknown = true
+            }
+            else => {}
+        }
+    }
+}
+
+fn reached_call(callee: ref Callee?, library: ref Ledger, mut reach: Reach) {
+    let known = callee ?? return
+    match known {
+        Callee::Own(name) => {
+            reach.calls.insert(name.clone())
+        }
+        Callee::Library { key, .. } => absorb(library.functions[key], reach),
+        Callee::Opaque(_) => {
+            reach.unknown = true
+        }
+        else => {}
+    }
+}
+
+// The method calls the type checker resolved, which this walk cannot
+// (ADR-288): one of this package is a call, any other brings its touch set.
+fn methods_reach(resolved: ref MethodsCalled?, own: ref Ledger, library: ref Ledger, mut reach: Reach) {
+    let known = resolved ?? return
+    if known.unseen {
+        reach.unknown = true
+    }
+    for callee in known.resolved {
+        if own.functions.contains_key(callee) {
+            reach.calls.insert(callee.clone())
+        } else {
+            absorb(library.functions[callee], reach)
+        }
+    }
+}
+
+// Take a described callee's touch set into a caller's, or give up. A resource
+// named by a **parameter** is named in the callee's words: until a caller's
+// argument can be mapped onto it, inheriting the name would be claiming
+// something about the wrong resource.
+fn absorb(contract: ref FnContract?, mut reach: Reach) {
+    if !touches_said(contract) {
+        reach.unknown = true
+        return
+    }
+    let known = contract ?? return
+    for touch in known.touches {
+        if touch.parameter != null {
+            reach.unknown = true
+        } else if !holds_touch(reach.outside, touch) {
+            reach.outside.push(touch.clone())
+        }
+    }
+}
+
+fn touches_said(contract: ref FnContract?) -> bool {
+    let known = contract ?? return false
+    return known.touches_known
+}
+
+// A touch named by no parameter is its kind and whether it writes.
+fn holds_touch(touches: ref Vec[Touch], touch: ref Touch) -> bool {
+    for one in touches {
+        if one.kind == touch.kind && one.write == touch.write {
+            return true
+        }
+    }
+    return false
 }

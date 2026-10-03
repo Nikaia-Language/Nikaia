@@ -5927,13 +5927,19 @@ impl<'p> Emitter<'p> {
                     else_branch,
                 }) = &only.node
             {
+                // **The `if` is a statement of the `else` block**, and the
+                // checker recorded what it decided about the condition under
+                // that statement: a lent argument written under the outer
+                // one's was a `&` missing - `else if !has(r.items, x)` handed
+                // a `Vec` where a slice was declared (found moving `touch`'s
+                // walk into Nikaia, #125).
                 return self.if_expr(
                     out,
                     cond,
                     then_branch,
                     else_branch.as_ref(),
                     depth,
-                    flow,
+                    flow.at(only.span.at()),
                     tail,
                 );
             }
