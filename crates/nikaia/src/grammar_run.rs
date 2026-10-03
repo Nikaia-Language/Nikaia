@@ -332,8 +332,7 @@ fn __nikaia_text(out: &mut String, s: &str) {
 /// the program's declarations into the shapes it walks.
 fn dumper(parsed: &Parsed, result: &Ty) -> Result<String, Wall> {
     let mut out = String::new();
-    let escaped = |name: &str| crate::emit::escaped(name).into_owned();
-    match nikaia_std::tools::dump::dump(&shapes(parsed), result, "value", 1, &escaped, &mut out) {
+    match nikaia_std::tools::dump::dump(&shapes(parsed), result, "value", 1, &mut out) {
         None => Ok(out),
         Some(refused) => Err(Wall::NoCrossedForm {
             ty: refused.ty,
@@ -342,8 +341,9 @@ fn dumper(parsed: &Parsed, result: &Ty) -> Result<String, Wall> {
     }
 }
 
-/// The `enum`s and `struct`s this program declares, each by its name; the
-/// first declaration of a name is the one read.
+/// The `enum`s and `struct`s this program declares, each by its name, with
+/// each field's name as Rust reads it; the first declaration of a name is the
+/// one read.
 fn shapes(parsed: &Parsed) -> Shapes {
     let mut shapes = Shapes {
         enums: Default::default(),
@@ -381,9 +381,13 @@ fn shapes(parsed: &Parsed) -> Shapes {
             Item::Struct { name, fields, .. } => {
                 let fields = fields
                     .iter()
-                    .map(|field| FieldShape {
-                        name: parsed.text(field.name).to_string(),
-                        ty: Ty::from_ast(parsed, &field.ty),
+                    .map(|field| {
+                        let name = parsed.text(field.name);
+                        FieldShape {
+                            name: name.to_string(),
+                            spelled: crate::emit::escaped(name).into_owned(),
+                            ty: Ty::from_ast(parsed, &field.ty),
+                        }
                     })
                     .collect();
                 shapes

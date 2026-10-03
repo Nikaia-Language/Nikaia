@@ -1255,6 +1255,7 @@ pub struct VariantShape {
 #[derive(Debug, Clone)]
 pub struct FieldShape {
     pub name: String,
+    pub spelled: String,
     pub ty: Ty,
 }
 
@@ -1272,12 +1273,15 @@ pub struct Uncrossable {
 
 const DEEPEST: i64 = 16;
 
-pub fn dump(shapes: &Shapes, ty: &Ty, expr: &str, depth: i64, escaped: &impl Fn(&str) -> String, out: &mut String) -> Option<Uncrossable> {
+pub fn dump(shapes: &Shapes, ty: &Ty, expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
     if depth > DEEPEST { return uncrossable(ty, "it contains itself, with no end to how deep it goes"); }
     match ty {
-        Ty::Named { name, args, view } => { let view = *view; dump_named(shapes, ty, name, args, view, expr, depth, escaped, out) },
+        Ty::Named { name, args, view } => { let view = *view; match view && name == "str" {
+            true => text_view(expr, depth, out),
+            false => dump_named(shapes, ty, name, args, expr, depth, out),
+        } },
         Ty::Pointed { item, slice, mutable } => { let item = nikaia_std::boxed::open(item); let mutable = *mutable; let slice = *slice; match slice && !mutable {
-            true => dump_run(shapes, item, expr, depth, escaped, out),
+            true => dump_run(shapes, item, expr, depth, out),
             false => uncrossable(ty, NO_FORM),
         } },
         _ => uncrossable(ty, NO_FORM),
@@ -1286,12 +1290,14 @@ pub fn dump(shapes: &Shapes, ty: &Ty, expr: &str, depth: i64, escaped: &impl Fn(
 
 const NO_FORM: &str = "a `const` holds an integer, a `bool`, text, a list of those and a `struct` whose fields are those";
 
-fn dump_named(shapes: &Shapes, ty: &Ty, name: &str, args: &[Ty], view: bool, expr: &str, depth: i64, escaped: &impl Fn(&str) -> String, out: &mut String) -> Option<Uncrossable> {
+fn text_view(expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
     let pad = "    ".repeat(nikaia_std::count::of(depth));
-    if name == "str" && view {
-        out.push_str(&format!("{}__nikaia_text(&mut out, {});\n", pad, expr));
-        return None;
-    }
+    out.push_str(&format!("{}__nikaia_text(&mut out, {});\n", pad, expr));
+    None
+}
+
+fn dump_named(shapes: &Shapes, ty: &Ty, name: &str, args: &[Ty], expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
+    let pad = "    ".repeat(nikaia_std::count::of(depth));
     if name == "String" {
         out.push_str(&format!("{}__nikaia_text(&mut out, &{});\n", pad, expr));
         return None;
@@ -1304,29 +1310,29 @@ fn dump_named(shapes: &Shapes, ty: &Ty, name: &str, args: &[Ty], view: bool, exp
         out.push_str(&format!("{}out.push_str(&format!(\"(i {{}})\", {}));\n", pad, expr));
         return None;
     }
-    if (name == "Vec" || name == "List" || name == ARRAY) && !args.is_empty() { return dump_run(shapes, nikaia_std::index::get(&args, 0), expr, depth, escaped, out); }
+    if (name == "Vec" || name == "List" || name == ARRAY) && !args.is_empty() { return dump_run(shapes, nikaia_std::index::get(&args, 0), expr, depth, out); }
     if name == "f32" || name == "f64" {
         out.push_str(&format!("{}out.push_str(&format!(\"(f {{:?}})\", {}));\n", pad, expr));
         return None;
     }
-    if shapes.enums.contains_key(name) { return dump_variants(shapes, ty, name, expr, depth, escaped, out); }
-    dump_fields(shapes, ty, name, expr, depth, escaped, out)
+    if shapes.enums.contains_key(name) { return dump_variants(shapes, ty, name, expr, depth, out); }
+    dump_fields(shapes, ty, name, expr, depth, out)
 }
 
-fn dump_run(shapes: &Shapes, item: &Ty, expr: &str, depth: i64, escaped: &impl Fn(&str) -> String, out: &mut String) -> Option<Uncrossable> {
+fn dump_run(shapes: &Shapes, item: &Ty, expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
     let pad = "    ".repeat(nikaia_std::count::of(depth));
     let held = format!("__nikaia_{}", depth);
     out.push_str(&format!("{}out.push_str(\"(l\");\n", pad));
     out.push_str(&format!("{}for {} in {}.iter() {{\n", pad, held, expr));
     out.push_str(&format!("{}    out.push(' ');\n", pad));
-    let refused = dump(shapes, item, &held, depth + 1, escaped, out);
+    let refused = dump(shapes, item, &held, depth + 1, out);
     if refused.is_some() { return refused; }
     out.push_str(&format!("{}}}\n", pad));
     out.push_str(&format!("{}out.push(')');\n", pad));
     None
 }
 
-fn dump_variants(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, escaped: &impl Fn(&str) -> String, out: &mut String) -> Option<Uncrossable> {
+fn dump_variants(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
     let variants = match *nikaia_std::index::get(&shapes.enums, name) { Some(__nikaia_value) => __nikaia_value, None => return uncrossable(ty, NO_FORM) };
     let pad = "    ".repeat(nikaia_std::count::of(depth));
     out.push_str(&format!("{}match {} {{\n", pad, expr));
@@ -1348,7 +1354,7 @@ fn dump_variants(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, e
         let mut i: i64 = 0;
         while ((i) as usize) < bound.len() {
             out.push_str(&format!("{}        out.push(' ');\n", pad));
-            let refused = dump(shapes, nikaia_std::index::get(&variant.carried, (i) as usize), nikaia_std::index::get(&bound, (i) as usize), depth + 2, escaped, out);
+            let refused = dump(shapes, nikaia_std::index::get(&variant.carried, (i) as usize), nikaia_std::index::get(&bound, (i) as usize), depth + 2, out);
             if refused.is_some() { return refused; }
             i += 1;
         }
@@ -1359,15 +1365,14 @@ fn dump_variants(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, e
     None
 }
 
-fn dump_fields(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, escaped: &impl Fn(&str) -> String, out: &mut String) -> Option<Uncrossable> {
+fn dump_fields(shapes: &Shapes, ty: &Ty, name: &str, expr: &str, depth: i64, out: &mut String) -> Option<Uncrossable> {
     let fields = match *nikaia_std::index::get(&shapes.structs, name) { Some(__nikaia_value) => __nikaia_value, None => return uncrossable(ty, &format!("`{}` isn't declared in this program with fields, and the value is built into the program field by field", name)) };
     if fields.is_empty() { return uncrossable(ty, &format!("`{}` declares no fields", name)); }
     let pad = "    ".repeat(nikaia_std::count::of(depth));
     out.push_str(&format!("{}out.push_str(\"(t {}\");\n", pad, name));
     for field in fields.iter() {
-        let spelled = escaped(&field.name);
         out.push_str(&format!("{}out.push_str(\" ({} \");\n", pad, field.name));
-        let refused = dump(shapes, &field.ty, &format!("{}.{}", expr, spelled), depth + 1, escaped, out);
+        let refused = dump(shapes, &field.ty, &format!("{}.{}", expr, field.spelled), depth + 1, out);
         if refused.is_some() { return refused; }
         out.push_str(&format!("{}out.push(')');\n", pad));
     }
