@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.391] — 2026-10-03
+
+**What the `\` in a written literal means is decided in Nikaia** (#125,
+ADR-250). The one escape table `build_time` reads a literal through
+(ADR-188 D2) moved into `tools/escapes.nika`, with its two readers - the
+build-time decoder and `NK1184`'s refusal - and the inverse that spells a value
+back as a literal. Which numbers name a character is Unicode's table, handed
+in from Rust as `char::from_u32`. The digits are now read exactly as `rustc`
+reads them, where `from_str_radix` had read more and less: `\x+1` and
+`\u{+41}` are refused rather than decoded, seven digits in `\u{…}` are
+refused as overlong, and `\u{1_F600}` - an `_` between the digits, which
+`rustc` accepts - is no longer refused, the one direction this compiler may
+never err in (Part III C.4). 19.5 % of the toolchain is Nikaia.
+
 ## [0.0.390] — 2026-10-03
 
 **Which functions stay `sync` is decided in Nikaia** (#125, ADR-250). The

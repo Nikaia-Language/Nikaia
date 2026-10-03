@@ -73,6 +73,7 @@ COMPILER_NIKA = {
     "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
     "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390)",
+    "escapes.nika": "build_time: what the `\\` in a written literal means, the escape nothing names, and a value spelled back as a literal (0.0.391)",
 }
 
 

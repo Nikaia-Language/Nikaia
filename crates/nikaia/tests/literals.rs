@@ -405,6 +405,8 @@ fn the_refusal_and_the_decoder_read_one_set() {
         "\\\"",
         "\\x41",
         "\\u{1F600}",
+        "\\u{1_F600}",
+        "\\u{00_0041}",
         "plain",
     ] {
         assert!(
@@ -413,7 +415,20 @@ fn the_refusal_and_the_decoder_read_one_set() {
         );
         assert!(nikaia::build_time::decoded(literal).is_some(), "{literal}");
     }
-    for literal in ["\\q", "\\x80", "\\xZZ", "\\u{ZZ}", "\\u41", "a\\"] {
+    for literal in [
+        "\\q",
+        "\\x80",
+        "\\xZZ",
+        "\\x+1",
+        "\\u{ZZ}",
+        "\\u{+41}",
+        "\\u{_41}",
+        "\\u{}",
+        "\\u{0000041}",
+        "\\u{D800}",
+        "\\u41",
+        "a\\",
+    ] {
         assert!(
             nikaia::build_time::an_escape_nothing_names(literal).is_some(),
             "{literal}"

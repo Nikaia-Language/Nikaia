@@ -1243,6 +1243,184 @@ fn parameter_list(names: &[String]) -> String {
 }
 
 
+// --- escapes.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotAnEscape {
+    pub written: String,
+    pub why: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Escape {
+    Means { value: char, next: i64 },
+    Nothing { refused: NotAnEscape },
+}
+
+const HEX: &str = "0123456789abcdef";
+
+pub fn an_escape_nothing_names(literal: &str, char_of: &impl Fn(i64) -> Option<char>) -> Option<NotAnEscape> {
+    let c: Vec<char> = nikaia_std::list::chars(literal.chars());
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) != '\\' {
+            at += 1;
+            continue;
+        }
+        match one_escape(&c, at + 1, char_of) {
+            Escape::Means { next, .. } => { at = next; },
+            Escape::Nothing { refused } => { return Some(refused); },
+        }
+    }
+    None
+}
+
+pub fn decoded(literal: &str, char_of: &impl Fn(i64) -> Option<char>) -> Option<String> {
+    let c: Vec<char> = nikaia_std::list::chars(literal.chars());
+    let mut out: String = String::from("");
+    let mut at: i64 = 0;
+    while at < c.len() as i64 {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) != '\\' {
+            out.push(*nikaia_std::index::get(&c, nikaia_std::index::at(at)));
+            at += 1;
+            continue;
+        }
+        match one_escape(&c, at + 1, char_of) {
+            Escape::Means { value, next } => {
+                out.push(value);
+                at = next;
+            },
+            Escape::Nothing { .. } => { return None; },
+        }
+    }
+    Some(out)
+}
+
+pub fn as_a_literal(text: &str) -> String {
+    let mut out: String = String::from("");
+    for c in text.chars() {
+        if c == '"' { out.push_str("\\\""); } else if c == '\\' { out.push_str("\\\\"); } else if c == '\n' { out.push_str("\\n"); } else if c == '\r' { out.push_str("\\r"); } else if c == '\t' { out.push_str("\\t"); } else if c == '\0' { out.push_str("\\0"); } else if a_control_character(c) {
+            out.push_str("\\u{");
+            out.push_str(&hex_of(c as i64));
+            out.push('}');
+        } else { out.push(c); }
+    }
+    out
+}
+
+fn one_escape(c: &[char], at: i64, char_of: &impl Fn(i64) -> Option<char>) -> Escape {
+    let mut written: String = String::from("\\");
+    if at >= c.len() as i64 { return not_an_escape(&written, "a `\\` at the end of a literal escapes nothing"); }
+    let first = *nikaia_std::index::get(&c, nikaia_std::index::at(at));
+    written.push(first);
+    if first == 'x' { return a_byte(c, at + 1, &written, char_of); }
+    if first == 'u' { return a_character(c, at + 1, &written, char_of); }
+    let value = match named_escape(first) { Some(__nikaia_value) => __nikaia_value, None => return not_an_escape(&written, "no escape starts with that character") };
+    Escape::Means { value, next: at + 1 }
+}
+
+fn a_byte(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<char>) -> Escape {
+    let mut written = so_far.to_owned();
+    let mut end = from;
+    while end < from + 2 && end < c.len() as i64 {
+        written.push(*nikaia_std::index::get(&c, nikaia_std::index::at(end)));
+        end += 1;
+    }
+    if end < from + 2 { return not_an_escape(&written, "`\\x` takes exactly two hexadecimal digits"); }
+    let high = nikaia_std::index::or(hex_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(from))), || 128);
+    let low = nikaia_std::index::or(hex_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(from + 1))), || 128);
+    let why = "`\\x` takes two hexadecimal digits naming a byte below `\\x80`";
+    let value = high * 16 + low;
+    if value >= 128 { return not_an_escape(&written, why); }
+    let byte = match char_of(value) { Some(__nikaia_value) => __nikaia_value, None => return not_an_escape(&written, why) };
+    Escape::Means { value: byte, next: end }
+}
+
+fn a_character(c: &[char], from: i64, so_far: &str, char_of: &impl Fn(i64) -> Option<char>) -> Escape {
+    let mut written = so_far.to_owned();
+    if from >= c.len() as i64 || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) != '{' { return not_an_escape(&written, "`\\u` takes its digits in braces, as `\\u{1F600}`"); }
+    written.push('{');
+    let mut end = from + 1;
+    let mut closed = false;
+    while end < c.len() as i64 && !closed {
+        written.push(*nikaia_std::index::get(&c, nikaia_std::index::at(end)));
+        closed = *nikaia_std::index::get(&c, nikaia_std::index::at(end)) == '}';
+        end += 1;
+    }
+    if !closed { return not_an_escape(&written, "`\\u{` is never closed"); }
+    let why = "`\\u{…}` takes up to six hexadecimal digits naming a character";
+    let value = match code_point(c, from + 1, end - 1) { Some(__nikaia_value) => __nikaia_value, None => return not_an_escape(&written, why) };
+    let named = match char_of(value) { Some(__nikaia_value) => __nikaia_value, None => return not_an_escape(&written, why) };
+    Escape::Means { value: named, next: end }
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn code_point(c: &[char], from: i64, to: i64) -> Option<i64> {
+    if from >= to || *nikaia_std::index::get(&c, nikaia_std::index::at(from)) == '_' { return None; }
+    let mut value: i64 = 0;
+    let mut digits = 0;
+    let mut at = from;
+    while at < to {
+        if *nikaia_std::index::get(&c, nikaia_std::index::at(at)) != '_' {
+            let digit = match hex_digit(*nikaia_std::index::get(&c, nikaia_std::index::at(at))) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            value = value * 16 + digit;
+            digits += 1;
+        }
+        at += 1;
+    }
+    if digits > 6 { return None; }
+    value.into()
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn named_escape(c: char) -> Option<char> {
+    if c == 'n' { return Some('\n'); }
+    if c == 'r' { return Some('\r'); }
+    if c == 't' { return Some('\t'); }
+    if c == '0' { return Some('\0'); }
+    if c == '\\' || c == '\'' || c == '"' { return Some(c); }
+    None
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn hex_digit(c: char) -> Option<i64> {
+    if c >= '0' && c <= '9' { return Some(c as i64 - 48); }
+    if c >= 'a' && c <= 'f' { return Some(c as i64 - 87); }
+    if c >= 'A' && c <= 'F' { return Some(c as i64 - 55); }
+    None
+}
+
+fn hex_of(n: i64) -> String {
+    if n == 0 { return String::from("0"); }
+    let digits: Vec<char> = nikaia_std::list::chars(HEX.chars());
+    let mut backwards: Vec<char> = vec![];
+    let mut rest = n;
+    while rest > 0 {
+        backwards.push(*nikaia_std::index::get(&digits, nikaia_std::index::at(rest % 16)));
+        rest /= 16;
+    }
+    let mut out: String = String::from("");
+    let mut i = backwards.len() as i64;
+    while i > 0 {
+        i -= 1;
+        out.push(*nikaia_std::index::get(&backwards, nikaia_std::index::at(i)));
+    }
+    out
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn a_control_character(c: char) -> bool {
+    let n = c as i64;
+    n < 32 || n >= 127 && n <= 159
+}
+
+fn not_an_escape(written: &str, why: &str) -> Escape { Escape::Nothing { refused: NotAnEscape { written: written.to_owned(), why: why.to_owned() } } }
+
+
 // --- findings.nika ---
 
 #[derive(Debug, Clone)]
@@ -10652,6 +10830,10 @@ pub mod diffs {
 pub mod dsl {
     #[allow(unused_imports)]
     pub use super::{parameters, is_deferred, type_name, shadow_types, drivers, check};
+}
+pub mod escapes {
+    #[allow(unused_imports)]
+    pub use super::{NotAnEscape, an_escape_nothing_names, decoded, as_a_literal};
 }
 pub mod findings {
     #[allow(unused_imports)]
