@@ -34,8 +34,10 @@ decides, whether it is built, and what supersedes what.
 
 An ADR is written once. When a later decision **changes** it, the change is a
 new ADR that names the section or `Dn` it displaces — never a silent edit. That
-is why records marked *superseded* are still here and still cited: every
-supersession in this project is **partial**.
+is why records marked *superseded* are still here and still cited: a
+supersession is **partial**, or a **consolidation** — one record that restates
+several whole ones, maps every decision and decides nothing anew. Either way the
+old records hold the evidence.
 
 **But a decision that is *withdrawn* is removed, not superseded.** When the
 project stops doing something altogether — a dependency it no longer has, a
