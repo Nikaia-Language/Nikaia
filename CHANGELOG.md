@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.381] — 2026-10-03
+
+**Whether `??` lends a value that copies, prepared for the owner**
+([ADR-274](docs/specification/adr/adr-274.md), open). 0.0.377 taught the
+checker that a copy type a program declares copies, and as a side effect a
+read position of `??` - `total(found ?? spare)` - now copies both sides where
+it lent them before, although ADR-259 D1 says nothing is copied there.
+Measured in optimised Rust: an 8-byte struct compiles to the same instructions
+either way, a 512-byte one costs a `memcpy` per read. The record compares
+Rust, C#, Swift, C++ and Kotlin, weighs copying, lending and a size line, and
+proposes lending all but the language's own scalars. Nothing in the compiler
+changes until it is decided.
+
 ## [0.0.380] — 2026-10-03
 
 **A map of `T?` values reads one `T?`, and writing `null` stores it**

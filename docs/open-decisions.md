@@ -19,6 +19,14 @@ blocked by a question, the question comes here in that shape.
 
 ## Open
 
+### Whether `??` lends a value that copies where its answer is only read
+
+Prepared as [ADR-274](specification/adr/adr-274.md), with how others do it,
+three options weighed and a measurement: since 0.0.377 a copy type a program
+declares is copied at a read position of `??` (a `memcpy` per read for a large
+one), where ADR-259 D1 says nothing is copied. The record proposes lending all
+but numbers, `bool` and `char`.
+
 ### How a schema is bound while the program is built
 
 **What is blocked.** The examples of [ADR-143](specification/adr/adr-143.md)
