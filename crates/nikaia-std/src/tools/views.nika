@@ -267,8 +267,16 @@ fn any_names_borrowing(names: ref winnow_grammar::InternerContext, types: ref Ve
     return false
 }
 
-// Whether a type is, or holds, a view.
-fn holds_view(ty: ref Type) -> bool {
+// Whether a type is, or holds, a view. **A function type holds what its
+// result holds**: what it is handed is borrowed for the call alone, and is
+// written below with no lifetime of its own (0.0.405).
+pub fn holds_view(ty: ref Type) -> bool {
+    let code = ty.code ?? return holds_view_written(ty)
+    let result = code.result ?? return false
+    return holds_view(result)
+}
+
+fn holds_view_written(ty: ref Type) -> bool {
     if ty.is_view {
         return true
     }
@@ -282,6 +290,11 @@ fn holds_view(ty: ref Type) -> bool {
 
 // Whether a type names a type that holds a view.
 fn names_borrowing(names: ref winnow_grammar::InternerContext, ty: ref Type, borrowing: ref collections::BTreeSet[String]) -> bool {
+    if ty.code != null {
+        let code = ty.code ?? return false
+        let result = code.result ?? return false
+        return names_borrowing(names, result, borrowing)
+    }
     if borrowing.contains(names.resolve(ty.name)) {
         return true
     }

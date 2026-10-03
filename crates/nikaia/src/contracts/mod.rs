@@ -909,229 +909,18 @@ impl LedgerOps for Ledger {
         target: Option<&str>,
         outer: &BTreeSet<String>,
     ) -> (String, FnContract) {
-        let Item::Fn {
-            name,
-            generics,
-            args,
-            config,
-            ret_type,
-            is_sync,
-            sync_by,
-            is_public,
-            can_throw: throws,
-            ..
-        } = item
-        else {
-            unreachable!("only a function is passed here");
-        };
-
-        // A generic parameter is a name that stands for a type rather than
-        // being one. The ledger records it as a **variable** (`$T`), so a call
-        // site binds it from what it passes and reads the result off the same
-        // signature - the machinery ADR-288 built for a library's `$V`, now
-        // pointed at a Nikaia function's own parameters
-        // ([ADR-295](../../../docs/specification/adr/adr-295.md) D2).
-        let mut parameters = outer.clone();
-        parameters.extend(generics.iter().map(|g| parsed.text(g.name).to_string()));
-
-        // The anonymous constructor of Kap 4.2 is `Type::new` to a caller,
-        // because that is what the lowering names it.
-        let own = match name {
-            Some(name) => parsed.text(*name).to_string(),
-            None => "new".to_string(),
-        };
-        let key = match target {
-            Some(target) => format!("{target}::{own}"),
-            None => own,
-        };
-
-        let returns_view = ret_type.as_ref().is_some_and(holds_view);
-        let borrows = if returns_view {
-            // **The receiver is a position too**, and `self` is what names it:
-            // a `ref self` is a view the caller gave, so a result that is a view
-            // may point into the subject. It was left out while nothing read the
-            // column across a receiver, and a reader that does then read *no
-            // position at all* for the accessor a program most often writes.
-            let subject = match item {
-                Item::Fn {
-                    receiver: Some(receiver),
-                    ..
-                } if receiver.is_ref => Some("self".to_string()),
-                _ => None,
-            };
-            subject
-                .into_iter()
-                .chain(
-                    args.iter()
-                        .filter(|a| holds_view(&a.ty))
-                        .map(|a| parsed.text(a.name).to_string()),
-                )
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        // A method's receiver is a parameter named `self`, so a caller reads
-        // the arguments off the same list either way.
-        let mut params: Vec<(String, ty::Ty)> = Vec::new();
-        if let Item::Fn {
-            receiver: Some(receiver),
-            ..
-        } = item
-        {
-            params.push(("self".to_string(), receiver_type(parsed, receiver, target)));
-        }
-        params.extend(args.iter().map(|a| {
-            (
-                parsed.text(a.name).to_string(),
-                ty::Ty::from_ast(parsed, &a.ty).parameterise(&parameters),
-            )
-        }));
-
-        (
-            key,
-            FnContract {
-                public: *is_public,
-                // `tether::infer` writes it, after the signature this loop
-                // records: what it asks is about the signature's shape and
-                // about which buffer a returned view came from.
-                views: Vec::new(),
-                // What the *declaration* says. `sync::infer` reads the body
-                // afterwards and may raise a `No` to `Inferred`; it never
-                // touches this one, because an assertion is what `NK2202`
-                // exists to contradict.
-                // `sync(f)` is the source's promise that only `f`'s lambda
-                // may make it pause ([ADR-288](../../../docs/specification/adr/adr-288.md)
-                // D4) - the entry `std` has written by hand as `from(f)` since
-                // ADR-288 D15.
-                sync_claim: match (*is_sync, sync_by.is_empty()) {
-                    (true, _) => Sync::Asserted,
-                    (false, false) => Sync::From(
-                        sync_by
-                            .iter()
-                            .map(|name| parsed.text(*name))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ),
-                    (false, true) => Sync::No,
-                },
-                // What the *declaration* says, which is nothing: a `.nika`
-                // file has no syntax for a touch set, and there is no reason to
-                // give it one - what a body reaches is read off the body.
-                // `touch::infer` answers it afterwards, the way `sync` and
-                // `throws` are answered ([ADR-288](../../../docs/specification/adr/adr-288.md)
-                // D2). Until it has run, "nobody said" is the answer, and that
-                // orders against everything (ADR-292 D3).
-                touches: Vec::new(),
-                touches_known: false,
-                // The *declaration* says only that it can fail. Which errors
-                // is a question about the body and about everything the body
-                // reaches, so `throws::infer` answers it afterwards - the same
-                // arrangement `sync` has since ADR-288.
-                fails_with: if *throws {
-                    vec![UNNAMED_ERROR.to_string()]
-                } else {
-                    Vec::new()
-                },
-                signature: Some(Signature {
-                    // **The bounds, where the declaration writes them**
-                    // ([ADR-295](../../../docs/specification/adr/adr-295.md) D18):
-                    // `fn tell[T: greet::Speaks](x: T)` records `T: greet::Speaks`,
-                    // and that is what lets a **consumer's** call be checked
-                    // against it. Before this the bound lived only in the AST of
-                    // the unit that declared the function, so a call from another
-                    // package was answered by `rustc` about the type it picked
-                    // (issue #162).
-                    // **Only a parameter with a bound**: one with none is
-                    // declared by its use in the signature (ADR-251 D4 writes
-                    // every one in brackets), and every reader of this list
-                    // asks for a bound.
-                    bounds: generics
-                        .iter()
-                        .filter(|g| !g.bounds.is_empty())
-                        .map(|g| {
-                            (
-                                parsed.text(g.name).to_string(),
-                                g.bounds
-                                    .iter()
-                                    .map(|b| parsed.text(*b).to_string())
-                                    .collect(),
-                            )
-                        })
-                        .collect(),
-                    params,
-                    // **The declaration and not an inference** (ADR-094 D3):
-                    // `mut out: Vec[i64]` is the claim that the caller's value
-                    // changes, and a parameter without the word does not make
-                    // it whatever its body does.
-                    mutable: args
-                        .iter()
-                        .filter(|a| a.mutable)
-                        .map(|a| parsed.text(a.name).to_string())
-                        .collect(),
-                    config: config
-                        .iter()
-                        .map(|c| ConfigContract {
-                            name: parsed.text(c.name).to_string(),
-                            ty: ty::Ty::from_ast(parsed, &c.ty).parameterise(&parameters),
-                            default: literal_text(parsed, &c.default),
-                        })
-                        .collect(),
-                    result: ret_type
-                        .as_ref()
-                        .map(|t| ty::Ty::from_ast(parsed, t).parameterise(&parameters)),
-                }),
-                borrows,
-                // What the *declaration* says is nothing again, and this one
-                // has no syntax at all: a parameter is a view unless the body
-                // keeps it, which is a question about the body
-                // ([ADR-094](../../../docs/specification/adr/adr-094.md) D2).
-                // `keeps::infer` answers it afterwards. Empty until then, and
-                // empty is the *permissive* answer here rather than the safe
-                // one — which is why nothing may read this column before that
-                // pass has run.
-                keeps: Vec::new(),
-                // **And this one is the declaration and not the body.** D3's
-                // whole sentence is that mutation of a subject is written where
-                // it is declared, so there is nothing to infer: `&mut self` is
-                // the claim, and a receiver written `&self` or `self` is not.
-                mutates: matches!(item, Item::Fn { receiver: Some(r), .. } if r.is_mut && r.is_ref),
-                // **And this one is the body**, which `locks::infer` reads
-                // afterwards for `keeps`' reason: it is a question about what
-                // the whole call graph reaches, and nothing here has seen it
-                // yet. `false` until then, and `false` is the *permissive*
-                // answer, which is why nothing may read the column before that
-                // pass has run.
-                touches_a_lock: Lock::No,
-                // **Nothing a `.nika` file declares says it**, and nothing here
-                // infers it: a Nikaia function that wants another thread writes
-                // a `task`, which the compiler sees and which is not this
-                // question. `threads` is about a body written in *another*
-                // language ([ADR-290](../../../docs/specification/adr/adr-290.md)
-                // D1), so *nobody said* is the honest answer for every entry
-                // this loop writes.
-                threads: Threads::Undecided,
-                // `sharing::infer` reads the bodies afterwards, for the same
-                // reason `sync` does: the answer is about where a value goes
-                // and not about how it was declared. Empty until then, which is
-                // the floor written out - the safe answer needs no line.
-                sharing: Vec::new(),
-                // A `.nika` function cannot hand back a sequence (ADR-105 D4),
-                // so there is no result for this column to be about.
-                ends_by_length: false,
-                // A source is where bytes enter the program from outside, and
-                // nothing a `.nika` file can write is one: `fs` and `io` are
-                // `std`, and `std` states its own (ADR-010 D2).
-                provenance: None,
-                // **The body's `assert`s, not its declaration**
-                // ([ADR-269](../../../docs/specification/adr/adr-269.md) D18):
-                // the prover publishes them after the check, through the
-                // lowering. Empty until then.
-                requires: Vec::new(),
-                ensures: Vec::new(),
-                from: Vec::new(),
-            },
+        // **What the declaration says, in Nikaia** (`tools/declared.nika`,
+        // ADR-294, #125): every column about the body is the inferences' to
+        // answer afterwards.
+        let declared = nikaia_std::tools::declared::declared_function(
+            &parsed.interner,
+            &parsed.aliases,
+            item,
+            &target.map(str::to_string),
+            outer,
         )
+        .expect("only a function is passed here");
+        (declared.key, declared.contract)
     }
 
     /// A function by the name a caller wrote.
@@ -1404,32 +1193,8 @@ fn toolchain() -> String {
 /// (ADR-296 D17), which is what lets a ledger record the text and an emitter
 /// print it.
 fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
-    use crate::ast::{Expr, UnaryOp};
     let _ = parsed;
-    match expr {
-        Expr::LitBool(true) => "true".to_string(),
-        Expr::LitBool(false) => "false".to_string(),
-        // A default of `null` is a default of `None`, and the ledger records
-        // what the emitter prints (ADR-296 D17).
-        Expr::LitNull => "None".to_string(),
-        Expr::LitInt { value, negative } => crate::ast::int_value(*value, *negative).to_string(),
-        Expr::LitFloat(f) => f.clone(),
-        Expr::LitChar(c) => format!("'{c}'"),
-        Expr::LitStr { text: s, .. } => format!("\"{s}\""),
-        // A default is a constant (Kap 5.1), and `f"…"` is a call to `format!`.
-        // The parser admits it here, so this says no in words rather than
-        // recording something a reader would take for text.
-        Expr::LitInterpolated { .. } => {
-            unreachable!("a default is a literal, and `f\"…\"` is built at run time")
-        }
-        Expr::Unary {
-            op: UnaryOp::Neg,
-            expr,
-        } => format!("-{}", literal_text(parsed, expr)),
-        // The grammar admits nothing else, so this is unreachable rather than
-        // a case with an answer.
-        other => unreachable!("a default is a literal, found {other:?}"),
-    }
+    nikaia_std::tools::declared::default_text(expr)
 }
 
 /// A value that may itself hold a quote - which a signature does, the moment an

@@ -1,0 +1,234 @@
+// crates/nikaia-std/src/tools/declared.nika
+//
+// **What a declaration says, before any body is read** - the type a `.nika`
+// declaration names, and the ledger entry a function's declaration makes -
+// moved from the compiler's `contracts` module (ADR-294, #125).
+//
+// An entry starts as what the declaration says and nothing more: whether it
+// is `pub`, its `sync` word, whether it may fail, its signature, the
+// parameters its result may point into, and whether it changes its subject.
+// Every column about the body - which errors, what it touches, what it keeps,
+// whether it locks, the views, the sharing, the `assert`s - is the inferences'
+// to answer afterwards, and empty until they have.
+
+use std::collections
+
+/// A function's entry, by the key a caller reaches it under.
+pub struct DeclaredFn {
+    pub key: String,
+    pub contract: FnContract,
+}
+
+/// The type a `.nika` declaration names.
+pub fn written_ty(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], ty: ref Type) -> Ty {
+    // **An integer argument** (ADR-152 D1), read first: it has no name, no
+    // arguments and no `?`.
+    let count = ty.count ?? -1
+    if ty.count != null {
+        return Ty::Count(count)
+    }
+    // **`Array[T]` with no count is the run itself** (ADR-184 D3), and under
+    // a `ref` it is a view of one.
+    if ty.is_view && !ty.is_slice && names.resolve(ty.name) == ARRAY && ty.generics.len() == 1 {
+        let item = written_ty(names, aliases, ty.generics[0])
+        if ty.is_nullable {
+            return Ty::Pointed { item: Ty::Nullable(item), slice: true, mutable: ty.is_mut }
+        }
+        return Ty::Pointed { item: item, slice: true, mutable: ty.is_mut }
+    }
+    // **What the C boundary lends** (ADR-302 D5). A `?` on one of these is the
+    // pointee's (D14): `&mut sqlite3?` is the out-parameter.
+    if ty.is_slice || ty.is_mut {
+        let item = lent_item(names, aliases, ty)
+        if ty.is_nullable {
+            return Ty::Pointed { item: Ty::Nullable(item), slice: ty.is_slice, mutable: ty.is_mut }
+        }
+        return Ty::Pointed { item: item, slice: ty.is_slice, mutable: ty.is_mut }
+    }
+    if ty.is_tuple {
+        return Ty::Tuple(written_all(names, aliases, ty.generics))
+    }
+    // **A parameter that is code** (ADR-277 D6), read before the `?`: the
+    // grammar gives the form no `?` to begin with.
+    if ty.code != null {
+        let code = ty.code ?? return Ty::Unknown
+        let params = written_all(names, aliases, ty.generics)
+        let result = code.result ?? return Ty::Fn { params: params, result: null, is_sync: code.is_sync, can_throw: code.can_throw }
+        return Ty::Fn { params: params, result: written_ty(names, aliases, result), is_sync: code.is_sync, can_throw: code.can_throw }
+    }
+    // The `?` wraps whatever the rest of the declaration says.
+    if ty.is_nullable {
+        let mut inner = ty.clone()
+        inner.is_nullable = false
+        return Ty::Nullable(written_ty(names, aliases, inner))
+    }
+    // A type may be written with this file's own name for the package that
+    // declares it (ADR-286 D12).
+    let name = unaliased_in(aliases, names.resolve(ty.name))
+    // **Text that is a view or its own per value is read as text of its own**
+    // (ADR-282 D15).
+    if ty.either {
+        return Ty::Named { name: TEXT.clone(), args: [], view: false }
+    }
+    // **A view of `String` is a view of text** (ADR-184 D2): `str` is the
+    // compiler's own noun for it.
+    if ty.is_view && name == TEXT {
+        return Ty::Named { name: TEXT_VIEW.clone(), args: written_all(names, aliases, ty.generics), view: true }
+    }
+    return Ty::Named { name: name, args: written_all(names, aliases, ty.generics), view: ty.is_view }
+}
+
+// What a C-boundary type lends: its element, or - `&mut T` - the name itself.
+fn lent_item(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], ty: ref Type) -> Ty {
+    if ty.generics.len() > 0 {
+        return written_ty(names, aliases, ty.generics[0])
+    }
+    return Ty::Named { name: unaliased_in(aliases, names.resolve(ty.name)), args: [], view: false }
+}
+
+fn written_all(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], types: ref Vec[Type]) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    for ty in types {
+        out.push(written_ty(names, aliases, ty))
+    }
+    return out
+}
+
+/// **One function's entry**, named as a caller would reach it: `Type::method`
+/// in an `impl`, and the anonymous constructor (Kap 4.2) as `Type::new`.
+/// `outer` is the `impl`'s own generic parameters.
+pub fn declared_function(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], item: ref Item, target: String?, outer: ref collections::BTreeSet[String]) -> DeclaredFn? {
+    let (name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw) = match item {
+        Item::Fn { name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw, .. } => (name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw),
+        else => return null,
+    }
+    // A generic parameter is a **variable** (`$T`), so a call site binds it
+    // from what it passes (ADR-295 D2).
+    let mut parameters = outer.clone()
+    for generic in generics {
+        parameters.insert(names.resolve(generic.name).clone())
+    }
+    let mut own: String = "new"
+    if name != null {
+        let symbol = name ?? return null
+        own = names.resolve(symbol).clone()
+    }
+    let mut key = own.clone()
+    if target != null {
+        let owner = target?.clone() ?? ""
+        key = f"{owner}::{own}"
+    }
+    // **The receiver is a position too**: a `ref self` is a view the caller
+    // gave, so a result that is a view may point into the subject.
+    let mut borrows: Vec[String] = []
+    // Asked inside the arm, where `ret_type` is still the field.
+    let returns_view = match item {
+        Item::Fn { ret_type, .. } => returns_a_view(ret_type),
+        else => false,
+    }
+    if returns_view {
+        if receiver != null {
+            let subject = receiver ?? return null
+            if subject.is_ref {
+                borrows.push("self")
+            }
+        }
+        for arg in args {
+            if holds_view(arg.ty) {
+                borrows.push(names.resolve(arg.name).clone())
+            }
+        }
+    }
+    // A method's receiver is a parameter named `self`.
+    let mut params: Vec[(String, Ty)] = []
+    let mut mutates = false
+    if receiver != null {
+        let subject = receiver ?? return null
+        let owner = target?.clone() ?? "Self"
+        let self_name: String = "self"
+        params.push((self_name, Ty::Named { name: owner, args: [], view: subject.is_ref }))
+        // **The declaration and not the body** (ADR-094 D3): `&mut self` is
+        // the claim.
+        mutates = subject.is_mut && subject.is_ref
+    }
+    let mut mutable: Vec[String] = []
+    for arg in args {
+        let arg_name = names.resolve(arg.name).clone()
+        params.push((arg_name.clone(), written_ty(names, aliases, arg.ty).parameterise(parameters)))
+        // `mut out: Vec[i64]` is the claim that the caller's value changes.
+        if arg.mutable {
+            mutable.push(arg_name)
+        }
+    }
+    // **The bounds, where the declaration writes them** (ADR-295 D18): only a
+    // parameter with one, since every reader of this list asks for a bound.
+    let mut bounds: Vec[(String, Vec[String])] = []
+    for generic in generics {
+        if generic.bounds.len() == 0 {
+            continue
+        }
+        let mut written: Vec[String] = []
+        for bound in generic.bounds {
+            written.push(names.resolve(bound).clone())
+        }
+        bounds.push((names.resolve(generic.name).clone(), written))
+    }
+    let mut options: Vec[ConfigContract] = []
+    for option in config {
+        let ty = written_ty(names, aliases, option.ty).parameterise(parameters)
+        options.push(ConfigContract { name: names.resolve(option.name).clone(), ty: ty, default: default_text(option.default) })
+    }
+    let mut result: Ty? = null
+    if ret_type != null {
+        let written = ret_type ?? return null
+        result = written_ty(names, aliases, written).parameterise(parameters)
+    }
+    // `sync(f)` is the source's promise that only `f`'s lambda may make it
+    // pause (ADR-288 D4).
+    let mut sync_claim = Sync::No
+    if is_sync {
+        sync_claim = Sync::Asserted
+    } else if sync_by.len() > 0 {
+        let mut lambdas: Vec[String] = []
+        for lambda in sync_by {
+            lambdas.push(names.resolve(lambda).clone())
+        }
+        sync_claim = Sync::From(lambdas.join(", "))
+    }
+    // The declaration says only that it can fail; which errors is the body's.
+    let mut fails_with: Vec[String] = []
+    if can_throw {
+        fails_with.push("?")
+    }
+    let signature = Signature { bounds: bounds, params: params, mutable: mutable, config: options, result: result }
+    let mut contract = FnContract::empty()
+    contract.public = is_public
+    contract.sync_claim = sync_claim
+    contract.fails_with = fails_with
+    contract.signature = signature
+    contract.borrows = borrows
+    contract.mutates = mutates
+    return DeclaredFn { key: key, contract: contract }
+}
+
+fn returns_a_view(ret_type: ref Type?) -> bool {
+    let written = ret_type ?? return false
+    return holds_view(written)
+}
+
+/// A default, written back the way the source wrote it: only a literal
+/// reaches here, and Nikaia spells every one of them the way the language
+/// below does (ADR-296 D17). A default of `null` is `None`.
+pub fn default_text(expr: ref Expr) -> String {
+    return match expr {
+        Expr::LitBool(value) => if value { "true" } else { "false" },
+        Expr::LitNull => "None",
+        Expr::LitInt { value, negative } => if negative { f"-{value}" } else { f"{value}" },
+        Expr::LitFloat(written) => written.clone(),
+        Expr::LitChar(written) => f"'{written}'",
+        Expr::LitStr { text, .. } => f"\"{text}\"",
+        Expr::Unary { expr, .. } => f"-{default_text(expr)}",
+        // The grammar admits nothing else as a default (Kap 5.1).
+        else => "",
+    }
+}

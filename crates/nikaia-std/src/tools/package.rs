@@ -1886,6 +1886,161 @@ pub fn type_entry(fields: &[String], derives: &collections::BTreeSet<String>) ->
 }
 
 
+// --- declared.nika ---
+
+#[derive(Debug, Clone)]
+pub struct DeclaredFn {
+    pub key: String,
+    pub contract: FnContract,
+}
+
+pub fn written_ty(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, ty: &Type) -> Ty {
+    let count = nikaia_std::index::or(ty.count, || -1);
+    if ty.count.is_some() { return Ty::Count(count); }
+    if ty.is_view && !ty.is_slice && names.resolve(ty.name) == ARRAY && ty.generics.len() == 1 {
+        let item = written_ty(names, aliases, nikaia_std::index::get(&ty.generics, 0));
+        if ty.is_nullable { return Ty::Pointed { item: Box::new(Ty::Nullable(Box::new(item))), slice: true, mutable: ty.is_mut }; }
+        return Ty::Pointed { item: Box::new(item), slice: true, mutable: ty.is_mut };
+    }
+    if ty.is_slice || ty.is_mut {
+        let item = lent_item(names, aliases, ty);
+        if ty.is_nullable { return Ty::Pointed { item: Box::new(Ty::Nullable(Box::new(item))), slice: ty.is_slice, mutable: ty.is_mut }; }
+        return Ty::Pointed { item: Box::new(item), slice: ty.is_slice, mutable: ty.is_mut };
+    }
+    if ty.is_tuple { return Ty::Tuple(written_all(names, aliases, &ty.generics)); }
+    if (*ty.code).is_some() {
+        let code = match (*ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return Ty::Unknown };
+        let params = written_all(names, aliases, &ty.generics);
+        let result = match (*code.result).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return Ty::Fn { params, result: Box::new(None), is_sync: code.is_sync, can_throw: code.can_throw } };
+        return Ty::Fn { params, result: Box::new(Some(written_ty(names, aliases, result))), is_sync: code.is_sync, can_throw: code.can_throw };
+    }
+    if ty.is_nullable {
+        let mut inner = ty.clone();
+        inner.is_nullable = false;
+        return Ty::Nullable(Box::new(written_ty(names, aliases, &inner)));
+    }
+    let name = unaliased_in(aliases, names.resolve(ty.name));
+    if ty.either { return Ty::Named { name: TEXT.to_owned(), args: vec![], view: false }; }
+    if ty.is_view && name == TEXT { return Ty::Named { name: TEXT_VIEW.to_owned(), args: written_all(names, aliases, &ty.generics), view: true }; }
+    Ty::Named { name, args: written_all(names, aliases, &ty.generics), view: ty.is_view }
+}
+
+fn lent_item(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, ty: &Type) -> Ty {
+    if !ty.generics.is_empty() { return written_ty(names, aliases, nikaia_std::index::get(&ty.generics, 0)); }
+    Ty::Named { name: unaliased_in(aliases, names.resolve(ty.name)), args: vec![], view: false }
+}
+
+fn written_all(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, types: &[Type]) -> Vec<Ty> {
+    let mut out: Vec<Ty> = vec![];
+    for ty in types.iter() { out.push(written_ty(names, aliases, ty)); }
+    out
+}
+
+pub fn declared_function(names: &winnow_grammar::InternerContext, aliases: &collections::BTreeMap<String, String>, item: &Item, target: &Option<String>, outer: &collections::BTreeSet<String>) -> Option<DeclaredFn> {
+    let (name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw) = match item {
+        Item::Fn { name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw, .. } => { let can_throw = *can_throw; let is_public = *is_public; let is_sync = *is_sync; let name = *name; (name, generics, receiver, args, config, ret_type, is_sync, sync_by, is_public, can_throw) },
+        _ => return None,
+    };
+    let mut parameters = outer.to_owned();
+    for generic in generics.iter() { parameters.insert(names.resolve(generic.name).to_owned()); }
+    let mut own: String = String::from("new");
+    if name.is_some() {
+        let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => return None };
+        own = names.resolve(symbol).to_owned();
+    }
+    let mut key = own.to_owned();
+    if target.is_some() {
+        let owner = nikaia_std::index::or(match target.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "".into());
+        key = format!("{}::{}", owner, own);
+    }
+    let mut borrows: Vec<String> = vec![];
+    let returns_view = match item {
+        Item::Fn { ret_type, .. } => returns_a_view((ret_type).as_ref()),
+        _ => false,
+    };
+    if returns_view {
+        if receiver.is_some() {
+            let subject = match receiver { Some(__nikaia_value) => __nikaia_value, None => return None };
+            if subject.is_ref { borrows.push(String::from("self")); }
+        }
+        for arg in args.iter() { if holds_view(&arg.ty) { borrows.push(names.resolve(arg.name).to_owned()); } }
+    }
+    let mut params: Vec<(String, Ty)> = vec![];
+    let mut mutates = false;
+    if receiver.is_some() {
+        let subject = match receiver { Some(__nikaia_value) => __nikaia_value, None => return None };
+        let owner = nikaia_std::index::or(match target.as_ref() {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "Self".into());
+        let self_name: String = String::from("self");
+        params.push((self_name, Ty::Named { name: owner, args: vec![], view: subject.is_ref }));
+        mutates = subject.is_mut && subject.is_ref;
+    }
+    let mut mutable: Vec<String> = vec![];
+    for arg in args.iter() {
+        let arg_name = names.resolve(arg.name).to_owned();
+        params.push((arg_name.to_owned(), written_ty(names, aliases, &arg.ty).parameterise(&parameters)));
+        if arg.mutable { mutable.push(arg_name); }
+    }
+    let mut bounds: Vec<(String, Vec<String>)> = vec![];
+    for generic in generics.iter() {
+        if generic.bounds.is_empty() { continue; }
+        let mut written: Vec<String> = vec![];
+        for bound in generic.bounds.iter() { written.push(names.resolve(*bound).to_owned()); }
+        bounds.push((names.resolve(generic.name).to_owned(), written));
+    }
+    let mut options: Vec<ConfigContract> = vec![];
+    for option in config.iter() {
+        let ty = written_ty(names, aliases, &option.ty).parameterise(&parameters);
+        options.push(ConfigContract { name: names.resolve(option.name).to_owned(), ty, default: default_text(&option.default) });
+    }
+    let mut result: Option<Ty> = None;
+    if ret_type.is_some() {
+        let written = match ret_type { Some(__nikaia_value) => __nikaia_value, None => return None };
+        result = Some(written_ty(names, aliases, written).parameterise(&parameters));
+    }
+    let mut sync_claim = Sync::No;
+    if is_sync { sync_claim = Sync::Asserted; } else if !sync_by.is_empty() {
+        let mut lambdas: Vec<String> = vec![];
+        for lambda in sync_by.iter() { lambdas.push(names.resolve(*lambda).to_owned()); }
+        sync_claim = Sync::From(lambdas.join(", "));
+    }
+    let mut fails_with: Vec<String> = vec![];
+    if can_throw { fails_with.push(String::from("?")); }
+    let signature = Signature { bounds, params, mutable, config: options, result };
+    let mut contract = FnContract::empty();
+    contract.public = is_public;
+    contract.sync_claim = sync_claim;
+    contract.fails_with = fails_with;
+    contract.signature = Some(signature);
+    contract.borrows = borrows;
+    contract.mutates = mutates;
+    Some(DeclaredFn { key, contract })
+}
+
+fn returns_a_view(ret_type: Option<&Type>) -> bool {
+    let written = match ret_type { Some(__nikaia_value) => __nikaia_value, None => return false };
+    holds_view(written)
+}
+
+pub fn default_text(expr: &Expr) -> String {
+    match expr {
+        Expr::LitBool(value) => { let value = *value; if value { String::from("true") } else { String::from("false") } },
+        Expr::LitNull => String::from("None"),
+        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; if negative { format!("-{}", value) } else { format!("{}", value) } },
+        Expr::LitFloat(written) => written.to_owned(),
+        Expr::LitChar(written) => format!("'{}'", written),
+        Expr::LitStr { text, .. } => format!("\"{}\"", text),
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); format!("-{}", default_text(expr)) },
+        _ => String::from(""),
+    }
+}
+
+
 // --- describe.nika ---
 
 #[derive(Debug, Clone)]
@@ -14460,13 +14615,24 @@ fn any_names_borrowing(names: &winnow_grammar::InternerContext, types: &[Type], 
     false
 }
 
-fn holds_view(ty: &Type) -> bool {
+pub fn holds_view(ty: &Type) -> bool {
+    let code = match (*ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return holds_view_written(ty) };
+    let result = match (*code.result).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+    holds_view(result)
+}
+
+fn holds_view_written(ty: &Type) -> bool {
     if ty.is_view { return true; }
     for inner in ty.generics.iter() { if holds_view(inner) { return true; } }
     false
 }
 
 fn names_borrowing(names: &winnow_grammar::InternerContext, ty: &Type, borrowing: &collections::BTreeSet<String>) -> bool {
+    if (*ty.code).is_some() {
+        let code = match (*ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+        let result = match (*code.result).as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+        return names_borrowing(names, result, borrowing);
+    }
     if borrowing.contains(names.resolve(ty.name)) { return true; }
     for inner in ty.generics.iter() { if names_borrowing(names, inner, borrowing) { return true; } }
     false
@@ -15197,6 +15363,10 @@ pub mod crossing {
     #[allow(unused_imports)]
     pub use super::{crosses, plainly_sendable, is_plain, generic_of, bounds_send, a_list, reaches_a_thread, the_crates_own, promise_lines, thread_lines, type_entry};
 }
+pub mod declared {
+    #[allow(unused_imports)]
+    pub use super::{DeclaredFn, written_ty, declared_function, default_text};
+}
 pub mod describe {
     #[allow(unused_imports)]
     pub use super::{Drafted, drafted};
@@ -15371,5 +15541,5 @@ pub mod types {
 }
 pub mod views {
     #[allow(unused_imports)]
-    pub use super::{Stored, Destination, Asked, views_stored, views_checked, written_type};
+    pub use super::{Stored, Destination, Asked, views_stored, views_checked, holds_view, written_type};
 }

@@ -80,6 +80,7 @@ COMPILER_NIKA = {
     "buffers.nika": "contracts::keep: where each buffer lives - the walk that follows a view to every place it leaves, and the plan of keeps and refusals (0.0.404)",
     "text_tiers.nika": "text_tiers: what a declared `String` is below - the walk of every value's kind of text into the positions it reaches, the fixpoint over them, and where a value is handed into a mixed one; and a name's alias spelled out (0.0.405)",
     "ledger_text.nika": "contracts: a ledger as it is written out - `nikaia.contracts`, the record of what it was derived from, and a description's header - and the `throws` list a diagnostic quotes (0.0.406)",
+    "declared.nika": "contracts: what a declaration says before any body is read - the type a `.nika` declaration names, and the entry a function's declaration makes (0.0.407)",
 }
 
 
