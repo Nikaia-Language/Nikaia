@@ -114,7 +114,7 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 ///
 /// **This test used to hold `comptime GREET = "hallo"`**, because text at build
 /// time did not exist and a refusal was the whole of what a string literal got.
-/// It does exist now ([ADR-079](../../../docs/specification/adr/adr-079.md) D1,
+/// It does exist now ([ADR-311](../../../docs/specification/adr/adr-311.md) D1,
 /// 0.0.112), so the example moved to one that still cannot fold.
 ///
 /// **And the reason 0.0.112 gave for it was wrong**, which 0.0.113 corrects
@@ -178,7 +178,7 @@ fn a_comptime_binding_over_text_folds() {
 }
 
 /// **A list of text crosses element for element**
-/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1).
 ///
 /// D1's rule is that a build-time value the program cannot own reaches it as a
 /// view: a list crosses as an `Array[T, N]` and text as a `&str`. An array of

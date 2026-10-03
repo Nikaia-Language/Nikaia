@@ -1,6 +1,6 @@
 // crates/nikaia-std/src/tools/fixed.nika
 //
-// **The table a `comptime` map crosses as** (ADR-176 D2, D3), built while the
+// **The table a `comptime` map crosses as** (ADR-311 D9, D10), built while the
 // program is built.
 //
 // The fourth piece of the compiler moved from Rust to Nikaia (0.0.250), by

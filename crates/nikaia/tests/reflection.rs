@@ -1,6 +1,6 @@
 //! **Generating code from a type's shape** — Part II 10.3,
-//! [ADR-088](../../../docs/specification/adr/adr-088.md) D2, D4, D5 and D6,
-//! built by [ADR-181](../../../docs/specification/adr/adr-181.md).
+//! [ADR-304](../../../docs/specification/adr/adr-304.md) D2, D5, D7, D9,
+//! built by [ADR-304](../../../docs/specification/adr/adr-304.md).
 //!
 //! That section was specified in full and built by halves: the **bound** landed
 //! at 0.0.120 and what it reaches was `NK1171` — *this is specified and this
@@ -76,7 +76,7 @@ fn the_specifications_own_example_runs() {
                   \x20   describe(Point { x: 1, y: 2 })\n\
                   }\n";
     let rust = lowered(source);
-    // **Nothing is left at run time** (ADR-088 D5): no loop, no descriptor, no
+    // **Nothing is left at run time** (ADR-304 D7): no loop, no descriptor, no
     // dispatch — the field reads a program would have written by hand.
     assert!(!rust.contains("T::fields"), "{rust}");
     assert!(
@@ -94,7 +94,7 @@ fn the_specifications_own_example_runs() {
 }
 
 /// **A body wrong for one field is right for the others, and the message says
-/// which turn it came from** ([ADR-088](../../../docs/specification/adr/adr-088.md)
+/// which turn it came from** ([ADR-304](../../../docs/specification/adr/adr-304.md)
 /// D5).
 ///
 /// `total + field.of(value)` is arithmetic for `age` and not for `name`, on one
@@ -129,12 +129,12 @@ fn a_body_wrong_for_one_field_names_the_turn() {
 }
 
 /// **A reflected field answers two members**
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2), and `NK1180`
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D2), and `NK1180`
 /// prints the list, which is short enough to be a misspelling rather than
 /// something nobody told the compiler about.
 ///
 /// **Said once**, not once per field: the generic walk owns this message
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D3), because it is
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D8), because it is
 /// about the function rather than about a turn.
 #[test]
 fn a_member_a_reflected_field_does_not_have_is_said_once() {
@@ -157,7 +157,7 @@ fn a_member_a_reflected_field_does_not_have_is_said_once() {
 }
 
 /// **A `[T: Struct]` function that never asks for the shape stays generic**
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D1).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D4).
 ///
 /// The bound says a shape *may* be asked for; the body says whether it is. One
 /// function below, generic in the language below, and no copies.
@@ -226,9 +226,9 @@ fn a_member_a_reflected_variant_does_not_have_is_refused() {
 }
 
 /// **`--comptime` prints what was unrolled**
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D6).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D9).
 ///
-/// The same information [ADR-181](../../../docs/specification/adr/adr-181.md)
+/// The same information [ADR-304](../../../docs/specification/adr/adr-304.md)
 /// D3's diagnostic carries, offered on demand instead of on failure — which is
 /// the arrangement `--overlaps`, `--sharing`, `--tethers` and `--trust` already
 /// have, and the alternative to inventing syntax for it.
@@ -274,7 +274,7 @@ fn the_report_prints_what_was_unrolled() {
 }
 
 /// **A shape walk declared in one file and called from another**
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D2, 0.0.130).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D6, 0.0.130).
 ///
 /// The files of a package share one namespace (Part I 9.1), so both halves of
 /// an unrolling cross files: *which functions walk a shape* is read off the

@@ -57,7 +57,7 @@ const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 /// ([ADR-281](../../docs/specification/adr/adr-281.md) D36).
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 /// `--optimization`'s words, resolved
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1).
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D1).
 const OPTIMIZATION_VAR: &str = "NIKAIA_OPTIMIZATION";
 /// Set where the build is `nikaia test`'s
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
@@ -66,7 +66,7 @@ const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
 /// How `--allow-read-from-list` reaches the `rustc` wrapper
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2, D6).
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D5, D9).
 ///
 /// The wrapper is a **second process**, started by Cargo, and it lowers the
 /// same file a second time — so it has to be told the same list or the two
@@ -103,7 +103,7 @@ pub struct Settings {
     pub reentrancy_check: String,
     /// `--optimization`, or `[build] optimization`: `name:level` words,
     /// comma-separated, the last one for a name deciding
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Empty where
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Empty where
     /// neither says anything.
     pub optimization: String,
     /// **Whether this is `nikaia test`'s build**
@@ -114,9 +114,9 @@ pub struct Settings {
 }
 
 /// **`name:level` words, comma-separated**, to what they decide
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). The names are
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). The names are
 /// `remove-bounds-checks` and `remove-overflow-checks`
-/// ([ADR-272](../../docs/specification/adr/adr-272.md) D1); a later word for
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D6); a later word for
 /// a name wins over an earlier one.
 pub fn optimizations(
     words: &str,
@@ -191,7 +191,7 @@ impl Settings {
     }
 
     /// **The command line's `--optimization` over the manifest's**
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Nothing a
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Nothing a
     /// program means depends on it, so a single build may say it, as it may
     /// say `--target`.
     pub fn optimize(&mut self, flags: &[String]) -> Result<()> {
@@ -691,7 +691,7 @@ pub fn lower(
 }
 
 /// **What a build may read, and where it compiles a parser**
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D1 and D2,
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D4 and D5,
 /// [ADR-177](../../docs/specification/adr/adr-177.md) D2).
 ///
 /// **One function rather than two constructions**, because both of this
@@ -719,7 +719,7 @@ fn reads_for(layout: &Layout, allowlist: Option<&Path>) -> Result<assets::Reads>
 }
 
 /// The same, told which allowlist is in effect
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2).
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D5).
 ///
 /// `None` is D1, and D1 is what every caller that does not pass the flag gets:
 /// a build given no list reads nothing while it builds.
@@ -844,7 +844,7 @@ pub fn lower_reading(
     let layout = Layout::resolve(input);
     let unit = layout.unit_name(input);
     // **What this build may read, resolved before anything is read**
-    // ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D2).
+    // ([ADR-310](../../docs/specification/adr/adr-310.md) D4, D5).
     let reads = reads_for(&layout, allowlist)?;
     let choices = match reads.list_digest() {
         Some(digest) => settings.choices().reading(digest),
@@ -950,7 +950,7 @@ pub fn lower_reading(
                 false => Foreign::default(),
             };
             // **The committed ledger against the one this build inferred**
-            // ([ADR-101](../../docs/specification/adr/adr-101.md) D1), read
+            // ([ADR-308](../../docs/specification/adr/adr-308.md) D11), read
             // once for the package rather than once per unit: the question is
             // whether a *contract* moved, and a contract belongs to the
             // package.
@@ -1019,7 +1019,7 @@ pub fn lower_reading(
             let ledger = program.contracts.render();
             let derived = program.contracts.render_derived();
 
-            // **An entry nothing read** ([ADR-072](../../docs/specification/adr/adr-072.md)
+            // **An entry nothing read** ([ADR-310](../../docs/specification/adr/adr-310.md)
             // D8): a list that may hold names nothing uses decays into
             // *everything we ever needed*, which is how an allowlist stops
             // being read. Said at the end of the build, where the whole set is
@@ -1030,7 +1030,7 @@ pub fn lower_reading(
             }
 
             if let Some(cache) = &mut cache {
-                // **What the build actually read** (ADR-021 D13, ADR-072 D7).
+                // **What the build actually read** (ADR-021 D13, ADR-310 D10).
                 // An empty map is correct and usual: with no list in effect
                 // nothing can be read at all.
                 let artifacts = Artifacts::new()
@@ -1287,7 +1287,7 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 /// checked — what the manifest links against and what was described beside it
 /// ([ADR-290](../../docs/specification/adr/adr-290.md) D1), and what a callee
 /// has newly gained since the ledger committed beside it
-/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1). Neither can be read
+/// ([ADR-308](../../docs/specification/adr/adr-308.md) D11). Neither can be read
 /// from a `Parsed`, and neither belongs to it.
 ///
 /// **One argument and not two**, because they arrive together and for the same
@@ -1298,7 +1298,7 @@ pub struct Around<'a> {
     pub foreign: &'a Foreign,
     pub newly: &'a check::Newly,
     /// **What this build may read while it builds**
-    /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    /// ([ADR-310](../../docs/specification/adr/adr-310.md)).
     ///
     /// The fourth fact, and it belongs beside the other three for the reason
     /// the doc above gives: it is about the *build* rather than about a file,
@@ -1356,7 +1356,7 @@ pub fn check(
     }
 
     // A warning is printed and does not stop anything. There is one, and it is
-    // a migration (ADR-035 D5): a string written before `f"…"` existed looks
+    // a migration (ADR-309 D15): a string written before `f"…"` existed looks
     // exactly like one that meant its braces, and neither refusing it nor
     // saying nothing would be right.
     let path = path.display().to_string();
@@ -1620,7 +1620,7 @@ pub fn check(
 /// it is the one that record asked for.
 ///
 /// **`NK2502` is not downgraded, and that is the decision.** A Rust dependency
-/// may bring its own runtime (ADR-038 D7), and its threads are not the
+/// may bring its own runtime (ADR-303 D7), and its threads are not the
 /// program's: `user_parallelism` bounds what *you* wrote, which is ADR-037 D2's
 /// load-bearing "user". So that crossing is real at both settings and so is the
 /// refusal.
@@ -1644,7 +1644,7 @@ fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism:
 }
 
 /// **What each function has newly gained in its `throws` set** since the
-/// ledger committed beside it ([ADR-101](../../docs/specification/adr/adr-101.md)
+/// ledger committed beside it ([ADR-308](../../docs/specification/adr/adr-308.md)
 /// D1).
 ///
 /// The ledger records `throws` as a **set** ([ADR-023](../../docs/specification/adr/adr-023.md)
@@ -1780,7 +1780,7 @@ pub struct Explain {
     /// inspection rather than assertion.
     pub tethers: bool,
     pub trust: bool,
-    /// [ADR-088](../../docs/specification/adr/adr-088.md) D6's report: what a
+    /// [ADR-304](../../docs/specification/adr/adr-304.md) D9's report: what a
     /// `T::fields` loop was unrolled to, for the types actually used.
     pub comptime: bool,
     /// [ADR-269](../../docs/specification/adr/adr-269.md) D7's report: every
@@ -1812,7 +1812,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     let several = program.units.len() > 1;
 
     // **Once for the program and not once per file**
-    // ([ADR-181](../../docs/specification/adr/adr-181.md) D5), which is the
+    // ([ADR-304](../../docs/specification/adr/adr-304.md) D10), which is the
     // difference from the four reports below: an unrolling is a fact about a
     // **call**, and the call may stand in a different file from the function it
     // names. Printing it per unit would print each one as many times as the
@@ -1930,7 +1930,7 @@ impl Project {
         }
 
         let manifest = Manifest::read(&layout.root.join("nikaia.toml"))?;
-        // ADR-038 D5 moved `cleanup-deadline` out of the manifest. The key is
+        // ADR-303 D5 moved `cleanup-deadline` out of the manifest. The key is
         // still accepted, and the note is what keeps the move from being
         // silent - a manifest whose setting stopped being read without saying
         // so is the mistake `[build]`'s unknown-key check already exists for.
@@ -2174,7 +2174,7 @@ impl Project {
         no_cache: bool,
         locked: bool,
         want: Explain,
-        // **The list this build reads under** (ADR-072 D2), or `None` for D1.
+        // **The list this build reads under** (ADR-310 D5), or `None` for D1.
         allowlist: Option<&Path>,
     ) -> Result<i32> {
         self.drive_to(subcommand, program_args, no_cache, locked, want, allowlist)
@@ -2460,7 +2460,7 @@ impl Project {
             true => modules::Program::read_for_tests(&self.entry(), &self.packages()?, true)?,
             false => modules::Program::read_with(&self.entry(), &self.packages()?)?,
         };
-        // **The same reads the build lowered under** (ADR-072, ADR-177). This
+        // **The same reads the build lowered under** (ADR-310, ADR-177). This
         // lowering has to be the lowering, or an item the build wrote a `const`
         // for is refused here and the backend's message never arrives.
         let layout = Layout::resolve(&self.entry());

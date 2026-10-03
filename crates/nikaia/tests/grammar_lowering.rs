@@ -34,7 +34,7 @@ mod measurements {
     include!("fixtures/measurements_expected.rs");
 
     /// `std::text`, as the fixture reaches it: the source writes
-    /// `text::digit_value` since [ADR-154](../../../docs/specification/adr/adr-154.md)
+    /// `text::digit_value` since [ADR-313](../../../docs/specification/adr/adr-313.md)
     /// put a name that lives in a module behind its prefix, so the stub is a
     /// module of that name rather than a bare function.
     pub mod text {

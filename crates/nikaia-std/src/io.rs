@@ -47,7 +47,7 @@
 ///
 /// **It lives in `io` and is written out.** `use std::io` and
 /// `io::IoError::NotFound(…)` is what a program that matches on it writes, which
-/// is [ADR-154](../../../docs/specification/adr/adr-154.md) D3's rule applied
+/// is [ADR-313](../../../docs/specification/adr/adr-313.md) D3's rule applied
 /// straight: what needs no prefix is Part I 1.3's list, and this is not on it.
 /// `fs::read` throwing an `io` type is the cost, accepted: a program that only
 /// *propagates* the failure names nothing, and one that takes it apart writes

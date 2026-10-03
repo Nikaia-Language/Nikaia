@@ -8,7 +8,7 @@
 //
 // One rule, and everything is downstream of it: **it may only ever take an
 // atomic away.** The atomic count is the floor (ADR-037 D6, lowered to the
-// plain one at `user_parallelism = no` by ADR-061 D2); a value may be lowered
+// plain one at `user_parallelism = no` by ADR-312 D10); a value may be lowered
 // to a plain count only where the analysis *proves* nothing crosses a thread
 // with it, and every case it cannot decide stays atomic with a reason from a
 // **closed list** - `Fallback`, the enumeration ADR-037 D8 answers "would an
@@ -85,7 +85,7 @@ pub struct Decision {
     /// Which row of `Fallback` this is, where it is one; nothing where the
     /// analysis *found* the crossing.
     pub fallback: Fallback?,
-    /// Every place a second handle on this allocation is made (ADR-040 D5).
+    /// Every place a second handle on this allocation is made (ADR-312 D5).
     pub duplications: Vec[String],
     /// Where a `get` copies the whole value out of the lock (ADR-281 D16).
     pub copied_out: Vec[String],
@@ -120,7 +120,7 @@ impl Sharing {
     }
 }
 
-/// Every count plain, because nothing can cross (ADR-061 D2). Applied to the
+/// Every count plain, because nothing can cross (ADR-312 D10). Applied to the
 /// finished answer, so the duplication sites are kept as they were found.
 pub fn every_count_plain(mut sharing: Sharing) {
     for i in 0..<sharing.decisions.len() {
@@ -173,7 +173,7 @@ pub fn sharing_report(sharing: ref Sharing) -> String {
         for site in decision.copied_out {
             out.push_str(ref f"             copied out: {site} each time - `access` reads it in place\n")
         }
-        // ADR-040 D5: where a handle is duplicated, which the source does not
+        // ADR-312 D5: where a handle is duplicated, which the source does not
         // say, is named beside the count.
         if decision.duplications.len() == 0 {
             out.push_str("             one handle, so the count is never stepped\n")
@@ -317,7 +317,7 @@ pub fn unseen(callee: ref String?) -> String {
 }
 
 /// Whether a position takes a handle on a shared value **by value**
-/// (ADR-040 D1): a view of one hands no handle on, and a type that merely
+/// (ADR-312 D1): a view of one hands no handle on, and a type that merely
 /// holds one is carried by whatever holds it.
 pub fn by_value_shared(ty: ref Ty) -> bool {
     return match ty {
@@ -449,7 +449,7 @@ pub struct Slots {
     pub index: collections::BTreeMap[String, i64],
     pub parent: Vec[i64],
     pub forced: Vec[Forced],
-    /// Where a second handle on a slot's allocation is made (ADR-040 D5):
+    /// Where a second handle on a slot's allocation is made (ADR-312 D5):
     /// the slot key, and what a reader is told about the place.
     pub duplicated: Vec[(String, String)],
     /// The slots a door over several locks names (ADR-281 D18): a
@@ -522,7 +522,7 @@ impl Slots {
         self.forced.push(Forced { key: key, why: why, fallback: fallback })
     }
 
-    /// A second handle on this slot's allocation is made here (ADR-040 D1),
+    /// A second handle on this slot's allocation is made here (ADR-312 D1),
     /// where the handle is handed on by value.
     pub fn duplicates(ref mut self, function: ref String, value: ref String, site: String) {
         let key = slot(function, value)

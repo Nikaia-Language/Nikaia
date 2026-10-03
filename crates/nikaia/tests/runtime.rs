@@ -1,6 +1,6 @@
 //! The runtime, from the outside: one program, both mechanisms, same answer.
 //!
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D3 says a file may be
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D3 says a file may be
 //! served by the kernel's completion queue or by the blocking path, and that
 //! **which one is chosen is a run-time decision**. The claim that carries is
 //! not that either mechanism works - the unit tests in `nikaia-std` say that -
@@ -445,7 +445,7 @@ fn a_manifest_cleanup_deadline_compiles_and_says_where_it_went() {
 /// mechanism than a comment is. What is **not** stripped is the inside of an
 /// `f"…"` interpolation, which is ordinary code: a plain `"…"` has no
 /// interpolation at all, because a brace is a brace
-/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md)).
 #[test]
 fn no_nika_file_says_async_or_names_a_mechanism() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -477,7 +477,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
                 assert!(
                     !code.contains(forbidden),
                     "{} says `{forbidden}` in code, and the runtime is invisible \
-                     from a Nikaia program (ADR-038 D3)",
+                     from a Nikaia program (ADR-303 D3)",
                     path.display()
                 );
             }
@@ -493,7 +493,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
 /// says why. A backslash escapes the character after it, so a literal does not
 /// end at the quote in `"a \" b"`; a brace opens an interpolation only in an
 /// `f` string, because elsewhere a brace is a brace
-/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md)).
 fn outside_string_literals(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars().peekable();
@@ -544,7 +544,7 @@ fn a_literals_body_is_dropped_and_an_interpolations_inside_is_not() {
     assert!(!dropped.contains("async"), "{dropped}");
     assert!(dropped.contains("ASYNC"), "{dropped}");
 
-    // A plain string has no interpolation at all (ADR-035), so its braces are
+    // A plain string has no interpolation at all (ADR-309), so its braces are
     // part of the body and go with it.
     let braces = outside_string_literals("print(\"{async}\")");
     assert!(!braces.contains("async"), "{braces}");

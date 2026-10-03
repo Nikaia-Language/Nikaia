@@ -570,7 +570,7 @@ impl LedgerOps for Ledger {
                     // of this thing have.
                     // **An `extern "C"` declaration is an entry like any
                     // other, and reads unlike a trait method**
-                    // ([ADR-124](../../../docs/specification/adr/adr-124.md)
+                    // ([ADR-302](../../../docs/specification/adr/adr-302.md)
                     // D2). Two things are turned around, and only one of them
                     // by this record. It is **`sync`**, asserted rather than
                     // inferred, which is the shape `std`'s own hand-written
@@ -899,7 +899,7 @@ impl LedgerOps for Ledger {
     /// One function's entry, named as a caller would reach it.
     ///
     /// `doc` is the prose standing in front of the declaration
-    /// ([ADR-139](../../../../docs/specification/adr/adr-139.md) D2), and it is
+    /// ([ADR-307](../../../../docs/specification/adr/adr-307.md) D5), and it is
     /// kept only where the entry is `pub`: what a private item says is the
     /// source's, and a consumer was never going to read it.
     fn function(
@@ -1137,7 +1137,7 @@ impl LedgerOps for Ledger {
     /// A function by the name a caller wrote.
     ///
     /// **Exactly the name, since
-    /// [ADR-154](../../../docs/specification/adr/adr-154.md)**: a `std` entry
+    /// [ADR-313](../../../docs/specification/adr/adr-313.md)**: a `std` entry
     /// that lives in a module is reached through the module, `text::digit_value`
     /// and not `digit_value`, and what needs no prefix is the list on Part I's
     /// first page — whose entries are keyed **bare** here, so the exact lookup
@@ -1787,7 +1787,7 @@ fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
 /// A value that may itself hold a quote - which a signature does, the moment an
 /// option's default is a string: `method: &str = "GET"`.
 /// **And a `\n` becomes `\\n`**, which is
-/// [ADR-139](../../../docs/specification/adr/adr-139.md) D2's one demand on
+/// [ADR-307](../../../docs/specification/adr/adr-307.md) D5's one demand on
 /// this format: a doc comment holds its line breaks and the file is read a
 /// line at a time. Nothing else written here has ever held one, so every
 /// ledger already on disk renders and reads back exactly as it did.
@@ -1851,7 +1851,7 @@ pub fn declared_types(parsed: &Parsed) -> BTreeSet<String> {
                 declared.insert(parsed.text(*name).to_string());
             }
             // **An opaque handle is a type this file declares**
-            // ([ADR-147](../../../docs/specification/adr/adr-147.md) D3). It
+            // ([ADR-302](../../../docs/specification/adr/adr-302.md) D7). It
             // has no fields and no constructor, but a declaration is what
             // `NK1135` asks for and this is one - the block that writes it is
             // the only place its name comes from.

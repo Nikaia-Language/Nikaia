@@ -63,7 +63,7 @@ pub struct Choices {
     pub build: String,
     pub backend: String,
     /// **The allowlist's own digest**, empty where no list is in effect
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D7).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D10).
     ///
     /// The list is a file the build read, so it belongs in the key beside the
     /// files it names — and it belongs *here*, with the switches, rather than

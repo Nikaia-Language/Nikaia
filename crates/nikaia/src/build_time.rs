@@ -6,7 +6,7 @@
 //! `+ - * / %` — [`fold`](crate::fold), 124 lines with no call in it. That is
 //! D5's **first** stage, and the second one was written down as *when Q4 is
 //! answered*: a call, and with it the file reading
-//! [ADR-072](../../../docs/specification/adr/adr-072.md) waits behind.
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) waits behind.
 //!
 //! Q4 **is** answered — [ADR-287](../../../docs/specification/adr/adr-287.md)
 //! D1 and D2 say what a build-time body may do — so this is the call, and with
@@ -147,7 +147,7 @@ pub enum Value {
         payload: Vec<Value>,
     },
     /// A tuple, which is what a **pair** is
-    /// ([ADR-176](../../../docs/specification/adr/adr-176.md) D1): a map the
+    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D8): a map the
     /// build can see is written `[("get", 1), ("post", 2)]`, and that needed no
     /// new literal — only a value for the one this language already has.
     Tuple(Vec<Value>),
@@ -162,7 +162,7 @@ pub enum Value {
     ///
     /// It lands as a `const` like anything else: `const P: Point = Point { x: 1, y: 2 };`
     /// is Rust, and a struct whose fields own nothing is already its own view —
-    /// [ADR-079](../../../docs/specification/adr/adr-079.md) D1's *a number is
+    /// [ADR-311](../../../docs/specification/adr/adr-311.md) D1's *a number is
     /// already its own view*, read one shape out.
     Struct {
         name: String,
@@ -214,7 +214,7 @@ pub enum Refusal {
     /// ring rather than the limit it hit.
     Circular { ring: Vec<String> },
     /// **A file this build may not read**
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D1 to D5).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D4 to D5).
     ///
     /// Understood and refused, which is why it is not `Unevaluable`: the shape
     /// is read, the path is in hand, and the answer is no — with a reason that
@@ -267,7 +267,7 @@ pub struct BuildTime<'a> {
     beside: &'a [&'a Parsed],
     own: &'a Ledger,
     /// **What this build may read while it builds**
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md)). A caller that
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md)). A caller that
     /// passes [`Reads::none`] gets D1: the whole class is off, which is what
     /// every test and every build that did not ask for it gets.
     reads: &'a Reads,
@@ -349,7 +349,7 @@ impl<'a> BuildTime<'a> {
                 }
                 Ok(Value::Tuple(held))
             }
-            // **`f"…"` is text with code in it** (ADR-035), and the code is
+            // **`f"…"` is text with code in it** (ADR-309), and the code is
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a
             // value somebody could have written down.
@@ -569,8 +569,8 @@ impl<'a> BuildTime<'a> {
                 };
                 let name = self.parsed.text(*name).to_string();
                 // **`asset("…")` is answered before the arguments are**
-                // ([ADR-116](../../../docs/specification/adr/adr-116.md) D2,
-                // [ADR-072](../../../docs/specification/adr/adr-072.md) D4).
+                // ([ADR-310](../../../docs/specification/adr/adr-310.md) D3,
+                // [ADR-310](../../../docs/specification/adr/adr-310.md) D7).
                 // A name that folds to `"config.json"` is a path that was
                 // *computed*, and reading it would make *named in the code*
                 // something a reader cannot decide by looking at the line.
@@ -701,7 +701,7 @@ impl<'a> BuildTime<'a> {
         }
     }
 
-    /// **`f"…"` while the program is built** (ADR-035, [ADR-032](../../../docs/specification/adr/adr-032.md)
+    /// **`f"…"` while the program is built** (ADR-309, [ADR-309](../../../docs/specification/adr/adr-309.md)
     /// D3 — a hole is code and every analysis sees it, this one included).
     ///
     /// The holes are split out by the same function the lowering uses, so the
@@ -718,7 +718,7 @@ impl<'a> BuildTime<'a> {
         parts: &[crate::ast::FPart],
         frame: &BTreeMap<String, Value>,
     ) -> Result<Value, Refusal> {
-        // Built from the parts the grammar parsed (ADR-262 D2, D5).
+        // Built from the parts the grammar parsed (ADR-309 D6, D9).
         let format = crate::emit::format_of(parts);
         let holes = crate::emit::interpolated_holes(parts);
         let mut values = Vec::with_capacity(holes.len());
@@ -727,7 +727,7 @@ impl<'a> BuildTime<'a> {
         }
 
         // **The literal parts are still *written*.** The grammar keeps a run
-        // of text as written (ADR-262 D1) — a `\` and the character after it,
+        // of text as written (ADR-309 D5) — a `\` and the character after it,
         // `\u{…}` braces included — so a chunk is read by
         // [`decoded`] exactly as a plain literal is, and a hole's value is
         // already decoded.
@@ -935,15 +935,15 @@ impl<'a> BuildTime<'a> {
     }
 
     /// **The file a build reads**
-    /// ([ADR-116](../../../docs/specification/adr/adr-116.md) D2).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D3).
     ///
     /// It is the compiler's and not `std`'s, so it is read here rather than
     /// resolved through a ledger: there is no body to describe. What comes back
     /// is the file's **text**, which is what crosses to the program as a `&str`
-    /// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1) and what a
+    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1) and what a
     /// grammar's entry takes.
     ///
-    /// Every rule [ADR-072](../../../docs/specification/adr/adr-072.md) states
+    /// Every rule [ADR-310](../../../docs/specification/adr/adr-310.md) states
     /// holds unchanged under the call rather than under the keyword it was
     /// written for, and the first of them is the one that costs nothing to
     /// keep: a build given no list reads nothing.
@@ -1311,7 +1311,7 @@ impl<'a> BuildTime<'a> {
                     }
                 }
                 // **`xs.push(v)`, which is how a table is *grown* rather than
-                // filled** — [ADR-079](../../../docs/specification/adr/adr-079.md)'s
+                // filled** — [ADR-311](../../../docs/specification/adr/adr-311.md)'s
                 // own title, *growable going in, fixed coming out*. The body
                 // works with a list that does not know its length yet; what
                 // crosses into the program is fixed, and the declaration is

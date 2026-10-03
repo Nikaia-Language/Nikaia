@@ -18,7 +18,7 @@ use std::process::Command;
 
 /// What the emitted Rust says when `user_parallelism = yes` reached the emitter.
 ///
-/// [ADR-038](../../../docs/specification/adr/adr-038.md) D4: the generated
+/// [ADR-303](../../../docs/specification/adr/adr-303.md) D4: the generated
 /// `fn main` starts the runtime and tells it what this build allows, so the
 /// switch is one word in one line of the output.
 ///

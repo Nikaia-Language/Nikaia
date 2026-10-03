@@ -1133,7 +1133,7 @@ impl Walk<'_> {
                 out.extend(self.origins(fallback));
                 out
             }
-            // **A hole is code** (ADR-032): a call in `f"{load(p).len()}"` is
+            // **A hole is code** (ADR-309): a call in `f"{load(p).len()}"` is
             // a call of this statement, and the text built around it is text
             // of its own.
             Expr::LitInterpolated { .. } => {

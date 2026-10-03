@@ -16,7 +16,7 @@ use winnow_grammar::{InternerContext, ParseContext, ParseInput, StateOf, Symbol,
 /// line is a list literal and not an index
 /// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3); a run of `///`
 /// before an item is that item's documentation
-/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1). Neither
+/// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4). Neither
 /// question can be asked of the input that is left.
 ///
 /// **Idempotent, which is what backtracking asks of state**: what whitespace
@@ -75,7 +75,7 @@ impl Trivia {
     }
 
     /// One `//…` comment, which is a doc comment when a third slash follows
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4).
     ///
     /// `body` is what stands after the two slashes, so a doc comment's body
     /// begins with the third. `////` is an ordinary comment, as it is in every
@@ -137,7 +137,7 @@ impl Trivia {
 }
 
 /// The documentation standing in front of the item about to be parsed
-/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+/// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4).
 ///
 /// Written by hand and called **first in the rule** rather than read in its
 /// action, because the two are different moments: by the time an item's action
@@ -371,7 +371,7 @@ pub struct Parsed {
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
     /// hole's place - the byte its `{` stands at: the shape of each value and the method it is handed over
     /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
-    /// `f"…"`'s holes are the grammar's ([ADR-262](../../../docs/specification/adr/adr-262.md)),
+    /// `f"…"`'s holes are the grammar's ([ADR-309](../../../docs/specification/adr/adr-309.md)),
     /// and each reader takes a copy of one, so the wrap is applied where the
     /// copy is taken - [`crate::emit::literal_expressions`] - and every reader
     /// sees it.
@@ -440,7 +440,7 @@ impl Parsed {
     ///
     /// So the two programs declare the same struct differently, and that is the
     /// crossing rather than a disagreement: the sub-program is the **growable**
-    /// side of [ADR-079](../../../docs/specification/adr/adr-079.md) D1 and the
+    /// side of [ADR-311](../../../docs/specification/adr/adr-311.md) D1 and the
     /// program is the fixed one. What holds them together is that the **dump** is
     /// generated from the program's declaration and reads a run either way — so a
     /// field the sub-program owns arrives as the list the program views.
@@ -950,7 +950,7 @@ fn stops_at(input: &str) -> Option<usize> {
 }
 
 /// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
-/// ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+/// ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2).
 ///
 /// `BLOCK_COMMENT`'s cut fires where the input ran out, which is the end of the
 /// file and not the place the reader has to fix - a comment that swallowed the
@@ -1074,7 +1074,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
             // **An unclosed `/* … */` is reported at its opening** and not at
             // the end of the file, which is the one place a parse error's
             // position is the reader's to be told rather than the parser's
-            // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+            // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2).
             let finding =
                 unclosed_block_comment(&e, input).unwrap_or_else(|| a_parse_error(&e, input));
             refuse_parsing(finding, input)
@@ -1396,7 +1396,7 @@ grammar! {
         rule COMMENT @= "//" body:until(line_ending) -> { _state.user().comment(_span, body) }
 
         // **`/* … */`, and it nests**
-        // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D1, D2).
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D1, D2).
         // Whitespace to the parser exactly as a line comment is, which is why
         // it is listed in `WS` and nowhere else: the generator puts `WS`
         // between the tokens of every syntactic rule, so a block comment stands
@@ -1469,7 +1469,7 @@ grammar! {
         // expected. A rule that got *further* keeps its own message - the
         // label only replaces the list (winnow-grammar `# "…"`).
         // **And every arm takes the prose standing in front of it**
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1). The
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4). The
         // `///` lines are gone by the time this runs — the implicit whitespace
         // skip ate them — so what is read back is what the skip recorded
         // (`Trivia::comment`), and `take_doc` is a *take*: an item consumes its
@@ -1494,7 +1494,7 @@ grammar! {
             KW_TEST title:STRING body:block -> { Item::Test { name: title, body } }
 
         // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-        // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1).
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1).
         //
         // **The declarations are `trait_method`s**, because a signature without
         // a body is the same shape wherever it stands. What differs is how one
@@ -1507,7 +1507,7 @@ grammar! {
         // so the grammar takes any string and the ledger pass says which.
         //
         // **A block holds two shapes since**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): a
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7): a
         // signature, and an `opaque type … released by …`. They may interleave
         // freely in the source and are taken apart here, so nothing downstream
         // has to walk a list of two kinds.
@@ -1530,7 +1530,7 @@ grammar! {
           | d:trait_method -> { ExternMember::Declared(d) }
 
         // **`opaque type T released by f`**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): an
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7): an
         // address the language never dereferences, whose release is a `cleanup`
         // the compiler runs at the end of its scope (Part I 6.4).
         //
@@ -1580,7 +1580,7 @@ grammar! {
 
         // A trait's methods are entries too — `Summarize::summary` is how a
         // bound is looked up — so they take their prose the same way
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1).
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4).
         rule trait_method -> Spanned<TraitMethod> @=
             d:doc_here
             KW_FN
@@ -1609,7 +1609,7 @@ grammar! {
             }
 
         // **A method takes its prose too**
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1, D2), and
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4, D5), and
         // it is the shape a package's surface is mostly made of: a `pub`
         // method's entry is in the ledger under `Type::name`, so a consumer
         // reads it there or nowhere.
@@ -2088,7 +2088,7 @@ grammar! {
         rule generic_bound_tail -> Symbol = "+" n:type_name -> { n }
 
         // **`&[u8]` and `&mut [u8]`, what the C boundary lends**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): a run of
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D5): a run of
         // elements whose length the caller knows and the type does not.
         //
         // **Always behind a `&`**, which is the record's own shape: a bare `[T]`
@@ -2202,7 +2202,7 @@ grammar! {
             }
 
         // **The `&`, and whether a `mut` followed it**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1). `&mut T`
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D5). `&mut T`
         // is a view the callee may write through, and the C boundary is the one
         // place this language writes one: a parameter's mutability is otherwise
         // the word in front of its *name*
@@ -3322,7 +3322,7 @@ grammar! {
           // which a PEG would read as a struct literal called `select`.
           | s:select_expr -> { s }
           // Part III 15.1's other half, and it sits here for `overlap`'s reason
-          // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D3): a
+          // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D3): a
           // keyword and a block, which a PEG would otherwise read as a struct
           // literal called `unsafe`. `unsafe` is a reserved word now, so it
           // could not be one - but the ordering is the rule and not the
@@ -3832,7 +3832,7 @@ grammar! {
         rule KW_FN = "fn" not(ident)
         rule KW_FOLD = "fold" not(ident)
         rule KW_FOR = "for" not(ident)
-        // **Not in `RESERVED`** ([ADR-116](../../../../docs/specification/adr/adr-116.md)
+        // **Not in `RESERVED`** ([ADR-310](../../../../docs/specification/adr/adr-310.md)
         // D1): `from` is an ordinary name, and this rule exists only so the
         // removed `dsl X from e` still gets its sentence rather than a parse
         // error at whatever token happens to be next. A token matcher and a
@@ -3880,7 +3880,7 @@ grammar! {
         rule KW_REF = "ref" not(ident)
 
         // The four words of `opaque type T released by f`
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3). They
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7). They
         // are **not** in `RESERVED`: each is a name everywhere else, and this
         // position is the only one that asks for it.
         rule KW_OPAQUE = "opaque" not(ident)
@@ -3986,7 +3986,7 @@ grammar! {
           | KW_TRAIT -> { 0 }
           | KW_WITH -> { 0 }
           // **Reserved with their constructs**
-          // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1), which
+          // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1), which
           // is what tells them from the four above: a word reserved so that a
           // reader can be told something is one `NK1117`'s help can tell them
           // about instead ([ADR-298](../../../../docs/specification/adr/adr-298.md)).
@@ -4142,7 +4142,7 @@ grammar! {
           | n:NAME -> { Some(n) }
 
         // Part III 15.1: `unsafe { … }`, the one place a call to an `extern`
-        // name may stand ([ADR-124](../../../../docs/specification/adr/adr-124.md)
+        // name may stand ([ADR-302](../../../../docs/specification/adr/adr-302.md)
         // D3). A block with a value and no other rule - what is inside is
         // checked exactly as anything else is, and what the word buys is that
         // the boundary is visible *at the call*.
@@ -4225,12 +4225,12 @@ grammar! {
         rule null_lit -> Expr = KW_NULL -> { Expr::LitNull }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
-        // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the
+        // it the braces are braces (ADR-309). UPPERCASE, so the `f` and the
         // quote are one token: `f "x"` with a space is the variable `f`
         // followed by a string, and reading it as an interpolation would make
         // whitespace change what a program means.
         //
-        // **And the holes are parsed here** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+        // **And the holes are parsed here** ([ADR-309](../../../docs/specification/adr/adr-309.md)
         // D1): the body is text and holes, and a hole's expression is the
         // ordinary `expr`, so every walk sees it as a child of the literal, and
         // the emitter builds the format string from the parts (D5).

@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/http1.nika
 //
 // **What an HTTP/1.1 request head says**, read by a Nikaia grammar
-// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D6,
+// ([ADR-303](../../../../docs/specification/adr/adr-303.md) D6,
 // [ADR-289](../../../../docs/specification/adr/adr-289.md) D13: *the parser is
 // Rust until it is not*).
 //

@@ -132,7 +132,7 @@ fn a_call_of_options_alone_needs_no_semicolon() {
 /// spelling to send a reader to.
 #[test]
 fn a_leading_semicolon_at_a_call_is_refused() {
-    // In a hole, which the grammar parses (ADR-262 D4): the refusal is the
+    // In a hole, which the grammar parses (ADR-309 D8): the refusal is the
     // parser's, at its place, and carries its help like any parse error.
     let source = "fn execute(target_age: i64 = 0) -> i64 { return target_age }\n\
                   fn main() { println(f\"{execute(; target_age: 30)}\") }";

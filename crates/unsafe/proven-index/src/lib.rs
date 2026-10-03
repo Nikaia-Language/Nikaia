@@ -4,7 +4,7 @@
 //! The caller is the Nikaia compiler's generated code, at an index its
 //! `--optimization=remove-bounds-checks` pass proved: by a loop over the
 //! list's own length whose body cannot change that length, or by a
-//! certificate of the solver that its checker accepted (ADR-271). Everywhere
+//! certificate of the solver that its checker accepted (ADR-306). Everywhere
 //! else the generated code indexes with the check.
 //!
 //! Every `unsafe` in this crate, and the argument for it, is listed in

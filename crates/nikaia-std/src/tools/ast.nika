@@ -46,7 +46,7 @@ pub struct Spanned[T] {
     pub node: T,
     pub span: Span,
     /// The run of `///` lines standing immediately before it
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1), with the
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4), with the
     /// slashes and one leading space taken off and the line breaks kept.
     ///
     /// **Here rather than on each item**, because it is the same fact about
@@ -54,7 +54,7 @@ pub struct Spanned[T] {
     /// came from*: prose in front of an item is a second answer to that
     /// question. Only an **item** carries one today; a field's and a variant's
     /// wait on `nikaia doc`, which is what would read them
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) §4).
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md)).
     ///
     /// The compiler does not read it (D3). What it does is travel.
     pub doc: String?,
@@ -150,7 +150,7 @@ pub enum Item {
     },
 
     /// Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1).
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D1).
     ///
     /// **Signatures and nothing else**, which is `Trait`'s reason one item
     /// over: a declaration has no body, so `Item::Fn` cannot serve. The
@@ -166,7 +166,7 @@ pub enum Item {
         abi: String,
         declarations: Vec[Spanned[TraitMethod]],
         /// **The handles the block declares**
-        /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3):
+        /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7):
         /// `opaque type sqlite3 released by sqlite3_close`.
         ///
         /// A list beside the declarations rather than a kind of declaration,
@@ -393,16 +393,16 @@ pub enum Expr {
         at: u32,
     },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
-    /// says so ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+    /// says so ([ADR-309](../../../docs/specification/adr/adr-309.md)).
     ///
     /// This is a separate variant rather than a flag for a reason the compiler
-    /// has already paid for once: before ADR-032 every analysis walked past a
+    /// has already paid for once: before ADR-309 every analysis walked past a
     /// string as if it held no code, because *whether* it did was a property of
     /// its text and nothing made anyone look. A variant makes the question
     /// unavoidable - every `match` on an expression has to say what it does
     /// with this one, and the compiler names the sites that forgot.
     ///
-    /// **The grammar parses its holes** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+    /// **The grammar parses its holes** ([ADR-309](../../../docs/specification/adr/adr-309.md)
     /// D1, D2): `parts` is the body as text runs and holes, and a hole is an
     /// expression of the tree like any other - a walk sees it without parsing
     /// anything, and the emitter builds the format string from the parts (D5).
@@ -669,7 +669,7 @@ pub enum Expr {
     },
 
     /// Part III 15.1: `unsafe { … }`
-    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D3).
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D3).
     ///
     /// **A block with a value, and no other rule.** What is inside is checked
     /// exactly as anything else is; what the word buys is that the boundary is
@@ -684,7 +684,7 @@ pub enum Expr {
     },
 }
 
-/// **One piece of an `f"…"`** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// **One piece of an `f"…"`** ([ADR-309](../../../docs/specification/adr/adr-309.md)
 /// D2): a run of text, as written - escapes and `{{` kept - or a hole, an
 /// expression and what follows its `:`, with the byte its `{` stands at, which
 /// is what a reader of one hole finds it again by.
@@ -735,7 +735,7 @@ pub struct Type {
     /// `name` holds the digits as they were written, so a message that prints
     /// a type prints the number the source wrote.
     pub count: i64?,
-    /// **`&mut T`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1):
+    /// **`&mut T`** ([ADR-302](../../../docs/specification/adr/adr-302.md) D5):
     /// a view the callee may write through.
     ///
     /// Beside `is_view` rather than inside it, because the two are independent
@@ -747,7 +747,7 @@ pub struct Type {
     /// mutability is otherwise written `mut name: T`
     /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3).
     pub is_mut: bool,
-    /// **`[T]`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): a
+    /// **`[T]`** ([ADR-302](../../../docs/specification/adr/adr-302.md) D5): a
     /// run of `T` whose length the caller knows and the type does not.
     ///
     /// The element goes in `generics`, where a tuple's parts and a function
@@ -768,7 +768,7 @@ pub struct Type {
 }
 
 /// One line of an `extern "C"` block, before the two shapes are taken apart
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7).
 ///
 /// The grammar's own type and nothing else's: a block may interleave the two
 /// freely and `Item::Extern` holds them in two lists, so this exists for the
@@ -779,7 +779,7 @@ pub enum ExternMember {
 }
 
 /// **An address this language never dereferences**
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7).
 ///
 /// `opaque type sqlite3 released by sqlite3_close`. It is moved and stored like
 /// any value, it has no fields and no indexing, and its release is a `cleanup`

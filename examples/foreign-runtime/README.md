@@ -1,6 +1,6 @@
-# A Rust crate that brings its own runtime — the ADR-038 D7 experiment
+# A Rust crate that brings its own runtime — the ADR-303 D7 experiment
 
-[ADR-038](../../docs/specification/adr/adr-038.md) D7 says a Nikaia program may
+[ADR-303](../../docs/specification/adr/adr-303.md) D7 says a Nikaia program may
 depend on a Rust crate that starts threads and an event loop of its own, and
 names two rules that are supposed to keep that sound. This directory is the
 program that tests it: a Nikaia project depending on `hyper` and `tokio` through

@@ -1,6 +1,6 @@
 //! A map whose keys the build knew
-//! ([ADR-176](../../../docs/specification/adr/adr-176.md) D2,
-//! [ADR-079](../../../docs/specification/adr/adr-079.md) D3).
+//! ([ADR-311](../../../docs/specification/adr/adr-311.md) D9,
+//! [ADR-311](../../../docs/specification/adr/adr-311.md) D6).
 //!
 //! **Four tables and no generated code.** The obvious lowering for a small map
 //! was a `match` written out by the emitter, because that is what the numbers
@@ -20,7 +20,7 @@
 
 /// A map built while the program was built.
 ///
-/// Everything in it is `&'static`, which is [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// Everything in it is `&'static`, which is [ADR-311](../../../docs/specification/adr/adr-311.md)
 /// D1's *growable going in, fixed coming out*: what the build owned, the program
 /// gets a view of.
 #[derive(Debug, Clone, Copy)]

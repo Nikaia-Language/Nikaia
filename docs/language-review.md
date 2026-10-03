@@ -209,7 +209,7 @@ it covers everything by construction.
 Twenty-two `catch {` handlers in `examples/`, and every one of them is a
 catch-all; none matches on `error`.
 
-*Decided since:* [ADR-101](specification/adr/adr-101.md) — the syntax stays,
+*Decided since:* [ADR-308](specification/adr/adr-308.md) — the syntax stays,
 and a new error reaching any `catch` is named once in the build, with the
 ledger commit as the acknowledgement. The recommendation below is kept for the
 record and is not the decision.
@@ -346,7 +346,7 @@ Ordered by how early a newcomer meets it. Each was reproduced unless marked
 | tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. *Decided since:* [ADR-291](specification/adr/adr-291.md) — the six, a guard is `if`, and `..` in a pattern is inclusive, so `..<` becomes the exclusive range everywhere and `..=` goes. **Built**: the range spelling first, then the six shapes. `calc.nika` matches `step`. |
 | `..` rest in a struct pattern | parse error *(spec status)*. *Decided since:* [ADR-291](specification/adr/adr-291.md) D10, with the other five. |
 | a bare `throw` as a match arm | parse error; must be `{ throw error }`. *Built since:* [ADR-276](specification/adr/adr-276.md) — `throw`, `return`, `break` and `continue` are expressions of the never type. |
-| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-134](specification/adr/adr-134.md) — `/* … */`, nesting, not a doc comment; and [ADR-139](specification/adr/adr-139.md) — a doc comment is a language feature and the ledger carries it in a derived `doc` column. **Both are built** for an item; a field's and a variant's wait on `nikaia doc`. |
+| block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-307](specification/adr/adr-307.md) — `/* … */`, nesting, not a doc comment; and [ADR-307](specification/adr/adr-307.md) — a doc comment is a language feature and the ledger carries it in a derived `doc` column. **Both are built** for an item; a field's and a variant's wait on `nikaia doc`. |
 | a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-276](specification/adr/adr-276.md). |
 
 None of these needs a decision any more. **Every row has a record**, and the
@@ -365,14 +365,14 @@ language.
 
 `from` only means something after `dsl X` and inside a `comptime` initialiser;
 `with`, `quote` and `macro` are reserved for constructs the language *promises
-never to add* (ADR-088 D7). The argument — "a reserved word can be given a
+never to add* (ADR-304). The argument — "a reserved word can be given a
 message where a name cannot" — is exactly what `NK1117`'s help text already
 does for `assert` and `unsafe`.
 
 **Recommendation:** `from` becomes contextual; `with`, `quote`, `macro` are
 un-reserved (the direction ADR-298 says costs nothing); `const` and `loop` stay
 only while their reopening conditions are live. *Decided since:*
-[ADR-116](specification/adr/adr-116.md) — `from` is a name outright, not
+[ADR-310](specification/adr/adr-310.md) — `from` is a name outright, not
 contextual, and the build-time read is `asset("…")`; and
 [ADR-298](specification/adr/adr-298.md) frees `loop`, `const`, `macro` and
 `quote`, moving their messages to `NK1117`'s help. `with` stays, for the

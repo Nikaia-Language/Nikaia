@@ -16,7 +16,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
 
 * `nikaia.toml`: the **manifest**. It describes the project, its authors and its dependencies.
 * `nikaia.lock`: the **lockfile**. It records everything that determines the build and is also the **cache key**.
-    * **Asset hashing:** where a grammar reads an external file (`asset("schema.sql")`), the compiler records the file's SHA256 hash here. The read itself is permitted by an allowlist file put in effect with `--allow-read-from-list=…` (Part II 10.2, [ADR-072](adr/adr-072.md)); the lockfile records it after the fact. A build given no allowlist reads nothing at compile time.
+    * **Asset hashing:** where a grammar reads an external file (`asset("schema.sql")`), the compiler records the file's SHA256 hash here. The read itself is permitted by an allowlist file put in effect with `--allow-read-from-list=…` (Part II 10.2, [ADR-310](adr/adr-310.md)); the lockfile records it after the fact. A build given no allowlist reads nothing at compile time.
     * **Source hashing:** the SHA256 of each `.nika` source that took part. An unchanged module skips parsing and expansion.
     * **Resolved versions:** the exact dependency versions, the toolchain version used, and the Nikaia compiler's own version. The compiler's version is part of the key. The dependency versions are recorded without being hashed into the key; Cargo's own fingerprinting covers them.
     * **Declaration and record:** `nikaia.toml` states what the project requires; `nikaia.lock` records what was resolved and used.
@@ -63,7 +63,7 @@ The manifest defines the project's metadata and the build options of Part I 1.2.
 
 The build options live in `[build]`. `--target` and `--user-parallelism` override `target` and `user-parallelism` for a single build. `reentrancy-check` is read from the manifest. A key `[build]` does not know fails the build.
 
-`optimization` names optimizations that change nothing a program means, as `NAME:LEVEL` words separated by commas. `--optimization=NAME:LEVEL` overrides it for a single build, and may be given more than once; a later word for a name wins. The first name is `remove-bounds-checks` ([ADR-271](adr/adr-271.md)): at `basic`, an index is written without its check inside a loop over the list's own length whose body cannot change that length; at `aggressive`, also wherever the solver proves `0 <= i < xs.len()` from the facts that hold there, with a certificate its checker accepts. The other is `remove-overflow-checks` ([ADR-272](adr/adr-272.md)), whose one level besides `off` is `aggressive`: a `+`, `-` or `*` of one whole-number type is written without its overflow check where the solver proves it stays inside that type. Both read what every write into a local list puts in it as a bound on its values, `x % n` as below `n`, and the length a loop that pushes once per turn leaves. The default is `off`. No level drops a check that is not proved, so a program stops at an index or an overflow at every level where it stops at `off` (A.2). It is part of the build's cache key; `std` is lowered at `off`.
+`optimization` names optimizations that change nothing a program means, as `NAME:LEVEL` words separated by commas. `--optimization=NAME:LEVEL` overrides it for a single build, and may be given more than once; a later word for a name wins. The first name is `remove-bounds-checks` ([ADR-306](adr/adr-306.md)): at `basic`, an index is written without its check inside a loop over the list's own length whose body cannot change that length; at `aggressive`, also wherever the solver proves `0 <= i < xs.len()` from the facts that hold there, with a certificate its checker accepts. The other is `remove-overflow-checks` ([ADR-306](adr/adr-306.md)), whose one level besides `off` is `aggressive`: a `+`, `-` or `*` of one whole-number type is written without its overflow check where the solver proves it stays inside that type. Both read what every write into a local list puts in it as a bound on its values, `x % n` as below `n`, and the length a loop that pushes once per turn leaves. The default is `off`. No level drops a check that is not proved, so a program stops at an index or an overflow at every level where it stops at `off` (A.2). It is part of the build's cache key; `std` is lowered at `off`.
 
 The manifest carries what the **compiler** must know. How the program behaves on the machine it runs on — the number of I/O workers, the size of the pool for user code, the I/O mechanism, the shutdown drain — is runtime configuration (13.3b), read at startup by whoever runs the program.
 
@@ -97,7 +97,7 @@ target = "x86_64-linux"
 # The option bounds user code, not the compiler or the runtime.
 user-parallelism = "no"
 
-# Optimizations that change nothing a program means (ADR-271, ADR-272). "off" by
+# Optimizations that change nothing a program means (ADR-306, ADR-306). "off" by
 # default; "basic" or "aggressive" drop an index's check where it is proved.
 # optimization = "remove-bounds-checks:aggressive,remove-overflow-checks:aggressive"
 
@@ -1412,7 +1412,7 @@ and inside a `dsl html` template's `{…}`, goes through the same path as a stat
 `NK1101` and the rest say the same thing about it that they would say about the same expression
 written on a line of its own. The `sync` analysis reads holes too, in both directions: a pausing
 call inside one costs an inferred `sync` and contradicts an asserted one. A hole whose text does
-not parse is a parse error in an `f"…"` ([ADR-262](adr/adr-262.md) D4) and is reported by the emitter in a template, and the checker raises no second error for it.
+not parse is a parse error in an `f"…"` ([ADR-309](adr/adr-309.md) D8) and is reported by the emitter in a template, and the checker raises no second error for it.
 
 ### C.5. What a Crossing Refused Looks Like
 

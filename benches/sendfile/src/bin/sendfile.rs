@@ -169,7 +169,7 @@ fn sendfile(path: &Path, socket: &mut TcpStream, times: usize, size: usize) {
     }
 }
 
-/// The same transfer on the ring ADR-038 D3 already runs files on.
+/// The same transfer on the ring ADR-303 D3 already runs files on.
 #[cfg(target_os = "linux")]
 fn splice(path: &Path, socket: &mut TcpStream, times: usize, size: usize) {
     let file = File::open(path).expect("open");

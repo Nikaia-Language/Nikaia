@@ -5,7 +5,7 @@
 [ADR-058](adr/adr-058.md)'s evidence
 **Related:** [ADR-058](adr/adr-058.md) (the decision these
 settled), [ADR-018](adr/adr-018.md) D2 (what a handler may
-return), [ADR-038](../specification/adr/adr-038.md) D3 (the I/O split), Part III
+return), [ADR-038](adr/adr-038.md) D3 (the I/O split), Part III
 17.1 (`fs::map`)
 **Produced by:** [`benches/sendfile/`](../../benches/sendfile) —
 `./benches/sendfile/sendfile.sh 7`, twice; §2 is the first run and §2.1 carries
@@ -226,7 +226,7 @@ a thousand slow connections that is a memory-scaling argument for `sendfile`
 that this bench, with its one fast reader, cannot see. It is named here rather
 than folded into the recommendation.
 
-**Nothing here is encrypted.** [ADR-038](../specification/adr/adr-038.md) D2 binds
+**Nothing here is encrypted.** [ADR-038](adr/adr-038.md) D2 binds
 `rustls`, and a TLS response cannot use `sendfile` at all without kTLS — so on a
 server that terminates TLS, the `sendfile` column is not available and the
 `mapped` column is the answer at every size.

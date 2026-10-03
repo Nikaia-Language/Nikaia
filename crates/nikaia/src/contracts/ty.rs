@@ -38,8 +38,8 @@ pub use nikaia_std::tools::ty::{
 };
 
 /// **What `T::fields` walks**, one element of it
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2,
-/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D2,
+/// [ADR-304](../../../docs/specification/adr/adr-304.md)).
 ///
 /// A name **no program can write**: `$` is not in an identifier, so a reader
 /// never meets it and a `.nika` file cannot declare one. It is the type a
@@ -60,7 +60,7 @@ pub const VARIANT: &str = "$Variant";
 
 /// A type's own name, with the module it lives in taken off.
 ///
-/// **Since [ADR-154](../../../docs/specification/adr/adr-154.md) D3 a `std`
+/// **Since [ADR-313](../../../docs/specification/adr/adr-313.md) D3 a `std`
 /// type carries its module**: `collections::HashMap`, `time::Duration`,
 /// `foreign::CStr`. The module says where the name is *reached from* and the
 /// last segment is the type, so every rule here that names a type by hand — the
@@ -168,7 +168,7 @@ impl TyOps for Ty {
                 mutable: ty.is_mut,
             };
         }
-        // **What the C boundary lends** (ADR-147 D1), read before the tuple for
+        // **What the C boundary lends** (ADR-302 D5), read before the tuple for
         // its reason: the element sits where a tuple's parts sit, and the
         // branches below would read it as an argument of a type called `slice`.
         if ty.is_slice || ty.is_mut {
@@ -186,7 +186,7 @@ impl TyOps for Ty {
                 },
             };
             // **A `?` on one of these is the *pointee's***
-            // ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which
+            // ([ADR-302](../../../docs/specification/adr/adr-302.md) D14), which
             // is where it parts company with Part I 2.3's own reading of a
             // trailing `?`. A view at the C boundary lives for the call and is
             // never absent, so a nullable view would be a shape nothing writes;

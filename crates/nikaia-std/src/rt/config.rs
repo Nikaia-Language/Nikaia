@@ -1,5 +1,5 @@
 //! The runtime configuration file, read at startup
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D5).
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D5).
 //!
 //! Four settings and no fifth. They are read when the program starts, by the
 //! person running it on the machine it runs on - which is why they are *not*
@@ -33,7 +33,7 @@ use std::time::Duration;
 /// Where the runtime looks for its configuration, unless the environment says
 /// otherwise.
 ///
-/// **Not decided by ADR-038.** D5 says "a runtime configuration file, read at
+/// **Not decided by ADR-303 D5 says "a runtime configuration file, read at
 /// startup" and names the four settings; it does not name the file or its
 /// search path. This is one constant and one function so that naming it is a
 /// one-line change when the decision is made.
@@ -183,7 +183,7 @@ impl Config {
                     let n = count(key, value).map_err(at)?;
                     if n == 0 {
                         return Err(at(
-                            "`io-workers` is 0, and one I/O thread always runs (ADR-038 D4)"
+                            "`io-workers` is 0, and one I/O thread always runs (ADR-303 D4)"
                                 .to_string(),
                         ));
                     }
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn zero_io_workers_is_refused_by_name() {
         let error = Config::parse("io-workers = 0\n").expect_err("refused");
-        assert!(error.contains("ADR-038 D4"), "{error}");
+        assert!(error.contains("ADR-303 D4"), "{error}");
     }
 
     #[test]

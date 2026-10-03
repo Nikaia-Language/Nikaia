@@ -2,7 +2,7 @@
 //! through.
 //!
 //! This module is
-//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D3, D4 and D5, and
+//! [ADR-303](../../../../docs/specification/adr/adr-303.md) D3-D5, and
 //! it is deliberately *here* rather than in the compiler. ADR-292 gave
 //! the reason when it put the statement overlap behind
 //! [`crate::task::both`]: the next change of mechanism must be a `std` change
@@ -222,7 +222,7 @@ static ON_DEMAND: OnceLock<UserCode> = OnceLock::new();
 /// **The runtime of a `main` that cannot pause, started when it is first
 /// needed** ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1).
 ///
-/// ADR-038 D4 starts the runtime before the first statement so that an
+/// ADR-303 D4 starts the runtime before the first statement so that an
 /// operation inside the program costs no thread start - which is worth it for a
 /// program that pauses. One whose `main` cannot pause has no operation that
 /// needs the I/O workers, and starting them anyway put a second thread in the

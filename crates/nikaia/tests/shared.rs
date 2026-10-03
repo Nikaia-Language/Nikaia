@@ -116,7 +116,7 @@ fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
         rust.contains("std::rc::Rc::new(connect("),
         "the call is the constructor (ADR-281 D2):\n{rust}"
     );
-    // A borrow duplicates nothing (ADR-040 D1's correction). Two of them, and
+    // A borrow duplicates nothing (ADR-312 D1's correction). Two of them, and
     // not one step of the count.
     assert!(
         !rust.contains(".clone()"),
@@ -137,7 +137,7 @@ fn the_switches_agree_about_a_shared_value() {
     let (parallel, two) = run("shared-parallel", BORROWED, &["--user-parallelism", "yes"]);
     assert_eq!(sequential, parallel, "the two builds print differently");
     // **What may not move is the meaning, and it does not.** The count itself
-    // may: since [ADR-061](../../../docs/specification/adr/adr-061.md) D2 one
+    // may: since [ADR-312](../../../docs/specification/adr/adr-312.md) D10 one
     // user thread is a build where nothing can cross, so every count there is
     // plain. This value is plain at both settings anyway - nothing crosses with
     // it at either - which is why the two lowerings are still byte for byte the
@@ -180,7 +180,7 @@ fn main() {
     // **At `yes`**, because that is where the fallback has anything to protect:
     // at one user thread nothing can cross, so there is nothing for a caller in
     // a unit this build cannot see to do with the value
-    // ([ADR-061](../../../docs/specification/adr/adr-061.md) D2) and the count
+    // ([ADR-312](../../../docs/specification/adr/adr-312.md) D10) and the count
     // is plain there whatever the signature says.
     let (printed, rust) = run("shared-atomic", source, &["--user-parallelism", "yes"]);
     assert_eq!(printed.trim(), "serving localhost");
@@ -248,12 +248,12 @@ fn the_report_explains_a_real_program() {
     );
 }
 
-// --- the handle is duplicated, and the cost is readable (ADR-040) ------------
+// --- the handle is duplicated, and the cost is readable (ADR-312) ------------
 
 /// A handle **handed on by value** is duplicated, and a **borrow** duplicates
 /// nothing. Both directions in one program, because the pair is the rule.
 ///
-/// [ADR-040](../../../docs/specification/adr/adr-040.md) D1: there is no method
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D1: there is no method
 /// to call, so the step is written where the handle is handed on - and D2 makes
 /// it unconditional rather than conditional on a later use, because a line
 /// further down may not decide what a line further up does to a cleanup point.
@@ -346,7 +346,7 @@ fn main() {
 }
 
 /// **`--sharing` names each duplication site beside the count it printed**
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D5).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D5).
 ///
 /// D1 makes the place one step of the count is paid unwritten in the source, so
 /// it has to be readable somewhere, and the count is already printed here.
@@ -511,7 +511,7 @@ fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
         assert_eq!(printed.trim(), "6", "at `{setting}`");
 
         // **One name above, two hulls below, and always a matching pair** -
-        // never an atomic count around a cheap lock (ADR-061 D2, ADR-281 D7).
+        // never an atomic count around a cheap lock (ADR-312 D10, ADR-281 D7).
         //
         // The cheap pair at **both** settings, and that is the per-value answer
         // doing its work: `zaehle` is an ordinary call on the same thread, so
@@ -533,7 +533,7 @@ fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
         // The handle is duplicated where it is handed on, not moved.
         assert!(
             rust.contains("zaehle(counter.clone())"),
-            "a handle handed on by value is duplicated (ADR-040 D1):\n{rust}"
+            "a handle handed on by value is duplicated (ADR-312 D1):\n{rust}"
         );
     }
 }
@@ -564,7 +564,7 @@ fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
 }
 
 /// **A handle a task uses is duplicated, not moved**
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1's task half).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D1's task half).
 ///
 /// Built for a call long before this, and unrunnable until `spawn` lowered: the
 /// task took the handle with it and `rustc` refused the later use about the
@@ -614,7 +614,7 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
 }
 
 /// **Four tasks on four threads, one lock, and the count is exact**
-/// ([ADR-045](../../../docs/specification/adr/adr-045.md) D2).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D7).
 ///
 /// The one program neither half of this could run on its own, which is why it
 /// is here rather than beside either. The lock had to be a **type**

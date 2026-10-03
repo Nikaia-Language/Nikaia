@@ -1,6 +1,6 @@
 #!/bin/sh
 # The oldest Rust Nikaia claims to work with is measured, not assumed
-# (ADR-219): this builds the compiler and `std` with exactly that version and
+# (ADR-305): this builds the compiler and `std` with exactly that version and
 # runs the whole test suite on it, which compiles every program the tests emit
 # with it too. The version is read from the one place that holds it, the
 # emitter's `RUST_FLOOR`.

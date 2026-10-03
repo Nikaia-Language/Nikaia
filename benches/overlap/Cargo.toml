@@ -10,7 +10,7 @@ publish = false
 # wake-up a closure pair costs — reproducible after the vehicle that used it was
 # withdrawn (ADR-292 D1).
 rayon = "1.10"
-# `--bin runtime` measures ADR-038 D4 through the real runtime rather than a
+# `--bin runtime` measures ADR-303 D4 through the real runtime rather than a
 # reduction of it: `nikaia_std::fs::read_both` on the runtime `rt::start` put
 # up before `main`. Timing a copy of it here would time a program this
 # compiler does not produce.

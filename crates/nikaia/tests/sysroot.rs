@@ -78,7 +78,7 @@ fn the_committed_rust_is_what_this_compiler_lowers() {
 /// `std`'s Nikaia half is lowered once, at `Build::default()`, and linked into
 /// programs built at either setting of `user_parallelism`. That is sound only
 /// while nothing in those files lowers differently per switch - and `Shared` is
-/// exactly what would break it: ADR-061 D2 makes every count the cheap one at
+/// exactly what would break it: ADR-312 D10 makes every count the cheap one at
 /// `no`, so a `Shared` here would be lowered once with a count that cannot cross
 /// a thread and linked into a program built at `yes`. The day one appears in a
 /// `.nika` file here, this test goes red instead of that program going quiet.

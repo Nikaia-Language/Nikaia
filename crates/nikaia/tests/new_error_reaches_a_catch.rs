@@ -1,5 +1,5 @@
 //! An error that newly reaches a `catch` is named once — `NK2402`
-//! ([ADR-101](../../../docs/specification/adr/adr-101.md)).
+//! ([ADR-308](../../../docs/specification/adr/adr-308.md)).
 //!
 //! Every failure in a Nikaia program is caught or declared, and a `catch`
 //! handles **everything** that reaches it. `throws` names no types at a
@@ -47,7 +47,7 @@ fn findings(source: &str, newly: &[(&str, &[&str])]) -> Vec<Finding> {
         &library,
         &BTreeSet::new(),
         &newly,
-        // No allowlist: a build given none reads nothing (ADR-072 D1).
+        // No allowlist: a build given none reads nothing (ADR-310 D4).
         &Reads::none(),
     )
     .findings
@@ -64,7 +64,7 @@ const HANDLED: &str = "use std::io\n\n\
                        }\n";
 
 /// **The note, and it is a warning.** A program is never refused for this
-/// (ADR-101 §3), so the severity is what says so.
+/// (ADR-308), so the severity is what says so.
 #[test]
 fn a_handler_is_told_what_newly_reaches_it() {
     let found = findings(HANDLED, &[("reads", &["io::IoError"])]);

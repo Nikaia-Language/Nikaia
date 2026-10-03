@@ -226,7 +226,7 @@ comptime KNOWN_KINDS: Array[ref String, 6] = ["file", "stdout", "stderr", "args"
 
 /// A statement, reduced to an `Operation` - or the reason it could not be.
 /// `walking` carries the two ledgers and the destination the result of each
-/// call is asked about (`Going::Ours`, ADR-045 D1: the closure overlapping
+/// call is asked about (`Going::Ours`, ADR-312 D6: the closure overlapping
 /// builds is this compiler's own).
 ///
 /// Two shapes are read: a `let` of one name and a bare expression statement.

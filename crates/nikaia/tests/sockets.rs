@@ -7,7 +7,7 @@
 //!
 //! The whole of it is a `.nika` file: `net::listen`, `accept`, `read`, `write`.
 //! Nothing here says how the waiting is done, which is
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D3's rule — the
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D3's rule — the
 //! runtime is invisible from a Nikaia program.
 
 mod common;
@@ -120,7 +120,7 @@ fn a_program_binds_a_socket_and_both_ends_talk() {
 }
 
 /// **The runtime is invisible from the program**
-/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D3), which a socket is
+/// ([ADR-303](../../../docs/specification/adr/adr-303.md) D3), which a socket is
 /// the easiest thing to break: every other language makes a reader choose a
 /// runtime before it can bind one.
 #[test]

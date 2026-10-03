@@ -148,7 +148,7 @@ question the page was written to answer is no longer open.
 * [`nightly-cost.md`](history/nightly-cost.md) — what the pinned nightly
   toolchain cost and bought; withdrawn, per `../CHANGELOG.md`.
 * [`runtime-cost.md`](history/runtime-cost.md) — what a pair of operations
-  costs on a running runtime; the evidence behind ADR-038 §4.3 and ADR-292 D6,
+  costs on a running runtime; the evidence behind ADR-303 and ADR-292 D6,
   both decided.
 * [`break-continue-cost.md`](history/break-continue-cost.md) — `break` and
   `continue`, priced before [ADR-276](specification/adr/adr-276.md) decided
@@ -157,12 +157,12 @@ question the page was written to answer is no longer open.
   costs; the question ADR-037 D3 left open, closed by ADR-037 D6–D8.
 * [`fixed-map-lookup.md`](history/fixed-map-lookup.md) — a fixed map's lookup,
   `match` against a perfect hash; the crossover
-  [ADR-176](specification/adr/adr-176.md) D2 rests on.
+  [ADR-311](specification/adr/adr-311.md) D9 rests on.
 * [`zero-copy-send.md`](history/zero-copy-send.md) — what it costs to answer a
   request with a file; [ADR-289](specification/adr/adr-289.md)'s evidence.
 * [`foreign-runtime.md`](history/foreign-runtime.md) — a Nikaia program that
   starts `hyper`; the finding changed no decision under
-  [ADR-038](specification/adr/adr-038.md) D7.
+  [ADR-303](specification/adr/adr-303.md) D7.
 * [`technical_notes.md`](history/technical_notes.md) — compiler-internals
   findings from the `rustc_ast` path; that path is withdrawn.
 * [`withdrawn-one-way-down.md`](history/withdrawn-one-way-down.md) — what the

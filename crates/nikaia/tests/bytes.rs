@@ -55,7 +55,7 @@ fn lowered(source: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// **`Bytes` is a name, written bare** (D1). Part I 1.3 has listed it since
-/// [ADR-154](../../../docs/specification/adr/adr-154.md) D1 and nothing
+/// [ADR-313](../../../docs/specification/adr/adr-313.md) D1 and nothing
 /// declared it; a type on that list and nowhere else is the one direction a
 /// prelude can be wrong in without anybody noticing.
 #[test]

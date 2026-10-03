@@ -140,8 +140,8 @@ fn a_struct_has_no_members_under_the_separator() {
 }
 
 /// **A type's shape is reached through a **bound** and not by name**
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2, built by
-/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D2, built by
+/// [ADR-304](../../../docs/specification/adr/adr-304.md)).
 ///
 /// A reader who writes `Point::fields` read the specification, so *`Point` has
 /// nothing called `fields`* would send them looking for a spelling that does

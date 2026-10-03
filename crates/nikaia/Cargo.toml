@@ -2,7 +2,7 @@
 name = "nikaia"
 version = "0.1.0"
 edition = "2024"
-# The oldest Rust this builds and is tested on (ADR-219); the emitter's
+# The oldest Rust this builds and is tested on (ADR-305); the emitter's
 # `RUST_FLOOR` says the same.
 rust-version = "1.88"
 

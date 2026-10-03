@@ -1,6 +1,6 @@
 //! **The files a build may read while it builds**
-//! ([ADR-072](../../../docs/specification/adr/adr-072.md),
-//! [ADR-116](../../../docs/specification/adr/adr-116.md) D2).
+//! ([ADR-310](../../../docs/specification/adr/adr-310.md),
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) D3).
 //!
 //! A `comptime` initialiser may write `asset("config.json")`, and what comes
 //! back is the file's text. Everything else on this page is about **which**
@@ -40,7 +40,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 
 /// The name a `comptime` initialiser writes
-/// ([ADR-116](../../../docs/specification/adr/adr-116.md) D2).
+/// ([ADR-310](../../../docs/specification/adr/adr-310.md) D3).
 ///
 /// **The compiler's and not `std`'s**, which is why it is a constant here
 /// rather than a ledger entry: there is no body to describe, and a program that
@@ -57,7 +57,7 @@ pub struct Allowlist {
     /// Where the list was read from, for the sentence a refusal writes.
     pub path: PathBuf,
     /// SHA-256 of the list's own bytes
-    /// ([D7](../../../docs/specification/adr/adr-072.md)): it is a file the
+    /// ([D7](../../../docs/specification/adr/adr-310.md)): it is a file the
     /// build read, so it belongs in the key with the files it names.
     pub digest: String,
     allowed: BTreeSet<String>,
@@ -203,7 +203,7 @@ impl Reads {
 
     /// What this build read, for the cache's asset dimension
     /// ([ADR-021](../../../docs/specification/adr/adr-021.md) D13,
-    /// [ADR-072](../../../docs/specification/adr/adr-072.md) D7).
+    /// [ADR-310](../../../docs/specification/adr/adr-310.md) D10).
     pub fn taken(&self) -> BTreeMap<String, String> {
         self.taken.lock().map(|it| it.clone()).unwrap_or_default()
     }

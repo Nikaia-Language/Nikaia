@@ -67,7 +67,7 @@ pub fn callee_named(names: ref winnow_grammar::InternerContext, name: String, ow
     // **A variant of a type is a constructor, not a call**:
     // `ConfigError::NotFound(path)` builds a value and runs no body, so it can
     // neither pause nor fail nor reach anything. The type is everything but
-    // the last segment (`io::IoError::NotFound` is `io::IoError`, ADR-154 D3),
+    // the last segment (`io::IoError::NotFound` is `io::IoError`, ADR-313 D3),
     // and it is one a ledger knows or this file declares - an enum of this
     // program gets no `TypeContract`, which is what the declarations are for.
     if names_a_variant(names, name, own, library, items) {

@@ -221,7 +221,7 @@ impl<T: Send + 'static> TaskHandle<T> {
     /// emitter writes this line at `user_parallelism = yes` and [`start`] at
     /// `no`, from one Nikaia `spawn` — so a program at the default is never
     /// asked for a `Send` its setting does not need, which is what keeps
-    /// [ADR-061](../../../docs/specification/adr/adr-061.md) D1's plain count
+    /// [ADR-312](../../../docs/specification/adr/adr-312.md) D9's plain count
     /// reachable from inside a task.
     ///
     /// [`start`]: TaskHandle::start

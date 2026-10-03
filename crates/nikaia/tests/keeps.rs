@@ -156,7 +156,7 @@ fn mutual_recursion_that_only_reads_keeps_nothing() {
     assert!(keeps(source, "pong").is_empty());
 }
 
-/// **A task keeps what it names** ([ADR-040](../../../docs/specification/adr/adr-040.md)
+/// **A task keeps what it names** ([ADR-312](../../../docs/specification/adr/adr-312.md)
 /// D1): its body may outlive the statement, so it takes what it names by value.
 #[test]
 fn a_parameter_a_task_names_is_kept() {

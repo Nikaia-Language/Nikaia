@@ -1,5 +1,5 @@
 //! **One poller, a registration each, and no worker in between**
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D3's readiness
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D3's readiness
 //! half, as [ADR-289](../../../../docs/specification/adr/adr-289.md) D6's socket
 //! needs it).
 //!
@@ -8,7 +8,7 @@
 //! A readiness wait used to be an [`super::worker::Op`]: the descriptor was
 //! duplicated, handed to an I/O worker over a channel, and the worker **blocked
 //! in `poll_one` for the whole of the wait**. `io-workers` is `1` by default
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4 — *one I/O
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D4 — *one I/O
 //! thread always runs*), so a wait that had not answered blocked every other
 //! wait in the process. A server waiting on `accept` while a connection waited
 //! on `read` was a server that stalled, and that is the shape an HTTP server

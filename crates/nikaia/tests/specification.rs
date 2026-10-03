@@ -11,7 +11,7 @@
 //! it hands back a `&str` where `String` is declared, and the lowering would not
 //! have compiled either — and three plain strings in Part I 7 held `{p}`,
 //! `{line}` and `{expected}`, written before
-//! [ADR-035](../../../docs/specification/adr/adr-035.md) made only `f"…"`
+//! [ADR-309](../../../docs/specification/adr/adr-309.md) made only `f"…"`
 //! interpolate. Both are fixed; this is what stops them coming back.
 //!
 //! **The baseline records fragments and refusals too**, and that is deliberate.
@@ -51,7 +51,7 @@ fn the_specifications_programs_are_the_ones_in_expected_txt() {
 /// about exactly that.
 ///
 /// `NK1111` is the one-release migration warning for `"{name}"` after
-/// [ADR-035](../../../docs/specification/adr/adr-035.md) D5, and a page that
+/// [ADR-309](../../../docs/specification/adr/adr-309.md) D15, and a page that
 /// trips it is a page written before that decision. Part I 2.5 trips it on
 /// purpose — it is the section that explains the difference — so the allowance
 /// is that one block, named by where it is rather than by a marker somebody has
@@ -65,7 +65,7 @@ fn only_the_section_about_interpolation_writes_a_plain_string_with_a_hole() {
     assert_eq!(
         tripped.len(),
         1,
-        "a plain string holding a hole is a page written before ADR-035 D5; the \
+        "a plain string holding a hole is a page written before ADR-309 D15; the \
          one allowed is Part I 2.5, which is about the difference: {:?}",
         tripped
             .iter()

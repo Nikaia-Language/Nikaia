@@ -908,7 +908,7 @@ impl Walk<'_, '_> {
             Expr::LitNull | Expr::LitInt { .. } | Expr::LitFloat(_) | Expr::LitBool(_) => {
                 Kinds::new()
             }
-            // **A hole is code** (ADR-032): what it passes to a function of
+            // **A hole is code** (ADR-309): what it passes to a function of
             // this program is a flow like any other.
             //
             // **And a value handed over inside one is handed over there**
@@ -916,7 +916,7 @@ impl Walk<'_, '_> {
             // is walked with its text, which is what the wrap is recorded by.
             Expr::LitInterpolated { parts } => {
                 let outer = std::mem::replace(&mut self.in_hole, true);
-                // The holes the grammar parsed (ADR-262 D2), each by its place.
+                // The holes the grammar parsed (ADR-309 D6), each by its place.
                 for (at, hole) in crate::emit::interpolated_holes(parts) {
                     let held = self.hole_text.replace(at);
                     self.expr(hole);

@@ -18,7 +18,7 @@
 //! so are its siblings.
 //!
 //! **Every source here parses and is analysed for real, and nothing is
-//! emitted.** `Shared` has no constructor and must not get one (ADR-040 §3), so
+//! emitted.** `Shared` has no constructor and must not get one (ADR-312), so
 //! a `Shared` arrives as a *declared type* - which is how `tests/send.rs` reaches
 //! the same type, and since Part I 6.2's annotated `let` is built it is also how
 //! a program makes one. What the lowering does with the answers is
@@ -331,7 +331,7 @@ fn a_type_whose_fields_are_rust_hides_what_it_holds() {
 ///
 /// `examples/fortunes.nika` line 73 takes `db: Shared[postgres::Connection]` and
 /// hands it to `all.fetch(db)`. Nothing written down describes `fetch` - its body
-/// is the driver's Rust - so ADR-038 D7's case applies and the polarity decides:
+/// is the driver's Rust - so ADR-303 D7's case applies and the polarity decides:
 /// atomic. The file's own comment says the opposite about the build it is written
 /// for ("At `user_parallelism = no` ... `Shared` costs a non-atomic refcount"),
 /// and both are right: the per-build expansion gives it `Rc`, and a per-value
@@ -795,7 +795,7 @@ fn the_report_has_the_shape_the_other_explanations_have() {
 ///
 /// **`Shared::deref` is the one entry that mentions the type, and it is the
 /// shape this guard is not about.** It takes `&Shared[$T]` and hands back `&$T`:
-/// a borrow duplicates nothing (ADR-040 D1's correction), and what comes out is a
+/// a borrow duplicates nothing (ADR-312 D1's correction), and what comes out is a
 /// view of the value inside rather than a handle on it - so there is no handle for
 /// the entry to keep and nothing for it to cross with. It is there because
 /// ADR-042 D2 sees a transparent container through to what it holds, which is
@@ -828,7 +828,7 @@ fn a_std_entry_that_takes_a_shared_needs_a_second_look() {
          `contracts::sharing` treats a described callee as accounted for, so somebody has to \
          decide whether that entry may keep the handle and cross a thread with it - see the \
          module header of `contracts::sharing`. A `ref Shared[$T]` receiver is not this case: a \
-         borrow duplicates nothing (ADR-040 D1)."
+         borrow duplicates nothing (ADR-312 D1)."
     );
 }
 
@@ -861,19 +861,19 @@ fn carries_a_handle(ty: &nikaia::contracts::ty::Ty) -> bool {
         // there is nothing in it to hold a handle
         // ([ADR-152](../../../docs/specification/adr/adr-152.md) D1).
         // What the C boundary lends lives for the call
-        // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1), so a
+        // ([ADR-302](../../../docs/specification/adr/adr-302.md) D5), so a
         // handle cannot be taken out of one and kept.
         Ty::Pointed { .. } => false,
         Ty::Unknown | Ty::Var { .. } | Ty::Count(_) => false,
     }
 }
 
-// --- where the second handle is made (ADR-040 D1 and D5) ---------------------
+// --- where the second handle is made (ADR-312 D1 and D5) ---------------------
 
 /// A handle handed to a function that **keeps** it is duplicated, and the place
 /// is named.
 ///
-/// [ADR-040](../../../docs/specification/adr/adr-040.md) D1 leaves the place one
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D1 leaves the place one
 /// step of the count is paid unwritten in the source - there is no method to
 /// call - so D5 asks for it beside the count, which is what this analysis feeds
 /// `--sharing`.

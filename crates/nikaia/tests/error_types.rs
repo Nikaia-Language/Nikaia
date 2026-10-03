@@ -332,7 +332,7 @@ fn a_failure_propagates_through_a_typed_channel() {
 }
 
 /// **A handler that never reads the error is untouched**
-/// ([ADR-090](../../../docs/specification/adr/adr-090.md)): the binding is
+/// ([ADR-308](../../../docs/specification/adr/adr-308.md)): the binding is
 /// `_error` and there is no envelope to open.
 #[test]
 fn a_handler_that_ignores_the_error_is_untouched() {

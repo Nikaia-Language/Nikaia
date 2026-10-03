@@ -52,7 +52,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
 }
 
 /// **The two bounds that ask what a type *is*** — Part II 10.3 and
-/// [ADR-088](../../../docs/specification/adr/adr-088.md) D2.
+/// [ADR-304](../../../docs/specification/adr/adr-304.md) D2.
 ///
 /// `[T: Struct]` and `[T: Enum]` are not traits anybody declares and no
 /// `impl` answers them: what answers is the **declaration**, which is the whole

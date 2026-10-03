@@ -37,7 +37,7 @@ const RESERVED_BELOW: &[&str] = &[
 /// fire for it. `trait` since
 /// [ADR-295](../../../docs/specification/adr/adr-295.md), and `extern` and
 /// `unsafe` with their constructs
-/// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1) — the two words
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D1) — the two words
 /// Part III 15.1 writes, reserved on a measurement that came to zero. All three
 /// are words Rust reserves *and* this language now does, which is why the escape
 /// can never fire for them.
@@ -69,7 +69,7 @@ const RESERVED_HERE_TOO: &[&str] = &["trait", "extern", "unsafe", "ref"];
 ///
 /// The other half of the measurement, and it is short: `union` is the only one
 /// of the sweep's candidates Rust accepts as a name. `gen` was one until the
-/// emitted code moved to Edition 2024, which reserves it (ADR-220).
+/// emitted code moved to Edition 2024, which reserves it (ADR-305).
 const NOT_RESERVED_BELOW: &[&str] = &["union", "counter"];
 
 /// The words the language below reserves and **cannot escape** — `r#crate` is

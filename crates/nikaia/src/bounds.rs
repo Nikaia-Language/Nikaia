@@ -1,5 +1,5 @@
 //! **Which index checks a proof shows are not needed**
-//! ([ADR-271](../../docs/specification/adr/adr-271.md)).
+//! ([ADR-306](../../docs/specification/adr/adr-306.md)).
 //!
 //! An index into a list stops the program where it is outside (Part III A.2).
 //! `--optimization=remove-bounds-checks:<level>` drops that check where it is
@@ -22,9 +22,9 @@
 //! reads where it writes an index of a list.
 //!
 //! **`--optimization=remove-overflow-checks:aggressive`**
-//! ([ADR-272](../../docs/specification/adr/adr-272.md) D1) asks the same walk
+//! ([ADR-306](../../docs/specification/adr/adr-306.md) D6) asks the same walk
 //! whether a `+`, `-` or `*` stays inside its type, and the walk knows more
-//! than ADR-271 gave it: a bound on **every value a list holds**, the join of
+//! than ADR-306 gave it: a bound on **every value a list holds**, the join of
 //! what each write puts in, proved where it is written (D2); `x % n` (D3); and
 //! the length a loop that pushes once per turn leaves (D4).
 
@@ -36,7 +36,7 @@ use crate::ast::{BinaryOp, Block, Expr, FPart, Item, Span, Spanned, Stmt, UnaryO
 use crate::check::value_node;
 use crate::parser::Parsed;
 
-/// How hard the compiler works to drop an index check (ADR-271 D1).
+/// How hard the compiler works to drop an index check (ADR-306 D1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub enum BoundsChecks {
     /// Every index is checked: the default.
@@ -68,7 +68,7 @@ impl BoundsChecks {
     }
 }
 
-/// How hard the compiler works to drop an overflow check (ADR-272 D1).
+/// How hard the compiler works to drop an overflow check (ADR-306 D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub enum OverflowChecks {
     /// Every `+`, `-` and `*` is checked: the default.
@@ -199,7 +199,7 @@ pub fn proven(
             collecting: false,
         };
         // **A bound on a list's values is an invariant, found and then
-        // checked** (ADR-272 D2): each pass reads the bounds the last one
+        // checked** (ADR-306 D7): each pass reads the bounds the last one
         // found, and the last pass keeps only those every write is proved
         // to stay within, assuming all of them. Reads before the writes they
         // depend on, and writes that depend on each other, are why one pass
@@ -579,7 +579,7 @@ struct Walk<'a> {
     arithmetic: &'a BTreeMap<usize, String>,
     /// What the body is, read once before any pass.
     shape: Shape,
-    /// The bounds on lists' values this pass may read (ADR-272 D2), by key:
+    /// The bounds on lists' values this pass may read (ADR-306 D7), by key:
     /// a list's name for its values, `name[]` for the values of the lists it
     /// holds.
     assumed: HashMap<String, Range>,
@@ -756,7 +756,7 @@ impl Walk<'_> {
     }
 
     /// **`value` is written into the list whose elements are `key`**
-    /// (ADR-272 D2): a number joins the key's bound, a list's items join
+    /// (ADR-306 D7): a number joins the key's bound, a list's items join
     /// `key[]`'s, a list the walk knows joins its bound into `key[]`.
     fn write(&mut self, key: &str, value: &Expr, facts: &Facts) {
         if !self.shape.tracks(key) {
@@ -843,7 +843,7 @@ impl Walk<'_> {
     }
 
     /// **The constants a whole number lies between**, where the walk can
-    /// tell: a linear term by the solver, and around it `%` (ADR-272 D3),
+    /// tell: a linear term by the solver, and around it `%` (ADR-306 D8),
     /// `>>`, `&`, a conversion, a truncation, and a value read out of a list
     /// whose values are bounded (D2). `None` is "not a number the walk
     /// knows", which is also what anything else is.
@@ -1224,7 +1224,7 @@ impl Walk<'_> {
         let len = self.arena.var(&length);
         let Some(at) = self.lin(index, facts) else {
             // A position read out of a list whose values are bounded
-            // (ADR-272 D2), or one `%` keeps small (D3).
+            // (ADR-306 D7), or one `%` keeps small (D3).
             let Some(Range {
                 lo: Some(lo),
                 hi: Some(hi),
@@ -1284,7 +1284,7 @@ impl Walk<'_> {
                 self.expr(value, facts);
                 let value_lin = self.lin(value, facts);
                 // **A number the walk bounds without a linear term**: a value
-                // read out of a list, a `%` (ADR-272 D2, D3).
+                // read out of a list, a `%` (ADR-306 D7, D8).
                 let value_range = match value_lin {
                     Some(_) => None,
                     None => self.range(value, facts).filter(Range::is_bounded),
@@ -1384,7 +1384,7 @@ impl Walk<'_> {
                     self.forget(&mut inner, &name);
                     inner.ints.remove(&name);
                 }
-                // `for x in xs`, where what `xs` holds is bounded (ADR-272 D2).
+                // `for x in xs`, where what `xs` holds is bounded (ADR-306 D7).
                 if let [only] = bindings.as_slice()
                     && !matches!(iter, Expr::Range { .. })
                     && let Some(key) = self.shape.elements_key(self.parsed, iter)
@@ -1425,7 +1425,7 @@ impl Walk<'_> {
                 }
                 self.block(body, &mut inner);
                 // **A loop that pushes once per turn adds its count to the
-                // length** (ADR-272 D4).
+                // length** (ADR-306 D9).
                 let filled = match &range {
                     Some((_, Some(low), Some(high), inclusive)) => {
                         let stable = changed
@@ -1712,7 +1712,7 @@ impl Walk<'_> {
                 }
                 self.after_change(facts, &changed);
             }
-            // **An operation that stays inside its type** (ADR-272 D1): its
+            // **An operation that stays inside its type** (ADR-306 D6): its
             // operands first, in the order they run.
             Expr::Binary {
                 op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul,
@@ -1938,7 +1938,7 @@ impl Changed {
     }
 }
 
-/// **The lists a loop's body pushes onto exactly once per turn** (ADR-272
+/// **The lists a loop's body pushes onto exactly once per turn** (ADR-306
 /// D4): one `xs.push(v)` among the body's own statements, nothing else that
 /// changes `xs`'s length or hands it on, and no way out of a turn before its
 /// end - no `break`, `continue`, `return`, `throw` or `?` anywhere in it.
@@ -2089,7 +2089,7 @@ fn pinned_in(parsed: &Parsed, body: &Block) -> HashSet<String> {
     out
 }
 
-// --- interval propagation (ADR-272) ---------------------------------------------
+// --- interval propagation (ADR-306) ---------------------------------------------
 
 /// A linear term as coefficients by variable and a constant.
 type Form = (BTreeMap<String, i128>, i128);
@@ -2235,7 +2235,7 @@ fn evaluate(form: &Form, known: &Known) -> Range {
     }
 }
 
-// --- what a body is (ADR-272) ------------------------------------------------------
+// --- what a body is (ADR-306) ------------------------------------------------------
 
 /// **What the walk reads off a body once, before any pass.**
 #[derive(Default)]
@@ -2246,7 +2246,7 @@ struct Shape {
     /// assigned to them, because an assignment that would make one negative
     /// stops the program.
     unsigned: HashSet<String>,
-    /// **Lists whose every write the walk sees** (ADR-272 D2): bound once in
+    /// **Lists whose every write the walk sees** (ADR-306 D7): bound once in
     /// the body to a literal, never assigned, handed on or captured, and
     /// changed only by a method that writes what the walk can read
     /// ([`writes_a_value`]) or that only keeps or removes values.

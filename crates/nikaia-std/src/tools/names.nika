@@ -150,7 +150,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
             names_in(expr, words, out)
             names_in_block(handler, words, out)
         }
-        // The holes of an `f"…"` are the grammar's (ADR-262 D2), walked like
+        // The holes of an `f"…"` are the grammar's (ADR-309 D6), walked like
         // any other expression. A `dsl` body is a foreign syntax whose
         // actions are Nikaia too: every word in its raw text counts, which
         // finds every name they could hold and a good many they could not.

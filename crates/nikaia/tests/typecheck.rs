@@ -427,7 +427,7 @@ fn a_hole_in_a_template_is_checked_too() {
 }
 
 /// A hole that does not parse is the **parser's** to report, at its place
-/// ([ADR-262](../../../docs/specification/adr/adr-262.md) D4): nothing reaches
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md) D8): nothing reaches
 /// the checker that the grammar did not accept, so it never has to guess.
 #[test]
 fn a_hole_that_does_not_parse_is_not_the_checkers_business() {
@@ -686,7 +686,7 @@ fn a_value_from_a_written_signature_is_measured_against_the_parameter() {
     assert_eq!(code, "NK1102", "a `String?` is not an `i32`");
 }
 
-// --- the migration warning (ADR-035 D5) --------------------------------------
+// --- the migration warning (ADR-309 D15) --------------------------------------
 
 /// A string written before the `f` existed looks exactly like one that meant
 /// its braces, so the change of meaning cannot be silent - Part III C.1 calls a
@@ -737,7 +737,7 @@ fn an_f_string_is_never_warned_about() {
     assert!(findings("fn main() { let n = 1 println(f\"{{{n}}}\") }").is_empty());
 }
 
-/// **The type comes from the syntax** (ADR-035 D3), so a `&str` return that
+/// **The type comes from the syntax** (ADR-309 D2), so a `&str` return that
 /// hands back an `f"…"` is the mistake it was before - and a plain string with
 /// a brace in it is a `&str` rather than becoming a `String` by accident.
 #[test]
@@ -904,7 +904,7 @@ fn the_checker_says_which_method_calls_can_fail() {
         &Ledger::infer(&parsed),
         // No described crates.
         &Ledger::empty(),
-        // No allowlist: a build given none reads nothing (ADR-072 D1).
+        // No allowlist: a build given none reads nothing (ADR-310 D4).
         &nikaia::assets::Reads::none(),
     )
     .methods;
@@ -1082,7 +1082,7 @@ fn a_view_of_a_view_is_the_view() {
 /// does ([ADR-281](../../../docs/specification/adr/adr-281.md) D2).
 ///
 /// The annotation used to be the constructor
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which meant the
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md)), which meant the
 /// places a hull could be made were a **list** - and a list somebody keeps
 /// complete is a list with holes in it.
 #[test]
@@ -1387,12 +1387,12 @@ fn an_undeclared_name_inside_an_expression_is_refused_too() {
         // parsed as `let q = quote` beside a block and lowered in silence, and
         // this is the row of `docs/spec-promises.md` it answered. `quote` is a
         // **reserved word** since
-        // [ADR-088](../../../docs/specification/adr/adr-088.md) D7, so it no
+        // [ADR-304](../../../docs/specification/adr/adr-304.md), so it no
         // longer reaches this check at all - the grammar refuses it first, which
         // is the earlier and better place. The shape is what mattered, so an
         // ordinary name stands here now.
         ("fn main() { let q = builder { 1 + 1 } }", "builder"),
-        // Inside an interpolation, which is Nikaia source too (ADR-032 D3).
+        // Inside an interpolation, which is Nikaia source too (ADR-309 D13).
         (r#"fn main() { let s = f"{nope}" }"#, "nope"),
         // And as an argument.
         (
@@ -1599,7 +1599,7 @@ fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
 #[test]
 fn a_word_this_language_does_not_know_is_refused() {
     // **`unsafe` used to be one of these and is a construct now**
-    // ([ADR-124](../../../docs/specification/adr/adr-124.md) D1): the word
+    // ([ADR-302](../../../docs/specification/adr/adr-302.md) D1): the word
     // joined Part I 2.1's list the way that list says one does, with its rule
     // in the same change. It is here as the shape it left, because a word
     // moving *onto* the list is the direction that breaks programs and the one

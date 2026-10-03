@@ -1,5 +1,5 @@
 //! **`from` is an ordinary name** —
-//! [ADR-116](../../../docs/specification/adr/adr-116.md) D1 and D3.
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) D12 and D13.
 //!
 //! It was reserved for `dsl X from e`, a form [ADR-296](../../../docs/specification/adr/adr-296.md)
 //! removed. What a reservation buys is one sentence — the one a reader who

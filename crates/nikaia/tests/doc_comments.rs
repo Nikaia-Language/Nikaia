@@ -1,8 +1,8 @@
 //! `///` before an item is its documentation
-//! ([ADR-139](../../../docs/specification/adr/adr-139.md) D1), and **the
+//! ([ADR-307](../../../docs/specification/adr/adr-307.md) D4), and **the
 //! ledger does not carry it**
 //! ([ADR-251](../../../docs/specification/adr/adr-251.md) D2, which withdraws
-//! ADR-139 D2): `nikaia.contracts` is what a caller's compiler reads about a
+//! ADR-307 D5): `nikaia.contracts` is what a caller's compiler reads about a
 //! body it cannot see, and a sentence is not that. The parser still reads the
 //! prose, for whatever reaches a dependency's documentation later.
 
@@ -45,7 +45,7 @@ fn a_run_of_slashes_is_the_items_documentation() {
 }
 
 /// **Anywhere else `///` is an ordinary comment** (D1), which is what
-/// [ADR-134](../../../docs/specification/adr/adr-134.md) D3 said of it and what
+/// [ADR-307](../../../docs/specification/adr/adr-307.md) D3 said of it and what
 /// this leaves true: a run with a statement between it and the next item
 /// belongs to nothing.
 #[test]

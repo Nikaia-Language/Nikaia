@@ -11,7 +11,7 @@ on, are in the record.
 would change), [ADR-006](adr/adr-006.md) (cleanup, whose observability is
 the gate in §2), [ADR-010](../specification/adr/adr-010.md) D1 (the polarity), [ADR-027](adr/adr-027.md) D1
 (the fixpoint this one is compared against), [ADR-029](adr/adr-029.md) (the walk
-through a struct's fields), [ADR-038](../specification/adr/adr-038.md) D7 (the foreign crossing),
+through a struct's fields), [ADR-038](adr/adr-038.md) D7 (the foreign crossing),
 Part II 12.2 (the counter that wants to cross)
 **What ran:** `benches/refcount/` (the measurement),
 `crates/nikaia/src/contracts/sharing.rs` and `crates/nikaia/tests/sharing.rs`
@@ -412,7 +412,7 @@ marks every one of them `undecided` rather than letting it pass as a decision.
 | case | why nothing decides it |
 | :--- | :--- |
 | a `Shared` in a **public** signature (parameter or result) | its callers are in a unit this build does not read (§5.1) |
-| a `Shared` handed to a **call nothing describes** | the body may start a thread of its own ([ADR-038](../specification/adr/adr-038.md) D7) |
+| a `Shared` handed to a **call nothing describes** | the body may start a thread of its own ([ADR-038](adr/adr-038.md) D7) |
 | a `Shared` handed to a **method nothing describes** | the same, reached by a name rather than a path |
 | a `Shared` in an argument position **no contract covers** | more arguments than the signature has parameters; nothing says where it went |
 

@@ -108,7 +108,7 @@ fn a_suffix_is_not_a_duration() {
 /// of a value that moves is not there.
 ///
 /// This is the `usize` defect one type over
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D2): a type the copy
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D6): a type the copy
 /// list does not name is one that **moves**, and the first program to write
 /// `time::sleep(50.millis())` was the first to meet it.
 #[test]

@@ -135,7 +135,7 @@ const cases = [
     ],
   },
   {
-    name: "a plain string's braces are braces (ADR-035 D1)",
+    name: "a plain string's braces are braces (ADR-309 D1)",
     src: `print("{ margin: 0 }")\nprint("\\\\d{3}")\n`,
     expect: [
       ['"', "string.quoted.double.nika"],

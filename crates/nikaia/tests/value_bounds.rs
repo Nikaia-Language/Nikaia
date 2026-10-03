@@ -1,10 +1,10 @@
 //! **A bound on a list's values, and `--optimization=remove-overflow-checks`**
-//! ([ADR-272](../../../docs/specification/adr/adr-272.md)).
+//! ([ADR-306](../../../docs/specification/adr/adr-306.md)).
 //!
 //! Every program here is lowered with both options off and both at
 //! `aggressive`, compiled with overflow checks on and without `-O`, and run:
 //! it prints the same, or stops at the same place with the language's message,
-//! at both (ADR-271 D2). The cases that stop are the ones a bound that says
+//! at both (ADR-306 D2). The cases that stop are the ones a bound that says
 //! more than the program does would get wrong.
 
 mod common;

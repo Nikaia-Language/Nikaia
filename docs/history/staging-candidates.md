@@ -9,7 +9,7 @@ three of them closed against this file's own prediction. What stays here are the
 the item is §6's closing rule, raised to a record as that ADR's D2: a candidate
 with a **measured crossover**.
 **Related:** [ADR-178](../specification/adr/adr-178.md) (the withdrawal, which cites
-this file as its evidence), [ADR-026](../specification/adr/adr-026.md) §3 (the two tiers),
+this file as its evidence), [ADR-026](adr/adr-026.md) §3 (the two tiers),
 [ADR-010](../specification/adr/adr-010.md) (the shipped precedent),
 [upstream findings](../upstream/winnow-grammar-findings.md)
 
@@ -132,7 +132,7 @@ a git dependency on its *commit*, so editing a vendored checkout has no effect (
 `docs/upstream/winnow-grammar-findings.md`); testing needs a `[patch]` or a path override. The repo
 already has the channel for handing such a finding over — that file exists for exactly this.
 
-Before attempting it, read [ADR-026](../specification/adr/adr-026.md) §3.1: it pre-registers the two ways
+Before attempting it, read [ADR-026](adr/adr-026.md) §3.1: it pre-registers the two ways
 this claim goes wrong ("table-free is not automatically faster"; "no branch mispredictions is
 backwards for the state machine itself") and states the defensible version — *the win is where the
 analysis removes states*.
@@ -195,7 +195,7 @@ Two findings, and neither would have survived being derived instead of measured.
 
 **A table of fat pointers is 4 KB to walk where a mask is a register.** All five characters are below
 64 — `"` 34, `&` 38, `'` 39, `<` 60, `>` 62 — so "is this one of the five" fits in a single `u64` and
-touches no memory at all. This is exactly the failure [ADR-026](../specification/adr/adr-026.md) §3.1
+touches no memory at all. This is exactly the failure [ADR-026](adr/adr-026.md) §3.1
 pre-registers as *"table-free is not automatically faster"*, met from the other side: table-**ful**
 was slower, on the first candidate that tried it.
 

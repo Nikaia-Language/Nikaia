@@ -87,7 +87,7 @@ fn the_type_is_in_the_ledger() {
     );
 }
 
-/// **It is reached through its module** ([ADR-154](../../../docs/specification/adr/adr-154.md)
+/// **It is reached through its module** ([ADR-313](../../../docs/specification/adr/adr-313.md)
 /// D3): the key carries the prefix, so what needs no `use` stays Part I 1.3's
 /// list and this is not on it. A program that only passes the failure on names
 /// nothing; one that takes it apart writes `use std::io`.

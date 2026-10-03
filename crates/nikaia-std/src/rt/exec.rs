@@ -2,7 +2,7 @@
 //! ([ADR-055](../../../../docs/specification/adr/adr-055.md) D3).
 //!
 //! **Why this is ours and not a bound runtime.**
-//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D3 built the I/O —
+//! [ADR-303](../../../../docs/specification/adr/adr-303.md) D3 built the I/O —
 //! completion for files, readiness for everything else — and D4 starts it before
 //! the program's first statement. A `tokio` or a `smol` brings an executor *and*
 //! an I/O layer, so binding one would put two event loops in one process, which
@@ -121,7 +121,7 @@ pub fn start(future: impl Future<Output = ()> + 'static) {
 /// the two are different lowerings of one Nikaia line: the emitter writes this
 /// one at `user_parallelism = yes` and that one at `no`, so a program at the
 /// default is never asked for a property its setting does not need
-/// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1 is the same
+/// ([ADR-312](../../../../docs/specification/adr/adr-312.md) D9 is the same
 /// shape — at one user thread a `Shared` is a plain count, and it could not be
 /// if every task had to be `Send`).
 ///
@@ -162,7 +162,7 @@ pub fn settled<T>(future: impl Future<Output = T>) -> T {
 /// Drive `future` to its value, running every started task in between.
 ///
 /// **The one place a Nikaia program's `main` is driven**
-/// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4 says where it is
+/// ([ADR-303](../../../../docs/specification/adr/adr-303.md) D4 says where it is
 /// called from). Nothing else blocks: a pause inside the program is a
 /// `Poll::Pending` that comes back here.
 ///
@@ -329,7 +329,7 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // **Nothing on this thread can move**, so what will move is the I/O -
         // the kernel's completion queue, or an I/O worker, which is a thread of
         // its own and already running
-        // ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4). This is
+        // ([ADR-303](../../../../docs/specification/adr/adr-303.md) D4). This is
         // the **one place in the program that parks**, which is what makes a
         // `std` read a suspension point: the thread is given up here and
         // nowhere else, so every other task has already had its turn.

@@ -63,7 +63,7 @@ pub mod task;
 pub mod tether;
 /// **An index the compiler proved inside**, read and written without its
 /// check: `--optimization=remove-bounds-checks`
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D5). The generated code
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D5). The generated code
 /// calls it inside `unsafe`, at an index its proof covers, and nowhere else.
 pub use proven_index as proven;
 pub mod time;
@@ -530,9 +530,9 @@ pub mod prelude {
     pub use crate::error::Full;
     pub use crate::seq::Join as _;
     // **The C boundary's one `std` type**
-    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
+    // ([ADR-302](../../../docs/specification/adr/adr-302.md) D8): a program
     // that declares `fn getenv(name: &[u8]) -> CStr` has to be able to name
-    // it, and until [ADR-154](../../../docs/specification/adr/adr-154.md)
+    // it, and until [ADR-313](../../../docs/specification/adr/adr-313.md)
     // decides what the prelude is, this is how a name reaches a program.
     pub use crate::foreign::CStr;
     pub use crate::fs;
@@ -571,14 +571,14 @@ pub mod prelude {
     pub use crate::time::{Duration, DurationExt, sleep};
     // `rt` is in the prelude so that the `fn main` the emitter writes can name
     // `rt::start` without a `use` the program did not ask for. Nothing in a
-    // `.nika` file reaches it: ADR-038 D3's whole point is that a program says
+    // `.nika` file reaches it: ADR-303 D3's whole point is that a program says
     // `fs::read_to_string(p)` and the runtime is invisible.
     pub use crate::rt;
     pub use crate::text::digit_value;
     pub use std::collections::HashMap;
 
     // **The modules a `.nika` file reaches through a prefix**
-    // ([ADR-154](../../../docs/specification/adr/adr-154.md) D3, D5): `use
+    // ([ADR-313](../../../docs/specification/adr/adr-313.md) D3, D8): `use
     // std::text` then `text::digit_value`, and the same for the rest. They are
     // here because the generated Rust writes the prefix the source wrote — the
     // **emitter's** prelude is not the program's list, and this is the half
@@ -588,7 +588,7 @@ pub mod prelude {
 }
 
 /// **What `use std::collections` reaches**
-/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3).
+/// ([ADR-313](../../../docs/specification/adr/adr-313.md) D3).
 ///
 /// A module of this crate and not a re-export of the language below's, because
 /// one name in it is **ours**: which hash a map gets follows the provenance of

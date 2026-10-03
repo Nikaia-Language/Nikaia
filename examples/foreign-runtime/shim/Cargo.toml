@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 # `hyper` needs an executor, so `tokio` comes with it. That is the point of the
-# experiment (ADR-038 D7), not a violation of ADR-002 D1: D1 says the toolchain
+# experiment (ADR-303 D7), not a violation of ADR-002 D1: D1 says the toolchain
 # does not adopt hyper as *Nikaia's* HTTP server, and D7 says a user's program
 # may depend on one.
 [dependencies]

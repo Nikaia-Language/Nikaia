@@ -5,7 +5,7 @@
 #   nothing outside them is in their build, so their tests, clippy and Miri say
 #   something new only when one of them, or the script that checks them,
 #   changed.
-# * `floor` - the whole suite on the oldest Rust Nikaia claims (ADR-219). Any
+# * `floor` - the whole suite on the oldest Rust Nikaia claims (ADR-305). Any
 #   change can reach for an API newer than the floor, so it runs on every push
 #   to main and on the weekly schedule; on a pull request only where the change
 #   is to a manifest, the lock file, the toolchain or the floor itself - the

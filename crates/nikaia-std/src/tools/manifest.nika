@@ -44,7 +44,7 @@ fn withdrawn(key: ref String) -> String {
 }
 
 // A key the manifest still accepts and the compiler no longer reads, with where
-// it went, or nothing. `cleanup-deadline` is ADR-038 D5's move: how long a
+// it went, or nothing. `cleanup-deadline` is ADR-303 D5's move: how long a
 // program waits at exit is an operating property, tuned by whoever runs it.
 fn moved(key: ref String) -> String {
     if key == "cleanup-deadline" {

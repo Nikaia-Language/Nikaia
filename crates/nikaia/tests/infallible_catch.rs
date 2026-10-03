@@ -1,5 +1,5 @@
 //! A `catch` over an expression that cannot fail is `NK1134`
-//! ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+//! ([ADR-308](../../../docs/specification/adr/adr-308.md)).
 //!
 //! The lowering makes a `catch` a `match` over a `Result`, so a guarded
 //! expression that is not one produced `E0308` about the generated file, naming

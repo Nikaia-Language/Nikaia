@@ -2,7 +2,7 @@
 //! ([ADR-289](../../../docs/specification/adr/adr-289.md) D6).
 //!
 //! Its own test binary for `at_yes.rs`'s reason: the runtime is one per process
-//! ([ADR-038](../../../docs/specification/adr/adr-038.md) D4), and what is
+//! ([ADR-303](../../../docs/specification/adr/adr-303.md) D4), and what is
 //! asserted here is that a thread is **given up** rather than held — which a
 //! test running after one that asked for something else would measure wrong.
 
@@ -113,7 +113,7 @@ async fn futures_join<A, B>(
 /// waits on `read` — and until 0.0.165 it did not work. A readiness wait was an
 /// [`nikaia_std::rt::worker`] operation and the worker **blocked** in the
 /// poller for the whole of it; `io-workers` is `1` by default
-/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D4, *one I/O thread
+/// ([ADR-303](../../../docs/specification/adr/adr-303.md) D4, *one I/O thread
 /// always runs*), so a wait that had not answered blocked every other wait in
 /// the process. The second wait below — whose pipe already has a byte in it —
 /// did not get a turn in two seconds.

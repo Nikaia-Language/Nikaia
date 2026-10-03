@@ -26,7 +26,7 @@ generated Rust, not to be generated from it.
 
 ## …and what it costs on the runtime instead
 
-[ADR-038](../../docs/specification/adr/adr-038.md) D4 starts the runtime before
+[ADR-303](../../docs/specification/adr/adr-303.md) D4 starts the runtime before
 `main`, and [ADR-292](../../docs/specification/adr/adr-292.md) predicted
 that a pair of operations on an I/O thread that is *already running* carries no
 per-pair wake-up at all. `runtime` is that measurement, and unlike the four

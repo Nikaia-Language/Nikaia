@@ -2,11 +2,11 @@
 //
 // Whether a value may cross a thread (ADR-005 §1 Group B, `NK25xx`).
 //
-// One question, asked of a **type and a destination** (ADR-045 D1):
+// One question, asked of a **type and a destination** (ADR-312 D6):
 //
 //     may a value of this type go to *this* destination?
 //
-// ADR-038 D7 states the first half as "a value may only cross into a foreign
+// ADR-303 D7 states the first half as "a value may only cross into a foreign
 // thread if it may cross any thread", and the reason the answer is a property of
 // the type rather than of the particular crossing is ADR-005 Group B: it has to
 // be **the same at both settings of `user_parallelism`**, so that a library
@@ -22,7 +22,7 @@
 // [`Destination`] has two values and **each gets an answer that is the same at
 // both settings**, which is the whole of what Group B asks - its own note says
 // "'At every setting' is a claim about the verdict, not about the severity". The
-// justification may differ per setting; the answer may not. Before ADR-045 the
+// justification may differ per setting; the answer may not. Before ADR-312 the
 // lock had to take the worse of the two settings and answer `MayNot`
 // everywhere, which made Part II 12.2's counter - the program
 // `user_parallelism = yes` exists to serve - impossible to write: at `yes` a real
@@ -45,7 +45,7 @@
 // `user_parallelism`, and it is still a property of the type. What changed is
 // one row of a table.
 //
-// **And one row came back** ([ADR-061](../../../../docs/specification/adr/adr-061.md)
+// **And one row came back** ([ADR-312](../../../../docs/specification/adr/adr-312.md)
 // D1): ADR-037 D7's per-value inference made the count's shape a property of
 // the *value* again, so there is no one representation for a foreign signature
 // to name, and a `Shared` may not go into code nothing describes after all.
@@ -97,7 +97,7 @@
 // discovering it.
 //
 // **[`CHOSEN`] is that day, and the column it needed turned out to be the
-// destination** (ADR-045 §4 predicted this file would want two columns here). A
+// destination** (ADR-312 predicted this file would want two columns here). A
 // lock at `user_parallelism = no` may be moved to another thread and may not be
 // looked at from one, so on the move/look axis it does belong in one column and
 // not the other. It never has to be asked that way, because both destinations
@@ -231,7 +231,7 @@ mod tests {
     }
 
     /// …and the same type asked about code nothing describes. The pair is what
-    /// ADR-045 D1 added, so most tests here come in twos now.
+    /// ADR-312 D6 added, so most tests here come in twos now.
     fn foreign(text: &str) -> Crossing {
         let (own, library) = ledgers();
         crossing(&Ty::parse(text), &own, &library, Destination::Foreign)
@@ -260,7 +260,7 @@ mod tests {
     ///
     /// There is nothing for the verdict to take the worse of: at `yes` the count
     /// is atomic wherever the analysis cannot prove nothing crosses, and at `no`
-    /// it is plain everywhere because nothing can (ADR-061 D2). Either way the
+    /// it is plain everywhere because nothing can (ADR-312 D10). Either way the
     /// count suffices for what can happen at that setting, so `Shared` is a
     /// container like `Vec`.
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         assert!(matches!(of("Shared"), Crossing::Undecided { .. }));
     }
 
-    /// **Part II 12.2's counter, which could not be written until ADR-045 D1.**
+    /// **Part II 12.2's counter, which could not be written until ADR-312 D6.**
     ///
     /// `Shared[Locked[i32]]` handed to a task of our own is the program
     /// `user_parallelism = yes` exists to serve, and the verdict refused it: a
@@ -307,7 +307,7 @@ mod tests {
         assert!(matches!(of("SharedMut"), Crossing::Undecided { .. }));
     }
 
-    /// **And it does not go into code nothing describes** - ADR-045 D3, which is
+    /// **And it does not go into code nothing describes** - ADR-312 D8, which is
     /// deliberately the worse answer.
     ///
     /// Strictly this would be safe at `user_parallelism = yes`, where a real
@@ -345,7 +345,7 @@ mod tests {
     }
 
     /// **And a `Shared` does not go there either**
-    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1), which was
+    /// ([ADR-312](../../../../docs/specification/adr/adr-312.md) D9), which was
     /// decided and not built: `Shared` is in [`CHOSEN`] *and* in [`CONTAINERS`],
     /// the container row answered first, and its row in `CHOSEN` was reached by
     /// nothing. A `Shared[String]` into code nothing describes came back `May` -
@@ -447,7 +447,7 @@ mod tests {
             note.contains("can't be passed to code the compiler knows nothing about"),
             "{note}"
         );
-        // ADR-045 D3's *the answer was chosen* is the finding's own note beside
+        // ADR-312 D8's *the answer was chosen* is the finding's own note beside
         // this one (`SAME_AT_BOTH`), said once for every crossing.
         // Part III C.2: no Rust vocabulary in a diagnostic, ever.
         for word in ["Rc", "Arc", "Send", "E0277", "lifetime", "borrow"] {
@@ -485,7 +485,7 @@ mod tests {
     ///
     /// Both non-`May` answers are exercised through the walk: a field nothing
     /// describes is undecided, and a field holding a lock is **refused at a
-    /// foreign destination and permitted into a task** - which is ADR-045 D1
+    /// foreign destination and permitted into a task** - which is ADR-312 D6
     /// reaching four fields deep, and the case that makes the destination a
     /// parameter of the walk rather than a question asked before it.
     #[test]

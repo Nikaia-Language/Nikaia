@@ -7,7 +7,7 @@
 //
 //     It may only ever take an atomic away.
 //
-// ADR-037 D6 made the atomic count the **floor**, and ADR-061 D2 lowered that
+// ADR-037 D6 made the atomic count the **floor**, and ADR-312 D10 lowered that
 // floor at `user_parallelism = no`, where nothing a user writes can cross and D1
 // closed the last way out of the program. So the floor is the atomic count at
 // `yes` and the plain one at `no`, and this file is an **optimisation** on top of
@@ -87,7 +87,7 @@
 //     a foreign crate is honest". No `std` entry takes or hands back a **handle**
 //     on a `Shared`: the one entry that mentions the type at all is
 //     `Shared::deref`, which takes `&Shared[$T]` and hands back `&$T` - a borrow
-//     duplicates nothing (ADR-040 D1) and what comes out is a view of the value
+//     duplicates nothing (ADR-312 D1) and what comes out is a view of the value
 //     inside, so there is no handle for it to keep.
 //     `a_std_entry_that_takes_a_shared_needs_a_second_look` in `tests/sharing.rs`
 //     is what makes somebody look on the day one does take one.
@@ -143,7 +143,7 @@ pub fn analyse_program(
     crossings_are_possible: bool,
 ) -> Sharing {
     // **Where nothing can cross, there is nothing to decide**
-    // ([ADR-061](../../../../docs/specification/adr/adr-061.md) D2). At
+    // ([ADR-312](../../../../docs/specification/adr/adr-312.md) D10). At
     // `user_parallelism = no` one thread runs the user's code; the runtime's I/O
     // thread carries none of it, a task interleaves on the same thread, and since
     // D1 a `Shared` may not be handed to code this compiler cannot see - which
@@ -152,7 +152,7 @@ pub fn analyse_program(
     // longer has to be found.
     //
     // The **verdict** is untouched and stays switch-independent
-    // ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1): a
+    // ([ADR-312](../../../../docs/specification/adr/adr-312.md) D6): a
     // `Shared[Locked[i32]]` may go into a task of ours at either setting. This is
     // about what is emitted, not about what is permitted.
     let mut analysis = Analysis::new(parsed, own, library);
@@ -199,7 +199,7 @@ pub fn analyse_program(
         }
     }
     let mut sharing = analysis.decide();
-    // Every count plain, because nothing can cross (ADR-061 D2): applied to
+    // Every count plain, because nothing can cross (ADR-312 D10): applied to
     // the finished answer, so the duplication sites are kept as they were
     // found and one run of this analysis is one code path at both settings.
     if !crossings_are_possible {
@@ -220,10 +220,10 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Decision>
 /// parameters against, and every type to have its `fields`. It reads nothing any
 /// of them wrote.
 /// **At the floor, whatever the switch says**, and that is the one place D2 does
-/// not reach ([ADR-061](../../../../docs/specification/adr/adr-061.md)). What
+/// not reach ([ADR-312](../../../../docs/specification/adr/adr-312.md)). What
 /// this writes is a **contract** — a statement about a function's positions that
 /// a reader and a later build consult — and a contract that moved with a build
-/// switch would be the thing ADR-045 D1 refuses. What is emitted is the
+/// switch would be the thing ADR-312 D6 refuses. What is emitted is the
 /// emitter's question and it asks it with the setting in hand.
 pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
     let summaries = analyse_program(parsed, ledger, library, true).summaries;
@@ -310,7 +310,7 @@ impl<'a> Analysis<'a> {
     }
 
     /// A second handle on this slot's allocation is made here
-    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D1), only
+    /// ([ADR-312](../../../../docs/specification/adr/adr-312.md) D1), only
     /// where the handle is handed on by value.
     fn duplicates(&mut self, function: &str, value: &str, site: String) {
         self.slots.duplicates(function, value, site);
@@ -672,7 +672,7 @@ impl<'a> Analysis<'a> {
             // Part II 11.2: a task runs on a thread of its own.
             Expr::Spawn { body, .. } => {
                 for name in send::names_used(self.parsed, body) {
-                    // ADR-040 D1's second half: a task that uses a handle takes one
+                    // ADR-312 D1's second half: a task that uses a handle takes one
                     // of its own, so the name outside the task stays usable.
                     if scope.get(&name).is_some_and(by_value_shared) {
                         self.duplicates(
@@ -712,7 +712,7 @@ impl<'a> Analysis<'a> {
             }
             // **A handle handed to a `?.m()` is handed over.** Whether the call
             // happens does not change where the value would go if it did, and
-            // this analysis may not miss a place it could (ADR-040 D1).
+            // this analysis may not miss a place it could (ADR-312 D1).
             | Expr::SafeMethod {
                 receiver,
                 method,
@@ -791,7 +791,7 @@ impl<'a> Analysis<'a> {
                 }
             }
             // **A hole is Nikaia source and is walked like any other**
-            // (ADR-032 D3, which the type checker already follows). Measured:
+            // (ADR-309 D13, which the type checker already follows). Measured:
             // `println(f"{hold(c)}")` handed a handle to a function this analysis
             // never saw, so the value kept the plain count while the callee's
             // parameter was decided atomic in the file declaring it - and the two
@@ -862,7 +862,7 @@ impl<'a> Analysis<'a> {
     /// Two answers and they are the two halves of the finding. A callee the
     /// ledger describes has a parameter slot, and the handle joins it: one
     /// allocation, one count, whichever side of the call decides it. A callee
-    /// nothing describes is ADR-038 D7's case: it may start a thread of its own,
+    /// nothing describes is ADR-303 D7's case: it may start a thread of its own,
     /// so the count is atomic.
     ///
     /// **Every name inside the argument counts, not only a bare variable.** An
@@ -925,7 +925,7 @@ impl<'a> Analysis<'a> {
                 (Some((key, params)), _) => match params.get(at) {
                     Some((param, param_ty)) => {
                         let (key, param) = (key.clone(), param.clone());
-                        // ADR-040 D1: a handle handed on **by value** is
+                        // ADR-312 D1: a handle handed on **by value** is
                         // duplicated; one the callee only borrows is not.
                         if by_value_shared(param_ty) {
                             self.duplicates(function, &handle, handed_on_to(&key, &param));
@@ -976,7 +976,7 @@ impl<'a> Analysis<'a> {
     ///
     /// **The type is here for one question only**: whether the position takes
     /// the handle by value or lends the inner value out. A by-value `Shared`
-    /// parameter is a second handle (ADR-040 D1); a `&Shared` one is a borrow
+    /// parameter is a second handle (ADR-312 D1); a `&Shared` one is a borrow
     /// and duplicates nothing. Neither changes which count the class gets.
     fn parameters(&self, callee: &str) -> Option<(String, Vec<(String, Ty)>)> {
         let suffix = format!("::{callee}");

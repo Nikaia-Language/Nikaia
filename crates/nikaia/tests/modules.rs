@@ -579,7 +579,7 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
     );
 
     // **What has to hold is that the two sides agree**, and since
-    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // [ADR-312](../../../docs/specification/adr/adr-312.md) D10 they agree the
     // other way round at one user thread: nothing can cross there, so every
     // count in the whole build is plain and no file can disagree with another.
     // At `yes` the floor is what makes them agree, which is what this was
@@ -613,7 +613,7 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
 /// The call is written inside a hole on purpose. `println(f"{hold(c)}")` is how
 /// somebody would actually write this, and the sharing analysis did not walk into
 /// a literal at all — so the handle was handed to a function it never saw, and
-/// nothing forced anything. A hole is Nikaia source (ADR-032 D3), and any
+/// nothing forced anything. A hole is Nikaia source (ADR-309 D13), and any
 /// analysis that stops at a literal is one a hole can be hidden in.
 #[test]
 fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
@@ -639,7 +639,7 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
     );
 
     // **What has to hold is that the two sides agree**, and since
-    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // [ADR-312](../../../docs/specification/adr/adr-312.md) D10 they agree the
     // other way round at one user thread: nothing can cross there, so every
     // count in the whole build is plain and no file can disagree with another.
     // At `yes` the floor is what makes them agree, which is what this was

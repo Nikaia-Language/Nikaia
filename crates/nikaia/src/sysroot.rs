@@ -246,7 +246,7 @@ impl Codegen {
 /// sentence. [ADR-037](../../../docs/specification/adr/adr-037.md) D3 made it
 /// `Rc` at `user_parallelism = no` and `Arc` at `yes`; D6 took the
 /// representation off the switch and it was safe here for as long as that held;
-/// [ADR-061](../../../docs/specification/adr/adr-061.md) D2 put the **emission**
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D10 put the **emission**
 /// back on it - at one user thread every count is the cheap one, because nothing
 /// can cross there and D1 closed the last way out of the program. So a `Shared`
 /// in a `.nika` file here would be lowered once with the cheap count and handed
@@ -255,7 +255,7 @@ impl Codegen {
 ///
 /// What is *not* switch-sensitive is the **verdict** - whether a value may cross
 /// at all - which `contracts::send` answers from a type and a destination and
-/// never from the switch ([ADR-045](../../../docs/specification/adr/adr-045.md)
+/// never from the switch ([ADR-312](../../../docs/specification/adr/adr-312.md)
 /// D1). That is what keeps `std`'s *ledger* sound across builds; it is the
 /// lowered bytes this constraint is about. The constraint is checked rather than
 /// only written down:

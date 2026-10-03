@@ -19,7 +19,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 /// **A `use` that names a type is refused** (D5), and since
-/// [ADR-154](../../../docs/specification/adr/adr-154.md) D3 the way out is the
+/// [ADR-313](../../../docs/specification/adr/adr-313.md) D3 the way out is the
 /// **module**: `HashMap` lives in one, so the line to write is
 /// `use std::collections` and the name is `collections::HashMap`.
 #[test]

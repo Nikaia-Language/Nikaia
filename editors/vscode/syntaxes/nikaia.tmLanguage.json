@@ -836,7 +836,7 @@
     },
 
     "dsl-hole": {
-      "comment": "ADR-035: `{{` is a literal brace here too — a template shares the syntax rather than inventing a second one.",
+      "comment": "ADR-309: `{{` is a literal brace here too — a template shares the syntax rather than inventing a second one.",
       "patterns": [
         {
           "name": "constant.character.escape.brace.nika",

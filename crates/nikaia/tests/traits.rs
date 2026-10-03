@@ -662,7 +662,7 @@ fn the_send_bound_follows_the_setting() {
 /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D27), from one
 /// constant in the emitter.
 ///
-/// The floor is measured ([ADR-219](../../../docs/specification/adr/adr-219.md)).
+/// The floor is measured ([ADR-305](../../../docs/specification/adr/adr-305.md)).
 /// The build compares `rustc --version` against it before handing anything to
 /// Cargo, because Cargo's own *package requires rustc 1.88 or newer* names a
 /// package the author never wrote — [Part III

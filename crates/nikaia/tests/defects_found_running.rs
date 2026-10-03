@@ -1184,7 +1184,7 @@ fn a_number_no_use_types_reaches_an_index_through_a_loop() {
 
 /// **A list of `u32` written with a literal no `i32` holds** (0.0.373): the
 /// literal took the widening of a number nothing asked - `4294967295i64` -
-/// inside a `Vec<u32>`, and `rustc` refused the file. Found writing ADR-271's
+/// inside a `Vec<u32>`, and `rustc` refused the file. Found writing ADR-306's
 /// tests.
 #[test]
 fn a_large_literal_in_a_list_of_u32_is_a_u32() {

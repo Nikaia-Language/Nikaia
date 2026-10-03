@@ -17,18 +17,24 @@ read the record in the right-hand column.
 | [012](adr-012.md) | Diagnostics — Reporting Errors in the File the User Wrote | [ADR-300](../../specification/adr/adr-300.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6, D7→D7, D8→D8 |
 | [018](adr-018.md) | The Handler Sees the Request, Because the Lambda Already Could | [ADR-289](../../specification/adr/adr-289.md) | D1→D17, D2→D18, D3→D19, D4→D20, D5→D21 |
 | [022](adr-022.md) | One Lambda Form. `fn:` Is Removed | [ADR-277](../../specification/adr/adr-277.md) | D1→D1, D2→D3, D3→D4, D4→D5 |
+| [026](adr-026.md) | Compile-Time I/O — What a Build May Read, and What May Run While It Reads | [ADR-310](../../specification/adr/adr-310.md) | D1→D1, D2→D2 |
 | [027](adr-027.md) | `sync` Is Earned, Not Entered | [ADR-288](../../specification/adr/adr-288.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6 |
 | [028](adr-028.md) | The Type Checker Already Knew | [ADR-288](../../specification/adr/adr-288.md) | D1→D7, D2→D8, D3→D9, D4→D10, D5→D11, D6→D12 |
 | [029](adr-029.md) | A Higher-Order Function Does What Its Lambda Does | [ADR-288](../../specification/adr/adr-288.md) | D1→D13, D2→D14, D3→D15, D4→D16 |
 | [030](adr-030.md) | A Program Is More Than One File, and That Is Name Resolution | [ADR-286](../../specification/adr/adr-286.md) | D1→D1, D2→D1, D3→D2, D4→D3, D5→D7, D6→D8, D7→D9 |
 | [031](adr-031.md) | A Signature May Name Its Receiver's Type Arguments | [ADR-288](../../specification/adr/adr-288.md) | D1→D17, D2→D18, D3→D19, D4→D20 |
+| [032](adr-032.md) | A Hole Is Code, and Every Analysis Has to See It | [ADR-309](../../specification/adr/adr-309.md) | D1→D11, D2→D12, D3→D13, D4→D14, D5→D2 |
 | [033](adr-033.md) | Program Order Is a Guarantee Where It Is Observable | [ADR-292](../../specification/adr/adr-292.md) | D1→D1, D2→D3, D3→D3, D4→D3, D5→D1, D6→D5, D7→D7, D8→D7, D9→D2, D10→D6 |
 | [034](adr-034.md) | A Handler That Can Return Makes the Next Statement Conditional | [ADR-292](../../specification/adr/adr-292.md) | D1→D1, D2→D1 |
+| [035](adr-035.md) | The `f` Goes on the String, Because the Mark Belongs on the Construct | [ADR-309](../../specification/adr/adr-309.md) | D1→D1, D2→D4, D3→D2, D4→D3, D5→D15 |
 | [036](adr-036.md) | A Stack Trace Is Asked For, and the Site Is Free | [ADR-280](../../specification/adr/adr-280.md) | D1→D1, D2→D2, D3→D3, D4→D4 |
+| [038](adr-038.md) | The Runtime Is Ours, and So Is the HTTP Server | [ADR-303](../../specification/adr/adr-303.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6, D7→D7 |
 | [039](adr-039.md) | The Lock Has One Shared Form and Four Doors, and Taking a Lock Inside a Lock Is Refused | [ADR-281](../../specification/adr/adr-281.md) | D1→D4, D2→D28, D3→D29, D4→D30, D5→D31, D6→D32, D7→D33, D8→D36, D9→D3, D10→D10 |
+| [040](adr-040.md) | A Handle on a Shared Value Is Duplicated, Never Moved | [ADR-312](../../specification/adr/adr-312.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
 | [041](adr-041.md) | Naming a Lambda's Arguments Is the Normal Form; the Automatic Names Are Experimental | [ADR-277](../../specification/adr/adr-277.md) | D1→D2, D2→D2 |
 | [043](adr-043.md) | An Overflow Aborts, at Every Build. Wrapping and Saturating Get Names | [ADR-285](../../specification/adr/adr-285.md) | D1→D5, D2→D6, D3→D7, D4→D12, D5→D29, D6→D8, D7→D13 |
 | [044](adr-044.md) | One Location Table, and Every Abort Points at the Nikaia Line | [ADR-300](../../specification/adr/adr-300.md) | D1→D9, D2→D10, D3→D11 |
+| [045](adr-045.md) | The Crossing Verdict Takes the Destination | [ADR-312](../../specification/adr/adr-312.md) | D1→D6, D2→D7, D3→D8 |
 | [046](adr-046.md) | `use` Names a Unit of Code and Brings Nothing In | [ADR-286](../../specification/adr/adr-286.md) | D1→D10, D2→D11, D3→D12, D4→D13, D5→D14 |
 | [047](adr-047.md) | A Package Is a Directory, and a Library Arrives by Path | [ADR-286](../../specification/adr/adr-286.md) | D1→D1, D2→D15 |
 | [048](adr-048.md) | A Length Is an `i64`, and the Numeric Surface Is the One the Page Names | [ADR-285](../../specification/adr/adr-285.md) | D1→D1, D2→D2 |
@@ -42,6 +48,7 @@ read the record in the right-hand column.
 | [058](adr-058.md) | A Response May Be Bytes the Program Never Read, and `std` Decides How They Travel | [ADR-289](../../specification/adr/adr-289.md) | D1→D22, D2→D23, D3→D24, D4→D25, D5→D26, D6→D27, D7→D28, D8→D29, D9→D30 |
 | [059](adr-059.md) | `access` Reads and `update` Writes, and the One Block That Changes a Value Says `mut` | [ADR-281](../../specification/adr/adr-281.md) | D1→D11, D2→D12, D3→D12 |
 | [060](adr-060.md) | A Literal No Use Constrains Takes the First Type That Holds It | [ADR-285](../../specification/adr/adr-285.md) | D1→D20, D2→D21, D3→D23 |
+| [061](adr-061.md) | A `Shared` Does Not Go Into Code Nothing Describes, So at One User Thread Its Count Is Plain | [ADR-312](../../specification/adr/adr-312.md) | D1→D9, D2→D10, D3→D11 |
 | [062](adr-062.md) | A Target That Lets Foreign Code Call In Is a Target, and the Boundary Is Where the Safe Shape Is Paid For | [ADR-284](../../specification/adr/adr-284.md) | D1→D1, D2→D2, D3→D3 |
 | [063](adr-063.md) | A Constant Written Only in Literals Takes the First Type That Holds It, and a Name Pins What Its Value Took | [ADR-285](../../specification/adr/adr-285.md) | D1→D22, D2→D26, D3→D28 |
 | [064](adr-064.md) | `SharedMut[T]` Names the Capability, a Call Makes the Hull, and There Is One Spelling | [ADR-281](../../specification/adr/adr-281.md) | D1→D1, D2→D2, D3→D3 |
@@ -52,24 +59,30 @@ read the record in the right-hand column.
 | [069](adr-069.md) | `http` Leaves `std` and Becomes a Package, So It Can Ripen at Its Own Speed | [ADR-289](../../specification/adr/adr-289.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
 | [070](adr-070.md) | There Is No Unconditional Loop Keyword — `while true` Is the Unconditional Loop | [ADR-276](../../specification/adr/adr-276.md) | D1→D1, D2→D2, D3→D6, D4→D9 |
 | [071](adr-071.md) | `break`, `continue` and `loop` Are Reserved Words, and None of Them Is a Construct | [ADR-276](../../specification/adr/adr-276.md) | D1→D9, D2→D11, D3→D9, D4→D10 |
+| [072](adr-072.md) | A File a Build Reads Is Named Three Times, and a Build Given No List Reads Nothing | [ADR-310](../../specification/adr/adr-310.md) | D1→D4, D2→D5, D3→D6, D4→D7, D5→D8, D6→D9, D7→D10, D8→D11 |
 | [073](adr-073.md) | `const` Is a Declaration That *Must* Be Evaluated at Build Time — a `let` That Merely Folds Is Not One | [ADR-287](../../specification/adr/adr-287.md) | D1→D1, D2→D3, D3→D4, D4→D5, D5→D6, D6→D7 |
 | [074](adr-074.md) | A Type Parameter Is a Type Inside Its Own Body and a Variable at Every Call Site | [ADR-295](../../specification/adr/adr-295.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
 | [075](adr-075.md) | A Build-Time Body May Call What Is `sync` and Touches at Most the Build's Parameters | [ADR-287](../../specification/adr/adr-287.md) | D1→D13, D2→D14, D3→D15, D4→D16, D5→D17, D6→D18 |
 | [076](adr-076.md) | A Name the Language Below Reserves Is Escaped Where It Is Written, and Refused Only Where It Cannot Be | [ADR-298](../../specification/adr/adr-298.md) | D1→D9, D2→D10, D3→D11, D4→D12 |
 | [077](adr-077.md) | The Word Is `comptime`, Because a Keyword Should Say *When* and Not *Whether It Changes* | [ADR-287](../../specification/adr/adr-287.md) | D1→D1, D2→D2, D3→D8 |
 | [078](adr-078.md) | A Trait Is Declared, and a Bound Is Answered from the Declaration | [ADR-295](../../specification/adr/adr-295.md) | D1→D6, D2→D7, D3→D8, D4→D9 |
+| [079](adr-079.md) | Growable Going In, Fixed Coming Out — and the Lookup Is the Compiler's, Not an Interface | [ADR-311](../../specification/adr/adr-311.md) | D1→D1, D2→D2, D3→D6, D4→D7, D5→D16 |
 | [082](adr-082.md) | A Grammar Is Entered by a Call, and Every `pub` Rule Is an Entry | [ADR-296](../../specification/adr/adr-296.md) | D1→D24, D2→D25, D3→D26, D4→D27 |
 | [084](adr-084.md) | `break` and `continue` Are in the Language, Unlabelled and Carrying No Value | [ADR-276](../../specification/adr/adr-276.md) | D1→D11, D2→D12, D3→D13, D4→D16, D5→D17, D6→D18, D7→D1, D8→D19 |
 | [085](adr-085.md) | The Unconditional Loop Is Lowered to `loop`, and the Preamble Gets No `allow` | [ADR-276](../../specification/adr/adr-276.md) | D1→D3, D2→D3, D3→D4, D4→D5 |
 | [086](adr-086.md) | A Head Parses the Same Language as a Body, Minus the Forms a `{` Begins — So `&&` and `||` Join It | [ADR-301](../../specification/adr/adr-301.md) | D1→D1, D2→D2, D3→D3, D4→D6, D5→D8 |
 | [087](adr-087.md) | A Head Holds Every Expression; Only a Brace-Led One Needs Parentheses | [ADR-301](../../specification/adr/adr-301.md) | D1→D4, D2→D5, D3→D6, D4→D7, D5→D8 |
+| [088](adr-088.md) | Reflection Is Data, Not a Syntax Tree — and `macro`, `quote` and `with` Are Reserved Words That Are Not Constructs | [ADR-304](../../specification/adr/adr-304.md) | D1→D1, D2→D2, D3→D3, D4→D5, D5→D7, D6→D9 |
 | [089](adr-089.md) | A `??`'s Fallback Is One Value, or an Expression in Brackets | [ADR-279](../../specification/adr/adr-279.md) | D1→D1, D2→D2 |
+| [090](adr-090.md) | A `catch` That Ignores the Error Binds `_error` | [ADR-308](../../specification/adr/adr-308.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
+| [091](adr-091.md) | A `catch` Over an Expression That Cannot Fail Is Refused | [ADR-308](../../specification/adr/adr-308.md) | D1→D6, D2→D7, D3→D8, D4→D9, D5→D10 |
 | [092](adr-092.md) | A Grammar Fold's `init`, `step` and `merge` Are Code | [ADR-296](../../specification/adr/adr-296.md) | D1→D28, D2→D29, D3→D30, D4→D31 |
 | [093](adr-093.md) | A Loop That Cannot End Needs No Unreachable `return` | [ADR-276](../../specification/adr/adr-276.md) | D1→D6, D2→D7, D3→D8 |
 | [095](adr-095.md) | A Trait Reached Across a Package Is Imported by the Emitter | [ADR-286](../../specification/adr/adr-286.md) | D1→D28, D2→D29, D3→D30 |
 | [097](adr-097.md) | A `comptime` Binding Where an Item Stands | [ADR-287](../../specification/adr/adr-287.md) | D1→D9, D2→D10, D3→D11, D4→D12 |
 | [098](adr-098.md) | A `let` Takes One Name, or a Flat Tuple of Them | [ADR-291](../../specification/adr/adr-291.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
 | [099](adr-099.md) | The Two Refusals That Come With the Lock's Doors | [ADR-281](../../specification/adr/adr-281.md) | D1→D20, D2→D21, D3→D25 |
+| [101](adr-101.md) | An Error That Newly Reaches a `catch` Is Named Once, and the Ledger Commit Is the Acknowledgement | [ADR-308](../../specification/adr/adr-308.md) | D1→D11, D2→D12, D3→D13, D4→D14 |
 | [102](adr-102.md) | A Function Type Says What a Handler May Do, and Whether It Is Kept Is Inferred | [ADR-277](../../specification/adr/adr-277.md) | D1→D6, D2→D7, D3→D8, D4→D9, D5→D11 |
 | [103](adr-103.md) | A Package Is Found by Version Through Cargo, Under the Crate Name `nikaia_<name>` | [ADR-286](../../specification/adr/adr-286.md) | D1→D23, D2→D24, D3→D25, D4→D26, D5→D27 |
 | [104](adr-104.md) | A Foreign Crate Is Described Before It Is Called, and `nikaia describe` Writes the Draft | [ADR-290](../../specification/adr/adr-290.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5 |
@@ -82,9 +95,11 @@ read the record in the right-hand column.
 | [113](adr-113.md) | `?.` Reaches Through a View, and the Receiver Stays Usable | [ADR-278](../../specification/adr/adr-278.md) | D1→D16, D2→D17, D3→D18, D4→D23 |
 | [114](adr-114.md) | Reading a Map Through the Brackets Is a `T?`, Because a Key Is Data | [ADR-293](../../specification/adr/adr-293.md) | D1→D1, D2→D2, D3→D3, D4→D4 |
 | [115](adr-115.md) | An `overlap` Keeps Every Failure — the First in Written Order Wins, the Rest Are Attached as `secondary` | [ADR-292](../../specification/adr/adr-292.md) | D1→D8, D2→D9, D3→D10, D4→D11 |
+| [116](adr-116.md) | `from` Is a Name, and a File a Build Reads Is `asset("…")` | [ADR-310](../../specification/adr/adr-310.md) | D1→D12, D2→D3, D3→D13 |
 | [117](adr-117.md) | `loop`, `const`, `macro` and `quote` Are Names, and Their Messages Move to the Undeclared-Name Help | [ADR-298](../../specification/adr/adr-298.md) | D1→D6, D2→D7, D3→D8 |
 | [120](adr-120.md) | A Grammar's Vocabulary Is One Page, an Action Is the Block After the Pattern, and Two Borrowed Names Go | [ADR-296](../../specification/adr/adr-296.md) | D1→D32, D2→D33, D3→D34 |
 | [122](adr-122.md) | A Function-Typed Parameter Lowers by Its Type — the Future Shape Unless It Says `sync` | [ADR-277](../../specification/adr/adr-277.md) | D1→D11, D2→D10, D3→D12 |
+| [124](adr-124.md) | `extern` and `unsafe` Are Reserved, Because They Cost Nothing Now and a Boundary Has to Be Visible | [ADR-302](../../specification/adr/adr-302.md) | D1→D1, D2→D2, D3→D3, D4→D4 |
 | [125](adr-125.md) | A Library for Other Languages — `pub extern "C" fn` Is an Entry Point, the Caller Owns the Memory, and Every Call Answers With a Status | [ADR-284](../../specification/adr/adr-284.md) | D1→D4, D2→D5, D3→D6, D4→D7, D5→D8, D6→D9, D7→D10, D8→D11, D9→D12, D10→D13 |
 | [126](adr-126.md) | `_` Is the Ignore Pattern — It Stands Where a Name Would Be Bound, and Nowhere Else | [ADR-291](../../specification/adr/adr-291.md) | D1→D6, D2→D7, D3→D8, D4→D9 |
 | [127](adr-127.md) | A Struct Crosses the Boundary by Value When It Says `extern "C"`, and Its Layout Is C's | [ADR-284](../../specification/adr/adr-284.md) | D1→D14, D2→D15, D3→D16, D4→D17, D5→D18 |
@@ -92,31 +107,42 @@ read the record in the right-hand column.
 | [129](adr-129.md) | An Async Call Hands Back a Ticket That Can Be Cancelled, and a Stream Is the Callback the Function Already Takes | [ADR-284](../../specification/adr/adr-284.md) | D1→D19, D2→D20, D3→D21 |
 | [130](adr-130.md) | A WebAssembly Library Is the Same Entry Point on Another Target — There Is No `extern "wasm"`, and the Host Takes Its Buffers From the Module | [ADR-284](../../specification/adr/adr-284.md) | D1→D22, D2→D23, D3→D24, D4→D25 |
 | [131](adr-131.md) | A Binding for Another Language Is a Generated File Over the C Library, Written by `nikaia bind`, and Never a Second Artifact | [ADR-284](../../specification/adr/adr-284.md) | D1→D26, D2→D27, D3→D28, D4→D29 |
+| [134](adr-134.md) | `/* … */` Is a Comment, It Nests, and It Is Not a Doc Comment | [ADR-307](../../specification/adr/adr-307.md) | D1→D1, D2→D2, D3→D3 |
 | [136](adr-136.md) | A Number Literal May Be Written `1_000_000`, `0xFF`, `0b1010` or `0o17`, and the Digits It Was Written In Are a Spelling | [ADR-285](../../specification/adr/adr-285.md) | D1→D16, D2→D17, D3→D18 |
 | [137](adr-137.md) | `match` Takes Six More Pattern Shapes, a Guard Is `if`, and `..` in a Pattern Is Inclusive — So `..<` Is the Exclusive Range Everywhere | [ADR-291](../../specification/adr/adr-291.md) | D1→D10, D2→D11, D3→D12, D4→D13, D5→D14, D6→D15 |
 | [138](adr-138.md) | `throw`, `return`, `break` and `continue` Are Expressions of the Never Type | [ADR-276](../../specification/adr/adr-276.md) | D1→D20, D2→D21, D3→D22 |
+| [139](adr-139.md) | A Doc Comment Is a Language Feature, and the Ledger Carries It | [ADR-307](../../specification/adr/adr-307.md) | D1→D4, D2→D5, D3→D6, D4→D7 |
 | [142](adr-142.md) | A Grammar's Action May Not Pause | [ADR-296](../../specification/adr/adr-296.md) | D1→D35, D2→D36, D3→D37 |
 | [143](adr-143.md) | The Database Driver Checks the SQL at Build Time Against the Schema — `std::db` Is the Protocol, the Dialect Is a Package, and the Compiler Adds One Intrinsic | [ADR-299](../../specification/adr/adr-299.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6 |
 | [144](adr-144.md) | A Name Denotes One Thing, and the Second Declaration Is Refused | [ADR-286](../../specification/adr/adr-286.md) | D1→D4, D2→D5, D3→D6 |
 | [145](adr-145.md) | A `match`'s Catch-All Arm Is `else`, Not `_` | [ADR-291](../../specification/adr/adr-291.md) | D1→D16, D2→D17, D3→D18 |
 | [146](adr-146.md) | A `match` Covers Every Case, and the Refusal Is This Compiler's | [ADR-291](../../specification/adr/adr-291.md) | D1→D19, D2→D20, D3→D21 |
+| [147](adr-147.md) | The C Boundary Has a View and an Opaque Handle, and No Raw Pointer | [ADR-302](../../specification/adr/adr-302.md) | D1→D5, D2→D6, D3→D7, D4→D8, D5→D9 |
 | [148](adr-148.md) | `select { … }` Keeps the First Branch to Finish, and a Task Handle Has `cancel()` | [ADR-292](../../specification/adr/adr-292.md) | D1→D12, D2→D13, D3→D14, D4→D15 |
 | [151](adr-151.md) | `break` Carries No Value, and the Refusal Names the Two Shapes That Do | [ADR-276](../../specification/adr/adr-276.md) | D1→D13, D2→D14, D3→D15 |
 | [153](adr-153.md) | A Native Node Add-On Waits for a Program, and Is Generated C Over the C Library | [ADR-284](../../specification/adr/adr-284.md) | D1→D28, D2→D28, D3→D28 |
+| [154](adr-154.md) | The Prelude Is a Written List, Small and Closed | [ADR-313](../../specification/adr/adr-313.md) | D1→D1, D2→D2, D3→D3, D4→D7, D5→D8 |
+| [155](adr-155.md) | A Handle May Be Absent, and `T?` Is How It Says So | [ADR-302](../../specification/adr/adr-302.md) | D1→D10, D2→D11, D3→D12, D4→D13, D5→D14 |
 | [156](adr-156.md) | `Bytes` Is the Language's, and the Tether It Needs Is Refused Until It Is Built | [ADR-283](../../specification/adr/adr-283.md) | D1→D19, D2→D20, D3→D21, D4→D9, D5→D13, D6→D22 |
 | [157](adr-157.md) | The Failure Channel Is the Error Type, Where the Ledger Names One | [ADR-280](../../specification/adr/adr-280.md) | D1→D9, D2→D10, D3→D11, D4→D12 |
 | [158](adr-158.md) | `std` Names What It Throws, and It Is One Type | [ADR-280](../../specification/adr/adr-280.md) | D1→D5, D2→D6, D3→D7, D4→D8 |
 | [159](adr-159.md) | A Library's Error Type Is a Channel Too, and It Travels Bare | [ADR-280](../../specification/adr/adr-280.md) | D1→D9, D2→D13, D3→D3, D4→D12 |
 | [160](adr-160.md) | A Set With Two Error Types In It Is a Generated Sum | [ADR-280](../../specification/adr/adr-280.md) | D1→D15, D2→D16, D3→D17, D4→D18 |
 | [161](adr-161.md) | Reading a Map Through the Brackets, Built — and What It Took | [ADR-293](../../specification/adr/adr-293.md) | D1→D2, D2→D5, D3→D6, D4→D7, D5→D8, D6→D9, D7→D10, D8→D11 |
+| [162](adr-162.md) | Diagnosis and Safety Are the Language's — `eprint`, `access_all`, `update_all` | [ADR-313](../../specification/adr/adr-313.md) | D1→D4, D2→D5, D3→D10 |
 | [163](adr-163.md) | A Block That Joins on the Executor Pauses, and Its Branches Travel in the Function's Own Channel | [ADR-292](../../specification/adr/adr-292.md) | D1→D16, D2→D17, D3→D18 |
 | [164](adr-164.md) | A Joining Block Has One Outcome, and a Handler on It Binds What the Branches Threw | [ADR-292](../../specification/adr/adr-292.md) | D1→D18, D2→D19, D3→D20 |
 | [165](adr-165.md) | There Is No Postfix `??` — the Three Things One Is Reached For Each Have a Spelling | [ADR-279](../../specification/adr/adr-279.md) | D1→D3, D2→D4 |
+| [167](adr-167.md) | The Shared Types Are the Language's, and a Prelude Name Written With a Module Is Refused | [ADR-313](../../specification/adr/adr-313.md) | D1→D6, D2→D9 |
 | [168](adr-168.md) | The Re-entrancy Check Is Built as a Build Option, and Part I 1.2's Status Note Was Wrong About Two of Its Three Clauses | [ADR-281](../../specification/adr/adr-281.md) | D1→D36, D2→D37, D3→D38 |
 | [169](adr-169.md) | A Type Says What Reading It Touches, and I/O Under a Lock Is Refused | [ADR-281](../../specification/adr/adr-281.md) | D1→D34, D2→D35 |
 | [170](adr-170.md) | An Error Carries the Failures That Joined It, and a Body That Joins Puts an Envelope on a Bare Channel | [ADR-280](../../specification/adr/adr-280.md) | D1→D13, D2→D19, D3→D20 |
 | [173](adr-173.md) | What a Parse Fails With Has a Name | [ADR-296](../../specification/adr/adr-296.md) | D1→D38, D2→D39, D3→D40 |
 | [174](adr-174.md) | A Bound Is Enforced Where It Is Used | [ADR-295](../../specification/adr/adr-295.md) | D1→D15, D2→D16, D3→D17 |
+| [175](adr-175.md) | A Build-Time Value May Be an Array | [ADR-311](../../specification/adr/adr-311.md) | D1→D3, D2→D4, D3→D5 |
+| [176](adr-176.md) | A Map the Build Can See Is a List of Pairs, and What It Crosses As Is a Table | [ADR-311](../../specification/adr/adr-311.md) | D1→D8, D2→D9, D3→D10, D4→D11, D5→D12 |
+| [180](adr-180.md) | A Fixed Table Holds a Declared Type as a **View** of One | [ADR-311](../../specification/adr/adr-311.md) | D1→D13, D2→D14, D3→D15 |
+| [181](adr-181.md) | `T::fields` Is a List the Build Walks, and the Loop Over It Is Unrolled Per Type | [ADR-304](../../specification/adr/adr-304.md) | D1→D4, D2→D6, D3→D8, D4→D2, D5→D10 |
 | [183](adr-183.md) | A Path's Head Is One of Five Things, and a Name That Is None of Them Is Refused | [ADR-286](../../specification/adr/adr-286.md) | D1→D31, D2→D32, D3→D33, D4→D34, D5→D35 |
 | [187](adr-187.md) | Rust Has A Stable `async` Closure, And A Premise Under Twelve Sentences Is False | [ADR-277](../../specification/adr/adr-277.md) | D1→D13, D2→D16, D3→D11 |
 | [189](adr-189.md) | `?.` Lends Its Receiver Where That Needs No Representation, And The Third Case Waits On The Tether | [ADR-278](../../specification/adr/adr-278.md) | D1→D18, D2→D18, D3→D19 |
@@ -129,6 +155,7 @@ read the record in the right-hand column.
 | [196](adr-196.md) | A Nikaia Piece Joins a Rust Program as an Ordinary Cargo Module | [ADR-290](../../specification/adr/adr-290.md) | D1→D16, D2→D17, D3→D18, D4→D19 |
 | [197](adr-197.md) | A `path` Is Relative to the File It Is Written In | [ADR-286](../../specification/adr/adr-286.md) | D1→D16, D2→D17, D3→D18 |
 | [198](adr-198.md) | `std::net` — the Socket `std` Lends, and the First Untrusted Source | [ADR-289](../../specification/adr/adr-289.md) | D1→D7, D2→D8, D3→D9, D4→D10, D5→D11 |
+| [199](adr-199.md) | A Readiness Wait Is a Registration, Not a Worker | [ADR-303](../../specification/adr/adr-303.md) | D1→D8, D2→D9, D3→D10, D4→D11, D5→D12 |
 | [200](adr-200.md) | `nikaia serve` Is Cut, And The MVP Is The Application Server Alone | [ADR-289](../../specification/adr/adr-289.md) | D1→D12, D2→D13, D3→D16 |
 | [201](adr-201.md) | `@borrowed` Is Removed, And The Word That Allows A Tether Is `@tethers` | [ADR-283](../../specification/adr/adr-283.md) | D1→D4, D2→D4, D3→D4 |
 | [205](adr-205.md) | A Bound Reaches a Caller Inside the `signature`, Where the Declaration Writes It | [ADR-295](../../specification/adr/adr-295.md) | D1→D18, D2→D19 |
@@ -143,6 +170,8 @@ read the record in the right-hand column.
 | [214](adr-214.md) | A Taking Has a Place in Its Statement and a Path in Its Value — and a Read Through the Brackets Warns About Nothing | [ADR-293](../../specification/adr/adr-293.md) | D1→D31, D2→D32, D3→D33 |
 | [215](adr-215.md) | What Was Left of ADR-212 §5 — `insert`, `str::chars`, a Slice's Type, a Named Range in the Brackets, and a Copy of a View | [ADR-293](../../specification/adr/adr-293.md) | D1→D21, D2→D22, D3→D23, D4→D24 |
 | [216](adr-216.md) | A Copy Has One Word — `.clone()`, and `.to_owned()` Is the Language Below's | [ADR-282](../../specification/adr/adr-282.md) | D1→D8, D2→D9, D3→D10, D4→D3 |
+| [219](adr-219.md) | The Oldest Rust Nikaia Works With Is Measured — 1.88 | [ADR-305](../../specification/adr/adr-305.md) | D1→D1, D2→D2, D3→D3 |
+| [220](adr-220.md) | Edition 2024 for Our Crates and for the Emitted Code | [ADR-305](../../specification/adr/adr-305.md) | D1→D4, D2→D5, D3→D6, D4→D7 |
 | [221](adr-221.md) | A Container of Structs of Views That Drops Entries Is Held, One Handle per Buffer | [ADR-283](../../specification/adr/adr-283.md) | D1→D14, D2→D15, D3→D16, D4→D17, D5→D18 |
 | [222](adr-222.md) | A `String` Field or Result Is Below What Flows Into It — Text of Its Own, a View, or Either per Value | [ADR-282](../../specification/adr/adr-282.md) | D1→D12, D2→D22, D3→D14, D4→D17, D5→D26 |
 | [223](adr-223.md) | Every Declared `String` Is a Position — Parameters, Annotated `let`s, and the Elements of a List or a Map | [ADR-282](../../specification/adr/adr-282.md) | D1→D12, D2→D14, D3→D15, D4→D23 |
@@ -169,11 +198,14 @@ read the record in the right-hand column.
 | [257](adr-257.md) | The Checker's Types Move to Nikaia, and a Measurement Decides Their Shape First | [ADR-294](../../specification/adr/adr-294.md) | D1→D12, D2→D13, D3→D14, D4→D15, D5→D16 |
 | [259](adr-259.md) | `??` Lends Its Left Side Where the Answer Is Read, and Takes It Where It Is Kept | [ADR-279](../../specification/adr/adr-279.md) | D1→D5, D2→D6, D3→D7 |
 | [261](adr-261.md) | The Toolchain's Nikaia Is One Package | [ADR-294](../../specification/adr/adr-294.md) | D1→D17, D2→D18, D3→D19, D4→D20 |
+| [262](adr-262.md) | The Grammar Parses the Holes of an `f"…"` | [ADR-309](../../specification/adr/adr-309.md) | D1→D5, D2→D6, D3→D7, D4→D8, D5→D9, D6→D10 |
 | [264](adr-264.md) | An `assert` Is a Contract — Proved Where the Compiler Can, Checked Where It Cannot, and a Test Is a Block | [ADR-269](../../specification/adr/adr-269.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6, D7→D7, D8→D8, D9→D9, D10→D10, D11→D11, D12→D12, D13→D13 |
 | [265](adr-265.md) | The Prover Is a Frontend, a Logic, and a Solver — and the Logic Is Built for a Parallel Solver Written in Nikaia | [ADR-270](../../specification/adr/adr-270.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D6, D7→D7, D8→D8 |
 | [266](adr-266.md) | A Written `assert` Is a Published Contract, Placed by Computing Back to the Entry — a Guard Is Only Observed | [ADR-269](../../specification/adr/adr-269.md) | D1→D14, D2→D15, D3→D16, D4→D17, D5→D18, D6→D19, D7→D20, D8→D21 |
 | [267](adr-267.md) | The Solver Is a CDCL(T) Engine with One Small Proof Format, Built on a Measured Workload and Aimed at QF_LIA | [ADR-270](../../specification/adr/adr-270.md) | D1→D9, D2→D10, D3→D11, D4→D5, D5→D12, D6→D13, D7→D14, D8→D15, D9→D16, D10→D17, D11→D18, D12→D8 |
 | [268](adr-268.md) | The Search Is Free; What a Build Uses Is a Committed Proof File | [ADR-270](../../specification/adr/adr-270.md) | D1→D4, D2→D4, D3→D19, D4→D20, D5→D21, D6→D22, D7→D23, D8→D15 |
+| [271](adr-271.md) | An Index Check a Proof Shows Unneeded Is Not Emitted — `--optimization=remove-bounds-checks:basic|aggressive` | [ADR-306](../../specification/adr/adr-306.md) | D1→D1, D2→D2, D3→D3, D4→D4, D5→D5, D6→D11 |
+| [272](adr-272.md) | What Every Write Into a List Keeps In Bounds Is Known of Every Read From It | [ADR-306](../../specification/adr/adr-306.md) | D1→D6, D2→D7, D3→D8, D4→D9, D5→D10, D6→D11 |
 | [273](adr-273.md) | A Map of `T?` Values Reads One `T?`, and Writing `null` Stores It | [ADR-293](../../specification/adr/adr-293.md) | D1→D12, D2→D13, D3→D14, D4→D15 |
 | [274](adr-274.md) | Where `??`'s Answer Is Only Read, a Value That Is a Word by Its Kind Is Copied and Everything Else Is Lent | [ADR-279](../../specification/adr/adr-279.md) | D1→D8, D2→D9 |
 | [275](adr-275.md) | A Borrowed Left Side of `??` Beside a Jump Is a View Wherever It Stands | [ADR-279](../../specification/adr/adr-279.md) | D1→D10, D2→D11 |
@@ -250,3 +282,11 @@ carried it before they were archived.
 | [027](adr-027.md) §7 | [029](adr-029.md) | effect polymorphism — a higher-order function's `sync` now depends on its lambda |
 | [028](adr-028.md) D6 | [029](adr-029.md) | a higher-order method carrying no `sync` at all |
 | [029](adr-029.md) §4 | [031](adr-031.md) | a signature naming its receiver's type arguments |
+
+| [024](../../specification/adr/adr-024.md) D5 (*a string literal is a `&str`*) | [035](adr-035.md) D3, [282](../../specification/adr/adr-282.md) D3 (narrow) | **where a literal is text of its own**: an `f"…"` is a `String`, hole or no hole, and a plain literal is one wherever its use asks for one. A literal nothing asks of is still a view, for D5's reason |
+| [032](adr-032.md) D2 (*a hole that does not parse is the emitter's to report*) | [262](adr-262.md) D4 (narrows) | **an `f"…"`**: a hole there that does not parse is a parse error at its own position, so nothing reaches an analysis the parser did not accept. A template's hole is still the emitter's |
+| [139](adr-139.md) D2 (*the ledger carries the prose*) | [251](../../specification/adr/adr-251.md) D2 (supersedes) | **the prose leaves the contract**: the compiler never read it and `--locked` failed on a reworded sentence. D1 stands - `///` is still the item's documentation, and the parser reads it |
+| [038](adr-038.md) D3 (the readiness half) | [199](adr-199.md) D1 (narrows) | the mechanism and not the surface: one poller for the process with a registration each, rather than a worker blocked in a poller per wait. What a program writes is unchanged |
+| [037](../../specification/adr/adr-037.md) D6 | [045](adr-045.md) D3 (narrows) | its coda that after D6 "no type answers `may not`" — the lock answers it at a foreign call, so `NK2501` and `NK2502` stop sharing one verdict |
+| [005](../../specification/adr/adr-005.md) §3 | [040](adr-040.md) D1 (narrows) | the ban on a clone the user did not write — it reaches a clone of **data** and no longer a **handle** on a shared value, which copies no data and produces no second value |
+| [032](adr-032.md) D5 | [035](adr-035.md) | a brace deciding a literal's type — the `f` decides it now |

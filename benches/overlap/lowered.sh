@@ -8,7 +8,7 @@
 # `--ordering strict`. Two binaries, one source, and the only difference between
 # them is the pair.
 #
-# Both of ADR-038 D3's mechanisms are measured, because D10's decision is about
+# Both of ADR-303 D3's mechanisms are measured, because D10's decision is about
 # the second one: on the completion path a pair is free, and on the fallback the
 # pair is performed in written order rather than for ~38 µs a pair. The
 # fallback's column is therefore the check that the decision is in the code.

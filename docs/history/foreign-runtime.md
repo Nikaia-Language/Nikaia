@@ -2,8 +2,8 @@
 
 **Date:** September 11, 2026
 **Status:** the experiment ran; the finding is evidence under
-[ADR-038](../specification/adr/adr-038.md) D7 and changes no decision
-**Related:** [ADR-038](../specification/adr/adr-038.md) D7 (the two rules under test) and §4
+[ADR-038](adr/adr-038.md) D7 and changes no decision
+**Related:** [ADR-038](adr/adr-038.md) D7 (the two rules under test) and §4
 (which asked for this early), [ADR-002](../specification/adr/adr-002.md) D1 (the crates.io promise),
 [ADR-037](../specification/adr/adr-037.md) D2/D3 and §3 (`user_parallelism`, `Shared`, the structural
 `Send` check), [ADR-005](../specification/adr/adr-005.md) D7 and §1 Group B (where that check was
@@ -19,7 +19,7 @@ runtime), [ADR-033](adr/adr-033.md) D4 (fail-closed `touches`)
 > race with the machinery under it. Any sentence here that has `no` avoiding an
 > atomic is that sentence and not a claim about the compiler today.
 
-[ADR-038](../specification/adr/adr-038.md) §4 called D7's two rules "the exception worth checking
+[ADR-038](adr/adr-038.md) §4 called D7's two rules "the exception worth checking
 early rather than late, because a program that starts `hyper` is the cheapest test of whether
 [ADR-002](../specification/adr/adr-002.md) D1's crates.io promise and this record can hold at the
 same time". This is that program, and what it found.
@@ -159,7 +159,7 @@ the next person writing one will hit them.
 
 > **A value may only cross into a foreign thread if it may cross any thread.** […] The structural
 > `Send` check ADR-037 §3 names is what decides it.
-> — [ADR-038](../specification/adr/adr-038.md) D7
+> — [ADR-038](adr/adr-038.md) D7
 
 ### 3.1 The structural `Send` check does not exist
 
@@ -222,7 +222,7 @@ and ADR-037 §3 all exist to prevent, arriving through a foreign call rather tha
 >
 > **What replaced it is a refusal.** D7's per-value inference means a `Shared[Conn]` is an `Rc` for
 > one value and an `Arc` for another in the same program, and no foreign signature can name both —
-> so [ADR-061](../specification/adr/adr-061.md) D1 refuses a `Shared` handed to code nothing describes,
+> so [ADR-061](adr/adr-061.md) D1 refuses a `Shared` handed to code nothing describes,
 > the same refusal a lock already had and for the sentence that was already the lock's reason.
 > `contracts::send`'s `CHOSEN` is where that lives. The way out is to pass what is inside.
 >
@@ -318,7 +318,7 @@ the foreign crate is honest, and a note to that effect belongs next to it.
 > **A `Cleanup` may not be owned by a foreign task.** ADR-006 D3 parks a cancelled cleanup with
 > *our* runtime, and a foreign runtime's shutdown will not drain that queue. A `Cleanup` handed
 > across is a cleanup that may never run.
-> — [ADR-038](../specification/adr/adr-038.md) D7
+> — [ADR-038](adr/adr-038.md) D7
 
 [ADR-006](adr/adr-006.md) is unbuilt, so this cannot be run. The argument below is
 the deliverable. It concludes that **the rule is right and its stated reason is the least of five**,
@@ -357,7 +357,7 @@ here, because the runtime was never told.
 **(d) `cleanup()` may pause, and a foreign executor cannot drive it.** This is the one place where
 the two records collide mechanically rather than in bookkeeping. `cleanup()` is a pausable Nikaia
 function, so in the lowered program it is a future whose wakers come from *our* runtime — and
-[ADR-038](../specification/adr/adr-038.md) D3/D4 put those completions on our I/O thread, on
+[ADR-038](adr/adr-038.md) D3/D4 put those completions on our I/O thread, on
 `io_uring` where the machine has it. A `tokio` task polling that future is a second runtime nested
 inside the first. [ADR-006](adr/adr-006.md) D5's own "honest limit" already names the
 shape of what follows: *"FFI that blocks the thread rather than pausing will block a single-threaded
@@ -444,7 +444,7 @@ down as rejected rather than unconsidered.
 > absent, so it reaches everything and orders against everything
 > ([ADR-033](adr/adr-033.md) D4). Fail-closed polarity means interop cannot silently
 > break the ordering guarantee — it only makes programs that use it slower.
-> — [ADR-038](../specification/adr/adr-038.md) D7
+> — [ADR-038](adr/adr-038.md) D7
 
 **Confirmed, empirically, and it is the one claim here asserted on every `cargo test`.**
 `nikaia --input examples/foreign-runtime/overlaps.nika --overlaps --user-parallelism yes`:
@@ -571,7 +571,7 @@ is above is what was measured, and this is what changed.
 column — three values, hand-written, the absence meaning *nobody said* — and D2
 made `NK2502` ask a **described** call where the word says `true`. Before that,
 the refusal asked its question only of a call *nothing* describes, which is
-[ADR-038](../specification/adr/adr-038.md) D7's own wording, so a crate that
+[ADR-038](adr/adr-038.md) D7's own wording, so a crate that
 answered every other question honestly turned the check off by being described.
 
 `hyper_shim::across_a_thread` and `across_a_thread_unchecked` both build a

@@ -12,7 +12,7 @@ panic hook), Part III Appendix A.2 (the panic table),
 [ADR-288](specification/adr/adr-288.md) D1, D2, D4 (`sync` earned from the
 body), [ADR-288](specification/adr/adr-288.md) D15 and D16 (`from(f)`),
 [ADR-037](specification/adr/adr-037.md) D2 and D3 (the switch),
-[ADR-038](specification/adr/adr-038.md) D4 (whose thread the I/O thread is),
+[ADR-303](specification/adr/adr-303.md) D4 (whose thread the I/O thread is),
 [`rc-or-arc.md`](history/rc-or-arc.md) §7 (where that experiment stopped, and why this one
 starts here)
 **What ran:** `benches/lockfloor/` (the measurement),
@@ -194,7 +194,7 @@ at the two settings.
 
 **At `no`.** One user thread ([ADR-037](specification/adr/adr-037.md) D2), and
 the runtime's I/O thread is not the user's and cannot touch a user lock:
-[ADR-038](specification/adr/adr-038.md) D4's boundary is the `Op` enum, and it
+[ADR-303](specification/adr/adr-303.md) D4's boundary is the `Op` enum, and it
 still holds — `pub(super) enum Op` in `crates/nikaia-std/src/rt/worker.rs` has
 exactly three variants (`Read`, `Readiness`, `Stop`), none of them carrying a
 closure, and `on_io_worker()` asserts the other direction at every public entry

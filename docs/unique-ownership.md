@@ -9,7 +9,7 @@ and of what would kill it — is worth having on paper before anyone starts.
 **Related:** [`lock-free.md`](lock-free.md) §4–§6 (the neighbouring question,
 measured), [ADR-281](specification/adr/adr-281.md) (the door it leaves open),
 [ADR-037](specification/adr/adr-037.md) D7 (the closest thing to this that is
-already built), [ADR-040](specification/adr/adr-040.md) D1 (what a handle does
+already built), [ADR-312](specification/adr/adr-312.md) D1 (what a handle does
 when it is handed on), [ADR-281](specification/adr/adr-281.md) (the doors),
 [ADR-010](specification/adr/adr-010.md) D1 (the polarity this would have to
 meet)
@@ -58,7 +58,7 @@ into, so that nobody rediscovers it.
   same file's clothes, and the first question is whether it can be made into an
   entry-shaped claim at all.
 * **A hull is a handle, and handing one on **duplicates** it**
-  ([ADR-040](specification/adr/adr-040.md) D1) — deliberately, so that a cleanup
+  ([ADR-312](specification/adr/adr-312.md) D1) — deliberately, so that a cleanup
   point does not move. So *handed between tasks* is not a move in this language
   today; it is a second owner. Unique ownership would need a way to say **this
   is the only handle**, which is either a new shape or a move of the hull, and

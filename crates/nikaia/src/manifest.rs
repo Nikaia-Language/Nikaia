@@ -46,7 +46,7 @@ pub struct Manifest {
     /// What this manifest carries that the compiler no longer reads, and where
     /// it went. Printed once per build rather than returned as an error:
     /// failing a manifest somebody already wrote to the specification would
-    /// punish them for the move ([ADR-038](../../../docs/specification/adr/adr-038.md) D5).
+    /// punish them for the move ([ADR-303](../../../docs/specification/adr/adr-303.md) D5).
     notes: Vec<String>,
     /// The directory the manifest was found in, and therefore the project root.
     /// `None` when there was no manifest at all.
@@ -448,7 +448,7 @@ mod tests {
         assert!(manifest.foreign_crates().contains("hyper_shim"));
     }
 
-    /// ADR-038 D5 moved it to the runtime configuration file. It is still
+    /// ADR-303 D5 moved it to the runtime configuration file. It is still
     /// accepted here - refusing it would fail a manifest written to the
     /// specification that documented it - and the note says where it went.
     #[test]

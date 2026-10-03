@@ -1,4 +1,4 @@
-//! The ADR-038 D7 experiment, kept re-runnable.
+//! The ADR-303 D7 experiment, kept re-runnable.
 //!
 //! D7 says a Rust crate may bring its own runtime and its own threads, and
 //! names two rules that keep that sound. `examples/foreign-runtime/` is the

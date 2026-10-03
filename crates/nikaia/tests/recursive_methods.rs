@@ -99,7 +99,7 @@ fn a_cycle_of_two_pausing_methods_is_boxed() {
 /// **A method that does not close a cycle is not boxed**, which is the half
 /// that says this is a measurement and not a pointer on every method call: a
 /// box is an allocation per call, and one that buys nothing is one nobody asked
-/// for ([ADR-040](../../../docs/specification/adr/adr-040.md) D1's polarity).
+/// for ([ADR-312](../../../docs/specification/adr/adr-312.md) D1's polarity).
 #[test]
 fn a_pausing_method_that_does_not_recur_is_not_boxed() {
     let rust = compiles(

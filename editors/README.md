@@ -21,7 +21,7 @@ Rust's with different words:
 
 | construct | where | what the grammar does |
 | :--- | :--- | :--- |
-| `f"…"` interpolation | Part I 2.5, ADR-035 | the holes are **Nikaia expressions** and are highlighted as such; `"…"` has no holes at all, so a brace in it is a brace; `{{` is one brace; `\u{0041}` is an escape and not a hole; the first colon outside a call or an index is a format spec, so `{utils::double(21)}` keeps its path and `{Point(x: 1)}` its named argument |
+| `f"…"` interpolation | Part I 2.5, ADR-309 | the holes are **Nikaia expressions** and are highlighted as such; `"…"` has no holes at all, so a brace in it is a brace; `{{` is one brace; `\u{0041}` is an escape and not a hole; the first colon outside a call or an index is a format spec, so `{utils::double(21)}` keeps its path and `{Point(x: 1)}` its named argument |
 | the `;` config zone | Part I 5.1 | the `;` inside a parameter list or a call gets `punctuation.separator.config`, and what follows it is named arguments; a statement's `;` is a terminator instead |
 | `...args: Self::dsl` | ADR-296 D5 | the typed spread, with `Self::dsl` as a type rather than the `dsl` keyword |
 | `break`, `continue` | Part I 3.3, ADR-276 | `keyword.control.flow`, with `return` rather than with `while` and `for`: `keyword.control.loop` is the word that **opens** a loop and these two are words that **leave** one. Neither takes a value and neither takes a label, so in each case the word is the whole token and there is nothing after it to scope |
@@ -88,7 +88,7 @@ be actively wrong. It is an embedded block, and the target name dispatches:
   text whatever the grammar is (Part II 10.5).
 
 `{…}` holes are enabled for `html` only. A template's holes need no `f` because
-the `dsl html { … }` *is* the mark (ADR-035 D4), but that is the template
+the `dsl html { … }` *is* the mark (ADR-309 D3), but that is the template
 grammar's property and not every DSL's — in SQL a brace is a brace, and guessing
 otherwise would colour someone's `GROUP BY` as code.
 

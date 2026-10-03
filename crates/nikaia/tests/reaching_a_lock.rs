@@ -9,14 +9,14 @@
 //!
 //! **The refusal was built and the number was not.** D6 says the check *is*
 //! `NK2502`'s walk generalised and never a copy of it, and the walk has been
-//! finding locks through fields since ADR-045 D3 — what came out was `NK2502`'s
+//! finding locks through fields since ADR-312 D8 — what came out was `NK2502`'s
 //! diagnostic, about a value crossing a thread, where Part III C.6 writes a
 //! refusal about the **call**. So what is here is one branch at the site that
 //! already walks every argument, and these are the sentences it prints.
 //!
 //! **Which is why `Shared` had to be told from a lock first.** Three things
 //! reach the refusing arm now — a lock, a shared count
-//! ([ADR-061](../../../docs/specification/adr/adr-061.md) D1), and a described
+//! ([ADR-312](../../../docs/specification/adr/adr-312.md) D9), and a described
 //! type that says `crosses = false` — and only the first is this code. The
 //! verdict carries the word; nothing here guesses it from a type's name.
 
@@ -154,7 +154,7 @@ fn a_call_that_reaches_no_lock_is_silent() {
 }
 
 /// **A shared count is not this refusal.** It may not go into code nothing
-/// describes either ([ADR-061](../../../docs/specification/adr/adr-061.md) D1),
+/// describes either ([ADR-312](../../../docs/specification/adr/adr-312.md) D9),
 /// for a reason that has nothing to do with a lock — so it keeps `NK2502` and
 /// the sentence that belongs to it.
 ///
@@ -190,7 +190,7 @@ fn a_lock_at_an_option_names_the_option_and_the_value() {
     assert!(help.contains("fremd::irgendwas(counter.get())"), "{help}");
 }
 
-/// **A described call is not asked**, which is ADR-038 D7's own words and the
+/// **A described call is not asked**, which is ADR-303 D7's own words and the
 /// limit `NK2503` inherits with the walk: the rule is about a body this
 /// compiler cannot see, and `std`'s are all written down.
 #[test]

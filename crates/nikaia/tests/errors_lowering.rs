@@ -633,7 +633,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         // Nothing declared and nothing described, which is a loose file's own
         // state: ADR-290 D1 asks a question about the *build*'s boundary and
         // this one has none. And nothing has gained an error since a committed
-        // ledger, which is every build but the one after a change (ADR-101 D1).
+        // ledger, which is every build but the one after a change (ADR-308 D11).
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
             newly: &nikaia::check::Newly::new(),
@@ -641,7 +641,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
             // nowhere else to call into.
             beside: &[],
             // …and this build was given no allowlist, so it reads nothing
-            // while it builds (ADR-072 D1).
+            // while it builds (ADR-310 D4).
             reads: &nikaia::assets::Reads::none(),
         },
         &path,
@@ -689,7 +689,7 @@ fn a_throw_carries_the_site_it_came_from() {
 
 /// …and `main` is not an exception, though its name in the lowering is.
 ///
-/// [ADR-038](../../../docs/specification/adr/adr-038.md) D4 gives `fn main` to
+/// [ADR-303](../../../docs/specification/adr/adr-303.md) D4 gives `fn main` to
 /// the runtime and emits the program's own entry point under a name the author
 /// never wrote. The *site* is the author's word, so it stays `main`: a site
 /// naming the emitter's wrapper would be ADR-023 D6's whole point undone by an

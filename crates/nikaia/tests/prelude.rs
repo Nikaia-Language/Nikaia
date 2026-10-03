@@ -1,7 +1,7 @@
 //! Part I 1.3's list and what `std` keys **bare** are the same set
-//! ([ADR-162](../../../docs/specification/adr/adr-162.md)).
+//! ([ADR-313](../../../docs/specification/adr/adr-313.md)).
 //!
-//! [ADR-154](../../../docs/specification/adr/adr-154.md) D1 names the list and
+//! [ADR-313](../../../docs/specification/adr/adr-313.md) D1 names the list and
 //! §5 enforced it: what needs no `use` is what `std`'s ledger keys without a
 //! module. Enforcing it made the rule true for what a **program** writes — and
 //! left the other direction unwatched, so the page and the compiler drifted
@@ -65,7 +65,7 @@ fn every_bare_name_in_std_is_on_the_list() {
     assert!(
         unlisted.is_empty(),
         "reachable with no `use` and named nowhere on Part I 1.3's list: {unlisted:?}\n\
-         Either the list gains it in a record (ADR-154 D4) or the entry gains a module."
+         Either the list gains it in a record (ADR-313 D7) or the entry gains a module."
     );
 }
 
@@ -103,9 +103,9 @@ fn the_two_pages_agree_about_printing() {
 }
 
 /// **And every type a program writes with no `use` is on it too**
-/// ([ADR-167](../../../docs/specification/adr/adr-167.md) D1).
+/// ([ADR-313](../../../docs/specification/adr/adr-313.md) D6).
 ///
-/// [ADR-162](../../../docs/specification/adr/adr-162.md) D3 built the
+/// [ADR-313](../../../docs/specification/adr/adr-313.md) D10 built the
 /// comparison for every **function** `std` keys bare, and a type escaped it: a
 /// type is keyed under its own name — `SharedMut::access` — rather than under
 /// nothing, so the filter above never saw one. `Shared`, `SharedMut` and
@@ -130,7 +130,7 @@ fn every_type_a_program_writes_with_no_use_is_on_the_list() {
 
 /// **`NK1163`: the list read the other way** — a name that needs no `use`,
 /// written with a `std` module in front of it
-/// ([ADR-167](../../../docs/specification/adr/adr-167.md) D2).
+/// ([ADR-313](../../../docs/specification/adr/adr-313.md) D9).
 ///
 /// `io::println("x")` is the spelling a reader reaches for, because every
 /// *other* `std` name wants its module. What it got was `rustc`: *cannot find

@@ -221,7 +221,7 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
 /// UTF-8 - the same rule `map` follows, for the same reason.
 ///
 /// **The read goes through the runtime**
-/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D3): the kernel
+/// ([ADR-303](../../../docs/specification/adr/adr-303.md) D3): the kernel
 /// completes it where the machine has a completion queue, and an I/O worker
 /// performs it where it does not. Which one is invisible from here and
 /// invisible from a `.nika` file - that is what "one `std` surface" means, and
@@ -288,7 +288,7 @@ fn text_named(bytes: Vec<u8>, what: impl FnOnce() -> String) -> Result<String, c
 /// **It always overlaps**, because a program asked for it - on the completion
 /// path for nothing, and on the blocking fallback for the ~38 µs a worker's
 /// wake-up costs, which above a quarter megabyte a pair it earns back
-/// (ADR-038 §4.3). There used to be a quieter twin for the pairs the
+/// (ADR-303). There used to be a quieter twin for the pairs the
 /// *compiler* put together, which overlapped only where that was free; the
 /// automatic grouping is withdrawn ([ADR-292](../../../docs/specification/adr/adr-292.md)
 /// D1) and the twin went with it, so this is the only pair vehicle left and
@@ -366,7 +366,7 @@ pub async fn write(
     append: bool,
     create: bool,
 ) -> Result<(), crate::io::IoError> {
-    // Through the runtime, like the reads (ADR-038 D3). The bytes travel as a
+    // Through the runtime, like the reads (ADR-303 D3). The bytes travel as a
     // borrowed slice and the runtime owns the copy only where the *kernel*
     // needs one to outlive the submission - which is the completion path, and
     // is `rt::uring`'s soundness rule rather than a convenience.
@@ -616,7 +616,7 @@ mod tests {
         std::fs::write(&text, "Hamburg;12.0\n").expect("write");
         // Driven rather than called, since ADR-055 §6 step 3: a read is a
         // future now, and `block_on` is what a program's `main` drives it with
-        // (ADR-038 D4) - so a test that awaited it any other way would be
+        // (ADR-303 D4) - so a test that awaited it any other way would be
         // testing something no program does.
         let (mine, theirs) = crate::rt::exec::block_on(async {
             (

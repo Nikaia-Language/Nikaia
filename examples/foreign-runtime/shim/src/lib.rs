@@ -1,4 +1,4 @@
-//! The Rust half of the ADR-038 D7 experiment: a crate that brings its own
+//! The Rust half of the ADR-303 D7 experiment: a crate that brings its own
 //! runtime and its own threads, wrapped in a surface a Nikaia program can call.
 //!
 //! Everything here is deliberately plain. What the experiment is after is what
@@ -100,7 +100,7 @@ impl Describe for String {
 ///
 /// It stands in for nothing now, and is the experiment's own value - which is
 /// the sharper position. A Nikaia `Shared` cannot be written into this shape at
-/// all: [ADR-061](../../../../docs/specification/adr/adr-061.md) D1 refuses one
+/// all: [ADR-312](../../../../docs/specification/adr/adr-312.md) D9 refuses one
 /// handed to code nothing describes, because D7's per-value inference makes a
 /// `Shared[Conn]` an `Rc` for one value and an `Arc` for another in the same
 /// program and no foreign signature can name both. So a value that may not

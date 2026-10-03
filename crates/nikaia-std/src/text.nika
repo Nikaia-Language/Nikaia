@@ -13,7 +13,7 @@
 /// A character that is not a digit is not a question this answers: it hands
 /// back whatever the subtraction comes to.
 //
-// The prose above is the **documentation** (ADR-139 D1) and travels in the
+// The prose above is the **documentation** (ADR-307 D4) and travels in the
 // ledger; what follows is about the source and stays here.
 //
 // A free function rather than a method on the character: Rust's own

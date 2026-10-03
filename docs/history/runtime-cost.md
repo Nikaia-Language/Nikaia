@@ -1,10 +1,10 @@
 # What an operation costs on a runtime that is already running
 
 **Date:** September 11, 2026; §6 added September 12
-**Status:** measured; the numbers it produced are [ADR-038](../specification/adr/adr-038.md) §4.3's
+**Status:** measured; the numbers it produced are [ADR-038](adr/adr-038.md) §4.3's
 evidence, and §6's are [ADR-033](adr/adr-033.md) D10's — including what a re-run of
 §2 on the same box a day later says about how far an absolute microsecond here travels
-**Related:** [ADR-038](../specification/adr/adr-038.md) D3 (the I/O split) and D4 (the runtime starts
+**Related:** [ADR-038](adr/adr-038.md) D3 (the I/O split) and D4 (the runtime starts
 before `main`), [ADR-033](adr/adr-033.md) §8.4 (the 46 µs per-pair wake-up this is
 measured against), §8.5 (the prediction this settles) and D10 (the lowering §6 measures),
 [ADR-037](../specification/adr/adr-037.md) D2 (whose thread the I/O thread is)
@@ -26,7 +26,7 @@ on the completion path. The blocking fallback, on the same pre-started threads, 
 pair**. "The runtime is already running" removes thread *creation*; it does not remove thread
 *wake-up*, which is what §8.4 said the floor was. What removes the wake-up is that `io_uring`
 involves no thread at all — which is
-[ADR-038](../specification/adr/adr-038.md) D3's argument, now with a number under it.
+[ADR-038](adr/adr-038.md) D3's argument, now with a number under it.
 
 ---
 
@@ -212,7 +212,7 @@ body performs an operation, so the pair is the pair and the loop is the repeat c
 pairs per run, nine repeats, timed as whole-process wall clock** — the two binaries start the same
 runtime and differ only in the pair, so process start cancels in the difference and is 0.01 µs a
 pair besides. A 64-pair warm-up precedes every block. Both of
-[ADR-038](../specification/adr/adr-038.md) D3's mechanisms are measured, because D10's decision is
+[ADR-038](adr/adr-038.md) D3's mechanisms are measured, because D10's decision is
 about the second one.
 
 **The machine:** the same class as §1 — Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM,

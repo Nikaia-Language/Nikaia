@@ -458,7 +458,7 @@ const LTO: &[&str] = &["-C", "lto=fat"];
 fn the_solver_kernels_lowered_against_rust_by_hand() {
     let nikaia = lower("solver-kernels.nika");
     // And with every index check the solver proves unnecessary dropped
-    // ([ADR-271](../../../docs/specification/adr/adr-271.md) D4).
+    // ([ADR-306](../../../docs/specification/adr/adr-306.md) D4).
     let proved = lower_with(
         "solver-kernels.nika",
         Build {

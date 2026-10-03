@@ -10,7 +10,7 @@ publish = false
 # `std::http` might pick between, and the picking is what ADR-289 decides.
 libc = "0.2"
 
-# ADR-038 D3's completion half, target-gated exactly as `nikaia-std` gates it:
+# ADR-303 D3's completion half, target-gated exactly as `nikaia-std` gates it:
 # the bindings do not exist off Linux at all.
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = "0.7"

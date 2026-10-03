@@ -2087,7 +2087,7 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
 }
 
 /// **A shape walk reaches across a file of the same package**, which it did not
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D2, 0.0.130).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D6, 0.0.130).
 ///
 /// `T::fields` shipped at 0.0.129 able to unroll a function whose calls stood
 /// in the **same file** and unable to build the shape anybody would write it

@@ -1,6 +1,6 @@
 //! The I/O threads, and the boundary that keeps user code off them.
 //!
-//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D4 starts one of
+//! [ADR-303](../../../../docs/specification/adr/adr-303.md) D4 starts one of
 //! these before the first statement the user wrote, so that an operation costs
 //! no thread wake-up. [ADR-037](../../../../docs/specification/adr/adr-037.md)
 //! D2 says whose thread it is: *the compiler's*, not the user's - which is the
@@ -156,7 +156,7 @@ impl Workers {
     /// A child process runs for as long as it runs, and an I/O worker that
     /// waited on one would hold up every read queued behind it - `io-workers`
     /// is `1` by default, which is the ceiling
-    /// [ADR-199](../../../../docs/specification/adr/adr-199.md) took away from
+    /// [ADR-303](../../../../docs/specification/adr/adr-303.md) took away from
     /// readiness waits. So the wait gets a thread, and everything a worker's
     /// reply does after the operation this does too: the reply goes in its
     /// channel, **both bells** ring, and the operation counts in `pending` from

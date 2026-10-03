@@ -37,6 +37,9 @@ SEARCH = [
     "README.md",
     "manifesto.md",
     "guide/**/*.md",
+    "editors/**/*",
+    "**/Cargo.toml",
+    "rust-toolchain.toml",
     "index.html",
 ]
 

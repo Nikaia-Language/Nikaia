@@ -227,7 +227,7 @@ fn a_while_body_is_walked_like_any_other() {
 /// buying nothing and costing the polarity
 /// [ADR-010](../../../docs/specification/adr/adr-010.md) D1 exists to protect.
 ///
-/// Found by the ADR-038 D7 experiment: a `sync` function calling into a foreign
+/// Found by the ADR-303 D7 experiment: a `sync` function calling into a foreign
 /// crate is exactly this shape, and a foreign crate has no contract by
 /// definition.
 #[test]
@@ -1212,7 +1212,7 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 /// line.
 ///
 /// **And the sixth.** `Fixed::len` arrived with the table a `comptime` map
-/// crosses as ([ADR-176](../../../docs/specification/adr/adr-176.md)), and it
+/// crosses as ([ADR-311](../../../docs/specification/adr/adr-311.md)), and it
 /// is a length the same way the other five are: the entry promises an `i64`
 /// and the emitter writes `as i64` because the name is `len`. Naming it
 /// `count` would have compiled and been wrong.

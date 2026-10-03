@@ -85,7 +85,7 @@ fn theirs(sets: ref collections::BTreeMap[String, collections::BTreeSet[String]]
 /// `ConfigError::NotFound` are both `ConfigError`: a variant is written under
 /// the type that declares it (Part I, 3.4), so **everything but the last
 /// segment** is the type - `io::IoError::NotFound` is `io::IoError`, a type
-/// keyed with its module (ADR-154 D3). A variant with named fields is a
+/// keyed with its module (ADR-313 D3). A variant with named fields is a
 /// struct literal, `ConfigError::BadSyntax { line }`, and records the type and
 /// not the variant too (ADR-023 D1, ADR-280 D9).
 pub fn error_type(names: ref winnow_grammar::InternerContext, thrown: ref Expr) -> String? {

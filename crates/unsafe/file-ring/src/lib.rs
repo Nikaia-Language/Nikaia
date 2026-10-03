@@ -5,7 +5,7 @@
 //! `README.md`; the soundness rule for the buffers is below.
 //!
 //! ## Files, completed by the kernel
-//! (Nikaia ADR-038 D3).
+//! (Nikaia ADR-303 D3).
 //!
 //! `epoll` cannot read a file at all: a regular file is always "ready" and the
 //! read blocks in the kernel anyway, which is why every readiness-based

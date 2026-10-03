@@ -1,4 +1,4 @@
-//! `/* … */` ([ADR-134](../../../docs/specification/adr/adr-134.md)).
+//! `/* … */` ([ADR-307](../../../docs/specification/adr/adr-307.md)).
 //!
 //! A comment was `//` to the end of the line and nothing else, which is enough
 //! beside a statement and not enough for commenting out a block while debugging,

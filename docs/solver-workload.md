@@ -281,7 +281,7 @@ hand-written one:
   (−0.0 %), and **watch 10.44 M, +0.7 %** - which §8.2 traces to one
   addition, `start + at`, not to `2 * v + 1` as first written. The same proof that drops an index check can
   drop an overflow check ([ADR-269](specification/adr/adr-269.md) §6's
-  implicit checks); that is [ADR-271](specification/adr/adr-271.md) §6's
+  implicit checks); that is [ADR-306](specification/adr/adr-306.md)'s
   next step.
 * **What `basic` buys here: nothing measurable.** Its one shape is the loop
   that LLVM already proves for itself. It exists for a check LLVM does not
@@ -290,7 +290,7 @@ hand-written one:
 
 ### 8.2 What a bound on a list's values would buy (0.0.378)
 
-For [ADR-272](specification/adr/adr-272.md). **One correction to §8.1 first:**
+For [ADR-306](specification/adr/adr-306.md). **One correction to §8.1 first:**
 the watch kernel's overflow cost is not `2 * v + 1` and `c * size`. Each check
 was removed by hand from the lowered Rust (`<u32>::wrapping_*`) and counted
 alone, with `-C overflow-checks=on` and fat LTO:
@@ -303,7 +303,7 @@ alone, with `-C overflow-checks=on` and fat LTO:
 | `checksum += 1`, `+= 3`, `+= 7` unchecked | 10.53 M (+0.8 %, layout) |
 | `start + at` unchecked | 10.11 M (−3.2 %) |
 
-LLVM already drops what the walk of ADR-271 D4 can prove (`v < 2000`, so
+LLVM already drops what the walk of ADR-306 D4 can prove (`v < 2000`, so
 `2 * v + 1` fits). The one check that costs reads `start` out of a list
 (`let start = list[k]`, `list` one of `watched`), and nothing the walk keeps
 says anything about a value read from memory. The same is true of two index
@@ -332,7 +332,7 @@ prints the same checksum.
 (`value[…]` twice, and `watched[first]`, `blockers[first]`, `watched[second]`,
 `blockers[second]` at set-up); a filling loop's length adds 3
 (`arena[start + at]`, `arena[c * size]`, `arena[c * size + 1]`). Of the 9
-left, 5 need `x % n` (ADR-271 §6) and 4 need two lists known to be as long as
+left, 5 need `x % n` (ADR-306) and 4 need two lists known to be as long as
 each other (`rv[i]` beside `rc[i]`, `blocks[k]` beside `list[k]`). rows and
 bignum gain nothing from values' bounds: rows' arithmetic multiplies by a
 parameter, bignum's `xi * y[j]` is a product of two unknowns, which no linear
@@ -351,7 +351,7 @@ the kernel row says "index-heavy code pays tens of milliseconds", no more.
 
 ### 8.3 Built (0.0.386)
 
-ADR-272 as built, measured as §8.2 was: both options at `aggressive`,
+ADR-306 as built, measured as §8.2 was: both options at `aggressive`,
 overflow checks on, fat LTO, against the same optimised `std`.
 
 | | `off` | `aggressive` |
@@ -363,7 +363,7 @@ overflow checks on, fat LTO, against the same optimised `std`.
 The watch row is §8.2's upper bound exactly: every check it removed by hand
 is proved - `start + at`, `value[blocks[k]]`, `value[arena[…]]`,
 `arena[start + at]` - and 32 index sites are written without their check
-(22 under ADR-271 alone). All three print the same checksums at both levels.
+(22 under ADR-306 alone). All three print the same checksums at both levels.
 
 **What it costs**, `nikaia lower --no-cache`, release build:
 
@@ -383,7 +383,7 @@ options off.
 **1BRC gains nothing**, as expected: `examples/1brc.nika` over a million
 rows lowers to the same Rust at both levels. Its hot code is the grammar's
 actions, which the walk does not enter, and `+=` in `Stats::add`, which keeps
-its check (ADR-271 D5). All its overflow checks together cost 1.4 %
+its check (ADR-306 D5). All its overflow checks together cost 1.4 %
 (481.4 M against 474.6 M with `-C overflow-checks=off`).
 
 ## 9. What this does not measure

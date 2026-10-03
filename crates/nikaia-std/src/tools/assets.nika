@@ -1,6 +1,6 @@
 // crates/nikaia-std/src/tools/assets.nika
 //
-// The files a build may read while it builds (ADR-072, ADR-116 D2) - what the
+// The files a build may read while it builds (ADR-310, ADR-310 D3) - what the
 // compiler's `assets` decides about a list and a path without touching a
 // file, moved from Rust (ADR-294, #125). Reading the files, the lock that
 // records what was read and the digest stay Rust.
@@ -23,7 +23,7 @@ pub enum Denied {
     /// The list named it, and the file is not there or cannot be read.
     Unreadable { because: String },
     /// Read, and not text: what crosses from build time to run time is a
-    /// `&str` (ADR-079 D1).
+    /// `&str` (ADR-311 D1).
     NotText,
 }
 
@@ -70,7 +70,7 @@ pub fn unused_entries(allowed: ref collections::BTreeSet[String], taken: ref col
     return out
 }
 
-/// What `NK1175` notes about a refused read (ADR-072 D1, D3).
+/// What `NK1175` notes about a refused read (ADR-310 D4, D6).
 pub fn why_not_read(why: ref Denied, path: ref String) -> String {
     return match why {
         Denied::NoList => "A build reads no files unless it's given a list of the files it may read.",

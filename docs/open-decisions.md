@@ -26,7 +26,7 @@ D3 and Part III 17.1 bind the schema a statement is checked against with
 `let app = comptime asset("schema.sql")` at the top of a file. That line is
 not the language as the rest of the specification writes it: a `let` is a
 statement, not an item, and a value computed while the program is built is
-declared `comptime NAME: T = …` (Part II 7, [ADR-116](specification/adr/adr-116.md)).
+declared `comptime NAME: T = …` (Part II 7, [ADR-310](specification/adr/adr-310.md)).
 [ADR-299](specification/adr/adr-299.md) D11 makes the schema's *name* decide
 which connection a statement may run on, so the spelling now matters.
 

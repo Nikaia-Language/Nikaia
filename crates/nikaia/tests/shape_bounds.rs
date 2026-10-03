@@ -1,5 +1,5 @@
 //! **The two bounds that ask what a type *is*** — Part II 10.3,
-//! [ADR-088](../../../docs/specification/adr/adr-088.md) D2 and D3.
+//! [ADR-304](../../../docs/specification/adr/adr-304.md) D2 and D3.
 //!
 //! `[T: Struct]` is not a trait anybody declares and no `impl` answers it. What
 //! answers it is the **declaration**, which is the whole of D2: the bound is
@@ -241,7 +241,7 @@ fn a_program_that_declares_the_trait_keeps_it() {
 }
 
 /// **And what the bound makes reachable is built since 0.0.129**
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md)), which is what this
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md)), which is what this
 /// test used to assert the absence of.
 ///
 /// The hole it was written for is still closed and is now closed the other

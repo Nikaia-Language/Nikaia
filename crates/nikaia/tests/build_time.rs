@@ -6,7 +6,7 @@
 //! an integer literal, a name whose value already folded, a negation and
 //! `+ - * / %` — `fold.rs`, 124 lines with no call in it. D5 called that the
 //! first stage and wrote the second one as *when Q4 is answered*: a call, and
-//! with it the file reading [ADR-072](../../../docs/specification/adr/adr-072.md)
+//! with it the file reading [ADR-310](../../../docs/specification/adr/adr-310.md)
 //! waits behind. [ADR-287](../../../docs/specification/adr/adr-287.md) answered
 //! Q4, and three records have been waiting on this since
 //! (issue #178).
@@ -313,7 +313,7 @@ fn the_loops_binding_does_not_outlive_it() {
 }
 
 /// **The aggregate value** (issue #174,
-/// [ADR-079](../../../docs/specification/adr/adr-079.md) §3's *evaluator that
+/// [ADR-311](../../../docs/specification/adr/adr-311.md)'s *evaluator that
 /// can loop and push*).
 ///
 /// The loop was built; what a loop had nowhere to put was a **value**. A table
@@ -345,7 +345,7 @@ fn a_table_is_computed_while_the_program_is_built() {
     );
 }
 
-/// A table written out by hand, which [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// A table written out by hand, which [ADR-311](../../../docs/specification/adr/adr-311.md)
 /// §3 calls the *toy* version and which was the harder one to reach: the
 /// annotation is a **use**, so it is what says the literal is an array rather
 /// than a list (ADR-152 D4).
@@ -449,7 +449,7 @@ fn an_array_has_a_length_in_the_ledger() {
 }
 
 /// **Growable going in, fixed coming out** —
-/// [ADR-079](../../../docs/specification/adr/adr-079.md)'s own title, and the
+/// [ADR-311](../../../docs/specification/adr/adr-311.md)'s own title, and the
 /// half of it this evaluator can now do. A body builds its table with `push`,
 /// which is the shape §3 of that record asked for; what crosses into the
 /// program is fixed, because `const X: Vec<T>` is not a thing the language
@@ -538,7 +538,7 @@ fn a_computed_table_of_the_wrong_length_says_both_numbers() {
     );
 }
 
-/// **`NK1167`** ([ADR-079](../../../docs/specification/adr/adr-079.md) D2): a
+/// **`NK1167`** ([ADR-311](../../../docs/specification/adr/adr-311.md) D2): a
 /// `comptime` whose value owns memory is refused for *what it is* — and the way
 /// out names the length, because the build has just computed it.
 #[test]
@@ -627,7 +627,7 @@ fn an_unevaluable_body_does_not_also_blame_its_declaration() {
 /// **Text while the program is built**, which the `NK1127` note had been
 /// calling out as missing since the evaluator gained a call.
 ///
-/// [ADR-079](../../../docs/specification/adr/adr-079.md) D1's other half, and
+/// [ADR-311](../../../docs/specification/adr/adr-311.md) D1's other half, and
 /// the simpler one: a `String` arrives as a `&str`, there is no length in the
 /// type, and `const X: &str` is what the language below has where
 /// `const X: String` is not.
@@ -644,7 +644,7 @@ fn text_is_computed_while_the_program_is_built() {
 }
 
 /// **`f"…"` is what makes it worth having.** A hole is Nikaia
-/// ([ADR-032](../../../docs/specification/adr/adr-032.md) D3), so this
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md) D13), so this
 /// evaluator reads it like every other analysis does — and a banner built from
 /// two other constants is the case a person actually writes.
 #[test]
@@ -700,7 +700,7 @@ fn a_string_a_body_built_crosses_as_a_view() {
     );
 }
 
-/// `NK1167`'s text half ([ADR-079](../../../docs/specification/adr/adr-079.md)
+/// `NK1167`'s text half ([ADR-311](../../../docs/specification/adr/adr-311.md)
 /// D2). The way out used to be `NK1166`'s *write `.to_string()`*, which is
 /// advice that makes the problem worse: a `String` is the one thing a `const`
 /// cannot hold.
@@ -958,7 +958,7 @@ fn a_float_crosses_as_the_bits_the_build_had() {
 ///
 /// `rust_array_type` read the first element and asked what *it* was, and the
 /// answer for a list was nothing — so `[[1, 2], [3, 4]]` was `NK1127` while
-/// `[1, 2, 3]` had crossed since [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// `[1, 2, 3]` had crossed since [ADR-311](../../../docs/specification/adr/adr-311.md)
 /// D1. One recursion, and the rule is the same at every depth.
 #[test]
 fn a_nested_list_crosses_as_a_nested_array() {

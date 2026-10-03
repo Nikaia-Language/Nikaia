@@ -111,7 +111,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
 /// Whether a block mentions a name anywhere inside it.
 ///
 /// **Asked by the emitter about a `catch` handler and the name `error`**
-/// ([ADR-090](../../../docs/specification/adr/adr-090.md)): Kap 7.1 says the
+/// ([ADR-308](../../../docs/specification/adr/adr-308.md)): Kap 7.1 says the
 /// handler sees the failure under that name, so the lowering binds it whether
 /// or not the handler reads one — and a handler that supplies a constant
 /// fallback, which is the shape Part I 7.1 teaches first, got

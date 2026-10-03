@@ -239,7 +239,7 @@ fn at_several_threads_a_lock_follows_the_value() {
 ///
 /// At this setting both are the cheap shape, and for one reason rather than two:
 /// nothing a user writes can cross a thread here
-/// ([ADR-061](../../../docs/specification/adr/adr-061.md) D2).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D10).
 #[test]
 fn one_call_allocates_the_lock_as_well_as_the_handle() {
     let rust = lowered(

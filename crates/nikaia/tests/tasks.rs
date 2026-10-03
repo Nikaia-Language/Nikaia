@@ -270,7 +270,7 @@ fn a_task_that_names_an_argument_is_refused() {
 }
 
 /// A handle on a `Shared[T]` is **duplicated** into a task, not moved
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1, D5).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D1, D5).
 ///
 /// Part I 8.3 says `NK2101` belongs to the data case only, and this is the other
 /// case: using the value again after the task is built is the very thing the
@@ -440,7 +440,7 @@ fn nothing_a_task_needs_is_written_in_nikaia() {
 /// polled on a thread that did not start it, so its future has to be `Send` (§2
 /// D6) and the pool's starter is what asks for that; at `no` it may not, so it
 /// does not — and asking there would refuse a task holding the plain count
-/// [ADR-061](../../../docs/specification/adr/adr-061.md) D1 gives a `Shared` at
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D9 gives a `Shared` at
 /// one user thread.
 #[test]
 fn the_switch_decides_which_executor_a_task_is_started_on() {

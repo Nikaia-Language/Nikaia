@@ -1,5 +1,5 @@
 //! The table a `comptime` map crosses as
-//! ([ADR-176](../../../docs/specification/adr/adr-176.md) D2, D3).
+//! ([ADR-311](../../../docs/specification/adr/adr-311.md) D9, D10).
 //!
 //! **Two shapes under one type**, and which one a table gets was decided while
 //! the program was built rather than by a branch in `std`:
@@ -18,7 +18,7 @@
 //! worth saying so nobody re-measures this to move it by two.
 
 /// Where a scan stops being as good as a hash
-/// ([ADR-176](../../../docs/specification/adr/adr-176.md) D3).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D10).
 pub const HASHED_FROM: usize = nikaia_std::tools::fixed::HASHED_FROM as usize;
 
 /// A table, ready to be written into a `const`.

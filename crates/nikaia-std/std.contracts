@@ -103,7 +103,7 @@
 # No `std` entry has one. `Shared::deref` is the only entry that mentions the
 # type, and it takes the handle as a **borrow** and hands back a view of what is
 # inside - so it has no `Shared` position of its own to classify: a borrow
-# duplicates nothing (ADR-040 D1). `a_std_entry_that_takes_a_shared_needs_a_second_look`
+# duplicates nothing (ADR-312 D1). `a_std_entry_that_takes_a_shared_needs_a_second_look`
 # in `crates/nikaia/tests/sharing.rs` is what makes somebody look on the day an
 # entry takes a handle by value or hands one back: the analysis treats a described
 # callee as accounted for, so an entry that could keep a handle and cross a thread
@@ -1284,14 +1284,14 @@ signature = "[V](self: Entry[V], f: fn()) -> ref V"
 # (ADR-037 D7), the atomic one where the value may reach another thread and the
 # plain one where `contracts::sharing` proves it cannot. At
 # `user_parallelism = no` every one of them is plain, because nothing can cross
-# there (ADR-061 D2).
+# there (ADR-312 D10).
 #
 # **There is no constructor entry, and there must not be one.** The annotation
 # *is* the constructor: `let db: Shared[Connection] = connect(…)` makes the
 # first handle, and a `Shared::new` would write the same thing twice
-# (ADR-040 §3, Part I 6.2). There is no entry for making a second handle either,
+# (ADR-312, Part I 6.2). There is no entry for making a second handle either,
 # because a handle handed on by value is duplicated and there is nothing to call
-# (ADR-040 D1).
+# (ADR-312 D1).
 #
 # `deref` is the one entry, and it is what makes `serve(ref db)` mean something.
 # ADR-042 D2 sees a container through to what it holds wherever its ledger
@@ -1397,7 +1397,7 @@ signature = "(self: ref Vec[?]) -> i64"
 # visible price was a build-time body: `for i in 0..<xs.len()` made `squares`
 # uncallable from a `comptime` with *nothing says what it touches*, while the
 # same loop written `0..<5` was fine.
-# **A map whose keys the build knew** (ADR-176). Written as a list of pairs
+# **A map whose keys the build knew** (ADR-311). Written as a list of pairs
 # under a `comptime`, and what it crosses as is four static tables — no
 # allocation, no generated code, and the lookup shape decided from the key count
 # while the program was built.
@@ -2311,7 +2311,7 @@ signature = "(text: ref String) -> i64?"
 # `touches` line above bought it (ADR-292). The claim is a promise about a
 # Rust type, written here and reviewed like code, exactly as `sync = true` is.
 # **Text a C library owns**
-# ([ADR-147](../../docs/specification/adr/adr-147.md) D4). An opaque handle with
+# ([ADR-302](../../docs/specification/adr/adr-302.md) D8). An opaque handle with
 # **no cleanup**, which is what tells it from that record's D3: a `FILE` is ours
 # to close and a C string is not ours at all, so nothing here frees anything.
 #
@@ -2334,7 +2334,7 @@ pub = true
 #
 # `throws` in the one way this can fail - bytes that are not UTF-8 - which is
 # what `fs::read_to_string` fails on for the same reason. *There is no text* was
-# the second until [ADR-155](../../docs/specification/adr/adr-155.md) D4 made it
+# the second until [ADR-302](../../docs/specification/adr/adr-302.md) D13 made it
 # a **value**: a declaration says `-> CStr?` where the library may find nothing,
 # and `getenv` finding nothing is an ordinary Tuesday rather than an error.
 # A copy of the text, owned by whoever asked for it.
@@ -2651,7 +2651,7 @@ touches = []
 signature = "(self) -> time::Duration"
 
 # **In `std::time` and not in the prelude**
-# ([ADR-154](../../docs/specification/adr/adr-154.md) D2): the rule the list is
+# ([ADR-313](../../docs/specification/adr/adr-313.md) D2): the rule the list is
 # built from is that nothing in it pauses, and this is the one entry here that
 # does. So it is `use std::time` and `time::sleep(…)`, and Part II 12.4's line
 # is written that way.
@@ -2734,7 +2734,7 @@ signature = "[T](self: ref channel::Sender[T], value: ?)"
 pub = true
 signature = "[T](self: ref channel::Receiver[T]) -> T?"
 
-# --- The collections outside the prelude (ADR-154 D3) ------------------------
+# --- The collections outside the prelude (ADR-313 D3) ------------------------
 #
 # **`HashMap` is the first thing outside the list**, and it is the name that
 # makes that a rule rather than a tidy-up: a map is common enough to argue for,

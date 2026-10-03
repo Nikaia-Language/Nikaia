@@ -51,13 +51,13 @@ pub struct Cli {
     pub user_parallelism: Option<String>,
 
     /// An optimization that changes nothing a program means, as
-    /// `NAME:LEVEL` (ADR-271 D1). There are two:
+    /// `NAME:LEVEL` (ADR-306 D1). There are two:
     /// `remove-bounds-checks:basic` drops an index's check inside a loop over
     /// the list's own length that cannot change it, and
     /// `remove-bounds-checks:aggressive` also every one the solver proves
     /// inside, with a certificate its checker accepts;
     /// `remove-overflow-checks:aggressive` drops the check of a `+`, `-` or
-    /// `*` the solver proves stays inside its type (ADR-272). A check nothing
+    /// `*` the solver proves stays inside its type (ADR-306). A check nothing
     /// proves stays at every level.
     ///
     /// May be given more than once; overrides `nikaia.toml`'s
@@ -136,15 +136,15 @@ pub struct Cli {
     pub asserts: bool,
 
     /// Print what a `T::fields` loop was unrolled to, for the types actually
-    /// used ([ADR-088](../../../docs/specification/adr/adr-088.md) D6,
-    /// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+    /// used ([ADR-304](../../../docs/specification/adr/adr-304.md) D9,
+    /// [ADR-304](../../../docs/specification/adr/adr-304.md)).
     ///
     /// **The one readability problem every build-time system shares** is that
     /// you cannot see what a function becomes for a given type without
     /// unrolling it in your head. The usual answer is to invent syntax; this
     /// project already has the other one, and `--overlaps`, `--sharing`,
     /// `--tethers` and `--trust` are it. So this is the same information
-    /// [ADR-181](../../../docs/specification/adr/adr-181.md) D3's diagnostic
+    /// [ADR-304](../../../docs/specification/adr/adr-304.md) D8's diagnostic
     /// carries, offered **on demand instead of on failure** (D5).
     ///
     /// Like the other four, it explains a decision rather than changing one.
@@ -152,7 +152,7 @@ pub struct Cli {
     pub comptime: bool,
 
     /// The file that names the files this build may read while it builds
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D2).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D5).
     ///
     /// **Without it a build reads nothing** (D1), and that is the whole of why
     /// the default is worth having: *this build reads nothing while building*
@@ -697,7 +697,7 @@ fn test_command(
 
 /// What the manifest still accepts and the compiler no longer reads.
 ///
-/// A note rather than a failure: [ADR-038](../../docs/specification/adr/adr-038.md)
+/// A note rather than a failure: [ADR-303](../../docs/specification/adr/adr-303.md)
 /// D5 moved `cleanup-deadline` to the runtime configuration file, and a
 /// manifest written to the specification that documented it must not stop
 /// compiling because of the move. The note is what makes the move discoverable

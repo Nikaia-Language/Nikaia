@@ -2,7 +2,7 @@
 name = "nikaia-std"
 version = "0.1.0"
 edition = "2024"
-# The oldest Rust this builds and is tested on (ADR-219); the emitter's
+# The oldest Rust this builds and is tested on (ADR-305); the emitter's
 # `RUST_FLOOR` says the same.
 rust-version = "1.88"
 
@@ -27,12 +27,12 @@ tether = { path = "../unsafe/tether" }
 # Bytes checked as text once, in chunks across the pool, and a file mapped and
 # checked (Part III 17.1).
 checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map"] }
-# Text a C library owns, copied out (ADR-147 D4).
+# Text a C library owns, copied out (ADR-302 D8).
 c-text = { path = "../unsafe/c-text" }
 # An error's site in one word, or its cold part boxed (ADR-280 D24).
 ref-or-box = { path = "../unsafe/ref-or-box" }
 # An index the compiler proved inside, read and written without its check
-# (ADR-271 D5).
+# (ADR-306 D5).
 proven-index = { path = "../unsafe/proven-index" }
 # The parser backend every generated program runs on. Declared here, on the
 # runtime, so that a program's `std` and its parser are one dependency - and
@@ -46,20 +46,20 @@ winnow-grammar = { workspace = true }
 winnow = { workspace = true }
 # The UTF-8 check `fs::map` owes its `&str` views is chunked across this pool.
 # The same pool the parallel piece driver uses, so a program has one - and the
-# pool ADR-038 D4 starts for user code at `user_parallelism = yes`.
+# pool ADR-303 D4 starts for user code at `user_parallelism = yes`.
 rayon = "1.10"
-# ADR-038 D3's readiness half: `epoll`/`kqueue`/IOCP and nothing else. No
+# ADR-303 D3's readiness half: `epoll`/`kqueue`/IOCP and nothing else. No
 # executor, no task model, no opinion about what the program does when a socket
 # is ready - which is what keeps D1's and D3's decisions from being remade by a
 # dependency.
 polled = { path = "../unsafe/polled" }
 
-# ADR-038 D3's completion half. A *target* gate and not a feature gate: the
+# ADR-303 D3's completion half. A *target* gate and not a feature gate: the
 # bindings do not exist off Linux at all. On Linux whether the ring is used is
 # decided at **run time** (`rt::config::Method::Auto` probes the kernel), so a
 # binary built on a machine with io_uring still runs on one without it.
 [target.'cfg(target_os = "linux")'.dependencies]
-# ADR-038 D3's completion half, with the bell ADR-121 D1 hangs on it: the ring
+# ADR-303 D3's completion half, with the bell ADR-121 D1 hangs on it: the ring
 # and the `unsafe` it takes live in their own crate (ADR-218).
 file-ring = { path = "../unsafe/file-ring" }
 

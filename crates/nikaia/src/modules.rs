@@ -955,7 +955,7 @@ impl Program {
     }
 
     /// The same, told what this build may read while it builds
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md)).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md)).
     ///
     /// **A second entry point and not a field on `Build`**: `Build` is the
     /// machine and the switches, copied freely, and what a build may read is a
@@ -1006,7 +1006,7 @@ impl Program {
                 trust.provenance,
                 &self.contracts,
                 &self.described,
-                // The entry is the only file ADR-038 D4's generated `fn main`
+                // The entry is the only file ADR-303 D4's generated `fn main`
                 // may be written from.
                 at == 0,
                 reads,
@@ -1064,7 +1064,7 @@ impl Program {
 /// The dispatcher is Nikaia, appended to the entry's text and parsed with it,
 /// so it goes through every check and the one lowering a program does: a test
 /// body may pause and may fail, and `main` is where both are already answered
-/// (ADR-038 D4). A test's function `throws`, so a failure that leaves its body
+/// (ADR-303 D4). A test's function `throws`, so a failure that leaves its body
 /// leaves `main` - which prints it and ends the process unsuccessfully.
 fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestCase>)> {
     let own: Vec<usize> = (0..units.len())

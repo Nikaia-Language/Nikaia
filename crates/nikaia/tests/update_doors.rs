@@ -287,7 +287,7 @@ fn the_read_door_is_untouched() {
 }
 
 /// **A lambda kept in a function field takes a handle of the lock it uses**
-/// ([ADR-230](../../../docs/specification/adr/adr-230.md) D4, ADR-040 D5): the
+/// ([ADR-230](../../../docs/specification/adr/adr-230.md) D4, ADR-312 D5): the
 /// name it was written beside stays usable on the next line. The capture used
 /// to move it, and `rustc` said *use of moved value* about a file nobody wrote.
 #[test]

@@ -1,7 +1,7 @@
 //! **`&[T]`, a view of a run of elements** —
 //! [ADR-179](../../../docs/specification/adr/adr-179.md).
 //!
-//! [ADR-079](../../../docs/specification/adr/adr-079.md) D1 said a build-time
+//! [ADR-311](../../../docs/specification/adr/adr-311.md) D1 said a build-time
 //! result arrives in its **view** form — `Vec[T]` as `&[T]`, `String` as
 //! `&str` — and half of it was built: text crossed as a `&str`, a list crossed
 //! as an `Array[T, N]` because that is what the type language could spell, and

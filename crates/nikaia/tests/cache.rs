@@ -177,7 +177,7 @@ fn an_edited_source_misses() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **A file the build read, changed** ([ADR-072](../../../docs/specification/adr/adr-072.md)
+/// **A file the build read, changed** ([ADR-310](../../../docs/specification/adr/adr-310.md)
 /// D7, [ADR-021](../../../docs/specification/adr/adr-021.md) D13).
 ///
 /// The asset dimension travelled through the key for a year with nothing
