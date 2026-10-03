@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The table in ADR-033 §8.2 and §8.4. See README.md.
+# The table in ADR-292 See README.md.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)

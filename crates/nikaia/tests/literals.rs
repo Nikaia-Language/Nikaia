@@ -188,7 +188,7 @@ fn a_space_after_the_f_is_not_an_interpolation() {
 }
 
 /// **A number no use constrains takes the first type that holds it**
-/// ([ADR-060](../../../docs/specification/adr/adr-060.md) D2, Part I 2.4).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D21, Part I 2.4).
 ///
 /// `let big = 3000000000` is a correct program and was refused in the backend's
 /// words about a type it never wrote — *"literal out of range for `i32`"* —
@@ -229,12 +229,12 @@ fn a_negation_is_folded_before_the_width_is_decided() {
     assert!(wider.contains("-2147483649i64"), "{wider}");
 }
 
-// --- a constant sum widens the way a constant does (ADR-063) -----------------
+// --- a constant sum widens the way a constant does (ADR-285) -----------------
 
 /// **A constant written only in literals takes the first type that holds it**
-/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D22).
 ///
-/// [ADR-060](../../../docs/specification/adr/adr-060.md) gave that to a literal
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) gave that to a literal
 /// and the rule did not reach a sum, so `3000000000 + 1` compiled and
 /// `2000000000 + 2000000000` did not — refused in the backend's words, *"this
 /// arithmetic operation will overflow"*, on the Nikaia line that wrote it. Which

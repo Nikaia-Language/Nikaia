@@ -1,5 +1,5 @@
 //! **A sequence's count is an `i64`, as a length is** (Part I 2.2,
-//! [ADR-048](../../../docs/specification/adr/adr-048.md) D1): issue #164
+//! [ADR-285](../../../docs/specification/adr/adr-285.md) D1): issue #164
 //! issue #164. `count()` kept the language below's `usize`, and the program met it
 //! in `rustc`'s words the moment the count stood where an `i64` is wanted.
 //! Each program prints the same at both settings of `user_parallelism`.

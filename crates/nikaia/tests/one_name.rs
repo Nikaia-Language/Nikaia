@@ -1,8 +1,8 @@
 //! A name denotes one thing
-//! ([ADR-144](../../../docs/specification/adr/adr-144.md)).
+//! ([ADR-286](../../../docs/specification/adr/adr-286.md)).
 //!
 //! Across files it already was refused
-//! ([ADR-047](../../../docs/specification/adr/adr-047.md) D1): the files of a
+//! ([ADR-286](../../../docs/specification/adr/adr-286.md) D1): the files of a
 //! package share one namespace, so two `Row`s in it is an error rather than a
 //! rule about which of them a line means. Inside **one** file nothing said it,
 //! unless the build happened to go through a manifest — and `nikaia lower`

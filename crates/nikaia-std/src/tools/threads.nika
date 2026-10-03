@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/threads.nika
 //
 // Whether a value may cross a thread (ADR-005 §1 Group B, `NK25xx`). Moved
-// from the compiler's `contracts::send` (ADR-250, #125); the reasoning for
+// from the compiler's `contracts::send` (ADR-294, #125); the reasoning for
 // every row is that module's.
 //
 // One question, asked of a **type and a destination** (ADR-045 D1): may a
@@ -37,7 +37,7 @@ comptime CROSSING_DEPTH: i64 = 16
 /// Where a value is going (ADR-045 D1).
 pub enum Going {
     /// Our own code on a thread of our own: a `spawn`ed task's body, and the
-    /// closure statement overlapping builds (ADR-033).
+    /// closure statement overlapping builds (ADR-292).
     Ours,
     /// Code nothing written down describes, which may do anything with what
     /// it is given (ADR-038 D7).
@@ -94,7 +94,7 @@ impl Crossing {
     }
 
     /// **Why** it is refused, where it is - the word `NK2503` reads
-    /// (ADR-039 D6).
+    /// (ADR-281 D32).
     pub fn why(ref self) -> Refusal? {
         return match self {
             Crossing::MayNot { why, .. } => why.clone(),
@@ -273,7 +273,7 @@ fn all_of(parts: ref Vec[Ty], walking: ref Walking, mut seen: collections::BTree
 
 /// The worse of two answers, with `MayNot` worse than `Undecided`, and the
 /// first refusal kept: a refusal a reader can act on beats an admission of
-/// ignorance (ADR-033 D9's rule, applied to the same kind of choice).
+/// ignorance (ADR-292 D2's rule, applied to the same kind of choice).
 pub fn worst_of(worst: Crossing, answer: Crossing) -> Crossing {
     return match worst {
         Crossing::MayNot { .. } => worst,
@@ -302,7 +302,7 @@ fn field_named_at(field: ref String, part: ref String, at: ref String?, why: ref
 
 // What the ledgers say about a type, by the name a program writes: the
 // program's own first, then `std`'s, by the whole key and then by a key that
-// ends in `::` and the name (ADR-011 D2).
+// ends in `::` and the name (ADR-296 D17).
 fn ledger_type(name: ref String, own: ref Ledger, library: ref Ledger) -> TypeContract? {
     let suffix = f"::{name}"
     let mine = in_one_ledger(name, suffix, own)

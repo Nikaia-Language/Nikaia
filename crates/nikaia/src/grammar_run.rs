@@ -23,7 +23,7 @@
 //! emits Rust and already drives Cargo, so the machinery is not new.
 //!
 //! **And it needs no new security model.** A grammar's action blocks are
-//! Nikaia, and [ADR-075](../../../docs/specification/adr/adr-075.md) already
+//! Nikaia, and [ADR-287](../../../docs/specification/adr/adr-287.md) already
 //! says what a build-time body may do; the bytes come from `asset("…")`, which
 //! [ADR-072](../../../docs/specification/adr/adr-072.md) already bounds. What
 //! is new here is neither the permission nor the input.

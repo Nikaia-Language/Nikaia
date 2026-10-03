@@ -8,7 +8,7 @@
 //!
 //! **The ledger's key does not move.** `Type::new` is the name the *lowering*
 //! writes, and the lowering is name for name
-//! ([ADR-011](../../../docs/specification/adr/adr-011.md) D2); what changed is
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17); what changed is
 //! that the resolution reaching for it now reaches into the library too, where
 //! it used to stop at this unit.
 

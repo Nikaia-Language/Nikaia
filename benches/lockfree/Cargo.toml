@@ -4,8 +4,8 @@
 # **It depends on `nikaia-std` on purpose**, which is the opposite of
 # `benches/lockfloor`'s choice and for the same reason: that bench measured
 # `RefCell` against `Mutex` because neither was yet what the emitter wrote.
-# `nikaia_std::lock::Local` and `Crossing` *are* what it writes now (ADR-057,
-# ADR-064), owner check and all, so measuring anything else would be measuring
+# `nikaia_std::lock::Local` and `Crossing` *are* what it writes now (ADR-281,
+# ADR-281), owner check and all, so measuring anything else would be measuring
 # a shape no program gets.
 [package]
 name = "lockfree-bench"

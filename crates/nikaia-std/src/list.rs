@@ -25,7 +25,7 @@ pub fn contains<T: PartialEq<A>, A: ?Sized>(items: &[T], value: &A) -> bool {
 /// `text.chars().collect()` into a `Vec[char]`, with the room for every
 /// character asked for once: a text's length in bytes is at least its count of
 /// characters. `collect` over `Chars` asks for a quarter of that and grows,
-/// which was the largest single cost of reading a ledger in Nikaia (ADR-257
+/// which was the largest single cost of reading a ledger in Nikaia (ADR-294
 /// step (c)).
 pub fn chars(text: std::str::Chars<'_>) -> Vec<char> {
     let mut all = Vec::with_capacity(text.as_str().len());

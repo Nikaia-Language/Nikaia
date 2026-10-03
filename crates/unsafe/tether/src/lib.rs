@@ -74,7 +74,7 @@ impl<T: Clone> Clone for Dangling<T> {
 /// arrives and the box is freed only when the `Keep` is, so a view of an
 /// earlier buffer stays valid while later ones arrive. That is what lets one
 /// `Keep` serve a loop over many files or a recursive include , in
-/// place of ADR-008 D4's buffer table.
+/// place of ADR-283 D11's buffer table.
 ///
 /// **The first buffer takes no lock and no list.** A keep of a buffer's own -
 /// one per file a pruned list reads, held by the elements that point into it -

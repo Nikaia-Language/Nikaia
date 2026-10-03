@@ -1,6 +1,6 @@
 //! **Cleanup that can pause** — `impl Cleanup`
-//! ([ADR-239](../../../docs/specification/adr/adr-239.md), refining
-//! [ADR-006](../../../docs/specification/adr/adr-006.md)).
+//! ([ADR-297](../../../docs/specification/adr/adr-297.md), refining
+//! [ADR-297](../../../docs/specification/adr/adr-297.md)).
 //!
 //! A value whose teardown needs I/O — a buffered file flushing — cannot run it
 //! in the language below's `Drop`, which cannot pause. So the work is split
@@ -67,7 +67,7 @@ static SENT_ORPHANS: std::sync::Mutex<Vec<Parked<SendWork>>> = std::sync::Mutex:
 pub trait Cleanup: 'static {
     /// The value's cleanup, which may pause and may fail. The failure is its
     /// message, since it is handed on without its type
-    /// ([ADR-239](../../../docs/specification/adr/adr-239.md) D3).
+    /// ([ADR-297](../../../docs/specification/adr/adr-297.md) D4).
     fn cleanup(&mut self) -> Pin<Box<dyn Future<Output = Result<(), String>> + '_>>;
 
     /// What the value is, as a message names it.
@@ -133,7 +133,7 @@ macro_rules! cleaned {
                 Self(Some(value))
             }
 
-            /// **Close it now** (ADR-239 D3): run the cleanup here, hand its
+            /// **Close it now** (ADR-297 D4): run the cleanup here, hand its
             /// failure back as the call's, and owe nothing afterwards.
             pub async fn close(mut self) -> Result<(), Failure> {
                 let mut value = self.0.take().expect("a value is closed once");
@@ -215,7 +215,7 @@ macro_rules! cleaned {
                 let Some(mut value) = self.0.take() else {
                     return;
                 };
-                // **A panic parks nothing** (ADR-239 D5): the value may be
+                // **A panic parks nothing** (ADR-297 D5): the value may be
                 // broken in the way that caused it, so only its synchronous
                 // `drop` runs, which is dropping it here.
                 if std::thread::panicking() {
@@ -340,7 +340,7 @@ pub async fn settle_quietly<K: Kind>() {
 }
 
 /// **The settle point around a function's body**
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D2): the body is run
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D2): the body is run
 /// to its end - every `return` and every failing call inside it ends the body
 /// and not the function - and then what died in it is settled. A failure while
 /// the body already failed is the body's failure's **secondary** (D3); one
@@ -462,7 +462,7 @@ impl<F: Future, Q: Queue> Future for Within<'_, F, Q> {
 }
 
 /// **An `overlap` branch with a queue of its own**
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D3): the branches
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D4): the branches
 /// run at once in one task, and what one of them parks is not another's to
 /// settle. What is still parked at its end goes to the settle point around the
 /// `overlap`.
@@ -478,7 +478,7 @@ pub async fn branch<K: Kind, T, F: Future<Output = T>>(body: F) -> T {
 
 /// **The same, settled at the branch's end**, where the branch's channel can
 /// take the failure: a cleanup that fails while the branch is already failing
-/// joins **that branch's** error (ADR-115 D3), one that fails where it
+/// joins **that branch's** error (ADR-292 D10), one that fails where it
 /// succeeded is its error.
 pub async fn branch_after<K: Kind, T, E, F>(body: F, origin: Origin) -> Result<T, E>
 where
@@ -501,7 +501,7 @@ where
 
 /// A body's result and its settle point's, as one (D3). The failure goes in
 /// an envelope with the settle point's site, so `error.full()` says where the
-/// cleanup ran ([ADR-240](../../../docs/specification/adr/adr-240.md) D2).
+/// cleanup ran ([ADR-280](../../../docs/specification/adr/adr-280.md) D29).
 fn joined<T, E: From<Thrown<Failure>> + crate::error::Joined>(
     result: Result<T, E>,
     settled: Result<(), Failure>,
@@ -519,7 +519,7 @@ fn joined<T, E: From<Thrown<Failure>> + crate::error::Joined>(
 }
 
 /// **A settle point that fails with its site**: what a block's settle point
-/// hands to its `?` (ADR-240 D2).
+/// hands to its `?` (ADR-280 D29).
 pub async fn settle_at<K: Kind>(origin: Origin) -> Result<(), Thrown<Failure>> {
     settle::<K>()
         .await
@@ -559,7 +559,7 @@ impl<W: Future<Output = Result<(), String>> + Unpin> Parked<W> {
 
 /// **The orphans started and not finished**, by a number of their own and what
 /// they clean up: what an expired `cleanup-deadline` names
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D5).
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D5).
 static RUNNING: std::sync::Mutex<Vec<(u64, String)>> = std::sync::Mutex::new(Vec::new());
 
 static NUMBERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -592,7 +592,7 @@ async fn drained<W: Future<Output = Result<(), String>> + Unpin>(orphans: Vec<(u
 }
 
 /// **Start every orphan on this thread**, where the drain at the end of `main`
-/// waits for it as for any task nobody joined (ADR-239 D5). A failure has no
+/// waits for it as for any task nobody joined (ADR-297 D5). A failure has no
 /// caller to go to, so it is said on standard error. How many were started.
 pub fn start_orphans() -> usize {
     let (local, sent) = orphans();

@@ -1,11 +1,11 @@
 // crates/nikaia-std/src/tools/surface.nika
 //
-// **What a Rust crate offers a caller** (ADR-104 D2-D4, ADR-193 D3-D5): every
+// **What a Rust crate offers a caller** (ADR-290 D2-D4, ADR-290 D8-D10): every
 // `fn` by the path it is defined at, which modules are `pub`, what a `pub use`
 // carries out of a private one, every `pub` type with its fields and derives,
 // and every `unsafe impl` the crate promises.
 //
-// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// Moved from the compiler's `describe.rs` by ADR-290's route (#124): lowered
 // by `nikaia lower-std` to `surface.rs` beside it, `include!`d as
 // `nikaia_std::tools::surface`, and called from `describe`. It reads the Rust
 // grammar's items (`rust.nika`) and the path work (`paths.nika`) beside it.
@@ -32,11 +32,11 @@ pub struct Function {
     /// The text after `->`, empty where there is none.
     pub result: String,
     /// The `<…>` list and the `where` clause, joined: read for whether a
-    /// parameter is bound `Send` (ADR-193 D4).
+    /// parameter is bound `Send` (ADR-290 D9).
     pub bounds: String,
     /// Every path the body calls, with the file's `use` items applied.
     pub calls: Vec[String],
-    /// `async fn` - a plain `fn` is `sync` (ADR-104 D3).
+    /// `async fn` - a plain `fn` is `sync` (ADR-290 D3).
     pub pauses: bool,
 }
 
@@ -61,7 +61,7 @@ pub struct Surface {
     /// `pub use` items, kept until every file has been read.
     pub exports: Vec[Export],
     /// Every `unsafe impl Trait for Type`, as the sentence a reader wants
-    /// (ADR-193 D5), whatever the type's visibility.
+    /// (ADR-290 D10), whatever the type's visibility.
     pub promises: Vec[String],
 }
 
@@ -84,7 +84,7 @@ pub fn empty() -> Surface {
 /// A binary's file is not a module of the library and adds nothing.
 ///
 /// The file's `use` items are read first, because a call is resolved against
-/// them and one may stand below the function that needs it (ADR-193 D4).
+/// them and one may stand below the function that needs it (ADR-290 D9).
 pub fn read_items(mut surface: Surface, relative: ref String, items: ref Vec[RustItem]) {
     let found = module_of(relative)
     if found == null {
@@ -206,7 +206,7 @@ pub fn candidates(export: ref Export, name: ref String) -> Vec[String] {
     return out
 }
 
-/// **What a name in one file means**, from its `use` items (ADR-193 D4):
+/// **What a name in one file means**, from its `use` items (ADR-290 D9):
 /// `use tokio::spawn;` makes `spawn` and `tokio::spawn` one function written
 /// two ways. **Flat over the file** rather than per module: a `use` inside a
 /// `mod` block treated as the file's can only make a name resolve where it
@@ -249,7 +249,7 @@ fn walk(mut surface: Surface, items: ref Vec[RustItem], at: ref String, imports:
                 surface.offers.insert(path.clone())
                 surface.functions.insert(path, function_of(f, imports))
             }
-            // **On the way to an entry rather than one** (ADR-193 D4): nothing
+            // **On the way to an entry rather than one** (ADR-290 D9): nothing
             // outside the crate can call it, and the call graph goes through
             // it.
             RustItem::Hidden(f) => {
@@ -291,12 +291,12 @@ fn walk(mut surface: Surface, items: ref Vec[RustItem], at: ref String, imports:
                     walk(surface, g.items, path, imports)
                 } else if g.what == "unsafe impl" && !g.via.is_empty() {
                     // **An `unsafe impl` is a promise the toolchain cannot
-                    // check** (ADR-193 D5), and one syntactic pattern is all it
+                    // check** (ADR-290 D10), and one syntactic pattern is all it
                     // takes to see that it was made.
                     surface.promises.push(f"unsafe impl {g.via} for {g.name}")
                 }
                 // Every other `impl` and every `trait`: what a method is at a
-                // foreign boundary is ADR-104 D4's own question, not asked
+                // foreign boundary is ADR-290 D4's own question, not asked
                 // here.
             }
         }

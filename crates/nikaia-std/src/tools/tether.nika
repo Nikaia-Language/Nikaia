@@ -1,13 +1,13 @@
 // crates/nikaia-std/src/tools/tether.nika
 //
-// Which of Part I 6.6's states each view in a signature is in (ADR-008 D2,
+// Which of Part I 6.6's states each view in a signature is in (ADR-283 D2,
 // D7), and whether a body makes a buffer of its own - the analysis half of
-// the compiler's `contracts::tether`, moved from Rust (ADR-250, #125). What
+// the compiler's `contracts::tether`, moved from Rust (ADR-294, #125). What
 // stays Rust is writing the answers into the ledger, the `--tethers` report
 // and the refusal, both of which read the keep plan.
 //
 // **Only Borrowed is built as a representation**, and `keep::infer` says
-// otherwise where a view really leaves (ADR-209 D6): so every position this
+// otherwise where a view really leaves (ADR-283 D13): so every position this
 // file writes is Borrowed, and it errs **towards Tethered** wherever it
 // cannot decide - a wider representation, never a program that does the
 // wrong thing.
@@ -156,7 +156,7 @@ pub fn carries_a_view(names: ref winnow_grammar::InternerContext, ty: ref Type, 
 }
 
 /// **A name declared `String` holds text of this frame's own**, whatever its
-/// initialiser was (ADR-207 D2, ADR-216 D4).
+/// initialiser was (ADR-282 D4, ADR-282 D3).
 pub fn declares_text(names: ref winnow_grammar::InternerContext, ty: ref Type?) -> bool {
     let written = ty ?? return false
     return names.resolve(written.name) == "String" && written.generics.len() == 0 && !written.is_view && !written.is_nullable
@@ -164,10 +164,10 @@ pub fn declares_text(names: ref winnow_grammar::InternerContext, ty: ref Type?) 
 
 /// Whether this expression hands back a buffer of its own. `asked` is the
 /// interner and the two ledgers; `unaliased` resolves a package's alias
-/// (ADR-046 D3).
+/// (ADR-286 D12).
 ///
 /// `to_owned` is owned text by the name; `to_string` is the text form of a
-/// value (ADR-216 D4) - a literal's is the literal, a number's or an
+/// value (ADR-282 D3) - a literal's is the literal, a number's or an
 /// `f"…"`'s is text of its own, anything else unsure; a copy of a literal is
 /// text of its own (D2). A call is answered by its ledger entry's result -
 /// owned text or bytes - and a call no ledger describes is a buffer this

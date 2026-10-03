@@ -1,5 +1,5 @@
 //! **A view that outlives its buffer is tethered**, and the compiler decides
-//! where the buffer lives ([ADR-209](../../../docs/specification/adr/adr-209.md)).
+//! where the buffer lives ([ADR-283](../../../docs/specification/adr/adr-283.md)).
 //!
 //! Eight programs, one per shape the design was checked against before it was
 //! built, each compiled and **run** at both settings of `user_parallelism`
@@ -434,7 +434,7 @@ fn each_representation_is_the_one_the_plan_chose() {
         "{cache}"
     );
     assert!(cache.contains(".put_viewed("), "{cache}");
-    // **No `unsafe` for a held view** (ADR-221 D1): the keep finds the view
+    // **No `unsafe` for a held view** (ADR-283 D14): the keep finds the view
     // again by address, so what the plan claims is checked, not trusted.
     assert!(!cache.contains("unsafe"), "{cache}");
 }
@@ -463,10 +463,10 @@ fn a_buffer_nothing_outlives_is_left_alone() {
 
 // ---------------------------------------------------------------------------
 // A container of structs holding views that drops entries in a loop
-// ([ADR-221](../../../docs/specification/adr/adr-221.md))
+// ([ADR-283](../../../docs/specification/adr/adr-283.md))
 // ---------------------------------------------------------------------------
 
-/// The program `NK2304` refused until ADR-221: records of the lines of files
+/// The program `NK2304` refused until ADR-283: records of the lines of files
 /// read in a loop, kept in a list that is pruned as it goes, and read back by
 /// index, by a `for`, and through a method.
 const RECORDS: &str = r##"use std::fs
@@ -521,7 +521,7 @@ fn a_list_of_structs_of_views_that_drops_entries_is_held() {
 }
 
 /// **A value whose views point into two buffers carries a handle on each**
-/// (ADR-221 D2), and neither buffer is copied.
+/// (ADR-283 D15), and neither buffer is copied.
 const PAIRS: &str = r##"use std::fs
 
 struct Pair {
@@ -551,7 +551,7 @@ fn a_struct_of_views_into_two_buffers_holds_both() {
 }
 
 /// **A view of something the element does not hold is carried as a copy**
-/// (ADR-221 D2): a literal in a view field points into no buffer, and the
+/// (ADR-283 D15): a literal in a view field points into no buffer, and the
 /// keep takes a copy of it rather than a reference it cannot vouch for.
 const LITERAL: &str = r##"use std::fs
 
@@ -581,7 +581,7 @@ fn a_view_of_a_literal_in_a_held_struct_is_carried_as_a_copy() {
 
 /// **Dropping entries after the loop is not dropping them while it goes on**:
 /// the frame's keep holds the buffers exactly as long, no element carries a
-/// handle, and the program is not refused (the case ADR-221 D5 fixes).
+/// handle, and the program is not refused (the case ADR-283 D18 fixes).
 const CLEARED_AFTER: &str = r##"use std::fs
 
 struct Record {
@@ -609,7 +609,7 @@ fn entries_dropped_only_after_the_loop_need_no_handle() {
     assert!(!rust.contains("Holding"), "{rust}");
 }
 
-/// **A map of structs of views is still refused, by name** (ADR-221 §4): a
+/// **A map of structs of views is still refused, by name** (ADR-283): a
 /// map's reads hand back a value that may be absent, and that is not yet
 /// read through the handle.
 #[test]
@@ -641,7 +641,7 @@ fn main() throws {
 }
 
 /// **An element taken out stays held, and a field is written through the
-/// handle** (ADR-221 D3, D4): `old` carries its buffer's keep out of the list,
+/// handle** (ADR-283 D16, D17): `old` carries its buffer's keep out of the list,
 /// a number is stored as it is, and a view made outside the element is found
 /// again in its keeps - or, here, is a literal and is copied into them.
 const TAKEN_AND_WRITTEN: &str = r##"use std::fs
@@ -693,7 +693,7 @@ fn an_element_taken_out_stays_held_and_a_field_is_written_through_the_handle() {
 /// views flowing into an `inner` declared around the buffer, `args` went into
 /// the frame's keep and the assignment put a view where a `String` goes -
 /// `rustc`'s *mismatched types* about a file nobody wrote (found moving
-/// `Ty::parse` into Nikaia, ADR-257).
+/// `Ty::parse` into Nikaia, ADR-294).
 #[test]
 fn a_buffer_assigned_whole_is_moved() {
     let source = "fn cut(written: ref String, front: i64) -> String {

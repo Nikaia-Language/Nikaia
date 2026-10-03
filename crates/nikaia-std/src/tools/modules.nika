@@ -2,15 +2,15 @@
 //
 // What a file of a package declares, and whether its `use` lines name what
 // the package may reach - the two questions the compiler's `modules` asks of
-// one parsed file, moved from Rust (ADR-250, #125). Reading the files, the
+// one parsed file, moved from Rust (ADR-294, #125). Reading the files, the
 // manifest and the ledgers stays Rust.
 
 use std::collections
 
 /// The names a file declares: what one package's namespace counts
-/// (ADR-047 D1). A method belongs to its type and a grammar's rule to its
+/// (ADR-286 D1). A method belongs to its type and a grammar's rule to its
 /// grammar, so neither is among them; a `trait` and a `grammar` are
-/// (ADR-144 D2).
+/// (ADR-286 D5).
 pub fn declared_names(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[String] {
     let mut out: Vec[String] = []
     for item in items {
@@ -22,7 +22,7 @@ pub fn declared_names(names: ref winnow_grammar::InternerContext, items: ref Vec
     return out
 }
 
-/// **Every `use` in a file, against the packages it may name** (ADR-046 D2,
+/// **Every `use` in a file, against the packages it may name** (ADR-286 D11,
 /// D4, D5), and the refusal for the first that is wrong, or nothing. `use`
 /// makes a package reachable and brings no name in, so there are four things
 /// to say no to, each with the way out (Part III C.2): a path rather than a
@@ -31,7 +31,7 @@ pub fn declared_names(names: ref winnow_grammar::InternerContext, items: ref Vec
 /// sees it. `beside` says whether `<package>.nika` is a file next to this one.
 pub fn a_use_refused(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], here: ref String, reachable: ref collections::BTreeSet[String], alone: bool, beside: fn(ref String) -> bool sync) -> String? {
     // What each `use` names, and what this file calls it: the two differ
-    // exactly where an alias is written (ADR-046 D3). A path first, and every
+    // exactly where an alias is written (ADR-286 D12). A path first, and every
     // one of them, because it is the only shape that is wrong about itself.
     let mut named: Vec[(String, String)] = []
     for item in items {

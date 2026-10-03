@@ -1,11 +1,11 @@
 //! A block that joins on the executor pauses, and its branches travel in the
 //! function's own channel
-//! ([ADR-163](../../../docs/specification/adr/adr-163.md)).
+//! ([ADR-292](../../../docs/specification/adr/adr-292.md)).
 //!
 //! `overlap { … }` and `select { … }` are the two constructs that hand several
 //! branches to the executor and wait there. Both were built before
 //! [ADR-055](../../../docs/specification/adr/adr-055.md) made the lowering
-//! `async` and before [ADR-157](../../../docs/specification/adr/adr-157.md)
+//! `async` and before [ADR-280](../../../docs/specification/adr/adr-280.md)
 //! gave the failure channel a type, and neither was asked again afterwards. So
 //! each of them had a correct program that `rustc` refused, in a file the
 //! author never wrote — [Part III C.1](../../../docs/specification/30-nikaia-tooling.md):
@@ -182,7 +182,7 @@ fn a_branch_that_pauses_still_makes_the_block_pause() {
 
 /// **D1's other half: an assertion is contradicted too** (`NK2202`).
 ///
-/// [ADR-027](../../../docs/specification/adr/adr-027.md) D4 says the inference
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) D4 says the inference
 /// never overwrites a written `sync`, so fixing the derivation alone would have
 /// left a hand-written one on a body that pauses — and `rustc` would say so
 /// about the generated file, which is the defect this record is about.
@@ -221,7 +221,7 @@ fn a_written_sync_over_a_joining_block_is_refused() {
 /// The vehicle needs the error type written out — an `async` block with a `?`
 /// in it and nothing to infer from is *type annotations needed* about a
 /// generated file. Naming the box was right while every channel was one; since
-/// [ADR-157](../../../docs/specification/adr/adr-157.md) it can be a
+/// [ADR-280](../../../docs/specification/adr/adr-280.md) it can be a
 /// `Thrown<E>`, and `?` does not convert one into the other.
 #[test]
 fn a_branch_travels_in_the_functions_own_channel() {
@@ -248,13 +248,13 @@ fn a_branch_travels_in_the_functions_own_channel() {
 }
 
 /// **And a library's channel** — which travelled **bare** until
-/// [ADR-115](../../../docs/specification/adr/adr-115.md) D1 put an envelope on
+/// [ADR-292](../../../docs/specification/adr/adr-292.md) D8 put an envelope on
 /// it for the sake of the `secondary` list.
 ///
 /// The defect this was written for is the same from the other side: the `?` on
 /// a branch had to convert a box into the channel, which it cannot. What
 /// changed since is *which* channel, not that the branch carries the
-/// function's: [ADR-159](../../../docs/specification/adr/adr-159.md) D2's
+/// function's: [ADR-280](../../../docs/specification/adr/adr-280.md) D13's
 /// reason was about the **site**, and the envelope this puts on still says
 /// *no site recorded*.
 #[test]
@@ -276,11 +276,11 @@ fn a_branch_travels_in_a_librarys_channel_too() {
 }
 
 /// **D5 still holds, and the second failure is kept** — which is
-/// [ADR-115](../../../docs/specification/adr/adr-115.md) D2, and the line this
+/// [ADR-292](../../../docs/specification/adr/adr-292.md) D9, and the line this
 /// test was written to have changed.
 ///
 /// Two branches fail. The first in **written** order is the block's error
-/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5), which is
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D5), which is
 /// unchanged and is the only order the source has. What is new is that the
 /// second one is **under** it rather than gone: the block waits for every
 /// branch, so when it ends every outcome is known and the list is a fact
@@ -323,7 +323,7 @@ fn the_block_keeps_every_failure_and_the_first_still_wins() {
         said.contains("a is missing"),
         "the first branch in written order is the block's failure:\n{said}"
     );
-    // **And the second is there now**, which is the whole of ADR-115.
+    // **And the second is there now**, which is the whole of ADR-292.
     assert!(
         said.contains("is broken"),
         "the later failure joined rather than being dropped:\n{said}"
@@ -337,11 +337,11 @@ fn the_block_keeps_every_failure_and_the_first_still_wins() {
 }
 
 // ---------------------------------------------------------------------------
-// [ADR-164](../../../docs/specification/adr/adr-164.md): the block's outcome is
+// [ADR-292](../../../docs/specification/adr/adr-292.md): the block's outcome is
 // one, and a handler on the block binds what the branches threw.
 // ---------------------------------------------------------------------------
 
-/// **D1: `overlap { … } catch { … }` lowers** — [ADR-115](../../../docs/specification/adr/adr-115.md)
+/// **D1: `overlap { … } catch { … }` lowers** — [ADR-292](../../../docs/specification/adr/adr-292.md)
 /// D4's own written example, which did not.
 ///
 /// A `?` per branch leaves the **function**, so a `catch` on the block got a
@@ -406,7 +406,7 @@ fn a_handler_on_the_block_matches_the_branches_variants() {
         rust.contains("Ok::<_, nikaia_std::error::Thrown<LoadError>>("),
         "the branches travel in the block's own channel:\n{rust}"
     );
-    // The envelope is opened once at the binding, as ADR-157 D2 says.
+    // The envelope is opened once at the binding, as ADR-280 D10 says.
     assert!(rust.contains(".split();"), "{rust}");
     assert_eq!(
         output("joining-match-on-the-block", &source),

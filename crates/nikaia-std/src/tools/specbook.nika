@@ -2,7 +2,7 @@
 //
 // **Every `nika` block in the specification, and the readings it can have**,
 // for the compiler's `specbook` (`tests/specification.rs` and its baseline).
-// The text half, moved from Rust (ADR-250, #125): what a page's blocks are,
+// The text half, moved from Rust (ADR-294, #125): what a page's blocks are,
 // whether the page is discussing a refusal in one, whether an elision stands
 // where code would, and the programs a block can be read as. Reading the pages
 // and taking each reading through the compiler stays Rust.
@@ -70,7 +70,7 @@ pub fn discusses_a_refusal(code: ref String) -> bool {
 }
 
 /// Whether an elision stands where code would. `...args` is not one: three
-/// dots against a name are the typed spread of ADR-007 D5, which a driver
+/// dots against a name are the typed spread of ADR-296 D5, which a driver
 /// writes as code.
 pub fn is_a_sketch(code: ref String) -> bool {
     let c: Vec[char] = code.chars().collect()

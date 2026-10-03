@@ -16,10 +16,10 @@ grammar Measurements {
 
     // Up to the semicolon - or to the end of the frame, whichever comes first.
     // A plain `until(";")` would run through the newline, and under a frame the
-    // compiler rejects that rather than quietly repairing it (ADR-009 D1).
+    // compiler rejects that rather than quietly repairing it (ADR-296 D9).
     rule NAME -> ref String = s:until(";" | frame_end) { s }
 
-    // The width the format fixes, stated (ADR-009 D5): -99.9 ..= 99.9.
+    // The width the format fixes, stated (ADR-296 D13): -99.9 ..= 99.9.
     rule TENTHS -> i32 =
         neg:"-"? whole:digit{1,2} "." frac:digit
         {
@@ -36,7 +36,7 @@ grammar Measurements {
         name:NAME ";" => temp:TENTHS frame_end
         { Reading { name, temp } }
 
-    // A frame plus a monoid is a parallel parse (ADR-009 D2), and that is the
+    // A frame plus a monoid is a parallel parse (ADR-296 D10), and that is the
     // whole of what the user writes down.
     pub rule file -> Summary =
         par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },

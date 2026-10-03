@@ -1,8 +1,8 @@
 //! **What a declared `String` is below, decided by what flows into it**
-//! ([ADR-222](../../../docs/specification/adr/adr-222.md),
-//! [ADR-223](../../../docs/specification/adr/adr-223.md)).
+//! ([ADR-282](../../../docs/specification/adr/adr-282.md),
+//! [ADR-282](../../../docs/specification/adr/adr-282.md)).
 //!
-//! [ADR-107](../../../docs/specification/adr/adr-107.md) D1 made `String` the
+//! [ADR-282](../../../docs/specification/adr/adr-282.md) D1 made `String` the
 //! one text type and its state - borrowed, tethered, owned - the compiler's,
 //! *the cheapest state that works, chosen per use*. Below, a declaration has
 //! one representation, so for a declared `String` "per use" means: by every
@@ -16,7 +16,7 @@
 //!   and nothing about it changes;
 //! * **only views** (and literals, which are views of text that lives as long
 //!   as the program): it becomes `ref String`, exactly as if the program had
-//!   written that, and [ADR-209](../../../docs/specification/adr/adr-209.md)
+//!   written that, and [ADR-283](../../../docs/specification/adr/adr-283.md)
 //!   decides where each buffer lives - in the caller's frame for nothing, with
 //!   a handle only where no frame outlives it;
 //! * **both**: it becomes `ref String` marked [`crate::ast::Type::either`],
@@ -26,7 +26,7 @@
 //!
 //! A literal alone moves nothing: a position only literals and owned text flow
 //! into stays `String`, and the literal is built where it stands as before
-//! ([ADR-207](../../../docs/specification/adr/adr-207.md) D2).
+//! ([ADR-282](../../../docs/specification/adr/adr-282.md) D4).
 //!
 //! **What is published may become a view but never both kinds**: a `pub` field
 //! of a `pub` struct, and a `pub` function's parameters and result. Their
@@ -34,7 +34,7 @@
 //! exist; a view the package itself puts there is in its ledger as
 //! `ref String`, and a mixed one would need a type no other package can know
 //! to build. There the view is refused as before, saying why
-//! ([ADR-208](../../../docs/specification/adr/adr-208.md) D2).
+//! ([ADR-282](../../../docs/specification/adr/adr-282.md) D25).
 //!
 //! Run once, right after parsing, so that the checker, every derived column,
 //! the ledger and the emitter all read one answer off the types.
@@ -83,7 +83,7 @@ fn tier(kinds: &Kinds) -> Tier {
 }
 
 /// What a method's name says about the text it hands back, and which
-/// containers this pass follows text into: `tools/tiers.nika` (ADR-250, #125).
+/// containers this pass follows text into: `tools/tiers.nika` (ADR-294, #125).
 use nikaia_std::tools::tiers::{
     hands_back_an_element, is_a_container_name, is_a_map_name, owns_its_text, puts_its_argument,
     views_what_it_is_called_on,
@@ -109,7 +109,7 @@ struct Position {
 }
 
 /// A declared `String`, or `String?`: a value that may be absent is a position
-/// as well, and `null` puts no text of either kind into it (ADR-224 D1).
+/// as well, and `null` puts no text of either kind into it (ADR-282 D12).
 fn plain_string(parsed: &Parsed, ty: &Type) -> bool {
     nikaia_std::tools::tiers::plain_string(&parsed.interner, ty)
 }
@@ -249,12 +249,12 @@ type Tiers = BTreeMap<Position, Tier>;
 struct Flows {
     positions: BTreeMap<Position, Kinds>,
     /// A `let` binding a name to a literal, by the byte it stands at, and the
-    /// positions that name is kept in (ADR-222 D4).
+    /// positions that name is kept in (ADR-282 D17).
     literal_lets: BTreeMap<usize, BTreeSet<Position>>,
     /// Values that go into a mixed position at a line whose lowering does not
     /// wrap them itself, by address, and how each is handed over.
     wraps: BTreeMap<usize, Hand>,
-    /// A parameter's own value going into another position (ADR-232 D2): a
+    /// A parameter's own value going into another position (ADR-282 D24): a
     /// published parameter whose value leaves through something fixed is
     /// fixed with it.
     param_into: BTreeSet<(Position, Position)>,
@@ -263,7 +263,7 @@ struct Flows {
     hole_wraps: BTreeMap<u32, BTreeSet<(String, Hand)>>,
     /// Two positions a whole value goes between - a list handed back, handed
     /// over, or bound - which are therefore one representation below, and get
-    /// one tier (ADR-224 D3).
+    /// one tier (ADR-282 D16).
     links: BTreeSet<(Position, Position)>,
     /// Positions a value goes into from inside an `f"…"` hole, where it
     /// cannot be wrapped: the hole is parsed out of the literal again by every
@@ -286,7 +286,7 @@ enum Hand {
     Items,
     /// `pairs.either_keys()`, `either_values()`, `either_pairs()`: before a
     /// `collect` into a map whose key, value or both are mixed
-    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D2).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D26).
     Keys,
     Values,
     Pairs,
@@ -377,7 +377,7 @@ impl Walk<'_, '_> {
         wrap: bool,
     ) {
         let mut path = path;
-        // **A parameter handed on as it is** (ADR-232 D2), remembered so that
+        // **A parameter handed on as it is** (ADR-282 D24), remembered so that
         // what it goes into can hold it to text of its own.
         if let Some(Expr::Variable(name)) = value
             && plain_string(self.declared.parsed, ty)
@@ -444,7 +444,7 @@ impl Walk<'_, '_> {
         }
     }
 
-    /// **A container going in whole** (ADR-224 D3): a literal's items one by
+    /// **A container going in whole** (ADR-282 D16): a literal's items one by
     /// one, a `collect` item by item, and anything that already has a
     /// position - a list handed back, handed over or bound - linked to it, so
     /// that the two are one representation below and nothing is converted.
@@ -698,7 +698,7 @@ impl Walk<'_, '_> {
                     .or_else(|| self.struct_of(value));
                 let literal = (ty.is_none() && matches!(value, Expr::LitStr { .. })).then_some(at);
                 // **A name bound to a list without a type is that list**
-                // (ADR-224 D3): what is put into it goes where the list came
+                // (ADR-282 D16): what is put into it goes where the list came
                 // from, whose representation it shares below.
                 let declared = match ty {
                     Some(t) => Some((Owner::Let(at), t.clone())),
@@ -831,7 +831,7 @@ impl Walk<'_, '_> {
     }
 
     /// What a function hands back: its result's position, wrapped by the
-    /// emitter where it is mixed (ADR-222 D3), so not marked here.
+    /// emitter where it is mixed (ADR-282 D14), so not marked here.
     fn flow_result(&mut self, value: &Expr, kinds: &Kinds) {
         let Some(key) = self.result.clone() else {
             return;
@@ -851,7 +851,7 @@ impl Walk<'_, '_> {
 
     /// A name bound to a literal, kept in a position: remembered with it, so
     /// that where the position stays `String` the binding is declared `String`
-    /// (ADR-222 D4).
+    /// (ADR-282 D17).
     fn kept_literal(&mut self, value: &Expr, owner: &Owner, path: &[usize], ty: &Type) {
         if !plain_string(self.declared.parsed, ty) {
             return;
@@ -989,7 +989,7 @@ impl Walk<'_, '_> {
                     }
                 }
                 // **What `map` makes is what its lambda hands back**, with the
-                // lambda's parameter bound to what came in (ADR-227 D2):
+                // lambda's parameter bound to what came in (ADR-293 D26):
                 // `lines.map(fn(l) { (l, 1) })` is pairs keyed by views.
                 if method == "map"
                     && let [Expr::Closure { params, body, .. }] = args.as_slice()
@@ -1073,7 +1073,7 @@ impl Walk<'_, '_> {
                     let key = (owner.clone(), name.clone());
                     if let Some((ty, _)) = self.declared.fields.get(&key).cloned() {
                         // The emitter wraps what goes into a mixed field
-                        // itself (ADR-222 D3).
+                        // itself (ADR-282 D14).
                         let owner = Owner::Field(owner.clone(), name);
                         let value = field.value.as_ref();
                         self.flow_value(&owner, &ty, Vec::new(), value, &kinds, false);
@@ -1299,7 +1299,7 @@ fn decide(declared: &Declared<'_>, flows: &Flows) -> Tiers {
     // of them, and none is mixed where one of them cannot be.
     let mut positions = flows.positions.clone();
     // **A published parameter's text may be either kind**
-    // ([ADR-232](../../docs/specification/adr/adr-232.md) D1): below it takes
+    // ([ADR-282](../../docs/specification/adr/adr-282.md) D23): below it takes
     // whatever hands over as `EitherText`, so a caller elsewhere still hands
     // over text of its own as the ledger says. Its elements, a published
     // field and a published result stay what they are published as.
@@ -1331,7 +1331,7 @@ fn decide(declared: &Declared<'_>, flows: &Flows) -> Tiers {
             }
         }
         // **A parameter whose value leaves through something fixed is fixed**
-        // (ADR-232 D2): `pub fn greet(who: String) -> String { return who }`
+        // (ADR-282 D24): `pub fn greet(who: String) -> String { return who }`
         // hands its parameter back through a published result, which is text
         // of its own, so the parameter is too.
         for (from, to) in &flows.param_into {
@@ -1376,7 +1376,7 @@ pub fn refine(parsed: &mut Parsed) {
         return;
     }
     // **A name bound to a literal and kept where text of its own is wanted is
-    // declared `String`** (ADR-222 D4): the literal is built into text once,
+    // declared `String`** (ADR-282 D17): the literal is built into text once,
     // where it is bound, which is what the program would have written.
     let lets: BTreeSet<usize> = flows
         .literal_lets
@@ -1719,7 +1719,7 @@ fn visit_expr_mut(
 }
 
 /// **A value going into a mixed position is handed over as `value.into_either()`**
-/// (ADR-223 D2): `EitherText` borrows a view and moves text of its own in,
+/// (ADR-282 D14): `EitherText` borrows a view and moves text of its own in,
 /// and which it is the language below reads off the value's type.
 fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 6]) {
     if wraps.is_empty() {

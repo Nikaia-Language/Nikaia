@@ -119,7 +119,7 @@ impl Interpreter {
                 // Literals evaluate to themselves.
             }
             // A `seq` block runs its statements in the order they were written,
-            // which is the only order this interpreter has ever had (ADR-033
+            // which is the only order this interpreter has ever had (ADR-292
             // D7): nothing here overlaps anything, so `seq` asks for what it
             // already does.
             Expr::Block(b) => self.eval_block(b),

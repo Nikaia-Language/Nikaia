@@ -48,7 +48,7 @@ use anyhow::{Context, Result};
 pub const ASSET: &str = "asset";
 
 /// Why a read was refused, the list's own syntax, whether a path leaves the
-/// root and the entries nothing read: `tools/assets.nika` (ADR-250, #125).
+/// root and the entries nothing read: `tools/assets.nika` (ADR-294, #125).
 pub use nikaia_std::tools::assets::Denied;
 
 /// The list itself: a file that names files.

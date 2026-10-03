@@ -2,7 +2,7 @@
 //
 // **Which reference count a particular `Shared` value gets** (ADR-037 D7):
 // the records, the `--sharing` report and the leaf questions of the
-// compiler's `contracts::sharing`, moved from Rust (ADR-250, #125). What
+// compiler's `contracts::sharing`, moved from Rust (ADR-294, #125). What
 // stays Rust for now is the union-find walk that joins handles into
 // allocation classes and decides each one.
 //
@@ -87,9 +87,9 @@ pub struct Decision {
     pub fallback: Fallback?,
     /// Every place a second handle on this allocation is made (ADR-040 D5).
     pub duplications: Vec[String],
-    /// Where a `get` copies the whole value out of the lock (ADR-238 D3).
+    /// Where a `get` copies the whole value out of the lock (ADR-281 D16).
     pub copied_out: Vec[String],
-    /// Why a word-sized value that crosses kept its lock (ADR-238 D2).
+    /// Why a word-sized value that crosses kept its lock (ADR-281 D18).
     pub kept_its_lock: String?,
 }
 
@@ -151,7 +151,7 @@ pub fn every_count_plain(mut sharing: Sharing) {
 
 /// What `--sharing` prints: one line per `Shared` value, the reason beside
 /// every atomic one, and the enumeration of what the floor caught. It
-/// **explains a decision rather than changing one** (ADR-033 D9).
+/// **explains a decision rather than changing one** (ADR-292 D2).
 pub fn sharing_report(sharing: ref Sharing) -> String {
     if sharing.decisions.len() == 0 {
         return "no `Shared` value here, so there is nothing to choose.\n"
@@ -249,7 +249,7 @@ pub fn split_slot(key: ref String) -> (String, String) {
     return (function.join("::"), name)
 }
 
-/// **A `SharedMut` of a value that fits a machine word** (ADR-238 D1).
+/// **A `SharedMut` of a value that fits a machine word** (ADR-281 D8).
 pub fn holds_a_word(ty: ref Ty) -> bool {
     return match ty {
         Ty::Named { name, args, view } => !view && name == "SharedMut" && args.len() == 1 && a_word(args[0]),
@@ -266,7 +266,7 @@ fn a_word(ty: ref Ty) -> bool {
     }
 }
 
-/// What a `SharedMut` holds, where it does not copy cheaply (ADR-238 D3); a
+/// What a `SharedMut` holds, where it does not copy cheaply (ADR-281 D16); a
 /// hull whose content nobody named says nothing.
 pub fn held_that_does_not_copy(ty: ref Ty) -> String? {
     return match ty {
@@ -327,7 +327,7 @@ pub fn by_value_shared(ty: ref Ty) -> bool {
 }
 
 /// The three types a program makes a hull of by calling their name
-/// (ADR-064 D2).
+/// (ADR-281 D2).
 pub fn is_hull(name: ref String) -> bool {
     return name == "Shared" || name == "SharedMut" || name == "Locked"
 }
@@ -400,7 +400,7 @@ pub fn rust_name(count: Count) -> String {
 }
 
 /// What `Locked[T]` lowers to - the same answer to the same question
-/// (ADR-057 D3): the count given the handle decides the lock inside it.
+/// (ADR-281 D7): the count given the handle decides the lock inside it.
 pub fn lock_name(count: Count) -> String {
     return match count {
         Count::Plain => "nikaia_std::lock::Local",
@@ -452,11 +452,11 @@ pub struct Slots {
     /// Where a second handle on a slot's allocation is made (ADR-040 D5):
     /// the slot key, and what a reader is told about the place.
     pub duplicated: Vec[(String, String)],
-    /// The slots a door over several locks names (ADR-238 D2): a
+    /// The slots a door over several locks names (ADR-281 D18): a
     /// compare-and-swap cannot be held, so their classes keep the lock.
     pub held_together: Vec[String],
     /// Where a `get` copies a value that does not copy cheaply out of its
-    /// lock, by slot (ADR-238 D3).
+    /// lock, by slot (ADR-281 D16).
     pub copies: Vec[(String, String)],
 }
 
@@ -578,11 +578,11 @@ fn before_last(text: ref String, separator: ref String) -> String {
 pub fn decided(mut slots: Slots) -> Sharing {
     slots.foreign_slots_hold_the_floor()
     // Of two reasons, the one that is a crossing rather than an admission of
-    // ignorance: ADR-033 D9, of two true answers the one somebody can act on.
+    // ignorance: ADR-292 D2, of two true answers the one somebody can act on.
     let mut why_of: collections::BTreeMap[i64, String] = collections::BTreeMap()
     // The rows of `Fallback` the classes' reasons are, where they are one.
     let mut fallback_of: collections::BTreeMap[i64, Fallback] = collections::BTreeMap()
-    // The classes the floor answered for (ADR-238 D2).
+    // The classes the floor answered for (ADR-281 D18).
     let mut floor: collections::BTreeSet[i64] = collections::BTreeSet()
     let forced = slots.forced.clone()
     for one in forced {
@@ -692,7 +692,7 @@ fn put_in_class(mut classes: collections::BTreeMap[String, collections::BTreeMap
     classes.insert(function.clone(), roots)
 }
 
-// Why a word-sized value that crosses kept its lock (ADR-238 D2).
+// Why a word-sized value that crosses kept its lock (ADR-281 D18).
 fn lock_kept(count: Count, a_word: bool, held_together: bool) -> String? {
     if count != Count::Atomic || !a_word {
         return null
@@ -799,7 +799,7 @@ fn method_name(names: ref winnow_grammar::InternerContext, item: ref Item) -> St
 }
 
 /// **Whether this `let` is itself the place the first handle is made**
-/// (ADR-064 D2): a literal or a struct literal is a plain value by
+/// (ADR-281 D2): a literal or a struct literal is a plain value by
 /// construction; a hull's own constructor is the allocation; and a call is
 /// one only where a ledger gives it a known result that holds no `Shared`.
 /// Everything else is no, the polarity this analysis runs on.
@@ -872,7 +872,7 @@ fn a_plain_result(contract: ref FnContract?) -> bool {
 /// being made (`Fallback::UnseenOrigin`): where it came from.
 pub fn origin_reason(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> String {
     let from = where_it_came_from(expr, names)
-    return f"{from}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-033)"
+    return f"{from}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-292)"
 }
 
 fn where_it_came_from(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> String {

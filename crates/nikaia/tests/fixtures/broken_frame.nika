@@ -4,7 +4,7 @@
 // the semicolon and nowhere else, so a line without one runs past the newline
 // and swallows the next measurement - which is exactly what makes cutting the
 // input at newlines wrong here. The parser backend rejects the grammar rather
-// than repairing it (ADR-009 D1).
+// than repairing it (ADR-296 D9).
 //
 // The point of this fixture is not that it is rejected. It is *where* the
 // rejection is reported: line 15, not a line of generated Rust.

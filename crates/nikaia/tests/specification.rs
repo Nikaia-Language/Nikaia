@@ -165,10 +165,10 @@ fn the_specifications_version_is_the_changelogs() {
 ///
 /// **Lowered a second time, from 50 to 49.** Part II 10.1's `grammar Json`
 /// writes a rule's action as the block after the pattern, with no second
-/// arrow ([ADR-120](../../../docs/specification/adr/adr-120.md) D2), and the
+/// arrow ([ADR-296](../../../docs/specification/adr/adr-296.md) D33), and the
 /// parser does not take that form yet — so the page is ahead of the compiler
 /// by decision, which is the state every unbuilt record leaves its examples
-/// in. The block comes back as a program with ADR-120 §5's first step, and
+/// in. The block comes back as a program with ADR-296's first step, and
 /// the floor goes back up with it.
 ///
 /// **Lowered a third time, from 49 to 48**, for the same reason — and **raised

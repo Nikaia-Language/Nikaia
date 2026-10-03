@@ -1,5 +1,5 @@
 //! **`u64`, `u32` and the bit operators**
-//! ([ADR-248](../../../docs/specification/adr/adr-248.md)): the types a program
+//! ([ADR-285](../../../docs/specification/adr/adr-285.md)): the types a program
 //! asked for, `&`, `|`, `^`, `<<`, `>>` and `!` on integers, a literal as wide
 //! as a `u64`, and a text's bytes. The program that asked is a hash, so a hash is
 //! what is run - against the value FNV-1a has everywhere else - at both settings
@@ -171,7 +171,7 @@ fn a_literal_above_an_i64_is_a_u64s() {
 }
 
 /// **An unannotated constant takes its type from its uses**
-/// ([ADR-249](../../../docs/specification/adr/adr-249.md)): with nothing
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md)): with nothing
 /// pinning `a`, the three names are one number, no use asks, and what they are
 /// given does not fit an `i32` - so the sum is an `i64`. Beside an `i32` `a`,
 /// `b` is asked to be an `i32` by `a + b`, and `3000000000` does not fit one:

@@ -2,7 +2,7 @@
 //! ([ADR-096](../../../docs/specification/adr/adr-096.md)).
 //!
 //! A **value** nothing declares has had `NK1117` since
-//! [ADR-051](../../../docs/specification/adr/adr-051.md) — *"nothing declares
+//! [ADR-298](../../../docs/specification/adr/adr-298.md) — *"nothing declares
 //! `q`"*. A type had nothing, so `let x: Widgit = 3` lowered verbatim and came
 //! back as `rustc`'s *"cannot find type `Widgit` in this scope"*, about a file
 //! nobody wrote. [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
@@ -107,7 +107,7 @@ fn every_kind_of_declared_name_is_left_alone() {
 /// **A qualified name is left alone**, and that is deliberate rather than
 /// unfinished: `http::Response` names a package's type, and whether this build
 /// can see that package is
-/// [ADR-046](../../../docs/specification/adr/adr-046.md) D2's question with its
+/// [ADR-286](../../../docs/specification/adr/adr-286.md) D11's question with its
 /// own message. Saying *"nothing declares it"* about a name a dependency does
 /// declare would be [Part III C.4](../../../docs/specification/30-nikaia-tooling.md).
 #[test]

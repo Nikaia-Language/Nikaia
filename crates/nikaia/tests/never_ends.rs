@@ -1,13 +1,13 @@
 //! A loop that cannot end needs no unreachable `return`
-//! ([ADR-093](../../../docs/specification/adr/adr-093.md)).
+//! ([ADR-276](../../../docs/specification/adr/adr-276.md)).
 //!
-//! [ADR-070](../../../docs/specification/adr/adr-070.md) D3: a function that
+//! [ADR-276](../../../docs/specification/adr/adr-276.md) D6: a function that
 //! genuinely never returns — an accept loop, an event loop, a supervisor — had
 //! to end with a `return 0` that cannot be reached, and a reader of that line
 //! could not tell dead code from a mistake.
 //!
 //! **Two tests, not one**, and the second is the one
-//! [ADR-084](../../../docs/specification/adr/adr-084.md) added: before `break`
+//! [ADR-276](../../../docs/specification/adr/adr-276.md) added: before `break`
 //! existed, the condition was the whole question. Now a `while true` a jump
 //! leaves is a loop that ends, and the shape is a walk of the body rather than
 //! a look at the head.
@@ -125,7 +125,7 @@ fn main() {
 /// **And the language below agrees**, which is what makes the claim safe rather
 /// than merely quiet.
 ///
-/// [ADR-085](../../../docs/specification/adr/adr-085.md) emits `loop` for this
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) emits `loop` for this
 /// shape, and `loop { }` is `!` in Rust — so a body that never ends fits any
 /// declared type. Before that record the checker could not have claimed this at
 /// all: `while true { }` is `()` below, and the refusal would only have moved

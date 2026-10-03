@@ -4,7 +4,7 @@
 // than lowered** ([ADR-096](../../../docs/specification/adr/adr-096.md)).
 //
 // A *value* nothing declares has had `NK1117` since
-// [ADR-051](../../../docs/specification/adr/adr-051.md) — *"nothing declares
+// [ADR-298](../../../docs/specification/adr/adr-298.md) — *"nothing declares
 // `q`"*. A type had nothing, so `let x: Widgit = 3` lowered verbatim and came
 // back as `rustc`'s *"cannot find type `Widgit` in this scope"*, about a file
 // nobody wrote. Part III C.1's rule held for one half of this language's names

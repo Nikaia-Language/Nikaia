@@ -26,7 +26,7 @@
 //! **Into code nothing describes, two of them are refused.** A lock, since
 //! ADR-045 D3 — and that one is `NK2503`'s now rather than this file's, because
 //! what the refusal is about there is the call
-//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D6, and
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D32, and
 //! `reaching_a_lock.rs`). A `Shared`, since
 //! [ADR-061](../../../docs/specification/adr/adr-061.md) D1 — which was decided
 //! and not built, and which this file asserted the *absence* of until
@@ -118,7 +118,7 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         &parsed,
         &own,
         &BTreeSet::new(),
-        // A loose file declares no Rust crate, so ADR-104 D1 has nothing to
+        // A loose file declares no Rust crate, so ADR-290 D1 has nothing to
         // ask about here, and nothing has gained an error since a committed
         // ledger, which is every build but the one after a change (ADR-101 D1).
         nikaia::project::Around {
@@ -329,7 +329,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     );
     assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
     let finding = &found[0];
-    // **`NK2503` and not `NK2502`** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+    // **`NK2503` and not `NK2502`** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     // D6): a lock reachable through an argument is a refusal about the *call*,
     // and the shipped diagnostic used to be the one about the value crossing.
     assert_eq!(finding.code, "NK2503");
@@ -342,7 +342,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     );
     let notes = finding.notes.join(" ");
     // The note names the type the source wrote, not what it expands to
-    // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+    // ([ADR-281](../../../docs/specification/adr/adr-281.md) D1).
     assert!(notes.contains("`SharedMut[i32]`"), "{notes}");
     assert!(
         notes.contains("code that might keep a lock could deadlock"),
@@ -560,7 +560,7 @@ fn probe_library() -> Ledger {
 /// says about them.
 ///
 /// It used to be the `--overlaps` report's text, which asked the same question
-/// through a paragraph. [ADR-050](../../../docs/specification/adr/adr-050.md) D1
+/// through a paragraph. [ADR-292](../../../docs/specification/adr/adr-292.md) D1
 /// withdrew the reordering and the report became one about `overlap { … }`
 /// blocks — so the verdict is asked directly here, which is what these tests
 /// were ever about: **crossing a thread is a reason two operations may not run
@@ -661,7 +661,7 @@ fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
 /// This is the crossing the **compiler** chose: overlapping puts each statement
 /// in a closure that runs elsewhere and hands its value back, so the result
 /// crosses a thread. Not overlapping is a step the compiler was never obliged to
-/// take, so fail-closed here costs speed and never a refusal - which is ADR-033
+/// take, so fail-closed here costs speed and never a refusal - which is ADR-292
 /// D4's own polarity, applied to the crossing question.
 #[test]
 fn an_operation_whose_result_nothing_permits_keeps_its_place() {
@@ -674,7 +674,7 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
     assert!(!report.contains("together"), "{report}");
     assert!(
         report.contains("would have to move to another thread"),
-        "and the report says which refusal it was (ADR-033 D9): {report}"
+        "and the report says which refusal it was (ADR-292 D2): {report}"
     );
 
     // And it is not a refusal: the program compiles, it simply does not overlap.
@@ -712,7 +712,7 @@ fn a_result_that_holds_a_lock_overlaps() {
 ///
 /// `cli::args` is the measured case. Its result is a Rust type whose parts this
 /// compiler cannot walk, so the answer was "nobody said" - which is not
-/// permission (ADR-010 D1) - and the ten pairs ADR-033 §8.1 bought with a
+/// permission (ADR-010 D1) - and the ten pairs ADR-292 bought with a
 /// `touches` line would have gone again. The `crosses = true` on
 /// `[type."cli::Args"]` is what keeps them.
 #[test]
@@ -959,7 +959,7 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_foreign_call() {
 }
 
 /// **A described foreign call is asked where the description says the word, and
-/// nowhere else** ([ADR-193](../../../docs/specification/adr/adr-193.md) D1, D2).
+/// nowhere else** ([ADR-290](../../../docs/specification/adr/adr-290.md) D6, D7).
 ///
 /// `examples/foreign-runtime/crossing` is the program: its handle says
 /// `crosses = false`, and it is handed to a foreign function the description

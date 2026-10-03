@@ -73,7 +73,7 @@ pub struct Choices {
     pub reads: String,
     /// **Every description this build reads at a foreign boundary**, as one
     /// digest, empty where the project describes nothing
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D5).
     ///
     /// Here for `reads`' reason and with `reads`' polarity: the file binds the
     /// whole build rather than one unit, and it is **hand-edited on purpose** —
@@ -84,7 +84,7 @@ pub struct Choices {
     /// hit an entry recorded before the word was there.
     pub describes: String,
     /// **The names the output writes for its files** (0.0.239): the abort
-    /// table names each file as it was handed to the compiler (ADR-044 D1),
+    /// table names each file as it was handed to the compiler (ADR-300 D9),
     /// so `/abs/one.nika` and `one.nika` are two lowerings of one source.
     /// Here and not in the unit's `source`, because that hash is what the
     /// lockfile records, and a path the checkout moves has no place there
@@ -267,7 +267,7 @@ impl Key {
         // one with an empty list: the first cannot read at all.
         b.field("reads", &choices.reads);
         // **And what the boundary says**
-        // ([ADR-104](../../../docs/specification/adr/adr-104.md) D5): the
+        // ([ADR-290](../../../docs/specification/adr/adr-290.md) D5): the
         // descriptions are files this build reads and a person edits, so a
         // change to one has to invalidate — for the reason the line above
         // exists, one boundary over.
@@ -332,7 +332,7 @@ impl Key {
         b.field("codegen", codegen);
         // **A switch that changes what `std` itself contains is a dimension of
         // the compiled `std`** ([ADR-021](../../../docs/specification/adr/adr-021.md)
-        // D7, [ADR-039](../../../docs/specification/adr/adr-039.md) D8): the
+        // D7, [ADR-281](../../../docs/specification/adr/adr-281.md) D36): the
         // re-entrancy check lives in that crate, so without this the second
         // project on the machine links the first one's answer — a guarantee
         // declined in one manifest and shipped from another's cache.

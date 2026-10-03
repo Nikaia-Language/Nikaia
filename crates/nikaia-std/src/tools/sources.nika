@@ -1,6 +1,6 @@
 // crates/nikaia-std/src/tools/sources.nika
 //
-// **The files `nikaia describe` reads a crate from** (ADR-195 D4, ADR-196 D4):
+// **The files `nikaia describe` reads a crate from** (ADR-290 D14, ADR-290 D19):
 // every `.rs` under the crate's `src`, with its text.
 //
 // The walk the Rust half did with `std::fs::read_dir` and a recursion, moved to

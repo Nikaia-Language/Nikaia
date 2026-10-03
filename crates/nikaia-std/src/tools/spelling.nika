@@ -3,7 +3,7 @@
 // **How close one word is to another**, for the compiler's *did you mean*.
 //
 // The first piece of the compiler that moved from Rust to Nikaia (0.0.238), by
-// ADR-196's route: written here, lowered ahead of time by `nikaia lower-std`
+// ADR-290's route: written here, lowered ahead of time by `nikaia lower-std`
 // to `spelling.rs` beside it, `include!`d as `nikaia_std::tools::spelling`,
 // and called from the checker as an ordinary Rust function. The two functions
 // it replaced - `check::distance` and `dsl::one_edit_apart` - are gone from

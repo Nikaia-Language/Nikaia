@@ -118,7 +118,7 @@ fn what_might_fail_is_left_alone() {
 ///
 /// `(text.parse() catch { 1 }) catch { 2 }` really does have nothing left for
 /// the second handler — but saying so needs what a handler's own failure does,
-/// which is [ADR-034](../../../docs/specification/adr/adr-034.md)'s question
+/// which is [ADR-292](../../../docs/specification/adr/adr-292.md)'s question
 /// and not this refusal's. So it stays quiet, in the direction that cannot
 /// refuse a program that is right.
 #[test]

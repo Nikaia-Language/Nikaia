@@ -137,7 +137,7 @@ pub fn start_on_pool(future: impl Future<Output = ()> + Send + 'static) {
 }
 
 /// **A call that cannot pause, driven where no `.await` can be written**
-/// ([ADR-244](../../../../docs/specification/adr/adr-244.md) D4).
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D31).
 ///
 /// A function written `sync(f)` is lowered as the `async fn` its body is: `f`
 /// may pause. A caller that is itself `sync`, and hands it a lambda that does
@@ -180,7 +180,7 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
     // would be a future in a queue nobody polls again. So the value waits until
     // the queue is empty, and until then this loop is the tasks' turn.
     let mut outcome: Option<T> = None;
-    // **The drain's deadline** ([ADR-006](../../../../docs/specification/adr/adr-006.md)
+    // **The drain's deadline** ([ADR-297](../../../../docs/specification/adr/adr-297.md)
     // D5), started when `main`'s value arrives and not before: what it bounds is
     // the wait for the tasks nobody joined, and `main` itself may legitimately
     // run for as long as it likes.
@@ -268,7 +268,7 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         let waiting = STARTED.with(|started| started.borrow().len()) + on_the_pool;
         if outcome.is_some() {
             // **The cleanups nobody will settle go first**
-            // ([ADR-239](../../../../docs/specification/adr/adr-239.md) D5):
+            // ([ADR-297](../../../../docs/specification/adr/adr-297.md) D5):
             // a cancelled task's, and one that died after a task's last
             // settle point. They are started here as tasks of this thread,
             // so the drain below waits for them under the same deadline.
@@ -289,8 +289,8 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             if since.elapsed() >= deadline {
                 // **A cleanup the deadline cut off is a failure of the
                 // program**, and each is named
-                // ([ADR-239](../../../../docs/specification/adr/adr-239.md)
-                // D5, ADR-112 D1 and D2): exit 70, on the panic path.
+                // ([ADR-297](../../../../docs/specification/adr/adr-297.md)
+                // D5, ADR-297 D7 and D8): exit 70, on the panic path.
                 let cut = crate::cleanup::unfinished();
                 if !cut.is_empty() {
                     crate::rt::cleanups_expired(&cut, deadline);
@@ -319,7 +319,7 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
         // is. **Only while `main` is still running**: once its value is in,
         // nothing takes its alarm at the top of the round, and asking it here
         // would go round for ever without reaching the park below - where
-        // the clock a sleeping task waits for is read (ADR-239 D5 found it: an
+        // the clock a sleeping task waits for is read (ADR-297 D5 found it: an
         // adopted cleanup that sleeps waited out the whole deadline).
         if outcome.is_none() && alarm.take() {
             alarm.ring();
@@ -640,7 +640,7 @@ mod io_tests {
     /// `Yield`, it is a `std` read - so `task::overlap2` over two reads is
     /// Part II 11.2's sentence about something a program actually writes, and
     /// `overlap { … }` is how a program writes it
-    /// ([ADR-050](../../../../docs/specification/adr/adr-050.md) D2).
+    /// ([ADR-292](../../../../docs/specification/adr/adr-292.md) D2).
     ///
     /// It reads two files and checks both answers. What makes it a test of the
     /// *interleaving* rather than of reading twice is that neither half is

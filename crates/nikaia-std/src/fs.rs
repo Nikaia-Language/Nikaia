@@ -122,7 +122,7 @@ fn climb(path: &Path) -> Option<std::path::PathBuf> {
 /// file. The text is validated as UTF-8 once, when the map is made; after that
 /// a view of it is a view of the pages.
 ///
-/// ADR-009 D7 allows a large read-only mapping to be left to the OS at process
+/// ADR-296 D15 allows a large read-only mapping to be left to the OS at process
 /// exit. Nothing here does that yet: the mapping is released when the value is
 /// dropped, and the drop is what `main` returning costs.
 pub struct Mapped {
@@ -154,7 +154,7 @@ impl AsRef<str> for Mapped {
 }
 
 /// A mapping is a buffer views of text are cut from, so a view of it kept by a
-/// container that drops entries is found in it again (ADR-221 D2).
+/// container that drops entries is found in it again (ADR-283 D15).
 impl crate::tether::Viewed for Mapped {
     fn bytes(&self) -> &[u8] {
         let text: &str = self;
@@ -226,7 +226,7 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
 /// performs it where it does not. Which one is invisible from here and
 /// invisible from a `.nika` file - that is what "one `std` surface" means, and
 /// it is why the next change of mechanism is a `std` change rather than a
-/// compiler change (ADR-033 §8.4 gave the same reason for the overlap
+/// compiler change (ADR-292 gave the same reason for the overlap
 /// vehicle).
 ///
 /// The read is `rt::io`'s rather than [`read`]'s, and deliberately: `read`
@@ -253,7 +253,7 @@ pub async fn read_to_string(
 /// The half of [`read_to_string`] that is not the read, so that a read
 /// performed somewhere else - one half of a pair the runtime put in flight
 /// ([`crate::task::as_text`]) - is finished by exactly the same check rather
-/// than by a second copy of it. One place, for the reason ADR-033 §8.4 gives
+/// than by a second copy of it. One place, for the reason ADR-292 gives
 /// about the vehicle: the next change belongs in `std`.
 pub(crate) fn text(bytes: Vec<u8>, what: &str) -> Result<String, crate::io::IoError> {
     text_named(bytes, || what.to_string())
@@ -275,7 +275,7 @@ fn text_named(bytes: Vec<u8>, what: impl FnOnce() -> String) -> Result<String, c
 /// Two files, **both in flight at once**, answered in the order they were
 /// asked for.
 ///
-/// ADR-033 §8.5's prediction, as a function: two operations that meet on
+/// ADR-292's prediction, as a function: two operations that meet on
 /// nothing and do not wait for each other, with **no thread started or woken
 /// for the pair** - the cost §8.4 measured at ~46 µs for a pair on the pool and
 /// could not remove with any user-space vehicle.
@@ -290,7 +290,7 @@ fn text_named(bytes: Vec<u8>, what: impl FnOnce() -> String) -> Result<String, c
 /// wake-up costs, which above a quarter megabyte a pair it earns back
 /// (ADR-038 §4.3). There used to be a quieter twin for the pairs the
 /// *compiler* put together, which overlapped only where that was free; the
-/// automatic grouping is withdrawn ([ADR-050](../../../docs/specification/adr/adr-050.md)
+/// automatic grouping is withdrawn ([ADR-292](../../../docs/specification/adr/adr-292.md)
 /// D1) and the twin went with it, so this is the only pair vehicle left and
 /// every use of it is a written one.
 pub fn read_both(
@@ -311,7 +311,7 @@ pub fn read_both(
 /// an image, a checksum, a format with a length prefix.
 ///
 /// **`Bytes` and not a `Vec[u8]`**, which is what Part III 17.2 has always
-/// said and [ADR-156](../../../docs/specification/adr/adr-156.md) D3 makes
+/// said and [ADR-283](../../../docs/specification/adr/adr-283.md) D21 makes
 /// true: one shared buffer, so handing the file on costs a count rather than a
 /// copy of it.
 pub async fn read(
@@ -415,7 +415,7 @@ pub fn scratch() -> Result<Root, crate::io::IoError> {
 }
 
 /// **A file written through a buffer, flushed when it is done with**
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D6): what `create`
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D11): what `create`
 /// hands back, and the first type in `std` whose cleanup needs I/O.
 ///
 /// `write` adds to the buffer and does no I/O; `flush` writes what is held; and
@@ -481,7 +481,7 @@ pub async fn create(path: impl AsRef<Path>, root: &Root) -> Result<Writer, crate
 }
 
 /// **Every file under a directory**, as names relative to it, `/` between the
-/// parts, in sorted order ([ADR-195](../../../docs/specification/adr/adr-195.md)
+/// parts, in sorted order ([ADR-290](../../../docs/specification/adr/adr-290.md)
 /// D4).
 ///
 /// What a tool that reads a tree needs, and the shape `nikaia describe` reads a
@@ -600,7 +600,7 @@ mod tests {
     use std::path::Path;
 
     /// Half of a pair finished by `task::as_text` is finished exactly as
-    /// `read_to_string` would have finished it (ADR-033 D10).
+    /// `read_to_string` would have finished it (ADR-292 D6).
     ///
     /// The lowering performs the read somewhere else and hands the bytes back,
     /// so this is the join: same value on the happy path, and the *same
@@ -645,7 +645,7 @@ mod tests {
         let one = one.expect_err("not text");
         let other = other.expect_err("not text");
         // **The values and not a `kind()` beside them**: since
-        // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 the variant
+        // [ADR-280](../../../docs/specification/adr/adr-280.md) D5 the variant
         // *is* the kind and it carries what it was about, so comparing the two
         // errors says what this used to need two assertions to say.
         assert_eq!(one, other);

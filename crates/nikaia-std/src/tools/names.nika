@@ -1,9 +1,9 @@
 // crates/nikaia-std/src/tools/names.nika
 //
-// **Every name an expression mentions** (ADR-033 D9), for the compiler's
+// **Every name an expression mentions** (ADR-292 D2), for the compiler's
 // `contracts::order` - whether two statements may change places - and for
 // `contracts::send`, which asks the same of a task's body. Moved from Rust
-// (ADR-250, #125).
+// (ADR-294, #125).
 //
 // **Deliberately over-approximate**: a field access `a.b` contributes `a`, a
 // method's name and a struct's field names are counted too, and a name that
@@ -43,7 +43,7 @@ pub fn names_in(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut 
         // happens is a question about the receiver's value; which names it
         // reads is the same question either way. What stands after a call's
         // `;` reads names like anything else - a DSL's deferred parameters
-        // arrive there (ADR-007 D5).
+        // arrive there (ADR-296 D5).
         Expr::MethodCall { receiver, method, args, config } => {
             names_in(receiver, words, out)
             out.insert(words.resolve(method).clone())

@@ -49,8 +49,8 @@ fn stop_with_break(n: i64) -> i64 {
 // gap of its own, found here, and it is what a program without `break` walked
 // into first.
 //
-// [ADR-086](../docs/specification/adr/adr-086.md) closed it. **This function is
-// kept as it was** - it is the shape ADR-084's numbers were taken on, and a
+// [ADR-301](../docs/specification/adr/adr-301.md) closed it. **This function is
+// kept as it was** - it is the shape ADR-276's numbers were taken on, and a
 // benchmark rewritten under a published measurement is a measurement nobody can
 // check - and `stop_with_and` below is the shape that is writable now, measured
 // beside it.
@@ -74,9 +74,9 @@ fn stop_with_flag(n: i64) -> i64 {
 }
 
 // The same program again, in the form the head grammar accepts since
-// [ADR-086](../docs/specification/adr/adr-086.md): one `while` with two terms
+// [ADR-301](../docs/specification/adr/adr-301.md): one `while` with two terms
 // in its head, and no nesting. Whether that is also *cheaper* than the nested
-// form is the question ADR-086 §3 asks of this function - the two are the same
+// form is the question ADR-301 asks of this function - the two are the same
 // program, and the optimiser is what decides whether they are the same code.
 fn stop_with_and(n: i64) -> i64 {
     let mut i = 0

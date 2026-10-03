@@ -1,7 +1,7 @@
 // crates/nikaia/src/contracts/order.rs
 //
 // Whether two statements have to keep the order they were written in
-// (ADR-033, Part I 8.1.1).
+// (ADR-292, Part I 8.1.1).
 //
 // The rule is one sentence - *two operations whose touch sets are disjoint have
 // no order between them* - and this file is the part of it that looks at a
@@ -10,7 +10,7 @@
 //     may these adjacent statements overlap?
 //
 // **It says "no" for every reason it can think of, and for every reason it
-// cannot.** That polarity is the decision (ADR-033 D4): a statement whose
+// cannot.** That polarity is the decision (ADR-292 D3): a statement whose
 // effects the compiler cannot enumerate keeps its position, so a program built
 // against libraries that describe nothing behaves exactly as it does today.
 // Every `false` below is either a real dependency or an admission of ignorance,
@@ -25,16 +25,16 @@
 // It also knows nothing about the build. Whether two operations *may* overlap
 // is a question about the program; whether a vehicle exists to overlap them
 // with, and whether the program wrote `seq` around them, are the emitter's
-// (ADR-033 §8.2b). No switch reaches this file, and none may.
+// (ADR-292b). No switch reaches this file, and none may.
 //
 // [`vehicle`] is not an exception to that, and the distinction is worth stating
 // because it looks like one. *Which* vehicle a pair would need - `std` putting
 // two operations in flight, or two closures carrying the program's own code -
-// is read off the statements and is therefore this file's (ADR-033 D10).
+// is read off the statements and is therefore this file's (ADR-292 D6).
 // Whether this build *has* that vehicle is two methods on `emit::Build`, and
 // the answers differ: one of them is `user_parallelism`'s and the other is not.
 //
-// **The shapes it sees** (ADR-033 §8.3's first item). The first increment read
+// **The shapes it sees** (ADR-292's first item). The first increment read
 // one shape: a `let` bound to exactly one call. Measuring it found that 101 of
 // 127 refused pairs in `examples/` fell out on that alone, before any `touches`
 // set was consulted - a zero that measured the analysis rather than the corpus.
@@ -91,7 +91,7 @@ pub fn operation(
 ///
 /// **The walk is written in Nikaia** (`tools/order.nika`, #125): a `let` of
 /// one name or a bare expression statement, looked through a `catch` whose
-/// handler cannot divert (ADR-034), taken apart into the calls it performs -
+/// handler cannot divert (ADR-292), taken apart into the calls it performs -
 /// literals, calls and operators over them, and a reason everywhere else -
 /// and each call answered from the ledgers: what it touches, whether a
 /// failure leaves uncaught, whether its result may cross back from the closure
@@ -159,7 +159,7 @@ pub(super) fn names_in_block(
 }
 
 /// **Every `overlap { … }` block in a program, and what it was allowed**
-/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D3).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D3).
 ///
 /// The answer to *"did these branches actually run together"*, which is the
 /// question a language without an `allow_parallel` owes its user. Nothing prints
@@ -205,7 +205,7 @@ pub fn overlap_report(
 /// Whether a branch can pause, which is what decides the starting order (D6).
 ///
 /// A function and not a lookup here, because no switch and no build setting may
-/// reach this file (ADR-033 §8.2b): the answer is the *emitter's*, read off the
+/// reach this file (ADR-292b): the answer is the *emitter's*, read off the
 /// ledger's `sync` column and the checker's answers about method calls, and no
 /// analysis in this file may reach for either.
 pub type Pauses<'a> = &'a dyn Fn(&Spanned<Stmt>) -> bool;

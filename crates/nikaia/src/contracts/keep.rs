@@ -1,13 +1,13 @@
 // crates/nikaia/src/contracts/keep.rs
 //
 // Where a buffer lives once views of it outlive the scope that made it
-// ([ADR-209](../../../../docs/specification/adr/adr-209.md), Part I 6.6).
+// ([ADR-283](../../../../docs/specification/adr/adr-283.md), Part I 6.6).
 //
 // ## The question, and the one answer to it
 //
 // A body reads a file into `text`, cuts it into views, and something keeps the
 // views longer than `text` would live: the result, a `mut` parameter, a list
-// declared outside the loop, a task. [ADR-008](../../../../docs/specification/adr/adr-008.md)
+// declared outside the loop, a task. [ADR-283](../../../../docs/specification/adr/adr-283.md)
 // calls that value **tethered** and says the buffer has to live as long as the
 // views do. This file decides **where** it lives, and the answer is always the
 // same rule (D1):
@@ -57,7 +57,7 @@ use super::Ledger;
 use super::tether::{Buffer, RESULT, State};
 /// What a whole unit says about views, which types hold one and what the
 /// structs among them are made of, with the questions asked of a type, a
-/// method's name and a ledger: `tools/keep.nika` (ADR-250, #125).
+/// method's name and a ledger: `tools/keep.nika` (ADR-294, #125).
 use nikaia_std::tools::keep::KeepContext as Context;
 pub use nikaia_std::tools::keep::takes_a_keep;
 use nikaia_std::tools::keep::{
@@ -185,20 +185,20 @@ pub struct Plan {
     pub tethered: BTreeMap<String, usize>,
     /// Locals whose views are held one handle per element (D4): a view of
     /// text as a `Held`, a struct of views as a `Holding`
-    /// ([ADR-221](../../../../docs/specification/adr/adr-221.md) D1).
+    /// ([ADR-283](../../../../docs/specification/adr/adr-283.md) D14).
     pub element_keepers: BTreeSet<String>,
     /// The element keepers whose elements are **structs** of views, read
-    /// through the handle rather than through `Deref` (ADR-221 D4).
+    /// through the handle rather than through `Deref` (ADR-283 D17).
     pub struct_keepers: BTreeSet<String>,
     /// How many keeps each element of a keeper carries: the most buffers any
-    /// one value put into it points into (ADR-221 D2).
+    /// one value put into it points into (ADR-283 D15).
     pub widths: BTreeMap<String, usize>,
     /// The struct each such keeper holds, by the keeper's name: what a write
-    /// through its handle asks about a field (ADR-221 D4).
+    /// through its handle asks about a field (ADR-283 D17).
     pub keeper_structs: BTreeMap<String, String>,
     /// Locals bound to an element **taken out** of such a keeper -
     /// `let old = kept.remove(0)` - which is still held and read through its
-    /// handle (ADR-221 D3).
+    /// handle (ADR-283 D16).
     pub held_locals: BTreeSet<String>,
     /// Statements that put a view into such a local: by statement and local,
     /// which argument of the call carries it and the buffer statements whose
@@ -508,7 +508,7 @@ impl Walk<'_> {
     }
 
     /// **Whether a `clone` here is a copy of text**
-    /// ([ADR-216](../../../docs/specification/adr/adr-216.md) D2), which is
+    /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D9), which is
     /// text of its own and points into nothing - where a copy of a list of
     /// views still points where the views did. Read off what this walk can see
     /// without types: a literal, or a name whose type was written as text.
@@ -597,7 +597,7 @@ impl Walk<'_> {
                 self.nested_blocks(value, at);
                 let made = match names.as_slice() {
                     [_] => match value {
-                        // A copy of text is a buffer of its own (ADR-216 D2).
+                        // A copy of text is a buffer of its own (ADR-282 D9).
                         Expr::MethodCall {
                             receiver, method, ..
                         } if self.parsed.text(*method) == "clone" && self.copies_text(receiver) => {
@@ -605,7 +605,7 @@ impl Walk<'_> {
                         }
                         // And so is the text form of something that is not
                         // text - `seed.to_string()` for `seed: i64` - where
-                        // text's own is the text itself (ADR-216 D4).
+                        // text's own is the text itself (ADR-282 D3).
                         Expr::MethodCall {
                             receiver, method, ..
                         } if self.parsed.text(*method) == "to_string" && self.formats(receiver) => {
@@ -631,7 +631,7 @@ impl Walk<'_> {
                     _ => Buffer::None,
                 };
                 // **An element taken out of a keeper** stays what it was in
-                // there (ADR-221 D3).
+                // there (ADR-283 D16).
                 if let [name] = names.as_slice()
                     && let Some(from) = taken_from(&self.parsed.interner, value)
                 {
@@ -691,7 +691,7 @@ impl Walk<'_> {
                     // it, `args` went into the frame's keep as a view, and the
                     // assignment put a view where a `String` goes - `rustc`
                     // about a file nobody wrote (found moving `Ty::parse` into
-                    // Nikaia, ADR-257).
+                    // Nikaia, ADR-294).
                     if whole && self.is_the_buffer(value) {
                         if let Some(local) = self.local_mut(&root) {
                             local.buffer = true;
@@ -1375,7 +1375,7 @@ fn decide(
         }
     }
 
-    // **One keep per buffer, as many as the widest value needs** (ADR-221
+    // **One keep per buffer, as many as the widest value needs** (ADR-283
     // D2): a value whose views point into two buffers carries a handle on
     // each, and every element of one keeper carries the same number, since
     // they are one type.
@@ -1384,7 +1384,7 @@ fn decide(
         let width = plan.widths.entry(keeper.clone()).or_insert(1);
         *width = (*width).max(widest);
     }
-    // **Which keepers hold structs** (ADR-221 D4): read through the handle.
+    // **Which keepers hold structs** (ADR-283 D17): read through the handle.
     for keeper in &plan.element_keepers {
         let written = walk_local_type(&walk, keeper)
             .is_some_and(|ty| names_a_struct_of_views(&parsed.interner, &ty, &context.borrowing));
@@ -1405,8 +1405,8 @@ fn decide(
         }
     }
 
-    // **No permission is asked for** ([ADR-209](../../../../docs/specification/adr/adr-209.md)
-    // D5, withdrawing [ADR-201](../../../../docs/specification/adr/adr-201.md)
+    // **No permission is asked for** ([ADR-283](../../../../docs/specification/adr/adr-283.md)
+    // D5, withdrawing [ADR-283](../../../../docs/specification/adr/adr-283.md)
     // D2): which buffer lives where is the compiler's decision, like which
     // count a `Shared` gets, and it is shown by `--tethers` and in the ledger
     // rather than demanded of the source. A word the program had to write for
@@ -1426,7 +1426,7 @@ fn walk_refusals(
     context: &Context,
 ) -> Vec<crate::check::Finding> {
     let mut out = Vec::new();
-    // D4 holds text one view at a time, and ADR-221 holds a **struct** of
+    // D4 holds text one view at a time, and ADR-283 holds a **struct** of
     // views one handle per buffer. What is left is a value `tether::Rebase`
     // has no shape for, and a struct in a container whose reads are not a
     // sequence's - each said by name rather than handed to `rustc`.

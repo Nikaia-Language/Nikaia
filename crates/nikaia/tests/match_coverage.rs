@@ -1,7 +1,7 @@
 //! A `match` covers every case
-//! ([ADR-146](../../../docs/specification/adr/adr-146.md)).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 //!
-//! [ADR-137](../../../docs/specification/adr/adr-137.md) §4 left exhaustiveness
+//! [ADR-291](../../../docs/specification/adr/adr-291.md) left exhaustiveness
 //! open — *a question about types this compiler does not yet answer*. It was
 //! never open **below**: Rust refuses a non-exhaustive `match`, so the reader
 //! got the backend's words on a Nikaia line, which is
@@ -96,7 +96,7 @@ fn a_bare_name_covers() {
     assert!(found.is_empty(), "{found:#?}");
 }
 
-/// **And `else` does** ([ADR-145](../../../docs/specification/adr/adr-145.md)),
+/// **And `else` does** ([ADR-291](../../../docs/specification/adr/adr-291.md)),
 /// which is how the rest is said everywhere the set cannot be written out.
 #[test]
 fn else_covers() {

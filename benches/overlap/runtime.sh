@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ADR-038 D4's number: what a pair of operations costs on the runtime that is
-# already running, against ADR-033 §8.4's per-pair thread wake-up.
+# already running, against ADR-292's per-pair thread wake-up.
 #
 # Five file sizes, and both mechanisms ADR-038 D3 names: `auto` (which is
 # completion where the machine has it) and `blocking` pinned, so the fallback

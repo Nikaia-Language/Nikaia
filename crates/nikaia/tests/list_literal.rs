@@ -183,7 +183,7 @@ fn an_index_on_its_subjects_line_still_indexes() {
                   }\n";
     let rust = lowered(source);
     // **A read is `index::get` since
-    // [ADR-161](../../../docs/specification/adr/adr-161.md) D6**, so what this
+    // [ADR-293](../../../docs/specification/adr/adr-293.md) D9**, so what this
     // asserts is the **subject** — that `xs [2]` on one line reads `xs` and is
     // not a list literal of its own.
     assert!(rust.contains("nikaia_std::index::get(&xs,"), "{rust}");

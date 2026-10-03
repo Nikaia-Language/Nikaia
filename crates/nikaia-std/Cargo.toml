@@ -6,7 +6,7 @@ edition = "2024"
 # `RUST_FLOOR` says the same.
 rust-version = "1.88"
 
-# **The re-entrancy check is a build option** (ADR-039 D8, Part I 1.2). It is on
+# **The re-entrancy check is a build option** (ADR-281 D36, Part I 1.2). It is on
 # by default and a program that declines it is built with `default-features =
 # false`, which the orchestrator writes into the generated manifest from the
 # `[build]` key. It is a Cargo feature because the check lives in this crate,
@@ -21,7 +21,7 @@ reentrancy-check = []
 trace = ["winnow-grammar/trace"]
 
 [dependencies]
-# Views that outlive the scope that read their buffer (ADR-209); the `unsafe`
+# Views that outlive the scope that read their buffer (ADR-283); the `unsafe`
 # it takes lives there, with its own checks (ADR-218).
 tether = { path = "../unsafe/tether" }
 # Bytes checked as text once, in chunks across the pool, and a file mapped and
@@ -29,7 +29,7 @@ tether = { path = "../unsafe/tether" }
 checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map"] }
 # Text a C library owns, copied out (ADR-147 D4).
 c-text = { path = "../unsafe/c-text" }
-# An error's site in one word, or its cold part boxed (ADR-211 D1).
+# An error's site in one word, or its cold part boxed (ADR-280 D24).
 ref-or-box = { path = "../unsafe/ref-or-box" }
 # An index the compiler proved inside, read and written without its check
 # (ADR-271 D5).
@@ -40,7 +40,7 @@ proven-index = { path = "../unsafe/proven-index" }
 # metadata rather than guessing among the copies in the deps directory.
 winnow-grammar = { workspace = true }
 # Named directly because a `grammar` **in this crate** expands to code that
-# writes `winnow::…` (`src/tools/rust.nika`, ADR-196 D1). A generated program declares
+# writes `winnow::…` (`src/tools/rust.nika`, ADR-290 D16). A generated program declares
 # it for the same reason; until `std` held a grammar of its own, this crate
 # reached it only through `winnow-grammar` and never by name.
 winnow = { workspace = true }

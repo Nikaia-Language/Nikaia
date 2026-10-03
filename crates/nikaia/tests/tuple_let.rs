@@ -1,5 +1,5 @@
 //! A `let` takes one name, or a flat tuple of them
-//! ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 //!
 //! Part I 8.1.2 writes `let (user, rights, prefs) = overlap { … }` and Part II
 //! 12.5 writes `let (tx, rx) = channel::bounded(100)`. Neither parsed: Part I

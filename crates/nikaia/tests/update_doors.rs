@@ -1,5 +1,5 @@
 //! `update` takes `mut v`, changes it in place, and returns nothing
-//! ([ADR-110](../../../docs/specification/adr/adr-110.md) D1) — the first steps
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D12) — the first steps
 //! of that record.
 //!
 //! `kasse.update fn(mut v) { v += 100 }` is the one form. `mut` is
@@ -116,7 +116,7 @@ fn a_mut_lambda_parameter_is_dereferenced() {
 /// **And a lambda parameter without the word is not**, which is the half that
 /// says the dereference comes from `mut` and not from being a lambda's
 /// parameter: `access` hands the value where it lies and may not change it
-/// ([ADR-059](../../../docs/specification/adr/adr-059.md) D1).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D11).
 #[test]
 fn a_plain_lambda_parameter_is_left_alone() {
     let rust = lowered(
@@ -128,7 +128,7 @@ fn a_plain_lambda_parameter_is_left_alone() {
     assert!(!rust.contains("(*n)"), "{rust}");
 }
 
-/// **`update_all` is D1 widened** ([ADR-110](../../../docs/specification/adr/adr-110.md)
+/// **`update_all` is D1 widened** ([ADR-281](../../../docs/specification/adr/adr-281.md)
 /// D6): one `mut` per lock, nothing returned, both held for the whole of the
 /// block.
 #[test]
@@ -267,7 +267,7 @@ fn a_lambda_that_is_not_a_door_is_left_alone() {
 }
 
 /// **`access` is the read door and is untouched**
-/// ([ADR-059](../../../docs/specification/adr/adr-059.md) D1): it hands the
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D11): it hands the
 /// value where it lies, may not change it, and its block hands a value back by
 /// design.
 #[test]

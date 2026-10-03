@@ -1,7 +1,7 @@
 //! There is no postfix `??`, and the three things one is reached for each have
-//! a spelling ([ADR-165](../../../docs/specification/adr/adr-165.md)).
+//! a spelling ([ADR-279](../../../docs/specification/adr/adr-279.md)).
 //!
-//! [ADR-018](../../../docs/specification/adr/adr-018.md) D3 wrote
+//! [ADR-289](../../../docs/specification/adr/adr-289.md) D19 wrote
 //! `lookup(a.query("id")??)` and Part III 17.1 copied it, against a Part I 3.5
 //! that defines `??` as `a ?? b` and nothing else. The question — *does the
 //! language have a postfix unwrap?* — is answered **no**, and the argument is
@@ -109,7 +109,7 @@ fn the_statement_head_refuses_it_as_well() {
 }
 
 /// **And `??` itself is untouched**, including the chain
-/// [ADR-066](../../../docs/specification/adr/adr-066.md) D4 allows.
+/// [ADR-278](../../../docs/specification/adr/adr-278.md) D15 allows.
 #[test]
 fn coalescing_and_its_chain_still_parse_and_run() {
     let printed = output(
@@ -142,9 +142,9 @@ fn a_fallback_value_is_the_operator_itself() {
 }
 
 /// **The second: a jump**, because the four of them are expressions
-/// ([ADR-138](../../../docs/specification/adr/adr-138.md) D1). This is the
-/// shape [ADR-165](../../../docs/specification/adr/adr-165.md) D2 puts in
-/// [ADR-018](../../../docs/specification/adr/adr-018.md) D3's line: a handler
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D20). This is the
+/// shape [ADR-279](../../../docs/specification/adr/adr-279.md) D4 puts in
+/// [ADR-289](../../../docs/specification/adr/adr-289.md) D19's line: a handler
 /// reaching a parameter that may be absent **answers** when it is.
 #[test]
 fn a_jump_is_the_second_spelling() {
@@ -165,7 +165,7 @@ fn a_jump_is_the_second_spelling() {
 
 /// **The third: saying the value is known to be there**, which ends the program
 /// with the program's own words rather than with punctuation
-/// ([ADR-161](../../../docs/specification/adr/adr-161.md) D3). Run for the
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D6). Run for the
 /// half that matters here — that it is a `String` afterwards and the program
 /// goes on.
 #[test]

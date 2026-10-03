@@ -1,16 +1,16 @@
 // crates/nikaia-std/src/tools/fold.nika
 //
-// **What a constant integer expression comes to** (ADR-063, ADR-252 D6), for
+// **What a constant integer expression comes to** (ADR-285, ADR-294 D11), for
 // the checker's `NK1116` and the emitter's widening.
 //
-// The first module of the ring after the tree (ADR-250 §1) moved from Rust to
-// Nikaia, by ADR-196's route: lowered ahead of time by `nikaia lower-std` to
+// The first module of the ring after the tree (ADR-294) moved from Rust to
+// Nikaia, by ADR-290's route: lowered ahead of time by `nikaia lower-std` to
 // `fold.rs` beside it, `include!`d as `nikaia_std::tools::fold`, and called
 // from the compiler's `fold`, which turns its answer into the `i128` the Rust
 // that remains keeps a constant in.
 //
-// **A magnitude and a sign** (ADR-252 D6): a literal is as large as a `u64`
-// holds and as small as an `i64` (ADR-248 D2), so a number here is 65 bits,
+// **A magnitude and a sign** (ADR-294 D11): a literal is as large as a `u64`
+// holds and as small as an `i64` (ADR-285 D19), so a number here is 65 bits,
 // which is exactly the shape the tree already gives a literal. A step that
 // leaves the `u64` is not wrapped: it is `Folded::TooLarge`, which the checker
 // refuses in this language's words.
@@ -26,7 +26,7 @@
 
 /// A folded integer: `magnitude` with a sign, and the integer type an
 /// operand's declaration pinned - empty where none did, since a literal pins
-/// nothing (ADR-060).
+/// nothing (ADR-285).
 pub struct Constant {
     pub magnitude: u64,
     pub negative: bool,
@@ -181,7 +181,7 @@ fn divided(a: ref Constant, b: ref Constant, pinned: String, remainder: bool) ->
     return Folded::Value(number(a.magnitude / b.magnitude, a.negative != b.negative, pinned))
 }
 
-/// **Does this constant need the wider type, and may it have it?** (ADR-063
+/// **Does this constant need the wider type, and may it have it?** (ADR-285
 /// D1): nothing pinned it, an `i32` does not hold it, and an `i64` does.
 pub fn wants_widening(folded: ref Folded) -> bool {
     return match folded {

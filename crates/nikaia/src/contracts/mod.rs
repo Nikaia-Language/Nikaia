@@ -14,7 +14,7 @@
 // `throws` is *declared* in the source and recorded exactly. The borrow
 // contract is *inferred from the signature* - the widest one a signature can
 // support - rather than by the whole-program analysis ADR-005 D3 describes.
-// `sync` is *inferred from the body* (ADR-027): a function that provably cannot
+// `sync` is *inferred from the body* (ADR-288): a function that provably cannot
 // pause gets the promise whether or not anyone wrote the word, and where the
 // word is written it stays an assertion for `NK2202` to check. `sharing` is
 // inferred from the bodies too (ADR-037 D7), and it is the one column that can
@@ -48,7 +48,7 @@ use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
 
 /// **The ledger's small records are declared in Nikaia**
-/// ([ADR-257](../../../docs/specification/adr/adr-257.md) step (b)):
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) step (b)):
 /// `nikaia-std/src/tools/ty.nika`, beside the type language their fields
 /// hold. Re-exported here so that every reader keeps its path.
 pub use nikaia_std::tools::ty::{
@@ -83,7 +83,7 @@ pub const STD: &str = include_str!("../../../nikaia-std/std.contracts");
 /// Recorded in the header so that a ledger can say what it knows, and a ledger
 /// produced by reading signatures must not be mistaken for one produced by
 /// reading bodies. Stage 0 reads signatures for the borrow contract and for
-/// `throws`; since ADR-027 it reads **bodies** for `sync`, since ADR-023 D1 for
+/// `throws`; since ADR-288 it reads **bodies** for `sync`, since ADR-023 D1 for
 /// the *errors* a `throws` names, and since ADR-037 D7 for `sharing` - the name
 /// says which half is which.
 /// The whole-program analysis of ADR-005 D3 will read bodies for the borrow
@@ -99,7 +99,7 @@ pub const INFERENCE: &str = "stage0-signatures+sync-bodies+throws-bodies+sharing
 /// may say more than it knows how to use.
 pub const VERSION: u32 = 3;
 
-/// What stays Rust of a variant's entry until its text moves (ADR-257 step
+/// What stays Rust of a variant's entry until its text moves (ADR-294 step
 /// (c)): reading one back. The declaration and `text` are `tools/ty.nika`'s.
 pub trait VariantOps {
     fn parse(text: &str) -> VariantContract;
@@ -111,7 +111,7 @@ impl VariantOps for VariantContract {
     }
 }
 
-/// What stays Rust of a [`Signature`] (ADR-257 step (b)): the parameters
+/// What stays Rust of a [`Signature`] (ADR-294 step (b)): the parameters
 /// after the receiver, as a slice of the entry's own, and reading one back.
 /// The declaration, `text` and the rest are `tools/ty.nika`'s.
 pub trait SignatureOps: Sized {
@@ -135,7 +135,7 @@ impl SignatureOps for Signature {
 }
 
 /// What the compiler does with a ledger: infer, absorb, render and read it
-/// back. The record is `tools/ty.nika`'s (ADR-257 D1); these stay Rust until
+/// back. The record is `tools/ty.nika`'s (ADR-294 D12); these stay Rust until
 /// step (c) and (d) move them.
 pub trait LedgerOps: Sized {
     fn empty() -> Self;
@@ -156,7 +156,7 @@ pub trait LedgerOps: Sized {
         library: &Ledger,
     ) -> (Self, Vec<crate::check::Checked>);
     /// [`LedgerOps::infer_package_checked`], and what the `sync` inference
-    /// learned for the build to say ([`sync::Noted`], ADR-244 D2 and D5).
+    /// learned for the build to say ([`sync::Noted`], ADR-288 D29 and D32).
     fn infer_package_noted(
         units: &[&Parsed],
         library: &Ledger,
@@ -214,7 +214,7 @@ impl LedgerOps for Ledger {
     /// The contracts of a **package**: every unit of it, inferred as one graph
     /// ([ADR-100](../../../docs/specification/adr/adr-100.md) D2).
     ///
-    /// A package is one namespace ([ADR-047](../../../docs/specification/adr/adr-047.md)
+    /// A package is one namespace ([ADR-286](../../../docs/specification/adr/adr-286.md)
     /// D1), so a call from one of its files to a function in another is a call
     /// this compiler can see - and the inference has to see it too. Inferring
     /// each file alone made a callee in the file next door indistinguishable
@@ -234,14 +234,14 @@ impl LedgerOps for Ledger {
     /// the name this package reaches it by. A call that leaves the package is
     /// answered from it; what is in neither it nor the package's own entries is
     /// code no ledger describes, and *that* is what fails closed
-    /// ([ADR-027](../../../docs/specification/adr/adr-027.md)).
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     fn infer_package(units: &[&Parsed], library: &Ledger) -> Self {
         Self::infer_package_checked(units, library).0
     }
 
     /// This package's **own** entries: what it publishes, with everything that
     /// belongs to a package *it* depends on left out
-    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D3).
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D21).
     ///
     /// A package's ledger file is the program's record of a whole build, so a
     /// library's carries its own dependencies' entries under their names. A
@@ -339,7 +339,7 @@ impl LedgerOps for Ledger {
 
     /// The same, for a package that writes **its own** word for a package this
     /// build has a word for too
-    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D2).
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D20).
     ///
     /// Qualifying is about the names a package declares; this is about the names
     /// it *reaches*, and they are the half that used to come out wrong. A library
@@ -423,7 +423,7 @@ impl LedgerOps for Ledger {
         // Kap 4.7: a trait's methods went into `functions` above, under
         // `Summarize::summary`, and were qualified with the rest. This carries
         // the **names**, which is what says `Summarize` is a trait at all
-        // ([ADR-078](../../../docs/specification/adr/adr-078.md) D3).
+        // ([ADR-295](../../../docs/specification/adr/adr-295.md) D8).
         //
         // Measured the hard way: without it a one-file program's bound resolved
         // twice and failed the third time, because the program's ledger is
@@ -432,7 +432,7 @@ impl LedgerOps for Ledger {
             // **Both spellings, on both sides**, because the question is asked
             // from both: inside the package the `impl` is `Handler for Dog`, and
             // to a consumer it is `pets::Handler for pets::Dog`. A bound may name
-            // a path since [ADR-106](../../../docs/specification/adr/adr-106.md)
+            // a path since [ADR-295](../../../docs/specification/adr/adr-295.md)
             // D1, so the qualified half is what a consumer's bound looks the
             // answer up under — and an extra spelling can only make the check
             // fail *open*, which is the side [Part III
@@ -469,7 +469,7 @@ impl LedgerOps for Ledger {
     /// 1. read the declarations, so every function has an entry to be looked
     ///    up in;
     /// 2. run the **type checker** against that, which resolves each method
-    ///    call to the function it goes to (ADR-028);
+    ///    call to the function it goes to (ADR-288);
     /// 3. infer `sync` from the bodies, using both.
     ///
     /// **Step 2 does not depend on step 3, and that is what makes this sound
@@ -542,7 +542,7 @@ impl LedgerOps for Ledger {
                             .into_iter()
                             .collect();
                         let target = parsed.text(target.name).to_string();
-                        // ADR-174 D1: `impl Speaks for Dog` is the claim that a
+                        // ADR-295 D15: `impl Speaks for Dog` is the claim that a
                         // `Dog` may stand where a `Speaks` is asked for, and it
                         // is the only place that claim is made.
                         if let Item::Impl {
@@ -564,7 +564,7 @@ impl LedgerOps for Ledger {
                     }
                     // Kap 4.7: a trait's methods are recorded under the trait's own
                     // name - `Summarize::summary` - which is what lets a bound be
-                    // looked up ([ADR-078](../../../docs/specification/adr/adr-078.md)
+                    // looked up ([ADR-295](../../../docs/specification/adr/adr-295.md)
                     // D3). The same key shape an `impl`'s methods get, because a
                     // bound and a receiver ask the same question: what does a value
                     // of this thing have.
@@ -577,14 +577,14 @@ impl LedgerOps for Ledger {
                     // entries have for the same reason: the body is in another
                     // language and this compiler does not read it. C has no
                     // suspension point at all, and a C function that sleeps
-                    // *blocks* — `println`'s question (ADR-067 D1) and not this
+                    // *blocks* — `println`'s question (ADR-288 D21) and not this
                     // one. And it carries **no `throws`**, which is what a
                     // body-less declaration carries anyway: C has no failure
                     // channel this language reads.
                     //
                     // `touches` and `locks` are absent, which is D4 and is
                     // fail-closed: absent `touches` reads as *touches
-                    // everything* (ADR-033) and absent `locks` is that column's
+                    // everything* (ADR-292) and absent `locks` is that column's
                     // third answer. A C signature says **less** than a Rust
                     // one, not more.
                     Item::Extern { declarations, .. } => {
@@ -738,14 +738,14 @@ impl LedgerOps for Ledger {
                                 // Nor does a declared `struct` read anything when
                                 // it is read: a field access is memory. The types
                                 // that are not are `std`'s, whose bodies are Rust
-                                // ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1).
+                                // ([ADR-281](../../../../docs/specification/adr/adr-281.md) D34).
                                 touches: Vec::new(),
                                 tethered,
                             },
                         );
                     }
                     // **Every `pub` rule of a grammar is an entry**
-                    // ([ADR-082](../../../docs/specification/adr/adr-082.md) D2).
+                    // ([ADR-296](../../../docs/specification/adr/adr-296.md) D25).
                     // A grammar is entered by an ordinary call — `Json.value(input)`
                     // — so the thing entered has to be an ordinary contract, and
                     // the one column it must carry is `throws`: a rule past a
@@ -754,7 +754,7 @@ impl LedgerOps for Ledger {
                     // without it.
                     //
                     // **`["ParseError"]` since
-                    // [ADR-173](../../../docs/specification/adr/adr-173.md) D1.**
+                    // [ADR-296](../../../docs/specification/adr/adr-296.md) D38.**
                     // It used to be `["?"]` — *something this compiler cannot
                     // name* — because a parse fails with a **rendered string**
                     // and a string is not a type. It was the last `"?"` in the
@@ -770,7 +770,7 @@ impl LedgerOps for Ledger {
                                     public: true,
                                     fails_with: vec![PARSE_ERROR.to_string()],
                                     // **An action may not pause**
-                                    // ([ADR-142](../../../docs/specification/adr/adr-142.md)
+                                    // ([ADR-296](../../../docs/specification/adr/adr-296.md)
                                     // D1), so every entry is `sync` — asserted
                                     // and not inferred, because it is a rule of
                                     // the language rather than a property of
@@ -846,10 +846,10 @@ impl LedgerOps for Ledger {
         // Kap 7.1: `throws` in the source says *that* it fails; this says with
         // what (ADR-023 D1). After `sync`, because both read bodies and only
         // this one needs nothing from the other - and both are handed the same
-        // `resolved`, because ADR-028's whole point is that there is one
+        // `resolved`, because ADR-288's whole point is that there is one
         // answer to what `a.add(v)` goes to and both walks read it.
         throws::infer(&mut ledger, units, library, &resolved);
-        // **The fourth derived column** ([ADR-067](../../../docs/specification/adr/adr-067.md)
+        // **The fourth derived column** ([ADR-288](../../../docs/specification/adr/adr-288.md)
         // D2), and the one that was specified without an inference. After
         // `throws` for no reason but tidiness: it reads the same bodies through
         // the same walk and needs nothing either of the two produced.
@@ -887,7 +887,7 @@ impl LedgerOps for Ledger {
             });
         locks::infer(&mut ledger, units, library, &resolved, &stored);
         // **Last, and it reads none of the columns above**
-        // ([ADR-008](../../../docs/specification/adr/adr-008.md) D7): what it
+        // ([ADR-283](../../../docs/specification/adr/adr-283.md) D5): what it
         // asks is about a signature's shape and about which buffer a returned
         // view came from, and no inference above answers either. It is also the
         // one that changes no lowering — the state it writes is a
@@ -928,9 +928,9 @@ impl LedgerOps for Ledger {
         // A generic parameter is a name that stands for a type rather than
         // being one. The ledger records it as a **variable** (`$T`), so a call
         // site binds it from what it passes and reads the result off the same
-        // signature - the machinery ADR-031 built for a library's `$V`, now
+        // signature - the machinery ADR-288 built for a library's `$V`, now
         // pointed at a Nikaia function's own parameters
-        // ([ADR-074](../../../docs/specification/adr/adr-074.md) D2).
+        // ([ADR-295](../../../docs/specification/adr/adr-295.md) D2).
         let mut parameters = outer.clone();
         parameters.extend(generics.iter().map(|g| parsed.text(g.name).to_string()));
 
@@ -1001,9 +1001,9 @@ impl LedgerOps for Ledger {
                 // touches this one, because an assertion is what `NK2202`
                 // exists to contradict.
                 // `sync(f)` is the source's promise that only `f`'s lambda
-                // may make it pause ([ADR-244](../../../docs/specification/adr/adr-244.md)
+                // may make it pause ([ADR-288](../../../docs/specification/adr/adr-288.md)
                 // D4) - the entry `std` has written by hand as `from(f)` since
-                // ADR-029 D3.
+                // ADR-288 D15.
                 sync_claim: match (*is_sync, sync_by.is_empty()) {
                     (true, _) => Sync::Asserted,
                     (false, false) => Sync::From(
@@ -1019,15 +1019,15 @@ impl LedgerOps for Ledger {
                 // file has no syntax for a touch set, and there is no reason to
                 // give it one - what a body reaches is read off the body.
                 // `touch::infer` answers it afterwards, the way `sync` and
-                // `throws` are answered ([ADR-067](../../../docs/specification/adr/adr-067.md)
+                // `throws` are answered ([ADR-288](../../../docs/specification/adr/adr-288.md)
                 // D2). Until it has run, "nobody said" is the answer, and that
-                // orders against everything (ADR-033 D4).
+                // orders against everything (ADR-292 D3).
                 touches: Vec::new(),
                 touches_known: false,
                 // The *declaration* says only that it can fail. Which errors
                 // is a question about the body and about everything the body
                 // reaches, so `throws::infer` answers it afterwards - the same
-                // arrangement `sync` has since ADR-027.
+                // arrangement `sync` has since ADR-288.
                 fails_with: if *throws {
                     vec![UNNAMED_ERROR.to_string()]
                 } else {
@@ -1035,7 +1035,7 @@ impl LedgerOps for Ledger {
                 },
                 signature: Some(Signature {
                     // **The bounds, where the declaration writes them**
-                    // ([ADR-205](../../../docs/specification/adr/adr-205.md) D1):
+                    // ([ADR-295](../../../docs/specification/adr/adr-295.md) D18):
                     // `fn tell[T: greet::Speaks](x: T)` records `T: greet::Speaks`,
                     // and that is what lets a **consumer's** call be checked
                     // against it. Before this the bound lived only in the AST of
@@ -1107,7 +1107,7 @@ impl LedgerOps for Ledger {
                 // infers it: a Nikaia function that wants another thread writes
                 // a `task`, which the compiler sees and which is not this
                 // question. `threads` is about a body written in *another*
-                // language ([ADR-193](../../../docs/specification/adr/adr-193.md)
+                // language ([ADR-290](../../../docs/specification/adr/adr-290.md)
                 // D1), so *nobody said* is the honest answer for every entry
                 // this loop writes.
                 threads: Threads::Undecided,
@@ -1144,7 +1144,7 @@ impl LedgerOps for Ledger {
     /// is the whole rule.
     ///
     /// It used to match on the last segment, which was name-for-name resolution
-    /// (ADR-011 D2) rather than import tracking, and it is what a compiler
+    /// (ADR-296 D17) rather than import tracking, and it is what a compiler
     /// without a module graph could honestly do before there was a written
     /// list. What it cost, beyond the prelude being undefined, was answering
     /// about the **wrong function**: a program with its own `fn read` found
@@ -1160,11 +1160,11 @@ impl LedgerOps for Ledger {
     /// Every entry a bare method name could resolve to.
     ///
     /// Which one `xs.len()` *is* depends on what `xs` is, and that is the type
-    /// checker's answer rather than this file's (ADR-028). But a question
+    /// checker's answer rather than this file's (ADR-288). But a question
     /// weaker than "which entry" can be answered without it: if **every**
     /// `::len` in the ledger reaches nothing, then `xs.len()` reaches nothing
     /// whatever `xs` turns out to be. An over-approximation over the
-    /// candidates, which is the direction ADR-033 D4 requires.
+    /// candidates, which is the direction ADR-292 D3 requires.
     ///
     /// **Only a method is a candidate**: an entry whose signature takes no
     /// `self` is a function a call names by its path, and `x.lines()` never
@@ -1255,7 +1255,7 @@ impl LedgerOps for Ledger {
     }
 
     /// The same file under a **description's** header
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D5).
     ///
     /// **A different header and the same body**, which is the whole of the
     /// difference: `render`'s says *do not edit by hand - it is regenerated on
@@ -1269,7 +1269,7 @@ impl LedgerOps for Ledger {
         out.push_str(&format!(
             "# The boundary of `{crate_name}`, described before it is called\n"
         ));
-        out.push_str("# ([ADR-104](../../docs/specification/adr/adr-104.md) D2).\n");
+        out.push_str("# ([ADR-290](../../docs/specification/adr/adr-290.md) D2).\n");
         out.push_str("#\n");
         out.push_str(&format!(
             "# Written by `nikaia describe {crate_name}` from the crate's `pub` signatures,\n"
@@ -1290,7 +1290,7 @@ impl LedgerOps for Ledger {
         out.push_str("#\n");
         out.push_str(&format!("# crate: {crate_name} {version}\n"));
         // **What the describer saw and did not claim**
-        // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3, D5),
+        // ([ADR-290](../../../../docs/specification/adr/adr-290.md) D8, D10),
         // before the entries because it is about the crate rather than about
         // one of them.
         if !notes.about_the_crate.is_empty() {
@@ -1311,7 +1311,7 @@ impl LedgerOps for Ledger {
     /// The same, with the describer's notes spliced above the entries they are
     /// about.
     ///
-    /// **A comment and not a column** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    /// **A comment and not a column** ([ADR-290](../../../../docs/specification/adr/adr-290.md)
     /// D3): what the describer saw does not *entail* an answer, so writing it
     /// as a claim could refuse a correct program. It is never parsed back —
     /// this is a sentence for the person who reviews the file, and the whole
@@ -1342,10 +1342,10 @@ impl LedgerOps for Ledger {
             match &contract.sync_claim {
                 Sync::Asserted => out.push_str("sync = true\n"),
                 // `Unpromised` is the checker's reading of an `"inferred"`
-                // from another package (ADR-244 D1) and is not meant to be
+                // from another package (ADR-288 D28) and is not meant to be
                 // rendered; where it is, it is still that fact.
                 Sync::Inferred | Sync::Unpromised => out.push_str("sync = \"inferred\"\n"),
-                // **The source's own word** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+                // **The source's own word** ([ADR-288](../../../../docs/specification/adr/adr-288.md)
                 // D4, [ADR-251](../../../../docs/specification/adr/adr-251.md) D4).
                 Sync::From(name) => out.push_str(&format!("sync = \"sync({name})\"\n")),
                 Sync::No => {}
@@ -1397,7 +1397,7 @@ impl LedgerOps for Ledger {
                 out.push_str("mutates = true\n");
             }
             // Beside `touches`, which is the other column about what a body
-            // reaches ([ADR-039](../../../../docs/specification/adr/adr-039.md) D3).
+            // reaches ([ADR-281](../../../../docs/specification/adr/adr-281.md) D29).
             match contract.touches_a_lock {
                 Lock::No => {}
                 Lock::Holds => out.push_str("locks = true\n"),
@@ -1407,7 +1407,7 @@ impl LedgerOps for Ledger {
             }
             // Beside `locks`, because both are claims about what a body does
             // that no signature shows and a person writes
-            // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+            // ([ADR-290](../../../../docs/specification/adr/adr-290.md) D6).
             match contract.threads {
                 Threads::Undecided => {}
                 Threads::May => out.push_str("threads = true\n"),
@@ -1476,14 +1476,14 @@ impl LedgerOps for Ledger {
             }
         }
 
-        // **A trait a package publishes** ([ADR-106](../../../../docs/specification/adr/adr-106.md)
+        // **A trait a package publishes** ([ADR-295](../../../../docs/specification/adr/adr-295.md)
         // D3). The table carries the one word a checker needs — *this name is a
         // trait* — and no `fields`: its **methods are the `fn` entries above**,
         // under `Handler::handle`, which is the key shape an `impl`'s get and the
         // one `NK1130` already compares against. Writing them twice would be a
         // second source of truth for one fact.
         //
-        // [ADR-078](../../../../docs/specification/adr/adr-078.md) §4 left this
+        // [ADR-295](../../../../docs/specification/adr/adr-295.md) left this
         // as *a question about modules*; D1 and D3 of that later record answered
         // it, and until they were built a bound could not name a path and nothing
         // outside a unit could name one of these traits.
@@ -1492,7 +1492,7 @@ impl LedgerOps for Ledger {
         }
 
         // **And each `impl`, in the ledger of the package that wrote it**
-        // ([ADR-106](../../../../docs/specification/adr/adr-106.md) D4). An
+        // ([ADR-295](../../../../docs/specification/adr/adr-295.md) D13). An
         // `impl` may be written in the trait's package, in the type's, or in a
         // consumer for its own type, so no single ledger can list a trait's
         // implementors completely — and a list read as complete would turn
@@ -1596,7 +1596,7 @@ impl LedgerOps for Ledger {
     /// than a TOML parser: the file is generated, so the shapes it can take are
     /// the shapes written above, and a dependency to read one's own output back
     /// is a dependency to keep in step.
-    /// **Read in Nikaia** (`tools/ledger.nika`, ADR-257 step (c)): the file's
+    /// **Read in Nikaia** (`tools/ledger.nika`, ADR-294 step (c)): the file's
     /// shape, what each table and key means, and a signature back from the
     /// file's spelling.
     fn parse(text: &str) -> Result<Self> {
@@ -1642,16 +1642,16 @@ pub fn std_library() -> Ledger {
 /// result are.
 ///
 /// **`sync` is the declaration's own word**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): a trait method
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D24): a trait method
 /// reads like a function type, so without `sync` it **may pause**, exactly as a
 /// function without the word may.
 ///
 /// **It used to be asserted whatever the declaration said**
-/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4), and that was a
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D9), and that was a
 /// decision rather than a default: `async fn` in a trait was something the
 /// emitter had no way to ask for, so a plain `fn` was the only thing it could
 /// write, and a trait whose method genuinely pauses was **refused** rather than
-/// mis-lowered (`NK1129`). ADR-109 D3 takes the cause away: the trait declares
+/// mis-lowered (`NK1129`). ADR-288 D26 takes the cause away: the trait declares
 /// the **return-position** form, `fn load(&self) -> impl Future<Output = …>`,
 /// and the `impl` writes `async fn`, which satisfies it. So the word can mean
 /// what it says.
@@ -1683,7 +1683,7 @@ fn trait_method(
         format!("{trait_name}::{}", parsed.text(method.name)),
         FnContract {
             public,
-            // ADR-109 D1: the declaration's own word, and its absence is the
+            // ADR-288 D24: the declaration's own word, and its absence is the
             // claim that it may pause.
             sync_claim: match method.is_sync {
                 true => Sync::Asserted,
@@ -1753,7 +1753,7 @@ fn toolchain() -> String {
 ///
 /// Only a literal reaches here - the grammar allows nothing else as a default -
 /// and Nikaia spells every one of them the way the language below does
-/// (ADR-011 D2), which is what lets a ledger record the text and an emitter
+/// (ADR-296 D17), which is what lets a ledger record the text and an emitter
 /// print it.
 fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
     use crate::ast::{Expr, UnaryOp};
@@ -1762,7 +1762,7 @@ fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
         Expr::LitBool(true) => "true".to_string(),
         Expr::LitBool(false) => "false".to_string(),
         // A default of `null` is a default of `None`, and the ledger records
-        // what the emitter prints (ADR-011 D2).
+        // what the emitter prints (ADR-296 D17).
         Expr::LitNull => "None".to_string(),
         Expr::LitInt { value, negative } => crate::ast::int_value(*value, *negative).to_string(),
         Expr::LitFloat(f) => f.clone(),
@@ -1803,14 +1803,14 @@ fn escape(value: &str) -> String {
 pub const UNNAMED_ERROR: &str = "?";
 
 /// What a parse fails with
-/// ([ADR-173](../../../docs/specification/adr/adr-173.md) D1).
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D38).
 ///
 /// A `std` type with no module in front, which is `Overtaken`'s shape: a
 /// program never writes a path to it, because it arrives in a `catch`.
 pub const PARSE_ERROR: &str = "ParseError";
 
 /// The one parameter every grammar entry takes: the text to parse
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1).
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D24).
 ///
 /// A name rather than four spellings of it, because three analyses have to
 /// agree on it: the loop below writes the signature, [`tether::infer`] writes
@@ -1836,7 +1836,7 @@ pub fn throws_text(throws: &[String]) -> String {
 /// The types Part I 2.2 offers, by name.
 ///
 /// Here rather than beside a diagnostic because two questions read it: whether
-/// `as` names a type this language has ([ADR-054](../../../docs/specification/adr/adr-054.md)
+/// `as` names a type this language has ([ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D1), and whether an `impl`'s type argument is a parameter or a type.
 const OFFERED: &[&str] = &[
     "i32", "i64", "u8", "u32", "u64", "f64", "bool", "char", "String", "str", "Self",
@@ -1872,7 +1872,7 @@ pub fn declared_types(parsed: &Parsed) -> BTreeSet<String> {
 /// `impl Stack<i64>`, and what tells them apart is whether the slot names a
 /// type: a bare name that is neither one of Part I 2.2's types nor one this
 /// file declares stands for a type rather than being one
-/// ([ADR-074](../../../docs/specification/adr/adr-074.md) D4).
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D4).
 ///
 /// **The `impl` has no parameter list of its own**, and that is the decision
 /// rather than a gap: Part I 4.6 writes `struct Box[T]` and nothing writes

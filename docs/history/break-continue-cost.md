@@ -2,26 +2,26 @@
 
 **Date:** September 14, 2026; §7 added when the question was answered
 **Status:** measured, and the numbers are
-[ADR-084](../specification/adr/adr-084.md)'s evidence. **Written before the decision
+[ADR-084](adr/adr-084.md)'s evidence. **Written before the decision
 and left as it was written** — the construct was built to price it, and what §7
 records is a question answered *from* this page rather than beside it.
-**Related:** [ADR-084](../specification/adr/adr-084.md) (the decision this measured),
-[ADR-070](../specification/adr/adr-070.md) D2 (which found the absence and left it
-open), [ADR-071](../specification/adr/adr-071.md) (all three words reserved, which
+**Related:** [ADR-084](adr/adr-084.md) (the decision this measured),
+[ADR-070](adr/adr-070.md) D2 (which found the absence and left it
+open), [ADR-071](adr/adr-071.md) (all three words reserved, which
 is why nothing here cost a program a name),
-[ADR-034](../specification/adr/adr-034.md) (a handler that diverts may not be
+[ADR-034](adr/adr-034.md) (a handler that diverts may not be
 overlapped), Part I 3.3
 
-[ADR-070](../specification/adr/adr-070.md) D2 found, while answering a different
+[ADR-070](adr/adr-070.md) D2 found, while answering a different
 question, that a Nikaia loop can only be left by its condition going false or by
 a `return` that leaves the whole function. It named the two words that were
 missing and did not decide whether they should arrive.
-[ADR-071](../specification/adr/adr-071.md) reserved them so the question could stay
+[ADR-071](adr/adr-071.md) reserved them so the question could stay
 open at no cost. This is the measurement that makes it answerable: the construct
 is built, the branch is green, and the three questions a keyword has to answer —
 *what does it cost at run time, what does it cost to compile, what does it break*
 — each have a number or a name under them.
-[ADR-084](../specification/adr/adr-084.md) is the answer that came out of it; §7 is
+[ADR-084](adr/adr-084.md) is the answer that came out of it; §7 is
 what it took from here and what it did not.
 
 **The conclusions, first.**
@@ -59,7 +59,7 @@ measurement and 18 tests.
 | :--- | :--- |
 | `ast/mod.rs` | `Stmt::Break` and `Stmt::Continue` — no payload, no label |
 | `parser/mod.rs` | `break_stmt` and `continue_stmt`, last in the `stmt` alternation (§3 says why last) |
-| `emit/mod.rs` | `break;` and `continue;` — name for name, [ADR-011](../specification/adr/adr-011.md) D2 — and the backstop of §4.3 |
+| `emit/mod.rs` | `break;` and `continue;` — name for name, [ADR-011](adr/adr-011.md) D2 — and the backstop of §4.3 |
 | `check/mod.rs` | a loop count, the boundaries it restarts at, `NK1132` and `NK1133` |
 | six walkers | one arm each, all of them doing nothing (§5) |
 
@@ -67,7 +67,7 @@ The emitter's half of that table is the part worth noticing: the refusal is in
 **both** places on purpose, and §4.3 says why one of them is not enough.
 
 **No program in the tree changes**, and no word had to be taken away from anyone:
-[ADR-071](../specification/adr/adr-071.md) reserved `break` and `continue` a day
+[ADR-071](adr/adr-071.md) reserved `break` and `continue` a day
 before this was written, so the addition is a rule that widens what parses and
 nothing else. That is the reservation paying for itself, and it is worth saying
 out loud because it is the part that would have been expensive later.
@@ -88,7 +88,7 @@ Two diagnostics are new:
 
 ## 2. What it costs at run time
 
-**The method is this repository's** ([ADR-011](../specification/adr/adr-011.md) §4):
+**The method is this repository's** ([ADR-011](adr/adr-011.md) §4):
 instructions retired under callgrind, on one tree, at `-O`. `benches/jumps.nika`
 holds both halves of every A/B in one file, so one lowering and one `rustc`
 invocation produce both and the only difference in a pair is the construct.
@@ -103,7 +103,7 @@ loops — is **468,851** instructions, and it is subtracted in the table below s
 that the numbers are the loops rather than the runtime starting.
 
 > **The first row of the table below was corrected after it was published, and
-> the correction is [ADR-086](../specification/adr/adr-086.md) §3.** It measured
+> the correction is [ADR-086](adr/adr-086.md) §3.** It measured
 > something real and attributed it to the wrong thing: the `break`-less baseline
 > had to nest an `if` inside its loop, because `while i < n && running` did not
 > parse — a *second* gap, which §2.1 below reports as a finding without either
@@ -112,7 +112,7 @@ that the numbers are the loops rather than the runtime starting.
 > to 165 instructions over two million turns. The −25 % was the nesting.
 >
 > The rest of the page stands, and so does what it decided — §7 says what
-> decided [ADR-084](../specification/adr/adr-084.md) was the `for` row, and that
+> decided [ADR-084](adr/adr-084.md) was the `for` row, and that
 > row is untouched. The tables are left as they were taken, with this note over
 > them, because a number edited after the fact is a number nobody can check.
 
@@ -200,7 +200,7 @@ and the language cannot express that. It is on [[#206](https://github.com/Nikaia
 
 **And it is the same finding as §2's first row**, which neither half of this page
 noticed while it was being written. The baseline was carrying two handicaps and
-the table named one of them. [ADR-086](../specification/adr/adr-086.md) closed the
+the table named one of them. [ADR-086](adr/adr-086.md) closed the
 gap and re-measured: with `&&` in the head, the `break`-less shape costs what the
 `break` costs. That is the sharpest lesson this page has to offer about its own
 method — **an A/B is about the construct only if the construct is the only
@@ -257,7 +257,7 @@ is right rather than plausible.
 
 **So the rules are last, and the comment there says why.** It costs nothing in
 correctness: both words are reserved
-([ADR-071](../specification/adr/adr-071.md)), so `NAME` cannot take one and no
+([ADR-071](adr/adr-071.md)), so `NAME` cannot take one and no
 earlier arm can swallow a jump. It costs something in reading order, which is
 paid back at 740 instructions a statement.
 
@@ -274,7 +274,7 @@ language below, and inside each of them a loop written outside is unreachable:
 | :--- | :--- | :--- |
 | a lambda — `fn (x) { … }` | a Rust closure | `NK1132` |
 | a task — `spawn fn { … }` | `async move { … }` ([ADR-055](../specification/adr/adr-055.md) §6) | `NK1132` |
-| an `overlap` branch | one `async { … }` per branch ([ADR-050](../specification/adr/adr-050.md) D2) | `NK1132` |
+| an `overlap` branch | one `async { … }` per branch ([ADR-050](adr/adr-050.md) D2) | `NK1132` |
 | a DSL fold's `init`, `step`, `merge` | closures handed to the fold driver | `NK1132` |
 
 ```text
@@ -292,7 +292,7 @@ C.1 calls a bug in this compiler rather than a bad error message.
 
 **The one that is worth knowing about before writing code** is the lock doors.
 `lock.update fn (v) { … }`, `access_all` and `update_all`
-([ADR-065](../specification/adr/adr-065.md)) all take the block as a lambda, so a
+([ADR-065](adr/adr-065.md)) all take the block as a lambda, so a
 loop cannot be left from inside one. The way out is the one the help names —
 decide inside, act outside — and it is a real restriction rather than an
 oversight, because the alternative is leaving a lock held across a jump.
@@ -371,9 +371,9 @@ A program should never see it.
 
 ### 4.4 The ordering analysis learns a fourth way to divert
 
-[ADR-034](../specification/adr/adr-034.md) refuses to overlap a statement whose
+[ADR-034](adr/adr-034.md) refuses to overlap a statement whose
 `catch` handler can `return`: the statement after it is conditional on this one
-having succeeded, and [ADR-033](../specification/adr/adr-033.md) D5 forbids running
+having succeeded, and [ADR-033](adr/adr-033.md) D5 forbids running
 a conditional operation early. A handler that *jumps* makes the next statement
 conditional in exactly the same way, so `contracts::order`'s `diverts` now counts
 `break` and `continue` too — and is exact about the one case where it should not:
@@ -389,7 +389,7 @@ reach it.
 ### 4.5 What the `while true` shape now does to the generated file
 
 `break` makes `while true { … }` the unconditional loop it was declared to be
-([ADR-070](../specification/adr/adr-070.md) D1) — before this, a `while true` could
+([ADR-070](adr/adr-070.md) D1) — before this, a `while true` could
 only be left by `return`, which is why no `.nika` file in the tree writes one.
 The emitted Rust for the shape that is about to become common is:
 
@@ -449,14 +449,14 @@ this is the first construct added since it was paid for.
 ## 6. What is still open
 
 **`break` with a value, and the `loop` keyword with it.**
-[ADR-070](../specification/adr/adr-070.md) D2 wrote down the condition under which
+[ADR-070](adr/adr-070.md) D2 wrote down the condition under which
 the `loop` keyword reopens: *the day a `break` hands back a value*. This does not
 meet it — `NK1133` refuses `break i` outright — so D1 stands as written and
 `loop` stays reserved and unused, which is what
-[ADR-071](../specification/adr/adr-071.md) reserved it for and what
-[ADR-084](../specification/adr/adr-084.md) D7 records.
+[ADR-071](adr/adr-071.md) reserved it for and what
+[ADR-084](adr/adr-084.md) D7 records.
 
-**[#183](https://github.com/Nikaia-Language/Nikaia/issues/183)'s unreachable-`return` entry was invalidated as written** — the one [ADR-093](../specification/adr/adr-093.md) later closed — and this is
+**[#183](https://github.com/Nikaia-Language/Nikaia/issues/183)'s unreachable-`return` entry was invalidated as written** — the one [ADR-093](adr/adr-093.md) later closed — and this is
 the one place where building the construct made something else more expensive.
 It has since been rewritten; what follows is the argument that had to go.
 The entry proposes a diagnostic improvement — a `while true { … }` cannot be left,
@@ -477,19 +477,19 @@ the body rather than a test on the condition.
 the unlabelled form costs nothing anywhere because it carries nothing anywhere.
 The case it does not reach — leaving an outer loop from an inner one — is served
 today by a flag or by `return`, and what *that* costs has not been measured.
-[ADR-084](../specification/adr/adr-084.md) D2 makes that measurement the condition
+[ADR-084](adr/adr-084.md) D2 makes that measurement the condition
 for reopening, which is the same shape of answer this page is.
 
 ---
 
 ## 7. What the decision took from here
 
-[ADR-084](../specification/adr/adr-084.md) is the record, and three things about the
+[ADR-084](adr/adr-084.md) is the record, and three things about the
 relationship are worth saying, because the order they happened in is the point.
 
 **The construct was built before it was decided**, which is not the usual order
 and was the right one here. A keyword is the most expensive thing a language adds
-([ADR-070](../specification/adr/adr-070.md) D1), so *"what does it cost"* deserves a
+([ADR-070](adr/adr-070.md) D1), so *"what does it cost"* deserves a
 number, and a number cannot be had from a design document. Everything in §4 — the
 four boundaries, the `catch` handler that is not one, the fold's unchecked
 lambdas, the walk that missed a `spawn` — was found by building it, and none of it
@@ -505,5 +505,5 @@ would have made a weaker case out of stronger evidence.
 **One measurement changed the implementation rather than justifying it.** §3.1's
 ordering was not written down and then checked: the rules were placed where they
 read best, measured at +1.28 %, moved to the end, and measured again at nothing.
-That is why [ADR-084](../specification/adr/adr-084.md) D8 exists as a decision at all
+That is why [ADR-084](adr/adr-084.md) D8 exists as a decision at all
 — an ordering with a reason attached survives the next person who tidies it.

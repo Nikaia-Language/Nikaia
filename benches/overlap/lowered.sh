@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-033 D10's number, end to end: what the *lowering* costs, not what the
+# ADR-292 D6's number, end to end: what the *lowering* costs, not what the
 # `std` function costs.
 #
 # `runtime.sh` measures `nikaia_std` from Rust. This measures a `.nika` program

@@ -1,11 +1,11 @@
 // crates/nikaia-std/src/tools/traits.nika
 //
 // Kap 4.7: **what an `impl` owes the `trait` it names** - moved from the
-// compiler's `traits.rs` (ADR-250, #125): the first check written in Nikaia,
+// compiler's `traits.rs` (ADR-294, #125): the first check written in Nikaia,
 // handing back `Finding`s (`findings.nika`).
 //
 // **A walk of its own, and the reason is the ledger's `sync` column.** The type
-// checker runs *before* `sync::infer` - that order is what keeps ADR-027 sound,
+// checker runs *before* `sync::infer` - that order is what keeps ADR-288 sound,
 // because the checker resolves method calls and the inference reads the result
 // - so a rule that needs the finished `sync` cannot live inside it. This runs
 // afterwards, from `check_program`, beside `dsl::check` and `views::check`.
@@ -27,7 +27,7 @@ pub fn check_impls(names: ref winnow_grammar::InternerContext, items: ref Vec[Sp
                 // check against: `impl Error for ConfigError` names a trait the
                 // compiler reads rather than one a `.nika` file wrote (ADR-023
                 // D3), and a trait a package publishes cannot be reached at all
-                // yet (ADR-078 §4). Silence is the only correct answer about a
+                // yet (ADR-295). Silence is the only correct answer about a
                 // declaration that is not here.
                 if !own.traits.contains_key(ref named) {
                     continue
@@ -158,8 +158,8 @@ fn receiver_text(receiver: Receiver?) -> String {
 }
 
 /// **`NK1129`: the implementation pauses and the declaration says `sync`**
-/// (ADR-109 D2), and **`NK1140`**: it fails and the declaration has no
-/// `throws`. Both are ADR-027's `NK2202` asked of somebody else's signature.
+/// (ADR-288 D25), and **`NK1140`**: it fails and the declaration has no
+/// `throws`. Both are ADR-288's `NK2202` asked of somebody else's signature.
 /// **The other direction fits and says nothing**: a body that never pauses
 /// under a declaration that may, or one that cannot fail under `throws`, is
 /// correct - the declaration is the wider claim and a narrower body honours it.

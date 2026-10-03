@@ -373,7 +373,7 @@ fn a_length_that_cannot_be_shown_to_fit_is_refused() {
 }
 
 /// **A `usize` at the boundary takes this language's own integer** (D2,
-/// [ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 ///
 /// A length here is an `i64` and the machine-width type left the surface a
 /// program can write, so a declaration that says `size_t` is handed an `i64`
@@ -529,7 +529,7 @@ fn nothing_reaches_inside_a_handle() {
 /// word means something only where a rule asks for it — and `opaque`, `type`,
 /// `released` and `by` are all names a program may want. Reserving a word buys
 /// exactly one thing, the sentence a reader who writes it gets
-/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D2), and this
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md) D7), and this
 /// position says that sentence without taking the word away.
 #[test]
 fn the_four_words_are_still_names() {
@@ -820,7 +820,7 @@ fn the_copy_fails_in_one_way() {
         .functions
         .get("foreign::CStr::to_string")
         .expect("std describes the copy");
-    // **One way, and since [ADR-158](../../../docs/specification/adr/adr-158.md)
+    // **One way, and since [ADR-280](../../../docs/specification/adr/adr-280.md)
     // D1 it has a name for it.** The doc below has always said *the same
     // failure `fs::read_to_string` has*, and a set of one that says which is
     // stronger evidence for *one way* than a `"?"` ever was.

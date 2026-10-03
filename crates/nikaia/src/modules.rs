@@ -1,7 +1,7 @@
 // crates/nikaia/src/modules.rs
 //
 // A program is more than one file, and **a package is a directory**
-// (Part I, 9.1; ADR-047 D1).
+// (Part I, 9.1; ADR-286 D1).
 //
 // The files of a package see one another with no `use` at all: they share one
 // namespace, so a name declared in any of them can be written in any other. What
@@ -9,7 +9,7 @@
 // declared - which is what keeps a library's internal file layout from being its
 // public surface.
 //
-// What this does is **resolution**, and resolution is the one thing ADR-011 D2
+// What this does is **resolution**, and resolution is the one thing ADR-296 D17
 // said Stage 0 does not do: the lowering is name for name, and nothing looks a
 // name up. That stays true of the *emitter* - what changes is that the compiler
 // knows which files take part, and hands the emitter each of them in turn.
@@ -21,7 +21,7 @@
 // which would report it about a file nobody wrote (Part III, C.1).
 //
 // **Which files** is the directory and not the `use` lines. A `use` names another
-// package (ADR-046 D1), and depending on one is not built (ADR-047 §5), so a
+// package (ADR-286 D10), and depending on one is not built (ADR-286), so a
 // `use` that is not `std`'s is refused with what to do instead.
 
 use crate::contracts::LedgerOps;
@@ -40,9 +40,9 @@ pub struct Unit {
     /// the program's own.
     ///
     /// It is not the file stem any more. A file is not a unit of naming
-    /// (ADR-047 D1), so nothing about a name says which file it came from; the
+    /// (ADR-286 D1), so nothing about a name says which file it came from; the
     /// field stays because a package that arrives by path will fill it in
-    /// (ADR-047 D2), and that is the same qualification one level up.
+    /// (ADR-286 D15), and that is the same qualification one level up.
     pub package: Option<String>,
     /// The package names **inside this file** that are another word for a
     /// package this build already has a word for - see
@@ -66,7 +66,7 @@ impl Unit {
 }
 
 /// A package this program depends on: the name a `use` writes, and where it is
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15).
 ///
 /// The name is the **manifest key** and nothing inside the package, which is D2
 /// rule 1: a package does not name itself, so two libraries that both want to be
@@ -79,12 +79,12 @@ pub struct Dependency {
     /// The names **it** may reach - its own manifest keys. Its files are read
     /// here so that this program's checks know its public surface, and they are
     /// checked as it would check them
-    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D3): a package
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D21): a package
     /// that depends on a package is a package, not a rule broken.
     pub reachable: BTreeSet<String>,
     /// How **its** package keys are read in this build: its own word for a
     /// package, mapped to the one word this build uses for that directory
-    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D2, and
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D20, and
     /// `project::renames_in` computes it).
     ///
     /// Empty for a dependency that depends on nothing, which is most of them,
@@ -94,7 +94,7 @@ pub struct Dependency {
 
 /// Every file of the package the entry belongs to, entry first.
 ///
-/// **The directory decides, not the `use` lines** (ADR-047 D1). Every `.nika`
+/// **The directory decides, not the `use` lines** (ADR-286 D1). Every `.nika`
 /// beside the entry takes part, whether or not anything names it - which is what
 /// makes moving a declaration from one file to another housekeeping rather than a
 /// change to the package's surface.
@@ -108,7 +108,7 @@ pub fn collect(entry: &Path) -> Result<Vec<Unit>> {
 }
 
 /// The same, with the packages this program depends on
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15).
 ///
 /// A dependency's files come **after** the program's own, in the order the
 /// manifest sorted its names, so the emitted file stays a function of the source
@@ -119,7 +119,7 @@ pub fn collect_with(entry: &Path, dependencies: &[Dependency]) -> Result<Vec<Uni
     let names: BTreeSet<String> = dependencies.iter().map(|d| d.name.clone()).collect();
     let mut units = package_at(entry, None, &names, &BTreeMap::new())?;
 
-    // **Read, and not emitted** ([ADR-053](../../../docs/specification/adr/adr-053.md)
+    // **Read, and not emitted** ([ADR-286](../../../docs/specification/adr/adr-286.md)
     // D1). A dependency is its own crate now, so its files are Cargo's to
     // compile - but its *surface* is this program's to check against, and a
     // package's surface is what its files declare. So they arrive here tagged
@@ -268,7 +268,7 @@ fn read_unit(
     })
 }
 
-/// **Two files of one package may not declare the same name** (ADR-047 D1).
+/// **Two files of one package may not declare the same name** (ADR-286 D1).
 ///
 /// One namespace, so two `Row`s in it is an error rather than a rule about which
 /// of them a line means. Refused here and not left to `rustc`: it would report a
@@ -276,7 +276,7 @@ fn read_unit(
 /// Part III C.1 forbids - and it would name a line the user never wrote.
 ///
 /// **Two files and not one**
-/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D3). A name declared
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D6). A name declared
 /// twice in *one* file is `NK1148` in the checker, which every build runs -
 /// where this runs only for a build that has a manifest. This kept the one-file
 /// case for as long as it was the only rule there was, and served it badly:
@@ -324,7 +324,7 @@ pub(crate) fn declared_once(files: &[(&Path, &Parsed)]) -> Result<()> {
 /// `Json::value` ([ADR-140](../../../docs/specification/adr/adr-140.md) D3).
 ///
 /// **A `trait` and a `grammar` are among them**
-/// ([ADR-144](../../../docs/specification/adr/adr-144.md) D2), and were not:
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D5), and were not:
 /// `trait Foo` beside `struct Foo` was accepted through every path, including
 /// this one, and `rustc` answered about the generated file.
 fn declared_names(parsed: &Parsed) -> Vec<String> {
@@ -332,7 +332,7 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
 }
 
 /// **Every `use` in a file, against the packages it may name**
-/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2, D4, D5).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D11, D13, D14).
 ///
 /// `use` makes a package reachable and brings **no name** in, so there are four
 /// things to say no to and one thing to accept. Each message names the way out,
@@ -341,7 +341,7 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
 /// * a **path** other than `std`'s — `use net::http` — which is either a nested
 ///   package (there is no such thing) or an attempt to import a name;
 /// * a name that is a **file beside this one**, the shape that worked before
-///   ADR-047 D1 made a package a directory;
+///   ADR-286 D1 made a package a directory;
 /// * a name **no dependency declares**, which is D4 read from the other side: a
 ///   prefix must be introduced, and this is the introduction that names nothing;
 /// * the **same name twice**, which is D5 — two packages under one name is an
@@ -349,7 +349,7 @@ fn declared_names(parsed: &Parsed) -> Vec<String> {
 ///
 /// The braced and glob forms (`use pool::{Conn}`, `use pool::*`) are parse errors
 /// at the brace and the star, so D2's sentence about them is not reachable from
-/// here; that is [ADR-046](../../../docs/specification/adr/adr-046.md) §5's
+/// here; that is [ADR-286](../../../docs/specification/adr/adr-286.md)'s
 /// remaining piece and it belongs in the grammar.
 fn check_imports(
     parsed: &Parsed,
@@ -423,7 +423,7 @@ fn groups(units: &[Unit]) -> Vec<std::ops::Range<usize>> {
 ///
 /// **Believed is the fast path and the *correct* one**, not merely the quick
 /// one. A package's own build had its own dependencies in view and this one does
-/// not (ADR-053 D3), so an answer derived here can only be the same or worse -
+/// not (ADR-286 D21), so an answer derived here can only be the same or worse -
 /// and two builds that derive the same function differently is the divergence
 /// D1 exists to make impossible.
 ///
@@ -442,7 +442,7 @@ fn package_ledger(
 }
 
 /// [`package_ledger`], and what the `sync` inference learned for the build to
-/// say (ADR-244 D2, D5) - nothing for a shipped ledger, which was inferred by
+/// say (ADR-288 D29, D32) - nothing for a shipped ledger, which was inferred by
 /// the package's own build and is read rather than derived.
 fn package_ledger_noted(
     units: &[Unit],
@@ -469,7 +469,7 @@ fn package_ledger_noted(
 }
 
 /// **What another package may rely on about pausing**
-/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1): what its source
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D28): what its source
 /// wrote, `sync` or `sync(f)`, and not what the inference observed about
 /// today's body. Each entry `another` says is across the boundary and reads
 /// `"inferred"` reads as *may pause* in the copy this returns -
@@ -509,8 +509,8 @@ fn shipped_ledger(root: &Path) -> Option<crate::contracts::Ledger> {
 pub struct Program {
     pub units: Vec<Unit>,
     /// **What the manifest's described crates say about their boundary**
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1,
-    /// [ADR-237](../../../docs/specification/adr/adr-237.md) D1): read by the
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D1,
+    /// [ADR-290](../../../docs/specification/adr/adr-290.md) D20): read by the
     /// emitter for one question, whether a call into one can fail. Empty
     /// outside a project and for a project that declares no crate.
     pub described: crate::contracts::Ledger,
@@ -524,7 +524,7 @@ pub struct Program {
     /// wrong one for a package's own: absorbing turns `Request` into
     /// `http::Request`, in the key and in every signature that names it, and the
     /// package's own file writes the bare word as its author must
-    /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2 gives no import
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D11 gives no import
     /// to write). Checked against the absorbed one, a package's `[H: Handler]`
     /// found no trait and `answer(connection, handler)` was told its own
     /// `fn(Request) -> Response` is not a `fn(http::Request) -> http::Response` —
@@ -541,12 +541,12 @@ pub struct Program {
     /// in every build but a test build, which is the only one that keeps them.
     pub tests: Vec<TestCase>,
     /// **The program's own functions that pause only where their lambdas do**
-    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2), by key, with
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D29), by key, with
     /// the code parameters that decide: each could promise `sync(f)`. Read by
     /// [`Program::could_promise`].
     pub paused_by_code: BTreeMap<String, Vec<String>>,
     /// **Why each of the program's own functions that can pause does**
-    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D5): the calls
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D32): the calls
     /// that lead to a statement that pauses, its unit an index into
     /// [`Program::units`].
     pub pauses: BTreeMap<String, crate::contracts::sync::Pause>,
@@ -583,7 +583,7 @@ impl Program {
     /// Parse every file, and infer the contracts of all of them together.
     ///
     /// Together, and not one at a time: `sync` is a fixpoint over the call
-    /// graph (ADR-027), and a call graph that stops at a file boundary would
+    /// graph (ADR-288), and a call graph that stops at a file boundary would
     /// give a different answer depending on which file was looked at first.
     /// 13.5 makes the ledger a pure function of the source tree, which is a
     /// promise about the tree and not about each file in it.
@@ -592,7 +592,7 @@ impl Program {
     }
 
     /// The same, with the packages this program depends on
-    /// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15).
     pub fn read_with(entry: &Path, dependencies: &[Dependency]) -> Result<Program> {
         Self::of(collect_with(entry, dependencies)?, dependencies)
     }
@@ -678,14 +678,14 @@ impl Program {
                 &units[group.clone()],
                 dependencies.iter().find(|d| d.name == package),
                 // **`std` alone for a dependency's own inference.** Its own
-                // dependencies are deliberately invisible here (ADR-053 D3),
+                // dependencies are deliberately invisible here (ADR-286 D21),
                 // which is exactly why a ledger derived on this side is the
                 // second-best answer and D1 prefers the one it shipped.
                 &crate::contracts::std_library(),
             );
             as_its_own.insert(package.clone(), own.clone());
             // **The program's own inference reads the dependency as promised**
-            // (ADR-244 D1): a call into it that only the inference calls `sync`
+            // (ADR-288 D28): a call into it that only the inference calls `sync`
             // makes the caller *may pause*. `contracts` keeps the entry as it
             // is, because that is what the lowering reads (D3).
             library.absorb_renaming(Some(&package), &renames, as_promised(own.clone(), |_| true));
@@ -720,7 +720,7 @@ impl Program {
         })
     }
 
-    /// **[ADR-244](../../../docs/specification/adr/adr-244.md) D2's note**:
+    /// **[ADR-288](../../../docs/specification/adr/adr-288.md) D29's note**:
     /// the program's own `pub` functions that could promise more about pausing
     /// than they do, each with the word that would promise it - empty where
     /// there is none.
@@ -812,7 +812,7 @@ impl Program {
         out
     }
 
-    /// **[ADR-244](../../../docs/specification/adr/adr-244.md) D5's warning**:
+    /// **[ADR-288](../../../docs/specification/adr/adr-288.md) D32's warning**:
     /// every `pub` function of the program's own that the committed ledger says
     /// could not pause (`"inferred"`) and that now can, at the statement that
     /// made it, with the calls that lead there - empty where none has.
@@ -893,7 +893,7 @@ impl Program {
     }
 
     /// **The program's contracts as its own files are checked against them**
-    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1): every
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D28): every
     /// dependency's entry reads only what that package's source promised about
     /// pausing ([`as_promised`]). [`Program::contracts`] stays the ledger the
     /// lowering reads and the one written beside the program.
@@ -909,7 +909,7 @@ impl Program {
     /// What it is for is telling a `package::item` call from a `Type::method`
     /// one. Empty for a program of its own files, which is every program today:
     /// the files of a package share one namespace, so nothing in it is qualified
-    /// (ADR-047 D1), and depending on another package is not built (D2).
+    /// (ADR-286 D1), and depending on another package is not built (D2).
     pub fn package_names(&self) -> std::collections::BTreeSet<String> {
         self.units
             .iter()
@@ -931,7 +931,7 @@ impl Program {
 
     /// The whole package as one Rust file.
     ///
-    /// **One crate root per package** (ADR-047 D1). One namespace in this
+    /// **One crate root per package** (ADR-286 D1). One namespace in this
     /// language is one namespace in the language below, so the program's own
     /// files need no `mod`, no `use super::*` and nothing for a reader to
     /// resolve. `pub` becomes `pub`, which is what publishes a name out of the
@@ -941,7 +941,7 @@ impl Program {
     ///
     /// **A dependency is a `mod` at that root** (D2), named by the manifest key,
     /// so `http::serve()` in Nikaia is `http::serve()` in Rust and nothing
-    /// resolved it (ADR-011 D2). Each opens with `use super::*` under an
+    /// resolved it (ADR-296 D17). Each opens with `use super::*` under an
     /// `#[allow]`, which brings in the preamble the root wrote - the allow is
     /// because the import is **ours**, and a module that happens to use nothing
     /// from the preamble would otherwise produce a warning about a line no Nikaia
@@ -988,7 +988,7 @@ impl Program {
         let mut map = SourceMap::default();
         let mut published = std::collections::BTreeMap::new();
         for (at, unit) in self.units.iter().enumerate() {
-            // **A dependency's files are read and not written** (ADR-053 D1).
+            // **A dependency's files are read and not written** (ADR-286 D19).
             // They are here so the ledger and the checks know what the package
             // offers; the crate that offers it is generated beside this one, and
             // a qualified name needs no help from us - `c::thing()` is emitted
@@ -1033,7 +1033,7 @@ impl Program {
             rust.push_str(&body.rust);
             rust.push('\n');
         }
-        // **Last, because it names lines** (ADR-044 D1). Only where the program
+        // **Last, because it names lines** (ADR-300 D9). Only where the program
         // has an entry point: the table is read by the hook `fn main` installs,
         // and a package with no `main` is a library whose consumer has one.
         if self.units[0].parsed.program.items.iter().any(|item| {

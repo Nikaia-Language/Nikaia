@@ -316,7 +316,7 @@ fn a_missing_operand_is_reported_as_an_expression() {
 fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);
 
-    // **A package is a directory** (ADR-047 D1), so an example in a directory of
+    // **A package is a directory** (ADR-286 D1), so an example in a directory of
     // its own is a package and a loose one is not. `examples/` itself is a
     // directory of *programs*: twelve files each declaring `main`, filed
     // together, which is exactly what `nikaia lower` outside a project makes

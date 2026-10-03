@@ -4,7 +4,7 @@
 
 //! The overlap's *first* lowering, kept as the number `join` had to beat.
 //!
-//! The emitter no longer writes this - see `join.rs` - but it is what ADR-033
+//! The emitter no longer writes this - see `join.rs` - but it is what ADR-292
 //! §8.2's table was measured on, and dropping it would make that table
 //! unreproducible.
 

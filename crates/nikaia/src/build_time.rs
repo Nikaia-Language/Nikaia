@@ -1,5 +1,5 @@
 //! Running Nikaia while the program is built
-//! ([ADR-073](../../../docs/specification/adr/adr-073.md) D5's second stage).
+//! ([ADR-287](../../../docs/specification/adr/adr-287.md) D6's second stage).
 //!
 //! `comptime` has had an evaluator since the word existed, and what it knew was
 //! an integer literal, a name whose value already folded, a negation and
@@ -8,7 +8,7 @@
 //! answered*: a call, and with it the file reading
 //! [ADR-072](../../../docs/specification/adr/adr-072.md) waits behind.
 //!
-//! Q4 **is** answered — [ADR-075](../../../docs/specification/adr/adr-075.md)
+//! Q4 **is** answered — [ADR-287](../../../docs/specification/adr/adr-287.md)
 //! D1 and D2 say what a build-time body may do — so this is the call, and with
 //! it the **loop**: a `for` over a range, a `while`, `break`, `continue` and an
 //! assignment, because a loop that cannot change anything is not one.
@@ -41,7 +41,7 @@ use crate::contracts::{Ledger, touch};
 use crate::parser::Parsed;
 
 /// How deep a build-time call may go before this stops
-/// ([ADR-075](../../../docs/specification/adr/adr-075.md) D4's neighbour).
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D16's neighbour).
 ///
 /// **Not a step budget.** A body that loops forever still hangs the build, which
 /// is what that record accepted; what this prevents is a *recursion* that takes
@@ -74,7 +74,7 @@ enum Flow {
 ///
 /// Four kinds, which is what the declaration can carry: Rust's `const` needs a
 /// type this compiler can spell
-/// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5) — an integer, a
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D6) — an integer, a
 /// `bool`, a **list** of them, and **text**.
 ///
 /// **The array is the aggregate issue #174 was about**, and it is an
@@ -139,7 +139,7 @@ pub enum Value {
     ///
     /// **The name is carried and not resolved here.** Which `enum` a variant
     /// belongs to is the checker's answer and the emitter writes what it is
-    /// told ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), so this
+    /// told ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), so this
     /// holds the pair rather than a reference to a declaration.
     Variant {
         ty: String,
@@ -156,7 +156,7 @@ pub enum Value {
     /// **What it is for is the method.** A `sync` method of the program's own
     /// looked exactly like something a `comptime` should be able to call — the
     /// body is right there and `sync` says it may run
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) — and it
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) — and it
     /// could not, because a method needs a **value** to be called on and this
     /// evaluator had none to make.
     ///
@@ -178,7 +178,7 @@ pub enum Refusal {
     /// reporting until every stage lands.
     Unevaluable,
     /// The callee may not be run while the program is built
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1, D2). A
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14). A
     /// different claim from the one above and it gets a different code: the
     /// shape is understood and the rule says no.
     NotAllowed {
@@ -243,7 +243,7 @@ pub enum Refusal {
     /// elements, and a build that answered *cannot evaluate* would send the
     /// reader looking for a missing feature instead of at the line
     /// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
-    /// Running it would abort at run time ([ADR-048](../../../docs/specification/adr/adr-048.md)
+    /// Running it would abort at run time ([ADR-285](../../../docs/specification/adr/adr-285.md)
     /// D1); at build time there is no run to abort.
     OutOfBounds { at: i128, len: usize },
 }
@@ -259,7 +259,7 @@ pub struct BuildTime<'a> {
     /// belongs to the file that was parsed into it.
     ///
     /// The *permission* to run a callee has been program-wide from the start —
-    /// it is two ledger columns ([ADR-075](../../../docs/specification/adr/adr-075.md)
+    /// it is two ledger columns ([ADR-287](../../../docs/specification/adr/adr-287.md)
     /// D1, D2) and a program's ledger is absorbed from its units'. What was not
     /// was the **body**, and no column could carry one: a ledger records what a
     /// caller has to know about a function it *cannot see the body of*, which
@@ -471,7 +471,7 @@ impl<'a> BuildTime<'a> {
             // forms it knows itself rather than entries it resolved. Said out
             // loud, because a `sync` method of this program's own looks exactly
             // like something that should work: `sync` is the **permission**
-            // ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) and a
+            // ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) and a
             // body this walk can read is the **ability**, and they are two
             // different things.
             // Kap 4.2's literal, and the shorthand with it: `Point { x, y }`
@@ -638,7 +638,7 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::Ge => Some(Value::Bool(a >= b)),
                 BinaryOp::And | BinaryOp::Or => None,
                 // **The bit operators, on the value as it is held**
-                // ([ADR-248](../../docs/specification/adr/adr-248.md) D3): an
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D9): an
                 // `i128` holds every `u64` and `i64` with the bits they have,
                 // and whether the result fits the type it goes into is
                 // `NK1116`'s, as for a sum. A count outside the width is not
@@ -966,7 +966,7 @@ impl<'a> BuildTime<'a> {
     /// A call to a function this unit declares.
     ///
     /// **The permission is read off the ledger**
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1, D2) and not
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14) and not
     /// off a list kept here: `sync` says the body never pauses, and a touch set
     /// that is empty or exactly the build's own parameters says it reaches
     /// nothing else. Both are derived for every function already.
@@ -1195,7 +1195,7 @@ impl<'a> BuildTime<'a> {
                     frame.insert(self.parsed.text(*name).to_string(), value);
                 }
                 // A `comptime` inside a body is a `let` that must fold
-                // ([ADR-073](../../../docs/specification/adr/adr-073.md) D2),
+                // ([ADR-287](../../../docs/specification/adr/adr-287.md) D3),
                 // and inside a build-time body everything must, so the two are
                 // the same statement here.
                 Stmt::Comptime { name, value, .. } => {
@@ -1271,7 +1271,7 @@ impl<'a> BuildTime<'a> {
                 }
                 Stmt::While { cond, body } => {
                     // **No step budget**
-                    // ([ADR-075](../../../docs/specification/adr/adr-075.md)
+                    // ([ADR-287](../../../docs/specification/adr/adr-287.md)
                     // D4), deliberately and with the cost written down: a
                     // `while` that does not end hangs the build. The call-depth
                     // limit above is not this and does not become it.
@@ -1417,7 +1417,7 @@ fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
 /// literal into a value at build time, and `Checker::an_escape_nothing_names`
 /// refuses a literal the set does not cover. Both read
 /// `crates/nikaia-std/src/tools/escapes.nika`, where the table is Nikaia
-/// ([ADR-250](../../docs/specification/adr/adr-250.md), #125).
+/// ([ADR-294](../../docs/specification/adr/adr-294.md), #125).
 pub use nikaia_std::tools::escapes::NotAnEscape as Refused;
 
 /// The escapes this language has, as a reader of a diagnostic wants them
@@ -1465,7 +1465,7 @@ pub fn written(text: &str) -> String {
 }
 
 /// Whether a touch is the build's own parameters
-/// ([ADR-075](../../../docs/specification/adr/adr-075.md) D2).
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D14).
 ///
 /// **`cli::args` passes, deliberately**: same parameters, same code. A build's
 /// own arguments are an input like its source is, and a body that shapes a

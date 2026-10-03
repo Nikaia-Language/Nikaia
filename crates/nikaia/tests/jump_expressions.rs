@@ -1,12 +1,12 @@
 //! `throw`, `return`, `break` and `continue` where an expression stands
-//! ([ADR-138](../../../docs/specification/adr/adr-138.md)).
+//! ([ADR-276](../../../docs/specification/adr/adr-276.md)).
 //!
 //! `=> throw NotFound` was a parse error. So was `?? throw Missing` and an arm
 //! that is one `return`. Each had to be written with braces that said nothing:
 //! there was no second statement they held together and no value they
 //! produced.
 //!
-//! The type side was already decided — [ADR-093](../../../docs/specification/adr/adr-093.md)
+//! The type side was already decided — [ADR-276](../../../docs/specification/adr/adr-276.md)
 //! gives the never type — so what this needed was the grammar and one ruling.
 
 use nikaia::contracts::{Ledger, LedgerOps, STD};
@@ -67,7 +67,7 @@ fn a_coalesce_may_end_in_a_throw() {
 
 /// **And the fallback is not put in a closure**, which is the defect this
 /// would otherwise have been: `unwrap_or_else` takes one, a jump may not cross
-/// a function boundary ([ADR-084](../../../docs/specification/adr/adr-084.md)
+/// a function boundary ([ADR-276](../../../docs/specification/adr/adr-276.md)
 /// D4), and the `return` would have returned from the closure while the
 /// program carried on.
 #[test]
@@ -130,7 +130,7 @@ fn a_jump_expression_still_needs_its_loop() {
 ///
 /// The parser reaches the expression form first, because `break_stmt` and
 /// `continue_stmt` are last in `stmt` for a measured reason
-/// ([ADR-084](../../../docs/specification/adr/adr-084.md) D8). A bare `break`
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D19). A bare `break`
 /// is normalised back to the statement it was.
 #[test]
 fn a_bare_break_is_still_the_statement_it_was() {

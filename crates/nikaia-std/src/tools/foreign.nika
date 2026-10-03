@@ -1,11 +1,11 @@
 // crates/nikaia-std/src/tools/foreign.nika
 //
 // **Every qualified name a unit writes, and every call it makes by name**
-// (ADR-104 D1, D2; ADR-010 D7, ADR-108 D4), for the compiler's
+// (ADR-290 D1, D2; ADR-010 D7, ADR-108 D4), for the compiler's
 // `foreign`: the refusal of a call into a crate nothing describes (`NK2504`,
 // `NK2505`) asks which crates a program reaches into, and `nikaia describe`
 // asks which names of one it reaches; `--trust` asks what each call is, and
-// what it hands a `root`. Moved from Rust (ADR-250, #125).
+// what it hands a `root`. Moved from Rust (ADR-294, #125).
 //
 // **The first walk of the tree in Nikaia.** It reads every item, every
 // statement and every expression the way `contracts::sync`'s walk does - the
@@ -14,7 +14,7 @@
 // expression of its statement like any other. What the holes of a literal are
 // is the compiler's to say (`holes_of`): an `f"…"`'s are its parts, a
 // template's are parsed out of its text, which only the compiler's parser can.
-// A package's alias is resolved by the compiler too (`unaliased`, ADR-046 D3),
+// A package's alias is resolved by the compiler too (`unaliased`, ADR-286 D12),
 // because the manifest key is the only name the declaration has.
 
 /// What the walk has met so far, and whether it was asked for names.
@@ -44,7 +44,7 @@ pub enum Seen {
     /// call of something that is not a name (`calls::callee_of`'s `Opaque`).
     Opaque { span: Span },
     /// An `overlap` or a `select`, which joins on the executor and so pauses
-    /// whatever it stands in (ADR-163 D1).
+    /// whatever it stands in (ADR-292 D16).
     Joins { construct: String, span: Span },
 }
 

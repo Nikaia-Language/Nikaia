@@ -15,11 +15,11 @@ user-parallelism = "no"
 
 # `type = "rust"` is ADR-002 D1's passthrough: the value with `type` removed
 # reaches Cargo verbatim - narrowed by one key
-# ([ADR-197](../../../docs/specification/adr/adr-197.md) D2), which resolves a
+# ([ADR-286](../../../docs/specification/adr/adr-286.md) D17), which resolves a
 # relative `path` against **this file** and writes it absolute into the
 # generated manifest. So this is the directory beside this one, as it would be
 # anywhere else. It used to climb four levels, against a generated manifest
-# that has not been where the count assumed since ADR-053 D1 - and these three
+# that has not been where the count assumed since ADR-286 D19 - and these three
 # projects did not build.
 [dependencies]
 hyper-shim = { type = "rust", path = "../shim" }

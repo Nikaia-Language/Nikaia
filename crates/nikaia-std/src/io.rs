@@ -36,7 +36,7 @@
 //! from costing more than it saves: a hop to a worker per *line* would be
 //! slower than the blocking reader, so a buffer comes back at a time.
 
-/// What a `std` call fails with ([ADR-158](../../../docs/specification/adr/adr-158.md) D1).
+/// What a `std` call fails with ([ADR-280](../../../docs/specification/adr/adr-280.md) D5).
 ///
 /// Part I 7.1's error type, for the library: an `enum` with payload, `impl
 /// Error`, and variants a `catch` can tell apart. Until this existed every
@@ -71,7 +71,7 @@
 /// **The payload is owned text and not a view.**
 /// [ADR-023](../../../docs/specification/adr/adr-023.md) D10 says a path that
 /// came from a buffer should travel as a view; that is the tether
-/// ([ADR-008](../../../docs/specification/adr/adr-008.md)), which is not built,
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md)), which is not built,
 /// and a lifetime on this type would reach every `std` signature. One
 /// allocation on a path that is already failing is the honest price until then.
 /// What an [`IoError`] from this module was about: a stream has no path, and
@@ -264,12 +264,12 @@ impl Lines {
     /// ([ADR-172](../../../docs/specification/adr/adr-172.md) D4).
     ///
     /// **`IoError` and not the language below's own**
-    /// ([ADR-158](../../../docs/specification/adr/adr-158.md) D1): a step of
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D5): a step of
     /// this fails, so the function around the `for` says `throws` — and what it
     /// throws is what `std` says it throws, here as everywhere else. This was
     /// the one surface that record missed, and it showed the day a program
     /// whose whole set was `io::IoError` got a **named** channel
-    /// ([ADR-159](../../../docs/specification/adr/adr-159.md) D1): the `?` the
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D9): the `?` the
     /// loop's step takes had a raw `std::io::Error` on the left of it and a
     /// named one on the right.
     ///

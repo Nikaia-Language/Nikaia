@@ -1,5 +1,5 @@
 //! What a parse fails with
-//! ([ADR-173](../../../docs/specification/adr/adr-173.md) D1).
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D38).
 //!
 //! A `dsl` entry rule's ledger entry used to write `throws = ["?"]` — *something
 //! this compiler cannot name* — because a parse fails with a **rendered
@@ -15,7 +15,7 @@
 /// A parse that did not accept its input.
 ///
 /// **It carries the message and nothing else**, which is
-/// [ADR-173](../../../docs/specification/adr/adr-173.md) D2 and the smaller of
+/// [ADR-296](../../../docs/specification/adr/adr-296.md) D39 and the smaller of
 /// the two answers that were on the table. The backend's own error has an
 /// offset, a list of expectations and the rule stack; what it renders out of
 /// them is a headline, the line with a caret under it, and what else was

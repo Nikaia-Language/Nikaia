@@ -2,14 +2,14 @@
 
 **Date:** September 11, 2026; §6 added September 12
 **Status:** measured; the numbers it produced are [ADR-038](../specification/adr/adr-038.md) §4.3's
-evidence, and §6's are [ADR-033](../specification/adr/adr-033.md) D10's — including what a re-run of
+evidence, and §6's are [ADR-033](adr/adr-033.md) D10's — including what a re-run of
 §2 on the same box a day later says about how far an absolute microsecond here travels
 **Related:** [ADR-038](../specification/adr/adr-038.md) D3 (the I/O split) and D4 (the runtime starts
-before `main`), [ADR-033](../specification/adr/adr-033.md) §8.4 (the 46 µs per-pair wake-up this is
+before `main`), [ADR-033](adr/adr-033.md) §8.4 (the 46 µs per-pair wake-up this is
 measured against), §8.5 (the prediction this settles) and D10 (the lowering §6 measures),
 [ADR-037](../specification/adr/adr-037.md) D2 (whose thread the I/O thread is)
 
-[ADR-033](../specification/adr/adr-033.md) §8.5 wrote down a prediction and said in the same
+[ADR-033](adr/adr-033.md) §8.5 wrote down a prediction and said in the same
 sentence that there was nothing to time: *"the sidecar thread is already running; two overlapped
 reads are two messages, not two thread starts… **This is a prediction, not a measurement** —
 there is no event loop, no sidecar and no async lowering yet."* All three now exist - the
@@ -40,7 +40,7 @@ compiler the block was run under, kept for that reason and not because this repo
 since [ADR-001](../specification/adr/adr-001.md) D1 the channel is stable. `--release`. `io_uring` is available on this
 kernel and `io-method = "auto"` chose it, which the binary prints before it measures anything.
 
-Same machine class as [ADR-033](../specification/adr/adr-033.md) §8.4's "4 vCPU container", so the
+Same machine class as [ADR-033](adr/adr-033.md) §8.4's "4 vCPU container", so the
 46 µs it measured and the 59 µs measured here are comparable rather than merely both being
 numbers.
 
@@ -140,7 +140,7 @@ ADR-038's §1 is no longer an argument from the literature: *that pool **is** th
 measurement of this repository's own fallback.
 
 **And the crossover is where ADR-033 put it.** On the fallback `both − seq` turns negative
-between 64 KiB (+37 µs) and 256 KiB (−78 µs) — [ADR-033](../specification/adr/adr-033.md) §8.2's
+between 64 KiB (+37 µs) and 256 KiB (−78 µs) — [ADR-033](adr/adr-033.md) §8.2's
 "crossover sits near **256 KB** of payload per operation", found again by a different vehicle on
 a different mechanism, which is the kind of agreement that makes a number worth trusting. The
 completion path has no crossover, because a fixed cost of zero has nothing to amortise.
@@ -190,7 +190,7 @@ configuration that produced it.
 
 ## 6. The same thing end to end, and what the re-run found
 
-**Date:** September 12, 2026 · the numbers [ADR-033](../specification/adr/adr-033.md) D10 and §8.5.1
+**Date:** September 12, 2026 · the numbers [ADR-033](adr/adr-033.md) D10 and §8.5.1
 rest on
 
 §1 to §5 measure `nikaia_std` from Rust. That answers what the *function* costs and not what the
@@ -273,7 +273,7 @@ magnitude worse than either; the fallback's crossover is where ADR-033 §8.2 put
 moved.
 
 A number quoted from §2 in an ADR should therefore be read as "about this, on a 4-vCPU shared VM",
-which is how [ADR-033](../specification/adr/adr-033.md) D10 quotes it.
+which is how [ADR-033](adr/adr-033.md) D10 quotes it.
 
 ### 6.4 How to run it again
 

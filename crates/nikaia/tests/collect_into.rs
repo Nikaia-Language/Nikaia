@@ -1,5 +1,5 @@
 //! **`collect()` builds what the place it goes into declares**
-//! ([ADR-227](../../../docs/specification/adr/adr-227.md)): a list where
+//! ([ADR-293](../../../docs/specification/adr/adr-293.md)): a list where
 //! nothing says otherwise, and a map, a set or text where a `let`, a
 //! field or a result declares one. Each program is compiled and **run** at both
 //! settings of `user_parallelism`.
@@ -105,7 +105,7 @@ fn collect_builds_the_map_the_set_and_the_text_a_let_declares() {
 }
 
 /// **Both kinds into a map built by `collect`**: the key is mixed, so each key
-/// goes in as it is (ADR-227 D2), and a result declares the map.
+/// goes in as it is (ADR-293 D26), and a result declares the map.
 const MIXED_KEYS: &str = r##"use std::fs
 use std::collections
 

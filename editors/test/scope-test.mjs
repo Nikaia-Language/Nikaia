@@ -245,7 +245,7 @@ const cases = [
     expect: [[";", "punctuation.terminator.statement.nika"]],
   },
   {
-    name: "the typed spread (ADR-007 D5)",
+    name: "the typed spread (ADR-296 D5)",
     src: `pub fn prepare(&self, statement: &str; ...args: Self::dsl) -> Self::dsl { }\n`,
     expect: [
       ["...", "keyword.operator.spread.nika"],
@@ -356,7 +356,7 @@ const cases = [
   },
   {
     comment:
-      "ADR-084. A jump is scoped with `return` and not with `while`: " +
+      "ADR-276. A jump is scoped with `return` and not with `while`: " +
       "`keyword.control.loop` opens a loop and these two leave one. And " +
       "neither takes a value or a label, so the word is the whole token.",
     name: "`break` and `continue` are control flow, like `return`",
@@ -398,11 +398,11 @@ const cases = [
     ],
   },
   {
-    // `@borrowed` stood here and is gone (ADR-201 D1). `@frame` is the same
+    // `@borrowed` stood here and is gone (ADR-283 D4). `@frame` is the same
     // scope on a word the language still has and a program still writes, so
     // what this holds is the rule - an attribute is coloured as one - rather
     // than a word that left.
-    name: "an attribute is a modifier (ADR-009 D1)",
+    name: "an attribute is a modifier (ADR-296 D9)",
     src: `grammar Log {\n    @frame(boundary: "\\n")\n    rule LINE -> i64 = n:dec[i64](digit+) -> { n }\n}\n`,
     expect: [["@frame", "storage.modifier.attribute.nika"]],
   },

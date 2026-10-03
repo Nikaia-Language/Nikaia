@@ -1,5 +1,5 @@
 //! `nikaia describe <crate>` — the draft a boundary is described by
-//! ([ADR-104](../../../docs/specification/adr/adr-104.md) D2, D3, D4).
+//! ([ADR-290](../../../docs/specification/adr/adr-290.md) D2-D4).
 //!
 //! D1 refuses a call into a crate nothing describes and names this command.
 //! What it writes is the file every analysis then reads there, so what it gets
@@ -34,7 +34,7 @@ fn project(name: &str, crate_source: &str, program: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src")).expect("a directory to work in");
     // The path is relative to **`nikaia.toml`**
-    // ([ADR-197](../../../docs/specification/adr/adr-197.md) D1), so the crate
+    // ([ADR-286](../../../docs/specification/adr/adr-286.md) D16), so the crate
     // sits beside `src/` and is named as such. It used to climb three levels,
     // against a generated manifest — which is how this test and `cargo build`
     // came to look in two different places for one crate's sources.
@@ -88,8 +88,8 @@ fn entries(root: &Path) -> String {
 /// never report.
 ///
 /// The reading half is a grammar written in Nikaia now
-/// ([ADR-195](../../../docs/specification/adr/adr-195.md) D3,
-/// [ADR-196](../../../docs/specification/adr/adr-196.md) D1), and this is the
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D13,
+/// [ADR-290](../../../docs/specification/adr/adr-290.md) D16), and this is the
 /// difference stated as an assertion. On the crate below the character scanner
 /// wrote entries for **four functions that do not exist** — `spectre` inside a
 /// block comment, `phantom` on the second line of a string literal, `hidden`
@@ -234,7 +234,7 @@ fn a_module_is_a_file_as_often_as_it_is_a_block() {
 }
 
 /// **The describer proposes and never claims**
-/// ([ADR-193](../../../docs/specification/adr/adr-193.md) D3), and **flags the
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D8), and **flags the
 /// promise a toolchain cannot check** (D5) — both on the repository's own shim,
 /// which has all three of D4's shapes in it on purpose.
 ///
@@ -307,7 +307,7 @@ fn what_the_describer_saw_is_a_note_and_never_a_column() {
     );
 }
 
-/// **The row a bound cannot answer** — [ADR-193](../../../docs/specification/adr/adr-193.md)
+/// **The row a bound cannot answer** — [ADR-290](../../../docs/specification/adr/adr-290.md)
 /// D4's call graph, on the shim it was written from.
 ///
 /// `across_a_thread_unchecked` asks its caller for nothing: an
@@ -370,7 +370,7 @@ fn a_bound_that_was_taken_away_is_found_by_following_the_calls() {
 }
 
 /// **A `use` makes one function two strings**, and the table is what puts them
-/// back together ([ADR-193](../../../docs/specification/adr/adr-193.md) D4).
+/// back together ([ADR-290](../../../docs/specification/adr/adr-290.md) D9).
 ///
 /// Written as its own test because the shim writes `tokio::spawn` in full, so
 /// the repository's own evidence never exercises the table — and a crate that
@@ -592,7 +592,7 @@ fn a_types_fields_answer_whether_it_crosses() {
     assert!(!says("Tuple").contains("crosses"), "{}", says("Tuple"));
 }
 
-/// **A type's `derive` says whether it copies and compares** ([ADR-252](../../../docs/specification/adr/adr-252.md)
+/// **A type's `derive` says whether it copies and compares** ([ADR-294](../../../docs/specification/adr/adr-294.md)
 /// D4.3): `Copy` is what a declared struct holding it needs to copy too, and
 /// `PartialEq` is what `==` on it needs. A type with no `derive` says neither.
 #[test]
@@ -638,7 +638,7 @@ fn a_derive_says_whether_a_type_copies_and_compares() {
     assert!(!says("Plain").contains("compares"), "{}", says("Plain"));
 }
 
-/// **An entry exists because a program asked for it** ([ADR-028](../../../docs/specification/adr/adr-028.md)
+/// **An entry exists because a program asked for it** ([ADR-288](../../../docs/specification/adr/adr-288.md)
 /// D5), so the draft is proportional to use and not to the crate.
 #[test]
 fn only_what_the_program_calls_is_described() {
@@ -731,7 +731,7 @@ fn a_crate_nothing_declares_is_not_described() {
 /// the file a reviewer wrote by hand before this command existed.
 ///
 /// `examples/foreign-runtime/*/contracts/hyper_shim.contracts` is what
-/// [ADR-104](../../../docs/specification/adr/adr-104.md) §5 calls *the file
+/// [ADR-290](../../../docs/specification/adr/adr-290.md) calls *the file
 /// `nikaia describe` will write, produced the way a reviewer would check it*.
 /// This is that claim, tested — and it needs no network, because the crate is
 /// in the tree.
@@ -740,7 +740,7 @@ fn a_crate_nothing_declares_is_not_described() {
 /// comments** — a reviewer's, and the only part of D5's review a command cannot
 /// do. `crosses = false` on `LocalHandle` **is** in the draft since the
 /// describer reads fields ([ADR-123](../../../docs/specification/adr/adr-123.md)
-/// D2), which is the line ADR-104 §5 said the crossing refusals were waiting
+/// D2), which is the line ADR-290 said the crossing refusals were waiting
 /// for.
 #[test]
 fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
@@ -796,12 +796,12 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
 /// `nikaia describe` reads a `pub struct`'s `Rc` field and writes
 /// `crosses = false` ([ADR-123](../../../docs/specification/adr/adr-123.md)
 /// D2); the build merges the description into the ledger the analyses read
-/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1); and `NK2501`
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D1); and `NK2501`
 /// refuses a `spawn` that takes the value with it — in **this compiler's**
 /// words, on the `.nika` line, with a way out.
 ///
 /// **That chain is what three entries were waiting on**, each from its own end:
-/// ADR-104 §5's *the day the describer reads fields*, ADR-123's *`NK2501` and
+/// ADR-290's *the day the describer reads fields*, ADR-123's *`NK2501` and
 /// `NK2502` can fire, for the first time, on a described foreign type*, and
 /// issue #264's task refusals. Asserted from a **program** rather than from
 /// a hand-written ledger, because a hand-written one proves the last link and

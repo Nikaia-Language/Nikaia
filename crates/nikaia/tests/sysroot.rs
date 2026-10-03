@@ -33,17 +33,17 @@ fn the_committed_rust_is_what_this_compiler_lowers() {
         "std has a Nikaia half, and this test is about it (ADR-014 D1)"
     );
     // **And the toolchain's own**, which rides the same release step
-    // ([ADR-196](../../../docs/specification/adr/adr-196.md) D1): the `.rs` is
+    // ([ADR-290](../../../docs/specification/adr/adr-290.md) D16): the `.rs` is
     // committed, so a change to the `.nika` that is not re-lowered is a silent
     // divergence, and that is as true of `tools/` as of `std`. The tools are
-    // one package, lowered into one file (ADR-261).
+    // one package, lowered into one file (ADR-294).
     let tools = sysroot.tools_dir();
     assert!(
         !sysroot
             .tool_modules()
             .expect("the toolchain's Nikaia modules")
             .is_empty(),
-        "`src/tools` holds the reading half of `nikaia describe` (ADR-195 D3)"
+        "`src/tools` holds the reading half of `nikaia describe` (ADR-290 D13)"
     );
     let expected = sysroot::lower_tools(&tools).expect("the toolchain's Nikaia lowers");
     let at = sysroot::tools_lowered_path(&tools);
@@ -221,7 +221,7 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
     std::fs::create_dir_all(&src).expect("a sysroot to work in");
 
     // A grammar whose action calls something that can pause. A grammar's
-    // action may not pause (ADR-142 D1), because the generated parser is an
+    // action may not pause (ADR-296 D35), because the generated parser is an
     // ordinary function. The probe used to reach the pause through a method on
     // what a **`match` arm** bound, which resolved to nothing while a pattern
     // binding had no type; since issue #168 such a binding is typed
@@ -274,7 +274,7 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
 }
 
 /// **A tool reads the Rust it is handed, described**
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.3): a module in
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.3): a module in
 /// `tools/` is checked and lowered against `tools/described.contracts` too, so
 /// a `winnow_grammar::Symbol` copies and compares and `resolve` does not
 /// pause. A module of `std` itself is not: a program's `std` names no crate of
@@ -306,7 +306,7 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
         let module = at.join("probe.nika");
         std::fs::write(&module, source).expect("write the module");
         match dir {
-            // **The tools are lowered as their package** (ADR-261).
+            // **The tools are lowered as their package** (ADR-294).
             "tools" => sysroot::lower_tools(&at),
             _ => sysroot::lower_std_module(&module),
         }
@@ -337,7 +337,7 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
     );
 }
 
-/// **The toolchain's files are one namespace, and say so** (ADR-047 D1, #125):
+/// **The toolchain's files are one namespace, and say so** (ADR-286 D1, #125):
 /// two private functions of one name in two of them were lowered as one, and
 /// a call of the one met the other's parameters - an argument count refused
 /// about a function the caller never meant.
@@ -361,7 +361,7 @@ fn two_tools_that_declare_one_name_are_refused() {
 }
 
 /// **A constant another tool declares is read like a function it declares**
-/// (ADR-047 D1, ADR-261): each file is checked with the others beside it, and
+/// (ADR-286 D1, ADR-294): each file is checked with the others beside it, and
 /// only its own `comptime`s were bound - so `TEXT` from `ty.nika` was
 /// `NK1117` in `views.nika` (found moving the compiler's `views` into Nikaia,
 /// #125).

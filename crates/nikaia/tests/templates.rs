@@ -156,7 +156,7 @@ fn an_unclosed_hole_is_refused() {
 }
 
 /// Only `html` is compiled as a template here, and a foreign statement with no
-/// hole at all is refused: its holes are what ADR-007 D5 gives a meaning to,
+/// hole at all is refused: its holes are what ADR-296 D5 gives a meaning to,
 /// and a body without them belongs to a grammar this compiler does not have.
 /// Saying so is better than lowering it to something that reads like a template
 /// and is not one.
@@ -221,7 +221,7 @@ fn the_position_check_runs_through_a_loop() {
 }
 
 /// The collection carries `:` because it is captured from the enclosing scope
-/// (ADR-007 D4), and leaving it off is worth a sentence rather than a parse
+/// (ADR-296 D4), and leaving it off is worth a sentence rather than a parse
 /// error about a missing angle bracket.
 #[test]
 fn the_capture_marker_is_required_and_explained() {

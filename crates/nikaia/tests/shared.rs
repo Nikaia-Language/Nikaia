@@ -114,7 +114,7 @@ fn a_shared_value_is_made_by_calling_the_type_and_lent_out_by_a_view() {
     // `atomic` about everything would pass a test that only checked it ran.
     assert!(
         rust.contains("std::rc::Rc::new(connect("),
-        "the call is the constructor (ADR-064 D2):\n{rust}"
+        "the call is the constructor (ADR-281 D2):\n{rust}"
     );
     // A borrow duplicates nothing (ADR-040 D1's correction). Two of them, and
     // not one step of the count.
@@ -237,7 +237,7 @@ fn the_report_explains_a_real_program() {
     let printed = report(BORROWED);
     assert!(printed.starts_with("main:\n"), "{printed}");
     // `(Shared)` and not `(Shared[Connection])`: since
-    // [ADR-064](../../../docs/specification/adr/adr-064.md) D2 the hull is made
+    // [ADR-281](../../../docs/specification/adr/adr-281.md) D2 the hull is made
     // by a call and this line writes no annotation, so what the analysis knows
     // about the slot is that it is a `Shared` - not what it holds. It needs no
     // more than that to decide a count, and the report says what it knows.
@@ -476,7 +476,7 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
     );
 }
 
-// --- the shared mutable type, end to end (ADR-064) ---------------------------
+// --- the shared mutable type, end to end (ADR-281) ---------------------------
 
 /// Part II 12.2's counter, which is the program `user_parallelism` exists for.
 const COUNTER: &str = "\
@@ -495,7 +495,7 @@ fn main() {
 /// **It compiles and runs, at both settings, for the first time.**
 ///
 /// Three things had to be true at once and none of them was
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md)): `SharedMut` had to be
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)): `SharedMut` had to be
 /// a type rather than a name that went through into Rust untranslated; the hull
 /// had to be makeable around a **number**, which the annotation never could
 /// because a literal has no type of its own; and both ends of the value - the
@@ -511,7 +511,7 @@ fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
         assert_eq!(printed.trim(), "6", "at `{setting}`");
 
         // **One name above, two hulls below, and always a matching pair** -
-        // never an atomic count around a cheap lock (ADR-061 D2, ADR-057 D3).
+        // never an atomic count around a cheap lock (ADR-061 D2, ADR-281 D7).
         //
         // The cheap pair at **both** settings, and that is the per-value answer
         // doing its work: `zaehle` is an ordinary call on the same thread, so
@@ -539,7 +539,7 @@ fn the_counter_of_part_ii_12_2_runs_at_both_settings() {
 }
 
 /// **And the long spelling is not a second way to write it**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D3), because two
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D3), because two
 /// spellings of one type were the same bytes below and two types above.
 #[test]
 fn a_shared_around_a_lock_is_refused_and_names_the_short_form() {
@@ -599,9 +599,9 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
     }
 
     // A value a task takes may reach another thread, so both hulls are the
-    // robust shape - and only where it does (ADR-037 D7, ADR-057 D3). For a
+    // robust shape - and only where it does (ADR-037 D7, ADR-281 D7). For a
     // counter the robust lock is the word itself, a compare-and-swap
-    // (ADR-238 D1): the count is atomic either way.
+    // (ADR-281 D8): the count is atomic either way.
     let (_, crossing) = run(
         "task-handle-pair",
         SHARED_WITH_A_TASK,
@@ -618,7 +618,7 @@ fn a_handle_a_task_uses_is_duplicated_and_the_name_survives() {
 ///
 /// The one program neither half of this could run on its own, which is why it
 /// is here rather than beside either. The lock had to be a **type**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md)) — it was an
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)) — it was an
 /// annotation that went into the language below untranslated — and a task had
 /// to be a **thread** ([ADR-055](../../../docs/specification/adr/adr-055.md) §6
 /// step 1's `yes` half), which it was not: every task interleaved on the one
@@ -677,16 +677,16 @@ fn main() {
         );
     }
 }
-// --- a door over several locks (ADR-065) -------------------------------------
+// --- a door over several locks (ADR-281) -------------------------------------
 
 /// **Chapter 12's own transfer**, which the language could not write.
 ///
 /// `access_all` read and `update_all` did not exist, so taking from one account
 /// and giving to the other under both locks had no door
-/// ([ADR-059](../../../docs/specification/adr/adr-059.md) D1 named the gap as it
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D11 named the gap as it
 /// made it). It runs now, and the block hands back **one new value per lock** —
 /// `update`'s rule widened rather than a second rule
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D18).
 const TRANSFER: &str = "\
 fn main() {
     let konto_a = SharedMut(100)

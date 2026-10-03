@@ -510,7 +510,7 @@ fn a_body_that_cannot_honour_static_is_refused_by_the_language_below() {
 }
 
 /// **A result that *carries* a view needs the same lifetime a result that *is*
-/// one needs** ([ADR-008](../../../docs/specification/adr/adr-008.md) D9).
+/// one needs** ([ADR-283](../../../docs/specification/adr/adr-283.md) D7).
 ///
 /// D9 writes `'static` where a function has nothing to borrow from, because
 /// there is nothing for Rust's elision to take and `-> ref String` is *missing

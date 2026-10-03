@@ -1,6 +1,6 @@
 // crates/nikaia/src/ast/mod.rs
 //
-// **The syntax tree is declared in Nikaia** (ADR-252 D1):
+// **The syntax tree is declared in Nikaia** (ADR-294 D6):
 // `nikaia-std/src/tools/ast.nika`, lowered to `ast.rs` beside it. This module
 // re-exports it, so every reader keeps writing `crate::ast::Expr`, and adds
 // what the compiler needs that the language does not say - a literal's number
@@ -17,7 +17,7 @@ pub fn int_value(value: u64, negative: bool) -> i128 {
     }
 }
 
-/// The literal that says `n`. The parser reads only numbers ADR-248 D2
+/// The literal that says `n`. The parser reads only numbers ADR-285 D19
 /// allows, from `-9223372036854775808` to `18446744073709551615`, so the
 /// magnitude fits a `u64`.
 pub fn int_literal(n: i128) -> Expr {

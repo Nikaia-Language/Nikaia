@@ -248,7 +248,7 @@ hand-written one:
 | `index::at`'s sign test on every `xs[i]` | the gap of §8 | a counter that starts at a literal and only grows, and a range's binding, index `as usize`; a comparison with a length is made in `usize` |
 | `count::of`'s `try_from` on a length | a branch per call | the same sign test, inlined |
 | `Vec` of a given length | a `push` per element | `resize` in the ledger, fused into `vec![v; n]` |
-| `&Vec<T>` parameters | a second load for every read | a list the body only reads is a `&[T]`, as text is a `&str` (ADR-207 D3) |
+| `&Vec<T>` parameters | a second load for every read | a list the body only reads is a `&[T]`, as text is a `&str` (ADR-282 D5) |
 | a runtime started for a `main` that cannot pause | an I/O thread, so `malloc` takes locks | started on demand (`rt::on_demand`) |
 | an index into a `mut` parameter; a number its uses do not type | did not compile | lowered (`&mut *out`; the range binding joins its bounds) |
 | a literal no `i32` holds in a `Vec[u32]` | did not compile (`4294967295i64`) | the element's type |

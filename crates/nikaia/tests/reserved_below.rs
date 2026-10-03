@@ -1,5 +1,5 @@
 //! A name the **language below** reserves, written in every position this
-//! language has one ([ADR-076](../../../docs/specification/adr/adr-076.md)).
+//! language has one ([ADR-298](../../../docs/specification/adr/adr-298.md)).
 //!
 //! `let type = 3` used to lower to `let type = 3;` and `rustc` answered
 //! *"expected identifier, found keyword `type`"* about a file nobody wrote, with
@@ -35,7 +35,7 @@ const RESERVED_BELOW: &[&str] = &[
 /// The words that have left the sweep since: reserved words of **this** language
 /// now, so no program can put one in a name position and the escape can never
 /// fire for it. `trait` since
-/// [ADR-078](../../../docs/specification/adr/adr-078.md), and `extern` and
+/// [ADR-295](../../../docs/specification/adr/adr-295.md), and `extern` and
 /// `unsafe` with their constructs
 /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1) — the two words
 /// Part III 15.1 writes, reserved on a measurement that came to zero. All three
@@ -44,7 +44,7 @@ const RESERVED_BELOW: &[&str] = &[
 ///
 /// They stay in the emitter's list on purpose — that list says what the language
 /// *below* reserves, which is still true of all of them, and un-reserving here
-/// is the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
+/// is the free direction ([ADR-292](../../../docs/specification/adr/adr-292.md) D7).
 ///
 /// **`ref` joined them at 0.0.133**
 /// ([ADR-184](../../../docs/specification/adr/adr-184.md) D1), and this test is
@@ -57,9 +57,9 @@ const RESERVED_BELOW: &[&str] = &[
 /// see that; a program that writes the word in **every** position could.
 ///
 /// **`macro` went the other way and is in the sweep again**
-/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D1). It had been
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md) D6). It had been
 /// reserved *against* a construct rather than for one, which is the ground
-/// [ADR-051](../../../docs/specification/adr/adr-051.md) D1 does not accept, and
+/// [ADR-298](../../../docs/specification/adr/adr-298.md) D1 does not accept, and
 /// leaving the list is what put it back where a Nikaia name can be one — so the
 /// escape can fire for it again. `const` and `loop` joined it there, and `quote`
 /// is a keyword in neither language and needs nothing.

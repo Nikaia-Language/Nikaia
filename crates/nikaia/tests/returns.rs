@@ -136,7 +136,7 @@ fn a_return_in_an_if_used_as_a_value_leaves_the_function() {
 }
 
 /// A block used as a value, and a `seq` block - which is a block that has
-/// withdrawn a reordering permission and nothing else (ADR-033 D7). Both had the
+/// withdrawn a reordering permission and nothing else (ADR-292 D7). Both had the
 /// same defect.
 ///
 /// **Read rather than run, and the shape is the reason.** For a block's *last*
@@ -150,7 +150,7 @@ fn a_return_in_an_if_used_as_a_value_leaves_the_function() {
 ///
 /// It used to check `seq { … }` beside the bare block, because the two were the
 /// same shape with different meanings. `seq` is withdrawn
-/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D7) and the bare block
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D7) and the bare block
 /// is the shape that remains.
 const BLOCK_AS_VALUE: &str = "fn pick() -> i64 {\n\
      \x20   let y = {\n\
@@ -168,7 +168,7 @@ fn a_return_in_a_block_used_as_a_value_leaves_the_function() {
 /// **A `catch` handler, which is the one the ordering analysis has an opinion
 /// about.**
 ///
-/// [ADR-034](../../../docs/specification/adr/adr-034.md) is about exactly this
+/// [ADR-292](../../../docs/specification/adr/adr-292.md) is about exactly this
 /// handler: one that can `return` makes the *next* statement conditional on the
 /// guarded operation having succeeded, so the two may not be overlapped.
 /// `contracts::order`'s `diverts` counts the `return` at the end of the handler

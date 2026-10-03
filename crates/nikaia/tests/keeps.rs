@@ -211,7 +211,7 @@ fn a_call_nothing_describes_keeps_what_it_is_given() {
 /// standing there is kept.
 ///
 /// And which entry the call goes to is the type checker's answer
-/// ([ADR-028](../../../docs/specification/adr/adr-028.md)), so where **any**
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md)), so where **any**
 /// method call in a body went to an entry no ledger has, the candidate list is
 /// not the whole list and may not be believed. `crates/nikaia/tests/lambdas.rs`
 /// is where that was met: its `Account::access` is a Rust stand-in taking
@@ -407,7 +407,7 @@ fn a_field_of_a_type_this_file_does_not_declare_keeps() {
     assert_eq!(keeps(source, "first"), ["m"]);
 }
 
-/// **Every way a value leaves is a return** ([ADR-207](../../../docs/specification/adr/adr-207.md)
+/// **Every way a value leaves is a return** ([ADR-282](../../../docs/specification/adr/adr-282.md)
 /// D4): the body's last expression, an `if`'s or a `match`'s arm, and a name
 /// a `let` bound to the parameter. Each of these was read as lent, and each
 /// came out as `rustc`'s *mismatched types* about a file nobody wrote.

@@ -1,5 +1,5 @@
 //! **A declared type whose every part is a copy derives `Copy`**
-//! ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.1): the Rust
+//! ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.1): the Rust
 //! below may copy it, and nothing the language says about the value changes.
 
 mod common;
@@ -88,7 +88,7 @@ fn a_copy_declared_below_its_holder_is_found() {
     assert!(derive_of(&rust, "Outer").contains("Copy"), "{rust}");
 }
 
-/// **A generic struct is seen through** (ADR-252 §5): `Spanned[Pattern]`
+/// **A generic struct is seen through** (ADR-294): `Spanned[Pattern]`
 /// holds a `Pattern` inline, so a `Pattern` holding one is on a ring and the
 /// member is boxed; and `Spanned[Stmt]` compares only if `Stmt` does, so a
 /// `Block` of them derives no `PartialEq` a `Stmt` without one would refuse.
@@ -135,7 +135,7 @@ fn a_type_that_is_dropped_is_not_a_copy() {
 }
 
 /// **A described Rust type that says it copies is a part that copies**
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.3), and one that
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.3), and one that
 /// says nothing is not: the line is a reviewed claim, and its absence is *no*.
 #[test]
 fn a_described_type_that_copies_is_a_part_that_copies() {

@@ -10,7 +10,7 @@ that measurement.
 
 ## 1. The three contenders, and which two were already measured
 
-[ADR-073](../specification/adr/adr-073.md) §3 measured **two**, on 200 keys:
+[ADR-073](adr/adr-073.md) §3 measured **two**, on 200 keys:
 
 ```
 HashMap nachschlagen                  18.65  17.94  18.60  17.85  17.84   ns

@@ -1,8 +1,8 @@
 //! `std::net` — the socket `std` lends, so a Nikaia package can speak a
 //! protocol over it
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D1).
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D6).
 //!
-//! [ADR-069](../../../docs/specification/adr/adr-069.md) D2's subtraction,
+//! [ADR-289](../../../docs/specification/adr/adr-289.md) D2's subtraction,
 //! carried one item further: what was pushed out of `std` is the *protocol and
 //! the framework*, and a socket is neither. It is an operating-system resource
 //! of exactly the kind `fs` and `io` already own, and the `http` package is
@@ -21,7 +21,7 @@
 //! `bind` and `connect` are the two that do **not**. Binding is a syscall that
 //! answers immediately; connecting is not, and this one blocks on it — stated
 //! rather than hidden, because what the MVP connects to is a listener on the
-//! same machine ([ADR-194](../../../docs/specification/adr/adr-194.md) D5) and a
+//! same machine ([ADR-289](../../../docs/specification/adr/adr-289.md) D13) and a
 //! non-blocking connect is a second readiness shape for a case nothing here
 //! has yet.
 //!
@@ -58,7 +58,7 @@ pub struct Listener {
 /// **Dropping it closes it**, which is Rust's own answer and not a decision
 /// this makes. A plain TCP close hands the socket to the kernel and waits for
 /// nothing, so this needs no pausable `Cleanup`
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md)); a program that
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md)); a program that
 /// wants the close at a named moment writes `close`.
 pub struct Connection {
     inner: TcpStream,
@@ -68,7 +68,7 @@ pub struct Connection {
 ///
 /// `"127.0.0.1:8080"` — the address is the caller's and this makes no choice
 /// about it. Which address a *server* binds when nobody says is
-/// [ADR-194](../../../docs/specification/adr/adr-194.md) D3's, one layer up.
+/// [ADR-289](../../../docs/specification/adr/adr-289.md) D13's, one layer up.
 pub async fn listen(address: &str) -> Result<Listener, IoError> {
     let inner = TcpListener::bind(address).map_err(|e| IoError::of(e, address))?;
     inner

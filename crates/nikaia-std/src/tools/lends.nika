@@ -3,7 +3,7 @@
 // Whether a callee **lends** a parameter, so that the compiler writes the
 // reference and the caller does not (ADR-094 D1, D2) - the rule the
 // compiler's `contracts::keeps` answers from the `keeps` column, moved from
-// Rust (ADR-250, #125). The walk that fills the column stays Rust.
+// Rust (ADR-294, #125). The walk that fills the column stays Rust.
 //
 // One answer with three readers - the emitter writing the declaration, the
 // emitter writing the call, and the checker refusing a `&` somebody wrote -
@@ -18,9 +18,9 @@ comptime COPIED: Array[ref String, 18] = ["i8", "i16", "i32", "i64", "isize", "u
 /// not be the receiver and not be `mut` (ADR-094 D3); then either its type is
 /// written as a view - the `&` the author wrote, at a function and at a
 /// method alike - or, at a function, its value **moves**, no ledger in
-/// `copying` says the type copies (ADR-252 D4.1), and the body does not keep
+/// `copying` says the type copies (ADR-294 D9.1), and the body does not keep
 /// it. A method's inferred lending waits on the emitter knowing which entry a
-/// call goes to (ADR-028).
+/// call goes to (ADR-288).
 pub fn lends_in(contract: ref FnContract, at: i64, copying: ref Vec[ref Ledger]) -> bool {
     let signature = contract.signature ?? return false
     let mut position = 0
@@ -62,7 +62,7 @@ fn described_as_copying(name: ref String, copying: ref Vec[ref Ledger]) -> bool 
 /// than copied - and whether this compiler can say so at all: a type it cannot
 /// name, a type variable and anything else unknown answer no, because what
 /// hangs on it is a reference the compiler would write. An array copies as its
-/// elements do (ADR-152 D2); a function value moves (ADR-102 D1); a nullable
+/// elements do (ADR-152 D2); a function value moves (ADR-277 D6); a nullable
 /// and a tuple move where a part does.
 pub fn moves(ty: ref Ty) -> bool {
     return match ty {

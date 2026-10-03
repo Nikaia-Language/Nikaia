@@ -158,7 +158,7 @@ reason worth keeping: `1 + ` fails inside `add_tail`, whose operand is a
 **No parse error showed the source line.** Every message was a headline plus
 `in <rule>` lines, and a reader of `at line 3, column 5` never saw line 3, while
 a *rustc* diagnostic routed through `nikaia --explain` got a snippet and a caret
-(ADR-012, `diagnostics::render`). It applied to all 26 rows and nothing else in
+(ADR-300, `diagnostics::render`). It applied to all 26 rows and nothing else in
 this file touched it.
 
 `ParseError::render(source)` now prints the line with a caret under the token
@@ -224,7 +224,7 @@ is left is 3 and 4, and neither is a performance question.
    the choice and what decided it.
 
    What the analysis is, so a later one is not mistaken for it: **one buffer**,
-   because ADR-008 gives a compilation unit one input lifetime. The join over a
+   because ADR-283 gives a compilation unit one input lifetime. The join over a
    program's sources is not a coarsening of a per-buffer analysis — it is the
    per-buffer analysis, for the one buffer this representation can express.
    `std` has no untrusted source yet; `http`, `net` and `db` arrive with the
@@ -242,15 +242,15 @@ is left is 3 and 4, and neither is a performance question.
    `fortunes.nika` lowers and runs today**, and `examples/escaping/src/main.nika` is the
    whole contract in one page.
 
-   Since [ADR-022](specification/adr/adr-022.md) removed the `fn:` form, the
+   Since [ADR-277](specification/adr/adr-277.md) removed the `fn:` form, the
    **whole file parses** — the chain in `main` was the last thing the syntax
    was in the way of. What it waits on now is two runtime pieces and no
    language question:
 
-   * **The `postgres` block**, a deferred-parameter DSL (ADR-007 D4): the
+   * **The `postgres` block**, a deferred-parameter DSL (ADR-296 D4): the
      statement has to reach a driver intact, which is a different machinery
      from the template that is built.
-   * **G6, the runtime binding.** [ADR-018](specification/adr/adr-018.md)
+   * **G6, the runtime binding.** [ADR-289](specification/adr/adr-289.md)
      decided what a handler *is* — the request as its first implicit argument,
      and what each return type answers with — and nothing of it can be built
      before there is a server to bind to. That is the roadmap line after the
@@ -309,11 +309,11 @@ pushed and green: 28 tests, `cargo fmt --check` clean, clippy clean. This file
 is updated on `claude/nika-2-branches-offene-aufgaben-kd77u1`, which is that
 branch plus this note.
 
-ADR-009 no longer sits below it: its two commits landed on `main` on their own
+ADR-296 no longer sits below it: its two commits landed on `main` on their own
 (PR #10), so what PR #9 still adds is the Stage 0 lowering and everything
 after it.
 
-* `Cargo.lock` is on upstream `024e3d3`. The measurements in ADR-011 §4 were
+* `Cargo.lock` is on upstream `024e3d3`. The measurements in ADR-296 were
   taken on `2f0d5da` and say so.
 * `examples/1brc.nika` runs and prints what the benchmark asks for.
 * The 203 explicit `_sp:skip_ws` bindings are gone (commit `8888c3c`). **That is

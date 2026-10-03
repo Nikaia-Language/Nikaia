@@ -1,6 +1,6 @@
 //! What it costs to answer a request with a file, five ways.
 //!
-//! The question is [ADR-058](../../../../docs/specification/adr/adr-058.md)'s:
+//! The question is [ADR-289](../../../../docs/specification/adr/adr-289.md)'s:
 //! can a file reach a socket without the program reading it, and is that worth
 //! a decision. There are **two families of answer**, because there are two
 //! programs: one whose page is known when the server starts, and one whose file
@@ -272,7 +272,7 @@ fn mapped_named(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usi
 
 /// Named by the request, and the bytes still never enter the process. The
 /// `fstat` is not decoration: `Content-Length` has to be known before the
-/// status line ([ADR-058](../../../../docs/specification/adr/adr-058.md) D6).
+/// status line ([ADR-289](../../../../docs/specification/adr/adr-289.md) D27).
 fn sendfile_named(paths: &[std::path::PathBuf], socket: &mut TcpStream, times: usize) {
     for turn in 0..times {
         let file = File::open(&paths[turn % paths.len()]).expect("open");

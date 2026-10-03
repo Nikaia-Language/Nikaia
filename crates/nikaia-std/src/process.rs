@@ -2,7 +2,7 @@
 //
 // `std::process`: start another program and wait for what it says
 // ([ADR-243](../../../docs/specification/adr/adr-243.md), on
-// [ADR-195](../../../docs/specification/adr/adr-195.md) D4's decision that
+// [ADR-290](../../../docs/specification/adr/adr-290.md) D14's decision that
 // `std` gains a subprocess).
 //
 // **One call, run to the end.** `run` starts a program, hands it its

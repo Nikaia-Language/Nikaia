@@ -69,7 +69,7 @@
 // promise can both be kept:
 //
 //   * A crossing **the compiler chose** - the `task::both` that statement
-//     overlapping emits (ADR-033) - is a step the compiler was never obliged to
+//     overlapping emits (ADR-292) - is a step the compiler was never obliged to
 //     take. Anything but `May` means it does not take it: the statements keep
 //     the order they were written in. Nothing is refused and only speed is
 //     spent, which is `order.rs`'s own polarity ("every `false` is either a real
@@ -88,7 +88,7 @@
 // A closed list, like `touch::KINDS` and for the same reason: a name this file
 // does not know is answered `Undecided`, and a name it knows wrongly would be a
 // typo that bought a crossing. The list grows when a type needs it, never
-// speculatively (ADR-028 D5).
+// speculatively (ADR-288 D11).
 //
 // Every name in [`PLAIN`] and [`CONTAINERS`] is safe both to **move** to
 // another thread and to be **looked at** from one, which is why a view (`&T`)
@@ -612,7 +612,7 @@ mod tests {
     }
 
     /// A refusal beats an admission of ignorance, because a reader can act on
-    /// it (ADR-033 D9's rule for the same kind of choice).
+    /// it (ADR-292 D2's rule for the same kind of choice).
     ///
     /// Asked of [`join`] directly, because no type produces a refusal to put on
     /// one side of it any more (ADR-037 D6). The rule is still the rule, and the

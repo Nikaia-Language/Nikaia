@@ -1,7 +1,7 @@
 # What a compare-and-swap loop would buy, and the defect finding it uncovered
 
 **Two findings, and the second one was not the question.** The question was
-whether [ADR-039](specification/adr/adr-039.md) §3's open door is worth walking
+whether [ADR-281](specification/adr/adr-281.md)'s open door is worth walking
 through: `update` takes a pure function and is therefore repeatable, which is the
 route to an implementation that **retries instead of locking** — the route
 Clojure's `atom` and Haskell's `TVar` took.
@@ -32,7 +32,7 @@ are read with that in mind.
 **It measures what the emitter writes.** `benches/lockfloor` deliberately measured
 `RefCell` against `Mutex`, because neither was yet what the compiler emitted; the
 two shapes in `nikaia_std::lock` *are* what it emits now
-([ADR-057](specification/adr/adr-057.md), [ADR-064](specification/adr/adr-064.md)),
+([ADR-281](specification/adr/adr-281.md), [ADR-281](specification/adr/adr-281.md)),
 owner check and all. Measuring anything else would be measuring a shape no program
 gets.
 
@@ -66,7 +66,7 @@ that contention is where the loop wins, not how much.
 ## 3. The defect this found
 
 **The first table said the crossing shape costs 63.5 ns.**
-[ADR-057](specification/adr/adr-057.md) §4 measures its owner check at **+2.0 ns,
+[ADR-281](specification/adr/adr-281.md) measures its owner check at **+2.0 ns,
 ×1.15** against a bare `Mutex` — so either the record was wrong or the
 implementation was not the thing the record measured. It was the second.
 
@@ -89,7 +89,7 @@ our own id there. Who is asking is computed once per thread.
 hand-written equivalent now ties with the shipped one (×0.96, ×1.08), which is
 what says the fix is the fix.
 
-## 4. What the numbers mean for the door ADR-039 left open
+## 4. What the numbers mean for the door ADR-281 left open
 
 **The loop must not replace the cheap shape.** ×6.5 to ×7.5 against it, and that
 shape is what *every* value gets at `user_parallelism = no` and what a value gets
@@ -116,17 +116,17 @@ choice is already made per value.
 * **A block that may be repeated.** `sync` says a block does not *wait*. It does
   not say it has no **effect** — run, not argued: a `println` inside an `update`
   compiles and prints today, so a retry would print twice.
-  [ADR-039](specification/adr/adr-039.md) §3 calls the missing property *"an
+  [ADR-281](specification/adr/adr-281.md) calls the missing property *"an
   additional assurance which does not exist yet"*, and **half of it arrived while
   this was being written**: `touches` is inferred over the call graph since
-  [ADR-067](specification/adr/adr-067.md) D2, so a user-written function answers
+  [ADR-288](specification/adr/adr-288.md) D22, so a user-written function answers
   what it reaches, and a body that prints inside an `update` reports
   `["lock write", "stdout write"]`. *"Touches nothing, and it is known"* is very
   nearly *"repeating it is unobservable"*; what is left is to say that they are
   the same thing. `get` and `set` need no repetition at all and could take the
   shape first.
 * **Not a value in a door over several locks.** `update_all` holds both at once
-  ([ADR-065](specification/adr/adr-065.md)), and a retry loop cannot be held. Such
+  ([ADR-281](specification/adr/adr-281.md)), and a retry loop cannot be held. Such
   a value has to keep a lock.
 * **Nothing new in the dependency tree.** The atomics are in `std`. And
   `crossbeam-utils`, `crossbeam-epoch` and `crossbeam-deque` are already compiled
@@ -138,12 +138,12 @@ choice is already made per value.
 
 ## 6. What this is, and what it is not
 
-**Built since:** [ADR-238](specification/adr/adr-238.md) is the third
+**Built since:** [ADR-281](specification/adr/adr-281.md) is the third
 representation §4 asks for: a word-sized `SharedMut` whose crossing is proven
 and which no door over several locks holds is `nikaia_std::lock::Word`, and
 everything else keeps the row it had.
 
-**Decided since:** [ADR-110](specification/adr/adr-110.md) D3 permits the
+**Decided since:** [ADR-281](specification/adr/adr-281.md) D14 permits the
 retry — an `update` block may run more than once — and D2 says where: on a
 copy, for a value that fits a machine word. The block's form is `fn(mut v)`
 either way; what changes is what `v` is. The shape question below is unchanged.
@@ -170,7 +170,7 @@ is measured, above — but **"does a real program share a word-sized value acros
 threads?"**. Writing a contending program to find out would be manufacturing the
 evidence; the honest route is to wait for a program that needs it. A server is the
 likeliest one, and `http` is now a package that can grow into it
-([ADR-069](specification/adr/adr-069.md)).
+([ADR-289](specification/adr/adr-289.md)).
 
 **And a warning for whoever measures it there.** A web server will not settle this
 by throughput. A request costs tens of microseconds and a door costs six

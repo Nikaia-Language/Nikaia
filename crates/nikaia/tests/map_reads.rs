@@ -1,5 +1,5 @@
 //! Reading a map through the brackets is a `T?`
-//! ([ADR-114](../../../docs/specification/adr/adr-114.md)).
+//! ([ADR-293](../../../docs/specification/adr/adr-293.md)).
 //!
 //! A map has a value only where the key is, and *there is nothing there* is
 //! data about the world rather than a bug in the program. So the bracket says
@@ -126,7 +126,7 @@ fn a_view_of_a_map_read_is_still_nullable() {
 
 /// **A value that does not copy is reached as a view** (D4), which is what lets
 /// a map of structs be read without an allocation the program did not write
-/// ([ADR-008](../../../docs/specification/adr/adr-008.md) D5).
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D3).
 #[test]
 fn a_value_that_does_not_copy_is_a_view() {
     let printed = output(
@@ -242,7 +242,7 @@ fn a_compound_write_to_a_list_is_left_alone() {
 
 /// **`panic(…)` ends the program with the program's own words**, at the Nikaia
 /// line ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md),
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D2). It was on
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D10). It was on
 /// Part I 1.3's list and did not exist, so D1's own written way out lowered to
 /// a call to nothing.
 #[test]
@@ -374,10 +374,10 @@ fn a_map_keyed_by_numbers_is_read() {
 }
 
 // ---------------------------------------------------------------------------
-// ADR-273: a map of `T?` values
+// ADR-293: a map of `T?` values
 // ---------------------------------------------------------------------------
 
-/// **A map of `T?` reads one `T?`** ([ADR-273](../../../docs/specification/adr/adr-273.md)
+/// **A map of `T?` reads one `T?`** ([ADR-293](../../../docs/specification/adr/adr-293.md)
 /// D1): a stored `null` and an absent key both answer `null`, through the
 /// brackets and through `get`, and `contains_key` tells them apart. **`m[k] =
 /// null` stores** (D2): the key is there afterwards and `len` counts it.

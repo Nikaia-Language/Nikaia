@@ -272,8 +272,8 @@ fn main() {
 /// `Option<Option<T>>` and `a?.b?.c` would come out holding a nullable of a
 /// nullable. Which of the two is right is a question about the declared type,
 /// so the checker decides and this emitter writes the word
-/// ([ADR-052](../../../docs/specification/adr/adr-052.md) §4,
-/// [ADR-028](../../../docs/specification/adr/adr-028.md)).
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md),
+/// [ADR-288](../../../docs/specification/adr/adr-288.md)).
 #[test]
 fn a_safe_reach_maps_over_a_plain_field_and_flattens_a_nullable_one() {
     let rust = compiled(
@@ -339,7 +339,7 @@ fn main() {
 ",
     );
     assert!(rust.contains("home: Some(home)"), "{rust}");
-    // **The one line option A migrated** ([ADR-191](../../../docs/specification/adr/adr-191.md)
+    // **The one line option A migrated** ([ADR-278](../../../docs/specification/adr/adr-278.md)
     // D2). `u.home` roots in a binding, so `?.city` is a view of it, and the
     // fallback is a text literal - which is already a view, reads the same and
     // costs nothing. The `.to_string()` that stood here was only ever matching
@@ -406,7 +406,7 @@ fn main() {
 #[test]
 fn the_coalescing_operator_is_not_a_safe_reach() {
     let rust = lowered("fn main() { let a: i64? = null\nlet b = a ?? 1 }");
-    // `index::or` since [ADR-161](../../../docs/specification/adr/adr-161.md)
+    // `index::or` since [ADR-293](../../../docs/specification/adr/adr-293.md)
     // D2; what this asserts is that a `??` is not a **reach**, which is the
     // same either way.
     assert!(rust.contains("nikaia_std::index::or("), "{rust}");
@@ -487,7 +487,7 @@ fn main() {
 }
 
 /// **`?.` reaches a method**, because Part I 3.5 says it reaches a *member* and
-/// a method is one ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+/// a method is one ([ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
 /// It used to be refused with a sentence, on the reading that the section's
 /// example writes a field. The word the section actually uses is "member", and
@@ -568,7 +568,7 @@ fn main() throws {
 }
 
 /// **A method whose own result is a `T?` flattens**, exactly as a field of that
-/// shape does (ADR-052 D6, which this extends rather than changes).
+/// shape does (ADR-278 D9, which this extends rather than changes).
 ///
 /// Without it `a?.b()?.c` would reach through a nullable of a nullable, and the
 /// program would not compile at all — so a result that comes back is what says
@@ -637,7 +637,7 @@ fn main() {
 }
 
 /// **`??` chains**, which it did not
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
 /// `a ?? b ?? c` was a parse error naming the *second* `??`, in a language whose
 /// page says the operator provides a fallback and nowhere says a value may have
@@ -700,7 +700,7 @@ fn main() {
 }
 
 /// **A plain `.` on a `T?` is refused**, and it is `NK1121` the other way round
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md) D6).
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md) D14).
 ///
 /// `a?.b.c` guards `a` and nothing else — which is what safe navigation means in
 /// every language that has it, and was worth getting right rather than assuming.
@@ -772,7 +772,7 @@ fn main() {
 }
 
 /// **A value this checker cannot type gets `.into()` and not `Some(…)`**
-/// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
 /// The rule used to write the constructor where it **knew** the value was a
 /// plain `T`, and stay silent otherwise — right about the risk, since wrapping a
@@ -794,7 +794,7 @@ fn main() {
 /// [ADR-024](../../../docs/specification/adr/adr-024.md) D4's erased generic,
 /// which is an absence the **language** decides; it cannot be used until a
 /// generic function lowers with its `<T>`, which it now does
-/// ([ADR-074](../../../docs/specification/adr/adr-074.md)). Whoever writes
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md)). Whoever writes
 /// `String::clone` down should move this fixture rather than delete it — what it
 /// measures is the rule, not the ledger.
 #[test]
@@ -1015,11 +1015,11 @@ fn a_statement_with_two_wraps_runs() {
 
 // ---------------------------------------------------------------------------
 // `?.` reaches through a view of its receiver
-// ([ADR-113](../../../docs/specification/adr/adr-113.md) D1,
-// [ADR-189](../../../docs/specification/adr/adr-189.md))
+// ([ADR-278](../../../docs/specification/adr/adr-278.md) D16,
+// [ADR-278](../../../docs/specification/adr/adr-278.md))
 // ---------------------------------------------------------------------------
 
-/// **The line [ADR-113](../../../docs/specification/adr/adr-113.md) was written
+/// **The line [ADR-278](../../../docs/specification/adr/adr-278.md) was written
 /// for, for a member that copies.** `user?.id` used to take `user`, so a second
 /// reach was `rustc`'s *use of moved value* about a file nobody wrote
 /// (Part III, C.1) — with a `help: consider calling .as_ref()` and a
@@ -1092,10 +1092,10 @@ fn main() {
 }
 
 /// **And a member that does not copy is a view of the receiver**
-/// ([ADR-113](../../../docs/specification/adr/adr-113.md) D2,
-/// [ADR-191](../../../docs/specification/adr/adr-191.md) D1) — **Borrowed**,
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md) D17,
+/// [ADR-278](../../../docs/specification/adr/adr-278.md) D19) — **Borrowed**,
 /// not Tethered: the view points into a binding that outlives the statement,
-/// which is what [ADR-008](../../../docs/specification/adr/adr-008.md) D2 calls
+/// which is what [ADR-283](../../../docs/specification/adr/adr-283.md) D2 calls
 /// the free case.
 ///
 /// It **runs**, with the receiver read on both sides of the view.
@@ -1118,13 +1118,13 @@ fn main() {
 }
 
 /// **A receiver that is a temporary keeps its old lowering, and that is the
-/// remainder** ([ADR-191](../../../docs/specification/adr/adr-191.md) D1).
+/// remainder** ([ADR-278](../../../docs/specification/adr/adr-278.md) D19).
 ///
 /// A view of `find(1)` would point into a value that dies at the `;`, and
 /// binding it is `rustc`'s *temporary value dropped while borrowed* about a
 /// file nobody wrote — so the reach takes the value, as it always did. A
 /// temporary has no next line to stay usable on, so
-/// [ADR-113](../../../docs/specification/adr/adr-113.md) D1's promise is kept
+/// [ADR-278](../../../docs/specification/adr/adr-278.md) D16's promise is kept
 /// where it means anything.
 ///
 /// Written as an assertion about the **lowering**, so the day the remainder is
@@ -1154,11 +1154,11 @@ fn main() {
 }
 
 /// **`??` joins two views, and a fallback that owns is refused** (`NK1185`,
-/// [ADR-191](../../../docs/specification/adr/adr-191.md) D2).
+/// [ADR-278](../../../docs/specification/adr/adr-278.md) D20).
 ///
 /// The three ways to hand back one value that is both a view and an owned one:
 /// a copy on the borrowed branch, which
-/// [ADR-008](../../../docs/specification/adr/adr-008.md) D5 bans outright; a
+/// [ADR-283](../../../docs/specification/adr/adr-283.md) D3 bans outright; a
 /// view fallback, which a text literal already is; or saying so here, rather
 /// than letting `rustc` say *expected `String`, found `&str`* about a file
 /// nobody wrote.
@@ -1199,7 +1199,7 @@ fn main() {
 }
 
 /// **A `?.` view out of a temporary is held for the rest of the block**
-/// ([ADR-228](../../../docs/specification/adr/adr-228.md) D1): `find(1)` is
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md) D21): `find(1)` is
 /// bound on the line before, and the view the reach hands back points into
 /// that binding. It used to be `rustc`'s *temporary value dropped while
 /// borrowed*.
@@ -1241,7 +1241,7 @@ fn a_view_out_of_a_temporary_is_held_for_the_rest_of_the_block() {
 }
 
 /// **Where holding it first would change what runs, the program is refused**
-/// (ADR-228 D2): on the lazy side of `??`, `find` would run where it did not.
+/// (ADR-278 D22): on the lazy side of `??`, `find` would run where it did not.
 #[test]
 fn a_view_out_of_a_temporary_on_the_lazy_side_is_refused() {
     let source = HELD.replace(
@@ -1406,7 +1406,7 @@ fn a_variant_matched_on_a_nullable_is_refused() {
 /// `Shape::Named { name, .. }` over a `ref Shape` is a view of an `Option`
 /// below, and the parameter is an option of a view. `shown(name)` reached
 /// `rustc` as *expected `Option<&str>`, found `&Option<String>`* - found
-/// moving `Ty` into Nikaia (ADR-257), where `Ty::Fn`'s result is one.
+/// moving `Ty` into Nikaia (ADR-294), where `Ty::Fn`'s result is one.
 #[test]
 fn a_nullable_part_of_a_lent_value_is_opened_for_a_nullable_view() {
     let printed = ran(
@@ -1455,7 +1455,7 @@ fn main() {
 /// **A name on the left of `??` is handed over** when what it holds does not
 /// copy: `viewed ?? "none"` takes the option, and a use of `viewed` after the
 /// line reached `rustc` as *borrow of moved value* (found moving `Ty::parse`
-/// into Nikaia, ADR-257). It is `NK2105` now, with the copy as the way out;
+/// into Nikaia, ADR-294). It is `NK2105` now, with the copy as the way out;
 /// a nullable number is copied and stays usable.
 #[test]
 fn a_name_given_to_a_coalesce_is_handed_over() {
@@ -1483,7 +1483,7 @@ fn a_name_given_to_a_coalesce_is_handed_over() {
 }
 
 /// **`??` lends its left side where the answer is only read, and takes it
-/// where the answer is kept** (ADR-259 D1): the rule an argument follows. Each
+/// where the answer is kept** (ADR-279 D5): the rule an argument follows. Each
 /// read shape - a text literal, a name of text, a declared variant, a name of
 /// a struct - leaves the name usable after the line and copies nothing; a
 /// `return` and a `let` take it, as `let b = a` does.
@@ -1562,7 +1562,7 @@ fn main() {
 "#;
     let lowered = lowered(source);
     assert!(lowered.contains("user.as_deref()"), "{lowered}");
-    // `Row` is a struct: lent whatever it copies (ADR-274 D1).
+    // `Row` is a struct: lent whatever it copies (ADR-279 D8).
     assert!(lowered.contains("r.as_ref(), || &spare"), "{lowered}");
     assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
     assert_eq!(
@@ -1571,11 +1571,11 @@ fn main() {
     );
 }
 
-/// **A field on the left of `??` is a place, as a name is** (ADR-259 D1).
+/// **A field on the left of `??` is a place, as a name is** (ADR-279 D5).
 /// Over a `ref self`, `self.parameter ?? "none"` handed to a reading position
 /// lends the field; bound by a `let`, it is a part of a loan handed over,
 /// `NK2106`. Unrecorded, both reached `rustc` as *cannot move out of
-/// `self.parameter`* (found moving the ledger's records into Nikaia, ADR-257).
+/// `self.parameter`* (found moving the ledger's records into Nikaia, ADR-294).
 #[test]
 fn a_field_on_the_left_of_a_coalesce_is_a_place() {
     let read = r#"pub struct Touch {
@@ -1768,7 +1768,7 @@ fn a_name_bound_to_a_map_read_is_read_as_one() {
 }
 
 /// **A value that is a word by its kind is copied, a type made of parts is
-/// lent** ([ADR-274](../../../docs/specification/adr/adr-274.md) D1), where
+/// lent** ([ADR-279](../../../docs/specification/adr/adr-279.md) D8), where
 /// `??`'s answer is only read: an enum whose variants hold nothing is copied
 /// as a number is, and a struct that copies - 64 bytes of it here - is lent,
 /// not copied at every read.
@@ -1818,7 +1818,7 @@ fn main() {
 }
 
 /// **A loan on the left of `??` and a jump on the right is a view**
-/// ([ADR-275](../../../docs/specification/adr/adr-275.md) D1): `let s =
+/// ([ADR-279](../../../docs/specification/adr/adr-279.md) D10): `let s =
 /// c.signature ?? return -1` over a lent `c` binds a view of the field, for
 /// text as for anything else, and the view kept past the loan is refused in
 /// the language's words with `.clone()` as the way out (D2).

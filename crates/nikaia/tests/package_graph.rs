@@ -153,7 +153,7 @@ fn a_trait_method_calling_the_file_next_door_is_not_refused() {
 /// a false refusal for a silent miscompilation.
 ///
 /// **The `sync` on the declaration is what makes it a refusal**, since
-/// [ADR-109](../../../docs/specification/adr/adr-109.md) D1: a trait method
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) D24: a trait method
 /// without the word *may* pause, so the same `impl` under a wordless
 /// declaration is a program — which the test below holds.
 #[test]
@@ -277,7 +277,7 @@ fn a_throwing_neighbour_is_named_rather_than_unknown() {
 /// therefore the sharper test.
 ///
 /// An empty `touches` means *touches everything* unless `touches_known` says
-/// otherwise ([ADR-033](../../../docs/specification/adr/adr-033.md) D4), so a
+/// otherwise ([ADR-292](../../../docs/specification/adr/adr-292.md) D3), so a
 /// call the walk could not resolve did not read as an unknown — it read as an
 /// answer nobody could use. Two `overlap` branches over such a function order
 /// against each other for no reason.

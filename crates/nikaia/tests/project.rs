@@ -94,7 +94,7 @@ fn a_project_builds_runs_and_notices_an_edit() {
 
     // The manifests Cargo was handed, and the ledger a build owes (13.5). The
     // root is the workspace and the package is a member of it, even where it is
-    // the only one (ADR-053 D1).
+    // the only one (ADR-286 D19).
     let root = std::fs::read_to_string(dir.join("target/nikaia/build/Cargo.toml"))
         .expect("the workspace root is written");
     assert!(root.contains("members = [\"greeter\"]"), "{root}");
@@ -478,7 +478,7 @@ fn the_manifest_becomes_a_cargo_manifest() {
 
     // The codegen table of the *chosen* machine, and only that one - on the
     // workspace root, which is where a profile Cargo reads has to be
-    // (ADR-053 D1).
+    // (ADR-286 D19).
     let root = workspace.render();
     let parsed: toml::Value = toml::from_str(&root).expect("the root is valid TOML");
     assert_eq!(parsed["profile"]["dev"]["opt-level"].as_integer(), Some(3));
@@ -498,7 +498,7 @@ fn the_manifest_becomes_a_cargo_manifest() {
 /// and fail somewhere that explains nothing.
 ///
 /// **A version, specifically.** A path dependency is decided and built
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2); what a version
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15); what a version
 /// would need is a registry, a version grammar and a distribution format, which
 /// are the three things [ADR-002](../../../docs/specification/adr/adr-002.md)
 /// D1 §5 refuses to guess at. So the message names the form that works.
@@ -520,7 +520,7 @@ fn a_nikaia_package_is_refused_and_says_why() {
     assert!(text.contains("http-server"), "{text}");
     // A **version** is what is not decided: no registry, no version grammar, no
     // distribution format (ADR-002 D1 §5). A path is decided and built
-    // (ADR-047 D2), so the message names both ways that work.
+    // (ADR-286 D15), so the message names both ways that work.
     assert!(
         text.contains("given by version, but there's no package registry yet"),
         "{text}"
@@ -745,7 +745,7 @@ fn the_explain_modes_reach_a_project_build() {
 }
 
 /// **A package reached through two parents is one package**, and so its types
-/// are one type ([ADR-053](../../../docs/specification/adr/adr-053.md) D2).
+/// are one type ([ADR-286](../../../docs/specification/adr/adr-286.md) D20).
 ///
 /// The diamond: the program depends on `deep` directly, and on a library that
 /// depends on **the same directory** under its own key `c`. Cargo has always
@@ -807,7 +807,7 @@ fn a_package_reached_through_two_parents_is_one_package() {
     let ran = nikaia(&["run"], &dir.join("app"));
     assert!(
         ran.status.success(),
-        "a package reached through two parents is one package (ADR-053 D2): {}",
+        "a package reached through two parents is one package (ADR-286 D20): {}",
         said(&ran)
     );
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "7");
@@ -840,7 +840,7 @@ fn a_program_and_a_package(purpose: &str, dependency: &str, files: &[(&str, &str
 }
 
 /// **A Nikaia package is depended on by path, and its public surface is what a
-/// program may write** ([ADR-047](../../../docs/specification/adr/adr-047.md)
+/// program may write** ([ADR-286](../../../docs/specification/adr/adr-286.md)
 /// D2).
 ///
 /// The first thing in this repository that is two packages. Three claims in one
@@ -893,7 +893,7 @@ fn a_package_is_depended_on_by_path() {
 
 /// **A package's own type is constructed through the package that declares it**
 /// (Part I 4.2, [ADR-140](../../../docs/specification/adr/adr-140.md) D2), and
-/// the whole of [ADR-018](../../../docs/specification/adr/adr-018.md)'s shape
+/// the whole of [ADR-289](../../../docs/specification/adr/adr-289.md)'s shape
 /// runs on top of it.
 ///
 /// **Found by writing the shape that record prints.** `tiny::Server()` lowered
@@ -907,8 +907,8 @@ fn a_package_is_depended_on_by_path() {
 /// Four things at once, because the point is that they compose: a **type**
 /// constructed through its package, a **method chain** over it, a
 /// **function-typed parameter** crossing the package boundary
-/// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), and the
-/// **`async` closure** [ADR-192](../../../docs/specification/adr/adr-192.md) D1
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D6), and the
+/// **`async` closure** [ADR-277](../../../docs/specification/adr/adr-277.md) D11
 /// writes for a run parameter — handed to a callee in another package.
 #[test]
 fn a_packages_type_is_constructed_and_its_handler_chain_runs() {
@@ -966,7 +966,7 @@ fn a_packages_type_is_constructed_and_its_handler_chain_runs() {
 ///
 /// Until a second package existed this check had nothing that could trigger it —
 /// the files of one package share a namespace, so a qualified name was a name
-/// from a package nobody could depend on ([ADR-047](../../../docs/specification/adr/adr-047.md)
+/// from a package nobody could depend on ([ADR-286](../../../docs/specification/adr/adr-286.md)
 /// §5). This is the day `pub` starts to mean something a program can observe.
 #[test]
 fn a_name_a_package_does_not_publish_is_refused() {
@@ -1014,9 +1014,9 @@ fn a_name_a_package_does_not_publish_is_refused() {
 }
 
 /// **A Nikaia dependency is part of the program, not a foreign package**
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2 rule 5).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15 rule 5).
 ///
-/// [ADR-043](../../../docs/specification/adr/adr-043.md) D6 turns the overflow
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D8 turns the overflow
 /// check on for the program and off for every foreign package. A dependency
 /// written in this language carries this language's promise, and without the rule
 /// stated it would land on the foreign side by accident — that is where a
@@ -1130,7 +1130,7 @@ fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The three rules of [ADR-047](../../../docs/specification/adr/adr-047.md) D2
+/// The three rules of [ADR-286](../../../docs/specification/adr/adr-286.md) D15
 /// that are about the **set** of dependencies rather than any one of them.
 ///
 /// Each is a message and not a silence, because each is a thing somebody will do:
@@ -1173,7 +1173,7 @@ fn the_rules_that_come_with_a_path_dependency() {
     std::fs::write(&manifest, &both).expect("back to one");
 
     // Rule 2: transitive dependencies are not visible - and since
-    // [ADR-053](../../../docs/specification/adr/adr-053.md) D3 that is
+    // [ADR-286](../../../docs/specification/adr/adr-286.md) D21 that is
     // structural rather than a refusal. A package that depends on a package
     // **builds**, because it is generated as its own crate naming its own
     // dependencies; what the program cannot do is reach past `http` to what
@@ -1258,7 +1258,7 @@ fn the_rules_that_come_with_a_path_dependency() {
 }
 
 /// **A field a package does not publish cannot be reached or written from
-/// outside it** (Part I 9.2, [ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+/// outside it** (Part I 9.2, [ADR-286](../../../docs/specification/adr/adr-286.md) D15).
 ///
 /// The hole this closes had the shortest fuse in the list: the ledger recorded no
 /// per-field `pub`, so a type whose fields were private could be **built by
@@ -1342,9 +1342,9 @@ fn a_field_a_package_does_not_publish_is_refused() {
 }
 
 /// **Every abort points at the Nikaia line**
-/// ([ADR-044](../../../docs/specification/adr/adr-044.md)).
+/// ([ADR-300](../../../docs/specification/adr/adr-300.md)).
 ///
-/// [ADR-012](../../../docs/specification/adr/adr-012.md) decides that a
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) decides that a
 /// diagnostic names the `.nika` file the user wrote, and the compiler kept that
 /// promise everywhere it *reported* something. An abort at run time was the one
 /// path where it could not: there is no compiler left to translate anything, so
@@ -1472,7 +1472,7 @@ fn an_abort_with_no_nikaia_line_keeps_rusts_own_report() {
 }
 
 /// **`use http as h` shortens the prefix, once, in one place**
-/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D12).
 ///
 /// The one thing that record *adds* rather than refuses, and what makes the
 /// qualified-only rule affordable. It also settles a collision: two libraries
@@ -1480,7 +1480,7 @@ fn an_abort_with_no_nikaia_line_keeps_rusts_own_report() {
 /// authority the consumer needs anyway.
 ///
 /// **The alias is resolved away rather than emitted.** A Rust `use … as …` would
-/// not do: every file's items are in one crate root (ADR-047 D1), so an alias
+/// not do: every file's items are in one crate root (ADR-286 D1), so an alias
 /// there would be the whole program's name for the package rather than this
 /// file's. `Parsed::unaliased` is the one place it happens, on the way to every
 /// name — which is why a call, a type, and a struct literal all work without
@@ -1615,7 +1615,7 @@ fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
 ///
 /// The diamond test above proves path dependencies work; it builds its packages
 /// in a scratch directory, which means the mechanism is covered and no example
-/// of it was. [ADR-069](../../../docs/specification/adr/adr-069.md) made `http` a
+/// of it was. [ADR-289](../../../docs/specification/adr/adr-289.md) made `http` a
 /// package and §4 said in as many words that the package did not exist — so
 /// `use http` answered *"no dependency is called `http`"* and a reader had
 /// nothing to copy.
@@ -1630,7 +1630,7 @@ fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
 /// a `type = "rust"` one is handed to Cargo verbatim (ADR-002 D1) and is
 /// therefore relative to the *generated* manifest under `target/nikaia/build/`.
 /// `examples/foreign-runtime/serve` climbs four levels; this climbs one.
-/// **And it is a server now** ([ADR-194](../../../docs/specification/adr/adr-194.md)
+/// **And it is a server now** ([ADR-289](../../../docs/specification/adr/adr-289.md)
 /// D5), which is what this test grew into: it used to build the pair and read
 /// one rendered response off stdout, because there was nothing to hand a
 /// response to.
@@ -1677,7 +1677,7 @@ fn the_http_package_serves_its_example() {
     );
 
     // **The query string is its own question, and nothing is not an empty
-    // string** ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
+    // string** ([ADR-289](../../../docs/specification/adr/adr-289.md) D20).
     let (status, body) = ask(&address, b"GET /?name=Ada HTTP/1.1\r\nhost: x\r\n\r\n");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert_eq!(body, "Hello, Ada", "the handler read the query string");
@@ -1809,14 +1809,14 @@ fn ask(address: &str, request: &[u8]) -> (String, String) {
 }
 
 /// **A trait a package publishes is implemented and then called**
-/// ([ADR-095](../../../docs/specification/adr/adr-095.md)).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md)).
 ///
 /// The emitter wrote the `impl` and never brought the trait into scope, so the
 /// method could not be called and the language below said so in its own words:
 /// *"trait `Handler` which provides `handle` is implemented but not in scope;
 /// perhaps you want to import it"* — [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
 /// class, naming a rule the program has no way to satisfy, because
-/// [ADR-046](../../../docs/specification/adr/adr-046.md) D2 gives Nikaia no
+/// [ADR-286](../../../docs/specification/adr/adr-286.md) D11 gives Nikaia no
 /// import to write.
 ///
 /// **It has to be two packages.** The same shape in one file compiles, because
@@ -1902,9 +1902,9 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
 /// function that has it, which is the claim that would make the consumer
 /// `.await` an `i64` — and the build repairs it and runs. **The day a ledger
 /// can be believed without being checked** (a registry package's,
-/// [ADR-103](../../../docs/specification/adr/adr-103.md); a hand-written
+/// [ADR-286](../../../docs/specification/adr/adr-286.md); a hand-written
 /// description of a foreign crate,
-/// [ADR-104](../../../docs/specification/adr/adr-104.md)) this test is what
+/// [ADR-290](../../../docs/specification/adr/adr-290.md)) this test is what
 /// says so, and D6 becomes writable and testable in the same change.
 #[test]
 fn a_hand_edited_dependency_ledger_is_repaired_before_it_is_read() {
@@ -2158,7 +2158,7 @@ fn a_shape_walk_reaches_across_the_files_of_a_package() {
 }
 
 /// **A head the package's *other* file declares is not `NK1181`**
-/// ([ADR-183](../../../docs/specification/adr/adr-183.md) D1).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D31).
 ///
 /// The files of a package share one namespace (Part I 9.1), so `Shade::Even`
 /// in `main.nika` names an `enum` that may stand in `shapes.nika` — and the
@@ -2271,16 +2271,16 @@ fn a_grammar_entry_in_tail_position_over_a_local_runs() {
 }
 
 /// **A bound takes a path, and a trait a package publishes is one a consumer may
-/// name** ([ADR-106](../../../docs/specification/adr/adr-106.md) D1 and D3).
+/// name** ([ADR-295](../../../docs/specification/adr/adr-295.md) D10 and D12).
 ///
 /// `fn tell[T: greet::Speaks](…)` was a parse error at the `:`,
 /// `expected one of: +, ,`, and `Ledger::traits` lived in memory and was never
 /// written — so nothing outside a unit could name one of its traits.
-/// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left that as *a
+/// [ADR-295](../../../docs/specification/adr/adr-295.md) left that as *a
 /// question about modules*; D1 and D3 answered it, and this is the pair built.
 ///
 /// **It has to be two packages.** Inside one, a module's names are the package's
-/// (`ADR-047` D1), so a bound on a trait of another file needs no path at all
+/// (`ADR-286 D1), so a bound on a trait of another file needs no path at all
 /// and a one-unit test cannot see this.
 #[test]
 fn a_bound_takes_a_path_across_a_package() {
@@ -2340,7 +2340,7 @@ fn a_bound_takes_a_path_across_a_package() {
 }
 
 /// **A bound a package declares is checked at a consumer's call**
-/// ([ADR-205](../../../docs/specification/adr/adr-205.md) D1).
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D18).
 ///
 /// It was the one thing left in issue #162: `Checker::declared_bounds` is
 /// built from the AST of the unit being checked, under the key a call in *that*
@@ -2422,7 +2422,7 @@ fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
 /// is a correct program refused ([Part III
 /// C.4](../../../docs/specification/30-nikaia-tooling.md)) *and* a way out that
 /// makes **a type gaining a variant** silent in that program forever after —
-/// which is the one thing [ADR-146](../../../docs/specification/adr/adr-146.md)
+/// which is the one thing [ADR-291](../../../docs/specification/adr/adr-291.md)
 /// D1 exists to prevent.
 ///
 /// **It has to be two packages**, for the reason the bound above needs two:
@@ -2461,7 +2461,7 @@ fn an_enum_a_package_declares_is_matched_completely_by_a_consumer() {
 }
 
 /// **And the `impl` may be the package's**
-/// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4): *whether a type
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D13): *whether a type
 /// implements a trait is the union of what the program and its dependencies'
 /// ledgers say*, so a consumer that writes no `impl` of its own gets the answer
 /// from the file.
@@ -2574,7 +2574,7 @@ fn a_type_that_implements_nothing_is_refused_at_a_path_bound() {
 /// package, **without the program calling it**: every unit of a build is
 /// checked, and a dependency's was checked against the *program's* ledger, whose
 /// keys `absorb` had qualified. The package's own file writes the bare word, as
-/// its author must ([ADR-046](../../../docs/specification/adr/adr-046.md) D2
+/// its author must ([ADR-286](../../../docs/specification/adr/adr-286.md) D11
 /// gives no import to write).
 ///
 /// **And the first fix was wrong in a way this test would not have caught**, so
@@ -2637,7 +2637,7 @@ fn a_packages_own_bound_and_its_own_types_are_answered_in_its_own_namespace() {
 }
 
 /// **A published parameter both kinds of text flow into**
-/// ([ADR-232](../../../docs/specification/adr/adr-232.md) D1): the package
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D23): the package
 /// hands its own `pub fn` a view and text of its own, and a program in
 /// another package hands it text of its own as the ledger says. Refused
 /// before, with `.clone()` named for the package's view.
@@ -2675,7 +2675,7 @@ fn a_published_parameter_takes_either_kind_from_its_package_and_its_own_from_oth
 }
 
 /// **A cleanup point the ledger moved is narrated at the call, once**
-/// ([ADR-236](../../../docs/specification/adr/adr-236.md), ADR-094 D5): the
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md), ADR-094 D5): the
 /// committed ledger says `look` only read its `Handle`, the edited body keeps
 /// it, and the build that records the change says where the cleanup went. The
 /// build after it says nothing: the committed ledger is the acknowledgement.
@@ -2750,7 +2750,7 @@ fn a_project_with_a_failing_crate(purpose: &str) -> PathBuf {
 }
 
 /// **A described call that can fail is a place that can fail, in the Rust
-/// too** ([ADR-237](../../../docs/specification/adr/adr-237.md) D1). The
+/// too** ([ADR-290](../../../docs/specification/adr/adr-290.md) D20). The
 /// checker read the description's `throws` and the emitter did not, so the
 /// crate's `Result` reached `n + 1` and `rustc` said so about a file nobody
 /// wrote.
@@ -2771,7 +2771,7 @@ fn a_described_call_that_can_fail_is_propagated() {
 }
 
 /// **A boundary the backend disagrees with is said as a stale description**
-/// (ADR-100 D6, ADR-237 D2). The description is edited by hand, as D5 expects
+/// (ADR-100 D6, ADR-290 D21). The description is edited by hand, as D5 expects
 /// a person to, and loses `throws`: the crate's sources have not moved, so
 /// nothing refuses the build, and the lowering believes the description. What
 /// `rustc` says about the `Result` is reported as the description of `fremd`
@@ -3111,7 +3111,7 @@ fn nikaia_run_becomes_the_program() {
 }
 
 /// **Another package's function is `sync` where its source says so, and only
-/// there** ([ADR-244](../../../docs/specification/adr/adr-244.md) D1, D3).
+/// there** ([ADR-288](../../../docs/specification/adr/adr-288.md) D28, D30).
 ///
 /// `lib::plus` cannot pause and does not promise it. A `sync` function of the
 /// program may not count on it, and is told that the word is missing in `lib`
@@ -3182,7 +3182,7 @@ fn another_packages_sync_is_what_its_source_promised() {
 }
 
 /// **The author is told which `pub` functions could promise more about pausing
-/// than they do** ([ADR-244](../../../docs/specification/adr/adr-244.md) D2),
+/// than they do** ([ADR-288](../../../docs/specification/adr/adr-288.md) D29),
 /// with the word that would promise it - and, once it is written, nothing.
 ///
 /// `parse` never pauses: `sync`. `apply` pauses only where its lambda does:
@@ -3257,7 +3257,7 @@ fn a_build_names_what_its_pub_functions_could_promise() {
 }
 
 /// **The author is warned when a `pub` function loses the `sync` it had**
-/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D5): the committed
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D32): the committed
 /// ledger says `parse` could not pause, a line two calls down now pauses, and
 /// the build says so at that line with the calls that lead there. Committed,
 /// it is not said again.

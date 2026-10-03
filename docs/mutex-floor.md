@@ -8,9 +8,9 @@ left to close. Nothing here reaches the emitter.
 no-pausing rule) and 12.3, Part I 6.2–6.3 (`Locked` and `.access()`) and 7.2 (the
 panic hook), Part III Appendix A.2 (the panic table),
 [ADR-005](specification/adr/adr-005.md) D6 (the rule, and the only ADR that names
-`Locked[T]` at all), [ADR-006](specification/adr/adr-006.md) D2, D5 and D6,
-[ADR-027](specification/adr/adr-027.md) D1, D2 and D4 (`sync` earned from the
-body), [ADR-029](specification/adr/adr-029.md) D3 and D4 (`from(f)`),
+`Locked[T]` at all), [ADR-297](specification/adr/adr-297.md) D3, D6, D10,
+[ADR-288](specification/adr/adr-288.md) D1, D2, D4 (`sync` earned from the
+body), [ADR-288](specification/adr/adr-288.md) D15 and D16 (`from(f)`),
 [ADR-037](specification/adr/adr-037.md) D2 and D3 (the switch),
 [ADR-038](specification/adr/adr-038.md) D4 (whose thread the I/O thread is),
 [`rc-or-arc.md`](history/rc-or-arc.md) §7 (where that experiment stopped, and why this one
@@ -20,7 +20,7 @@ starts here)
 inference), and the seven `.nika` and three `.rs` probes quoted below
 
 > **Read as a snapshot.** The lambdas on this page are written in the form
-> [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> [ADR-277](specification/adr/adr-277.md) withdrew — `sort_by_key fn { a }`, with
 > the argument read off the body — and **no sample here compiles as written**; the
 > current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
 > The analysis each section records is unaffected: what a lambda's arguments are
@@ -40,7 +40,7 @@ were a `Mutex` at **both** settings then acquiring a lock could block — while
 1. **Blocking is not pausing, and the specification already says so in the one
    place where it had to choose.** The panic hook *must* be `sync`, and Part I
    7.2 says of it: *"Blocking is allowed here — briefly."*
-   [ADR-006](specification/adr/adr-006.md) D6 says it twice: *"Must be `sync`:
+   [ADR-297](specification/adr/adr-297.md) D10 says it twice: *"Must be `sync`:
    mid-panic there is no runtime to pause on"* and *"**Blocking is exceptionally
    permitted**"*. [ADR-005](specification/adr/adr-005.md) D6 is titled *"No
    suspension point while a lock is held, enforced statically by `sync`"*. So
@@ -48,10 +48,10 @@ were a `Mutex` at **both** settings then acquiring a lock could block — while
    An always-`Mutex` floor neither violates 12.2's rule nor sidesteps it (§2).
 2. **Whether `access` is still `sync` turns on one line of one ledger entry, and
    not on the primitive underneath it.** Run against the real inference: with
-   `sync = "from(f)"` — the spelling [ADR-029](specification/adr/adr-029.md) D3
+   `sync = "from(f)"` — the spelling [ADR-288](specification/adr/adr-288.md) D15
    built for `and_modify` — 12.2's idiom is `sync = "inferred"` and so is every
    caller above it; with no `sync` line it is not, and
-   [ADR-027](specification/adr/adr-027.md) D1's greatest fixpoint takes the claim
+   [ADR-288](specification/adr/adr-288.md) D1's greatest fixpoint takes the claim
    from every caller too. Separately, and for a reason that has nothing to do
    with the representation: **12.2's own idiom is not `sync` today** — nothing
    can resolve `counter.access`, so D2's polarity refuses it (§3).
@@ -69,7 +69,7 @@ were a `Mutex` at **both** settings then acquiring a lock could block — while
    on one thread: the borrow flag exits 101 with `RefCell already borrowed`; the
    `Mutex` prints "holding; now re-entering" and has to be killed. At `no` there
    is one user thread, so that hang is the whole program, and
-   [ADR-006](specification/adr/adr-006.md) D5's *"honest limit"* already names
+   [ADR-297](specification/adr/adr-297.md) D6's *"honest limit"* already names
    this hazard class — a thread that blocks rather than pauses stops the
    cleanup deadline with it. Keeping the panic on a `Mutex` floor is an owner
    check in front of the acquisition and costs **+2.0 ns, ×1.15** (§4.3).
@@ -134,7 +134,7 @@ error: .probe/lockproj/src/main.nika:6:1: cannot find type `Locked` in this scop
 a method *of*: no `Locked` entry in `crates/nikaia-std/std.contracts`, no
 `NK2201` anywhere in the compiler (`docs/spec-promises.md` lists it among the
 codes "Part III C.3 catalogues and nothing raises"), and none of the four
-constructs [ADR-027](specification/adr/adr-027.md) §1 names as `sync`'s consumers
+constructs [ADR-288](specification/adr/adr-288.md) names as `sync`'s consumers
 is built: `access`/`access_all` do not exist, `par_iter`'s methods have no ledger
 entry, `task::scope fn(s) { … }` and `panic::on_panic fn(info) sync { … }` each
 parse as two expressions rather than one (`docs/spec-promises.md`).
@@ -171,7 +171,7 @@ word for the event `sync` forbids and it is not "blocking":
   rule as Rust's *"a `MutexGuard` must not live across `.await`"*.
 * The panic hook **must be `sync`** — and Part I 7.2 says of it, in bold,
   *"**Blocking is allowed here — briefly.**"*
-  [ADR-006](specification/adr/adr-006.md) D6 says the same thing twice: *"Must be
+  [ADR-297](specification/adr/adr-297.md) D10 says the same thing twice: *"Must be
   `sync`: mid-panic there is no runtime to pause on"*, then *"**Blocking is
   exceptionally permitted.** … Where it survives the hook blocks one worker"*.
 
@@ -217,7 +217,7 @@ exit=124   (124 = still running when the timeout fired)
 One user thread blocked is the whole program, forever, with no diagnostic — and
 at `no` a panic is an abort (Part III Appendix A.2), so even the panic hook is not
 a place the program could say so from. Worse, it takes the shutdown deadline with
-it: [ADR-006](specification/adr/adr-006.md) D5's *"This cannot hang"* rests on two
+it: [ADR-297](specification/adr/adr-297.md) D6's *"This cannot hang"* rests on two
 things, a runtime-driven timer and *"locks are never held across a suspension
 point"* — and D5's own **honest limit** already names the class the blocking
 acquisition joins: *"FFI that blocks the thread rather than pausing will block a
@@ -279,7 +279,7 @@ signature = "(counter: Shared[Locked[i32]])"
 
 **`tally` has no `sync` line at all.** Not because of anything about locks:
 `counter.access` is a method call whose receiver type no ledger describes, so the
-type checker cannot resolve it and [ADR-027](specification/adr/adr-027.md) D2
+type checker cannot resolve it and [ADR-288](specification/adr/adr-288.md) D2
 takes the claim away. The same happens to a `par_iter` body — and to a pure one:
 
 ```nika
@@ -311,7 +311,7 @@ ledger, and that is where the floor has to be argued.
 `crates/nikaia/tests/lock_floor.rs` hands `contracts::sync::infer` the same
 program, `std`'s ledger with one `Locked::access` entry appended, and the type
 checker's answer for `counter.access` — which `infer` takes as a parameter
-anyway ([ADR-028](specification/adr/adr-028.md)), so nothing had to be faked
+anyway ([ADR-288](specification/adr/adr-288.md)), so nothing had to be faked
 except the resolution `Locked` being unbuilt denies it.
 
 | the entry says | what the inference concludes for `tally` | …and for `outer`, which calls it |
@@ -324,13 +324,13 @@ except the resolution `Locked` being unbuilt denies it.
 Four assertions, all passing, and the middle row is the one that says `from` is
 not a hole: the lambda still decides, because it runs during the call and its
 calls are counted in the function that writes it
-([ADR-029](specification/adr/adr-029.md) D4's bound).
+([ADR-288](specification/adr/adr-288.md) D16's bound).
 
 So the consequence of classifying an acquisition as a pause is not "`access`
 loses a label". It is that **no function that touches a lock can be `sync`**, and
 therefore none can appear in a `par_iter` body, inside another `access`, in a
 scope's parallel tasks or in the panic hook — the four constructs
-[ADR-027](specification/adr/adr-027.md) §1 lists. 12.2's own idiom would be
+[ADR-288](specification/adr/adr-288.md) lists. 12.2's own idiom would be
 uncompilable in 12.6's own vehicle. The same chain, on functions that *are*
 built, as a control:
 
@@ -396,7 +396,7 @@ fn pausing_lambda(xs: Vec[i32]) -> i32 {
 
 **And here is the one place the argument bends,** which is worth writing down
 because it is the strongest case against the floor.
-[ADR-027](specification/adr/adr-027.md) §2 justifies its polarity like this:
+[ADR-288](specification/adr/adr-288.md) justifies its polarity like this:
 
 > A wrong `sync` there is a pausing body inside somebody else's lock — a
 > **deadlock on one thread**, a stalled core on several, and no diagnostic
@@ -405,7 +405,7 @@ because it is the strongest case against the floor.
 A blocking acquisition inside a `sync` body produces *precisely that outcome* —
 a deadlock on one thread, no diagnostic — by a different mechanism. So with an
 always-`Mutex` floor, `sync` still means exactly what it says (this body contains
-no suspension point) but it stops implying the thing ADR-027 wanted from it
+no suspension point) but it stops implying the thing ADR-288 wanted from it
 (this body makes progress). The property is unchanged; the *reassurance* is
 weaker, and it is weaker only for reentrancy, which is the case 12.2 already
 concedes and 12.3 already forbids the syntax for.
@@ -529,7 +529,7 @@ the representation at `yes`. Checked:
   takes a `sync` lambda at every setting) and mentions the representation only in
   passing — *"shrinks the divergence of `Locked[T]` between settings. The runtime
   check and lock poisoning stay as backstops"*. It records the divergence; it does
-  not decide it. [ADR-033](specification/adr/adr-033.md) D2's touch sets name a
+  not decide it. [ADR-292](specification/adr/adr-292.md) D3's touch sets name a
   `Locked` value as a resource, which is orthogonal.
 
 So the question is narrower than it looks, but not in the direction the lead
@@ -573,7 +573,7 @@ Three things, in this order. None of them is decided here.
    costs +2.0 ns / ×1.15 to keep (§4.3), and 12.2's own text calls it a safety net
    for code that is not well-formed. A floor that keeps it is a `Mutex` with an
    owner check; a floor that drops it turns a panic into a hang that also stops
-   [ADR-006](specification/adr/adr-006.md) D5's deadline.
+   [ADR-297](specification/adr/adr-297.md) D6's deadline.
 3. **Whether the floor is worth its one capability.** 11.3 ns and no syscall at
    `no` (§4), against `Shared[Locked[T]]` becoming a thing that can cross a
    thread at all (§5). That is the trade, and the second half is the part

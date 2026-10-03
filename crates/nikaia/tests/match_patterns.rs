@@ -1,5 +1,5 @@
 //! The six pattern shapes
-//! ([ADR-137](../../../docs/specification/adr/adr-137.md) D1, D2, D3).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md) D10-D12).
 //!
 //! `match` matched a literal, a path with bindings and the catch-all, and
 //! nothing else. The absence was visible in the corpus: `examples/calc/src/main.nika`
@@ -204,7 +204,7 @@ fn a_struct_pattern_may_name_no_field_at_all() {
 }
 
 /// **An or-pattern covers every variant in it**, which is
-/// [ADR-146](../../../docs/specification/adr/adr-146.md) §4's question answered
+/// [ADR-291](../../../docs/specification/adr/adr-291.md)'s question answered
 /// by building the form it waited on: `Op::Plus | Op::Minus` is two cases and
 /// one arm.
 #[test]

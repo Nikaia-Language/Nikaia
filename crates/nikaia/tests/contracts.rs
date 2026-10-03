@@ -23,7 +23,7 @@ fn ledger(source: &str) -> Ledger {
 }
 
 /// `throws` is declared, so it is recorded exactly; `sync` is declared *or*
-/// earned, and the ledger says which (ADR-027).
+/// earned, and the ledger says which (ADR-288).
 #[test]
 fn a_declaration_is_recorded_as_it_was_written() {
     let l = ledger(
@@ -37,7 +37,7 @@ fn a_declaration_is_recorded_as_it_was_written() {
     assert_eq!(pure.sync_claim, Sync::Asserted, "the source wrote the word");
 
     // Neither of these says `sync`, and neither of them calls anything, so
-    // neither of them can pause. Before ADR-027 the ledger recorded that as
+    // neither of them can pause. Before ADR-288 the ledger recorded that as
     // "not `sync`" - a claim about a body it had already read and knew better
     // about. `throws` and `sync` are orthogonal: a function may fail without
     // pausing, and `risky` is one.
@@ -76,7 +76,7 @@ fn what_cannot_be_resolved_is_not_inferred_sync() {
 }
 
 /// A method call is resolved by the **type checker**, and the inference uses
-/// its answer (ADR-028).
+/// its answer (ADR-288).
 ///
 /// Before this, every method call was an unknown and cost the function its
 /// claim - which is what made the restrictive polarity above so expensive, and
@@ -102,7 +102,7 @@ fn a_method_call_is_resolved_through_the_receiver() {
     assert_eq!(l.functions["mutated"].sync_claim, Sync::No);
 }
 
-/// A higher-order method hands on whatever its lambda does (ADR-029).
+/// A higher-order method hands on whatever its lambda does (ADR-288).
 ///
 /// This is the whole of `sync = "from(f)"`. `and_modify` cannot commit to one
 /// answer for every caller, because `fn { a + 1 }` and `fn { io::read()… }` are
@@ -142,7 +142,7 @@ fn from_does_not_let_io_into_a_sync_function() {
     assert_eq!(dirty[0].callee, "io::read");
 }
 
-/// ADR-029 D3's reason carries to `throws`, so `from` needs nothing new for it.
+/// ADR-288 D15's reason carries to `throws`, so `from` needs nothing new for it.
 ///
 /// D3 reads `sync = "from(f)"` as "this call adds no pausing of its own", sound
 /// because the lambda runs *during* the call and its calls are already counted in
@@ -156,7 +156,7 @@ fn from_does_not_let_io_into_a_sync_function() {
 /// the second thing asserted here. `contracts::throws` answered every method
 /// call with `"?"` rather than asking the type checker, so `sortiere` read
 /// "fails with `LeereZeile`, or with something I cannot name" about a call the
-/// compiler had already named. Since ADR-028's resolution is handed to this
+/// compiler had already named. Since ADR-288's resolution is handed to this
 /// walk too, `xs.sort_by_key` resolves to `Vec::sort_by_key`, whose entry in
 /// `std.contracts` carries no `throws` - and an absent `throws` there is a
 /// written-down "it cannot fail", reviewed like code, which is the opposite of
@@ -190,7 +190,7 @@ fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
     // so `LeereZeile` above came from the lambda's body and from nowhere else.
     // The entry stays `["?"]` because the *declaration* is a promise a caller
     // already relies on and the inference is here to say more than it, never
-    // less (ADR-027 D4's polarity, in `throws`).
+    // less (ADR-288 D4's polarity, in `throws`).
     assert_eq!(l.functions["ohne_lambda"].fails_with, ["?"]);
 }
 
@@ -214,7 +214,7 @@ fn a_while_body_is_walked_like_any_other() {
 
 /// An asserted `sync` may not survive a call nothing can resolve.
 ///
-/// [ADR-027](../../../docs/specification/adr/adr-027.md) D2 makes the
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) D2 makes the
 /// *inference* conservative in the restrictive direction, and D4 says an
 /// **assertion** is never overwritten by it. Those two together meant a source
 /// that wrote `sync` and called something no ledger knows kept `sync = true` -
@@ -245,7 +245,7 @@ fn an_asserted_sync_does_not_survive_an_unresolvable_call() {
 /// A method call stays permissive here, and that is not the same hole.
 ///
 /// `stats.add(5)` names `add` and says nothing about what `stats` is. The
-/// **type checker** resolves it (ADR-028) and the inference merges that answer
+/// **type checker** resolves it (ADR-288) and the inference merges that answer
 /// in per function, so the claim is still taken away where it has to be - the
 /// check simply is not the place that does it. The test above must not be read
 /// as making every unresolved thing an error.
@@ -281,14 +281,14 @@ fn a_helper_that_uses_an_iterator_method_may_be_called_from_a_lock() {
 }
 
 /// The chain, end to end, on the shape that held the last three ADRs up
-/// (ADR-031).
+/// (ADR-288).
 ///
 /// `HashMap[&str, Stats]` binds `$V` to `Stats`, so `entry` hands back an
 /// `Entry[Stats]`, so `and_modify`'s `fn(&$V)` is a `fn(&Stats)`, so the `stats`
 /// in the lambda is a `&Stats`, so `stats.add(v)` resolves to `Stats::add`, which
 /// is pure - and `record` is `sync` without anyone writing the word.
 ///
-/// The argument is **named**, which is the only spelling since ADR-049 - and the
+/// The argument is **named**, which is the only spelling since ADR-277 - and the
 /// chain is the same one either way: what types it is the callee's signature, not
 /// where the name came from.
 ///
@@ -313,7 +313,7 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
 }
 
 /// A variable in an **argument** would reject correct programs, so there is
-/// none (ADR-031 D3).
+/// none (ADR-288 D19).
 ///
 /// Rust's `HashMap::get` takes anything the key borrows as, so a map with
 /// `String` keys is correctly asked with a `&str` - `k-nucleotide.nika` does
@@ -373,7 +373,7 @@ fn a_detached_lambda_may_not_use_from() {
             continue;
         };
         // **The doors over several locks are the compiler's to type**
-        // ([ADR-065](../../../docs/specification/adr/adr-065.md) D1), so they
+        // ([ADR-281](../../../docs/specification/adr/adr-281.md) D17), so they
         // carry the `sync` column and no signature - which is the one thing the
         // ledger can say about them and the one thing it cannot. What this guard
         // proves for the others is proved for these by `check::Checker::locks`,
@@ -414,7 +414,7 @@ fn a_detached_lambda_may_not_use_from() {
 
 /// The type checker does not depend on the `sync` it helps infer.
 ///
-/// This is the invariant the whole of ADR-028 rests on. `Ledger::infer` reads
+/// This is the invariant the whole of ADR-288 rests on. `Ledger::infer` reads
 /// the declarations, runs the checker against *that* ledger to resolve method
 /// calls, and then infers `sync` using the answers. That is sound only because
 /// the checker reads `signature`, `fields` and `iterates` and never `sync` - so
@@ -474,7 +474,7 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
 
 /// A pure helper nobody annotated is callable from a `sync` function.
 ///
-/// This is what ADR-027 is *for*. `access`, `access_all` and `par_iter` all
+/// This is what ADR-288 is *for*. `access`, `access_all` and `par_iter` all
 /// demand a `sync` lambda (Part II, 12.2), and while `sync` was opt-in the set
 /// of things such a lambda could call was "whatever someone remembered to
 /// annotate". Now it is "whatever provably cannot pause".
@@ -584,7 +584,7 @@ fn a_type_records_what_ties_it_to_the_input() {
     );
 
     // **`tethered` is the whole of it**, and the column that used to stand beside
-    // it is gone ([ADR-201](../../../docs/specification/adr/adr-201.md) D1):
+    // it is gone ([ADR-283](../../../docs/specification/adr/adr-283.md) D4):
     // `borrowed = true` recorded that a struct had written `@borrowed`, shipped
     // across a package boundary, and was read by nothing.
     assert_eq!(l.types["Hit"].tethered, ["path"]);
@@ -631,12 +631,12 @@ fn the_ledger_is_deterministic_and_reads_back() {
     assert_eq!(read.types["S"].tethered, ["t"]);
 }
 
-// --- ADR-205: a bound reaches a caller inside the signature ------------------
+// --- ADR-295: a bound reaches a caller inside the signature ------------------
 
 /// **A bound is written where the declaration writes it**, and it reads back.
 ///
 /// The signature already carried the type parameter as `$H`
-/// ([ADR-074](../../../docs/specification/adr/adr-074.md) D2); a bound is the
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D2); a bound is the
 /// rest of that sentence, which is why it is inside the one string a caller
 /// already parses rather than a second key that has to agree with it.
 #[test]
@@ -744,9 +744,9 @@ fn the_shipped_std_ledger_agrees_with_its_nikaia_sources() {
 /// The test above says what a module beside `lib.rs` means: `std` offers it,
 /// and the shipped ledger has to carry every `pub` thing it declares. That rule
 /// is the reason `tools/` exists — `tools/rust.nika` is the reading half of
-/// `nikaia describe` ([ADR-195](../../../docs/specification/adr/adr-195.md)
+/// `nikaia describe` ([ADR-290](../../../docs/specification/adr/adr-290.md)
 /// D3), which the compiler calls as an ordinary Rust module
-/// ([ADR-196](../../../docs/specification/adr/adr-196.md) D1) and which no
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D16) and which no
 /// Nikaia program is offered.
 ///
 /// Written as a test because the failure it guards against is quiet: a `pub fn`
@@ -780,7 +780,7 @@ fn a_toolchain_module_is_not_part_of_std() {
                 !shipped.functions.contains_key(&key),
                 "std.contracts names `{key}`, which is the toolchain's and not \
                  std's. A module under `src/tools` is not offered to a Nikaia \
-                 program (ADR-196 D1); move it beside `lib.rs` or take the \
+                 program (ADR-290 D16); move it beside `lib.rs` or take the \
                  entry out."
             );
             checked += 1;
@@ -866,7 +866,7 @@ fn a_function_that_is_not_sync_may_call_anything() {
 /// first run: a `sync` method building a value through a constructor that never
 /// said it was `sync` either.
 ///
-/// **ADR-027 changed the answer here, and it is the change worth looking at.**
+/// **ADR-288 changed the answer here, and it is the change worth looking at.**
 /// The constructor builds a struct literal and calls nothing, so it cannot
 /// pause, so it is `sync` whether or not anyone wrote the word - and the caller
 /// that used to be rejected is now accepted. What the check was reporting was
@@ -1155,10 +1155,10 @@ fn the_provenance_chooses_the_map() {
 /// A call inside a hole is a call, and the **inference** has to see it.
 ///
 /// This is the half of the blind spot that was more than a missed diagnostic.
-/// `sync` is inferred from what a body calls (ADR-027), the hole's expression
+/// `sync` is inferred from what a body calls (ADR-288), the hole's expression
 /// was parsed on the way to the emitter, and so a function whose only pausing
 /// call sat inside `"{…}"` was recorded `sync = "inferred"` - a claim, in a
-/// file a library ships, that it cannot pause. ADR-027 D2 and ADR-010 D1 both
+/// file a library ships, that it cannot pause. ADR-288 D2 and ADR-010 D1 both
 /// name that direction the dangerous one: an analysis that fails open is a
 /// vulnerability generator.
 #[test]
@@ -1195,7 +1195,7 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 }
 
 /// **Every length is an `i64`, and `len` is what every one of them is called**
-/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 ///
 /// The emitter converts a call it recognises **by name** — `xs.len()` becomes
 /// `xs.len() as i64`, because Rust's hands back a `usize` and this compiler has no
@@ -1273,8 +1273,8 @@ fn the_lengths_are_i64_and_are_all_called_len() {
 }
 
 /// **A `std` parameter the language below counts in `usize` is written as the
-/// `i64` a program can hold** ([ADR-054](../../../docs/specification/adr/adr-054.md)
-/// D2) — the direction [ADR-048](../../../docs/specification/adr/adr-048.md) D1
+/// `i64` a program can hold** ([ADR-285](../../../docs/specification/adr/adr-285.md)
+/// D2) — the direction [ADR-285](../../../docs/specification/adr/adr-285.md) D1
 /// left open and named this one entry as the whole of.
 ///
 /// The emitter chooses the conversion by **name** (`emit::is_count`), the way it
@@ -1307,20 +1307,20 @@ fn a_count_parameter_is_an_i64_and_the_emitter_knows_its_name() {
             assert!(
                 !ty.text().contains("usize"),
                 "`{key}`'s `{name}`: `usize` is not a type a program may meet \
-                 (ADR-048 D1, ADR-054 D2)"
+                 (ADR-285 D1, ADR-285 D15)"
             );
         }
         if let Some(result) = signature.result.as_ref() {
             assert!(
                 !result.text().contains("usize"),
-                "`{key}` hands back a `usize`, and a length is an `i64` (ADR-048 D1)"
+                "`{key}` hands back a `usize`, and a length is an `i64` (ADR-285 D1)"
             );
         }
     }
 }
 
 /// **A field's `pub` is in the ledger, and a ledger without it reads as
-/// private** ([ADR-047](../../../docs/specification/adr/adr-047.md) D2).
+/// private** ([ADR-286](../../../docs/specification/adr/adr-286.md) D15).
 ///
 /// A consumer of another package needs to know which fields it may touch, and
 /// nothing inside the package does — privacy is per package. The word goes in
@@ -1360,7 +1360,7 @@ fn a_fields_visibility_survives_the_ledger() {
 }
 
 /// **A grammar's entry earns its columns from its actions**
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D24,
 /// [ADR-186](../../../docs/specification/adr/adr-186.md)).
 ///
 /// A `pub` rule is a ledger entry, and it used to be written with
@@ -1425,7 +1425,7 @@ fn a_grammar_rule_that_prints_carries_the_touch() {
 }
 
 /// **The grammar is the unit, not the rule**, and that is the
-/// over-approximation [ADR-033](../../../docs/specification/adr/adr-033.md) D4
+/// over-approximation [ADR-292](../../../docs/specification/adr/adr-292.md) D3
 /// asks for in this column: a rule's pattern names other rules of the same
 /// grammar and their actions run with it, and which ones is the parser
 /// backend's question rather than this walk's.

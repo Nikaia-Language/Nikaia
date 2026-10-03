@@ -107,7 +107,7 @@ not this parameter's; a task's body. Anything else is not a destination — whic
 what keeps `examples/k-nucleotide/src/main.nika` out of it (§4).
 
 **The second** looks at what the view is stored *into*. A field is declared, and
-its declaration says which buffer it points into ([ADR-008] D1). So where the
+its declaration says which buffer it points into ([ADR-283 D1). So where the
 destination is a field of a subject that itself holds a view, the buffer is
 already named, and the parameter is lowered as a view of **that** buffer —
 `name: &'a str` — rather than refused. `NK2302` is what is left where the chain
@@ -155,7 +155,7 @@ that does not compile, which is the C.1 violation the work exists to remove.
 
 ## 3. What a full answer would be, and what it would have to track
 
-The full rule is not "write the lifetime out further". It is [ADR-008] D2:
+The full rule is not "write the lifetime out further". It is [ADR-283 D2:
 
 > Every view has one of three states… `Borrowed ⊑ Tethered ⊑ Owned`, and
 > inference computes the least state that makes the program valid.
@@ -173,7 +173,7 @@ name, `'a`. `crates/nikaia/src/emit/mod.rs` has a single `INPUT_LIFETIME`, used
 for a struct's parameter, an enum's, and an impl's; `contracts/trust.rs` states
 the consequence in its own header:
 
-> **One buffer, because Stage 0 has one input lifetime.** ADR-008's model gives a
+> **One buffer, because Stage 0 has one input lifetime.** ADR-283's model gives a
 > compilation unit a single lifetime, so it has a single input buffer… When the
 > representation grows more than one, this becomes the join over each.
 
@@ -206,7 +206,7 @@ wrote them, and the program is **correct** — because the container's buffer an
 `seq`'s buffer are the *same* buffer, and what says so is the `return`. No amount
 of following where the view goes answers that. What answers it is equating two
 buffer variables and checking the equation holds, which is the monotone fixpoint
-[ADR-008] D7 says the lattice shares with the region solver — and which is not
+[ADR-283 D5 says the lattice shares with the region solver — and which is not
 built.
 
 ### 3.1. What the compiler has at the point the analysis runs
@@ -219,7 +219,7 @@ Asked concretely, because "it would need more information" is not an answer.
 | which parameters a result may point into | **yes, but from the signature only.** `FnContract::borrows` is `borrows(a \| b)` — every view parameter, whenever the result holds a view. `Ledger::infer` never reads the body for it, so it is an over-approximation and says nothing about *which* one |
 | a type for every local | **computed and then thrown away.** `check::Checker` carries `scope: Vec<Vec<(String, Ty)>>` and infers a type for every `let`, but `Checked` exports only `findings`, `fallible_loops` and `methods`. The channel for handing one more answer to the emitter already exists — `emit` asks `check::fallible_loops_against` today — so this is an export, not a new pass |
 | which parameter of a `std` call keeps what it is given | **no.** `std.contracts` writes `HashMap::get(&HashMap[$K, $V], key: ?)` and has no entry for `insert` at all. This is the undecided case of §2.1, and it is a file to extend rather than a mechanism to build |
-| a buffer variable per view position, and a solver over them | **no.** One `INPUT_LIFETIME`, no variables, no solver. [ADR-008] D7 argues the solver is the *same* monotone fixpoint as the region solver, so the claim is that it is not new work of a new kind — but it is not present |
+| a buffer variable per view position, and a solver over them | **no.** One `INPUT_LIFETIME`, no variables, no solver. [ADR-283 D5 argues the solver is the *same* monotone fixpoint as the region solver, so the claim is that it is not new work of a new kind — but it is not present |
 | a representation other than a native reference | **no.** Nothing emits a buffer handle plus `(offset, len)`; `tethered` in the ledger is "which fields hold a view", not a solved state, and D7's "solved state and buffer-table shape" is nowhere |
 | `nikaia explain --tethers`, which D6 calls the inverse tool | **no.** `docs/spec-promises.md` records `error: unrecognized subcommand 'explain'` |
 
@@ -271,7 +271,7 @@ down which `std` parameters keep what they are given. Both are small, both are
 useful on their own, and neither changes any program's meaning by itself.
 
 Not extensions: a buffer variable per view position, a solver over them, and a
-representation that is not a native reference. Those are [ADR-008] D2, D4 and D7,
+representation that is not a native reference. Those are [ADR-283 D2, D11, D5,
 none of which is built, and the last of them is the one with real surface — a
 container that holds a buffer table, `Eq`/`Hash` on a view that is content-based
 rather than identity-based, and `Cleanup` running when the last tether dies
@@ -294,13 +294,13 @@ keep what they are given (one file), because each removes a guess without
 widening what the analysis claims.
 
 The full answer should not be started as a continuation of this work. It is
-[ADR-008] D2's lattice and D4's buffer table, which need a representation the
+[ADR-283 D2's lattice and D4's buffer table, which need a representation the
 emitter does not have, and §4 measured what building the reachable half first
 does: it refuses a program in `examples/` that works today. If the lattice is
 wanted, it wants its own decision, and the one thing to carry across from here is
 that the reach must not arrive before the solver.
 
-[ADR-008]: specification/adr/adr-008.md
+[ADR-283]: specification/adr/adr-283.md
 
 ---
 
@@ -312,7 +312,7 @@ language, which is worth saying here so a reader copying a block out of §1 does
 not get a parse error for it.
 
 `@borrowed` above a struct asserted *no value of this type ever tethers*, and it
-is removed ([ADR-201] D1). The word that stands there now is `@tethers`, and it
+is removed ([ADR-283 D4). The word that stands there now is `@tethers`, and it
 is the opposite: a **permission**, written where a struct may keep its buffer
 alive, with an error where it is missing. Three things made the swap:
 
@@ -328,8 +328,7 @@ alive, with an error where it is missing. Three things made the swap:
   already. The assertion had no transition to refuse.
 
 The two blocks in §1 lower today with the line taken off; `@tethers` is not in
-the grammar either ([ADR-201] D3), because the state it permits does not exist
+the grammar either ([ADR-283 D4), because the state it permits does not exist
 yet. **The recommendation at the end of this note is unchanged**: the reach must
 not arrive before the solver, and neither must the word.
 
-[ADR-201]: specification/adr/adr-201.md

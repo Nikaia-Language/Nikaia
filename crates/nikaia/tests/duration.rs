@@ -139,7 +139,7 @@ fn a_sleep_carries_an_await() {
 
 /// **Either integer type**, which is why the ledger has ten entries and not
 /// five: `5` is an `i32` where nothing asks otherwise, and a count that came
-/// from a length is an `i64` ([ADR-048](../../../docs/specification/adr/adr-048.md)
+/// from a length is an `i64` ([ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D1).
 #[test]
 fn a_count_may_be_either_integer() {

@@ -170,7 +170,7 @@ impl Pool {
         for n in 0..threads {
             let mine = pool.clone();
             // **Detached, and no handle is kept.** A worker leaves when
-            // `close` is called, and ADR-006 D5's drain is about the *tasks*
+            // `close` is called, and ADR-297 D6's drain is about the *tasks*
             // rather than about the threads — `block_on` has already waited for
             // the work by the time anything closes this.
             let started = std::thread::Builder::new()
@@ -211,7 +211,7 @@ impl Pool {
     }
 
     /// How many tasks are started and unfinished — what the drain at the end of
-    /// `main` asks about (ADR-006 D5).
+    /// `main` asks about (ADR-297 D6).
     pub fn live(&self) -> usize {
         self.live.lock().unwrap_or_else(|e| e.into_inner()).len()
     }

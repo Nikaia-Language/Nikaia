@@ -6,9 +6,9 @@ publish = false
 
 [dependencies]
 # The pool `std` itself links (`fs::map`, the parallel piece driver). `--bin
-# runtime` calls `rayon::join` directly to keep ADR-033 §8.4's number — the
+# runtime` calls `rayon::join` directly to keep ADR-292's number — the
 # wake-up a closure pair costs — reproducible after the vehicle that used it was
-# withdrawn (ADR-050 D1).
+# withdrawn (ADR-292 D1).
 rayon = "1.10"
 # `--bin runtime` measures ADR-038 D4 through the real runtime rather than a
 # reduction of it: `nikaia_std::fs::read_both` on the runtime `rt::start` put

@@ -38,13 +38,13 @@ fn tracing() -> bool {
 
 /// Where a `throw` was, as the compiler wrote it: **a reference to the text**
 /// rather than the text's own two words, so that it fits in one word beside a
-/// tag ([ADR-211](../../../docs/specification/adr/adr-211.md) D1). The emitter
+/// tag ([ADR-280](../../../docs/specification/adr/adr-280.md) D24). The emitter
 /// writes `&"load"`, which the language below promotes to a `'static` like any
 /// constant, so it still costs nothing at run time.
 pub type Origin = &'static &'static str;
 
 /// Everything an error carries besides itself, **in one word**
-/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D24).
 ///
 /// * **Odd**: the site and nothing else - the address of the [`Origin`] with
 ///   its lowest bit set. That is what nearly every error is: nothing joined it,
@@ -63,12 +63,12 @@ struct Tail<S> {
 }
 
 /// The part of the envelope only the special cases need
-/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D24).
 struct Cold<S> {
     origin: &'static str,
     trace: Option<Backtrace>,
     /// **The failures that joined this one**
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), in the
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8), in the
     /// order they joined.
     ///
     /// What fills it is an `overlap` whose later branches failed too (D2), or
@@ -139,7 +139,7 @@ impl<S> Tail<S> {
     }
 
     /// The same site, trace and list, each joined failure converted: what a
-    /// hop from one channel to another keeps (ADR-240 D1). Always the cold
+    /// hop from one channel to another keeps (ADR-280 D28). Always the cold
     /// form, which is one allocation on a path that allocates a box anyway.
     fn map_into<T>(mut self, convert: impl FnMut(S) -> T) -> Tail<T> {
         let origin = self.origin();
@@ -176,11 +176,11 @@ impl<S> Tail<S> {
 /// It is the author's error plus what the language attaches: the site, and a
 /// trace where one was asked for. `Display` is the author's message and nothing
 /// else, because that is what a `{error}` hole prints and what may be shown to
-/// a stranger (Kap 7.1, ADR-018).
+/// a stranger (Kap 7.1, ADR-289).
 ///
 /// **Three words**: the author's error behind its box, and the `Tail` - the
 /// site, and a pointer to the trace and what joined only where there is one
-/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D3).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D26).
 pub struct Raised {
     inner: Box<dyn Error>,
     tail: Tail<Box<dyn Error>>,
@@ -201,7 +201,7 @@ impl Raised {
     /// top, as [`Thrown`] says it - and not under every failure that joined.
     fn long(&self, note_trace: bool) -> String {
         // An envelope put on in the box to hold a list has no site of its own,
-        // and says so as a library's error does (ADR-159 D3).
+        // and says so as a library's error does (ADR-280 D3).
         let mut out = match self.tail.origin() == BELOW_SITE {
             true => format!("{}\n{BELOW}", self.inner),
             false => format!("{}\n  raised at {}", self.inner, self.tail.origin()),
@@ -266,7 +266,7 @@ where
 }
 
 /// The same envelope, over an error type the compiler could **name**
-/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D1).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D9).
 ///
 /// Where a function's inferred error set is one type this program declares, the
 /// failure channel is that type rather than a box, and this is what travels in
@@ -283,13 +283,13 @@ where
 ///
 /// **One word more than the error itself**, and a `Result` around it no larger
 /// than that: the site, the trace and what joined are one `Tail`, whose word
-/// is never zero ([ADR-211](../../../docs/specification/adr/adr-211.md) D1, D2).
+/// is never zero ([ADR-280](../../../docs/specification/adr/adr-280.md) D24, D25).
 pub struct Thrown<E> {
     inner: E,
     /// What joined it is **of this channel's own type**
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), which is
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8), which is
     /// what makes the list possible at all: a joining block hands every branch
-    /// the same channel ([ADR-164](../../../docs/specification/adr/adr-164.md)
+    /// the same channel ([ADR-292](../../../docs/specification/adr/adr-292.md)
     /// D2), so the failures that meet here are the same kind of thing as the
     /// one they meet. Each keeps its own envelope, so each keeps the site
     /// [ADR-023](../../../docs/specification/adr/adr-023.md) D6 gives it — and
@@ -321,7 +321,7 @@ impl<E: fmt::Display> Thrown<E> {
     /// error.
     ///
     /// **With what joined it, indented under it**
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1). An outage
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8). An outage
     /// that took two of three loads down reads as two failures, the second
     /// under the first, rather than as one with the rest gone.
     pub fn full(&self) -> String {
@@ -344,7 +344,7 @@ impl<E: fmt::Display> Thrown<E> {
 }
 
 /// One joined failure, under the one it joined
-/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8).
 ///
 /// Every line of it moves right, not only the first, so a secondary that has
 /// secondaries of its own reads as the tree D3 makes it: the depth on the page
@@ -360,17 +360,17 @@ fn indented(full: &str) -> String {
 
 /// What the language put around a thrown error: where it was raised, and the
 /// trace if this process captured one
-/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D10).
 ///
 /// It exists because a handler is handed the **error** and still has to be able
 /// to answer both of the questions the envelope answers. Carrying it beside the
 /// error is what lets `match error { … }` be the plain match the source wrote.
 ///
 /// What joined the error is kept here too
-/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), for the same
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8), for the same
 /// reason the site is: both of the things the envelope holds have to stay
 /// reachable from where it was opened. **One word**, the envelope's own
-/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D24).
 pub struct Site<E> {
     tail: Tail<Thrown<E>>,
 }
@@ -381,7 +381,7 @@ impl<E> Site<E> {
     ///
     /// The same string [`Thrown::full`] builds, from the two halves the handler
     /// holds rather than from one value - **the failures that joined it
-    /// included** ([ADR-241](../../../docs/specification/adr/adr-241.md) D3),
+    /// included** ([ADR-280](../../../docs/specification/adr/adr-280.md) D10),
     /// which the handler's half used to leave out.
     pub fn full_of(&self, error: &E) -> String
     where
@@ -405,7 +405,7 @@ impl<E> Site<E> {
         // **And what joined it travels on with it**, in the same word. A
         // handler that passes an error along passes what came with it; dropping
         // the list here would make `throw error` the one place a failure
-        // quietly loses the others ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+        // quietly loses the others ([ADR-292](../../../docs/specification/adr/adr-292.md) D8).
         Thrown {
             inner: error,
             tail: self.tail,
@@ -413,7 +413,7 @@ impl<E> Site<E> {
     }
 
     /// The failures that joined this one, for a handler that reads them
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8).
     pub fn secondary(&self) -> &[Thrown<E>] {
         self.tail.secondary()
     }
@@ -429,7 +429,7 @@ fn full_form<E: fmt::Display>(
 }
 
 /// The same, told whether to say anything about the trace
-/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8).
 fn full_form_with<E: fmt::Display>(
     error: &E,
     origin: &'static str,
@@ -437,8 +437,8 @@ fn full_form_with<E: fmt::Display>(
     note_trace: bool,
 ) -> String {
     // **An envelope with no site says so in the sentence that already existed**
-    // ([ADR-159](../../../docs/specification/adr/adr-159.md) D3). Since
-    // [ADR-115](../../../docs/specification/adr/adr-115.md) D1 a library's
+    // ([ADR-280](../../../docs/specification/adr/adr-280.md) D3). Since
+    // [ADR-292](../../../docs/specification/adr/adr-292.md) D8 a library's
     // error may be enveloped for the sake of the **list**, and *raised at
     // (below Nikaia)* would be this compiler inventing a place.
     let mut out = match origin == BELOW_SITE {
@@ -462,7 +462,7 @@ impl<E: fmt::Display> fmt::Display for Thrown<E> {
 }
 
 /// **What an uncaught failure prints**, which is where the list is read most
-/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8).
 ///
 /// A `main` that hands back an `Err` is printed by the language below through
 /// `Debug`, so this is the operator's view of a program that stopped — and a
@@ -475,7 +475,7 @@ impl<E: fmt::Display> fmt::Debug for Thrown<E> {
 }
 
 /// **Into the box, the envelope goes with it**
-/// ([ADR-240](../../../docs/specification/adr/adr-240.md) D1): a `?` from a
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D28): a `?` from a
 /// typed channel into the boxed one converts the `Thrown` into a [`Raised`]
 /// with the same site, trace and list, so `error.full()` names the `throw` the
 /// callee wrote and what joins it later is kept.
@@ -507,14 +507,14 @@ pub fn throwing<E>(error: E, origin: Origin) -> Thrown<E> {
     }
 }
 
-/// **A library's error, put in an envelope** — [ADR-115](../../../docs/specification/adr/adr-115.md)
-/// D1 read against [ADR-159](../../../docs/specification/adr/adr-159.md) D2.
+/// **A library's error, put in an envelope** — [ADR-292](../../../docs/specification/adr/adr-292.md)
+/// D1 read against [ADR-280](../../../docs/specification/adr/adr-280.md) D13.
 ///
 /// That record said a library's error travels **bare**, because there is no
 /// `throw` in this program to have a site. That holds for the site and not for
 /// the list: an `overlap` that combines failures is the language doing
 /// something, so there is something to attach even where nothing was raised
-/// here. Since [ADR-241](../../../docs/specification/adr/adr-241.md) D1 every
+/// here. Since [ADR-280](../../../docs/specification/adr/adr-280.md) D13 every
 /// channel that is one library error is the envelope, and this is what a `?`
 /// from a `std` call, which hands the error bare, converts through.
 ///
@@ -532,10 +532,10 @@ impl<E> From<E> for Thrown<E> {
 const BELOW_SITE: &str = "(below Nikaia)";
 
 /// **What a joining block does with the failures after the first**
-/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D2).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D9).
 ///
 /// The first failure in written order is the block's
-/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5) and every later
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D5) and every later
 /// one joins its list, in written order. One trait so that
 /// [`crate::task::combine2`] and its arities need to know only that the channel
 /// can take one, whichever of the envelopes it is.
@@ -554,7 +554,7 @@ impl<E> Joined for Thrown<E> {
 /// [`Raised`] wherever this program raised it into the box. An error that
 /// arrived without one - from below Nikaia, or in a callee's typed channel that
 /// a `?` put in the box - is put in one here, with no site, so what joins it is
-/// kept ([ADR-239](../../../docs/specification/adr/adr-239.md) D3: a cleanup
+/// kept ([ADR-297](../../../docs/specification/adr/adr-297.md) D4: a cleanup
 /// that fails while such an error is leaving joins it rather than vanishing).
 impl Joined for Box<dyn Error> {
     fn joined_by(&mut self, later: Box<dyn Error>) {
@@ -590,7 +590,7 @@ impl Full for Box<dyn Error> {
 }
 
 /// What the long form says about a failure **no `throw` in this program
-/// raised** ([ADR-159](../../../docs/specification/adr/adr-159.md) D3).
+/// raised** ([ADR-280](../../../docs/specification/adr/adr-280.md) D3).
 const BELOW: &str = "  (raised below Nikaia; no site recorded)";
 
 /// The long form for a **library's** error type, where one is the channel (D2).
@@ -635,7 +635,7 @@ mod tests {
     }
     impl Error for Boom {}
 
-    /// **ADR-240 D1: a typed envelope keeps its site in the box**, and the
+    /// **ADR-280 D28: a typed envelope keeps its site in the box**, and the
     /// failures that joined it, each with its own; and what joins it there is
     /// kept too.
     #[test]
@@ -691,7 +691,7 @@ mod tests {
     }
 
     /// **A failure that joined is under the one it joined**
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1, D2), in the
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D8, D9), in the
     /// order they joined.
     #[test]
     fn what_joined_is_printed_under_it() {
@@ -720,7 +720,7 @@ mod tests {
     }
 
     /// **An envelope with no site says so**, which is the sentence
-    /// [ADR-159](../../../docs/specification/adr/adr-159.md) D3 already had.
+    /// [ADR-280](../../../docs/specification/adr/adr-280.md) D3 already had.
     /// Since D1 a library's error may be enveloped for the sake of the list,
     /// and *raised at (below Nikaia)* would be this compiler inventing a place.
     #[test]
@@ -751,7 +751,7 @@ mod tests {
         assert!(e.full().contains("no site recorded"), "{}", e.full());
     }
 
-    // --- The one-word tail (ADR-211) ----------------------------------------
+    // --- The one-word tail (ADR-280) ----------------------------------------
 
     use std::mem::size_of;
     use std::sync::atomic::{AtomicUsize, Ordering};

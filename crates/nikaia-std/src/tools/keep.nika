@@ -1,8 +1,8 @@
 // crates/nikaia-std/src/tools/keep.nika
 //
 // Where a buffer lives once views of it outlive the scope that made it
-// (ADR-209, Part I 6.6) - the questions the compiler's `contracts::keep` asks
-// of a type, a method's name and a ledger, moved from Rust (ADR-250, #125).
+// (ADR-283, Part I 6.6) - the questions the compiler's `contracts::keep` asks
+// of a type, a method's name and a ledger, moved from Rust (ADR-294, #125).
 // What stays Rust is the walk that follows views by origin and the plan it
 // decides, whose statement numbers are `usize` doors this language does not
 // have.
@@ -48,7 +48,7 @@ impl KeepContext {
     }
 
     /// Why a value of this type **cannot** be carried into a handle, or
-    /// nothing where it can (ADR-221 D3): every view in it is text, or a list
+    /// nothing where it can (ADR-283 D16): every view in it is text, or a list
     /// or a nullable of one, or a struct made only of such fields. That is
     /// what `tether::Rebase` is written for, and the one property `Holding`
     /// needs beyond it - covariance - holds for every such struct.
@@ -205,7 +205,7 @@ pub fn keeping_method_key(ledger: ref Ledger, target: ref String?, on_self: bool
 }
 
 /// The name a call's callee is written as. `unaliased` resolves a package's
-/// alias (ADR-046 D3).
+/// alias (ADR-286 D12).
 pub fn written_callee(names: ref winnow_grammar::InternerContext, func: ref Expr, unaliased: fn(ref String) -> String sync) -> String? {
     return match func {
         Expr::Variable(name) => names.resolve(name).clone(),

@@ -1,5 +1,5 @@
 //! A range that is a **value**
-//! ([ADR-212](../../../docs/specification/adr/adr-212.md) D3).
+//! ([ADR-293](../../../docs/specification/adr/adr-293.md) D18).
 //!
 //! `0..<n` is two numbers. Walking it does not use it up, so a program may keep
 //! one in a name and walk it twice - which the language below's `Range` does
@@ -139,7 +139,7 @@ where
 
 impl<T: Copy + PartialOrd> FusedIterator for Through<T> where RangeInclusive<T>: Iterator<Item = T> {}
 
-/// **The length, for every integer type** (ADR-212 D3).
+/// **The length, for every integer type** (ADR-293 D18).
 ///
 /// Rust's `Range<i64>` has no `ExactSizeIterator`, because on a 32-bit target
 /// its length may not fit a `usize`; its `size_hint` is still exact wherever
@@ -157,7 +157,7 @@ macro_rules! sized {
 
 sized!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
-/// **A kept range slices as a written one does** (ADR-212 D3): `t[r]` with `r`
+/// **A kept range slices as a written one does** (ADR-293 D18): `t[r]` with `r`
 /// a name is the same run of `t` as `t[1..<3]`, and goes through the same
 /// conversion to `usize` - so a negative end is the same abort, at the line
 /// that wrote it.

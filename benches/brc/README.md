@@ -43,7 +43,7 @@ prints the machine with the table and so should any quotation of it:
 | Nikaia, `user-parallelism = "yes"` | 4 | 0.29 s | 1.2× |
 
 Four runs, one output. That the two Nikaia rows agree is
-[ADR-009](../../docs/specification/adr/adr-009.md) D2's whole claim — the chunk
+[ADR-296](../../docs/specification/adr/adr-296.md) D10's whole claim — the chunk
 count does not change the result — checked rather than asserted, and the script
 fails if it ever stops being true.
 
@@ -73,7 +73,7 @@ and the fold, not the whole program.
 ## A lowercase `par_fold` rule, and what its whitespace cost (0.0.388)
 
 `examples/1brc.nika` writes its entry rule `pub rule file` - lowercase, so
-syntactic. Its entry point skipped no whitespace (ADR-009 D2), but the rule
+syntactic. Its entry point skipped no whitespace (ADR-296 D10), but the rule
 itself still skipped at its start and before every item of the fold, until
 `winnow-grammar` 28cf576. That broke the one thing `par_fold` promises: at
 `user-parallelism = "no"` a station ` b` lost its leading blank and a blank

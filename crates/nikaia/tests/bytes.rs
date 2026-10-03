@@ -1,5 +1,5 @@
 //! `Bytes`, and the tether refused where it would be needed
-//! ([ADR-156](../../../docs/specification/adr/adr-156.md)).
+//! ([ADR-283](../../../docs/specification/adr/adr-283.md)).
 //!
 //! Two halves of one answer. `Bytes` is **the language's** (D1): a name written
 //! bare, like `Vec` and `String`, lowered to one shared buffer (D2), and what
@@ -7,7 +7,7 @@
 //!
 //! And the mechanism it hangs on is **not built**: a view that outlives the
 //! buffer it points into is Part I 6.6's `Tethered`, which is
-//! [ADR-008](../../../docs/specification/adr/adr-008.md)'s unbuilt state. D4 is
+//! [ADR-283](../../../docs/specification/adr/adr-283.md)'s unbuilt state. D4 is
 //! what happens meanwhile — `NK2303`, on the Nikaia line, naming the buffer.
 //! The alternative was lowering the function and letting `rustc` explain a file
 //! the author never wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
@@ -33,7 +33,7 @@ fn refusals(source: &str) -> Vec<Finding> {
 
 /// Whether a function's result takes a keep from its caller: its views
 /// outlive the buffer the body read, so the buffer lives in the caller's keep
-/// ([ADR-209](../../../docs/specification/adr/adr-209.md) D2).
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D10).
 fn tethers_its_result(source: &str, key: &str) -> bool {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
@@ -120,8 +120,8 @@ fn a_program_may_declare_what_fs_read_hands_back() {
 // ---------------------------------------------------------------------------
 
 /// **A view of a buffer the body made is tethered** — it was refused while the
-/// state did not exist ([ADR-156](../../../docs/specification/adr/adr-156.md)
-/// D4), and it is what [ADR-209](../../../docs/specification/adr/adr-209.md)
+/// state did not exist ([ADR-283](../../../docs/specification/adr/adr-283.md)
+/// D4), and it is what [ADR-283](../../../docs/specification/adr/adr-283.md)
 /// builds: `data` goes into the caller's keep, and the result points into it.
 #[test]
 fn a_view_of_a_local_buffer_is_tethered() {
@@ -211,7 +211,7 @@ fn a_buffer_that_is_not_handed_back_is_left_alone() {
 }
 
 /// **A view of text that outlives the program is not a tether**, which is
-/// [ADR-008](../../../docs/specification/adr/adr-008.md) D9's own example.
+/// [ADR-283](../../../docs/specification/adr/adr-283.md) D7's own example.
 #[test]
 fn a_literal_is_left_alone() {
     let source = "fn name() -> ref String {\n\

@@ -2,9 +2,9 @@
 
 **Date:** September 13, 2026
 **Status:** measured; the numbers are
-[ADR-058](../specification/adr/adr-058.md)'s evidence
-**Related:** [ADR-058](../specification/adr/adr-058.md) (the decision these
-settled), [ADR-018](../specification/adr/adr-018.md) D2 (what a handler may
+[ADR-058](adr/adr-058.md)'s evidence
+**Related:** [ADR-058](adr/adr-058.md) (the decision these
+settled), [ADR-018](adr/adr-018.md) D2 (what a handler may
 return), [ADR-038](../specification/adr/adr-038.md) D3 (the I/O split), Part III
 17.1 (`fs::map`)
 **Produced by:** [`benches/sendfile/`](../../benches/sendfile) —
@@ -98,7 +98,7 @@ Machine CPU, µs per request. **Five runs**, all on the same box: the first two
 while it was busy with this repository's own builds, then one pinned to two
 cores with `taskset`, then two on a quiet box. The first run is kept in the
 table because it is the one the first draft of
-[ADR-058](../specification/adr/adr-058.md) argued from, and finding out that it was
+[ADR-058](adr/adr-058.md) argued from, and finding out that it was
 the outlier is the point of this section.
 
 ### Named at startup
@@ -170,7 +170,7 @@ Reproduced in **all five** runs:
   column is not — the instrument, not the mechanism.
 
 **Retired by the re-runs** — each of these was true in the busy run only, and
-each was in the first draft of [ADR-058](../specification/adr/adr-058.md):
+each was in the first draft of [ADR-058](adr/adr-058.md):
 
 * *"`sendfile` loses at 64 KiB."* One run of five. In the other four it is the
   best vehicle in its family there, by 20–30 %.
@@ -245,7 +245,7 @@ maps all 64 files up front, never evicts and never checks whether the file
 changed underneath it. A `std` that keeps mappings owes an eviction policy and
 an answer to "the file was replaced" — both are correctness work this number
 does not price, and
-[ADR-058](../specification/adr/adr-058.md) D8 is where they are decided rather than
+[ADR-058](adr/adr-058.md) D8 is where they are decided rather than
 assumed.
 
 **Nothing here is under memory pressure, and the cache is warm** — which is the
@@ -261,7 +261,7 @@ happens. A single connection with a fast reader cannot show either.
 machine class. What reproduced across runs here is the *ordering* and the
 *ratios* — `read_each` worst at small sizes, `mapped` and `cached` together,
 `sendfile` behind them until the megabyte and ahead after, `splice` last — and
-those are what [ADR-058](../specification/adr/adr-058.md) rests on.
+those are what [ADR-058](adr/adr-058.md) rests on.
 
 ---
 

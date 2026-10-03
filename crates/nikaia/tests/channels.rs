@@ -3,7 +3,7 @@
 //!
 //! Nothing here is syntax: two values, two methods, and the tuple `let` that
 //! binds them was already built
-//! ([ADR-098](../../../docs/specification/adr/adr-098.md)). What the record had
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md)). What the record had
 //! to decide was where it lives and what it promises.
 
 mod common;

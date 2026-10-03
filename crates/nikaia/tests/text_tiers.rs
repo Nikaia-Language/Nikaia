@@ -1,11 +1,11 @@
 //! **What a `String` field or result is below is decided by what flows into
-//! it** ([ADR-222](../../../docs/specification/adr/adr-222.md)), and each
+//! it** ([ADR-282](../../../docs/specification/adr/adr-282.md)), and each
 //! tier is compiled and **run** here at both settings of `user_parallelism`:
 //!
 //! | what flows in | below |
 //! | :--- | :--- |
 //! | text of its own only | `String`, unchanged |
-//! | views (and literals) only | a view, its buffer placed by ADR-209 |
+//! | views (and literals) only | a view, its buffer placed by ADR-283 |
 //! | both | `EitherText`: each value borrowed or owned where it is put in |
 //!
 //! Not one of these programs writes `ref`, `.clone()` or anything about
@@ -131,7 +131,7 @@ fn a_view_kept_where_a_string_is_declared_is_a_view() {
     let rust = lowered(WALL, Build::default());
     // `Person.name` only ever receives views: it is one, and costs nothing.
     assert!(rust.contains("struct Person<'a>"), "{rust}");
-    // The slice of the file: the buffer lives in the caller's keep (ADR-209).
+    // The slice of the file: the buffer lives in the caller's keep (ADR-283).
     assert!(
         rust.contains("__keep: &'k nikaia_std::tether::Keep"),
         "{rust}"
@@ -211,7 +211,7 @@ fn both_kinds_of_text_in_one_field_each_as_it_is() {
 
 /// **Text of its own only: nothing changes.** The ordinary field is a
 /// `String` below, as before this record, and a literal in it is built where
-/// it stands (ADR-207 D2).
+/// it stands (ADR-282 D4).
 #[test]
 fn a_field_only_text_of_its_own_flows_into_stays_a_string() {
     let source = r##"struct Greeting {
@@ -233,7 +233,7 @@ fn main() {
     );
 }
 
-/// **What the compiler chose is a report** (ADR-107 D4, ADR-222 D5):
+/// **What the compiler chose is a report** (ADR-282 D26, ADR-282 D26):
 /// `--tethers` names each `String` field or result that is not text of its
 /// own below, and why.
 #[test]
@@ -258,7 +258,7 @@ fn the_tiers_are_reported() {
     );
 }
 
-/// **A published field is never both kinds** (ADR-222 D2): its
+/// **A published field is never both kinds** (ADR-282 D22): its
 /// representation leaves with the package, before the programs that build it
 /// exist. The view is refused as before, saying why.
 #[test]
@@ -286,7 +286,7 @@ fn main() {
             .any(|f| f.code == "NK1106" && f.message.contains("`Person.name` holds `String`")),
         "{found:#?}"
     );
-    // The same for one that may be absent (ADR-224 D1).
+    // The same for one that may be absent (ADR-282 D12).
     let nullable = source
         .replace("pub name: String,", "pub name: String?,")
         .replace(
@@ -299,7 +299,7 @@ fn main() {
 
 // ---------------------------------------------------------------------------
 // Every other place a program declares `String`
-// ([ADR-223](../../../docs/specification/adr/adr-223.md))
+// ([ADR-282](../../../docs/specification/adr/adr-282.md))
 // ---------------------------------------------------------------------------
 
 /// **A parameter, an annotated `let`, and the elements of a list and a map**
@@ -400,7 +400,7 @@ fn both_kinds_into_a_parameter_a_let_and_a_list_each_as_it_is() {
     assert!(rust.contains("either_text::either(last)"), "{rust}");
 }
 
-/// **A `String?` is a position too** ([ADR-224](../../../docs/specification/adr/adr-224.md)
+/// **A `String?` is a position too** ([ADR-282](../../../docs/specification/adr/adr-282.md)
 /// D1): views only, and `null`, which is no text of either kind, make it a
 /// view that may be absent.
 const NULLABLE: &str = r##"use std::fs
@@ -498,7 +498,7 @@ fn both_kinds_into_a_value_that_may_be_absent_each_as_it_is() {
     assert!(rust.contains("note: None"), "{rust}");
 }
 
-/// **A list going in whole** ([ADR-224](../../../docs/specification/adr/adr-224.md)
+/// **A list going in whole** ([ADR-282](../../../docs/specification/adr/adr-282.md)
 /// D3): a literal's items one by one, a `collect` item by item, and a list
 /// handed back and bound - with a type or without - is the list it came from,
 /// one representation below, so nothing is converted.
@@ -538,7 +538,7 @@ fn a_list_going_in_whole_is_handed_over_item_by_item_or_is_the_list_it_came_from
     );
 }
 
-/// **A view cut from text is typed as one** ([ADR-225](../../../docs/specification/adr/adr-225.md)
+/// **A view cut from text is typed as one** ([ADR-282](../../../docs/specification/adr/adr-282.md)
 /// D1): `trim` on text of its own, `lines`, `split` hand back views, so a view
 /// handed straight to a parameter both kinds flow into is borrowed there.
 const VIEWS_TYPED: &str = r##"use std::fs
@@ -570,8 +570,8 @@ fn a_view_cut_from_text_goes_into_a_mixed_parameter_as_it_is() {
     runs("views-typed", VIEWS_TYPED, "# settings own 11 settings");
 }
 
-/// **And where it cannot go as it is, it is refused** (ADR-225 D2): a list a
-/// published function hands back is text of its own (ADR-223 D4), so a view
+/// **And where it cannot go as it is, it is refused** (ADR-282 D19): a list a
+/// published function hands back is text of its own (ADR-282 D23), so a view
 /// pushed into it is kept, and the checker says so - where before the
 /// `rustc` of the file below did.
 #[test]
@@ -605,7 +605,7 @@ fn main() throws {
 }
 
 /// **A view handed back out of a parameter that holds views**
-/// ([ADR-226](../../../docs/specification/adr/adr-226.md)): an element of a
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md)): an element of a
 /// list of views, a view field of a struct - the result is the buffer's, not a
 /// borrow of the parameter - and a field both kinds flow into, which is handed
 /// over with its struct as a `String` field is.

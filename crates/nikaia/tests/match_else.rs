@@ -1,9 +1,9 @@
 //! A `match`'s catch-all arm is `else`
-//! ([ADR-145](../../../docs/specification/adr/adr-145.md)).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 //!
 //! The last arm is *everything else*, and it was written with a character
 //! borrowed from the ignore pattern — which says something different:
-//! [ADR-126](../../../docs/specification/adr/adr-126.md) is careful that `_`
+//! [ADR-291](../../../docs/specification/adr/adr-291.md) is careful that `_`
 //! means **ignore a value that arrived**, neither bind it nor use it, and that
 //! record even argues against calling it a *wildcard*. Nothing arrives at a
 //! catch-all arm.
@@ -12,7 +12,7 @@
 //! reserved, and already reads as *the branch taken when nothing before it
 //! matched* ([ADR-132](../../../docs/specification/adr/adr-132.md)) — so this
 //! costs no word, which is most of the argument
-//! ([ADR-084](../../../docs/specification/adr/adr-084.md)).
+//! ([ADR-276](../../../docs/specification/adr/adr-276.md)).
 
 use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
@@ -107,7 +107,7 @@ fn the_arm_works_in_statement_position_too() {
 
 /// **And `_name` is still a name**, which is `UNDERSCORE`'s own condition and is
 /// why the refusal above could be put in the parser at all
-/// ([ADR-126](../../../docs/specification/adr/adr-126.md) §5).
+/// ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 #[test]
 fn an_underscore_prefixed_name_is_a_binding_arm() {
     let rust = lowered(

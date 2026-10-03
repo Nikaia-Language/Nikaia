@@ -1,6 +1,6 @@
 //! A call into foreign code from which a **lock** is reachable — `NK2503`.
 //!
-//! [ADR-039](../../../docs/specification/adr/adr-039.md) D6 and
+//! [ADR-281](../../../docs/specification/adr/adr-281.md) D32 and
 //! [Part III 15.2](../../../docs/specification/30-nikaia-tooling.md), worked
 //! through in C.6: *foreign code touches only what it reaches, and the language
 //! has no global mutable data. Where no lock is reachable from the arguments,
@@ -66,7 +66,7 @@ fn a_lock_handed_straight_in_names_the_call() {
     );
     assert!(
         notes.contains("`counter` is a `SharedMut[i32]`"),
-        "the note names the type the source wrote (ADR-064 D1): {notes}"
+        "the note names the type the source wrote (ADR-281 D1): {notes}"
     );
     assert!(
         notes.contains("code that might keep a lock could deadlock"),

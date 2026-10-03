@@ -1,13 +1,13 @@
 //! Running Nikaia while the program is built
-//! ([ADR-073](../../../docs/specification/adr/adr-073.md) D5's second stage,
-//! bounded by [ADR-075](../../../docs/specification/adr/adr-075.md)).
+//! ([ADR-287](../../../docs/specification/adr/adr-287.md) D6's second stage,
+//! bounded by [ADR-287](../../../docs/specification/adr/adr-287.md)).
 //!
 //! `comptime` has had an evaluator since the word existed and what it knew was
 //! an integer literal, a name whose value already folded, a negation and
 //! `+ - * / %` — `fold.rs`, 124 lines with no call in it. D5 called that the
 //! first stage and wrote the second one as *when Q4 is answered*: a call, and
 //! with it the file reading [ADR-072](../../../docs/specification/adr/adr-072.md)
-//! waits behind. [ADR-075](../../../docs/specification/adr/adr-075.md) answered
+//! waits behind. [ADR-287](../../../docs/specification/adr/adr-287.md) answered
 //! Q4, and three records have been waiting on this since
 //! (issue #178).
 
@@ -149,7 +149,7 @@ fn a_callee_that_touches_the_world_is_refused() {
 
 /// **A recursion with no base case says so rather than taking the stack.**
 ///
-/// [ADR-075](../../../docs/specification/adr/adr-075.md) D4 deliberately has no
+/// [ADR-287](../../../docs/specification/adr/adr-287.md) D16 deliberately has no
 /// step budget and wrote down what that costs: a body that does not terminate
 /// hangs the build. This is not that — a recursion without a base case would
 /// overflow *this compiler's* stack, and a compiler that falls over is not the
@@ -201,7 +201,7 @@ fn a_for_over_a_range_is_evaluated() {
 }
 
 /// **`..` and `..<` are different loops**
-/// ([ADR-137](../../../docs/specification/adr/adr-137.md) D3, D4), and the
+/// ([ADR-291](../../../docs/specification/adr/adr-291.md) D12, D13), and the
 /// evaluator reads the end the same way the emitter does rather than assuming
 /// one.
 #[test]
@@ -222,7 +222,7 @@ fn an_inclusive_range_counts_one_further() {
 }
 
 /// **A `while`**, which is the loop
-/// [ADR-075](../../../docs/specification/adr/adr-075.md) D4 said would get no
+/// [ADR-287](../../../docs/specification/adr/adr-287.md) D16 said would get no
 /// step budget: this one ends because its body ends it, and nothing here
 /// counted the turns.
 #[test]
@@ -274,7 +274,7 @@ fn break_and_continue_are_both_read() {
 
 /// **A `return` out of a loop leaves the function**, not the loop — which is
 /// the one way a loop's body hands a value back at all, since
-/// [ADR-151](../../../docs/specification/adr/adr-151.md) D1 says `break`
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) D13 says `break`
 /// carries none.
 #[test]
 fn a_return_inside_a_loop_leaves_the_function() {
@@ -384,7 +384,7 @@ fn a_comptime_that_disagrees_with_its_own_type_is_refused() {
 }
 
 /// **`NK1165`: the index happening at the one moment there is no run to abort
-/// in.** [ADR-048](../../../docs/specification/adr/adr-048.md) D1 aborts with
+/// in.** [ADR-285](../../../docs/specification/adr/adr-285.md) D1 aborts with
 /// this sentence at run time; *this compiler cannot evaluate it* would send the
 /// reader looking for a missing feature rather than at the line.
 #[test]
@@ -434,7 +434,7 @@ fn a_forbidden_callee_is_also_said_once() {
 
 /// **An array knows its own length**, which nothing said before: `xs.len()` on
 /// an `Array[T, N]` resolved to no ledger entry, and an unresolved call costs
-/// the *enclosing* function its touch set (ADR-033) — so the natural spelling
+/// the *enclosing* function its touch set (ADR-292) — so the natural spelling
 /// of a build-time loop was refused with *nothing says what it touches* while
 /// `0..<5` was fine.
 #[test]
@@ -782,7 +782,7 @@ fn an_escape_the_backend_rejects_is_not_invented_here() {
 /// **A `sync` method of this program's own folds**, which is what the owner
 /// expected of it and what 0.0.113 had to say it did not do.
 ///
-/// The wall was not `sync` — that is [ADR-075](../../../docs/specification/adr/adr-075.md)
+/// The wall was not `sync` — that is [ADR-287](../../../docs/specification/adr/adr-287.md)
 /// D1's **permission**, and the ledger check it drives applies to a method's
 /// key exactly as to a function's. It was that a method needs a **value** to be
 /// called on, and this evaluator had none to make.
@@ -819,7 +819,7 @@ fn a_method_of_this_program_folds() {
 
 /// **The permission is still the ledger's**, which is the half that must not
 /// have moved: a method that reaches the world is `NK1152` by its own key, the
-/// same sentence a free function gets ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// same sentence a free function gets ([ADR-287](../../../docs/specification/adr/adr-287.md)
 /// D1, D2).
 #[test]
 fn a_method_the_rule_forbids_is_named_by_its_key() {
@@ -904,7 +904,7 @@ fn a_constant_may_stand_above_the_one_it_reads() {
 ///
 /// Once a constant may read one declared later, `comptime A = B` beside
 /// `comptime B = A` becomes writable — and it has no base case to reach, so it
-/// is not the call depth that catches it ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// is not the call depth that catches it ([ADR-287](../../../docs/specification/adr/adr-287.md)
 /// D4's neighbour, which is about a recursion that *would* end if the stack
 /// were deeper). The stack of names being worked out is, and it can say which.
 #[test]

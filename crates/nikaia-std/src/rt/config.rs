@@ -24,7 +24,7 @@
 //!
 //! `cleanup-deadline` arrives here from `nikaia.toml`, where Part III 13.3 had
 //! put it. How long a program waits at exit for pending cleanup
-//! ([ADR-006](../../../../docs/specification/adr/adr-006.md) D5) is an
+//! ([ADR-297](../../../../docs/specification/adr/adr-297.md) D6) is an
 //! operating property.
 
 use std::path::{Path, PathBuf};
@@ -95,7 +95,7 @@ pub struct Config {
     pub user_pool: usize,
     /// Which mechanism serves a file.
     pub io_method: Method,
-    /// How long shutdown drains (ADR-006 D5). `0` disables draining.
+    /// How long shutdown drains (ADR-297 D6). `0` disables draining.
     pub cleanup_deadline: Duration,
 }
 
@@ -105,7 +105,7 @@ impl Default for Config {
             io_workers: 1,
             user_pool: 0,
             io_method: Method::Auto,
-            // ADR-006 D5's "generous default", unchanged by the move.
+            // ADR-297 D6's "generous default", unchanged by the move.
             cleanup_deadline: Duration::from_secs(30),
         }
     }
@@ -206,7 +206,7 @@ fn count(key: &str, value: &str) -> Result<usize, String> {
 }
 
 /// `"30s"`, `"500ms"`, `"2m"` or a bare number of seconds. `"0"` disables
-/// draining, which is ADR-006 D5's own word for it.
+/// draining, which is ADR-297 D6's own word for it.
 fn deadline(value: &str) -> Result<Duration, String> {
     let unwell = || {
         format!(

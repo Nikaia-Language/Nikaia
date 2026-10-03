@@ -15,11 +15,11 @@
 //! the same reason it does there — the sets only grow, and there are finitely
 //! many names to grow by.
 //!
-//! The call resolution is `sync`'s, not a second one. ADR-028 recorded what the
+//! The call resolution is `sync`'s, not a second one. ADR-288 recorded what the
 //! alternative costs: two analyses that have to agree about what `stats.add(5)`
 //! goes to, and eventually do not. That includes the **method** half of it: the
 //! type checker resolves a receiver and both walks read its answer, so
-//! `a.add(v)` in ADR-031's `HashMap[&str, Stats]` chain reaches `Stats::add`
+//! `a.add(v)` in ADR-288's `HashMap[&str, Stats]` chain reaches `Stats::add`
 //! here for the same reason it reaches it in [`super::sync`]. Before that this
 //! file answered every method call with `"?"` - fail-closed and therefore not a
 //! bug, but a set that said "something I cannot name" about a call the compiler
@@ -56,7 +56,7 @@ struct Contrib {
 /// already relies on, and inference is here to say more than it, never less.
 ///
 /// `resolved` is the type checker's answer to what a method call goes to
-/// (ADR-028), the same map [`super::sync::infer`] is handed. Having one of the
+/// (ADR-288), the same map [`super::sync::infer`] is handed. Having one of the
 /// two read it and the other not is what recorded `throws = ["?"]` for a
 /// function whose only failing call was `a.add(v)` - a chain
 /// `docs/history/from-for-throws-and-touches.md` §3 walks link by link, and which
@@ -103,7 +103,7 @@ pub fn infer(
 
     // **The fixpoint is Nikaia** (`tools/throws.nika`, #125): it starts with
     // what each one throws itself, grows by what it reaches - a callee the
-    // graph does not hold still has the set the ledger gives it (ADR-173 D3) -
+    // graph does not hold still has the set the ledger gives it (ADR-296 D40) -
     // and answers what every `throws` function fails with.
     let direct: BTreeMap<String, BTreeSet<String>> = graph
         .iter()
@@ -151,7 +151,7 @@ fn contrib_of(
     };
 
     // **The walk is Nikaia** (`tools/throws.nika`, #125); what a call
-    // resolves to is `sync`'s single answer (ADR-028), handed in.
+    // resolves to is `sync`'s single answer (ADR-288), handed in.
     let thrown = nikaia_std::tools::throws::thrown_by(
         body,
         &parsed.interner,
@@ -164,7 +164,7 @@ fn contrib_of(
     };
 
     // What the walk above left to somebody else: this function's method calls,
-    // as the type checker resolved them (ADR-028). Merged rather than
+    // as the type checker resolved them (ADR-288). Merged rather than
     // reconciled, exactly as `sync::reach_of` merges them - the walk skips
     // method calls entirely and this covers those and nothing else.
     //
@@ -207,7 +207,7 @@ fn contrib_of(
 /// name can fail, and reading *I cannot see it* as *it does not fail* is the
 /// one direction ADR-010 D1 calls a vulnerability generator. A method call is
 /// answered per function by the type checker, and merged in by `contrib_of` -
-/// `sync`'s own arrangement, and the point of ADR-028's single resolution.
+/// `sync`'s own arrangement, and the point of ADR-288's single resolution.
 fn contribution(
     parsed: &Parsed,
     expr: &Expr,

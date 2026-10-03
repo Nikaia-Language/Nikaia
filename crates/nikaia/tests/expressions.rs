@@ -13,7 +13,7 @@ fn emit(source: &str) -> String {
 }
 
 /// Kap 3.3: `0..<n` is what a `for` counts over, and `0..n` is the same range
-/// with its end in it ([ADR-137](../../../docs/specification/adr/adr-137.md)
+/// with its end in it ([ADR-291](../../../docs/specification/adr/adr-291.md)
 /// D3, D4).
 #[test]
 fn a_range_is_an_expression() {
@@ -66,7 +66,7 @@ fn a_range_binds_looser_than_its_arithmetic() {
 #[test]
 fn a_range_may_end_in_a_call() {
     let emitted = emit("fn f(xs: Vec[i32]) { for i in 0..<xs.len() { } }");
-    // `as i64` because a length is one (ADR-048 D1), and no parentheses: `as`
+    // `as i64` because a length is one (ADR-285 D1), and no parentheses: `as`
     // binds tighter than `..` in Rust, so the range still ends at the length.
     assert!(
         emitted.contains("for i in 0..xs.len() as i64 {"),
@@ -102,7 +102,7 @@ fn a_postfix_leaves_a_plain_receiver_alone() {
     let emitted = emit("fn f(xs: Vec[i32]) { let n = xs.len() let m = xs[0].abs() }");
     assert!(emitted.contains("xs.len()"), "{emitted}");
     assert!(!emitted.contains("(xs)"), "{emitted}");
-    // The read is a call now ([ADR-161](../../../docs/specification/adr/adr-161.md)
+    // The read is a call now ([ADR-293](../../../docs/specification/adr/adr-293.md)
     // D6) and the `*` around it is a place, so a postfix still needs no
     // parentheses of its own beyond the ones the read already has.
     //
@@ -198,7 +198,7 @@ fn a_return_inside_an_if_wraps_itself_when_the_function_throws() {
     assert!(emitted.contains("return Ok(0);"), "{emitted}");
 }
 
-// --- ADR-022: one lambda form -----------------------------------------------
+// --- ADR-277: one lambda form -----------------------------------------------
 
 /// A method may take arguments **and** a trailing lambda, and the chain
 /// continues after it.
@@ -224,7 +224,7 @@ fn a_method_takes_arguments_and_a_trailing_lambda() {
 /// `}`, so there is nothing to swallow.
 ///
 /// The argument is named, because that is the only spelling: the automatic `a`
-/// is withdrawn (ADR-049), and `fn { … }` is a lambda of no arguments.
+/// is withdrawn (ADR-277), and `fn { … }` is a lambda of no arguments.
 #[test]
 fn a_block_lambda_does_not_swallow_the_chain() {
     let emitted = emit("fn main() { let n = xs.map fn (x) { x.id } .len() }");
@@ -411,7 +411,7 @@ fn a_while_is_one_statement_and_not_three() {
 }
 
 /// …and it lowers name for name, because the language below spells it the same
-/// way (ADR-011 D2).
+/// way (ADR-296 D17).
 #[test]
 fn a_while_lowers_to_a_while() {
     let rust = emit(

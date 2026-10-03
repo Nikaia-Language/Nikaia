@@ -1,8 +1,8 @@
 //! **A Nikaia program binds a socket and talks over it**
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D1), which is the
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D6), which is the
 //! step issue #90 calls the blocker:
-//! [ADR-018](../../../docs/specification/adr/adr-018.md) entire,
-//! [ADR-058](../../../docs/specification/adr/adr-058.md), and the roadmap's
+//! [ADR-289](../../../docs/specification/adr/adr-289.md) entire,
+//! [ADR-289](../../../docs/specification/adr/adr-289.md), and the roadmap's
 //! route hashing all wait on something for a handler to run *for*.
 //!
 //! The whole of it is a `.nika` file: `net::listen`, `accept`, `read`, `write`.

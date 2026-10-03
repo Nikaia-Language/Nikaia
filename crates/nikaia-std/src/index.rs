@@ -1,6 +1,6 @@
 //! What goes between the brackets, converted where it has to be.
 //!
-//! **A length is an `i64`** ([ADR-048](../../../docs/specification/adr/adr-048.md)
+//! **A length is an `i64`** ([ADR-285](../../../docs/specification/adr/adr-285.md)
 //! D1), so `for i in 0..xs.len()` gives an `i64` and `xs[i]` is an `i64` index.
 //! Rust indexes a sequence by `usize`, and this is the conversion - emitted, never
 //! written. D1's trade is that the ceremony a user would write cannot fail while
@@ -14,7 +14,7 @@
 //! nothing in their program contains.
 //!
 //! **Why a trait and not a function.** The emitter puts this around *every* index
-//! it writes, because it does not know types (ADR-011 D2) and a map is indexed
+//! it writes, because it does not know types (ADR-296 D17) and a map is indexed
 //! too: `counts[path]` takes a `&str`. So the conversion has to be chosen by the
 //! type of what is in the brackets, and choosing on a type is what a trait is. For
 //! anything that is not an integer this is the identity, which is why a uniform
@@ -32,7 +32,7 @@ pub trait At {
 /// `#[track_caller]` all the way out to [`at`], so the location the panic hook is
 /// handed is the **caller's** - the line of the generated file that wrote the
 /// index - and not a line of this file. Without it,
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table has nothing
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D9's table has nothing
 /// to look up and the reader is told about `nikaia_std/src/index.rs`, which is
 /// the Part III C.1 defect one crate over.
 #[cold]
@@ -131,11 +131,11 @@ pub fn at<I: At>(index: I) -> I::Out {
 }
 
 /// **A read through the brackets answers what the container can promise**
-/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D4).
 ///
 /// One trait with an **output type per container**, which is the same
 /// arrangement [`Set`] has and for the same reason: this emitter does not know
-/// types ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), so it
+/// types ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), so it
 /// writes the same three tokens for a map and for a sequence and the language
 /// below picks.
 ///
@@ -255,7 +255,7 @@ where
 
 /// **A view of a container reads like the container**, because this emitter
 /// writes `get(&x, …)` whether `x` is owned or already a view
-/// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2) — so a `&&str`
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D17) — so a `&&str`
 /// arrives here and has to answer what a `&str` would.
 ///
 /// **The answer is tied to the inner reference and not to this borrow**, which
@@ -304,7 +304,7 @@ where
 }
 
 /// What a **map** read answers, before the `*` the emitter writes around every
-/// read takes it apart ([ADR-161](../../../docs/specification/adr/adr-161.md)
+/// read takes it apart ([ADR-293](../../../docs/specification/adr/adr-293.md)
 /// D6).
 ///
 /// A sequence read has to be a **value** — `return xs[at]` on a `-> i64` is the
@@ -440,11 +440,11 @@ where
 }
 
 /// What `??` does, once the left of it may be a **view into a container**
-/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D4).
 ///
 /// A map read answers `Option<&V>`, because the value reached is the map's and
 /// copying it is never something a compiler does on its own
-/// ([ADR-008](../../../docs/specification/adr/adr-008.md) D5). But the fallback
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D3). But the fallback
 /// is written as the value it stands for — `m[k] ?? 0` — so the two sides do
 /// not have the same type, and `unwrap_or_else` cannot join them.
 ///
@@ -454,7 +454,7 @@ where
 ///
 /// `T: Copy` on the second and not `Clone`: a copy of a number is what
 /// `m[k] ?? 0` means, and a **clone** of a `String` is an allocation the
-/// program did not write ([ADR-008](../../../docs/specification/adr/adr-008.md)
+/// program did not write ([ADR-283](../../../docs/specification/adr/adr-283.md)
 /// D5). Where the value does not copy, the fallback has to be a view too — or
 /// the program says `.to_owned()`, which is the same sentence that section has
 /// everywhere else.
@@ -484,7 +484,7 @@ impl<T: Copy> Or<T> for &Option<T> {
 }
 
 /// **A map's text, read, with a literal after `??`**
-/// ([ADR-213](../../../docs/specification/adr/adr-213.md) D2): the map hands
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D28): the map hands
 /// out its `String` by reference and the literal is a `&str`, so what the two
 /// can both be is a view of text - with nothing copied and nothing allocated.
 impl<'a> Or<&'a str> for Option<&'a String> {
@@ -505,7 +505,7 @@ where
 }
 
 /// **A read of a map whose values are `T?` is one `T?`**
-/// ([ADR-273](../../../docs/specification/adr/adr-273.md) D3): the map answers
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D14): the map answers
 /// `Option<&Option<T>>`, and a stored `None` and an absent key are both
 /// `None` here. Still a view of what the map keeps: nothing is copied.
 pub fn flat<T>(read: Option<&Option<T>>) -> Option<&T> {
@@ -559,7 +559,7 @@ where
 /// three spellings the program never wrote, which is Part III C.1's class at its
 /// worst. `insert` takes `K` by value and pins it exactly, and a sequence's
 /// write is still an indexed assignment — so the two are one trait for the same
-/// reason `At` above is one: **this emitter does not know types** (ADR-011 D2),
+/// reason `At` above is one: **this emitter does not know types** (ADR-296 D17),
 /// and a rule applied everywhere cannot be applied to the wrong container.
 pub trait Set<K, V> {
     fn set(&mut self, key: K, value: V);

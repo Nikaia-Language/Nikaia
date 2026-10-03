@@ -2,7 +2,7 @@
 //
 // Part I 2.2 and Part III C.1: **a type nothing declares is refused here
 // rather than lowered** (ADR-096), and the names a file declares are declared
-// once (`NK1148`). Moved from the compiler's `types` (ADR-250, #125). What the
+// once (`NK1148`). Moved from the compiler's `types` (ADR-294, #125). What the
 // file declares as types and what an `impl`'s target makes a type parameter
 // are the compiler's `contracts`' answers, handed in.
 

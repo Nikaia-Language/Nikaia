@@ -67,8 +67,8 @@ fn ran(purpose: &str, source: &str) -> String {
 
 /// Part I 4.5's own example, compiled and run.
 ///
-/// **With the `??` the read now needs** ([ADR-114](../../../docs/specification/adr/adr-114.md)
-/// D1, built by [ADR-161](../../../docs/specification/adr/adr-161.md)): a map
+/// **With the `??` the read now needs** ([ADR-293](../../../docs/specification/adr/adr-293.md)
+/// D1, built by [ADR-293](../../../docs/specification/adr/adr-293.md)): a map
 /// has a value only where the key is, so the bracket answers a `T?` and a
 /// program that knows better says so.
 #[test]
@@ -94,10 +94,10 @@ fn main() {
 
 /// D2: the write is an `insert`, which takes the key **by value** and is what
 /// pins it. The **read** is a call of its own now
-/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4): it answers what
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D4): it answers what
 /// the container can promise, and the `*` around it is what lets the same three
 /// tokens serve a map and a sequence
-/// ([ADR-161](../../../docs/specification/adr/adr-161.md) D6).
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D9).
 #[test]
 fn the_write_is_a_set_and_the_read_is_a_get() {
     let rust = lowered(
@@ -132,7 +132,7 @@ fn main() {
     );
     // **And it is no longer an index.** Rust's `Index` for a map panics on an
     // absent key, which is the abort
-    // [ADR-114](../../../docs/specification/adr/adr-114.md) took away.
+    // [ADR-293](../../../docs/specification/adr/adr-293.md) took away.
     assert!(
         !rust.contains("scores[nikaia_std::index::at(\"Player1\")]"),
         "the read is not an index any more:\n{rust}"
@@ -142,7 +142,7 @@ fn main() {
 /// **A sequence is written the same way and means the same thing**, which is
 /// what makes this one rule rather than two: `Set` for a `Vec` *is* an indexed
 /// assignment, chosen by the language below on the container's type because this
-/// emitter does not know it (ADR-011 D2).
+/// emitter does not know it (ADR-296 D17).
 #[test]
 fn a_sequence_written_through_the_brackets_still_works() {
     let printed = ran(
@@ -183,7 +183,7 @@ fn main() {
     );
     // The `at` is absent here and that is a different rule: a **constant**
     // index needs no conversion, because the fold already knows it fits
-    // ([ADR-048](../../../docs/specification/adr/adr-048.md) D1). What this
+    // ([ADR-285](../../../docs/specification/adr/adr-285.md) D1). What this
     // asserts is the form, not the spelling of the subscript.
     assert!(
         rust.contains("xs[0] += 1"),
@@ -264,7 +264,7 @@ fn a_field_of_an_indexed_element_compiles_and_runs() {
 /// `SliceIndex<str>` — and handing a bare `1..=3` to `at` settles *nothing*,
 /// since `At` is implemented for a range of every signed type and all of them
 /// answer the same `usize`. A range built out of **names** is an `i64` one and
-/// has to be converted, which is [ADR-048](../../../docs/specification/adr/adr-048.md)
+/// has to be converted, which is [ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D1's whole trade. `examples/k-nucleotide/src/main.nika` writes the second shape.
 #[test]
 fn a_slice_of_text_is_converted_where_the_range_is_computed() {
@@ -301,7 +301,7 @@ fn a_slice_of_text_is_converted_where_the_range_is_computed() {
 /// issue #147's entry for it at 0.0.131).
 ///
 /// The read wrapper writes a `*` around every bracket
-/// ([ADR-161](../../../docs/specification/adr/adr-161.md) D6), which is what
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D9), which is what
 /// makes `xs[0]` the element rather than a view of it. Over a **range** the
 /// read answers a `&str` already, and `*` over one is a `str`: *the size for
 /// values of type `str` cannot be known at compilation time*, about a noun
@@ -360,7 +360,7 @@ fn a_read_at_a_number_is_still_the_element() {
 }
 
 /// **A range that counts from the end reaches run time**
-/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1,
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D1,
 /// [ADR-182](../../../docs/specification/adr/adr-182.md) D3).
 ///
 /// `xs[-2..-1]` is an access out of bounds and says so — but only if it gets
@@ -406,7 +406,7 @@ fn a_range_that_counts_from_the_end_is_an_access_out_of_bounds() {
 
 /// **A field of an element is read through the reference the read answers**:
 /// `rows[1].a` is `get(&rows, 1).a`, with no `*` the language below does on
-/// its own (found moving the ledger's records into Nikaia, ADR-257, where
+/// its own (found moving the ledger's records into Nikaia, ADR-294, where
 /// `clippy` refused the deref in `std`).
 #[test]
 fn a_field_of_an_element_is_read_without_a_deref() {

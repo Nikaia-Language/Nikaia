@@ -2,7 +2,7 @@
 //!
 //! `strict` vs `join` says what an overlap costs *for these reads*; this says
 //! what it costs for nothing, which is the floor no payload can undercut. The
-//! two numbers together are what ADR-033 §8.4 rests on: the floor is thread
+//! two numbers together are what ADR-292 rests on: the floor is thread
 //! wake-up latency, so no user-space vehicle removes it.
 
 fn main() {

@@ -1,11 +1,11 @@
 //! A set with more than one error type in it: the generated sum
-//! ([ADR-160](../../../docs/specification/adr/adr-160.md)).
+//! ([ADR-280](../../../docs/specification/adr/adr-280.md)).
 //!
 //! [ADR-023](../../../docs/specification/adr/adr-023.md) D1 records `throws` as
 //! a **set**, and the three records before this one made a set of **one** a
-//! channel: the program's own type ([ADR-157](../../../docs/specification/adr/adr-157.md)),
-//! then `std`'s names ([ADR-158](../../../docs/specification/adr/adr-158.md)),
-//! then a library's type ([ADR-159](../../../docs/specification/adr/adr-159.md)).
+//! channel: the program's own type ([ADR-280](../../../docs/specification/adr/adr-280.md)),
+//! then `std`'s names ([ADR-280](../../../docs/specification/adr/adr-280.md)),
+//! then a library's type ([ADR-280](../../../docs/specification/adr/adr-280.md)).
 //! What was left is the shape a program reaches by doing two ordinary things:
 //! reading a file **and** throwing an error of its own.
 //!
@@ -103,7 +103,7 @@ fn two_error_types_are_a_sum() {
 
 /// **Each member keeps the channel it would have had alone** (D2): an
 /// envelope, the program's own type and a library's alike
-/// ([ADR-241](../../../docs/specification/adr/adr-241.md) D1) - and a `?`
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D13) - and a `?`
 /// straight from `std` hands the library's error bare, so the sum puts the
 /// envelope on for it.
 #[test]

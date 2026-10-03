@@ -1,5 +1,5 @@
 //! A `??`'s fallback is one value, or an expression in brackets
-//! ([ADR-089](../../../docs/specification/adr/adr-089.md)).
+//! ([ADR-279](../../../docs/specification/adr/adr-279.md)).
 //!
 //! **`??` sat above the whole binary chain**, so its fallback reached rightwards
 //! across every operator there is: `a ?? 0 > 3` was `a ?? (0 > 3)` while looking
@@ -130,7 +130,7 @@ fn main() {{
     }
 }
 
-/// D1 keeps the chain, which is [ADR-066](../../../docs/specification/adr/adr-066.md)
+/// D1 keeps the chain, which is [ADR-278](../../../docs/specification/adr/adr-278.md)
 /// D4's decision and must survive a change to the rule under it.
 #[test]
 fn a_chain_of_fallbacks_still_parses() {

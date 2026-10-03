@@ -1,6 +1,6 @@
 //! An arithmetic overflow aborts, at every build.
 //!
-//! [ADR-043](../../../docs/specification/adr/adr-043.md) D1. The specification
+//! [ADR-285](../../../docs/specification/adr/adr-285.md) D5. The specification
 //! said nothing about overflow, and what the silence cost was measurable: the
 //! generated project named one profile, `dev`, so a user's program aborted while
 //! every benchmark in this repository runs `--release`, where it wraps. The
@@ -37,7 +37,7 @@ use std::process::Command;
 ///
 /// Across a call on purpose: rustc refuses a *constant-evaluable* overflow at
 /// compile time with "this arithmetic operation will overflow", which is a
-/// message about the generated file and a different defect (ADR-043 §3). What is
+/// message about the generated file and a different defect (ADR-285). What is
 /// under test here is the run time, so the addition has to be one no lint can
 /// see through.
 const OVERFLOWS: &str = "\
@@ -82,7 +82,7 @@ fn an_overflow_aborts_where_the_check_is_on() {
     let rust = lower(&dir, OVERFLOWS);
     assert!(
         rust.contains("a + b"),
-        "the emitted code must say `+` (ADR-043 D6):\n{rust}"
+        "the emitted code must say `+` (ADR-285 D8):\n{rust}"
     );
 
     let binary = dir.join("program");
@@ -125,7 +125,7 @@ fn an_overflow_aborts_where_the_check_is_on() {
 /// reaches the program this compiler emits and stops at the crate boundary.
 ///
 /// Which way round the two are written follows from
-/// [ADR-053](../../../docs/specification/adr/adr-053.md) D4: a build emits a
+/// [ADR-286](../../../docs/specification/adr/adr-286.md) D22: a build emits a
 /// workspace, and a default of "on" with an exception for `"*"` would reach the
 /// members too. So the default is the foreign answer and each crate of this
 /// language is named back onto the program's side.
@@ -178,7 +178,7 @@ fn the_generated_manifest_checks_the_program_and_not_its_dependencies() {
 }
 
 /// The generated workspace root's `Cargo.toml` - the one that carries the
-/// profile ([ADR-053](../../../docs/specification/adr/adr-053.md) D1). A member's
+/// profile ([ADR-286](../../../docs/specification/adr/adr-286.md) D19). A member's
 /// is one directory further down and carries none, so the shallowest wins.
 fn find_manifest(under: &Path) -> Option<std::path::PathBuf> {
     let mut stack = vec![(0usize, under.to_path_buf())];
@@ -232,7 +232,7 @@ fn a_built_program_that_overflows_aborts() {
 
 /// **Wrapping and saturating arithmetic, run.**
 ///
-/// ADR-043 D2 and D3. These exist because D1 aborts: a hash function wraps on
+/// ADR-285 D6 and D7. These exist because D1 aborts: a hash function wraps on
 /// purpose and has to be able to say so. Run rather than read, because what is
 /// under test is a number and not a spelling - and the pair with the plain `*`
 /// below is the whole point, since the same arithmetic two ways must give two
@@ -385,7 +385,7 @@ fn run_optimized(dir: &Path, source: &str) -> (bool, String) {
     )
 }
 
-/// **A narrowing conversion aborts, in the shipping build** (ADR-043 D4).
+/// **A narrowing conversion aborts, in the shipping build** (ADR-285 D12).
 #[test]
 fn a_number_that_does_not_fit_the_smaller_type_aborts() {
     let dir = common::scratch_dir("narrowing-integer");
@@ -396,7 +396,7 @@ fn a_number_that_does_not_fit_the_smaller_type_aborts() {
         "it failed, but not of the conversion:\n{said}"
     );
     // The abort must name the generated Nikaia line and not a file in `std`:
-    // ADR-044's table has nothing to translate otherwise. `#[track_caller]` is
+    // ADR-300's table has nothing to translate otherwise. `#[track_caller]` is
     // what makes this true for the float half below.
     assert!(
         !said.contains("num.rs"),
@@ -467,10 +467,10 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
     );
     assert!(
         rust.contains("big as i32") && !rust.contains("truncating"),
-        "the name is Rust's `as` and nothing else (ADR-043 D7):\n{rust}"
+        "the name is Rust's `as` and nothing else (ADR-285 D13):\n{rust}"
     );
     // Bare where nothing needs it, parenthesised where something does: a length
-    // is an `i64` (ADR-048 D1) and narrowing it is a second conversion, so
+    // is an `i64` (ADR-285 D1) and narrowing it is a second conversion, so
     // `text.len().truncating_i32()` is two of them and the inner one has to
     // happen first. A parenthesis nobody needs is a warning about a file nobody
     // wrote (Part III, C.1), which is why this is not simply always.
@@ -513,7 +513,7 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
 }
 
 /// **A length is an `i64` and an index takes one, and neither conversion is
-/// written** ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// written** ([ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 ///
 /// The program below is the shape D1 is about: a loop over a length, an index by
 /// the loop variable, a length in arithmetic and a length in a comparison. Before
@@ -624,8 +624,8 @@ fn a_negative_index_aborts_as_an_access_out_of_bounds() {
 }
 
 /// **A count goes in as an `i64` and the conversion is emitted**
-/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D2) — the parameter
-/// direction of [ADR-048](../../../docs/specification/adr/adr-048.md) D1, which
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D15) — the parameter
+/// direction of [ADR-285](../../../docs/specification/adr/adr-285.md) D1, which
 /// that record left open and named `"  ".repeat(indent as usize)` as the one
 /// site it had.
 ///
@@ -678,7 +678,7 @@ fn a_count_is_written_as_an_i64_and_the_conversion_is_emitted() {
 }
 
 /// …and a **negative** count says what it is, which is the one place this differs
-/// from an index ([ADR-054](../../../docs/specification/adr/adr-054.md) D2).
+/// from an index ([ADR-285](../../../docs/specification/adr/adr-285.md) D15).
 ///
 /// A negative index *is* an access out of bounds and reports as one; a negative
 /// count is not an access at all, so reusing that message would name something

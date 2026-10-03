@@ -228,7 +228,7 @@ fn a_crossing_in_a_callee_reaches_the_callers_handle() {
 /// struct that crosses.
 ///
 /// `send::crossing` walks a struct's `fields` through the ledger (ADR-024, the
-/// walk ADR-029 established) to refuse the struct for its field's sake. This is
+/// walk ADR-288 established) to refuse the struct for its field's sake. This is
 /// the same walk the other way round: the struct crosses, so the field's count
 /// has to be atomic - and the handle that was *put into* the field is the same
 /// allocation, so it is atomic too.
@@ -471,7 +471,7 @@ fn a_shared_read_out_of_a_field_is_the_fields_allocation() {
         let decision = one(source, "h");
         assert_eq!(decision.count, Count::Atomic, "{decision:#?}");
         // …and the reason is the crossing rather than the ignorance, because a
-        // reader can act on the first (ADR-033 D9's rule).
+        // reader can act on the first (ADR-292 D2's rule).
         assert!(!decision.undecided(), "{decision:#?}");
         assert!(
             decision.why.as_deref().unwrap().contains("spawn"),

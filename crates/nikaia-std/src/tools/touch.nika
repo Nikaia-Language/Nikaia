@@ -1,14 +1,14 @@
 // crates/nikaia-std/src/tools/touch.nika
 //
-// **What an operation reaches, and whether it changes it** (ADR-033, ADR-067
+// **What an operation reaches, and whether it changes it** (ADR-292, ADR-288
 // D2) - the decisions of the compiler's `contracts::touch`, moved from Rust
-// (ADR-250, #125): when two reached resources might be one and force an
+// (ADR-294, #125): when two reached resources might be one and force an
 // order, and the fixpoint that gives every function the `touches` its body
 // earns.
 //
 // What stays Rust is reading a `touches` entry back, the list of kinds this
 // compiler knows, and the walk that finds what each body reaches and whom it
-// calls: it is `sync`'s walk (ADR-028), and it moves with it.
+// calls: it is `sync`'s walk (ADR-288), and it moves with it.
 
 use std::collections
 

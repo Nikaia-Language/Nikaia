@@ -10,7 +10,7 @@
 //! error, which is why these are compiled and not only compared as text.
 //!
 //! **The stand-ins.** A trailing lambda's callee is usually something `std`
-//! does not have yet - a lock's `access`, `both_of`, `task::scope`. ADR-028
+//! does not have yet - a lock's `access`, `both_of`, `task::scope`. ADR-288
 //! D5 keeps an entry out of `std` until a program asks for it, so each test
 //! that needs one prepends the Rust it stands for. What is under test is the
 //! grammar and the lowering: that the emitted call is a well-formed Rust call
@@ -131,7 +131,7 @@ fn a_lock_is_accessed_through_a_named_trailing_lambda() {
 /// lambda is a method call at all. The callee here is a made-up `both_of` and
 /// not the real door, because this is a test of the **grammar** - `access_all`
 /// is typed and lowered by the compiler now
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md)), so using its name
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)), so using its name
 /// would test that instead.
 #[test]
 fn a_free_call_takes_arguments_and_a_named_trailing_lambda() {
@@ -191,7 +191,7 @@ fn a_path_takes_a_named_trailing_lambda() {
 }
 
 /// **A lambda that names nothing takes nothing**, in every position that has one
-/// ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D2).
 ///
 /// This used to assert the opposite of its first half: `fn { a.id }` was a lambda
 /// of one argument called `a`. Nothing is read off a body now, so the same source
@@ -216,10 +216,10 @@ fn a_lambda_that_names_nothing_takes_nothing() {
 /// **And reaching for one of the three withdrawn names is refused here**, not by
 /// `rustc` about the generated file (Part III, C.1).
 ///
-/// `xs.map fn { a.id }` is the idiom that existed until ADR-049. It now lowers to
+/// `xs.map fn { a.id }` is the idiom that existed until ADR-277. It now lowers to
 /// `|| { a.id }`, which does not compile - so the message has to be this
 /// language's, and it has to say what happened to the form rather than only that
-/// a name is unknown. The same ground ADR-022 stands on for `fn: …`.
+/// a name is unknown. The same ground ADR-277 stands on for `fn: …`.
 #[test]
 fn reaching_for_a_withdrawn_automatic_name_is_refused() {
     let source = "fn ids(xs: Vec[i64]) -> Vec[i64] { return xs.map fn { a.id } }";
@@ -256,7 +256,7 @@ fn reaching_for_a_withdrawn_automatic_name_is_refused() {
     );
 }
 
-/// ADR-022's removed `fn: …` still gets its sentence rather than a parse error
+/// ADR-277's removed `fn: …` still gets its sentence rather than a parse error
 /// about a parameter list - from a method and from a path alike.
 ///
 /// The named arm is tried first and starts with the same `fn`, so this is the
@@ -281,14 +281,14 @@ fn the_expression_lambda_still_says_it_was_removed() {
 }
 
 /// **Not built, and this is where it stands - a refusal now, not three
-/// statements.** Part I 7.2 and ADR-006 D6 write the panic hook as
+/// statements.** Part I 7.2 and ADR-297 D10 write the panic hook as
 /// `panic::on_panic fn(info) sync { … }`: the lambda carries an effect
 /// annotation, and nothing in the grammar gives a lambda one - a closure's
 /// parameter list is followed by its block and by nothing else.
 ///
 /// This test used to assert that the line was **three statements**: the `sync`
 /// not part of the lambda, the lambda not part of the call. The reserved-word
-/// list ([ADR-051](../../../docs/specification/adr/adr-051.md)) ends that
+/// list ([ADR-298](../../../docs/specification/adr/adr-298.md)) ends that
 /// reading - `sync` is not a name, so
 /// there is no statement for it to be - and the line is refused where the
 /// `sync` is.
@@ -347,7 +347,7 @@ fn spawn_with_a_named_lambda_is_refused_rather_than_read_as_something_else() {
 
 /// **The count comes from the list, and a local called `a` is a local.**
 ///
-/// This is what ADR-049 bought, and it is worth a test of its own. A lambda's
+/// This is what ADR-277 bought, and it is worth a test of its own. A lambda's
 /// arity used to be read off which of `a`, `b`, `c` its body *mentioned*, so a
 /// local called `a` inside one became an argument and the closure's arity stopped
 /// matching its call. With the arguments written down - the only spelling now - a

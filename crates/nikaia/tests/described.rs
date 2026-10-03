@@ -1,5 +1,5 @@
 //! A crate is described before it is called
-//! ([ADR-104](../../../docs/specification/adr/adr-104.md) D1).
+//! ([ADR-290](../../../docs/specification/adr/adr-290.md) D1).
 //!
 //! A call into a Rust crate no ledger describes was **silent**. Every analysis
 //! this compiler has reads a contract at the boundary — what may cross a
@@ -24,7 +24,7 @@ fn refusals(source: &str, declared: &[&str], described: &[&str]) -> Vec<nikaia::
     let parsed = parse_to_ast(source).expect("the source parses");
     // **Nothing has moved**, which is what these tests are not about: the hash
     // rule is `described_entries.rs`'s, and a set handed in empty here keeps
-    // each file measuring one thing ([ADR-104](../../../docs/specification/adr/adr-104.md)
+    // each file measuring one thing ([ADR-290](../../../docs/specification/adr/adr-290.md)
     // D1 and D5 are two rules).
     nikaia::foreign::check(
         &parsed,

@@ -46,7 +46,7 @@ fn cache_in(dir: &std::path::Path) -> Cache {
 
 /// An example that lowers differently at either `user_parallelism`, so that a cache
 /// which confused the two would be caught. `1brc.nika` is the one the
-/// specification leans on for exactly this difference (ADR-009's `par_fold`).
+/// specification leans on for exactly this difference (ADR-296's `par_fold`).
 fn a_switch_sensitive_example() -> String {
     let path = repo_root().join("examples/1brc.nika");
     let source = std::fs::read_to_string(&path).expect("1brc.nika is readable");
@@ -467,7 +467,7 @@ fn a_hit_still_writes_the_ledger_and_still_answers_locked() {
 }
 
 /// **What the output names is part of the key** (0.0.239). The abort table
-/// names each file as it was handed to the compiler (ADR-044 D1), and the key
+/// names each file as it was handed to the compiler (ADR-300 D9), and the key
 /// named it relative to its root - so `nikaia lower /abs/one.nika` followed
 /// by `nikaia lower one.nika` served the first lowering to the second, and
 /// an abort in it named a path the user never wrote. Each form lowers once and

@@ -1338,7 +1338,7 @@ impl Walk<'_> {
                 false
             }
             // **The value first, and then the write**, in the order the
-            // lowering runs them (ADR-114 D2): a value that shrinks the list
+            // lowering runs them (ADR-293 D2): a value that shrinks the list
             // is reached before the index it is written at.
             Stmt::Assign { target, op, value } => {
                 self.expr(value, facts);

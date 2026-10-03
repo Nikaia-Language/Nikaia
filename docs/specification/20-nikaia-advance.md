@@ -604,7 +604,7 @@ counter.access fn(n) { xs.map fn(x) { fs::read("log", fs::Root::Anywhere) } } //
 User code writes nothing for this.
 
 **A function the program writes says it with `sync(f)`**
-([ADR-244](adr/adr-244.md) D4). The word stands where `sync` stands, after the
+([ADR-288](adr/adr-288.md) D31). The word stands where `sync` stands, after the
 result, and names the parameters whose lambdas decide; several are written
 `sync(f, g)`:
 

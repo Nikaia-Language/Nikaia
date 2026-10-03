@@ -7,10 +7,10 @@ from one this notebook already walked up to, and because the shape of the work �
 and of what would kill it — is worth having on paper before anyone starts.
 **Whose:** the owner's, in this session.
 **Related:** [`lock-free.md`](lock-free.md) §4–§6 (the neighbouring question,
-measured), [ADR-039](specification/adr/adr-039.md) §3 (the door it leaves open),
+measured), [ADR-281](specification/adr/adr-281.md) (the door it leaves open),
 [ADR-037](specification/adr/adr-037.md) D7 (the closest thing to this that is
 already built), [ADR-040](specification/adr/adr-040.md) D1 (what a handle does
-when it is handed on), [ADR-065](specification/adr/adr-065.md) (the doors),
+when it is handed on), [ADR-281](specification/adr/adr-281.md) (the doors),
 [ADR-010](specification/adr/adr-010.md) D1 (the polarity this would have to
 meet)
 
@@ -73,11 +73,11 @@ into, so that nobody rediscovers it.
   have a wrong answer that corrupts memory.
 * **The ledger is per package and this property is whole-program.** A value
   handed across a package boundary would need the barrier
-  [ADR-008](specification/adr/adr-008.md) D7 already names for the tether: at a
+  [ADR-283](specification/adr/adr-283.md) D5 already names for the tether: at a
   `dyn` boundary or a published API, widen to the safe answer.
 * **The doors are not only locks.** `update` may run more than once
-  ([ADR-110](specification/adr/adr-110.md) D3) and `access` holds the door open
-  while user code runs ([ADR-039](specification/adr/adr-039.md) D10). What a
+  ([ADR-281](specification/adr/adr-281.md) D14) and `access` holds the door open
+  while user code runs ([ADR-281](specification/adr/adr-281.md) D10). What a
   lock-free lowering means for each is its own question, and they may not have
   the same answer.
 

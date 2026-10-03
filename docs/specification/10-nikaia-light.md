@@ -229,7 +229,7 @@ Nikaia provides basic types to represent simple values.
       `text.bytes()` is a text's UTF-8, one `u8` at a time.
     * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the
       bits are the point: a hash, a mask, a wire format's field
-      ([ADR-248](adr/adr-248.md)). No two integer types mix on their own:
+      ([ADR-285](adr/adr-285.md)). No two integer types mix on their own:
       `a + b` over a `u64` and an `i64` is refused (`NK1199`), and the
       conversion is written with `as`.
 * **Floats:** numbers with decimal points.
@@ -329,7 +329,7 @@ names with `saturating_`, except that there is no `saturating_shl` and no
 type has no `_neg` and no `_abs`. There is no operator for either.
 
 **The bits of an integer are reached with operators**
-([ADR-248](adr/adr-248.md)): `&`, `|`, `^`, `<<` and `>>`, and `!`, which on
+([ADR-285](adr/adr-285.md)): `&`, `|`, `^`, `<<` and `>>`, and `!`, which on
 an integer flips every bit. Both sides are one integer type, except a shift's
 count, which may be any. A shift loses the bits it moves out, and a count as
 large as the type is wide aborts; `>>` fills with zeros on an unsigned type and
@@ -658,7 +658,7 @@ if (match n { 1 => 10, else => 20 }) > 15 {
 That is the whole of the difference between the head of an `if`, a `while` or a
 `for` and any other position. Every expression is reachable.
 
-**A jump may carry its condition after it** ([ADR-255](adr/adr-255.md)).
+**A jump may carry its condition after it** ([ADR-276](adr/adr-276.md)).
 `return`, `throw`, `break` and `continue` take an `if` on their own line, and
 the line means `if cond { jump }`:
 
@@ -1185,7 +1185,7 @@ The standard library provides types for groups of values.
     is absent and a key that holds `null` both answer `null`, and
     `m.contains_key(k)` tells them apart. `m[k] = null` **stores** `null` - the
     key is there afterwards - and `m.remove(k)` removes it
-    ([ADR-273](adr/adr-273.md)). A map whose keys it
+    ([ADR-293](adr/adr-293.md)). A map whose keys it
     **owns** — a `HashMap[String, V]`, a `HashMap[i64, V]` — takes a key
     written into it as its own and is lent one it is read with; `m[k] ?? "-"`
     over a map of text is a view of text.

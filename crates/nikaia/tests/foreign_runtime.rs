@@ -8,7 +8,7 @@
 //!
 //! **One test here runs on every `cargo test`** - the one that needs neither
 //! Cargo nor the network, and which is the one that checks a guarantee rather
-//! than a finding: a call into a foreign crate has no ledger entry, so ADR-033
+//! than a finding: a call into a foreign crate has no ledger entry, so ADR-292
 //! D4 makes it order against everything.
 //!
 //! **The rest are `#[ignore]`d**, because each one runs `cargo`, and the first
@@ -59,7 +59,7 @@ fn said(output: &std::process::Output) -> String {
 // D7's third paragraph: what needs no rule.
 // ---------------------------------------------------------------------------
 
-/// A foreign crate has no ledger entry, so `touches` is absent, so ADR-033 D4
+/// A foreign crate has no ledger entry, so `touches` is absent, so ADR-292 D3
 /// makes the call reach everything and order against everything.
 ///
 /// This is the one claim in D7 that is a *guarantee* rather than a finding, so
@@ -75,7 +75,7 @@ fn a_call_into_a_foreign_crate_orders_against_everything() {
     let library = Ledger::parse(STD).expect("std ships a ledger");
     let own = Ledger::infer(&parsed);
     // **Every adjacent pair, asked directly.** It used to go through the
-    // `--overlaps` report; ADR-050 D1 withdrew the reordering that report was
+    // `--overlaps` report; ADR-292 D1 withdrew the reordering that report was
     // about, and the claim under test is the verdict rather than the schedule -
     // a foreign call reaches everything, so no pair holding one may overlap.
     let mut lines = Vec::new();
@@ -188,12 +188,12 @@ fn a_nikaia_program_serves_one_request_through_hyper() {
 /// permission nor a refusal.
 ///
 /// What decides it now is two things a **person wrote down**
-/// ([ADR-193](../../../docs/specification/adr/adr-193.md) D1, D2):
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D6, D7):
 /// `crosses = false` on `hyper_shim::LocalHandle`, because the type holds an
 /// `Rc`, and `threads = true` on `hyper_shim::across_a_thread`, because it
 /// builds a `tokio` runtime and spawns. Neither is inferred and neither could
 /// be; both are in the committed description a reviewer reads
-/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D5).
 #[test]
 #[ignore = "runs cargo and fetches hyper and tokio from crates.io"]
 fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
@@ -252,7 +252,7 @@ fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
 /// `unsafe impl<T> Send for Smuggled<T>` cannot change that line, because the
 /// line never asked Rust.
 ///
-/// **None of this is soundness** ([ADR-193](../../../docs/specification/adr/adr-193.md)
+/// **None of this is soundness** ([ADR-290](../../../docs/specification/adr/adr-290.md)
 /// D3). A description that claimed `crosses = true` about the same type would
 /// get exactly as far as it did before. What moved is *who* has to be honest,
 /// and a `.contracts` file is committed and reviewed like code.

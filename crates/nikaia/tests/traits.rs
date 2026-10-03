@@ -1,9 +1,9 @@
 //! Part I 4.7's `trait` declaration, and the bound it makes possible
-//! ([ADR-078](../../../docs/specification/adr/adr-078.md)).
+//! ([ADR-295](../../../docs/specification/adr/adr-295.md)).
 //!
 //! **The section's own example did not parse.** `trait Summarize { … }` was a
 //! parse error at the keyword, so a trait could be implemented and not declared
-//! — and that is what [ADR-074](../../../docs/specification/adr/adr-074.md) §4
+//! — and that is what [ADR-295](../../../docs/specification/adr/adr-295.md)
 //! named as the prerequisite for a bound: `[T: Summarize]` has to name
 //! something. Until it did, a generic body could move and pass its value and
 //! nothing else, which `NK1126` said to the user in so many words.
@@ -104,7 +104,7 @@ fn a_trait_is_declared_bound_and_run() {
 /// `impl`'s writes a body.
 ///
 /// **And the form is the return-position one**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D3), because
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D26), because
 /// `Summarize` does not say `sync` and so may pause. The sugar `async fn` is
 /// not written: `async_fn_in_trait` warns on a public trait whose future
 /// carries no `Send` bound, and a warning about the generated file is
@@ -127,7 +127,7 @@ fn a_trait_method_is_a_signature() {
 }
 
 /// **A declaration that says `sync` is a plain `fn` below**, which is the other
-/// half of D3 and the one every trait had before ADR-109.
+/// half of D3 and the one every trait had before ADR-288.
 #[test]
 fn a_sync_declaration_is_a_plain_signature() {
     let rust = lowered(
@@ -291,14 +291,14 @@ fn main() {
 }
 
 /// **A trait method's `sync` is the declaration's own word**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): it reads like a
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D24): it reads like a
 /// function type, so without the word it **may pause**.
 ///
 /// **It used to be asserted whatever the declaration said**
-/// ([ADR-078](../../../docs/specification/adr/adr-078.md) D4), and had to be: a
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D9), and had to be: a
 /// plain `fn` was the only thing the emitter could write in a trait, so a
 /// pausing declaration had no lowering and `No` would have made every call
-/// through a bound an `.await` on a `String`. ADR-109 D3 takes the cause away
+/// through a bound an `.await` on a `String`. ADR-288 D26 takes the cause away
 /// with the return-position form.
 #[test]
 fn a_trait_method_carries_the_word_it_was_written_with() {
@@ -335,7 +335,7 @@ fn a_trait_method_carries_the_word_it_was_written_with() {
 }
 
 /// `trait` is a reserved word now, which it was not: it was found as a *name*
-/// by [ADR-076](../../../docs/specification/adr/adr-076.md)'s sweep.
+/// by [ADR-298](../../../docs/specification/adr/adr-298.md)'s sweep.
 #[test]
 fn trait_is_a_reserved_word() {
     assert!(
@@ -348,14 +348,14 @@ fn trait_is_a_reserved_word() {
     );
 }
 
-/// `NK1129` ([ADR-109](../../../docs/specification/adr/adr-109.md) D2): the
+/// `NK1129` ([ADR-288](../../../docs/specification/adr/adr-288.md) D25): the
 /// implementation pauses and the declaration **says `sync`**.
 ///
 /// **It used to refuse every pausing implementation**
 /// ([ADR-080](../../../docs/specification/adr/adr-080.md) D1), because a trait
 /// method had no way to say it may pause: the trait lowered to `fn load(&self)
 /// -> Result<…>;` and the `impl` to `async fn load(&self) -> Result<…>`, and
-/// the language below answered `E0053` about a file nobody wrote. ADR-109 D3's
+/// the language below answered `E0053` about a file nobody wrote. ADR-288 D26's
 /// return-position form takes that away, so what is left is a **comparison** —
 /// which is `NK2202` asked of somebody else's signature.
 #[test]
@@ -520,7 +520,7 @@ fn main() {
 }
 
 /// **`NK1140`: the implementation can fail and the declaration has no
-/// `throws`** ([ADR-109](../../../docs/specification/adr/adr-109.md) D2) —
+/// `throws`** ([ADR-288](../../../docs/specification/adr/adr-288.md) D25) —
 /// `NK1129`'s twin one column over, and the same `NK2202` asked of somebody
 /// else's signature.
 #[test]
@@ -556,7 +556,7 @@ fn main() {
 
 /// **The other direction fits and says nothing.** A declaration is the wider
 /// claim: a body that never pauses under one that may, or one that cannot fail
-/// under `throws`, is correct ([ADR-109](../../../docs/specification/adr/adr-109.md)
+/// under `throws`, is correct ([ADR-288](../../../docs/specification/adr/adr-288.md)
 /// D2).
 ///
 /// It is the half that says these two are comparisons rather than a demand that
@@ -594,7 +594,7 @@ fn main() {
 
 /// **`docs/language-review.md` §1.3's probe**, which is what the work entry
 /// named as the evidence: a trait over a file read, refused as `NK1129` before
-/// ADR-109 and a program now — compiled and run.
+/// ADR-288 and a program now — compiled and run.
 #[test]
 fn a_trait_over_a_file_read_is_a_program() {
     let printed = ran(
@@ -627,7 +627,7 @@ fn main() throws {
 }
 
 /// **`+ Send` follows the executor, not the type**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D3).
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D26).
 ///
 /// At `user_parallelism = yes` a task crosses threads and a spawn needs a
 /// `Send` future; at `no` nothing crosses, the counts are plain
@@ -659,7 +659,7 @@ fn the_send_bound_follows_the_setting() {
 }
 
 /// **The floor is written where Cargo reads it**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4), from one
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D27), from one
 /// constant in the emitter.
 ///
 /// The floor is measured ([ADR-219](../../../docs/specification/adr/adr-219.md)).
@@ -686,9 +686,9 @@ fn the_rust_floor_is_one_constant_and_this_toolchain_clears_it() {
 }
 
 /// **`NK1164`: the bound was declared and not enforced**
-/// ([ADR-174](../../../docs/specification/adr/adr-174.md) D2).
+/// ([ADR-295](../../../docs/specification/adr/adr-295.md) D16).
 ///
-/// `[T: Speaks]` put `say` in reach of the body from the day ADR-078 landed —
+/// `[T: Speaks]` put `say` in reach of the body from the day ADR-295 landed —
 /// that half is `NK1126` and is tested above. The other half, *may this type
 /// stand here*, was asked by nobody: the call was accepted and `rustc` answered
 /// *the trait bound `Rock: Speaks` is not satisfied* about a file nobody wrote.

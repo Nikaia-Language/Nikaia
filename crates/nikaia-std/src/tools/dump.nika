@@ -2,7 +2,7 @@
 //
 // The encoder a grammar run at build time prints its result with (issue #178,
 // ADR-079 D1) - the statements `grammar_run` writes into the sub-program,
-// moved from Rust (ADR-250, #125). Building and running the sub-project, and
+// moved from Rust (ADR-294, #125). Building and running the sub-project, and
 // the decoder that reads what it printed, stay Rust.
 //
 // **Written inline** rather than as a function per type: generating

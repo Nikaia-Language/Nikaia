@@ -73,7 +73,7 @@ pub(super) enum Op {
         want: usize,
         reply: Sender<io::Result<Vec<u8>>>,
     },
-    /// Stop after everything already queued. What shutdown sends (ADR-006 D5).
+    /// Stop after everything already queued. What shutdown sends (ADR-297 D6).
     Stop,
 }
 
@@ -108,7 +108,7 @@ pub(super) struct Workers {
     inbox: Mutex<Sender<Op>>,
     /// Operations queued and not yet answered. Shutdown's deadline watches
     /// this, and it is what makes the drain bounded rather than hopeful
-    /// (ADR-006 D5).
+    /// (ADR-297 D6).
     pending: Arc<AtomicUsize>,
     threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
@@ -189,7 +189,7 @@ impl Workers {
         self.pending.load(Ordering::SeqCst)
     }
 
-    /// Drain, bounded by `deadline`, then stop (ADR-006 D5).
+    /// Drain, bounded by `deadline`, then stop (ADR-297 D6).
     ///
     /// Returns how many operations had not finished when the deadline expired,
     /// which is what the warning names. This cannot hang: the timer is the
@@ -357,7 +357,7 @@ mod tests {
     }
 
     /// The drain is bounded by the clock and not by the work, which is the
-    /// half of ADR-006 D5 that cannot hang.
+    /// half of ADR-297 D6 that cannot hang.
     ///
     /// **A read of a FIFO nobody writes to**, which used to be a readiness wait
     /// on a socket nobody writes to. Readiness is not a worker operation any

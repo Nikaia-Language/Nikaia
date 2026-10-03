@@ -6,7 +6,7 @@
 //! the emitter, so a committed `user-parallelism = "yes"` is a property of the
 //! project and not a comment in a file nothing reads.
 //!
-//! **There are two switches again** ([ADR-050](../../../docs/specification/adr/adr-050.md)
+//! **There are two switches again** ([ADR-292](../../../docs/specification/adr/adr-292.md)
 //! D7): `ordering` went with the reordering it turned off, and Part I 1.2's
 //! *"there are exactly two things to choose"* is true once more, having been
 //! three.
@@ -23,7 +23,7 @@ use std::process::Command;
 /// switch is one word in one line of the output.
 ///
 /// It used to be the presence of an overlapped pair, which stopped being a
-/// marker when [ADR-050](../../../docs/specification/adr/adr-050.md) D1
+/// marker when [ADR-292](../../../docs/specification/adr/adr-292.md) D1
 /// withdrew the reordering — and this is the better one anyway: it names the
 /// switch rather than a consequence two records away from it.
 const AT_YES: &str = "UserCode::Concurrent";

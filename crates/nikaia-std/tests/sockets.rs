@@ -1,5 +1,5 @@
 //! **A socket in `std`**, driven end to end
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D1).
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D6).
 //!
 //! Its own test binary for `at_yes.rs`'s reason: the runtime is one per process
 //! ([ADR-038](../../../docs/specification/adr/adr-038.md) D4), and what is

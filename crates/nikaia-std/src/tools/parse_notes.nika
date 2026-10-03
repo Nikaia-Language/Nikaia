@@ -4,7 +4,7 @@
 // `docs/error-corpus.md`), the text half: what a refusal's caret looks back
 // at - the token before it, the quote or the bracket or the comment never
 // closed - and the notes a refusal gets from what a reader sees on the line.
-// Moved from the compiler's `parser` (ADR-250, #125). Every position here is
+// Moved from the compiler's `parser` (ADR-294, #125). Every position here is
 // a character index into the text; the compiler turns it into the byte its
 // spans are counted in.
 
@@ -200,7 +200,7 @@ comptime AFTER_A_FALLBACK: Array[ref String, 17] = ["==", "!=", "<=", ">=", "=",
 /// The note and the help a parse error gets when a `??`'s fallback reached
 /// for an operator: the fallback is one value, so `a ?? 0 > 3` fails after
 /// the fallback succeeded, in a rule whose message is about something else
-/// (ADR-089 D2). `=` is among the operators because the backend names the
+/// (ADR-279 D2). `=` is among the operators because the backend names the
 /// first character it could not use, so a `==` arrives as `=`; and the token
 /// is not written into the message for the same reason.
 pub fn coalesce_fallback_note(found: ref String, before: ref String) -> Vec[String] {
@@ -216,7 +216,7 @@ pub fn coalesce_fallback_note(found: ref String, before: ref String) -> Vec[Stri
 }
 
 /// The note and the help a `let` gets that takes apart something a flat
-/// tuple of names cannot (ADR-098).
+/// tuple of names cannot (ADR-291).
 pub fn let_names_note(found: ref String, before: ref String) -> Vec[String] {
     if found != "(" || !(before.contains("let (") || before.contains("let mut (")) {
         return []

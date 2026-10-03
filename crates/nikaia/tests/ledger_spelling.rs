@@ -80,7 +80,7 @@ fn a_type_variable_is_declared_in_brackets() {
 }
 
 /// **`std`'s own ledger is in this spelling**, and a promise about a lambda is
-/// `sync(f)` - the word ADR-244 D4 gives the source.
+/// `sync(f)` - the word ADR-288 D31 gives the source.
 #[test]
 fn stds_ledger_is_written_in_nikaias_spelling() {
     let std = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");

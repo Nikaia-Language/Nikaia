@@ -102,7 +102,7 @@ is normative and nothing may depend on it to know what a program means.
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and
   the 11 ns an uncontended acquisition costs where it can never be contended.
-* [`lock-free.md`](lock-free.md) — whether ADR-039 §3's open door is worth
+* [`lock-free.md`](lock-free.md) — whether ADR-281's open door is worth
   walking through: what a compare-and-swap loop would buy over the shipped
   crossing door, the **3.7×** defect the measurement uncovered on the way, and
   §6's finding that what decides it is not the saving but whether a real program
@@ -140,7 +140,7 @@ question the page was written to answer is no longer open.
   where compile-time staging would pay; every candidate is closed
   ([ADR-178](specification/adr/adr-178.md)).
 * [`from-for-throws-and-touches.md`](history/from-for-throws-and-touches.md) —
-  whether ADR-029 D3's `sync = "from(f)"` argument carries to the other two
+  whether ADR-288 D15's `sync = "from(f)"` argument carries to the other two
   effect columns; answered, and the syntax it was written against is
   superseded.
 * [`std-sysroot.md`](history/std-sysroot.md) — what `std`'s build graph cost
@@ -148,10 +148,10 @@ question the page was written to answer is no longer open.
 * [`nightly-cost.md`](history/nightly-cost.md) — what the pinned nightly
   toolchain cost and bought; withdrawn, per `../CHANGELOG.md`.
 * [`runtime-cost.md`](history/runtime-cost.md) — what a pair of operations
-  costs on a running runtime; the evidence behind ADR-038 §4.3 and ADR-033 D10,
+  costs on a running runtime; the evidence behind ADR-038 §4.3 and ADR-292 D6,
   both decided.
 * [`break-continue-cost.md`](history/break-continue-cost.md) — `break` and
-  `continue`, priced before [ADR-084](specification/adr/adr-084.md) decided
+  `continue`, priced before [ADR-276](specification/adr/adr-276.md) decided
   them.
 * [`rc-or-arc.md`](history/rc-or-arc.md) — what an atomic reference count
   costs; the question ADR-037 D3 left open, closed by ADR-037 D6–D8.
@@ -159,7 +159,7 @@ question the page was written to answer is no longer open.
   `match` against a perfect hash; the crossover
   [ADR-176](specification/adr/adr-176.md) D2 rests on.
 * [`zero-copy-send.md`](history/zero-copy-send.md) — what it costs to answer a
-  request with a file; [ADR-058](specification/adr/adr-058.md)'s evidence.
+  request with a file; [ADR-289](specification/adr/adr-289.md)'s evidence.
 * [`foreign-runtime.md`](history/foreign-runtime.md) — a Nikaia program that
   starts `hyper`; the finding changed no decision under
   [ADR-038](specification/adr/adr-038.md) D7.

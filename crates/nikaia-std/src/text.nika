@@ -49,7 +49,7 @@ pub fn digit_value(c: char) -> i32 sync {
 // **`null` where Rust's `parse` has an error**: the reasons it gives - empty,
 // not a digit, too large - are one answer to a program that only asks *is this
 // a number*, and the absence is data, as a key that is not in a map is
-// (ADR-114 D1).
+// (ADR-293 D1).
 pub fn parse_i64(text: ref String) -> i64? sync {
     let least: i64 = -9223372036854775807 - 1
     let mut value: i64 = 0

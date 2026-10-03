@@ -1,5 +1,5 @@
 //! Part I 4.6's type parameters, built rather than erased
-//! ([ADR-074](../../../docs/specification/adr/adr-074.md)).
+//! ([ADR-295](../../../docs/specification/adr/adr-295.md)).
 //!
 //! **The form parsed and did not compile.** `fn hand[T](x: T) -> T` lowered to
 //! `fn hand(x: T) -> T`, because the emitter's header had no slot for a type
@@ -123,7 +123,7 @@ fn main() {
 }
 
 /// D2: **the result is the type the argument had.** Before this, a free call
-/// bound nothing — ADR-031 bound from a receiver and a free function has none —
+/// bound nothing — ADR-288 bound from a receiver and a free function has none —
 /// so `hand(n)` was `?` and every question about it was unanswerable.
 #[test]
 fn the_result_is_what_the_argument_was() {

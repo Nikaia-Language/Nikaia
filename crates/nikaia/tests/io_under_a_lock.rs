@@ -1,6 +1,6 @@
 //! `NK2201`: I/O while holding locked data, and the one thing it is about
-//! ([ADR-067](../../../docs/specification/adr/adr-067.md) D1,
-//! [ADR-169](../../../docs/specification/adr/adr-169.md)).
+//! ([ADR-288](../../../docs/specification/adr/adr-288.md) D21,
+//! [ADR-281](../../../docs/specification/adr/adr-281.md)).
 //!
 //! D1 split Part II 12.2's *no I/O while holding locked data* in two — what
 //! **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s, and a
@@ -148,7 +148,7 @@ fn a_type_that_says_nothing_is_claimed_nothing_about() {
 
 /// **The column is the ledger's, not a list of names.** `fs::Mapped` says it in
 /// `std.contracts`, and a second such type needs a line there and nothing in
-/// the compiler ([ADR-169](../../../docs/specification/adr/adr-169.md) D1).
+/// the compiler ([ADR-281](../../../docs/specification/adr/adr-281.md) D34).
 #[test]
 fn the_claim_lives_in_the_ledger() {
     let library = Ledger::parse(STD).expect("std ships a ledger");

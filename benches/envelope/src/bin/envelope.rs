@@ -1,11 +1,11 @@
 //! **What an envelope costs a library's error** — the measurement
 //! issue #199 asked for before the list may travel to a caller with a
 //! bare channel of its own, and on which
-//! [ADR-241](../../../../docs/specification/adr/adr-241.md) decided.
+//! [ADR-280](../../../../docs/specification/adr/adr-280.md) decided.
 //!
-//! A library's error travels **bare** ([ADR-159](../../../../docs/specification/adr/adr-159.md)
+//! A library's error travels **bare** ([ADR-280](../../../../docs/specification/adr/adr-280.md)
 //! D2): `Result<T, io::IoError>`. Where a body joins, it travels in an envelope
-//! ([ADR-170](../../../../docs/specification/adr/adr-170.md) D1):
+//! ([ADR-280](../../../../docs/specification/adr/adr-280.md) D13):
 //! `Result<T, Thrown<io::IoError>>`, which is the error and one word - the site,
 //! or a pointer to the site, trace and list. The question is what that word
 //! costs where nothing fails, and where something does.

@@ -41,11 +41,11 @@ use crate::types::SHAPE_BOUNDS;
 use winnow_grammar::Symbol as Ident;
 
 /// The types Part I 2.2 offers, which is what an `as` may name
-/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D14).
 ///
 /// Wider than `record_cast`'s `NUMERIC`, and the two answer different questions:
 /// that one is which conversions are **checked** at run time
-/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4), this one is which
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D12), this one is which
 /// types a program may **write**. `bool`, `char`, `String` and `&str` are types
 /// of this language and no conversion between them narrows anything.
 const OFFERED: [&str; 10] = [
@@ -53,7 +53,7 @@ const OFFERED: [&str; 10] = [
 ];
 
 /// The number types a program writes (Part I 2.2,
-/// [ADR-248](../../docs/specification/adr/adr-248.md) D1).
+/// [ADR-285](../../docs/specification/adr/adr-285.md) D3).
 const OFFERED_NUMBERS: [&str; 6] = ["i32", "i64", "u8", "u32", "u64", "f64"];
 
 /// The note every `NK25xx` carries, because it is the reason the code exists.
@@ -130,7 +130,7 @@ pub struct Label {
     pub main: bool,
 }
 
-/// Where one function's method calls went (ADR-028).
+/// Where one function's method calls went (ADR-288).
 ///
 /// A method call is the one shape neither `sync.rs` analysis can resolve on its
 /// own: `stats.add(5)` names `add` and says nothing about what `stats` is, and
@@ -142,7 +142,7 @@ pub struct MethodCalls {
     /// It calls a method whose receiver type is not known, or one no ledger
     /// has an entry for. **Not the same as calling nothing** - it is the
     /// absence of an answer, and an analysis that claims a property must treat
-    /// it as such (ADR-027 D2).
+    /// it as such (ADR-288 D2).
     pub unresolved: bool,
     /// How many such calls, which the boolean above cannot say.
     ///
@@ -164,12 +164,12 @@ pub struct MethodCalls {
     pub fields_called: BTreeSet<String>,
     /// Which of `resolved` were reached from inside a **`spawn`** body, and
     /// whether any unresolvable call was
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D3).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D29).
     ///
     /// A task started with `spawn` runs **later and elsewhere**, so what it
     /// does is not what the surrounding function does — where a trailing
     /// lambda's body *is*, because it runs during the call
-    /// ([ADR-029](../../docs/specification/adr/adr-029.md) D4). An analysis
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D16). An analysis
     /// that asks about the calling function's own reach subtracts this; one
     /// that asks what the whole text mentions does not, which is why it is a
     /// second set rather than a narrowing of the first.
@@ -220,7 +220,7 @@ pub struct Claim {
 }
 
 /// Whether an expression names a **place that outlives the statement**
-/// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
+/// ([ADR-278](../../docs/specification/adr/adr-278.md) D19).
 ///
 /// Stricter than [`crate::emit::is_a_place`] on purpose, and the difference is
 /// the whole of what makes a view safe here. That one asks whether an
@@ -276,11 +276,11 @@ struct Arguments<'a> {
 }
 
 /// How a `?.` takes a member out of the view it reaches through
-/// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
+/// ([ADR-278](../../docs/specification/adr/adr-278.md) D19).
 ///
-/// The emitter has no types ([ADR-011](../../docs/specification/adr/adr-011.md)
+/// The emitter has no types ([ADR-296](../../docs/specification/adr/adr-296.md)
 /// D2), and the two views are spelled differently in the language below, so the
-/// answer travels the way [ADR-028](../../docs/specification/adr/adr-028.md)
+/// answer travels the way [ADR-288](../../docs/specification/adr/adr-288.md)
 /// hands over every other answer this emitter has none of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Viewed {
@@ -317,12 +317,12 @@ pub struct Checked {
     pub findings: Vec<Finding>,
     /// What each `comptime` is written as below - its type and its **value** - by
     /// the byte its statement starts at
-    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D4, D5).
     ///
     /// The same arrangement as `fallible_methods` and for the same reason, said
     /// twice over. The **type** may be left out and Rust's `const` demands one,
     /// so somebody has to infer it, and the emitter has no types
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)). The **value** is
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)). The **value** is
     /// here for the sharper half of the same reason: folding `PAGE * 2` means
     /// knowing what `PAGE` is, which is a scope - and the emitter has none of
     /// those either, so a constant built out of another would reach the
@@ -337,7 +337,7 @@ pub struct Checked {
     /// Rust's functional update writes the struct's name — `Point { x: 1, ..p }`
     /// — and the operand's type is this walk's answer rather than the parser's.
     /// So the emitter is **told**, the way it is told a `comptime`'s value:
-    /// [ADR-011](../../docs/specification/adr/adr-011.md) D2 keeps it a walk
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D17 keeps it a walk
     /// that knows no types, and a second inference living in it would be the
     /// two halves free to disagree about one program.
     pub with_types: BTreeMap<usize, String>,
@@ -367,7 +367,7 @@ pub struct Checked {
     /// starts at and the name to write there.
     ///
     /// **Keyed by the byte** for the reason `comptime_values` is: the emitter
-    /// has no types ([ADR-028](../../docs/specification/adr/adr-028.md)) and
+    /// has no types ([ADR-288](../../docs/specification/adr/adr-288.md)) and
     /// cannot work out which copy `describe(u)` means.
     pub unrolled_calls: BTreeMap<usize, String>,
     /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
@@ -405,7 +405,7 @@ pub struct Checked {
     /// expression's **type**, and the emitter has no types.
     pub pausing_loops: BTreeSet<usize>,
     /// The `for`s over a **name** that holds a sequence, by the byte the
-    /// statement starts at ([ADR-212](../../docs/specification/adr/adr-212.md)
+    /// statement starts at ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D4).
     ///
     /// A `for` over a place lends it and the emitter writes `.iter()`; a
@@ -428,7 +428,7 @@ pub struct Checked {
     pub copied_view_bindings: BTreeSet<(usize, String)>,
     /// **An integer literal whose place is an unsigned type**, by the
     /// literal's own node and its value, and the type
-    /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). The emitter
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D3). The emitter
     /// writes the suffix: a number above an `i32` is otherwise given `i64`'s,
     /// which is right for a bare `let` and wrong beside a `u64`.
     ///
@@ -440,7 +440,7 @@ pub struct Checked {
     pub unsigned_literals: BTreeMap<(usize, i128), String>,
     /// **A `let` without an annotation whose number its uses typed**, by the
     /// byte the statement starts at, and the type
-    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D4). The emitter
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D27). The emitter
     /// writes it, so the language below infers nothing this compiler decided.
     pub number_lets: BTreeMap<usize, String>,
     /// **A list element a method call changes**, by statement and the
@@ -449,11 +449,11 @@ pub struct Checked {
     pub changed_elements: BTreeSet<(usize, String)>,
     /// The arguments that are a **count the language below takes in `usize`**,
     /// by the byte the statement starts at, the method as written and the
-    /// position ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
+    /// position ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// How each key goes into the brackets of a map whose keys are owned, by
     /// the byte the statement starts at, the key's shape and whether it is
-    /// written ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
+    /// written ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     ///
     /// **Whether it is written is part of the key** (0.0.245): `m[k.clone()]
     /// = (m[k.clone()] ?? 0) + 1` spells one key twice in one statement, once
@@ -462,7 +462,7 @@ pub struct Checked {
     pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
     /// Indexes that are a **range kept in a name**, by the byte the statement
     /// starts at and the index's shape: a slice, like a range written in the
-    /// brackets ([ADR-215](../../docs/specification/adr/adr-215.md) D3).
+    /// brackets ([ADR-293](../../docs/specification/adr/adr-293.md) D23).
     pub slice_indices: BTreeSet<(usize, String)>,
     /// **Indexes of a list**, by the node of the indexed expression
     /// ([`value_node`] of the `base`): a position into a `Vec` or an `Array`,
@@ -484,13 +484,13 @@ pub struct Checked {
     pub arithmetic: BTreeMap<usize, String>,
     /// `clone` calls that went to a `std` entry, by statement and receiver
     /// shape: written `to_owned` below, which is a copy whether the receiver
-    /// is a value or a view of one (ADR-215 D4).
+    /// is a value or a view of one (ADR-293 D24).
     pub owned_copies: BTreeSet<(usize, String)>,
     /// `.to_string()` on **text**, by statement and receiver shape: the text
     /// form of text is the text itself, so the call is written as its receiver
-    /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D3).
     pub text_as_is: BTreeSet<(usize, String)>,
-    /// **`??`s that lend their left side** (ADR-259 D1), by statement and
+    /// **`??`s that lend their left side** (ADR-279 D5), by statement and
     /// shape, with how the option is opened below: `.as_deref()` for text and
     /// `.as_ref()` for anything else.
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
@@ -504,11 +504,11 @@ pub struct Checked {
     pub optional_fallbacks: BTreeSet<(usize, String)>,
     /// **A read of a map whose values are `T?`**, by statement and shape: it
     /// is one `T?` and not a `T?` of a `T?` - a stored `null` and an absent key
-    /// both answer `null` ([ADR-273](../../docs/specification/adr/adr-273.md)
+    /// both answer `null` ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1), and the read is written through `index::flat` (D3).
     pub flat_reads: BTreeSet<(usize, String)>,
     /// **A map's read copied out where a `T?` of its own is kept**, by
-    /// statement and shape ([ADR-273](../../docs/specification/adr/adr-273.md)
+    /// statement and shape ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D4): the value copies, and the emitter writes `.copied()`.
     pub copied_reads: BTreeSet<(usize, String)>,
     /// **A list of text asked whether it holds a view of text**, by statement
@@ -517,12 +517,12 @@ pub struct Checked {
     pub text_in_lists: BTreeSet<(usize, String)>,
     /// **`count()` calls that are `std`'s count of a sequence**, by statement
     /// and receiver shape: the language below counts in `usize`, and a count
-    /// is an `i64` here, as a length is (Part I 2.2, ADR-048 D1).
+    /// is an `i64` here, as a length is (Part I 2.2, ADR-285 D1).
     pub counted: BTreeSet<(usize, String)>,
     /// **The names a `match` arm binds as a view of its scrutinee**, by the
     /// arm's pattern: the scrutinee is a place this function owns, the part
     /// does not copy, and the arm does not keep it - so the name stays whole
-    /// after the `match` (Part I 6.5, ADR-242).
+    /// after the `match` (Part I 6.5, ADR-291).
     pub lent_bindings: BTreeMap<usize, BTreeSet<String>>,
     /// **A `match` over a field reached through a view**, by the scrutinee's
     /// address: matched by reference below, so its parts are bound as the
@@ -535,7 +535,7 @@ pub struct Checked {
     pub guards_inside_boxes: BTreeMap<usize, BTreeSet<String>>,
     /// `collect()` calls whose target declares what they build - a map, a
     /// set, text - by statement and receiver shape
-    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): written
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D25): written
     /// without `::<Vec<_>>`, so the declared type is what the language below
     /// builds.
     pub collected_into: BTreeSet<(usize, String)>,
@@ -576,7 +576,7 @@ pub struct Checked {
     ///
     /// The same arrangement as `fallible_loops`, for the same reason and said
     /// once: a method call's callee is only known to something that knows the
-    /// receiver's type, the emitter has no types (ADR-028), so the answer is
+    /// receiver's type, the emitter has no types (ADR-288), so the answer is
     /// computed here and handed over. The emitter writes the `?`.
     ///
     /// The statement and the name, because that is the most an `Expr` can be
@@ -589,7 +589,7 @@ pub struct Checked {
     /// call fails that does not.
     pub fallible_methods: BTreeSet<(usize, String)>,
     /// The `set` calls that carry a **witness**
-    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D5), by the byte
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D26), by the byte
     /// their statement starts at.
     ///
     /// `kasse.set(neu; after: stand)` is a different door from `set` — it
@@ -605,25 +605,25 @@ pub struct Checked {
     /// written `after:` as well, so what that costs is bounded by the pair
     /// being written at all.
     /// The lambda arguments that lower to a closure returning a **boxed
-    /// future** ([ADR-122](../../docs/specification/adr/adr-122.md) D1), by the
+    /// future** ([ADR-277](../../docs/specification/adr/adr-277.md) D11), by the
     /// byte their statement starts at and the argument's position.
     ///
     /// The parameter's **type** decides the shape — it may pause unless it says
     /// `sync` — and a type is what the emitter has none of
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)), so the answer is
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)), so the answer is
     /// computed where it is known and looked up where it is needed. The same
     /// arrangement `lent_args` and `nullable_args` have.
     pub future_lambdas: BTreeSet<(usize, usize)>,
     /// The lambda arguments whose parameter the callee **runs** rather than
     /// keeps, so the closure is an `async` one and not a boxed future
-    /// ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
     ///
     /// A subset of [`Checked::future_lambdas`], recorded beside it rather than
     /// instead of it: the two shapes differ only at a *run* parameter, and the
     /// emitter reads both keys at one position.
     ///
     /// **Run is the absence of `keeps`**, which is the column
-    /// [ADR-102](../../docs/specification/adr/adr-102.md) D3 already points at:
+    /// [ADR-277](../../docs/specification/adr/adr-277.md) D8 already points at:
     /// *the same analysis that decides whether a value is a view or kept, asked
     /// of a parameter that is code*. Nothing new is derived for it.
     pub run_lambdas: BTreeSet<(usize, usize)>,
@@ -640,7 +640,7 @@ pub struct Checked {
     /// `throws` becomes a `?` and *can pause* becomes an `.await`, both read off
     /// the callee's contract - and for a method the emitter cannot read it,
     /// because `stats.add(5)` names `add` and only a type checker knows what it
-    /// goes to (ADR-028). So this is the one-column-over twin of
+    /// goes to (ADR-288). So this is the one-column-over twin of
     /// `fallible_methods`, and it keeps that set's fail-quietly: a name that in
     /// one statement is both a pausing call and a call that is not is in neither
     /// set.
@@ -657,7 +657,7 @@ pub struct Checked {
     /// `let mut m: &str? = null` then `m = "World"`: the second line hands a
     /// `&str` to an `Option<&str>`, and the language below needs the
     /// constructor written. The same arrangement as `shared_sites` and for the
-    /// same reason - the emitter has no types (ADR-028), and whether the value
+    /// same reason - the emitter has no types (ADR-288), and whether the value
     /// beside the `=` is *already* nullable is the whole question.
     ///
     /// **Only where this checker is sure of both sides.** A value whose type is
@@ -676,7 +676,7 @@ pub struct Checked {
     ///
     /// **Only text is in here.** A number's `+` stays exactly where it is,
     /// because arithmetic that moved into `std` would silently lose
-    /// [ADR-043](../../docs/specification/adr/adr-043.md) D1's overflow abort -
+    /// [ADR-285](../../docs/specification/adr/adr-285.md) D5's overflow abort -
     /// `overflow-checks` is on per Nikaia crate and off for the profile, and
     /// inlining does not carry the check across.
     pub concatenations: BTreeSet<usize>,
@@ -687,7 +687,7 @@ pub struct Checked {
     /// a `T?` it has to be `and_then`, or the result holds a nullable of a
     /// nullable and `a?.b?.c` comes out wrong. Which of the two is a question
     /// about the declared type, so it is answered here and the emitter writes
-    /// the word (ADR-028).
+    /// the word (ADR-288).
     ///
     /// The statement and the name, for the reason `fallible_methods` gives at
     /// length: an expression carries no span, so a pair is recorded only where
@@ -698,11 +698,11 @@ pub struct Checked {
     pub flattened_reaches: BTreeSet<(usize, String)>,
     /// Part I 3.5: the `?.` reaches over a field this compiler knows to
     /// **copy**, as the byte the statement starts at and the field's name
-    /// ([ADR-189](../../docs/specification/adr/adr-189.md) D1).
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D18).
     ///
     /// What the emitter does with it is take the receiver by `as_ref()`, so the
     /// reach leaves the value where it was — which is
-    /// [ADR-113](../../docs/specification/adr/adr-113.md) D1 for the half of D2
+    /// [ADR-278](../../docs/specification/adr/adr-278.md) D16 for the half of D2
     /// that needs no representation: a number, a `bool` and a `char` come out
     /// of a view by being copied, and a member that would come out as a view
     /// needs the state that is not built.
@@ -714,8 +714,8 @@ pub struct Checked {
     pub copied_reaches: BTreeSet<(usize, String)>,
     /// Part I 3.5: the `?.` reaches over a field that does **not** copy and
     /// whose receiver is a **place**, so the member comes out as a *view* of it
-    /// ([ADR-191](../../docs/specification/adr/adr-191.md) D1,
-    /// [ADR-113](../../docs/specification/adr/adr-113.md) D2).
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D19,
+    /// [ADR-278](../../docs/specification/adr/adr-278.md) D17).
     ///
     /// The value says how the view is taken, because the emitter has no types
     /// and the two spellings differ: `ref String` is `&str` below
@@ -726,19 +726,19 @@ pub struct Checked {
     /// line: the view would point into a temporary that dies at the `;`, and
     /// binding it is `rustc`'s *temporary value dropped while borrowed* about a
     /// file nobody wrote. A temporary has no next line to stay usable on, so
-    /// leaving it owned keeps [ADR-113](../../docs/specification/adr/adr-113.md)
+    /// leaving it owned keeps [ADR-278](../../docs/specification/adr/adr-278.md)
     /// D1's promise where it means anything.
     pub viewed_reaches: BTreeMap<(usize, String), Viewed>,
     /// Part I 3.5: the `?.` reaches over a **method** that changes nothing, as
     /// the byte the statement starts at and the method's name
-    /// ([ADR-189](../../docs/specification/adr/adr-189.md) D2).
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D18).
     ///
     /// The method half of the same sentence the field half writes: the reach
     /// takes its scrutinee by `as_ref()`, so the receiver is lent to the call
     /// and is usable afterwards. A **method** needs no representation for it at
     /// all — what comes out is the call's own result and not a view of the
     /// receiver — so this half of
-    /// [ADR-113](../../docs/specification/adr/adr-113.md) D1 is whole.
+    /// [ADR-278](../../docs/specification/adr/adr-278.md) D16 is whole.
     ///
     /// **Only where every candidate for the name says it changes nothing**, the
     /// rule `NK1138` already uses one construct over: a name this compiler
@@ -746,7 +746,7 @@ pub struct Checked {
     pub lent_reaches: BTreeSet<(usize, String)>,
     /// A lent `?.` method reach whose result is a **view** and whose receiver
     /// is a temporary - rooted in a call - by statement and method name
-    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1). The receiver is
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D21). The receiver is
     /// held in a binding of its own before the statement, so the view has
     /// something to point into past the `;`.
     pub held_reaches: BTreeSet<(usize, String)>,
@@ -785,11 +785,11 @@ pub struct Checked {
     /// nobody wrote (Part III, C.1).
     pub nullable_args: BTreeMap<(usize, String, usize), BTreeMap<String, Wrap>>,
     /// The **narrowing conversions**, as the byte the statement they stand in
-    /// starts at and the type converted to (ADR-043 D4).
+    /// starts at and the type converted to (ADR-285 D12).
     ///
     /// The fourth answer this module gives the emitter, and for the reason the
     /// other three have: `as i32` narrows or widens depending on what it is
-    /// *given*, and the emitter has no types (ADR-028). The emitter writes the
+    /// *given*, and the emitter has no types (ADR-288). The emitter writes the
     /// checked conversion.
     ///
     /// Narrow in the same way `fallible_methods` is narrow, and by the same
@@ -819,7 +819,7 @@ pub struct Checked {
     /// declaration too — one answer, two positions, because the two disagreeing
     /// is a `&&T` or a moved value in the language below. What the emitter
     /// cannot decide on its own is the other half: whether *this* argument is
-    /// already a view, which is a question about its type (ADR-028).
+    /// already a view, which is a question about its type (ADR-288).
     ///
     /// The four-part key is `nullable_args`' and is there for the same reason:
     /// a statement may call one function twice, and `f(a) + f(b)` has two
@@ -833,7 +833,7 @@ pub struct Checked {
     /// For a call **by name** the emitter reads that off the callee's contract
     /// itself; for a **method** it cannot, because finding the entry means
     /// resolving the receiver and the emitter has no types
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — the same
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — the same
     /// arrangement `lent_args` and `nullable_args` have.
     ///
     /// Without it a method's options were **dropped**: `q.execute(target_age: 30)`
@@ -918,11 +918,11 @@ pub struct Checked {
     /// **The functions in which a value with a cleanup may die**, by key, and
     /// whether their settle point can fail them - a cleanup that can fail, in
     /// a function that says `throws`
-    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D2, D3): their body
+    /// ([ADR-297](../../docs/specification/adr/adr-297.md) D2, D4): their body
     /// is written as a settle point's.
     pub settle_fns: BTreeMap<String, bool>,
     /// **The `let`s that bind a value with a cleanup**, by the byte the
-    /// statement starts at, and whether its cleanup can fail (ADR-239 D2): the
+    /// statement starts at, and whether its cleanup can fail (ADR-297 D2): the
     /// block they stand in is settled where it ends.
     pub settle_lets: BTreeMap<usize, bool>,
     /// What each `spawn` body **binds and then holds across a pause**, by the
@@ -952,7 +952,7 @@ pub struct Checked {
     /// over an `f64` is a *copy*, and a `&` there is a borrow held across the
     /// loop that writes the same field — `E0502` about a file nobody wrote.
     /// Which of the two is a question about the type, the emitter has none
-    /// (ADR-028), and [`moves_away`] is the same answer `NK2101` reads.
+    /// (ADR-288), and [`moves_away`] is the same answer `NK2101` reads.
     ///
     /// **Silence where the type is unknown**, which leaves the statement
     /// exactly where every program already is. The two wrong answers are both
@@ -980,7 +980,7 @@ pub struct Checked {
     /// D1).
     ///
     /// **Decided here and written there**, which is
-    /// [ADR-028](../../docs/specification/adr/adr-028.md)'s division: whether
+    /// [ADR-288](../../docs/specification/adr/adr-288.md)'s division: whether
     /// every part of a type compares is a question about types, and the emitter
     /// keeps none.
     pub compares: BTreeSet<String>,
@@ -992,7 +992,7 @@ pub struct Checked {
     /// declaration.
     pub compares_totally: BTreeSet<String>,
     /// **Which declared types derive `Copy`**
-    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1): those whose
+    /// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.1): those whose
     /// every part is a number, a `bool`, a `char` or another such type - a
     /// unit-only `enum`, a struct of two `u32`.
     ///
@@ -1010,7 +1010,7 @@ pub struct Checked {
     /// so the binding is a view of the element and Rust's `as` does not see
     /// through one. Answered here for the reason every set beside it is: which
     /// name is a view is a question about the **scope**, and the emitter keeps
-    /// none (ADR-028).
+    /// none (ADR-288).
     ///
     /// Keyed by the **name** as well as by the statement, because one
     /// statement may cast twice — `(n as i64) + (m as i64)` — and only one of
@@ -1023,7 +1023,7 @@ pub struct Checked {
     /// `[0.0, 0.0, 0.0]` is a `Vec` on its own and an `Array[f64, 3]` where the
     /// use asks for one, and which of the two it is decides what the emitter
     /// writes - `vec![…]` or `[…]`. The use is a *type*, and the emitter has
-    /// none ([ADR-028](../../docs/specification/adr/adr-028.md)), so the answer
+    /// none ([ADR-288](../../docs/specification/adr/adr-288.md)), so the answer
     /// is computed here and handed over.
     ///
     /// **The literal's own byte and not the statement's**, which is the one
@@ -1033,7 +1033,7 @@ pub struct Checked {
     /// position, and it carries it for this.
     pub array_literals: BTreeSet<usize>,
     /// The text literals that stand where **text of its own** is wanted
-    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), by the byte
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D4), by the byte
     /// the opening quote stands at.
     ///
     /// `"x"` is a view of static text on its own and a `String` where the use
@@ -1048,14 +1048,14 @@ pub struct Checked {
     pub owned_texts: BTreeSet<usize>,
     /// The text literals that are the fallback of a `??` whose left side is a
     /// **view** of text, by the literal's byte
-    /// ([ADR-209](../../docs/specification/adr/adr-209.md) §6). The emitter
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md)). The emitter
     /// writes every other fallback as `"…".into()`, so that `?? "none"` on a
     /// `String?` is a `String` - and on a `ref String?` that conversion is the
     /// one thing the language below cannot resolve: *type annotations needed*
     /// about `m["host"] ?? "-"` over a map of views.
     pub view_fallbacks: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
-    /// method calls went (ADR-028).
+    /// method calls went (ADR-288).
     ///
     /// The second thing the checker answers for somebody else, after
     /// `fallible_loops`, and for the same reason: the question is about types,
@@ -1085,7 +1085,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Checked {
 /// callee's name: the errors it newly throws
 /// ([ADR-101](../../docs/specification/adr/adr-101.md) D1), and the parameters
 /// whose `keeps` changed on a type whose teardown does something
-/// ([ADR-236](../../docs/specification/adr/adr-236.md) D1).
+/// ([ADR-297](../../docs/specification/adr/adr-297.md) D12).
 ///
 /// Empty for every build that has nothing to compare — a first build, a loose
 /// file, a package whose ledger is not committed yet — which is the honest
@@ -1099,7 +1099,7 @@ pub struct Newly {
     pub keeps: BTreeMap<String, Vec<Kept>>,
 }
 
-/// **A parameter whose `keeps` moved** (ADR-236 D1).
+/// **A parameter whose `keeps` moved** (ADR-297 D12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Kept {
     /// The parameter, as the callee's signature names it.
@@ -1163,7 +1163,7 @@ pub fn check_against<'a>(
     parsed: &'a Parsed,
     // **The program's other files**, for the one question that needs a body
     // rather than a contract: a `comptime` calling across a file boundary
-    // ([ADR-073](../../docs/specification/adr/adr-073.md) D5). Empty for a
+    // ([ADR-287](../../docs/specification/adr/adr-287.md) D6). Empty for a
     // caller that has one file, which is every test and every `nikaia lower`
     // outside a project.
     beside: &'a [&'a Parsed],
@@ -1391,7 +1391,7 @@ fn walked<'a>(
     // walk above is what found: a call may stand above the function it names.
     checker.unroll();
     checker.checked.walks_fields = checker.walks_fields.clone();
-    // ADR-007 D5: the DSL parameters a call forgot, and the ones it invented.
+    // ADR-296 D5: the DSL parameters a call forgot, and the ones it invented.
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
     checker.checked.findings.extend(crate::dsl::check(parsed));
@@ -1421,7 +1421,7 @@ fn walked<'a>(
         .extend(crate::views::check(parsed, own, library));
     // A view handed back that points into a buffer the body owns (`NK2303`).
     // The tether's own refusal
-    // ([ADR-156](../../docs/specification/adr/adr-156.md) D4), and a walk of
+    // ([ADR-283](../../docs/specification/adr/adr-283.md) D9), and a walk of
     // its own for the same reason `views` is: it asks where a *value* points
     // rather than what a type is. It reads both ledgers, because which calls
     // make a buffer is what they say.
@@ -1438,7 +1438,7 @@ fn walked<'a>(
         .findings
         .extend(crate::traits::check(parsed, own));
     // Part I 2.2: a **type** nothing declares, which had nothing where a value
-    // has had `NK1117` since ADR-051
+    // has had `NK1117` since ADR-298
     // ([ADR-096](../../docs/specification/adr/adr-096.md)). Separate for the
     // same reason as the three above: it asks about a written *name* rather
     // than about a value's type, so it needs the item tree and neither the
@@ -1447,7 +1447,7 @@ fn walked<'a>(
         .checked
         .findings
         .extend(crate::types::check(parsed, own, library));
-    // **What no function body held**, typed the same way (ADR-249).
+    // **What no function body held**, typed the same way (ADR-285).
     checker.numbers_typed_by_their_uses();
     checker.checked.findings.sort_by_key(|f| f.span.at());
     // Only the calls that provably fail, and only where the name is not also a
@@ -1476,7 +1476,7 @@ fn walked<'a>(
 }
 
 /// Which kind of checked conversion a narrowing one needs
-/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D12).
 ///
 /// Two kinds because Rust gives one of them and not the other, which is measured
 /// in that record: `i32::try_from` exists for an integer, and
@@ -1539,7 +1539,7 @@ pub enum Narrowing {
 /// operator, a field, an index.
 ///
 /// Whether this expression **leaves** rather than coming to a value
-/// ([ADR-138](../../docs/specification/adr/adr-138.md) D1).
+/// ([ADR-276](../../docs/specification/adr/adr-276.md) D20).
 ///
 /// Its type is *never*, which is not a type this checker's `Ty` spells: what
 /// never means here is *this is not one of the answers that have to agree*, and
@@ -1549,7 +1549,7 @@ pub enum Narrowing {
 /// Whether an expression **leaves the function** on every path through it -
 /// a `return` or a `throw` - which `leaves` says and more: a `break` and a
 /// `continue` leave a branch and not the function, so what was taken before
-/// them is still taken after the loop (ADR-213 D4).
+/// them is still taken after the loop (ADR-293 D30).
 fn exits(expr: &Expr) -> bool {
     match expr {
         Expr::Throw(_) | Expr::Return(_) => true,
@@ -1576,7 +1576,7 @@ fn leaves(expr: &Expr) -> bool {
 }
 
 /// The same question about a **block**, which is what a `select` arm's body is
-/// ([ADR-148](../../docs/specification/adr/adr-148.md) D1).
+/// ([ADR-292](../../docs/specification/adr/adr-292.md) D12).
 ///
 /// Part II 12.4's own example has two arms and both of them jump, so this is
 /// what decides that the `select` around them carries no value.
@@ -1589,8 +1589,8 @@ fn block_leaves(block: &Block) -> bool {
 }
 
 /// Whether a pattern matches every value of its type
-/// ([ADR-137](../../docs/specification/adr/adr-137.md) D1,
-/// [ADR-145](../../docs/specification/adr/adr-145.md) D1).
+/// ([ADR-291](../../docs/specification/adr/adr-291.md) D10,
+/// [ADR-291](../../docs/specification/adr/adr-291.md) D16).
 ///
 /// **A bare name is a catch-all, and covers**: one segment and no brackets is
 /// the binding form — `Op::Times` is two, and `Message::Write(text)` is a
@@ -1698,7 +1698,7 @@ fn views_into_text(found: &Ty, want: &Ty) -> bool {
 }
 
 /// A view of text, present or absent, going into a `String?`
-/// ([ADR-224](../../../docs/specification/adr/adr-224.md) D1).
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D12).
 fn views_into_nullable_text(found: &Ty, want: &Ty) -> bool {
     let present = match found {
         Ty::Nullable(found) => found.as_ref(),
@@ -1719,9 +1719,9 @@ fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
 }
 
 /// **How a plain value is put into a nullable slot** (Part I 2.3,
-/// [ADR-068](../../../docs/specification/adr/adr-068.md)).
+/// [ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
-/// The question the four positions of [ADR-052](../../../docs/specification/adr/adr-052.md)
+/// The question the four positions of [ADR-278](../../../docs/specification/adr/adr-278.md)
 /// D4 ask was never *whether* to wrap - it was **how**, and the second answer
 /// was missing. A value this checker worked out to be a plain `T` takes the
 /// constructor; one whose type it could not work out takes the conversion,
@@ -1877,7 +1877,7 @@ pub struct Propagation {
     /// so the binding is a view of the element and Rust's `as` does not see
     /// through one. Answered here for the reason every set beside it is: which
     /// name is a view is a question about the **scope**, and the emitter keeps
-    /// none (ADR-028).
+    /// none (ADR-288).
     ///
     /// Keyed by the **name** as well as by the statement, because one
     /// statement may cast twice — `(n as i64) + (m as i64)` — and only one of
@@ -2140,7 +2140,7 @@ pub fn propagation_against(
 }
 
 /// How a `comptime`'s type is spelled in the language below, where this compiler
-/// can spell it ([ADR-073](../../docs/specification/adr/adr-073.md) D5).
+/// can spell it ([ADR-287](../../docs/specification/adr/adr-287.md) D6).
 ///
 /// **A short list on purpose.** Rust's `const` takes a type and no inference,
 /// so a Nikaia type this cannot name is a `comptime` this cannot write - and
@@ -2426,15 +2426,15 @@ enum Copyable {
 }
 
 /// **A number no annotation typed**
-/// ([ADR-249](../../docs/specification/adr/adr-249.md)): one `let`, or several
+/// ([ADR-285](../../docs/specification/adr/adr-285.md)): one `let`, or several
 /// its uses joined, and what those uses asked of it.
 ///
 /// Part I 2.4 says *a number takes the type its use asks for*, and that half was
-/// the language below's inference, inherited rather than built (ADR-060 D1): the
+/// the language below's inference, inherited rather than built (ADR-285 D20): the
 /// `let` was written bare and `rustc` looked at the uses. Two things broke it.
 /// A use `rustc` cannot see through - `v[i].push(x)`, where `index::at` takes
-/// any integer - left it without an answer; and ADR-248's `u64` and `u32` gave
-/// a number above an `i32` a second type to be, which ADR-060 D3's *"there is
+/// any integer - left it without an answer; and ADR-285's `u64` and `u32` gave
+/// a number above an `i32` a second type to be, which ADR-285 D23's *"there is
 /// no second answer"* had ruled out.
 struct OpenNumber {
     /// The name, for the message.
@@ -2455,7 +2455,7 @@ struct OpenNumber {
     given: Vec<(i128, Span, bool)>,
     /// What an operation over it comes to, where that folds: held to the type
     /// and never deciding it, because a name is where the widening stops
-    /// (ADR-063 D2).
+    /// (ADR-285 D26).
     derived: Vec<(i128, Span)>,
     /// The statements that give it a number, by the byte they start at, and
     /// every literal in them: the emitter writes each with the type's suffix
@@ -2537,7 +2537,7 @@ struct Local {
     /// one sentence that has to say so: `let s = "x"` and then `Person { name:
     /// s }` is refused, and a reader asks why the compiler that builds `"x"`
     /// into a `String` on that line does not do the same through `s`
-    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D25).
     literal: Option<String>,
     /// Where the `let` stands, for a binding whose value was an **empty list**
     /// and whose element type nothing has said yet
@@ -2548,7 +2548,7 @@ struct Local {
     /// and an outer `xs` are two questions and not one.
     empty_list: Option<usize>,
     /// **A number no annotation typed, whose uses will**
-    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D1): the `let` it
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D23): the `let` it
     /// was bound at, which names its entry in `Checker::open_numbers`.
     open_number: Option<usize>,
     /// **Which binding this is**, of all the ones a name has had: a number no
@@ -2709,7 +2709,7 @@ struct Checker<'a> {
     /// under the same key, so one field check serves both shapes.
     variant_owner: BTreeMap<String, String>,
     /// Every **grammar** declared here, with the names of its `pub` rules
-    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     ///
     /// A grammar is entered by an ordinary call — `Json.value(input)` — so its
     /// name has to be something `NK1117` counts as declared, and which rules
@@ -2728,7 +2728,7 @@ struct Checker<'a> {
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
     /// The function being checked hands back text **both kinds** of which
-    /// flow into its result ([ADR-222](../../docs/specification/adr/adr-222.md)
+    /// flow into its result ([ADR-282](../../docs/specification/adr/adr-282.md)
     /// D3): text of its own is moved in as it is, so it is not a view refused.
     expected_either: bool,
     /// The same for the field whose value is being checked.
@@ -2737,7 +2737,7 @@ struct Checker<'a> {
     /// function's own `[T]` and the `[T]` of the `impl` around it.
     ///
     /// A name in here is a **type** while the body is walked and a **variable**
-    /// at every call site ([ADR-074](../../docs/specification/adr/adr-074.md)
+    /// at every call site ([ADR-295](../../docs/specification/adr/adr-295.md)
     /// D1). Empty everywhere else, which is every function written today.
     type_parameters: BTreeMap<String, Vec<String>>,
     /// Every generic struct declared here, with its parameters in **declaration
@@ -2764,7 +2764,7 @@ struct Checker<'a> {
     ///
     /// The receiver's type is built from this rather than from the bare name,
     /// and that is what lets a field reach the body as something
-    /// ([ADR-074](../../docs/specification/adr/adr-074.md) D1). `self` typed as
+    /// ([ADR-295](../../docs/specification/adr/adr-295.md) D1). `self` typed as
     /// a bare `Holder` binds none of the struct's parameters, so `self.value`
     /// substituted a `T` nothing had bound and came out `?` - and a `?` is the
     /// one thing this checker says nothing about. Every refusal a `T` earns as
@@ -2787,7 +2787,7 @@ struct Checker<'a> {
     /// into a package whose generic function carries a bound is not checked
     /// against it. That is the column a ledger would need, and nothing asks for
     /// it yet: a bound may name a path since
-    /// [ADR-106](../../docs/specification/adr/adr-106.md) D1, and what a caller
+    /// [ADR-295](../../docs/specification/adr/adr-295.md) D10, and what a caller
     /// gets wrong is caught where the callee's body reads the parameter.
     declared_bounds: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Whether it declared `throws` - which is what says a failure may leave
@@ -2803,7 +2803,7 @@ struct Checker<'a> {
     /// goes back to what it was before the handler is walked.
     caught: bool,
     /// The handler being walked was handed an error that can be **more than
-    /// one type** ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    /// one type** ([ADR-280](../../docs/specification/adr/adr-280.md) D18).
     ///
     /// `match error { … }` reads it. The set of error types arriving at a
     /// `catch` is **open** ([ADR-023](../../docs/specification/adr/adr-023.md)
@@ -2840,7 +2840,7 @@ struct Checker<'a> {
     ///
     /// A `break` is legal where this is not zero, and `NK1132` is what it meets
     /// where it is (Part I 3.3,
-    /// [ADR-084](../../../docs/specification/adr/adr-084.md) D4).
+    /// [ADR-276](../../../docs/specification/adr/adr-276.md) D16).
     loops: usize,
     /// What that nearest boundary is, where one stands between here and the
     /// function's own body: a lambda, a task, an `overlap` branch.
@@ -2848,7 +2848,7 @@ struct Checker<'a> {
     /// Each of those is **a function of its own in the language below**, and a
     /// jump does not leave a function - so a `break` inside one whose loop is
     /// outside it is not a program this compiler may lower
-    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D4). It is carried
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D16). It is carried
     /// rather than derived because the message is the whole value of catching
     /// it here: without the word, the refusal would be `rustc`'s, about a file
     /// nobody wrote (Part III, C.1).
@@ -2877,7 +2877,7 @@ struct Checker<'a> {
     pausing_methods: BTreeSet<(usize, String)>,
     settled_methods: BTreeSet<(usize, String)>,
     /// **What the lambda being walked has been seen to do**
-    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
     ///
     /// A function type carries two promises and the defaults are the
     /// language's: without `sync` the code may pause, without `throws` it
@@ -2946,7 +2946,7 @@ struct Checker<'a> {
     /// inside that statement.
     walked: Vec<Taken>,
     /// **Which branch of which `if` or `match` the walk is in**, outermost
-    /// first ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    /// first ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
     ///
     /// A sequence taken in the `then` of an `if` and read in its `else` was
     /// taken on neither's way to the other, and `NK2702` ordered by statement
@@ -2960,11 +2960,11 @@ struct Checker<'a> {
     reads_on_paths: Vec<Read>,
     /// Which read an expression **is**, by the expression's address, so that
     /// `p.name` extends the read of `p` it stands on and a hand-over names the
-    /// read that was handed ([ADR-214](../../docs/specification/adr/adr-214.md)
+    /// read that was handed ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1). Also what keeps an expression walked twice from counting as two
     /// reads.
     read_index: std::collections::HashMap<(usize, usize), usize>,
-    /// **`??`s that may lend their left side** (ADR-259 D1), until the
+    /// **`??`s that may lend their left side** (ADR-279 D5), until the
     /// statement they stand in is walked: one handed to a position that only
     /// reads it is lent, and every other one is taken when the statement ends.
     pending_coalesces: Vec<PendingCoalesce>,
@@ -2972,25 +2972,25 @@ struct Checker<'a> {
     /// the frame it was bound in: a part of one cannot be handed over.
     lent_lets: BTreeSet<(String, usize)>,
     /// **Data handed to something that keeps it**
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D3): the name, its
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D29): the name, its
     /// type, the byte the handing statement ends on, the branch, and the words
     /// for what took it. `NK2105` is a later read on the same path.
     handed: Vec<Taken>,
     /// **Names a method changed or took, or an assignment wrote**, in the
     /// order they were met: what a `match` arm does to a part other than
-    /// read it (ADR-242).
+    /// read it (ADR-291).
     changed: Vec<String>,
     /// Set by an assignment whose target is an index, for the one `Index` it
     /// walks: a key **written** is handed to the map, a key read is lent
-    /// (ADR-213 D1).
+    /// (ADR-293 D27).
     writing_index: bool,
     /// Set where an `Index` read a **map**, for the `??` around it: a map read
-    /// hands out a view of the value, whatever the value's type (ADR-213 D2).
+    /// hands out a view of the value, whatever the value's type (ADR-293 D28).
     read_a_map: bool,
     /// **Every read of a map**, by the expression's address: through the
     /// brackets or `get`. It is an `Option<&T>` below whatever the type
     /// says, so a place that keeps a `T?` of its own copies it out or is
-    /// refused ([ADR-273](../../docs/specification/adr/adr-273.md) D4).
+    /// refused ([ADR-293](../../docs/specification/adr/adr-293.md) D15).
     map_read_sites: BTreeSet<usize>,
     /// **The bindings a `let` made of a map read** (#297), by
     /// [`Local::id`]: `let found = calls.get(key)` is a view of what the map
@@ -3004,7 +3004,7 @@ struct Checker<'a> {
     /// runs, which stay closure arguments below.
     run_code: BTreeSet<String>,
     /// The ledger key the last method call resolved to, for the arm around it
-    /// (ADR-215 D4).
+    /// (ADR-293 D24).
     last_resolved: Option<String>,
     /// The **name** of the receiver of the method call being walked, where it is
     /// a plain name ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
@@ -3024,7 +3024,7 @@ struct Checker<'a> {
     /// the byte its statement starts at.
     written_at: Vec<(String, usize)>,
     /// **The loops and lambdas around the expression being walked**, innermost
-    /// last ([ADR-212](../../docs/specification/adr/adr-212.md) D4): where each
+    /// last ([ADR-293](../../docs/specification/adr/adr-293.md) D19): where each
     /// begins in `scope`, and what would let a sequence taken inside it be
     /// taken again.
     ///
@@ -3034,7 +3034,7 @@ struct Checker<'a> {
     /// which is why the per-statement order `walked` reads cannot see them.
     repeats: Vec<Repeats>,
     /// A read that does not take what it reads
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4): an
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D19): an
     /// assignment's target, and the operand of a `&`.
     reading_only: bool,
     /// How many reads the walk has met so far: each read's place in the order.
@@ -3049,7 +3049,7 @@ struct Checker<'a> {
     /// list nothing will ever constrain, and that is `NK1153`.
     empty_lists: BTreeMap<usize, (String, Span)>,
     /// **The numbers whose uses decide their type**, by the `let` each was
-    /// bound at ([ADR-249](../../docs/specification/adr/adr-249.md)). Asked
+    /// bound at ([ADR-285](../../docs/specification/adr/adr-285.md)). Asked
     /// once the body has been walked, as `empty_lists` is: the use that
     /// answers stands after the `let`.
     open_numbers: BTreeMap<usize, OpenNumber>,
@@ -3078,7 +3078,7 @@ struct Checker<'a> {
     /// its own.
     task_bindings: Vec<Vec<(String, Ty, usize)>>,
     /// Whether the lambda being walked is a **write door**'s block — `update`
-    /// or `update_all` ([ADR-110](../../docs/specification/adr/adr-110.md) D1,
+    /// or `update_all` ([ADR-281](../../docs/specification/adr/adr-281.md) D12,
     /// D6).
     ///
     /// It is what narrows `NK1138` at a lambda parameter to where D1 asks for
@@ -3087,7 +3087,7 @@ struct Checker<'a> {
     /// there would refuse a program that compiles.
     at_a_write_door: bool,
     /// The name the `set` being typed was called on, for `NK2205`'s message
-    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
     ///
     /// The rule wants the receiver's **name** and the argument's **type**, and
     /// those are known in two different places: the name where the method call
@@ -3095,7 +3095,7 @@ struct Checker<'a> {
     /// than passed, the way the door flags beside it are.
     set_receiver: Option<String>,
     /// Where the condition this stands under was read from a lock, if it was
-    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D4's second shape).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D25's second shape).
     ///
     /// `if stand > 100 { kasse.set(0) }` stores a plain value; the **decision**
     /// is the stale thing. A `while`, a `match` and a nested `if` are
@@ -3104,12 +3104,12 @@ struct Checker<'a> {
     stamped_condition: Option<usize>,
     /// Whether what is being walked is **inside a door's block** — `access`,
     /// `update`, `access_all` or `update_all`
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D10).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D10).
     ///
     /// `at_a_write_door` above is the narrower question `NK1138` and `NK1141`
     /// ask; this is the one `NK2203` asks, because *a lock taken while a lock
     /// is held* is about **any** door being open and not about which
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D2).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D28).
     ///
     /// `get` and `set` are doors and are **not** here, and D10 says why: while
     /// the lock is open in either of them no code of the program's runs, so
@@ -3120,18 +3120,18 @@ struct Checker<'a> {
     /// each.
     stored_frames: Vec<StoredCode>,
     /// The rule whose action is being walked, for
-    /// [ADR-142](../../docs/specification/adr/adr-142.md) D1's refusal - which
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D35's refusal - which
     /// needs the rule's name, because a grammar is a page of rules and a caret
     /// on a call inside one is not enough to find it.
     inside_an_action: Option<String>,
     /// The name of the enclosing function, where its declaration **writes**
-    /// `sync` ([ADR-027](../../docs/specification/adr/adr-027.md) D4: an
+    /// `sync` ([ADR-288](../../docs/specification/adr/adr-288.md) D4: an
     /// assertion is checked, never overwritten).
     ///
     /// It is here because `NK2202` cannot see a **method** call: `contracts::sync`
     /// deliberately does not resolve one, on the ground that the type checker is
     /// the only thing that knows what `tx.send(1)` goes to
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — and the type
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — and the type
     /// checker is here. Without it a `sync` function that sends on a channel
     /// lowered to an ordinary `fn` with an `.await` inside it, which is not Rust
     /// (Part III, C.1). Found by
@@ -3169,7 +3169,7 @@ struct Checker<'a> {
 }
 
 /// What a lambda's body was seen to do
-/// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+/// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
 #[derive(Debug, Clone, Copy)]
 struct Handed {
     pauses: bool,
@@ -3233,9 +3233,9 @@ struct Guarded {
 }
 
 /// Whether a body's last statement is a loop no jump leaves
-/// ([ADR-093](../../../docs/specification/adr/adr-093.md)).
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md)).
 ///
-/// [ADR-070](../../../docs/specification/adr/adr-070.md) D3: a function that
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) D6: a function that
 /// genuinely never returns — an accept loop, an event loop, a supervisor — had
 /// to end with a `return 0` that cannot be reached, and a reader of that line
 /// could not tell dead code from a mistake.
@@ -3243,13 +3243,13 @@ struct Guarded {
 /// **The literal `true` only**, never a name that happens to be true: the
 /// equivalence is D1's and it is about the written form. `emit` makes exactly
 /// this shape Rust's `loop`, which is `!` and fits any declared type
-/// ([ADR-085](../../../docs/specification/adr/adr-085.md)) — so the two halves
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md)) — so the two halves
 /// agree by construction, and the checker could not have claimed this before
 /// that record, because `while true { }` is `()` below and the refusal would
 /// only have moved to `rustc`.
 ///
 /// **And no `break` bound to this loop**, which is what
-/// [ADR-084](../../../docs/specification/adr/adr-084.md) added to the question:
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) added to the question:
 /// before it, the condition was the whole test. The walk over-approximates — it
 /// descends into a lambda, where a `break` is not bound to this loop at all —
 /// and that is the safe direction: a false *"a jump leaves it"* asks for the
@@ -3283,7 +3283,7 @@ fn a_jump_leaves(block: &Block, loops: usize) -> bool {
 }
 
 /// **What a `?.` reaches**, which Part I 3.5 calls a *member*
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
 ///
 /// The two spellings are one operator, and the only place the difference has to
 /// be said out loud is the refusal: a reader who wrote a call is owed `.m(…)`
@@ -3296,19 +3296,19 @@ enum Reached<'a> {
 /// **Something taken**: a sequence walked (`NK2702`) or data handed to what
 /// keeps it (`NK2105`).
 struct Taken {
-    /// A name, or a part of one: `p.name` ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    /// A name, or a part of one: `p.name` ([ADR-293](../../docs/specification/adr/adr-293.md) D32).
     path: String,
     ty: Ty,
     /// The bytes the statement that took it starts and ends at.
     from: usize,
     at: usize,
     /// **Where in that statement**: the order the walk read it in, so a later
-    /// read in the same statement is after it (ADR-214 D1).
+    /// read in the same statement is after it (ADR-293 D31).
     seq: usize,
     /// The branch it was taken in.
     choices: Choices,
     /// Where a branch that left the function ends, for a taking inside it:
-    /// nothing after that is on its path (ADR-213 D4).
+    /// nothing after that is on its path (ADR-293 D30).
     until: Option<usize>,
     /// What took it, in words (`NK2105`).
     to: String,
@@ -3328,7 +3328,7 @@ struct Read {
 }
 
 /// An expression's address, which is what tells two reads of one name apart
-/// in one statement (ADR-214 D1).
+/// in one statement (ADR-293 D31).
 fn address(expr: &Expr) -> usize {
     expr as *const Expr as usize
 }
@@ -3370,7 +3370,7 @@ fn revives(written: &str, taken: &str) -> bool {
 }
 
 /// How a key goes into the brackets of a map whose keys are owned
-/// ([ADR-213](../../docs/specification/adr/adr-213.md) D1), handed from the
+/// ([ADR-293](../../docs/specification/adr/adr-293.md) D27), handed from the
 /// checker to the emitter, which has no types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyForm {
@@ -3387,7 +3387,7 @@ pub enum KeyForm {
 }
 
 /// A path through the choices of a body: which arm of which `if` or `match`
-/// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+/// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
 type Choices = Vec<(usize, usize)>;
 
 /// Whether two places are in different arms of one choice, so that no run
@@ -3400,7 +3400,7 @@ fn apart(a: &Choices, b: &Choices) -> bool {
 }
 
 /// A body that may run more than once, around a sequence being taken
-/// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+/// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
 struct Repeats {
     /// Where the body's own names begin in `Checker::scope`: a name bound in a
     /// frame before this is from outside it.
@@ -3551,7 +3551,7 @@ impl<'a> Checker<'a> {
                     // In **declaration order**, because that is what a type
                     // argument's position means: `Pair[i64]`'s `i64` is the
                     // first parameter and nothing else says which
-                    // ([ADR-074](../../docs/specification/adr/adr-074.md) D2).
+                    // ([ADR-295](../../docs/specification/adr/adr-295.md) D2).
                     let order: Vec<String> = generics
                         .iter()
                         .map(|g| self.parsed.text(g.name).to_string())
@@ -3573,7 +3573,7 @@ impl<'a> Checker<'a> {
                     // **An item's own name was never asked**, which `not_self`
                     // did not have to be: `struct self` cannot parse, because
                     // the receiver takes the word. `struct crate` parses fine
-                    // and went to the language below (ADR-076 D3).
+                    // and went to the language below (ADR-298 D11).
                     self.nameable(&own, &item.span, "a struct");
                     if !order.is_empty() {
                         self.struct_parameters.insert(own.clone(), order);
@@ -3681,7 +3681,7 @@ impl<'a> Checker<'a> {
     /// value is wanted (ADR-233 D4): a number, a `bool` or a `char`, and
     /// beside them a type that is one by declaration - the unit's own that
     /// derive `Copy`, and a described Rust type whose ledger says `copies`
-    /// (ADR-252 D4.3). `for name in names` over a `ref Vec[Symbol]` binds a
+    /// (ADR-294 D9.3). `for name in names` over a `ref Vec[Symbol]` binds a
     /// view of each `Symbol`, and handing one to `resolve` was refused as a
     /// mismatch although the handle is a `u32` the ledger says copies.
     fn a_view_that_copies(&self, ty: &Ty) -> bool {
@@ -3693,7 +3693,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Which declared types derive `Copy`**
-    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1,
+    /// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.1,
     /// [`Checked::copies`]).
     ///
     /// The least answer that holds: a type joins once every part of it is a
@@ -3716,7 +3716,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         // **And every type another file of the package declares**
-        // (ADR-047 D1): whether `Count` from `ty.nika` copies is the same
+        // (ADR-286 D1): whether `Count` from `ty.nika` copies is the same
         // answer in `sharing.nika`, and each file decides it alike because
         // each asks over the whole package. Asked only here; what this unit
         // derives `Copy` for is still its own (found moving the compiler's
@@ -3799,7 +3799,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         // **A described Rust type that says it copies** is a part that copies
-        // ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3): `describe`
+        // ([ADR-294](../../docs/specification/adr/adr-294.md) D9.3): `describe`
         // read its `#[derive(Copy)]`, and the line was reviewed. Nothing else
         // from a crate is.
         let mut copies: BTreeSet<String> = self
@@ -3829,7 +3829,7 @@ impl<'a> Checker<'a> {
                         (false, _, Some(parts)) => parts.clone(),
                         (false, _, None) => return false,
                     };
-                    // **Never a type with a cleanup** (ADR-239 D1): its
+                    // **Never a type with a cleanup** (ADR-297 D1): its
                     // cleanup is a `Drop` below, and a copied value would run
                     // it twice - `rustc` refuses the pair (E0184), which is
                     // how Part I's own `Connection` found this.
@@ -3919,7 +3919,7 @@ impl<'a> Checker<'a> {
     /// promise is only checkable where the cases are known. They come from the
     /// source for this unit's own types and from the ledger's `variants` column
     /// for every other — the same column, read one file over, which is what
-    /// [ADR-028](../../docs/specification/adr/adr-028.md) D5 says the ledger is
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) D11 says the ledger is
     /// for.
     ///
     /// **This unit's own types win**, which is why this runs after the source
@@ -3939,7 +3939,7 @@ impl<'a> Checker<'a> {
                     // **A positional variant is built by its constructor**, as
                     // a declared enum's is: `fs::Root::Dir("site")` has to meet
                     // `Dir(String)` so the literal is made text of its own
-                    // (ADR-207 D2). Recorded as a struct it was a type called
+                    // (ADR-282 D4). Recorded as a struct it was a type called
                     // with no constructor, or, before the ledger said what
                     // `Dir` holds, a `&str` handed to `rustc`.
                     match variant.positional && !variant.holds.is_empty() {
@@ -4024,7 +4024,7 @@ impl<'a> Checker<'a> {
     /// and a call resolves to one key either way. `std` declares no bound today,
     /// so this is a package's answer in practice — and it is the same answer the
     /// source gives one file over, which is what
-    /// [ADR-028](../../docs/specification/adr/adr-028.md) D5 says the ledger is
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) D11 says the ledger is
     /// for.
     ///
     /// **A parameter with no bound is not an entry here**, which keeps the map
@@ -4059,7 +4059,7 @@ impl<'a> Checker<'a> {
     ///
     /// A package writes its own names bare — `[H: Handler]` inside `handler` —
     /// and a consumer writes `handler::Handler`, because privacy and naming are
-    /// per package ([ADR-047](../../docs/specification/adr/adr-047.md) D1). So
+    /// per package ([ADR-286](../../docs/specification/adr/adr-286.md) D1). So
     /// the bound arrives in the *declaring* package's namespace and has to be
     /// read in the consumer's, or [`Checker::answers_for`] fails open on a trait
     /// it has under another spelling and the refusal never lands.
@@ -4118,7 +4118,7 @@ impl<'a> Checker<'a> {
 
     fn program(&mut self) {
         // **A frame under every body, filled before any of them is walked**
-        // ([ADR-097](../../../docs/specification/adr/adr-097.md)). A `comptime`
+        // ([ADR-287](../../../docs/specification/adr/adr-287.md)). A `comptime`
         // at item level is in scope for the whole file, and this checker's
         // scope is a stack pushed per function — so the name has to be there
         // before the first `fn` is entered, and it has to be there for a
@@ -4151,7 +4151,7 @@ impl<'a> Checker<'a> {
                     // An `impl`'s own parameters carry no bounds: the head
                     // writes `impl Stack[T]` and there is nowhere in it for a
                     // `: Summarize` to stand
-                    // ([ADR-078](../../docs/specification/adr/adr-078.md) §4).
+                    // ([ADR-295](../../docs/specification/adr/adr-295.md)).
                     let outer: BTreeMap<String, Vec<String>> =
                         crate::contracts::impl_parameters(self.parsed, target, &declared)
                             .into_iter()
@@ -4165,7 +4165,7 @@ impl<'a> Checker<'a> {
                     // `type_parameters` above is keyed by and what `NK1126`
                     // reads. So one line answers both, and the receiver below
                     // binds the struct's parameters the way any other value of
-                    // that type does (ADR-074 D2).
+                    // that type does (ADR-295 D2).
                     let arguments: Vec<Ty> = target
                         .generics
                         .iter()
@@ -4204,7 +4204,7 @@ impl<'a> Checker<'a> {
     /// `NK1156`: a `use` that names a **type** rather than a module
     /// ([ADR-140](../../docs/specification/adr/adr-140.md) D5).
     ///
-    /// [ADR-046](../../docs/specification/adr/adr-046.md) D2's rule is *no name
+    /// [ADR-286](../../docs/specification/adr/adr-286.md) D11's rule is *no name
     /// is brought in*, and `std` was the one place it was not followed:
     /// `use std::collections::HashMap` parsed, and what it did was **nothing** —
     /// `HashMap` works with no `use` at all, because it is a name this compiler
@@ -4356,7 +4356,7 @@ impl<'a> Checker<'a> {
     /// else is the mistake worth catching: a rule is where a struct literal is
     /// most often typed out in full.
     /// **Two names the engine has and a grammar may not write** (`NK1187`,
-    /// [ADR-120](../../docs/specification/adr/adr-120.md) D3).
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D34).
     ///
     /// `tag("x")` is `"x"` and `digit1` is `digit+`: each is the engine's
     /// spelling for something the grammar can already say, and D1 makes Part II
@@ -4426,7 +4426,7 @@ impl<'a> Checker<'a> {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
             // **The rule's own key, so its answers land in its own entry.**
             // A `pub` rule *is* a ledger entry
-            // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), and the
+            // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), and the
             // walks that derive `touches` and `locks` read the method answers
             // this checker files under the caller's key — which was `None` for
             // an action, so a grammar's entry inherited nothing and every
@@ -4442,7 +4442,7 @@ impl<'a> Checker<'a> {
                 let mut frame = Vec::new();
                 self.bindings_of(&alt.pattern.node, &mut frame);
                 // **A fold's lambdas first, and in the pattern's own frame**
-                // ([ADR-092](../../../docs/specification/adr/adr-092.md)),
+                // ([ADR-296](../../../docs/specification/adr/adr-296.md)),
                 // because a fold may stand beside a binding in a sequence:
                 // `head:N rest:fold(N, zero, fn(acc, m) { acc + m + head })`
                 // parses, and without this `head` is refused. And outside
@@ -4450,9 +4450,9 @@ impl<'a> Checker<'a> {
                 // `init` and `step` build is the parser backend's arithmetic on
                 // the way to that type, not the type itself.
                 // **An action may not pause**
-                // ([ADR-142](../../docs/specification/adr/adr-142.md) D1), and
+                // ([ADR-296](../../docs/specification/adr/adr-296.md) D35), and
                 // a fold's `init`, `step` and `merge` are action code too
-                // ([ADR-092](../../docs/specification/adr/adr-092.md)) - so the
+                // ([ADR-296](../../docs/specification/adr/adr-296.md)) - so the
                 // flag is set around both rather than around the block alone.
                 let named = self.parsed.text(rule.name).to_string();
                 let outer_action = self.inside_an_action.replace(named);
@@ -4481,14 +4481,14 @@ impl<'a> Checker<'a> {
     }
 
     /// **A `fold`'s `init`, `step` and `merge`, walked like any other code**
-    /// ([ADR-092](../../../docs/specification/adr/adr-092.md)).
+    /// ([ADR-296](../../../docs/specification/adr/adr-296.md)).
     ///
     /// They are expressions inside a **pattern**, and the walk above takes a
     /// rule's *action block* and nothing else - so
     /// `fn(acc, m) { nothing_declares_this }` lowered without a word and the
     /// message was `rustc`'s about a file nobody wrote (Part III, C.1).
     ///
-    /// [ADR-084](../../../docs/specification/adr/adr-084.md) D4 closed the half
+    /// [ADR-276](../../../docs/specification/adr/adr-276.md) D16 closed the half
     /// a **jump** can reach and deliberately no more, with its own walk of
     /// these same expressions. This subsumes that walk rather than standing
     /// beside it: [`Expr::Closure`]'s arm already crosses a boundary and counts
@@ -4573,10 +4573,10 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK2210`: `sync(f)` names what is not code the call runs
-    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D4). A name that is
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D31). A name that is
     /// no parameter, a parameter that is not a function, and one the function
     /// keeps - hands to a task or stores - so that its lambda runs after the
-    /// call, where nobody the caller counts is waiting on it (ADR-029 D4).
+    /// call, where nobody the caller counts is waiting on it (ADR-288 D16).
     fn a_lambda_the_promise_names(
         &mut self,
         key: &str,
@@ -4713,11 +4713,11 @@ impl<'a> Checker<'a> {
             None => "new".to_string(),
         };
         // A function's own name, for the reason the struct's is asked: `fn self`
-        // cannot parse and `fn crate` can (ADR-076 D3). The span is the body's
+        // cannot parse and `fn crate` can (ADR-298 D11). The span is the body's
         // first statement where there is one, which is the nearest this walk has
         // - a declaration with a span of its own is `FnArg`'s and not the item's.
         // **What `sync(f)` names is code the call runs**
-        // ([ADR-244](../../docs/specification/adr/adr-244.md) D4).
+        // ([ADR-288](../../docs/specification/adr/adr-288.md) D31).
         if !sync_by.is_empty() {
             let key = match target {
                 Some(target) => format!("{target}::{own_name}"),
@@ -4745,7 +4745,7 @@ impl<'a> Checker<'a> {
         };
 
         // **Inside its own body a type parameter is a type**
-        // ([ADR-074](../../docs/specification/adr/adr-074.md) D1). `T` is not a
+        // ([ADR-295](../../docs/specification/adr/adr-295.md) D1). `T` is not a
         // hole here: the caller picked it, this body did not, and a body that
         // put an `i64` where its caller's `T` is wanted would be wrong. So the
         // name stays a name and `fits` compares it, which is what lets `NK1126`
@@ -4829,7 +4829,7 @@ impl<'a> Checker<'a> {
                 Ty::from_ast(self.parsed, &option.ty).erase(&parameters),
             ));
         }
-        // **So is a spread** ([ADR-007](../../docs/specification/adr/adr-007.md)
+        // **So is a spread** ([ADR-296](../../docs/specification/adr/adr-296.md)
         // D5): `...args: Self::dsl` is the driver's one value holding what the
         // statement left open, and its body hands it on. Missing from this
         // frame, `return args` was `NK1117` in every driver. Its type is the
@@ -4858,7 +4858,7 @@ impl<'a> Checker<'a> {
             .map(|contract| contract.keeps.clone())
             .unwrap_or_default();
         // **A parameter the function keeps dies in it**, unless it is handed
-        // on, as a value bound by a `let` does (ADR-239 D2).
+        // on, as a value bound by a `let` does (ADR-297 D2).
         for arg in args {
             let name = self.parsed.text(arg.name).to_string();
             let kept = keeps.contains(&name).then(|| {
@@ -4885,7 +4885,7 @@ impl<'a> Checker<'a> {
         let tail = self.block(body);
         self.grown_text = outer_grown;
         // **A body's numbers, typed by their uses** once all of them have been
-        // seen ([ADR-249](../../docs/specification/adr/adr-249.md) D2) - the
+        // seen ([ADR-285](../../docs/specification/adr/adr-285.md) D24) - the
         // tail's included, which is read against the scope still standing.
         if let (Some(expected), Some(Stmt::Expr(value))) =
             (&expected, body.stmts.last().map(|s| &s.node))
@@ -4909,7 +4909,7 @@ impl<'a> Checker<'a> {
         // The last expression of a body is what the function hands back, so it
         // answers to the declared type exactly as a `return` does - unless the
         // body **cannot get there**
-        // ([ADR-093](../../../docs/specification/adr/adr-093.md)).
+        // ([ADR-276](../../../docs/specification/adr/adr-276.md)).
         let ends = !never_ends(body);
         if let (Some(expected), Some(span)) = (&expected, tail_span.filter(|_| ends)) {
             // **A tail is a `return` written without the word**, so it owes the
@@ -4925,7 +4925,7 @@ impl<'a> Checker<'a> {
                 true => view_of(&tail),
                 false => tail,
             };
-            // **And the tail is a use**, as `return` is (ADR-207 D2).
+            // **And the tail is a use**, as `return` is (ADR-282 D4).
             let tail = match body.stmts.last().map(|s| &s.node) {
                 Some(Stmt::Expr(value)) if !lending => self
                     .text_literal(expected, value, true)
@@ -4977,7 +4977,7 @@ impl<'a> Checker<'a> {
         self.run_code = outer_run_code;
     }
 
-    /// Whether a conversion narrows, recorded for the emitter (ADR-043 D4).
+    /// Whether a conversion narrows, recorded for the emitter (ADR-285 D12).
     ///
     /// **Only among the numeric types this compiler knows the range of**, for the
     /// reason `constant_fits` gives: a claim about a type neither the
@@ -4990,7 +4990,7 @@ impl<'a> Checker<'a> {
     /// about is checked at run time rather than truncated in silence.
     ///
     /// **The machine-width types are not in it, and no longer need to be**
-    /// ([ADR-048](../../../../docs/specification/adr/adr-048.md) D1). They were,
+    /// ([ADR-285](../../../../docs/specification/adr/adr-285.md) D1). They were,
     /// because `len` handed one back and what fits on a large machine does not on
     /// a small one. A length is an `i64` now and `usize` has left the surface a
     /// program can write, so a conversion out of one is a conversion out of a type
@@ -5048,7 +5048,7 @@ impl<'a> Checker<'a> {
     /// ```
     ///
     /// **The third one is history now**
-    /// ([ADR-136](../../docs/specification/adr/adr-136.md)): `1_000` is the
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md)): `1_000` is the
     /// number `1000`, so this message stopped naming it — a help text that
     /// explains a form the language has is worse than no help at all.
     ///
@@ -5080,7 +5080,7 @@ impl<'a> Checker<'a> {
             || self.enums.contains_key(&name)
             || self.own.types.contains_key(&name)
             || self.modules.contains(&name)
-            // A grammar's name stands where a callee stands (ADR-082 D1), so
+            // A grammar's name stands where a callee stands (ADR-296 D24), so
             // it is declared in exactly the way a module is.
             || self.grammars.contains_key(&name);
         if declared {
@@ -5098,7 +5098,7 @@ impl<'a> Checker<'a> {
             ],
             help: Some(match a_word_that_was_reserved(&name) {
                 // **What each word used to be told a reserved one, this tells a
-                // stray one** ([ADR-117](../../docs/specification/adr/adr-117.md)
+                // stray one** ([ADR-298](../../docs/specification/adr/adr-298.md)
                 // D2). Reserving a word buys exactly one thing, which is the
                 // sentence a reader who writes it gets; the four that left the
                 // list were paying for nothing, because this message can say it
@@ -5355,7 +5355,7 @@ impl<'a> Checker<'a> {
     /// **A declared type has no operators because the language gives it no
     /// way to have one**: there is no overloading
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) §1,
-    /// [ADR-144](../../docs/specification/adr/adr-144.md) §4) and no trait an
+    /// [ADR-286](../../docs/specification/adr/adr-286.md)) and no trait an
     /// `impl` could name to give a type `+` (Part I 4.7). `a -= 30` on an
     /// `Account` lowered as it was written and `rustc` said *binary assignment
     /// operation `-=` cannot be applied* (E0368, E0369) about a file nobody
@@ -5551,7 +5551,7 @@ impl<'a> Checker<'a> {
         let files: Vec<&Parsed> = std::iter::once(parsed)
             .chain(self.beside.iter().copied())
             .collect();
-        // **A declared generic type is seen through** (ADR-252 §5): a member
+        // **A declared generic type is seen through** (ADR-294): a member
         // typed `Spanned[Pattern]` holds a `Pattern` inline where `Spanned[T]`
         // holds its `T` inline, which was read as an indirection like `Vec`'s
         // and left `Pattern` with no size.
@@ -6396,7 +6396,7 @@ impl<'a> Checker<'a> {
     ///
     /// `member` is the field or the method, and `Member` says which: the way out
     /// is the plain `.`, and a reader is owed it in the spelling they wrote
-    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
     fn reaches_through_a_plain_value(&mut self, on: &Ty, member: Reached<'_>, span: &Span) {
         if on.is_unknown() {
             return;
@@ -6421,7 +6421,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Part I 2.3: a `T?` is a type of its own, and `.` is not one of its
-    /// members** ([ADR-066](../../../docs/specification/adr/adr-066.md) D6).
+    /// members** ([ADR-278](../../../docs/specification/adr/adr-278.md) D14).
     ///
     /// `NK1125`, and it is [`Checker::reaches_through_a_plain_value`] the other
     /// way round: that one refuses a `?.` where there is nothing to reach
@@ -6480,7 +6480,7 @@ impl<'a> Checker<'a> {
     /// it, in the same way that it is not a member of an `i64`.
     ///
     /// **This is the refusal that makes writing the `<T>` worth anything**
-    /// ([ADR-074](../../docs/specification/adr/adr-074.md) D5). Emitting the
+    /// ([ADR-295](../../docs/specification/adr/adr-295.md) D5). Emitting the
     /// parameter without it turns *"every generic function fails in `rustc`"*
     /// into *"every generic function whose body uses its parameter fails in
     /// `rustc`"* - the same [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
@@ -6493,7 +6493,7 @@ impl<'a> Checker<'a> {
     /// method"*: the method may well exist on every type the caller will ever
     /// pass, and what is missing is the sentence that says so.
     /// The **bound** that answers a member reached on a type parameter, if one
-    /// does ([ADR-078](../../docs/specification/adr/adr-078.md) D3).
+    /// does ([ADR-295](../../docs/specification/adr/adr-295.md) D8).
     ///
     /// `fn shout[T: Summarize](x: T)` and `x.summary()`: `T`'s bound names
     /// `Summarize`, the trait declares `summary`, and the ledger records that
@@ -6576,7 +6576,7 @@ impl<'a> Checker<'a> {
     /// language, and a raw internal error reaching you is a Nikaia bug.*
     ///
     /// **Not a hidden `.clone()`**, which was the other option and is against a
-    /// decision already made: [ADR-064](../../docs/specification/adr/adr-064.md)
+    /// decision already made: [ADR-281](../../docs/specification/adr/adr-281.md)
     /// D2 wrote *a hull you can see is one you write*, and a copy the author
     /// cannot see is the same thing one position over. Both ways out already
     /// exist and both are one word — `.clone()`, written where it happens, or a
@@ -6589,7 +6589,7 @@ impl<'a> Checker<'a> {
     /// is silence rather than a guess.
     /// The ledger key `Json.value(input)` enters through, where the receiver
     /// names a grammar of this file and the method one of its `pub` rules
-    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     ///
     /// `None` for everything else, which is every other method call: a grammar
     /// name is not a value, so there is nothing to confuse this with.
@@ -6682,7 +6682,7 @@ impl<'a> Checker<'a> {
     /// answer in two positions, because the two disagreeing is a `&&T` or a
     /// moved value in the language below. What this adds is the half the
     /// emitter cannot see: whether the argument is **already** a view, which is
-    /// a question about its type (ADR-028).
+    /// a question about its type (ADR-288).
     ///
     /// **`NK1137` lands exactly where the compiler would have written one**,
     /// and nowhere else. A `&` in a position the callee keeps, or one in front
@@ -6891,12 +6891,12 @@ impl<'a> Checker<'a> {
         // the body only calls is an `&impl Fn` below already, and a second `&`
         // on a call that hands it on is a new type at every level of a
         // recursion - `rustc`'s *overflow evaluating the requirement*, found
-        // moving `fold` into Nikaia (ADR-252 D6).
+        // moving `fold` into Nikaia (ADR-294 D11).
         if matches!(found, Ty::Fn { .. }) && self.a_lent_parameter(given) {
             return false;
         }
         // **A `??` handed to a position that only reads it lends its left
-        // side** (ADR-259 D1): the answer is a view already, of the name or of
+        // side** (ADR-279 D5): the answer is a view already, of the name or of
         // the fallback, and needs no `&` of its own.
         if self.a_pending_coalesce_is_lent(given, span) {
             return true;
@@ -6939,7 +6939,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2203`: a lock taken while a lock is held**
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D2, D3).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D28, D29).
     ///
     /// Part II 12.3 called manual nesting an anti-pattern and *"often a
     /// compile-time error"*; D2 makes *often* into **always**, and with that no
@@ -6960,7 +6960,7 @@ impl<'a> Checker<'a> {
     /// where every program already is.
     ///
     /// **A `println` is one of these**, and that is the case
-    /// [ADR-067](../../docs/specification/adr/adr-067.md) D1 was written about:
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) D21 was written about:
     /// it never pauses, so `sync` says nothing about it, and it takes standard
     /// output's own lock while yours is open. Two conditions and not one.
     fn a_lock_inside_a_lock(&mut self, called: &str, holds: crate::contracts::Lock, span: &Span) {
@@ -6999,10 +6999,10 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2201`: I/O while holding locked data**
-    /// ([ADR-067](../../docs/specification/adr/adr-067.md) D1,
-    /// [ADR-169](../../docs/specification/adr/adr-169.md) D2).
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D21,
+    /// [ADR-281](../../docs/specification/adr/adr-281.md) D35).
     ///
-    /// ADR-067 D1 split *no I/O while holding locked data* in two — what
+    /// ADR-288 D21 split *no I/O while holding locked data* in two — what
     /// **pauses** is `NK2202`'s and what **takes a lock** is `NK2203`'s — and
     /// left the third case as a question: *is there I/O that does neither?*
     ///
@@ -7013,7 +7013,7 @@ impl<'a> Checker<'a> {
     /// before this nothing said a word.
     ///
     /// **Read off the type's own column, never a list of names**
-    /// ([ADR-169](../../docs/specification/adr/adr-169.md) D1): a type whose
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D34): a type whose
     /// `touches` names a file says so in the ledger, and a second such type
     /// needs a line there and nothing here.
     ///
@@ -7067,7 +7067,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1141`: an `update` block hands a value back**
-    /// ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D12).
     ///
     /// `update` used to take the value by value and put back what the block
     /// returned; D1 hands it the address instead, so *there is nothing to
@@ -7117,7 +7117,7 @@ impl<'a> Checker<'a> {
     }
 
     /// One lambda parameter, bound — and refusable where it is changed without
-    /// `mut` ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    /// `mut` ([ADR-281](../../docs/specification/adr/adr-281.md) D12).
     ///
     /// `kasse.update fn(mut v) { v += 100 }` is where the word earns its place:
     /// the block changes the value in place and the caller whose value changes
@@ -7163,7 +7163,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Whether a type's values have a cleanup**, and whether it can fail
-    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D1): an `impl
+    /// ([ADR-297](../../docs/specification/adr/adr-297.md) D1): an `impl
     /// Cleanup` for it in any ledger this build reads - or for what it holds,
     /// in a field, an element or a nullable, which dies with it. A view is not
     /// the value, and dies nowhere. The type named is the one with the
@@ -7232,7 +7232,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A value with a cleanup may die in the function being walked**
-    /// (ADR-239 D2): its body becomes a settle point's, and the settle is a call
+    /// (ADR-297 D2): its body becomes a settle point's, and the settle is a call
     /// every analysis reads - one that pauses, and one that fails where the
     /// function says `throws` and the cleanup can fail.
     fn a_settle_in_this_function(&mut self, fails: bool) {
@@ -7252,14 +7252,14 @@ impl<'a> Checker<'a> {
         self.reached_method(Some(key));
     }
 
-    /// A value with a cleanup, made by a call or a literal (ADR-239 D2).
+    /// A value with a cleanup, made by a call or a literal (ADR-297 D2).
     fn a_value_with_a_cleanup_made(&mut self, ty: &Ty) {
         if let Some((_, fails)) = self.cleanup_of(ty) {
             self.a_settle_in_this_function(fails);
         }
     }
 
-    /// **A value with a cleanup, bound by a `let`** (ADR-239 D2, D4): the
+    /// **A value with a cleanup, bound by a `let`** (ADR-297 D2, D3): the
     /// block is settled where it ends, the settle is a pause wherever pausing
     /// is refused, and a cleanup that can fail is the function's to declare.
     fn a_value_with_a_cleanup_bound(&mut self, name: &str, ty: &Ty, span: &Span) {
@@ -7311,7 +7311,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2601`: an `impl Cleanup` is the one method `fn cleanup(ref mut
-    /// self)`** ([ADR-239](../../docs/specification/adr/adr-239.md) D1). The
+    /// self)`** ([ADR-297](../../docs/specification/adr/adr-297.md) D1). The
     /// synchronous fallback a type may also have is its own `impl Drop`, which
     /// runs after the cleanup, or alone where the cleanup cannot run - so a
     /// `drop` written here is named and pointed there.
@@ -7757,7 +7757,7 @@ impl<'a> Checker<'a> {
     /// and only one thing a call *is*: `x.m()` and `x?.m()` differ in whether
     /// the call happens, never in what it throws, whether it pauses, what its
     /// arguments have to be, or what the receiver's type binds in its signature
-    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)). Two copies of
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)). Two copies of
     /// these rules would be that many chances for the two spellings to drift.
     ///
     /// `on` is the receiver's type - for a `?.` the type **inside** the `T?`,
@@ -7765,7 +7765,7 @@ impl<'a> Checker<'a> {
     ///
     /// `entry` is the name the **ledger** knows this call by, which is the
     /// written one everywhere but at
-    /// [ADR-111](../../docs/specification/adr/adr-111.md) D5's witness door:
+    /// [ADR-281](../../docs/specification/adr/adr-281.md) D26's witness door:
     /// `kasse.set(neu; after: stand)` is `set(after)`, a different operation
     /// from `set` and a different entry. `method` stays the name the *program*
     /// wrote, and everything the **emitter** is handed stays keyed by that —
@@ -7815,7 +7815,7 @@ impl<'a> Checker<'a> {
             // D3's *otherwise `Par[T]` has `Seq[T]`'s surface*.
             Ty::Seq { parallel: true, .. } => self.method(&format!("{}::{entry}", ty::SEQ)),
             // **Text of its own lends itself as a view**
-            // ([ADR-225](../../docs/specification/adr/adr-225.md) D1), so a
+            // ([ADR-282](../../docs/specification/adr/adr-282.md) D18), so a
             // method of a view is a method of a `String` too - which is how
             // the language below has it.
             Ty::Named { name, args, .. } if name == "String" && args.is_empty() => {
@@ -7828,7 +7828,7 @@ impl<'a> Checker<'a> {
                 self.method(&format!("list::ListExt::{entry}"))
             }
             // **A value with a cleanup closes under std's one `close`**
-            // ([ADR-239](../../docs/specification/adr/adr-239.md) D3): it
+            // ([ADR-297](../../docs/specification/adr/adr-297.md) D4): it
             // runs the cleanup now and hands its failure back at the call.
             Ty::Named { name, .. }
                 if entry == "close"
@@ -7845,7 +7845,7 @@ impl<'a> Checker<'a> {
         // No ledger describes it because nothing has to - and answered as
         // *nothing describes this method*, `r.clone()` on a declared `struct`
         // made the function around it `async`, found moving the ledger's
-        // records into Nikaia (ADR-257), where `Signature::text` became a
+        // records into Nikaia (ADR-294), where `Signature::text` became a
         // future.
         if found.is_none()
             && entry == "clone"
@@ -7870,7 +7870,7 @@ impl<'a> Checker<'a> {
             // The type is known and no ledger describes this method of
             // it - `HashMap::entry` until something writes it down.
             // **A bound is looked up before anything is refused**
-            // ([ADR-078](../../docs/specification/adr/adr-078.md) D3): where
+            // ([ADR-295](../../docs/specification/adr/adr-295.md) D8): where
             // `T: Summarize` and the trait declares this method, the call is
             // asked again on the trait and everything about it - arity,
             // argument types, `sync`, `throws` - is answered from the
@@ -8015,14 +8015,14 @@ impl<'a> Checker<'a> {
         // compiler can answer at all.
         self.may_fail_here(&key, contract, span);
 
-        // What the receiver's own type tells the signature (ADR-031).
+        // What the receiver's own type tells the signature (ADR-288).
         // `HashMap[&str, Stats]` against `&HashMap[$K, $V]` binds `$V`
         // to `Stats`, so `-> Entry[$V]` is an `Entry[Stats]` and the
         // next call in the chain has something to bind from in turn.
         let bound = bindings(contract, &on);
 
         // The arguments are walked **after** the contract is in hand,
-        // which is what lets a lambda's parameters have types (ADR-029).
+        // which is what lets a lambda's parameters have types (ADR-288).
         // The old order walked them first and could not: `a` in
         // `.and_modify fn { a.add(t) }` is named nowhere and typed by
         // nothing but the callee's signature.
@@ -8051,7 +8051,7 @@ impl<'a> Checker<'a> {
             matches!(arg, Expr::Closure { .. }) && paused_here.contains(&argument_shape(arg))
         });
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
-        // **A literal where the receiver says text is wanted** (ADR-215 D1):
+        // **A literal where the receiver says text is wanted** (ADR-293 D21):
         // `m.insert("a", 1)` on a map of `String` keys wants `$K`, which the
         // receiver binds and the per-argument check below does not see. A
         // method's argument is handed over, so the literal is built there.
@@ -8091,15 +8091,15 @@ impl<'a> Checker<'a> {
             }
         }
         self.a_pattern_of_owned_text(&key, args, &found, span);
-        // The receiver first (ADR-031), then whatever the arguments can still
-        // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
+        // The receiver first (ADR-288), then whatever the arguments can still
+        // say (ADR-295 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
         let mut bound = bound;
         for (name, ty) in from_arguments(contract, &found) {
             bound.entry(name).or_insert(ty);
         }
         // A method's own parameters carry bounds exactly as a free function's
-        // do, and one written call is one rule (ADR-066).
+        // do, and one written call is one rule (ADR-278).
         self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = ty::substitute(&result, &bound);
         let result = shape_through(contract, &on, &found, result);
@@ -8191,7 +8191,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2703`: a sequence asked for something it is not**
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D2).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D17).
     ///
     /// `rev` writes its receiver `Seq[$T] ends`, and in a receiver's position
     /// the word is a demand: `io::lines().rev()` is refused here, in the
@@ -8278,7 +8278,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A count the language below takes in `usize`**
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D5), recorded for
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D20), recorded for
     /// the emitter by the **entry** the call resolved to - so a method of the
     /// program's own that happens to be called `take` is not converted.
     fn counts_in_usize(&mut self, key: &str, method: Ident, span: &Span) {
@@ -8294,7 +8294,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1164`: the type a call picked does not answer for the bound**
-    /// ([ADR-174](../../docs/specification/adr/adr-174.md) D2).
+    /// ([ADR-295](../../docs/specification/adr/adr-295.md) D16).
     ///
     /// ```nika
     /// fn tell[T: Speaks](x: T) -> String {
@@ -8328,7 +8328,7 @@ impl<'a> Checker<'a> {
         let wanted = match self.declared_bounds.get(key) {
             Some(wanted) => wanted.clone(),
             // **A package's function answers from its signature**
-            // ([ADR-205](../../docs/specification/adr/adr-205.md) D1). The map
+            // ([ADR-295](../../docs/specification/adr/adr-295.md) D18). The map
             // above is built from the AST of the unit being checked, under the
             // key a call in *that* unit resolves to; a call written
             // `handler::dispatch` resolves to a key no unit's AST produced, and
@@ -8470,7 +8470,7 @@ impl<'a> Checker<'a> {
         if let Some(bounds) = self.type_parameters.get(ty) {
             return bounds.iter().any(|declared| declared == trait_name);
         }
-        // **The program's ledger and not this file's walk** (ADR-174 D1).
+        // **The program's ledger and not this file's walk** (ADR-295 D15).
         // `impl Speaks for Dog` may stand in a different file from the
         // `fn tell[T: Speaks]` that asks, and one file's walk sees one file —
         // measured on a two-file project, where the refusal was a **correct**
@@ -8484,7 +8484,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Part I 2.2: **`as` names a type this language offers**
-    /// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D14).
     ///
     /// Nothing ever decided that a program may write `as u128`, and it could:
     /// the target of an `as` went to the language below unread, so a cast named
@@ -8494,9 +8494,9 @@ impl<'a> Checker<'a> {
     /// page had no word for what it was. And `-3 as usize` is
     /// 18,446,744,073,709,551,613 - a silent reinterpretation, in a language
     /// where a conversion that does not fit aborts
-    /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4). The same
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D12). The same
     /// conversion at an index has reported as an access out of bounds since
-    /// [ADR-048](../../../docs/specification/adr/adr-048.md) D1; written by hand
+    /// [ADR-285](../../../docs/specification/adr/adr-285.md) D1; written by hand
     /// it reported nothing.
     ///
     /// **`NK1122`.** A refusal costs nothing today and would break programs
@@ -8525,7 +8525,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A map's read kept where a `T?` of its own is wanted**
-    /// ([ADR-273](../../docs/specification/adr/adr-273.md) D4): the read is
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D15): the read is
     /// a view of what the map keeps, an `Option<&T>` below, so a value that
     /// copies is copied out - `let k: Kind? = m[1]` - and one that does not
     /// is refused with the copy to write, where it reached `rustc` as
@@ -8571,7 +8571,7 @@ impl<'a> Checker<'a> {
     /// emitter is told.
     ///
     /// **Which of the two**, and the answer used to be *"one, or nothing"*
-    /// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
     ///
     /// The constructor may only be written where the value is known **not** to
     /// be a `T?` already, because wrapping one that is would make an
@@ -8622,19 +8622,19 @@ impl<'a> Checker<'a> {
     /// annotated `let`, a `return` against a declared result, and an argument
     /// whose parameter says what it takes.
     ///
-    /// **A sum reaches further, and that is ADR-043 §3's gap closing.** Where an
+    /// **A sum reaches further, and that is ADR-285's gap closing.** Where an
     /// operand's *declaration* pins the type - `let a: i32 = …`, then `a + 1` -
     /// the arithmetic has a type whatever stands beside it, so the bare `let` is
     /// asked too. That is the one case `rustc` refused about the generated file
     /// with *"attempt to compute `i32::MAX + 1_i32`"*.
     ///
     /// **Only the integer types Part I 2.2 offers** — `i64`, `i32`, `u8`, and
-    /// since [ADR-248](../../docs/specification/adr/adr-248.md) `u64` and
+    /// since [ADR-285](../../docs/specification/adr/adr-285.md) `u64` and
     /// `u32`. A range that is not checked is `rustc` about the generated file
     /// the first time somebody writes one.
     fn constant_fits(&mut self, value: &Expr, want: Option<&Ty>, span: &Span) {
         // **A type beside a value is a use of the numbers in it**
-        // ([ADR-249](../../docs/specification/adr/adr-249.md) D2), whether or
+        // ([ADR-285](../../docs/specification/adr/adr-285.md) D24), whether or
         // not the value folds.
         if let Some(want) = want {
             self.number_asked(value, want, span, true);
@@ -8683,7 +8683,7 @@ impl<'a> Checker<'a> {
             Some(ty) => ty,
             // **Nothing beside it and nothing pinning it**, which is the
             // constant that decides its own type
-            // ([ADR-063](../../docs/specification/adr/adr-063.md) D1): it takes
+            // ([ADR-285](../../docs/specification/adr/adr-285.md) D22): it takes
             // the first that holds it, so the only thing left to report here is
             // a value no type holds at all. Reported against the wider one,
             // because that is the one it fell out of.
@@ -8696,7 +8696,7 @@ impl<'a> Checker<'a> {
 
     /// `NK1116` for a number and the type it has to fit, where it does not;
     /// nothing where it does. `why` is a note saying where the type came from,
-    /// for one the uses decided ([ADR-249](../../docs/specification/adr/adr-249.md)).
+    /// for one the uses decided ([ADR-285](../../docs/specification/adr/adr-285.md)).
     fn a_number_that_does_not_fit(
         &mut self,
         value: i128,
@@ -8713,7 +8713,7 @@ impl<'a> Checker<'a> {
             // writes, `let x: u8 = 300` writing it is `rustc` about the
             // generated file ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
             "u8" => u8::try_from(value).is_ok(),
-            // ADR-248 D1 and D2.
+            // ADR-285 D3 and D19.
             "u32" => u32::try_from(value).is_ok(),
             "u64" => u64::try_from(value).is_ok(),
             _ => return,
@@ -8732,7 +8732,7 @@ impl<'a> Checker<'a> {
         // to, because the expression is on the line the caret is under and the
         // number is the part the reader cannot see.
         // **A fold that left the 65 bits** has no number to name
-        // ([ADR-252](../../docs/specification/adr/adr-252.md) D6): it is said
+        // ([ADR-294](../../docs/specification/adr/adr-294.md) D11): it is said
         // as what it is past, which is the widest there is.
         let comes_to = match value.unsigned_abs() > u128::from(u64::MAX) {
             true if value < 0 => format!("less than -{}", u64::MAX),
@@ -8784,7 +8784,7 @@ impl<'a> Checker<'a> {
     ///
     /// **The arithmetic is [`crate::fold`]'s**, and what this adds is the half
     /// the emitter cannot have: a name resolved to what it is worth
-    /// ([ADR-063](../../docs/specification/adr/adr-063.md) D2). Only an
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D26). Only an
     /// **immutable** `let` carries a value forward to be found here, which
     /// `bind_with` decides; a declaration on the way pins the type, and that is
     /// what makes `let a: i32 = 2` then `a + a` arithmetic in an `i32`.
@@ -8793,7 +8793,7 @@ impl<'a> Checker<'a> {
             let (ty, constant) = self.local(self.parsed.text(name))?;
             let value = constant?;
             // **An open number pins nothing yet**
-            // ([ADR-249](../../docs/specification/adr/adr-249.md) D3): its uses
+            // ([ADR-285](../../docs/specification/adr/adr-285.md) D25): its uses
             // have not all been seen, and what it comes to is held to the type
             // they decide once they have.
             if self
@@ -8807,7 +8807,7 @@ impl<'a> Checker<'a> {
             }
             Some(Constant {
                 // **A name pins, and a literal does not**
-                // ([ADR-063](../../docs/specification/adr/adr-063.md) D2). A
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D26). A
                 // declaration pins what it says; a bare `let` pins the type its
                 // own value took, which is the first that holds it - so
                 // `let a = 2000000000` is an `i32` and `a + a` is arithmetic in
@@ -8825,7 +8825,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The entry an open number was joined into
-    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D1).
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D23).
     fn open_root(&self, mut at: usize) -> usize {
         while let Some(number) = self.open_numbers.get(&at) {
             if number.joined == at {
@@ -8840,7 +8840,7 @@ impl<'a> Checker<'a> {
     /// the operations whose result is of their operands' type - arithmetic, a
     /// bit operation, a negation. A call, a cast and a comparison make a value
     /// of a type of their own and stop it; so does a shift's count, which is
-    /// any integer (ADR-248 D3).
+    /// any integer (ADR-285 D9).
     fn open_numbers_in(&self, expr: &Expr, out: &mut Vec<usize>) {
         match expr {
             Expr::Variable(name) => {
@@ -8949,7 +8949,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Every open number of a body, decided** once the body has been walked
-    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D2-D4).
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D24, D25, D27).
     fn numbers_typed_by_their_uses(&mut self) {
         let numbers = std::mem::take(&mut self.open_numbers);
         let root = |mut at: usize| loop {
@@ -8993,7 +8993,7 @@ impl<'a> Checker<'a> {
                 None => None,
             };
             // **Where no use asks, the first type that holds what it is given**
-            // (D3, ADR-060 D2) - `i32`, else `i64`.
+            // (D3, ADR-285 D21) - `i32`, else `i64`.
             let held = decided.clone().unwrap_or_else(|| {
                 let small = members
                     .iter()
@@ -9054,7 +9054,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK1200`: one number, two uses, two types
-    /// ([ADR-249](../../docs/specification/adr/adr-249.md) D2).
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D24).
     fn a_number_asked_for_two_types(&mut self, name: &str, first: &str, second: &str, at: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -9079,7 +9079,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `self` is a reserved word, and this is the one position the grammar
-    /// cannot refuse it in ([ADR-051](../../docs/specification/adr/adr-051.md)).
+    /// cannot refuse it in ([ADR-298](../../docs/specification/adr/adr-298.md)).
     ///
     /// Every other reserved word is excluded from `NAME` itself, so `let fn = 3`
     /// does not parse. **`self` cannot be**, because it is the one keyword that
@@ -9101,7 +9101,7 @@ impl<'a> Checker<'a> {
     /// file with *"expected identifier, found keyword `self`"*.
     /// The four words the **language below** reserves and cannot escape.
     ///
-    /// [ADR-076](../../docs/specification/adr/adr-076.md) D1 escapes every other
+    /// [ADR-298](../../docs/specification/adr/adr-298.md) D9 escapes every other
     /// one — `type` becomes `r#type` and the Nikaia name stays legal. These four
     /// have no escape at all: *"`crate` cannot be a raw identifier"* is Rust's
     /// own answer to `r#crate`, and the same for `super`, `self` and `Self`. So
@@ -9129,7 +9129,7 @@ impl<'a> Checker<'a> {
     /// `E0532` about a module — about a file nobody wrote, which is
     /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
     /// Every other such word is escaped where it is written
-    /// ([ADR-076](../../docs/specification/adr/adr-076.md) D1); these three have
+    /// ([ADR-298](../../docs/specification/adr/adr-298.md) D9); these three have
     /// no escape, so a refusal here is the only thing left that is not a message
     /// in the backend's words.
     ///
@@ -9179,7 +9179,7 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// ADR-043 D5.5: a division whose divisor is a constant zero is refused
+    /// ADR-285 D29.5: a division whose divisor is a constant zero is refused
     /// here, in this language's words.
     ///
     /// It was already refused where it was written, and by the same mechanism as
@@ -9190,13 +9190,13 @@ impl<'a> Checker<'a> {
     /// **`NK1118`, and the polarity is the fold's.** A divisor that does not
     /// fold to a constant says nothing: a division by something this checker
     /// cannot evaluate is the ordinary case, and it aborts at run time with the
-    /// Nikaia line the table names (ADR-044). Only a zero it can *prove* is
+    /// Nikaia line the table names (ADR-300). Only a zero it can *prove* is
     /// refused.
     /// **`NK1116` at the operation that overflows**, wherever it stands
     /// (0.0.251, issue #176): in an `f"…"` hole, a condition, a list,
     /// a receiver - not only where a `let`, a `return` or a parameter stands
     /// beside it. Where a name pinned the type
-    /// ([ADR-063](../../docs/specification/adr/adr-063.md) D2) the operation
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D26) the operation
     /// has one, and a constant that does not fit it is refused here rather than
     /// by `rustc`'s *this arithmetic operation will overflow* about the
     /// generated file.
@@ -9226,7 +9226,7 @@ impl<'a> Checker<'a> {
             return;
         };
         // **An open number in it is measured with that number**, once its
-        // uses have decided what it is (ADR-249 D3) - and a refusal there
+        // uses have decided what it is (ADR-285 D25) - and a refusal there
         // names the cause. **Asked before the pinned type**, which an open
         // number never has: `a + a - a` for `let a = 2000000000` recorded the
         // result and not the step, and the step is what the language below
@@ -9327,13 +9327,13 @@ impl<'a> Checker<'a> {
                 let of_a_map = std::mem::replace(&mut self.read_a_map, outer_read)
                     && matches!(value, Expr::Index { .. } | Expr::MethodCall { .. });
                 // **A value with a cleanup, bound here, dies where this block
-                // ends** (ADR-239 D2).
+                // ends** (ADR-297 D2).
                 if let [single] = names.as_slice() {
                     let name = self.parsed.text(*single).to_string();
                     self.a_value_with_a_cleanup_bound(&name, &found, span);
                 }
                 // **`let t = s` is a rename, and a rename moves** (ADR-094 D4,
-                // ADR-213 D3) - except `let _ = s`, which binds nothing and so
+                // ADR-293 D29) - except `let _ = s`, which binds nothing and so
                 // takes nothing.
                 let bound: Vec<&str> = names.iter().map(|n| self.parsed.text(*n)).collect();
                 if bound.iter().any(|n| *n != "_") {
@@ -9369,7 +9369,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 // **A tuple of names takes the value apart**
-                // ([ADR-098](../../../docs/specification/adr/adr-098.md)). The
+                // ([ADR-291](../../../docs/specification/adr/adr-291.md)). The
                 // parts come from the value's own type where it is a tuple of
                 // the right width, and are `?` otherwise - the same silence
                 // every other unanswered question here keeps, and never a guess
@@ -9379,7 +9379,7 @@ impl<'a> Checker<'a> {
                 }
                 let name = self.parsed.text(names[0]).to_string();
                 // **`let _ = expr` is a statement wearing a `let`**
-                // ([ADR-126](../../docs/specification/adr/adr-126.md) D2). A
+                // ([ADR-291](../../docs/specification/adr/adr-291.md) D7). A
                 // binding that ignores its whole value binds nothing, so the
                 // word `let` says something that does not happen - and below it
                 // is Rust's `let _ =`, which **discards** the value where the
@@ -9398,7 +9398,7 @@ impl<'a> Checker<'a> {
                     Some(ty) => {
                         let want = self.declared(ty, span);
                         // **The annotation is no longer the constructor**
-                        // ([ADR-064](../../docs/specification/adr/adr-064.md) D2):
+                        // ([ADR-281](../../docs/specification/adr/adr-281.md) D2):
                         // a hull is made by a call, so a plain value standing here
                         // is an ordinary mismatch - and `convert` is what names the
                         // way out.
@@ -9429,7 +9429,7 @@ impl<'a> Checker<'a> {
                     // what it is assigned to is `ref String`* - with a help to
                     // take a view of the sum, which is no way out at all. A
                     // literal is built into text of its own wherever it is kept
-                    // ([ADR-207](../../docs/specification/adr/adr-207.md) D2),
+                    // ([ADR-282](../../docs/specification/adr/adr-282.md) D4),
                     // and a binding the program appends to keeps it: the `let`
                     // reads as `let mut s: String = "a"` would.
                     //
@@ -9449,14 +9449,14 @@ impl<'a> Checker<'a> {
                     }
                     None => {
                         // **A number nothing typed is open**
-                        // ([ADR-249](../../docs/specification/adr/adr-249.md)
+                        // ([ADR-285](../../docs/specification/adr/adr-285.md)
                         // D1): its uses decide, once the body has been walked,
                         // and what it is given is held to that type then.
                         //
                         // **No annotation, and a type all the same** where an
                         // operand's declaration pinned one: `let a: i32 = …`
                         // then `let b = a + 1` is arithmetic in an `i32`, and
-                        // that is the sum ADR-043 §3 left to `rustc`.
+                        // that is the sum ADR-285 left to `rustc`.
                         if !(found == Ty::Unknown && self.number_shaped(value)) {
                             self.constant_fits(value, None, span);
                         }
@@ -9565,8 +9565,8 @@ impl<'a> Checker<'a> {
             }
 
             // **`comptime` is a `let` that has to fold**
-            // ([ADR-073](../../docs/specification/adr/adr-073.md) D3). The fold
-            // is the one [ADR-063](../../docs/specification/adr/adr-063.md)
+            // ([ADR-287](../../docs/specification/adr/adr-287.md) D4). The fold
+            // is the one [ADR-285](../../docs/specification/adr/adr-285.md)
             // already shares, so nothing new evaluates anything: what this arm
             // adds is the refusal where it comes back empty, and the type the
             // emitter will need (D4).
@@ -9619,7 +9619,7 @@ impl<'a> Checker<'a> {
                 // it - `message = "other"` after the `spawn` is a correct
                 // program - so the target is recorded before it is walked, and
                 // walking it records a read this must not be confused with.
-                // **And a part of one** (ADR-214 D2): `p.name = …` gives back
+                // **And a part of one** (ADR-293 D32): `p.name = …` gives back
                 // what `xs.push(p.name)` took.
                 if let Some(path) = self.place_path(target) {
                     self.written_at.push((path, span.at()));
@@ -9642,18 +9642,18 @@ impl<'a> Checker<'a> {
                     self.a_shared_name_changed_in_parallel(&root, span);
                 }
                 // **A write through the brackets is unchanged**
-                // ([ADR-114](../../docs/specification/adr/adr-114.md) D2):
+                // ([ADR-293](../../docs/specification/adr/adr-293.md) D2):
                 // `m[k] = v` inserts or replaces, and what it inserts is a `V`.
                 // Only the **read** answers a `T?`, so the slot being written
                 // is the value type with that answer taken back off — without
                 // this, the write would be handed a `Some(v)` for a map whose
                 // values are plain.
                 // The target is **written**, not taken: `s = xs.iter()` gives a
-                // walked sequence a new one (ADR-212 D4). What is inside an
+                // walked sequence a new one (ADR-293 D19). What is inside an
                 // index is still read, and is walked by its own arm.
                 let outer =
                     std::mem::replace(&mut self.reading_only, matches!(target, Expr::Variable(_)));
-                // **A key written is handed to the map** (ADR-213 D1): the
+                // **A key written is handed to the map** (ADR-293 D27): the
                 // `Index` arm reads this for the one index it is walking.
                 self.writing_index = op.is_none() && matches!(target, Expr::Index { .. });
                 let into = match target {
@@ -9669,7 +9669,7 @@ impl<'a> Checker<'a> {
                 // **An assignment keeps what it is given**, so a text literal
                 // assigned to a `String` place - a name, a field, a map's or a
                 // list's slot - is built into text of its own there, as it is at
-                // every other place that keeps it (ADR-207 D1, ADR-213 D2).
+                // every other place that keeps it (ADR-282 D3, ADR-293 D28).
                 if op.is_none() {
                     self.a_kept_lambda(&into, value, span);
                 }
@@ -9679,7 +9679,7 @@ impl<'a> Checker<'a> {
                 };
                 // **An assignment is a use of both sides, and a number given
                 // to the one on the left**
-                // ([ADR-249](../../docs/specification/adr/adr-249.md) D2, D3):
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D24, D25):
                 // `n = xs.len()` makes an open `n` an `i64`, `n = 3000000000`
                 // is held to whatever `n` is, and `total = n` asks `n` for
                 // `total`'s type. A shift's count is any integer and asks
@@ -9703,7 +9703,7 @@ impl<'a> Checker<'a> {
                     }
                     self.number_asked(value, &into, span, true);
                 }
-                // **What is assigned is given to the place** (ADR-213 D3).
+                // **What is assigned is given to the place** (ADR-293 D29).
                 if op.is_none() {
                     let to = match target {
                         Expr::Index { .. } => "written into a container",
@@ -9712,10 +9712,10 @@ impl<'a> Checker<'a> {
                     self.hands_over(value, &found, to, span);
                 }
                 // **A write to shared mutable state goes through a door**
-                // ([ADR-099](../../../docs/specification/adr/adr-099.md)).
+                // ([ADR-281](../../../docs/specification/adr/adr-281.md)).
                 self.a_write_that_skips_the_door(target, &into, value, span);
                 // **A compound assignment on a map slot is written out**
-                // ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+                // ([ADR-293](../../docs/specification/adr/adr-293.md) D2).
                 if op.is_some() {
                     self.a_compound_write_to_a_map_slot(target, span);
                 }
@@ -9794,7 +9794,7 @@ impl<'a> Checker<'a> {
                 self.a_sequence_is_walked(iter, &over, span);
                 let elements = elements_of(&over, bindings.len());
                 // **A name that holds a sequence is handed over, not lent**
-                // (ADR-212 D4): the emitter writes no `.iter()` for it, and the
+                // (ADR-293 D19): the emitter writes no `.iter()` for it, and the
                 // binding is each element itself.
                 let owned = crate::emit::is_a_place(iter) && matches!(over, Ty::Seq { .. });
                 if owned {
@@ -9839,7 +9839,7 @@ impl<'a> Checker<'a> {
                     });
                 }
                 // **A range's binding is a use of the numbers it counts
-                // between** ([ADR-249](../../docs/specification/adr/adr-249.md)
+                // between** ([ADR-285](../../docs/specification/adr/adr-285.md)
                 // D1, [ADR-270](../../docs/specification/adr/adr-270.md) D8
                 // step 1): in `for lit in 0..<(2 * variables) { lists[lit] }`
                 // the index asks `variables` for its type through `lit`. Left
@@ -9904,7 +9904,7 @@ impl<'a> Checker<'a> {
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
         let ty = self.value_of(expr, span);
         // **`get` on a map of `T?` is one `T?`, as the brackets are**
-        // ([ADR-273](../../docs/specification/adr/adr-273.md) D1): the
+        // ([ADR-293](../../docs/specification/adr/adr-293.md) D12): the
         // signature hands back `V?`, and a `V` that is a `T?` would make it a
         // `T?` of a `T?`.
         let ty = match (expr, ty) {
@@ -9928,7 +9928,7 @@ impl<'a> Checker<'a> {
             self.map_read_sites.insert(address(expr));
         }
         // **A value with a cleanup made here may die in this function**
-        // (ADR-239 D2): by a call or a literal, which is where one comes from.
+        // (ADR-297 D2): by a call or a literal, which is where one comes from.
         // A read of a name or a field is not a death, and is not asked.
         if matches!(
             expr,
@@ -10029,7 +10029,7 @@ impl<'a> Checker<'a> {
                         // is the mistake a reader of the old specification
                         // makes, and `withdrawn_automatic_name` says what
                         // happened to the form rather than only that the name
-                        // is unknown (ADR-049 §5). Where it has spoken, the
+                        // is unknown (ADR-277). Where it has spoken, the
                         // general refusal would be a second finding about one
                         // mistake.
                         if !self.withdrawn_automatic_name(name, span) {
@@ -10079,7 +10079,7 @@ impl<'a> Checker<'a> {
             }
 
             // A `seq` block is a block for every purpose but one: what it says
-            // is about the *order* its statements run in (ADR-033 D7), not
+            // is about the *order* its statements run in (ADR-292 D7), not
             // about what any of them mean or what it hands back.
             // **`unsafe { … }` is a block with a value and no other rule**
             // ([ADR-124](../../docs/specification/adr/adr-124.md) D3): what is
@@ -10100,7 +10100,7 @@ impl<'a> Checker<'a> {
 
             // **Part I 8.1.2: each statement is a branch, and the block's value
             // is the tuple of their results in written order**
-            // ([ADR-050](../../docs/specification/adr/adr-050.md) D2).
+            // ([ADR-292](../../docs/specification/adr/adr-292.md) D2).
             //
             // Walked here rather than through the `Block` arm above, because a
             // block hands back its *last* statement and this hands back all of
@@ -10113,7 +10113,7 @@ impl<'a> Checker<'a> {
                     .stmts
                     .iter()
                     .map(|stmt| {
-                        // Each branch is an `async` block of its own (ADR-050
+                        // Each branch is an `async` block of its own (ADR-292
                         // D2), so the boundary is per branch rather than per
                         // block.
                         self.past_a_boundary("`overlap` branch", |me| match &stmt.node {
@@ -10131,18 +10131,18 @@ impl<'a> Checker<'a> {
             }
 
             // **Part II 12.4: every arm is started and the first to finish
-            // wins** ([ADR-148](../../docs/specification/adr/adr-148.md) D1).
+            // wins** ([ADR-292](../../docs/specification/adr/adr-292.md) D12).
             //
             // Each raced expression is an `async` block of its own, exactly as
             // an `overlap` branch is, so the boundary is per arm. What the arm
             // *binds* is the value that came back, so the body is walked in a
             // scope holding that one name - and `_` binds nothing, which is
-            // [ADR-126](../../docs/specification/adr/adr-126.md) D1's ignore
+            // [ADR-291](../../docs/specification/adr/adr-291.md) D6's ignore
             // pattern rather than a catch-all arm.
             //
             // **The type is the `match` rule one construct over**: an arm that
             // jumps is not one of the types that have to agree
-            // ([ADR-138](../../docs/specification/adr/adr-138.md) D1), and
+            // ([ADR-276](../../docs/specification/adr/adr-276.md) D20), and
             // where the rest do not say the same the answer is `Unknown`
             // rather than a guess. Part II 12.4's own example is two jumping
             // arms, so it is a `select` of no value at all.
@@ -10184,7 +10184,7 @@ impl<'a> Checker<'a> {
                 let cond_ty = self.expr(cond, span);
                 self.expect_bool(&cond_ty, span, "An `if` decides on a `bool`.");
                 // **A decision taken on what a lock said is stale too**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D4's
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D25's
                 // second shape). It reaches inward and **accumulates**: a
                 // nested `if` under a stamped one is still under it, and a
                 // plain condition inside does not clear the outer one.
@@ -10220,7 +10220,7 @@ impl<'a> Checker<'a> {
                         );
                         self.branch.pop();
                         // Only when both arms agree is there something to say
-                        // - or when they meet at text (ADR-207 D2).
+                        // - or when they meet at text (ADR-282 D4).
                         if then == other {
                             then
                         } else {
@@ -10296,7 +10296,7 @@ impl<'a> Checker<'a> {
                     true => view_of(&typed),
                     false => typed,
                 };
-                // **A `match` is a condition too** (ADR-111 D4).
+                // **A `match` is a condition too** (ADR-281 D25).
                 let outer_condition = self.stamped_condition;
                 if on.is_seen() {
                     self.stamped_condition = Some(span.at());
@@ -10308,7 +10308,7 @@ impl<'a> Checker<'a> {
                 self.next_choice += 1;
                 for (taken, arm) in arms.iter().enumerate() {
                     // **Every alternative of an or-pattern binds the same
-                    // names** ([ADR-137](../../docs/specification/adr/adr-137.md)
+                    // names** ([ADR-291](../../docs/specification/adr/adr-291.md)
                     // D1), asked before the body is walked so that the body's
                     // scope is one this checker can stand behind.
                     self.an_or_pattern_that_binds_unevenly(&arm.pattern, span);
@@ -10324,7 +10324,7 @@ impl<'a> Checker<'a> {
                         self.a_guard_reading_inside_a_box(&arm.pattern, guard);
                     }
                     // **Over a place this function owns, a part is lent**
-                    // (ADR-242): the bindings are typed from the
+                    // (ADR-291): the bindings are typed from the
                     // variant, so that what the arm keeps is seen as kept.
                     // **Over a value the `match` was lent, a part is a view
                     // of it** (0.0.252), and a number is its copy: `why` in
@@ -10383,7 +10383,7 @@ impl<'a> Checker<'a> {
                     // `&Option<String>` below, where a `ref String?` parameter
                     // is an `Option<&str>`. The two type alike here, and a call
                     // that hands the first to the second needs the option
-                    // opened (found moving `Ty` into Nikaia, ADR-257).
+                    // opened (found moving `Ty` into Nikaia, ADR-294).
                     let lent_parts = !lendable && typed.is_a_view();
                     let frame = self
                         .pattern_bindings(&arm.pattern)
@@ -10443,7 +10443,7 @@ impl<'a> Checker<'a> {
                     self.branch.pop();
                     self.scope.pop();
                     // **An arm that jumps is not one of the types that have to
-                    // agree** ([ADR-138](../../docs/specification/adr/adr-138.md)
+                    // agree** ([ADR-276](../../docs/specification/adr/adr-276.md)
                     // D1): its type is *never*, which fits every expected type
                     // without widening anything, so an arm that throws sits
                     // beside an arm that hands back a `&str` and the `match` is
@@ -10477,7 +10477,7 @@ impl<'a> Checker<'a> {
                 self.a_variant_matched_on_a_nullable(&on, value, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same -
-                // or when the arms meet at text (ADR-207 D2).
+                // or when the arms meet at text (ADR-282 D4).
                 match result {
                     Some(ty) if agree => ty,
                     _ => self
@@ -10499,7 +10499,7 @@ impl<'a> Checker<'a> {
                 config,
             } => {
                 // **`after:` on a `set` is a witness and not an option**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5): it
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D26): it
                 // is walked below as an *argument*, where the door's signature
                 // is what says it has to be a `$T`. Found here by name, and
                 // confirmed to be the door once the receiver's type is in hand
@@ -10510,7 +10510,7 @@ impl<'a> Checker<'a> {
                         .position(|a| self.parsed.text(a.name) == "after"),
                     false => None,
                 };
-                // ADR-007 D5: a DSL's deferred parameters stand here. They are
+                // ADR-296 D5: a DSL's deferred parameters stand here. They are
                 // expressions like any other, so they are walked - what checks
                 // that they are the *right* names is `dsl::check`, which knows
                 // which statement the receiver came from.
@@ -10520,7 +10520,7 @@ impl<'a> Checker<'a> {
                     }
                 });
                 // **A grammar is entered by an ordinary call**
-                // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so
+                // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), so
                 // this is that call: a receiver naming a grammar of this file
                 // and a method naming one of its `pub` rules. Answered before
                 // the receiver is typed, because a grammar name is not a value
@@ -10577,7 +10577,7 @@ impl<'a> Checker<'a> {
                 if reads_a_map {
                     self.read_a_map = true;
                 }
-                // **A receiver the method only reads is lent** (ADR-259 D1):
+                // **A receiver the method only reads is lent** (ADR-279 D5):
                 // `(name ?? "guest").len()` asks the answer and keeps nothing
                 // of it, where every candidate for the method takes its
                 // receiver as a view and changes nothing.
@@ -10587,7 +10587,7 @@ impl<'a> Checker<'a> {
                     self.a_pending_coalesce_is_lent(receiver, span);
                 }
                 // **The tier pass's own conversion**
-                // ([ADR-224](../../docs/specification/adr/adr-224.md) D2):
+                // ([ADR-282](../../docs/specification/adr/adr-282.md) D5):
                 // `value.into_either()` is written into the program where a
                 // value goes into text both kinds flow into, and it hands the
                 // value on as it is - absent where it may be absent - so it
@@ -10598,7 +10598,7 @@ impl<'a> Checker<'a> {
                 // written around it; before a `collect`, `either_items()`,
                 // which is the same items.
                 // What goes in is `EitherText`, which reads as text of its
-                // own (ADR-223 D3): a view handed over this way is not a view
+                // own (ADR-282 D15): a view handed over this way is not a view
                 // kept.
                 let own = |ty: Ty| match ty {
                     ty if ty == Ty::view("str") => Ty::named("String"),
@@ -10715,7 +10715,7 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 }
                 // **The witness door, now that the receiver is typed**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5).
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D26).
                 // `kasse.set(neu; after: stand)` is `Locked::set(after)` in the
                 // ledger — a key no program can write as a method name, which
                 // is what keeps D5's *one door* one (`NK2208` is what a program
@@ -10767,7 +10767,7 @@ impl<'a> Checker<'a> {
                 );
                 self.a_door_that_is_not_written(&on, &written, span);
                 // **`NK2203`, the method half**: which entry `other.get()` goes
-                // to is the type checker's answer (ADR-028), so it is asked
+                // to is the type checker's answer (ADR-288), so it is asked
                 // here where the receiver's type is in hand.
                 if self.inside_a_door
                     && let Ty::Named { name, .. } = &on
@@ -10779,11 +10779,11 @@ impl<'a> Checker<'a> {
                     }
                 }
                 // **And a method on a mapping reads the file**
-                // ([ADR-169](../../docs/specification/adr/adr-169.md) D2):
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D35):
                 // `mapped.lines()` walks pages that are not there yet.
                 self.io_inside_a_door(&on, &format!("`{written}`"), span);
                 // **`update`'s block is a write door's**
-                // ([ADR-110](../../docs/specification/adr/adr-110.md) D1), and
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D12), and
                 // that is where a parameter without `mut` is refused. Set
                 // around the call and restored after it, so a lambda written
                 // inside the block is not one.
@@ -10794,7 +10794,7 @@ impl<'a> Checker<'a> {
                     self.an_update_block_reads_what_it_writes(params, body, span);
                 }
                 let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
-                // **And `access` holds one open too** (ADR-039 D10): `get` and
+                // **And `access` holds one open too** (ADR-281 D10): `get` and
                 // `set` do not, because no code of the program's runs while the
                 // lock is open in either.
                 let holding = matches!(self.parsed.text(*method), "update" | "access")
@@ -10839,7 +10839,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.a_copy_under_another_name(receiver, *method, args, span);
-                // **The text form of text is the text** (ADR-216 D4): a view
+                // **The text form of text is the text** (ADR-282 D3): a view
                 // stays a view and a literal stays a literal, and whoever keeps
                 // it asks for text of its own as anywhere else - by building a
                 // literal there, or by a `.clone()` the program writes.
@@ -10915,7 +10915,7 @@ impl<'a> Checker<'a> {
                     self.inside_a_door = outer_inside;
                     return (*result).unwrap_or_else(|| Ty::named("()"));
                 }
-                // **A copy of a slice is a list** (ADR-216 D2): `to_owned`
+                // **A copy of a slice is a list** (ADR-282 D9): `to_owned`
                 // below, where `.clone()` would copy the reference.
                 let a_run = match &on {
                     // What a parameter declared `ref Array[T]` is (ADR-184 D3).
@@ -10947,7 +10947,7 @@ impl<'a> Checker<'a> {
                 self.last_resolved = None;
                 let value = self.call_on(on, *method, args, &written, span);
                 // **A copy of `std`'s is a copy whatever the receiver is**
-                // (ADR-215 D4): below, `.clone()` of a view is the view.
+                // (ADR-293 D24): below, `.clone()` of a view is the view.
                 if let Some(key) = self.last_resolved.take() {
                     let library = key.ends_with("::clone")
                         && self.library.functions.contains_key(&key)
@@ -10961,7 +10961,7 @@ impl<'a> Checker<'a> {
                     // name is a `&str` below, and what the list's own
                     // `contains` takes is a `&String`, so `rustc` refused the
                     // file - and the way round it written in Nikaia was a copy
-                    // of the name (`ref name.clone()`), which ADR-008 D5 says
+                    // of the name (`ref name.clone()`), which ADR-283 D3 says
                     // is never the program's to need.
                     if key == "Vec::contains"
                         && let [Expr::Variable(name)] = args
@@ -11044,7 +11044,7 @@ impl<'a> Checker<'a> {
             // happens only where there is something to call it on, and the
             // result is flattened for [`Expr::SafeField`]'s reason - a method
             // that hands back a `T?` would otherwise give a nullable of a
-            // nullable ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+            // nullable ([ADR-278](../../../docs/specification/adr/adr-278.md)).
             Expr::SafeMethod {
                 receiver,
                 method,
@@ -11052,7 +11052,7 @@ impl<'a> Checker<'a> {
                 config,
             } => {
                 // **The witness is held back here too**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D5), for
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D26), for
                 // the reason a `?.` is one arm and not two: it decides
                 // *whether* the call happens and never *what* a call is. A
                 // `SharedMut[i64]?` reached with `?.set(neu; after: stand)` is
@@ -11110,8 +11110,8 @@ impl<'a> Checker<'a> {
                     None => (&args[..], self.parsed.text(*method).to_string()),
                 };
                 // **The receiver is lent to the call where the call changes
-                // nothing** ([ADR-189](../../docs/specification/adr/adr-189.md)
-                // D2, [ADR-113](../../docs/specification/adr/adr-113.md) D1 and
+                // nothing** ([ADR-278](../../docs/specification/adr/adr-278.md)
+                // D2, [ADR-278](../../docs/specification/adr/adr-278.md) D16 and
                 // D3). What comes out of a reached **method** is the call's own
                 // result rather than a view of the receiver, so this half needs
                 // no representation and is whole.
@@ -11143,7 +11143,7 @@ impl<'a> Checker<'a> {
                 if lent {
                     self.checked.lent_reaches.insert((span.at(), name.clone()));
                 }
-                // **And a copy of a view is text of its own** (ADR-215 D4),
+                // **And a copy of a view is text of its own** (ADR-293 D24),
                 // reached or not: `b?.clone()` for a `b: ref String?` is a
                 // `String?`, which `.clone()` of the `&str` inside is not.
                 if inner.is_a_view() && name == "clone" && args.is_empty() {
@@ -11153,7 +11153,7 @@ impl<'a> Checker<'a> {
                 }
                 let reached = self.call_on(*inner, *method, args, &written, span);
                 // **A view out of a temporary needs something to point into**
-                // (ADR-228 D1): the receiver is held for the rest of the block.
+                // (ADR-278 D21): the receiver is held for the rest of the block.
                 let a_view = match &reached {
                     Ty::Nullable(inner) => inner.is_a_view(),
                     other => other.is_a_view(),
@@ -11163,7 +11163,7 @@ impl<'a> Checker<'a> {
                 }
                 match reached {
                     // The `and_then` case, recorded by name for the emitter
-                    // exactly as a nullable field is (ADR-028: the emitter has
+                    // exactly as a nullable field is (ADR-288: the emitter has
                     // no types and this is a question about one).
                     Ty::Nullable(result) => {
                         self.checked.flattened_reaches.insert((span.at(), name));
@@ -11259,7 +11259,7 @@ impl<'a> Checker<'a> {
                         // `Pair[i64].first` is an `i64`: the receiver's own
                         // arguments bind the declaration's parameters, exactly
                         // as a method's receiver binds its signature's
-                        // (ADR-031, and ADR-074 D2 for a `.nika` declaration).
+                        // (ADR-288, and ADR-295 D2 for a `.nika` declaration).
                         ty::substitute(&declared.ty, &self.arguments_of(&on))
                     }
                     None => {
@@ -11306,15 +11306,15 @@ impl<'a> Checker<'a> {
                         // `T?`**, and the emitter is told which by name: `map`
                         // over one would make an `Option<Option<T>>`, and that
                         // is a question about the declared type, which this
-                        // module answers and the emitter cannot (ADR-028).
+                        // module answers and the emitter cannot (ADR-288).
                         // **A view is taken of a place and never of a
-                        // temporary** ([ADR-191](../../docs/specification/adr/adr-191.md)
+                        // temporary** ([ADR-278](../../docs/specification/adr/adr-278.md)
                         // D1). Measured: the view of a temporary dies at the
                         // `;`, and binding it is `rustc`'s *temporary value
                         // dropped while borrowed* about a file nobody wrote
                         // (Part III C.1). A temporary has no next line to stay
                         // usable on, so leaving it owned keeps
-                        // [ADR-113](../../docs/specification/adr/adr-113.md)
+                        // [ADR-278](../../docs/specification/adr/adr-278.md)
                         // D1's promise where it means anything.
                         let place = roots_in_a_binding(base);
                         match &declared.ty {
@@ -11334,8 +11334,8 @@ impl<'a> Checker<'a> {
                                 declared.ty
                             }
                             // **A member that copies comes out of a view**
-                            // ([ADR-189](../../docs/specification/adr/adr-189.md)
-                            // D1, [ADR-113](../../docs/specification/adr/adr-113.md)
+                            // ([ADR-278](../../docs/specification/adr/adr-278.md)
+                            // D1, [ADR-278](../../docs/specification/adr/adr-278.md)
                             // D1 and D2). A number, a `bool` and a `char` are
                             // read through the receiver and copied, so the
                             // reach leaves the receiver where it was and the
@@ -11347,11 +11347,11 @@ impl<'a> Checker<'a> {
                             // the receiver (D2) - which is not a **state**:
                             // three of the four shapes a `?.` has are Borrowed
                             // and the fourth is `NK2303`'s
-                            // ([ADR-190](../../docs/specification/adr/adr-190.md)
+                            // ([ADR-278](../../docs/specification/adr/adr-278.md)
                             // D1). What it waits on is one question about `??`,
                             // on `docs/open-decisions.md`. So that reach lowers
                             // exactly as it did, moving the receiver, and
-                            // [ADR-052](../../docs/specification/adr/adr-052.md)
+                            // [ADR-278](../../docs/specification/adr/adr-278.md)
                             // D8's translation stays for it alone.
                             plain if !crate::contracts::keeps::moves(plain) => {
                                 self.checked.copied_reaches.insert((span.at(), field));
@@ -11359,11 +11359,11 @@ impl<'a> Checker<'a> {
                             }
                             // **And a member that does not copy comes out as a
                             // view of the receiver**, which is
-                            // [ADR-113](../../docs/specification/adr/adr-113.md)
-                            // D2 and [ADR-191](../../docs/specification/adr/adr-191.md)
+                            // [ADR-278](../../docs/specification/adr/adr-278.md)
+                            // D2 and [ADR-278](../../docs/specification/adr/adr-278.md)
                             // D1. Borrowed and not Tethered: the view points
                             // into a place that outlives the statement, which
-                            // is what [ADR-008](../../docs/specification/adr/adr-008.md)
+                            // is what [ADR-283](../../docs/specification/adr/adr-283.md)
                             // D2 calls the free case.
                             plain if place => {
                                 let viewed = viewed_as(plain);
@@ -11386,7 +11386,7 @@ impl<'a> Checker<'a> {
 
             Expr::StructLit { name, fields } => {
                 // `unaliased`, the same as a type: `h::Request(path: …)` builds
-                // `http::Request` (ADR-046 D3).
+                // `http::Request` (ADR-286 D12).
                 let name = self.parsed.unaliased(self.parsed.text(*name));
                 let declared = self.fields_of(&name);
                 // **A struct literal naming nothing this compiler declares**
@@ -11404,12 +11404,12 @@ impl<'a> Checker<'a> {
                 // **Unqualified only**, which is `NK1135`'s own convention:
                 // `pool::Conn(id: 1)` names a package's type, and whether this
                 // build can see that package is a question with a message of its
-                // own (ADR-046 D2).
+                // own (ADR-286 D11).
                 if declared.is_none() && !name.contains("::") && !self.declares_a_type(&name) {
                     self.a_struct_nothing_declares(&name, span);
                 }
                 // **What a generic struct's literal binds**
-                // ([ADR-074](../../docs/specification/adr/adr-074.md) D2).
+                // ([ADR-295](../../docs/specification/adr/adr-295.md) D2).
                 // `Pair { first: 1, second: 2 }` is a `Pair[i64]` and nothing
                 // else says so: the declaration writes `first: $T` and the
                 // value is an `i64`, which is one `bind` per field.
@@ -11479,7 +11479,7 @@ impl<'a> Checker<'a> {
                         Some(found_field) => {
                             let want = found_field.ty.clone();
                             ty::bind(&want, &found, &mut bound);
-                            // **A field holds what it is given** (ADR-213 D3),
+                            // **A field holds what it is given** (ADR-293 D29),
                             // unless it is declared a view.
                             if !want.is_a_view() {
                                 let to = format!("stored in `{name}.{field}`");
@@ -11491,12 +11491,12 @@ impl<'a> Checker<'a> {
                             let owner = name.clone();
                             self.field_is_reachable(&name, found_field, span);
                             // **No longer a constructor either**
-                            // ([ADR-064](../../docs/specification/adr/adr-064.md)
+                            // ([ADR-281](../../docs/specification/adr/adr-281.md)
                             // D2). It was the second of the two positions, and the
                             // two positions are what stopped being a list.
                             let _ = &owner;
                             // **A declared field is a use** (ADR-152 D4), and
-                            // it is the position [ADR-127](../../docs/specification/adr/adr-127.md)
+                            // it is the position [ADR-284](../../docs/specification/adr/adr-284.md)
                             // §4's C value field will be written through.
                             let found = match init.value.as_ref() {
                                 Some(value) => self
@@ -11557,7 +11557,7 @@ impl<'a> Checker<'a> {
                                     .or_default()
                                     .insert(value.map(argument_shape).unwrap_or_default(), how);
                                 // A view into a `String?` is still a view kept
-                                // (ADR-224 D1): asked as it would be without
+                                // (ADR-282 D12): asked as it would be without
                                 // the `?`.
                                 if views_into_nullable_text(&found, &want) {
                                     self.field_either = self.either_field(&owner, &field);
@@ -11646,7 +11646,7 @@ impl<'a> Checker<'a> {
                 }
                 // **A view is not something to move from** (D3): what `with`
                 // does not name it takes from the operand *by move*, and no
-                // copy is inserted that the program did not write (ADR-107 D3).
+                // copy is inserted that the program did not write (ADR-282 D7).
                 if *view {
                     self.a_with_over_something_else(&name, Copyable::AView, span);
                     return Ty::named(name);
@@ -11696,7 +11696,7 @@ impl<'a> Checker<'a> {
                         None => self.no_such_field(&name, &field, &declared, span),
                     }
                 }
-                // **The type, for the emitter** (ADR-011 D2): Rust writes the
+                // **The type, for the emitter** (ADR-296 D17): Rust writes the
                 // struct's name in a functional update and this node does not
                 // carry one, so the answer travels under the byte the `with`
                 // stands at rather than being worked out twice.
@@ -11704,7 +11704,7 @@ impl<'a> Checker<'a> {
                 found
             }
 
-            // A lambda's arguments are the ones it names (ADR-049). There is
+            // A lambda's arguments are the ones it names (ADR-277). There is
             // nothing to read off the body any more, so a `fn { … }` pushes an
             // empty frame - and a body reaching for `a` is then a body naming
             // something nothing declares, which `NK1117` refuses.
@@ -11731,7 +11731,7 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Unary { op, expr } => {
-                // `&s` looks at a sequence without taking it (ADR-212 D4). Only
+                // `&s` looks at a sequence without taking it (ADR-293 D19). Only
                 // a name directly under the `&`: `&f(s)` still hands `s` over.
                 let looks = matches!(op, UnaryOp::Ref) && matches!(&**expr, Expr::Variable(_));
                 let outer = std::mem::replace(&mut self.reading_only, looks);
@@ -11747,7 +11747,7 @@ impl<'a> Checker<'a> {
                     UnaryOp::Not => {
                         let boolean = Ty::named("bool");
                         // **`!` on an integer flips its bits**
-                        // ([ADR-248](../../docs/specification/adr/adr-248.md)
+                        // ([ADR-285](../../docs/specification/adr/adr-285.md)
                         // D3), and the integer is what it makes.
                         let value = value_of_a_copy(inner.unseen());
                         if integer_named(&value).is_some() {
@@ -11774,7 +11774,7 @@ impl<'a> Checker<'a> {
                 self.divisor_is_not_zero(*op, rhs, span);
                 self.an_operation_that_overflows(*op, lhs, rhs, span);
                 // **The stamp sticks**
-                // ([ADR-111](../../docs/specification/adr/adr-111.md) D2):
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D23):
                 // `stand + 100` is a `Seen[i64]` and `stand > 100` a
                 // `Seen[bool]`. An operator cannot put a value back into the
                 // lock it came from, so what it makes still carries where it
@@ -11782,7 +11782,7 @@ impl<'a> Checker<'a> {
                 // other sink take it.
                 let stamped = left.is_seen() || right.is_seen();
                 // **A bit operator beside a comparison is parenthesised**
-                // ([ADR-248](../../docs/specification/adr/adr-248.md) D4).
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D10).
                 if op.is_comparison() {
                     self.a_bit_operation_beside_a_comparison(*op, lhs, rhs, at);
                 }
@@ -11792,7 +11792,7 @@ impl<'a> Checker<'a> {
                     self.two_number_types(*op, &left, &right, at);
                 }
                 // **A literal beside an unsigned side is of that side's type**
-                // (ADR-248 D1), and the emitter is told so.
+                // (ADR-285 D3), and the emitter is told so.
                 if !matches!(op, BinaryOp::And | BinaryOp::Or) {
                     for (side, other, count) in [(lhs, &right, false), (rhs, &left, true)] {
                         let other = value_of_a_copy(other.unseen());
@@ -11807,7 +11807,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 // **An operation is a use of the numbers on both sides**
-                // ([ADR-249](../../docs/specification/adr/adr-249.md) D1, D2):
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D23, D24):
                 // a side with a type asks the other for it, and two open sides
                 // are one number's question from here on. A shift's count is
                 // any integer and is neither.
@@ -11846,7 +11846,7 @@ impl<'a> Checker<'a> {
                         Ty::named("bool")
                     }
                     BinaryOp::Eq | BinaryOp::Ne => {
-                        // **A comparison only reads its sides** (ADR-259 D1):
+                        // **A comparison only reads its sides** (ADR-279 D5):
                         // a `??` of text on either side lends its left side.
                         // Text alone, because the language below compares a
                         // view of text with text and with a view, and a view of
@@ -12014,7 +12014,7 @@ impl<'a> Checker<'a> {
             }
 
             // **`return`, `break` and `continue` where an expression stands**
-            // ([ADR-138](../../docs/specification/adr/adr-138.md) D1). Nothing
+            // ([ADR-276](../../docs/specification/adr/adr-276.md) D20). Nothing
             // about what they do changes (D2), so each asks exactly what its
             // statement form asks — the answer to *what is a `return` worth* is
             // the same wherever it is written.
@@ -12046,7 +12046,7 @@ impl<'a> Checker<'a> {
                     _ => false,
                 };
                 // **A fallback that jumps takes its takings with it**
-                // (ADR-213 D4), as a branch that leaves does: `let c = f(k) ??
+                // (ADR-293 D30), as a branch that leaves does: `let c = f(k) ??
                 // return Refused(k)` hands `k` over only on the path that
                 // leaves, so a use of `k` on the next line is no use after it -
                 // it was `NK2105` (found moving `contracts::order`'s walk into
@@ -12062,7 +12062,7 @@ impl<'a> Checker<'a> {
                     span,
                 );
                 // **A name on the left of `??` is taken where the answer is
-                // kept and lent where it is only read** (ADR-259 D1), which is
+                // kept and lent where it is only read** (ADR-279 D5), which is
                 // the rule an argument follows (ADR-094 D1). Which one is known
                 // once the position is: a call that only reads the answer lends
                 // it (`the_compiler_writes_the_reference`), and every other `??`
@@ -12074,9 +12074,9 @@ impl<'a> Checker<'a> {
                 // where it is kept it is a part of a loan handed over, which is
                 // refused in the language's words - unrecorded, it reached
                 // `rustc` as *cannot move out of `self.parameter`* (found moving
-                // the ledger's records into Nikaia, ADR-257).
+                // the ledger's records into Nikaia, ADR-294).
                 // **A loan on the left and a jump on the right is a view**
-                // ([ADR-275](../../docs/specification/adr/adr-275.md) D1):
+                // ([ADR-279](../../docs/specification/adr/adr-279.md) D10):
                 // `let s = c.signature ?? return false` over a lent `c` cannot
                 // take the field, and a jump has no value, so the answer is a
                 // view of the left side wherever it stands - a `let` binds a
@@ -12120,7 +12120,7 @@ impl<'a> Checker<'a> {
                             .view_fallbacks
                             .insert(self.text_at(*at as usize));
                     }
-                    // **A map's text, read, is a view of it** (ADR-213 D2): the
+                    // **A map's text, read, is a view of it** (ADR-293 D28): the
                     // map hands out its `String` and keeps it, so the literal
                     // after `??` is the other view the answer can be, and the
                     // whole is a view of text - `m[k] ?? "-"`. It used to be
@@ -12197,7 +12197,7 @@ impl<'a> Checker<'a> {
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
                 // ending the chain means, and claiming nothing about it cost
                 // everything downstream — the day a map read became a `T?`
-                // ([ADR-114](../../docs/specification/adr/adr-114.md) D1),
+                // ([ADR-293](../../docs/specification/adr/adr-293.md) D1),
                 // `let s = m[k] ?? panic(…)` made `s` unknown and `s.mean()`
                 // one more method call nobody could answer.
                 //
@@ -12222,7 +12222,7 @@ impl<'a> Checker<'a> {
             // Indexing a container yields what the container holds - but only
             // where the container's type says so.
             //
-            // This claimed nothing at all until ADR-028, and the cost was not
+            // This claimed nothing at all until ADR-288, and the cost was not
             // the missing type but everything downstream of it: in
             // `n-body.nika`, `let b = &self.bodies[i]` made `b` unknown, so
             // `b.x` was unknown, so `dx * dx + dy * dy` was unknown, so
@@ -12238,14 +12238,14 @@ impl<'a> Checker<'a> {
                 let on = self.expr(base, span);
                 let key = self.expr(index, span);
                 // **An index of a mapping is a page fault**
-                // ([ADR-169](../../docs/specification/adr/adr-169.md) D2).
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D35).
                 self.io_inside_a_door(&on, "this index", span);
                 // **A view of a run is indexed as the run is** (ADR-179 D1,
-                // ADR-215 D3): `xs[i]` for an `xs: ref Array[T]` is a `T`, and a
+                // ADR-293 D23): `xs[i]` for an `xs: ref Array[T]` is a `T`, and a
                 // range in the brackets is a run of it again. It was `?`, so a
                 // method called on an element was one no ledger describes, and
                 // the function around it became a future (found moving `Ty::fits`
-                // into Nikaia, ADR-257).
+                // into Nikaia, ADR-294).
                 if let Ty::Pointed {
                     item,
                     slice: true,
@@ -12277,7 +12277,7 @@ impl<'a> Checker<'a> {
                 // since [ADR-154](../../docs/specification/adr/adr-154.md) D3 and
                 // what is indexed is the type rather than where it is reached
                 // from.
-                // **A range in the brackets is a slice** (ADR-215 D3): a run of
+                // **A range in the brackets is a slice** (ADR-293 D23): a run of
                 // the list, `ref Array[T]` - the type a function writes to take
                 // one - or a view of the text. Written there, or kept in a name.
                 let a_range = matches!(&**index, Expr::Range { .. })
@@ -12288,8 +12288,8 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(index)));
                 }
                 // **An index is a use that prefers an `i64`**
-                // ([ADR-249](../../docs/specification/adr/adr-249.md) D2): a
-                // length and an index are one (ADR-048 D1), and the language
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D24): a
+                // length and an index are one (ADR-285 D1), and the language
                 // below takes any integer through `index::at` - so it is asked
                 // only where nothing else asks.
                 if !a_range && matches!(crate::contracts::ty::base(name), "Vec" | "List" | "Array")
@@ -12309,7 +12309,7 @@ impl<'a> Checker<'a> {
                 }
                 match (crate::contracts::ty::base(name), args.as_slice()) {
                     // **A sequence keeps its `T` and its abort**
-                    // ([ADR-114](../../docs/specification/adr/adr-114.md) D3):
+                    // ([ADR-293](../../docs/specification/adr/adr-293.md) D3):
                     // it has a `T` at every index it has at all, and an index
                     // it does not have is the program's own arithmetic gone
                     // wrong ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md)).
@@ -12327,7 +12327,7 @@ impl<'a> Checker<'a> {
                         self.read_a_map = !writing;
                         self.a_map_key(&keys, &key, index, writing, span);
                         // **A map of `T?` reads one `T?`**
-                        // ([ADR-273](../../docs/specification/adr/adr-273.md)
+                        // ([ADR-293](../../docs/specification/adr/adr-293.md)
                         // D1): a stored `null` and an absent key are both
                         // `null`, and `contains_key` tells them apart. A write
                         // keeps the slot's own type, so `m[k] = null` stores
@@ -12346,7 +12346,7 @@ impl<'a> Checker<'a> {
                 }
             }
             // **A range is a sequence that replays**
-            // ([ADR-212](../../docs/specification/adr/adr-212.md) D3): its
+            // ([ADR-293](../../docs/specification/adr/adr-293.md) D18): its
             // elements are produced as they are asked for, it can be walked
             // from either end, its length is known, and walking it walks a copy
             // - it is two numbers, and a value. Before, it had no type at all,
@@ -12384,7 +12384,7 @@ impl<'a> Checker<'a> {
                 // itself is ordinary code again - a failure raised inside one
                 // leaves the function like any other.
                 let outer = std::mem::replace(&mut self.caught, true);
-                // **And the lambda's own record of it** (ADR-102 D2): a
+                // **And the lambda's own record of it** (ADR-277 D7): a
                 // `catch` in a lambda's body keeps a failure from leaving the
                 // lambda, which `self.caught` cannot say because it also holds
                 // for a `catch` around the call the lambda is handed to. Put
@@ -12400,7 +12400,7 @@ impl<'a> Checker<'a> {
                 // `(a.parse() catch { 1 }) catch { 2 }` has nothing left for the
                 // second. The outer is told *no answer* rather than *nothing
                 // fails*, because what a handler's own failure does is
-                // [ADR-034](../../../docs/specification/adr/adr-034.md)'s
+                // [ADR-292](../../../docs/specification/adr/adr-292.md)'s
                 // question and this refusal does not need it answered.
                 let enclosing = self.guarded.replace(Guarded::default());
                 let answers = self.expr(expr, span);
@@ -12423,7 +12423,7 @@ impl<'a> Checker<'a> {
                 let handled = self.block(handler);
                 // **A handler's value stands where the guarded one would**, so
                 // a text literal it ends in is built into text of its own where
-                // the guarded value is (ADR-216 D4, one more of ADR-207 D1's
+                // the guarded value is (ADR-282 D3, one more of ADR-282 D3's
                 // positions): `read() catch { "" }`.
                 let literal =
                     tail_of(handler).and_then(|tail| self.text_literal(&answers, tail, true));
@@ -12456,7 +12456,7 @@ impl<'a> Checker<'a> {
                 // comes to** (Part I 8.2, ADR-055 D5), and that is why the body
                 // is walked here rather than through the generic closure arm:
                 // what a lambda hands back is not written down anywhere
-                // (ADR-029 D1), but a task's body is a *block*, and a block's
+                // (ADR-288 D13), but a task's body is a *block*, and a block's
                 // value is a thing this checker already knows. So `spawn fn {
                 // work(21) }` is a `TaskHandle[i64]` and `handle.join()` is an
                 // `i64`, with nothing inferred that a signature did not say.
@@ -12486,7 +12486,7 @@ impl<'a> Checker<'a> {
                 self.scope.push(Vec::new());
                 self.task_bindings.push(Vec::new());
                 // **A task started with `spawn` runs later and elsewhere**
-                // ([ADR-039](../../docs/specification/adr/adr-039.md) D3), so
+                // ([ADR-281](../../docs/specification/adr/adr-281.md) D29), so
                 // taking a lock inside one is the ordinary case and not this
                 // door's reach. `contracts::locks` makes the same split when it
                 // builds the column; this is it at the refusal.
@@ -12679,12 +12679,12 @@ impl<'a> Checker<'a> {
 
     /// **`a`, `b` and `c` were a lambda's arguments, and are not** (`NK1117`).
     ///
-    /// [ADR-049](../../../../docs/specification/adr/adr-049.md) D1 withdrew the
+    /// [ADR-277](../../../../docs/specification/adr/adr-277.md) D2 withdrew the
     /// three automatic names. Without this, `xs.map fn { a.id }` - the idiom that
     /// existed until that record - lowers to `|| { a.id }` and `rustc` says
     /// *cannot find value `a`* about a file nobody wrote, which is the one thing
     /// Part III C.1 forbids. A form that was in the specification deserves a
-    /// sentence, which is the same ground [ADR-022](../../../../docs/specification/adr/adr-022.md)
+    /// sentence, which is the same ground [ADR-277](../../../../docs/specification/adr/adr-277.md)
     /// stands on for `fn: …`.
     ///
     /// **This is not the mechanism that was removed.** That one read a lambda's
@@ -12785,7 +12785,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1197`: a bit operator written beside a comparison without
-    /// parentheses** ([ADR-248](../../docs/specification/adr/adr-248.md) D4).
+    /// parentheses** ([ADR-285](../../docs/specification/adr/adr-285.md) D10).
     ///
     /// This language binds `&` tighter than `==`, so `a & mask == 0` is
     /// `(a & mask) == 0` - and C binds it the other way, so a reader who learned
@@ -12830,7 +12830,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1198`: `&`, `|`, `^` or a shift on something that is not an
-    /// integer** ([ADR-248](../../docs/specification/adr/adr-248.md) D3). A
+    /// integer** ([ADR-285](../../docs/specification/adr/adr-285.md) D9). A
     /// `bool` is pointed at `&&` and `||`; a side whose type is not known is not
     /// asked about (Part III C.4).
     fn a_bit_operator_on_something_else(&mut self, op: BinaryOp, left: &Ty, right: &Ty, at: &Span) {
@@ -12874,7 +12874,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1199`: two number types in one operation**
-    /// ([ADR-248](../../docs/specification/adr/adr-248.md) D1). No two of them
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D3). No two of them
     /// mix silently, and the conversion is written with `as`; a shift's count
     /// is the one side that may be any integer. Only where both sides are known
     /// (Part III C.4).
@@ -12935,17 +12935,17 @@ impl<'a> Checker<'a> {
     }
 
     /// **A `??` whose left side is a view and whose fallback owns** (`NK1185`,
-    /// [ADR-191](../../docs/specification/adr/adr-191.md) D2).
+    /// [ADR-278](../../docs/specification/adr/adr-278.md) D20).
     ///
     /// `user?.name` is a view of `user` where `name` does not copy
-    /// ([ADR-113](../../docs/specification/adr/adr-113.md) D2), and
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D17), and
     /// `?? "nobody".to_owned()` asks the operator to hand back one value that is
     /// both. There are only three ways to do that and the language has ruled
     /// two of them out:
     ///
     /// * an **owned** result copies the borrowed branch, and a
     ///   compiler-inserted copy is what
-    ///   [ADR-008](../../docs/specification/adr/adr-008.md) D5 bans outright;
+    ///   [ADR-283](../../docs/specification/adr/adr-283.md) D3 bans outright;
     /// * a **view** result needs the fallback to be one — which `"nobody"`
     ///   already is and `"nobody".to_owned()` is not;
     /// * so the third is to say so here, in this language's words, rather than
@@ -12984,7 +12984,7 @@ impl<'a> Checker<'a> {
         };
         // **A type of this package that copies is a copy here too**, as a
         // number is: `k ?? Kind::B` for a `k: ref Kind?` is `index::or`'s
-        // copy of it (found writing ADR-273's tests).
+        // copy of it (found writing ADR-293's tests).
         if !matches!(owned, Ty::Named { .. })
             || !crate::contracts::keeps::moves(&owned)
             || !self.takes_away(&owned)
@@ -13271,7 +13271,7 @@ impl<'a> Checker<'a> {
                 _ => self.hole.clone(),
             };
             let held = self.expr(&hole, span);
-            // **A hole is formatted by reference** (ADR-259 D1): a `??` that
+            // **A hole is formatted by reference** (ADR-279 D5): a `??` that
             // is the hole lends its left side, as a print call's argument does.
             if matches!(literal, Expr::LitInterpolated { .. }) {
                 self.a_pending_coalesce_is_lent(&hole, span);
@@ -13345,11 +13345,11 @@ impl<'a> Checker<'a> {
 
     /// `f(a, b)`, `Stats(first)`, `io::read_to_string()`, `write(p, d; append: true)`.
     /// A door over several locks: `access_all` reads them, `update_all` writes
-    /// them ([ADR-065](../../docs/specification/adr/adr-065.md)).
+    /// them ([ADR-281](../../docs/specification/adr/adr-281.md)).
     ///
     /// **It is typed here and not in the ledger**, for the reason the hull
     /// constructors are: a signature binds its type variables from the
-    /// **receiver** (ADR-031), and a door over several locks has none - the
+    /// **receiver** (ADR-288), and a door over several locks has none - the
     /// locks are arguments, they hold different types, and how many there are is
     /// open. What a written signature cannot say, this says.
     ///
@@ -13440,9 +13440,9 @@ impl<'a> Checker<'a> {
         // Both kinds hold their locks open across the block, so both are one.
         let outer_inside = std::mem::replace(&mut self.inside_a_door, true);
         // **Nothing is asked of this block's promises**
-        // ([ADR-102](../../docs/specification/adr/adr-102.md) D2), and that is
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D7), and that is
         // deliberate rather than an omission: `access_all` and `update_all` are
-        // not ledger entries at all ([ADR-065](../../docs/specification/adr/adr-065.md)
+        // not ledger entries at all ([ADR-281](../../docs/specification/adr/adr-281.md)
         // D1), so there is no written type here to read a promise off. What
         // Part II 12.2 requires of the block — `sync`, and no lock — is
         // `NK2202`'s and `NK2203`'s, and a second refusal saying the same thing
@@ -13461,9 +13461,9 @@ impl<'a> Checker<'a> {
         self.at_a_write_door = outer_door;
         self.inside_a_door = outer_inside;
         match door {
-            // What a lambda hands back is not written down (ADR-029 D1) — but
+            // What a lambda hands back is not written down (ADR-288 D13) — but
             // that it came **out of a lock** is
-            // ([ADR-111](../../docs/specification/adr/adr-111.md) D1), and the
+            // ([ADR-281](../../docs/specification/adr/adr-281.md) D22), and the
             // stamp is what a `set` reads. `Seen[?]` is the honest pair: the
             // type is unknown and where it came from is not.
             MultiLock::Reading => Ty::seen(Ty::Unknown),
@@ -13501,7 +13501,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `Shared(x)`, `SharedMut(x)` and `Locked(x)` make a hull
-    /// ([ADR-064](../../docs/specification/adr/adr-064.md) D2).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D2).
     ///
     /// **One argument, and the hull takes the type of what it is handed.** A
     /// literal hands over `Unknown`, which is not a failure here: the hull is made
@@ -13510,11 +13510,11 @@ impl<'a> Checker<'a> {
     /// between a constructor and an annotation, and it is why the annotation could
     /// not answer `SharedMut(0)` at all.
     /// A type **as it is written**, checked for the one spelling this language
-    /// does not have ([ADR-064](../../docs/specification/adr/adr-064.md) D3).
+    /// does not have ([ADR-281](../../docs/specification/adr/adr-281.md) D3).
     ///
     /// `Shared[Locked[T]]` is what `SharedMut[T]` is, and two ways to write one
     /// type is the thing the short name was given a name *instead* of
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D9). Worse than
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D3). Worse than
     /// untidy: the two are the same bytes below and two different types up here,
     /// so a value of one would not fit the other while the emitted Rust could not
     /// tell them apart.
@@ -13609,7 +13609,7 @@ impl<'a> Checker<'a> {
 
     fn call(&mut self, func: &Expr, args: &[Expr], config: &[ast::ConfigArg], span: &Span) -> Ty {
         // **A door over several locks types its own lambda**
-        // ([ADR-065](../../docs/specification/adr/adr-065.md) D1), and it has to
+        // ([ADR-281](../../docs/specification/adr/adr-281.md) D17), and it has to
         // be answered before the arguments are walked: what the lambda is handed
         // comes from what the *locks* hold, so the locks are typed first and the
         // lambda after. Every other call can walk its arguments in one pass.
@@ -13628,8 +13628,8 @@ impl<'a> Checker<'a> {
             }
         }
         // **`NK2203`**: a free call inside a door's block, to something that
-        // takes a lock (ADR-039 D2). `println` is the one every program writes,
-        // and ADR-067 D1 is where it was pinned down: it never pauses, so
+        // takes a lock (ADR-281 D28). `println` is the one every program writes,
+        // and ADR-288 D21 is where it was pinned down: it never pauses, so
         // `sync` says nothing about it, and it takes standard output's own lock
         // while yours is open.
         if self.inside_a_door
@@ -13645,17 +13645,17 @@ impl<'a> Checker<'a> {
             self.a_lock_inside_a_lock(&name, holds, span);
         }
         // **The callee is named and resolved before the arguments are walked**
-        // ([ADR-029](../../docs/specification/adr/adr-029.md), the free half).
+        // ([ADR-288](../../docs/specification/adr/adr-288.md), the free half).
         // A lambda's parameters are typed from the callee's signature, so the
         // signature has to be in hand first — which is exactly the ordering the
         // *method* path was given when that record landed, and which this one
         // did not have: `hand(fn(n) { … })` left `n` with no type at all, and
-        // [ADR-102](../../docs/specification/adr/adr-102.md) D2's promises had
+        // [ADR-277](../../docs/specification/adr/adr-277.md) D7's promises had
         // nothing to be asked of.
         let name = match func {
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
             // `unaliased`: `h::serve()` is `http::serve()` where the file wrote
-            // `use http as h` (ADR-046 D3), and the ledger knows only the
+            // `use http as h` (ADR-286 D12), and the ledger knows only the
             // package's own name.
             Expr::Path(segments) => self.parsed.unaliased(
                 &segments
@@ -13701,7 +13701,7 @@ impl<'a> Checker<'a> {
         // a `&str` where the variant holds a `String`, and `rustc` said
         // *mismatched types* about a file nobody wrote. The parts are the
         // variant's declared types, a literal handed to text is built into
-        // text of its own there (ADR-207 D2), and a name handed in is given.
+        // text of its own there (ADR-282 D4), and a name handed in is given.
         if let Some(parts) = self.variant_parts.get(&name).cloned() {
             let found = self.arguments_given(args, &parts, false, None, span);
             for ((arg, want), ty) in args.iter().zip(&parts).zip(&found) {
@@ -13744,7 +13744,7 @@ impl<'a> Checker<'a> {
         self.a_constructor_nothing_describes(&name, args, span);
 
         // **A grammar is entered by an ordinary call**
-        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
+        // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), through a
         // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3.
         // Answered before anything is resolved, because a grammar is not a
         // ledger entry a `resolve` would find.
@@ -13858,9 +13858,9 @@ impl<'a> Checker<'a> {
         }
 
         // **A hull you can observe, you write**
-        // ([ADR-064](../../docs/specification/adr/adr-064.md) D2). The three hull
+        // ([ADR-281](../../docs/specification/adr/adr-281.md) D2). The three hull
         // types are made by a call, and it is this compiler's to type rather than
-        // the ledger's: the ledger binds `$T` from a **receiver** (ADR-031) and a
+        // the ledger's: the ledger binds `$T` from a **receiver** (ADR-288) and a
         // constructor has none, so the type argument would have to come from what
         // is handed in.
         if is_hull(&name) {
@@ -13923,7 +13923,7 @@ impl<'a> Checker<'a> {
         };
         self.reachable(&name, contract, span);
         // **A described call is asked too, where the description says the word**
-        // ([ADR-193](../../docs/specification/adr/adr-193.md) D2). It fires on
+        // ([ADR-290](../../docs/specification/adr/adr-290.md) D7). It fires on
         // the **claim** and never on its absence: a description that does not
         // say is a description that was not asked, and the program keeps the
         // answer it has today. Before this, a crate that answered every other
@@ -13981,16 +13981,16 @@ impl<'a> Checker<'a> {
             });
         let result = self.arguments(&key, &name, contract, args, &found, &passed, span);
         // **What the arguments tell the signature**
-        // ([ADR-074](../../docs/specification/adr/adr-074.md) D2). A free
-        // function has no receiver, so ADR-031's binding had nothing to work
+        // ([ADR-295](../../docs/specification/adr/adr-295.md) D2). A free
+        // function has no receiver, so ADR-288's binding had nothing to work
         // from and `hand(7)` handed back `?`; the same `bind` pointed at the
         // parameters answers `i64`. After `arguments` rather than before it,
         // because a variable fits everything and the check is therefore the
         // same either way round - while the *types* are not: a lambda's
-        // parameters are typed from the signature (ADR-029), so the signature
+        // parameters are typed from the signature (ADR-288), so the signature
         // has to reach them unsubstituted.
         let bound = from_arguments(contract, &found);
-        // …and what the arguments tell a **bound** (ADR-174 D2), which is the
+        // …and what the arguments tell a **bound** (ADR-295 D16), which is the
         // same binding read for the other question a type parameter raises.
         self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = constructed.unwrap_or_else(|| ty::substitute(&result, &bound));
@@ -14088,7 +14088,7 @@ impl<'a> Checker<'a> {
             // A literal that cannot fit the parameter it is given, asked here
             // rather than where the argument was walked: a free call walks its
             // arguments before it resolves the callee, so the type to measure
-            // against is not known yet at that point (ADR-029's ordering is what
+            // against is not known yet at that point (ADR-288's ordering is what
             // gives a *method* call the answer earlier).
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
@@ -14101,7 +14101,7 @@ impl<'a> Checker<'a> {
             // still this argument's questions, and they have to be asked of what
             // the literal turned out to be.
             //
-            // **And one handed to a `String` is one** (ADR-207 D2) — text of its
+            // **And one handed to a `String` is one** (ADR-282 D4) — text of its
             // own where the callee keeps it, and the literal as it is where the
             // callee only reads it, because that parameter is a `&str` below
             // (D3) and a constant needs no copy to be read.
@@ -14111,7 +14111,7 @@ impl<'a> Checker<'a> {
                 &[self.library],
             ) || (at == 0 && is_a_lookup(key));
             let kept = !lent;
-            // **What the callee keeps, it is given** (ADR-213 D3): no `&` is
+            // **What the callee keeps, it is given** (ADR-293 D29): no `&` is
             // written for this position, so a name here moves.
             // **Not across the C boundary**: what a C declaration takes it
             // takes by address or by copy, and the call writes that address
@@ -14149,8 +14149,8 @@ impl<'a> Checker<'a> {
             });
             let found = array.as_ref().unwrap_or(found);
             // **A view handed to a `String` the callee only reads is lent as it
-            // is** ([ADR-208](../../docs/specification/adr/adr-208.md) D1). The
-            // parameter is a `&str` below (ADR-207 D3), so the view already is
+            // is** ([ADR-282](../../docs/specification/adr/adr-282.md) D11). The
+            // parameter is a `&str` below (ADR-282 D5), so the view already is
             // what the callee takes: asking for `.to_owned()` here asked for a
             // copy nothing would keep. Only for a function this compiler
             // declares, because only there is the `&str` its own writing.
@@ -14174,14 +14174,14 @@ impl<'a> Checker<'a> {
                 continue;
             }
             // **A view handed to a parameter both kinds flow into** is
-            // borrowed as it is ([ADR-223](../../docs/specification/adr/adr-223.md)
+            // borrowed as it is ([ADR-282](../../docs/specification/adr/adr-282.md)
             // D2): the emitter hands it over, as it does into a mixed field.
             if views_into_text(found, want) && self.either_param(key, at) {
                 continue;
             }
             // **A `usize` at the C boundary takes this language's own integer**
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D2,
-            // [ADR-048](../../docs/specification/adr/adr-048.md) D1). A length
+            // [ADR-285](../../docs/specification/adr/adr-285.md) D1). A length
             // here is an `i64` and the machine-width type left the surface a
             // program can write, so a declaration that says `size_t` is handed
             // an `i64` and the conversion is emitted — the same arrangement
@@ -14219,7 +14219,7 @@ impl<'a> Checker<'a> {
             ) {
                 continue;
             }
-            // **What is printed is only read** (ADR-259 D1): below, the four
+            // **What is printed is only read** (ADR-279 D5): below, the four
             // print calls format their argument by reference, so a `??`
             // handed to one lends its left side as a lent argument does.
             if matches!(written, "println" | "eprintln" | "print" | "eprint")
@@ -14263,7 +14263,7 @@ impl<'a> Checker<'a> {
             // A plain value where a hull is wanted. It is refused by a code of
             // its own because the sentence is worth more than a type mismatch's:
             // it names the hull and the value. **What the way out is changed**
-            // ([ADR-064](../../docs/specification/adr/adr-064.md) D2) - the word
+            // ([ADR-281](../../docs/specification/adr/adr-281.md) D2) - the word
             // goes here, at the call, where it used to have to go somewhere else.
             if becomes_shared(found, want) {
                 let value = given.get(at).and_then(|arg| self.names_of(arg));
@@ -14336,7 +14336,7 @@ impl<'a> Checker<'a> {
     /// make a refusal into an acceptance and can never turn an acceptance into a
     /// refusal. One step only: a container inside a container is two questions,
     /// and nothing in the language has asked the second yet
-    /// ([ADR-028](../../../docs/specification/adr/adr-028.md) D5).
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D11).
     fn fits_through_deref(&self, found: &Ty, want: &Ty) -> bool {
         if found.fits(want) {
             return true;
@@ -14348,7 +14348,7 @@ impl<'a> Checker<'a> {
             return false;
         };
         // The receiver's own arguments bind the signature's variables, exactly
-        // as they do for any other method (ADR-031), so `(&Shared[$T]) -> &$T`
+        // as they do for any other method (ADR-288), so `(&Shared[$T]) -> &$T`
         // answers with what *this* `Shared` holds rather than with a variable.
         let Some(signature) = contract.signature.as_ref() else {
             return false;
@@ -14362,7 +14362,7 @@ impl<'a> Checker<'a> {
 
     /// [`Checker::expect`], for a position that has the value in hand, so a
     /// view of text kept where text of its own is wanted can say **why** here
-    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2). `keeper` is the
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D25). `keeper` is the
     /// position's own words for what keeps it.
     #[allow(clippy::too_many_arguments)]
     fn expect_kept(
@@ -14376,13 +14376,13 @@ impl<'a> Checker<'a> {
         message: impl FnOnce(&str, &str) -> String,
     ) {
         // **A place that says its type is a use of the numbers put there**
-        // ([ADR-249](../../docs/specification/adr/adr-249.md) D2): a field, a
+        // ([ADR-285](../../docs/specification/adr/adr-285.md) D24): a field, a
         // `let`'s annotation, what a function hands back.
         if let Some(value) = value {
             self.number_asked(value, want, &span, true);
         }
         // **A view into a position both kinds of text flow into** is borrowed
-        // as it is (ADR-222 D3, ADR-223 D3): that is what the position is for.
+        // as it is (ADR-282 D14, ADR-282 D15): that is what the position is for.
         // The position reads as text of its own, so a view is what needs
         // letting through.
         let either = match what {
@@ -14394,7 +14394,7 @@ impl<'a> Checker<'a> {
             return;
         }
         // **Into a `String?` the same holds of what is there**
-        // ([ADR-224](../../docs/specification/adr/adr-224.md) D1): a view,
+        // ([ADR-282](../../docs/specification/adr/adr-282.md) D12): a view,
         // present or absent, goes into a mixed one as it is, and is refused
         // from an owned one - which the `?` alone had let through to the
         // language below.
@@ -14432,13 +14432,13 @@ impl<'a> Checker<'a> {
     }
 
     /// **Owned text is not a pattern** (found moving `Ty::parse` into Nikaia,
-    /// ADR-257). `starts_with`, `ends_with` and `contains` take a view of text
+    /// ADR-294). `starts_with`, `ends_with` and `contains` take a view of text
     /// or a character, which is why the ledger writes their parameter `?`, and
     /// `line.starts_with(f"{word}[")` passed and reached `rustc` as *the trait
     /// `Pattern` is not implemented for `String`* about a file nobody wrote
     /// (Part III C.1). It is the ordinary argument refusal, with the way out
     /// every method argument has: a view, written `ref`. A literal is a view
-    /// already (ADR-207 D3), and a type this compiler could not work out is
+    /// already (ADR-282 D5), and a type this compiler could not work out is
     /// left alone (C.4).
     fn a_pattern_of_owned_text(&mut self, key: &str, given: &[Expr], found: &[Ty], span: &Span) {
         let param = match key {
@@ -14475,7 +14475,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A view kept where the receiver says text of its own**
-    /// ([ADR-225](../../docs/specification/adr/adr-225.md) D2):
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D19):
     /// `names.push(line.trim())` on a `Vec[String]`. The signature says `$T`,
     /// which a view fits; the receiver binds `$T` to `String`, and that is the
     /// question - the one [`Checker::arguments`] asks of a parameter that says
@@ -14511,7 +14511,7 @@ impl<'a> Checker<'a> {
             if !generic || !kept || !views_into_text(found, want) {
                 continue;
             }
-            // A literal is built into text where it is kept (ADR-207 D2),
+            // A literal is built into text where it is kept (ADR-282 D4),
             // which the caller has already recorded.
             let literal = given.get(at).and_then(|g| self.text_literal(want, g, true));
             let found = literal.as_ref().unwrap_or(found);
@@ -14583,7 +14583,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether parameter `at` of a function this program declares is text both
-    /// kinds of which flow into (ADR-223 D2): by its key, `f` or `Type::m`.
+    /// kinds of which flow into (ADR-282 D14): by its key, `f` or `Type::m`.
     fn either_param(&self, key: &str, at: usize) -> bool {
         let (target, own) = match key.rsplit_once("::") {
             Some((target, own)) => (Some(target.rsplit("::").next().unwrap_or(target)), own),
@@ -14620,7 +14620,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether a struct's field is text both kinds of which flow into
-    /// ([ADR-222](../../docs/specification/adr/adr-222.md) D3).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D14).
     fn either_field(&self, owner: &str, field: &str) -> bool {
         let owner = owner.rsplit("::").next().unwrap_or(owner);
         self.parsed
@@ -14636,7 +14636,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Why a view of text needs `.to_owned()` here, said for the case it is**
-    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D25).
     ///
     /// A language that hides ownership owes the reader the reason at the one
     /// place it does not: otherwise the question is *the compiler knows exactly
@@ -14741,7 +14741,7 @@ impl<'a> Checker<'a> {
             "returns" => "NK1104",
             "assign" => "NK1105",
             "field" => "NK1106",
-            // An argument a method's receiver types (ADR-225 D2), which is
+            // An argument a method's receiver types (ADR-282 D19), which is
             // the code `arguments` gives one its signature types.
             "argument" => "NK1102",
             // **`NK1166`, and it used to be an `unreachable!`.** A `comptime`
@@ -14818,7 +14818,7 @@ impl<'a> Checker<'a> {
             }
             self.newly_reaches_a_handler(key, span);
             // **And the lambda this may be inside**
-            // ([ADR-102](../../docs/specification/adr/adr-102.md) D2). Here for
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D7). Here for
             // the same reason the line above is here: this is the one place
             // every written call — free or method — has its callee's contract
             // in hand, and a `catch` further out does not change what the
@@ -14839,7 +14839,7 @@ impl<'a> Checker<'a> {
                 // `throws` on a function that does not fail would be a second
                 // message for one mistake, in the wrong place. Where the type
                 // **does** allow failing, the failure travels to the caller by
-                // [ADR-029](../../docs/specification/adr/adr-029.md) D3 and
+                // [ADR-288](../../docs/specification/adr/adr-288.md) D15 and
                 // `NK2605` is right.
                 if !handed.promised.may_fail {
                     return;
@@ -14950,7 +14950,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2403`: a value's cleanup moved with a contract**
-    /// ([ADR-236](../../docs/specification/adr/adr-236.md), ADR-094 D5).
+    /// ([ADR-297](../../docs/specification/adr/adr-297.md), ADR-094 D5).
     ///
     /// A callee that keeps what it is given runs its cleanup when it is done
     /// with it; one that only reads it lends it, and the cleanup runs at the end
@@ -15032,7 +15032,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Whether a type's teardown does something**, and what says so
-    /// (ADR-236 D1): an `impl Drop` or an `impl Cleanup` in any ledger this
+    /// (ADR-297 D12): an `impl Drop` or an `impl Cleanup` in any ledger this
     /// build reads, on the type or on the type of one of its fields.
     fn tears_down(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> Option<String> {
         let Ty::Named {
@@ -15062,12 +15062,12 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2206` and `NK2606`: a handler that does more than its type allows**
-    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
     ///
     /// A lambda that does **less** fits a type that allows more: one that never
     /// pauses goes where pausing is allowed, one that cannot fail goes where
     /// failing is. The other direction is the assertion
-    /// [ADR-027](../../docs/specification/adr/adr-027.md) makes about a
+    /// [ADR-288](../../docs/specification/adr/adr-288.md) makes about a
     /// declaration, made about somebody else's code — a caller who writes
     /// `fn() sync` in a signature has promised their own callers something, and
     /// a handler that pauses takes the promise away without saying so.
@@ -15136,13 +15136,13 @@ impl<'a> Checker<'a> {
     }
 
     /// **What a lambda's body was seen to do, one call at a time**
-    /// ([ADR-102](../../docs/specification/adr/adr-102.md) D2).
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D7).
     ///
     /// The failing half is recorded in [`Self::may_fail_here`], where every
     /// written call already has its callee's contract in hand. This is the
     /// pausing half, and it needs its own line because only the *method* path
     /// records pausing for the emitter — a free call's `.await` is written from
-    /// the name, which the emitter can resolve itself (ADR-028).
+    /// the name, which the emitter can resolve itself (ADR-288).
     ///
     /// **And `NK2202` inside a door** (Part II 12.2,
     /// [ADR-233](../../docs/specification/adr/adr-233.md) D3): a door's block
@@ -15168,7 +15168,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A value's cleanup is a pause where the value dies**
-    /// ([ADR-239](../../docs/specification/adr/adr-239.md) D4): the same rules
+    /// ([ADR-297](../../docs/specification/adr/adr-297.md) D3): the same rules
     /// as a written call, and the message names the value.
     fn a_cleanup_that_may_pause(&mut self, name: &str, span: &Span) {
         let pause = Pause {
@@ -15194,7 +15194,7 @@ impl<'a> Checker<'a> {
             before_door,
         } = pause;
         // **Another package's function that does not pause and never said so**
-        // (ADR-244 D1) is refused as one that may, and the message says which
+        // (ADR-288 D28) is refused as one that may, and the message says which
         // of the two it is: *can pause* would send the reader looking for a
         // pause that is not there.
         let (pauses, why) = match &unpromised {
@@ -15254,12 +15254,12 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2209`: a call that can pause, inside a grammar's action**
-    /// ([ADR-142](../../docs/specification/adr/adr-142.md) D1).
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D35).
     ///
-    /// The demand [ADR-050](../../docs/specification/adr/adr-050.md) makes of an
+    /// The demand [ADR-292](../../docs/specification/adr/adr-292.md) makes of an
     /// `overlap` branch and Part II 12.6 of a `par_iter` lambda, in the place a
     /// parser needs it: a parse that can be cut into pieces and run on several
-    /// cores at once ([ADR-009](../../docs/specification/adr/adr-009.md)) is one
+    /// cores at once ([ADR-296](../../docs/specification/adr/adr-296.md)) is one
     /// whose steps do not wait on the world.
     ///
     /// **Asked where both call paths meet**, so the free call and the method
@@ -15307,12 +15307,12 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2202` for a method call** — the half `contracts::sync` cannot do
-    /// ([ADR-027](../../docs/specification/adr/adr-027.md) D4,
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D4,
     /// [ADR-149](../../docs/specification/adr/adr-149.md) D2).
     ///
     /// That analysis resolves a **free** call by name and stops at a method, on
     /// the ground that only a type checker knows what `tx.send(1)` goes to
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) — and it is right
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) — and it is right
     /// about that, which is why the rule is here instead. What it cost while
     /// nothing asked it: a function declaring `sync` and calling a pausing
     /// method lowered to an ordinary `fn` with an `.await` in its body, and the
@@ -15427,7 +15427,7 @@ impl<'a> Checker<'a> {
             // **A handle is duplicated into the task, not moved**
             // ([ADR-040](../../docs/specification/adr/adr-040.md) D1). It is
             // recorded rather than refused, because the emitter is what writes
-            // the step and it has no types (ADR-028) - the same arrangement
+            // the step and it has no types (ADR-288) - the same arrangement
             // every other answer this module hands over uses. Unconditional, and
             // not only where the name is used again (D2): a line further down
             // may not decide what a line further up does to a cleanup point.
@@ -15517,7 +15517,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A key in the brackets of a map whose keys are owned**
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     ///
     /// The brackets went through `index::at` whatever was in them, and `at` is
     /// for a **position**: it turns a number into a `usize` and passes a view
@@ -15528,9 +15528,9 @@ impl<'a> Checker<'a> {
     ///
     /// A key is not a position. **Written**, the map keeps it: it goes in by
     /// value, a literal is built into text of its own where it stands (as
-    /// ADR-207 does for every other place that keeps text), a name is handed
+    /// ADR-282 does for every other place that keeps text), a name is handed
     /// over (`NK2105` if it is used again), and a **view** is refused with the
-    /// sentence ADR-208 has for text kept where only a view was given.
+    /// sentence ADR-282 has for text kept where only a view was given.
     /// **Read**, the map keeps nothing: the key is lent, or goes in as it is
     /// where it is a view already.
     ///
@@ -15597,13 +15597,13 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1189`: a copy under another name than `.clone()`**
-    /// ([ADR-216](../../docs/specification/adr/adr-216.md) D1).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D8).
     ///
     /// `.to_owned()` is the language below's name for a copy of a view -
     /// needed there because `.clone()` of a reference copies the reference.
     /// This language has no reference to copy: a copy of text is text of its
     /// own, whatever the text was, and the compiler writes whichever call the
-    /// language below needs (ADR-215 D4). So there is one word, and the other
+    /// language below needs (ADR-293 D24). So there is one word, and the other
     /// is refused naming it, as `..=` and `Type::new` were.
     ///
     /// **`.to_string()` is not this**, and stays: it is *the text form of a
@@ -15644,7 +15644,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A value handed to something that keeps it**
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D3, which builds
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D29, which builds
     /// [ADR-094](../../docs/specification/adr/adr-094.md) D2's last paragraph).
     ///
     /// Called at the places a value is given away rather than lent: an argument
@@ -15659,7 +15659,7 @@ impl<'a> Checker<'a> {
     /// outside a loop or a lambda handed over inside it is refused where it is
     /// handed, because the next turn hands over what is already gone.
     fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
-        // `name.to_string()` is `name` (ADR-216 D4): what is handed over is it.
+        // `name.to_string()` is `name` (ADR-282 D3): what is handed over is it.
         if let Expr::MethodCall { receiver, .. } = value
             && self
                 .checked
@@ -15681,7 +15681,7 @@ impl<'a> Checker<'a> {
         self.hands_over_path(path, ty, seq, to, span);
     }
 
-    /// **Whether a `??` over a name may lend it** (ADR-259 D1), and how the
+    /// **Whether a `??` over a name may lend it** (ADR-279 D5), and how the
     /// option is opened where it does. The left side is a `T?` whose `T` is
     /// taken rather than copied; the fallback is one a view of which exists
     /// for as long as the answer does: a text literal (a view already), a
@@ -15697,7 +15697,7 @@ impl<'a> Checker<'a> {
             return None;
         };
         // **A value that is a word by its kind is copied; anything else is
-        // lent** ([ADR-274](../../docs/specification/adr/adr-274.md) D1): a
+        // lent** ([ADR-279](../../docs/specification/adr/adr-279.md) D8): a
         // copy type made of parts - a struct, a tuple, an array, an enum with
         // a payload - is lent as a type that moves is, so a large one is not
         // copied at every read.
@@ -15725,7 +15725,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A type whose value is one machine word or less by what kind of type
-    /// it is** ([ADR-274](../../docs/specification/adr/adr-274.md) D1): a
+    /// it is** ([ADR-279](../../docs/specification/adr/adr-279.md) D8): a
     /// number, a `bool`, a `char`, an enum of this program whose variants hold
     /// nothing, and a type the library's ledger says copies. No size is
     /// computed: a type made of parts is never one.
@@ -15750,7 +15750,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A `??` in a position that only reads it lends its left side**
-    /// (ADR-259 D1): recorded for the emitter, and no longer pending.
+    /// (ADR-279 D5): recorded for the emitter, and no longer pending.
     fn a_pending_coalesce_is_lent(&mut self, given: &Expr, span: &Span) -> bool {
         if !matches!(given, Expr::Coalesce { .. }) {
             return false;
@@ -15797,7 +15797,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Every `??` of the statement just walked that no reading position lent
-    /// is taken (ADR-259 D1).
+    /// is taken (ADR-279 D5).
     fn coalesces_not_lent_are_taken(&mut self) {
         for pending in std::mem::take(&mut self.pending_coalesces) {
             let Some(&at) = self.read_index.get(&(pending.left, pending.span.at())) else {
@@ -15825,7 +15825,7 @@ impl<'a> Checker<'a> {
         if !self.task_bindings.is_empty() {
             return;
         }
-        // A stamp is not data: what is under it decides (ADR-111 D2).
+        // A stamp is not data: what is under it decides (ADR-281 D23).
         if !self.takes_away(&ty.unseen()) {
             return;
         }
@@ -15891,7 +15891,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2106`: a part of something lent, handed to what keeps it**
-    /// ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D32).
     ///
     /// `xs.push(p.name)` with `p` a view takes the field out of a value this
     /// body does not own: the language below said *cannot move out of
@@ -15946,7 +15946,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `p.name` extends the read of `p` it stands on: what is read is the part
-    /// ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D32).
     fn a_read_of_a_part(&mut self, base: &Expr, expr: &Expr, field: &str, span: &Span) {
         // Once per expression, as the read it extends: an argument walked a
         // second time would otherwise read `self.path.path`.
@@ -15981,9 +15981,9 @@ impl<'a> Checker<'a> {
     }
 
     /// **The first read after a taking, on a path that passes both**
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4,
-    /// [ADR-213](../../docs/specification/adr/adr-213.md) D4,
-    /// [ADR-214](../../docs/specification/adr/adr-214.md) D1): in a later
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D19,
+    /// [ADR-293](../../docs/specification/adr/adr-293.md) D30,
+    /// [ADR-293](../../docs/specification/adr/adr-293.md) D31): in a later
     /// statement, or later in the same one; not in another arm of a choice the
     /// taking stood in; not past a branch that left the function; and touching
     /// what was taken. `None` where an assignment gave it back first - in the
@@ -16013,7 +16013,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A branch that leaves the function takes its takings with it**
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D4).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D30).
     ///
     /// `if ended == 0 { refuse(connection, 408, …) return }` hands the
     /// connection over and leaves, so the `refuse(connection, 400, …)` after the
@@ -16034,7 +16034,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2105`: data used after it was handed to something that keeps it**
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D3).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D29).
     ///
     /// `rustc` said *borrow of moved value* about a file nobody wrote. The
     /// shape is `NK2101`'s: the first read after the hand-over on a path that
@@ -16052,7 +16052,7 @@ impl<'a> Checker<'a> {
                 path: name, ty, to, ..
             } = taken;
             // The part read where the whole was taken, or the whole where a
-            // part was: the sentence says which (ADR-214 D2).
+            // part was: the sentence says which (ADR-293 D32).
             let message = match read == name {
                 true => format!("You're using `{name}` again, but it was {to}."),
                 false => format!("You're using `{read}`, but `{name}` was {to}."),
@@ -16084,7 +16084,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A name that holds a sequence, read where the read takes it**
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
     ///
     /// Every read of one takes it, because a sequence has nothing that looks
     /// at it without walking it: a `let` that names it again moves it, an
@@ -16223,9 +16223,9 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2104`: two branches of an `overlap` meet on something**
-    /// ([ADR-050](../../docs/specification/adr/adr-050.md) D3).
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D3).
     ///
-    /// **This is [ADR-033](../../docs/specification/adr/adr-033.md)'s analysis
+    /// **This is [ADR-292](../../docs/specification/adr/adr-292.md)'s analysis
     /// used the other way round**, and it is the return on machinery built for
     /// an inference that D1 withdraws. The touch sets no longer decide *whether
     /// the compiler may* overlap two statements; they decide *whether the
@@ -16516,7 +16516,7 @@ impl<'a> Checker<'a> {
     /// were private could be built by name from another package with nothing
     /// saying no. The language below cannot help here the way it does for an
     /// item: the emitted struct is in the **same crate**, so `pub` on a field
-    /// buys nothing there ([ADR-047](../../../../docs/specification/adr/adr-047.md)
+    /// buys nothing there ([ADR-286](../../../../docs/specification/adr/adr-286.md)
     /// D2).
     ///
     /// Only for a **qualified** type, which is the same spelling rule
@@ -16562,7 +16562,7 @@ impl<'a> Checker<'a> {
     /// it writes `secret()`, unqualified. So this needs no notion of "which
     /// package am I in" - the spelling says it.
     ///
-    /// **No program reaches this today**, and that is [ADR-047](../../../../docs/specification/adr/adr-047.md)
+    /// **No program reaches this today**, and that is [ADR-286](../../../../docs/specification/adr/adr-286.md)
     /// D1 rather than an oversight. The boundary used to be the file, and it is
     /// the package now: the files of one package share a namespace, so a
     /// qualified name is a name from *another* package - and depending on one is
@@ -16615,10 +16615,10 @@ impl<'a> Checker<'a> {
     //
     // **A method call is not asked**, and the limit is worth naming: a foreign
     // Rust function is reached by a qualified path (`hyper_shim::serve`), which
-    // is what a name-for-name lowering makes callable at all (ADR-011 D2), so
+    // is what a name-for-name lowering makes callable at all (ADR-296 D17), so
     // the call form below is the one ADR-038 D7 is about. A method on a receiver
     // whose type no ledger describes would need the same question asked of its
-    // arguments, and nothing in the corpus reaches it - ADR-028 D5's rule, that
+    // arguments, and nothing in the corpus reaches it - ADR-288 D11's rule, that
     // an entry exists because a program asked for it.
 
     /// Part II 11.2: a task runs on a thread of its own, so everything it takes
@@ -16686,7 +16686,7 @@ impl<'a> Checker<'a> {
     /// *foreign* destination. A refusal costs nothing before there are programs
     /// it would reject, and the same refusal added afterwards breaks them. What
     /// reaches it first is a type from outside this language, which is what
-    /// [ADR-104](../../docs/specification/adr/adr-104.md) is for.
+    /// [ADR-290](../../docs/specification/adr/adr-290.md) is for.
     fn a_task_holds_these_across_a_pause(
         &mut self,
         body: &Block,
@@ -16742,7 +16742,7 @@ impl<'a> Checker<'a> {
     ///
     /// A method call is answered from [`Checked::pausing_methods`], which the
     /// walk that just ran filled: which entry `db.load()` goes to is the type
-    /// checker's answer ([ADR-028](../../docs/specification/adr/adr-028.md)). A
+    /// checker's answer ([ADR-288](../../docs/specification/adr/adr-288.md)). A
     /// free call is answered from the ledgers directly, the way
     /// [`contracts::sync`] answers it.
     fn what_the_body_does(&self, body: &Block) -> (Vec<usize>, BTreeMap<String, usize>) {
@@ -16844,7 +16844,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             // **Which refusal it is decides which code it prints**
-            // ([ADR-039](../../docs/specification/adr/adr-039.md) D6). A lock
+            // ([ADR-281](../../docs/specification/adr/adr-281.md) D32). A lock
             // reachable through an argument is `NK2503`, a refusal about the
             // **call**; everything else is `NK2502`, about the value crossing.
             if crossing.why() == Some(send::Refusal::Lock) {
@@ -16873,7 +16873,7 @@ impl<'a> Checker<'a> {
 
     /// **A call into foreign code from which a lock is reachable** through its
     /// arguments, transitively and through the fields of a struct
-    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D6, Part III 15.2,
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D32, Part III 15.2,
     /// worked through in C.6): `NK2503`.
     ///
     /// D6 says the check **is** `NK2502`'s walk generalised and never a copy of
@@ -17106,7 +17106,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1151`: a `match` that misses a case**
-    /// ([ADR-146](../../docs/specification/adr/adr-146.md) D1).
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D19).
     ///
     /// Part I 3.4's own first sentence says a `match` *ensures that every
     /// possible case is handled*, and nothing here ensured it: Rust refuses a
@@ -17115,10 +17115,10 @@ impl<'a> Checker<'a> {
     ///
     /// **The question asked first is *does anything catch everything*,** and
     /// only where nothing does is the scrutinee's type asked about at all — an
-    /// `else` ([ADR-145](../../docs/specification/adr/adr-145.md)) or a bare
+    /// `else` ([ADR-291](../../docs/specification/adr/adr-291.md)) or a bare
     /// name, which binds and matches anything (D2).
     /// The variants one pattern names, recursing through an or-pattern
-    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1).
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D10).
     ///
     /// A **tuple's parts** are deliberately not walked: a part names a variant
     /// of some *other* type, and what this is collecting is the cases of the
@@ -17142,7 +17142,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1155`: an or-pattern whose alternatives do not bind the same
-    /// names** ([ADR-137](../../docs/specification/adr/adr-137.md) D1).
+    /// names** ([ADR-291](../../docs/specification/adr/adr-291.md) D10).
     ///
     /// That rule is what keeps the arm's body answerable: a name the body reads
     /// has to be bound whichever alternative matched, and `(0, y) | (x, 0)` is
@@ -17204,7 +17204,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1162`: `m[k] += 1` on a map**
-    /// ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D2).
     ///
     /// A compound assignment reads the slot and writes it, and since D1 the
     /// read is a **`T?`** — so the form has to say what an absent key counts
@@ -17245,7 +17245,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether more than one error **type** can arrive at a handler
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D18).
     ///
     /// Read off the guarded call's own set, the way the lowering reads it: only
     /// the outermost call and only one by name, because that is what a `catch`
@@ -17313,7 +17313,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK1151` for a `match` over a `catch`'s error**
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D18).
     ///
     /// The variants **within** one error type are closed and the set of error
     /// **types** is open ([ADR-023](../../docs/specification/adr/adr-023.md)
@@ -17431,7 +17431,7 @@ impl<'a> Checker<'a> {
 
     fn a_match_that_misses_a_case(&mut self, on: &Ty, arms: &[ast::MatchArm], span: &Span) {
         // **A guarded arm covers nothing** (
-        // [ADR-137](../../docs/specification/adr/adr-137.md) D2): the pattern
+        // [ADR-291](../../docs/specification/adr/adr-291.md) D11): the pattern
         // says which values reach it and the guard says which of those it
         // takes, so the rest of them reach the arms below. Rust reads it the
         // same way, which is what keeps this compiler's answer and the
@@ -17479,8 +17479,8 @@ impl<'a> Checker<'a> {
             return;
         };
         // **An or-pattern names every variant in it**
-        // ([ADR-137](../../docs/specification/adr/adr-137.md) D1, and
-        // [ADR-146](../../docs/specification/adr/adr-146.md) §4's question
+        // ([ADR-291](../../docs/specification/adr/adr-291.md) D10, and
+        // [ADR-291](../../docs/specification/adr/adr-291.md)'s question
         // answered by building it): `Op::Plus | Op::Minus => …` is two cases
         // covered by one arm. A **guarded** arm names none, for the reason
         // above.
@@ -17525,8 +17525,8 @@ impl<'a> Checker<'a> {
     }
 
     /// **The interpreter, and the two refusals it can raise**
-    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D5's second stage,
-    /// bounded by [ADR-075](../../docs/specification/adr/adr-075.md)).
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D6's second stage,
+    /// bounded by [ADR-287](../../docs/specification/adr/adr-287.md)).
     ///
     /// `None` is *this compiler cannot evaluate it*, which the caller turns
     /// into `NK1127` — the refusal that has always been there and whose note
@@ -17789,7 +17789,7 @@ impl<'a> Checker<'a> {
     /// `comptime A = B` beside `comptime B = A` becomes writable — and it has
     /// no base case to reach, so nothing would end it.
     ///
-    /// **Not the call depth** ([ADR-075](../../docs/specification/adr/adr-075.md)
+    /// **Not the call depth** ([ADR-287](../../docs/specification/adr/adr-287.md)
     /// D4's neighbour), which catches a recursion that *would* terminate if the
     /// stack were deeper and says so. This one never would, and the message
     /// names the ring rather than a limit that has nothing to do with it.
@@ -17863,7 +17863,7 @@ impl<'a> Checker<'a> {
             // **The wall's way out, and then the one every `comptime` has.**
             // The second half is the generic refusal's own sentence, with the
             // reader's name in it: a value meant to be computed while the
-            // program runs was never a constant (ADR-073 D3).
+            // program runs was never a constant (ADR-287 D4).
             help: Some(format!(
                 "{}. Or write `let {bound} = …` to compute it while the program runs.",
                 sentence(way_out)
@@ -17876,7 +17876,7 @@ impl<'a> Checker<'a> {
     ///
     /// The same mistake a running program makes, met at the one moment there is
     /// no run to abort: `xs[7]` of five elements while the program is being
-    /// built. [ADR-048](../../docs/specification/adr/adr-048.md) D1 aborts with
+    /// built. [ADR-285](../../docs/specification/adr/adr-285.md) D1 aborts with
     /// this sentence at run time, and saying *this compiler cannot evaluate it*
     /// instead would send the reader looking for a missing feature rather than
     /// at the line ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)).
@@ -17941,7 +17941,7 @@ impl<'a> Checker<'a> {
                 };
             }
         }
-        // **A text literal takes its neighbours' text** (ADR-207 D2): where
+        // **A text literal takes its neighbours' text** (ADR-282 D4): where
         // the list already holds text of its own, `["a", f"c"]` is a list of
         // `String` and the literal is constructed as one. A list holds one
         // type, so the literal has no other answer - and a **view** among the
@@ -18021,9 +18021,9 @@ impl<'a> Checker<'a> {
     ///
     /// **Only those**, which is the whole rule and is what makes it safe. A
     /// type this file declares may have its `impl Error` in another file of the
-    /// same package ([ADR-047](../../docs/specification/adr/adr-047.md)), a
+    /// same package ([ADR-286](../../docs/specification/adr/adr-286.md)), a
     /// package's type is not this compiler's to answer for
-    /// ([ADR-046](../../docs/specification/adr/adr-046.md) D2), and a caught
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D11), and a caught
     /// error re-thrown is a `?` — so each of those is left alone, which is
     /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s rule.
     ///
@@ -18067,7 +18067,7 @@ impl<'a> Checker<'a> {
     /// ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
     ///
     /// `usize` is not a type this language's own values have
-    /// ([ADR-048](../../docs/specification/adr/adr-048.md) D1) — a length is an
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D1) — a length is an
     /// `i64` and the machine-width type left the surface a program can write —
     /// so a foreign declaration that writes one is naming C's `size_t`, and
     /// what a caller hands it is the integer this language does have. The
@@ -18168,7 +18168,7 @@ impl<'a> Checker<'a> {
     /// **What makes a pair is the declaration's own types**: a `&[T]` and, right
     /// after it, a `usize`. The type is what says *length* rather than the name,
     /// because `usize` is not a type this language's own values have
-    /// ([ADR-048](../../docs/specification/adr/adr-048.md) D1) — a length here
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md) D1) — a length here
     /// is an `i64` and the machine-width type left the surface a program can
     /// write. A declaration that writes `usize` beside a buffer is therefore
     /// saying C's `size_t`, and this is what that says.
@@ -18278,7 +18278,7 @@ impl<'a> Checker<'a> {
 
     /// **A literal takes the use's type, whichever literal it is**: an array
     /// where an `Array[T, N]` is wanted (ADR-152 D4), and text of its own where
-    /// a `String` is ([ADR-207](../../docs/specification/adr/adr-207.md) D2).
+    /// a `String` is ([ADR-282](../../docs/specification/adr/adr-282.md) D4).
     /// One entry for every position that is a use, so a position cannot ask
     /// one of the two questions and forget the other.
     fn literal_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
@@ -18290,7 +18290,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`collect()` builds what the place it goes into declares**
-    /// ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map from
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D25): a map from
     /// pairs, a set from items, text from characters or pieces of text. The ledger says `Vec[$T]`, which is what it builds where nothing
     /// says otherwise; where a `let`, a field or a result declares another
     /// container the items fit, that is the value's type, and the language
@@ -18442,7 +18442,7 @@ impl<'a> Checker<'a> {
 
     /// **A lambda's text literal is built where its type keeps text**: the
     /// value a lambda ends in is handed to whoever calls it, as a function's
-    /// is (ADR-207 D2).
+    /// is (ADR-282 D4).
     fn a_lambdas_text_is_its_own(&mut self, want: &Ty, value: &Expr) {
         if let (Ty::Fn { result, .. }, Expr::Closure { body, .. }) = (want, value)
             && let Some(result) = result.as_ref()
@@ -18481,7 +18481,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A text literal where a `String` is wanted is a `String`**
-    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), and hands back
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D4), and hands back
     /// the type it became.
     ///
     /// `"x"` is a view of static text, and a view put where text of its own
@@ -18527,7 +18527,7 @@ impl<'a> Checker<'a> {
         let text = Ty::named("String");
         match (want, value) {
             (Ty::Nullable(inner), _) => self.text_literal(inner, value, owned),
-            // `"x".to_string()` is `"x"` (ADR-216 D4), so it is built where it
+            // `"x".to_string()` is `"x"` (ADR-282 D3), so it is built where it
             // is kept exactly as the literal is.
             (
                 _,
@@ -18592,7 +18592,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Arms that disagree only because some are text literals and some are
-    /// text of their own agree on `String`** (ADR-207 D2): the literals take
+    /// text of their own agree on `String`** (ADR-282 D4): the literals take
     /// their neighbours' type, as they do in a list. `if c { name } else
     /// { "anonymous" }` over a `name: String` is a `String`, and the literal
     /// arm is constructed as one. A **view** arm is not a literal, so an arm
@@ -18607,7 +18607,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         // **A number written down takes its type from where it stands**
-        // (ADR-060), so it agrees with whatever the other arms say, and
+        // (ADR-285), so it agrees with whatever the other arms say, and
         // `Some(1)` is resolved by the `T?` it goes into.
         let a_number = |arm: &Option<&Expr>| {
             matches!(arm, Some(Expr::LitInt { .. } | Expr::LitFloat(_)))
@@ -18615,7 +18615,7 @@ impl<'a> Checker<'a> {
                     if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
         };
         // **And a text literal takes `String` where its neighbours are text
-        // of their own** (ADR-207 D2, as [`Checker::arms_meet_at_text`]
+        // of their own** (ADR-282 D4, as [`Checker::arms_meet_at_text`]
         // reads it): `match e { A => "a", B => kind(b), C => null }` into a
         // `String?` is one `T?`, where the literal's view kept the arms apart
         // and the language below said *`match` arms have incompatible types*
@@ -19150,7 +19150,7 @@ impl<'a> Checker<'a> {
     ///
     /// **`&` and not `&[…] as &[T]`**: a `const` promotes an array literal to
     /// `'static`, so `const XS: &[i64] = &[1, 2, 3];` is what Rust already
-    /// does with the shorter spelling ([ADR-011](../../docs/specification/adr/adr-011.md)
+    /// does with the shorter spelling ([ADR-296](../../docs/specification/adr/adr-296.md)
     /// D2 — the generated file says what the program said).
     ///
     /// Where nothing is declared it falls back to [`rust_value`], which is the
@@ -19509,7 +19509,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK1152`: a build-time body the rule forbids
-    /// ([ADR-075](../../docs/specification/adr/adr-075.md) D1, D2).
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D13, D14).
     ///
     /// **Not `NK1127`**, which says *this compiler cannot evaluate it*. Here it
     /// can: the shape is understood, the body is in hand, and the ledger says
@@ -19537,7 +19537,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The call-depth limit, which is **not** a step budget
-    /// ([ADR-075](../../docs/specification/adr/adr-075.md) D4).
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D16).
     ///
     /// That record deliberately has none and wrote down what it costs: a body
     /// that does not terminate hangs the build. A *recursion* that does not
@@ -19577,7 +19577,7 @@ impl<'a> Checker<'a> {
     ///
     /// The ledger's key stays `Type::new`, because that is what the **lowering**
     /// writes and the lowering is name for name
-    /// ([ADR-011](../../docs/specification/adr/adr-011.md) D2). What this
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D17). What this
     /// refuses is the *source* spelling.
     fn a_constructor_written_as_new(&mut self, name: &str, span: &Span) {
         let Some(ty) = name.strip_suffix("::new") else {
@@ -19764,7 +19764,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The same question asked of a `match` arm's pattern
-    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1's shapes), which
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D10's shapes), which
     /// is where a misspelled variant is most likely to be written and least
     /// likely to be noticed.
     fn a_pattern_naming_a_member_a_type_does_not_have(
@@ -19796,7 +19796,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK1144`: a `let` whose only name is the ignore pattern
-    /// ([ADR-126](../../docs/specification/adr/adr-126.md) D2).
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D7).
     fn a_let_that_binds_nothing(&mut self, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -20124,7 +20124,7 @@ impl<'a> Checker<'a> {
     /// **Only where the annotation is a number**, because that is the whole of
     /// what `num::value` answers and the whole of what may be read through a
     /// view without a copy being **inserted**
-    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D5). A `let r: Row =
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D3). A `let r: Row =
     /// <binding>` is a different question with a different answer, and it is
     /// issue #153's to carry until
     /// somebody decides it.
@@ -20149,7 +20149,7 @@ impl<'a> Checker<'a> {
         // ([ADR-185](../../docs/specification/adr/adr-185.md) D1): a number is
         // `Copy` and reading one through a view inserts nothing, and a `struct`
         // is not — so the same answer here would be a copy the source did not
-        // write, which [ADR-008](../../docs/specification/adr/adr-008.md) D5
+        // write, which [ADR-283](../../docs/specification/adr/adr-283.md) D3
         // forbids in as many words.
         let Expr::Variable(name) = value else {
             return;
@@ -20170,7 +20170,7 @@ impl<'a> Checker<'a> {
     /// element is a type the value does not have. What came back was `rustc`'s
     /// *mismatched types*, with *consider using clone here* as the way out —
     /// an instruction to insert exactly the copy
-    /// [ADR-008](../../docs/specification/adr/adr-008.md) D5 says is written
+    /// [ADR-283](../../docs/specification/adr/adr-283.md) D3 says is written
     /// and never inserted, about a file nobody wrote
     /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
     ///
@@ -20255,7 +20255,7 @@ impl<'a> Checker<'a> {
     /// one, and there is no `&` the compiler may write here — a struct outlives
     /// the expression that fills it, so a view into a local would be a
     /// reference to something already gone
-    /// ([ADR-107](../../docs/specification/adr/adr-107.md) D3: no copy and no
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D7: no copy and no
     /// borrow the program did not write).
     ///
     /// **A parameter is the case where the `&` *is* the compiler's**
@@ -20554,7 +20554,7 @@ impl<'a> Checker<'a> {
     // --- looking things up ---------------------------------------------------
 
     /// Bind a name, with the constant it stands for where there is one
-    /// (ADR-043 D5). Only [`Stmt::Let`] ever passes anything but `None`.
+    /// (ADR-285 D29). Only [`Stmt::Let`] ever passes anything but `None`.
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
         self.bind_local(Local {
             id: a_new_binding(),
@@ -20617,7 +20617,7 @@ impl<'a> Checker<'a> {
         // the anonymous constructor, exactly as `Stats(first)` is for a type a
         // `.nika` file declares. The ledger's key stays `Vec::new`, because
         // that is the name the **lowering** writes and the lowering is name for
-        // name ([ADR-011](../../docs/specification/adr/adr-011.md) D2) - what
+        // name ([ADR-296](../../docs/specification/adr/adr-296.md) D17) - what
         // changes is that the fallback above reaches the library too, where it
         // used to stop at this unit.
         self.library.lookup(&constructed)
@@ -20627,12 +20627,12 @@ impl<'a> Checker<'a> {
     ///
     /// The types come from the callee's signature, so this can only run once
     /// the callee is known - which is why the resolution moved ahead of the
-    /// walk (ADR-029). An argument whose parameter says nothing is walked
+    /// walk (ADR-288). An argument whose parameter says nothing is walked
     /// exactly as it was before.
     ///
     /// `declared_here` says whether the signature came from **this program's**
     /// ledger rather than from `std`'s. It decides one thing and
-    /// [ADR-122](../../docs/specification/adr/adr-122.md) D3 is why: a `std`
+    /// [ADR-277](../../docs/specification/adr/adr-277.md) D12 is why: a `std`
     /// entry's lambda type is a hand-written description of a **Rust**
     /// signature, which takes a plain closure whatever its `sync` column says,
     /// so the future shape must not be written for one.
@@ -20643,7 +20643,7 @@ impl<'a> Checker<'a> {
         declared_here: bool,
         // The callee's contract, where one was resolved. Read for one question:
         // whether it **keeps** the parameter a lambda is landing in
-        // ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
         callee: Option<&FnContract>,
         span: &Span,
     ) -> Vec<Ty> {
@@ -20665,16 +20665,16 @@ impl<'a> Checker<'a> {
                 ) => {
                     // **A lambda handed to a parameter whose type may pause is
                     // written as a closure returning a boxed future**
-                    // ([ADR-122](../../docs/specification/adr/adr-122.md) D1).
+                    // ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
                     // Recorded here because it is a question about the
                     // parameter's **type**, which the emitter has no way to ask
-                    // ([ADR-028](../../docs/specification/adr/adr-028.md)) — the
+                    // ([ADR-288](../../docs/specification/adr/adr-288.md)) — the
                     // same arrangement `lent_args` and `nullable_args` have, and
                     // keyed the same way.
                     if !is_sync && declared_here {
                         self.checked.future_lambdas.insert((span.at(), at));
                         // **And an `async` closure where the callee *runs* it**
-                        // ([ADR-192](../../docs/specification/adr/adr-192.md)
+                        // ([ADR-277](../../docs/specification/adr/adr-277.md)
                         // D1). The box is what a **kept** parameter needs, and
                         // a run parameter never did: `impl AsyncFn(A) -> R` is
                         // 1.37 ns/call against the box's 11.99, on a 0.31
@@ -20725,7 +20725,7 @@ impl<'a> Checker<'a> {
                         self.paused_args.push(argument_shape(arg));
                     }
                     // **The lambda as the type it was handed to, with what its
-                    // body comes to where that type does not say** (ADR-212
+                    // body comes to where that type does not say** (ADR-293
                     // D5): `fn($T) -> $U` binds `$U` from it, which is how a
                     // `map` knows its elements. Where the type does say, what it
                     // says stands - this is an answer for a variable, not a
@@ -20788,7 +20788,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A kept function takes its arguments by value**, so a text literal
-    /// handed to one where it keeps text is built there (ADR-207 D2).
+    /// handed to one where it keeps text is built there (ADR-282 D4).
     fn kept_arguments_are_its_own(&mut self, args: &[Expr], params: &[Ty]) {
         for (arg, want) in args.iter().zip(params) {
             self.text_literal(want, arg, true);
@@ -20865,10 +20865,10 @@ impl<'a> Checker<'a> {
         if let Some(seen) = seen {
             self.a_handler_that_does_more_than_the_type_allows(promised, seen, span);
         }
-        // **What its body comes to** ([ADR-212](../../docs/specification/adr/adr-212.md)
+        // **What its body comes to** ([ADR-293](../../docs/specification/adr/adr-293.md)
         // D5), which is not a claim about the lambda's type but a fact about a
         // block this checker has just walked - the same one `spawn` reads for
-        // a task. ADR-029 D1 was about *writing* a lambda's result down, which
+        // a task. ADR-288 D13 was about *writing* a lambda's result down, which
         // nothing does; a `map` still has to know what its elements are.
         //
         // **And whether it paused** ([ADR-233](../../docs/specification/adr/adr-233.md)
@@ -20887,7 +20887,7 @@ impl<'a> Checker<'a> {
         let loops = std::mem::replace(&mut self.loops, 0);
         let barrier = self.barrier.replace(what);
         // **And what a lambda was seen to do stops here too**
-        // ([ADR-102](../../docs/specification/adr/adr-102.md) D2), for the same
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D7), for the same
         // reason the loop count does: what a body written *inside* this one
         // does happens when its own callee runs it. `lambda` sets its own
         // accumulator inside the walk and reads it back there.
@@ -20895,7 +20895,7 @@ impl<'a> Checker<'a> {
         // **And the enclosing `sync` stops here too.** What is inside this body
         // is a body of its own — a lambda, an `overlap` branch, a `select` arm —
         // and what *it* may do is said by its own type rather than by the
-        // declaration around it ([ADR-102](../../docs/specification/adr/adr-102.md)
+        // declaration around it ([ADR-277](../../docs/specification/adr/adr-277.md)
         // D2, whose `NK2206` is the rule for a lambda).
         let promised = self.inside_a_sync_function.take();
         let value = walk(self);
@@ -20918,7 +20918,7 @@ impl<'a> Checker<'a> {
     /// the smaller change. Emitting the expression without the `match` would
     /// take the program the author wrote and quietly delete a block from it -
     /// including a `return` inside the handler, which
-    /// [ADR-034](../../../docs/specification/adr/adr-034.md) makes the
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md) makes the
     /// *function's* return. A handler that never runs is a belief about the
     /// program, and a belief that is wrong is worth a sentence.
     ///
@@ -20947,8 +20947,8 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK2205`: a `set` whose argument reads the same container with `get`
-    /// ([ADR-039](../../../docs/specification/adr/adr-039.md) D10,
-    /// [ADR-099](../../../docs/specification/adr/adr-099.md)).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D10,
+    /// [ADR-281](../../../docs/specification/adr/adr-281.md)).
     ///
     /// `kasse.set(kasse.get() + 100)` takes the lock **twice** — once to read
     /// and once to store — and between the two the value can change, so what is
@@ -20963,7 +20963,7 @@ impl<'a> Checker<'a> {
     /// widening this rule would mean guessing, and the narrow one is right
     /// about what it does see.
     /// **The stamp passes through a call the callee cannot put it back with**
-    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D2).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D23).
     ///
     /// A call whose argument is stamped is allowed where the callee's `touches`
     /// column names no lock — it cannot write the value into one — and **its
@@ -20973,7 +20973,7 @@ impl<'a> Checker<'a> {
     ///
     /// **A callee that touches a lock, or that nothing describes, does not
     /// pass one on.** An absent `touches` reads as *touches everything*
-    /// ([ADR-033](../../docs/specification/adr/adr-033.md)), so a call nobody
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md)), so a call nobody
     /// wrote down hands back a plain value rather than a stamped one: the
     /// wrong answer that way costs a refusal that is not raised, and the wrong
     /// answer the other way refuses a program (C.4).
@@ -20990,7 +20990,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2207`: an `update` block that assigns to its `mut v` without
-    /// reading it** ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    /// reading it** ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
     ///
     /// `update fn(mut v) { v = n }` is a `set` through the back door and is
     /// refused as one: nothing about it decides *inside* the lock, which is
@@ -21059,13 +21059,13 @@ impl<'a> Checker<'a> {
 
     /// **The witness takes no `&`, and a written one is `NK1137`**
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D1, at
-    /// [ADR-111](../../docs/specification/adr/adr-111.md) D5's door).
+    /// [ADR-281](../../docs/specification/adr/adr-281.md) D26's door).
     ///
     /// The ledger declares `seen: &$T` — the witness is read and never stored,
     /// so the caller keeps it — and the `&` that says so is the compiler's, as
     /// it is everywhere else. It is refused here rather than through `lends`
     /// because `lends` withholds its claim on every *method* argument
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md): the emitter cannot
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md): the emitter cannot
     /// resolve a receiver), and this one position the emitter is told about
     /// outright. Without the refusal a written `&` would come out `&&`, which
     /// is `rustc`'s words about a file nobody wrote (Part III C.1).
@@ -21130,7 +21130,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2208`: the lowering of a door, written as a door**
-    /// ([ADR-111](../../docs/specification/adr/adr-111.md) D5).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D26).
     ///
     /// `kasse.set(neu; after: stand)` lowers to `set_after(neu, stand)`, and
     /// what is below is reachable by name from above: `kasse.set_after(a, b)`
@@ -21177,7 +21177,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **`NK2205`: a `set` given a stamped value, or standing under a stamped
-    /// condition** ([ADR-111](../../docs/specification/adr/adr-111.md) D4).
+    /// condition** ([ADR-281](../../docs/specification/adr/adr-281.md) D25).
     ///
     /// `kasse.set(stand + 100)` is a read-modify-write through two doors: the
     /// lock is taken once to read and once to store, and anything may happen
@@ -21276,8 +21276,8 @@ impl<'a> Checker<'a> {
     }
 
     /// `NK2204`: an assignment straight into a `SharedMut`
-    /// ([ADR-039](../../../docs/specification/adr/adr-039.md) D10,
-    /// [ADR-099](../../../docs/specification/adr/adr-099.md)).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D10,
+    /// [ADR-281](../../../docs/specification/adr/adr-281.md)).
     ///
     /// `kasse = 42` looks like an ordinary assignment and is not: the lock has
     /// to be taken for the write, and what takes it is a **door**. Without this
@@ -21342,7 +21342,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **A `let` that binds several names at once**
-    /// ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md)).
     ///
     /// Part I 8.1.2 writes `let (user, rights, prefs) = overlap { … }` and Part
     /// II 12.5 writes `let (tx, rx) = channel::bounded(100)`. Both take a value
@@ -21400,7 +21400,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **Every item-level `comptime`, in a frame that stays under the whole
-    /// file** ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+    /// file** ([ADR-287](../../../docs/specification/adr/adr-287.md)).
     ///
     /// A pass of its own, and both halves of that are load-bearing. It runs
     /// *before* the item loop, because a `fn` declared **above** a constant
@@ -21412,7 +21412,7 @@ impl<'a> Checker<'a> {
     /// The bodies go through [`Self::comptime_binding`], the same function the
     /// statement form uses, so the fold, the refusal and the spelling the
     /// emitter is handed are one thing in one place
-    /// ([ADR-073](../../docs/specification/adr/adr-073.md) D2: the difference
+    /// ([ADR-287](../../docs/specification/adr/adr-287.md) D3: the difference
     /// between the two places is where the name is visible and nothing else).
     fn item_constants(&mut self) {
         self.scope.push(Vec::new());
@@ -21429,7 +21429,7 @@ impl<'a> Checker<'a> {
         // this walk has not reached yet honestly is. The binding below shadows
         // it with the answer.
         // **And every constant another file of the package declares**
-        // (ADR-047 D1): one namespace holds them as it holds the functions
+        // (ADR-286 D1): one namespace holds them as it holds the functions
         // and the types, so `TEXT` from `ty.nika` is read in `views.nika` -
         // where it was `NK1117`, *isn't declared anywhere* (found moving the
         // compiler's `views` into Nikaia, #125). Its declared type, read in
@@ -21471,9 +21471,9 @@ impl<'a> Checker<'a> {
     }
 
     /// **One `comptime`, wherever it stands**
-    /// ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md)).
     ///
-    /// [ADR-073](../../docs/specification/adr/adr-073.md) D2 decided both
+    /// [ADR-287](../../docs/specification/adr/adr-287.md) D3 decided both
     /// places and said the difference is *"where the name is visible, never
     /// what may stand to the right of the `='"*. So there is one function and
     /// the two callers differ only in which frame the name lands in - a second
@@ -21509,7 +21509,7 @@ impl<'a> Checker<'a> {
         // the one the build computed.
         let folded = self.constant_of(value);
         // **The second stage of
-        // [ADR-073](../../docs/specification/adr/adr-073.md) D5**: a call, and
+        // [ADR-287](../../docs/specification/adr/adr-287.md) D6**: a call, and
         // with it everything a called body can reach. The fold above is the
         // first stage and stays in front of it, because it is what says which
         // integer type a *declaration* pinned — a question the interpreter does
@@ -21779,7 +21779,7 @@ impl<'a> Checker<'a> {
             lent: false,
             changing: false,
             // The fold's number, which is what `constant_of` reads one
-            // `comptime` later and what `ADR-043` D5's overflow check needs.
+            // `comptime` later and what `ADR-285 D29's overflow check needs.
             constant: match &evaluated {
                 Some(build_time::Value::Int(value)) => Some(*value),
                 _ => None,
@@ -21797,9 +21797,9 @@ impl<'a> Checker<'a> {
     /// `NK1133`: a statement after a `break` or a `continue`, in the same block.
     ///
     /// **The shape this is really about is `break i`**
-    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D3). A `break` in
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D13). A `break` in
     /// Rust carries a value out of a `loop`; here a loop is a statement and
-    /// hands back nothing ([ADR-070](../../../docs/specification/adr/adr-070.md)
+    /// hands back nothing ([ADR-276](../../../docs/specification/adr/adr-276.md)
     /// D2), so the word takes no value - and a value written after it parses as
     /// a statement of its own. Without this the program compiles, the value is
     /// dropped, and nothing says so.
@@ -21823,7 +21823,7 @@ impl<'a> Checker<'a> {
                  never runs."
             )],
             // **The two shapes that carry a value out of a loop**
-            // ([ADR-151](../../docs/specification/adr/adr-151.md) D2), and the
+            // ([ADR-276](../../docs/specification/adr/adr-276.md) D14), and the
             // `return` one is second because that is what a search loop is
             // usually written as. It said *bind it before the `break`* alone,
             // which is one of the two and not the one a reader wants.
@@ -21837,7 +21837,7 @@ impl<'a> Checker<'a> {
     }
 
     /// **What a `return` hands back, asked once**
-    /// ([ADR-138](../../docs/specification/adr/adr-138.md) D2): the statement
+    /// ([ADR-276](../../docs/specification/adr/adr-276.md) D21): the statement
     /// and the expression are the same `return`, so they ask the same
     /// questions in the same order rather than in two places that drift.
     fn returns(&mut self, value: Option<&Expr>, span: &Span, in_an_expression: bool) {
@@ -21949,7 +21949,7 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// Note where a method call in the function being walked went (ADR-028).
+    /// Note where a method call in the function being walked went (ADR-288).
     ///
     /// `None` is "I could not find out", and it is recorded rather than
     /// dropped: an analysis that claims a property has to be able to tell that
@@ -21973,7 +21973,7 @@ impl<'a> Checker<'a> {
         let Some(current) = &self.current else {
             return;
         };
-        // **Which side of a `spawn` this call is on** (ADR-039 D3). The stack
+        // **Which side of a `spawn` this call is on** (ADR-281 D29). The stack
         // is the one the task walk already keeps, so "inside a task" is
         // exactly what it says.
         let inside_a_task = !self.task_bindings.is_empty();
@@ -22077,7 +22077,7 @@ impl<'a> Checker<'a> {
     /// [`Checker::fields_of`] without the copy, for a question asked of every
     /// `struct` in the program: an assignment into `a.b.c = …` asks it once per
     /// declared type, and a copy each time made that quadratic in the program's
-    /// size ([ADR-257](../../docs/specification/adr/adr-257.md) §4).
+    /// size ([ADR-294](../../docs/specification/adr/adr-294.md)).
     fn fields_seen(&self, name: &str) -> Option<&[FieldContract]> {
         if let Some(fields) = self.structs.get(name) {
             return Some(fields.as_slice()).filter(|f| !f.is_empty());
@@ -22088,7 +22088,7 @@ impl<'a> Checker<'a> {
         // declare a `Conn`, and a suffix match would answer with whichever came
         // first. `std` has no such ambiguity and a value's type does not carry
         // the module a library writes in front of it, which is why that one is
-        // matched the other way (ADR-011 D2).
+        // matched the other way (ADR-296 D17).
         if let Some(contract) = self.own.types.get(name) {
             return Some(contract.fields.as_slice()).filter(|f| !f.is_empty());
         }
@@ -22189,7 +22189,7 @@ impl<'a> Checker<'a> {
         out
     }
 
-    /// **The parts an arm only reads are lent** (ADR-242): a part
+    /// **The parts an arm only reads are lent** (ADR-291): a part
     /// that does not copy, which nothing in the arm took, returned or handed
     /// back as the arm's value, is bound as a view, and the scrutinee stays
     /// whole for what comes after the `match`.
@@ -22288,7 +22288,7 @@ impl<'a> Checker<'a> {
     /// The names one pattern binds, in the order it writes them.
     ///
     /// **Recursive, because a pattern nests**
-    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1): a tuple's parts
+    /// ([ADR-291](../../docs/specification/adr/adr-291.md) D10): a tuple's parts
     /// are patterns, so `Event::Click(Point { x, .. })` binds what the part
     /// inside it binds.
     ///
@@ -22334,7 +22334,7 @@ impl<'a> Checker<'a> {
 /// writes `(Seq[$T], …)` and a container's writes `(&Vec[$T], …)`, so the file
 /// that describes the method is what says whether the walk keeps it.
 /// The ledger entries whose argument at a position is a count the language
-/// below takes in `usize` ([ADR-212](../../docs/specification/adr/adr-212.md)
+/// below takes in `usize` ([ADR-293](../../docs/specification/adr/adr-293.md)
 /// D5). The entry and not the method's name, which is what `emit::is_count`
 /// has to go by.
 const COUNTS: &[(&str, usize)] = &[
@@ -22350,7 +22350,7 @@ const COUNTS: &[(&str, usize)] = &[
 ];
 
 /// **What a sequence entry's result is as a whole**
-/// ([ADR-212](../../docs/specification/adr/adr-212.md) D2): a word the entry
+/// ([ADR-293](../../docs/specification/adr/adr-293.md) D17): a word the entry
 /// writes on its result, where every sequence handed in has it too.
 ///
 /// A `map` walked from the back is its input walked from the back, so `map`
@@ -22468,7 +22468,7 @@ fn walks_by_value(contract: &FnContract) -> bool {
 }
 
 /// The sentence a word that used to be reserved gets instead
-/// ([ADR-117](../../docs/specification/adr/adr-117.md) D2).
+/// ([ADR-298](../../docs/specification/adr/adr-298.md) D7).
 ///
 /// `None` for every other name, which keeps the general help exactly as it was:
 /// this adds a sentence where the word is one of the four and changes nothing
@@ -22494,7 +22494,7 @@ fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
 }
 
 /// **Whether this file declares a type by this name**
-/// ([ADR-183](../../docs/specification/adr/adr-183.md) D1).
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D31).
 ///
 /// For the package's *other* files, which share one namespace with this one
 /// (Part I 9.1). It reads the item tree rather than a ledger because a ledger
@@ -22615,7 +22615,7 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
         //
         // Without this a `for` over an array bound a name of **unknown** type,
         // and everything downstream of it went quiet — including
-        // [ADR-043](../../docs/specification/adr/adr-043.md) D4's abort, so
+        // [ADR-285](../../docs/specification/adr/adr-285.md) D12's abort, so
         // `for n in NS { n as u8 }` over an `Array[i64, 2]` **truncated
         // silently**, which is the one thing that record exists to stop.
         Ty::Named { name, args, view }
@@ -22673,7 +22673,7 @@ fn view_of(inner: &Ty) -> Ty {
         // for exactly that reason.
         //
         // Answering `Unknown` here left `&m[k]` unchecked the day a map read
-        // became a `T?` ([ADR-114](../../docs/specification/adr/adr-114.md)
+        // became a `T?` ([ADR-293](../../docs/specification/adr/adr-293.md)
         // D1): `let s = &m[k]` followed by `s.min` reached no `NK1125` and was
         // refused by `rustc`, about the generated file
         // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
@@ -22718,24 +22718,24 @@ fn viewed_from(view: &Ty) -> Vec<Ty> {
 /// The type several parts of a program own at once (Part I 6.2).
 const SHARED: &str = "Shared";
 /// Part I 6.3's lock, which shares the `Shared` hull's construction line
-/// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 const LOCKED: &str = "Locked";
 
 /// The shared mutable type: a value several parts own at once and any of them may
-/// change ([ADR-039](../../../docs/specification/adr/adr-039.md) D9).
+/// change ([ADR-281](../../../docs/specification/adr/adr-281.md) D3).
 ///
 /// It is a **name this module carries whole**. Only the emitter expands it to the
 /// count around the lock, which is what keeps a spelling nobody wrote out of every
 /// message about the language's most common type
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D1).
 const SHARED_MUT: &str = "SharedMut";
 
 /// The three types whose hull a program writes by calling their name
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D2).
 ///
 /// **A hull you cannot observe, the compiler writes; a hull you can observe, you
 /// write.** A `T?` costs nothing and hides nothing - the same value, possibly
-/// absent - so its `Some(…)` is written for you (ADR-052). These three change
+/// absent - so its `Some(…)` is written for you (ADR-278). These three change
 /// **when a value is cleaned up**, which Part I 6.2 says a program can see, so the
 /// word stands where it happens.
 fn is_hull(name: &str) -> bool {
@@ -22757,7 +22757,7 @@ fn is_hull(name: &str) -> bool {
 pub const HULLS: [&str; 3] = [SHARED, SHARED_MUT, LOCKED];
 
 /// The two doors that take **several** locks at once
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 ///
 /// They are not ledger entries and not grammar: the parser already takes
 /// `access_all(a, b) fn(x, y) { … }` as an ordinary call with a trailing lambda
@@ -22826,7 +22826,7 @@ fn is_a_handle(ty: &Ty) -> bool {
 /// would hold. It used to *permit* that at two positions, because the annotation
 /// was the constructor ([ADR-040](../../../docs/specification/adr/adr-040.md) §3).
 /// It permits nothing now
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2): a hull is made by a
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D2): a hull is made by a
 /// call, wherever a call may stand, and what this answers is only *which sentence
 /// to write* when one is missing.
 ///
@@ -22849,7 +22849,7 @@ fn becomes_shared(found: &Ty, want: &Ty) -> bool {
             // A `SharedMut[T]` beside a `T` is the same shape as a `Shared[T]`
             // beside one: the value that would go in. Asked in this order so a
             // value that is *already* what the hull holds matches at the first
-            // level ([ADR-064](../../docs/specification/adr/adr-064.md) D2).
+            // level ([ADR-281](../../docs/specification/adr/adr-281.md) D2).
             found.fits(held) || found.fits(&locked_content(held))
         }
         _ => false,
@@ -22880,7 +22880,7 @@ fn convert(found: &Ty, want: &Ty) -> String {
     {
         return format!("Wrap it: `{name}(…)`.");
     }
-    // **A slice where a list is declared** (ADR-215 D3): the parameter is
+    // **A slice where a list is declared** (ADR-293 D23): the parameter is
     // what changes, to the type that takes a run of any list - a slice and a
     // whole list alike - with the element the declaration already names.
     if let (
@@ -22914,9 +22914,9 @@ fn convert(found: &Ty, want: &Ty) -> String {
         // used to match `&str` - which nothing prints any more, so the one
         // mismatch every newcomer meets fell through to *make it a `String`*
         // and never said how. A literal no longer reaches here in a position
-        // that wants text of its own (ADR-207 D2); what does is a view of text
+        // that wants text of its own (ADR-282 D4); what does is a view of text
         // the program **has**, and a copy of that is written, never inserted
-        // (ADR-107 D3).
+        // (ADR-282 D7).
         ("ref String", "String") => {
             "Write `.clone()` to turn this view into text of its own.".to_string()
         }
@@ -22936,7 +22936,7 @@ fn convert(found: &Ty, want: &Ty) -> String {
 /// A view or a type with arguments is neither: `&i32` is a reference and
 /// `Vec[i32]` is a list, and a number does not stand beside either of them.
 /// **The operations whose result is of their operands' type**: arithmetic and
-/// the bit operators ([ADR-249](../../docs/specification/adr/adr-249.md) D1).
+/// the bit operators ([ADR-285](../../docs/specification/adr/adr-285.md) D23).
 fn an_operation_of_one_type(op: BinaryOp) -> bool {
     !op.is_comparison() && !matches!(op, BinaryOp::And | BinaryOp::Or)
 }
@@ -22994,7 +22994,7 @@ fn tail_of(block: &Block) -> Option<&Expr> {
 }
 
 /// Whether every way out of an expression is a text literal
-/// ([ADR-207](../../docs/specification/adr/adr-207.md) D2): the literal itself,
+/// ([ADR-282](../../docs/specification/adr/adr-282.md) D4): the literal itself,
 /// or an `if`, a `match` or a block whose every arm ends in one.
 fn ends_in_text(expr: &Expr) -> bool {
     match expr {
@@ -23147,7 +23147,7 @@ fn moves_away(ty: &Ty) -> bool {
 
 impl Checker<'_> {
     /// [`moves_away`], where a type the library says **copies** is copied
-    /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1, the reading):
+    /// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.1, the reading):
     /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
     fn takes_away(&self, ty: &Ty) -> bool {
         moves_away(ty)
@@ -23585,7 +23585,7 @@ fn float_literal(value: f64) -> Option<String> {
 /// for every other question asked of `std`. It is the wrong one for a **refusal**:
 /// a module the specification promises and the compiler has not built is a
 /// correct program refused. `use std::db` is how
-/// [ADR-143](../../docs/specification/adr/adr-143.md)'s driver is reached, and
+/// [ADR-299](../../docs/specification/adr/adr-299.md)'s driver is reached, and
 /// the day it exists nothing about that line changes.
 ///
 /// So the refusal stands on the join of two lists, and this half is **written
@@ -23593,9 +23593,9 @@ fn float_literal(value: f64) -> Option<String> {
 /// name is one a page or a record writes after `use std::`, and a name on
 /// neither list is one nobody has written down anywhere. Where each comes from,
 /// in the order they appear below: `use std::backend::x86`
-/// ([ADR-007](../../docs/specification/adr/adr-007.md), Part III 16); the build
+/// ([ADR-296](../../docs/specification/adr/adr-296.md), Part III 16); the build
 /// script's own API (Part III 13.4);
-/// [ADR-143](../../docs/specification/adr/adr-143.md)'s driver protocol; Part III
+/// [ADR-299](../../docs/specification/adr/adr-299.md)'s driver protocol; Part III
 /// 17.1's *other key modules*; Part I 2.6's panic hook, `panic::on_panic`
 /// ([ADR-141](../../docs/specification/adr/adr-141.md)); Part III 17.2's table,
 /// which says what a target withholds; Part II 12.7's `task::scope`; and that
@@ -23628,7 +23628,7 @@ const NOT_A_MODULE: &[&str] = &["f64", "i32", "i64", "list", "str"];
 ///
 /// One entry, and it earns its own list because it earns its own sentence:
 /// `crates/nikaia-std/src/tools/` holds
-/// [ADR-196](../../docs/specification/adr/adr-196.md)'s Rust-signature grammar,
+/// [ADR-290](../../docs/specification/adr/adr-290.md)'s Rust-signature grammar,
 /// which the *compiler* calls and a program may not. Left to the list above it
 /// would be told *nobody has written that down*, which is false and sends the
 /// reader looking for a typo.
@@ -23728,7 +23728,7 @@ fn list(names: &[&str]) -> String {
 /// What the receiver's actual type binds this signature's variables to.
 ///
 /// The receiver is the signature's first parameter where there is one, so this
-/// is one `bind` against one pattern - the narrowness is ADR-031's decision
+/// is one `bind` against one pattern - the narrowness is ADR-288's decision
 /// rather than a gap. A signature with no variables produces an empty map and
 /// every substitution below is the identity.
 fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
@@ -23746,9 +23746,9 @@ fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
 
 /// What the **arguments** bind this signature's variables to.
 ///
-/// ADR-031 bound from the receiver only, and said so on purpose: binding from
+/// ADR-288 bound from the receiver only, and said so on purpose: binding from
 /// arguments is where a signature language grows into a unification algorithm.
-/// [ADR-074](../../../docs/specification/adr/adr-074.md) D2 takes that step and
+/// [ADR-295](../../../docs/specification/adr/adr-295.md) D2 takes that step and
 /// keeps it one step. This is the same `ty::bind` against one pattern per
 /// argument - a structural walk, no queue, no fixpoint, no occurs check -
 /// because a type parameter is **written** rather than inferred, so there is
@@ -23920,7 +23920,7 @@ impl Comparable<'_> {
             | "Shared" => holds(seen),
             _ => {
                 // Keyed by the whole type: `Spanned[Stmt]` and `Spanned[Item]`
-                // are two questions (ADR-252 §5).
+                // are two questions (ADR-294).
                 let key = match args.is_empty() {
                     true => name.to_string(),
                     false => format!("{name}{args:?}"),
@@ -23935,7 +23935,7 @@ impl Comparable<'_> {
                     // fields name its parameters, which answer *yes* as a type
                     // variable does, so `Block { stmts: Vec[Spanned[Stmt]] }`
                     // derived `PartialEq` while `Stmt` did not, and `rustc`
-                    // refused the derive (ADR-252 §5).
+                    // refused the derive (ADR-294).
                     let bound: BTreeMap<String, Ty> = self
                         .parameters
                         .get(name)
@@ -23991,7 +23991,7 @@ impl Comparable<'_> {
 /// **A part that lets the type holding it derive `Copy`**
 /// ([`Checker::collect_copies`]): a number, a truth value, a character, a
 /// declared type already found to be one, a Rust type whose description says
-/// `copies` (ADR-252 D4.3), and a tuple, a nullable or an array of those.
+/// `copies` (ADR-294 D9.3), and a tuple, a nullable or an array of those.
 /// Never a view, a type variable, an unknown or any other Rust crate's type:
 /// each is a claim nothing here can back.
 fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
@@ -24236,7 +24236,7 @@ fn brace_groups(text: &str) -> Vec<String> {
 /// A pause the checker was told of, in the words its refusals use: what
 /// pauses, and the way out of a walk and of a door.
 /// **Whether an entry is another package's `sync` that was never promised**
-/// ([ADR-244](../../docs/specification/adr/adr-244.md) D1): the one reading of
+/// ([ADR-288](../../docs/specification/adr/adr-288.md) D28): the one reading of
 /// *may pause* that is not a pause.
 fn unpromised(contract: &FnContract) -> bool {
     contract.sync_claim == crate::contracts::Sync::Unpromised

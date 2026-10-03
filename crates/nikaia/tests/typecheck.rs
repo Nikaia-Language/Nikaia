@@ -131,8 +131,8 @@ fn a_call_into_std_is_checked_against_the_shipped_ledger() {
 #[test]
 fn an_argument_of_the_wrong_type_is_reported() {
     // A **view** and not a literal: a literal handed to a `String` is one
-    // (ADR-207 D2). And a **published** parameter text of its own also goes
-    // into, which stays text of its own (ADR-223 D2), so the view still needs
+    // (ADR-282 D4). And a **published** parameter text of its own also goes
+    // into, which stays text of its own (ADR-282 D14), so the view still needs
     // its copy written.
     let (code, message) = one("pub fn greet(who: String) -> String { return who }\n\
          pub fn hello(w: ref String) -> String { return greet(w) }\n\
@@ -194,7 +194,7 @@ fn an_assignment_of_the_wrong_type_is_reported() {
 #[test]
 fn a_struct_field_of_the_wrong_type_is_reported() {
     // Published, and text of its own flows in too: the field stays text of
-    // its own (ADR-222 D2), so the view is the wrong type for it.
+    // its own (ADR-282 D22), so the view is the wrong type for it.
     let (code, message) = one("pub struct Reading { pub name: String, pub temp: i32 }\n\
          pub fn read(city: ref String) -> Reading { return Reading { name: city, temp: 12 } }\n\
          pub fn made() -> Reading { return Reading { name: f\"x\", temp: 1 } }");
@@ -534,11 +534,11 @@ fn a_loop_over_something_that_cannot_fail_says_nothing() {
 /// it, and a checker that had an opinion about it would be guessing.
 ///
 /// `push_str` used to stand here and no longer can, because the ledger now says
-/// what `String()` hands back (ADR-033 needed its touch set, and a
+/// what `String()` hands back (ADR-292 needed its touch set, and a
 /// signature came with it) - so the receiver has a type, the entry for
 /// `String::push_str` resolves, and three arguments to a method that takes one
 /// is caught. That is the ledger growing and the checker getting sharper
-/// together, which is what ADR-028 predicted it would look like.
+/// together, which is what ADR-288 predicted it would look like.
 #[test]
 fn a_method_nobody_wrote_down_says_nothing() {
     // **The name is `common::UNDESCRIBED_METHOD`'s**, which is where this
@@ -654,7 +654,7 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 /// erased generic**, which this comment already called the better one: an absence
 /// the **language** decides rather than one the ledger happens to be silent
 /// about. It became usable when a generic function started lowering with its
-/// `<T>` ([ADR-074](../../../docs/specification/adr/adr-074.md)); before that it
+/// `<T>` ([ADR-295](../../../docs/specification/adr/adr-295.md)); before that it
 /// did not compile at all.
 ///
 /// It used to be `HashMap::keys`, whose signature said `(&HashMap[?, ?]) -> ?` —
@@ -822,7 +822,7 @@ fn a_catch_handler_is_not_itself_caught() {
 }
 
 /// A method call is a written call too, and the receiver's type is what makes
-/// it answerable (ADR-028).
+/// it answerable (ADR-288).
 #[test]
 fn a_method_that_can_fail_is_the_same_rule() {
     let (code, message) = one("enum ZuVoll { Voll }\n\
@@ -874,7 +874,7 @@ fn the_refusal_does_not_weaken_when_the_method_call_propagates() {
 
 /// What the emitter is handed, said of the checker's own output.
 ///
-/// ADR-028: there is one type checker, and the emitter is not a second one. So
+/// ADR-288: there is one type checker, and the emitter is not a second one. So
 /// the answer about which method calls can fail is computed here, keyed by the
 /// statement it is in and the method's name, and the emitter looks it up. Two
 /// calls of the same name in one statement where only one can fail produce no
@@ -942,7 +942,7 @@ fn a_callee_no_ledger_describes_is_not_guessed_at() {
 // --- the withdrawn automatic argument names (Part I 5.3) ---------------------
 
 /// **A lambda that reaches for `a` is refused, and the message says what
-/// happened to the form** ([ADR-049](../../../docs/specification/adr/adr-049.md)
+/// happened to the form** ([ADR-277](../../../docs/specification/adr/adr-277.md)
 /// D1).
 ///
 /// These tests used to hold the opposite: `NK1114`, a warning, because named
@@ -1079,7 +1079,7 @@ fn a_view_of_a_view_is_the_view() {
 // --- a shared value: where one is made, and where it is refused (Part I 6.2) --
 
 /// **A call on the type makes the first handle**, and it is the only thing that
-/// does ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
+/// does ([ADR-281](../../../docs/specification/adr/adr-281.md) D2).
 ///
 /// The annotation used to be the constructor
 /// ([ADR-040](../../../docs/specification/adr/adr-040.md) §3), which meant the
@@ -1101,7 +1101,7 @@ fn a_call_on_the_type_makes_a_plain_value_shared() {
 /// …and it stands wherever an expression may, a struct literal's field included.
 ///
 /// **That is the whole of what changed**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2). There used to be
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D2). There used to be
 /// two positions where a plain value could become a shared one, and they were a
 /// list somebody had to keep complete. A call needs no list.
 #[test]
@@ -1143,7 +1143,7 @@ fn a_call_that_wants_a_shared_value_and_is_given_a_plain_one_is_refused() {
     .expect("Part III C.2: every diagnostic names a way out");
     assert!(
         help.contains("Shared(db)"),
-        "the way out is the constructor, at the call (ADR-064 D2): {help}"
+        "the way out is the constructor, at the call (ADR-281 D2): {help}"
     );
 }
 
@@ -1166,7 +1166,7 @@ fn a_shared_value_fits_a_shared_parameter() {
 /// **Lending the inner value out duplicates nothing, and the checker is what
 /// makes it writable.** `serve(&db)` takes a view of the value inside, through
 /// `Shared::deref` and [ADR-042](../../../docs/specification/adr/adr-042.md) D2 -
-/// a generic container seen through with what *this* one holds (ADR-031).
+/// a generic container seen through with what *this* one holds (ADR-288).
 #[test]
 fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
     assert!(
@@ -1197,7 +1197,7 @@ fn a_shared_value_does_not_fit_a_view_of_just_anything() {
 
 /// `NK1116` at each of the three places a type stands beside a literal.
 ///
-/// ADR-043 D5. This was already refused where it was written - but by `rustc`,
+/// ADR-285 D29. This was already refused where it was written - but by `rustc`,
 /// in Rust's words, down to the lint name `overflowing_literals` and the advice
 /// to use a `u32`, about a file nobody wrote. So the point is not to prevent an
 /// abort, which never happened: it is to take the message back (Part III, C.1).
@@ -1248,7 +1248,7 @@ fn a_literal_that_fits_is_not_mentioned() {
 }
 
 /// **A name pins the type its own value took**
-/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D2), so a constant
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D26), so a constant
 /// reached through one is arithmetic in that type.
 ///
 /// `let a = 2000000000` is an `i32` — the first type that holds it — so `a + a`
@@ -1259,7 +1259,7 @@ fn a_literal_that_fits_is_not_mentioned() {
 ///
 /// **It is deliberately not widened.** Widening `a + a` would mean widening
 /// `a`'s declaration, which is a walk back from a use to a binding — the one
-/// analysis ADR-060 was cheap for not needing.
+/// analysis ADR-285 was cheap for not needing.
 #[test]
 fn a_constant_reached_through_a_name_is_arithmetic_in_that_name_s_type() {
     let found = findings("fn main() { let a = 2000000000\n let c = a + a }");
@@ -1292,7 +1292,7 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
         .unwrap_or_else(|| panic!("no NK1116: {found:#?}"));
     assert!(it.message.contains("doesn't fit in an `i64`"), "{it:#?}");
     // A value an `i64` does not hold and a `u64` does is pointed at the
-    // `u64` (ADR-248 D2); one past both is told the widest there is.
+    // `u64` (ADR-285 D19); one past both is told the widest there is.
     assert!(
         it.help.as_deref().is_some_and(|h| h.contains("`u64`")),
         "every error names a way out (Part III C.2): {it:#?}"
@@ -1304,7 +1304,7 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
         "{past:#?}"
     );
     // **A fold past the 65 bits has no number to name**
-    // ([ADR-252](../../../docs/specification/adr/adr-252.md) D6), and says what
+    // ([ADR-294](../../../docs/specification/adr/adr-294.md) D11), and says what
     // it is past.
     assert!(
         past.iter()
@@ -1314,11 +1314,11 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
 }
 
 /// **A declared operand holds every step to its type**
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D6, the refinement):
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) D11, the refinement):
 /// `a + a - a` ends inside an `i32`, and its first step does not - which the
 /// language below refuses, so this does, with the step's number.
 ///
-/// A bare `let a = 2000000000` is an open number (ADR-249 D3), which pins
+/// A bare `let a = 2000000000` is an open number (ADR-285 D25), which pins
 /// nothing until its uses decide: its step is measured with the type they
 /// decide, `i32` where nothing asks for more (0.0.280).
 #[test]
@@ -1379,7 +1379,7 @@ fn an_undeclared_name_inside_an_expression_is_refused_too() {
         ("fn main() { let n = q + 1 }", "q"),
         // The misparse the statement rule was built for, one position over. It
         // used to be `1_000`, which was a number beside a name; since
-        // [ADR-136](../../../docs/specification/adr/adr-136.md) that is the
+        // [ADR-285](../../../docs/specification/adr/adr-285.md) that is the
         // number `1000`, and what is left of the reading is the leading
         // underscore, which is a name in every language that has both.
         ("fn main() { let n = _000 + 1 }", "_000"),
@@ -1447,9 +1447,9 @@ fn summary(lines: i64; separator: ref String = " ") -> String {
     }
 }
 
-// --- a sum of constants that cannot fit (ADR-043 §3) ------------------------
+// --- a sum of constants that cannot fit (ADR-285) ------------------------
 
-/// **The gap [ADR-043](../../../docs/specification/adr/adr-043.md) §3 named, closing.**
+/// **The gap [ADR-285](../../../docs/specification/adr/adr-285.md) named, closing.**
 /// `let b = a + 1` where `a` is a constant `i32` at its ceiling was refused by
 /// `rustc` with *"attempt to compute `i32::MAX + 1_i32`, which would overflow"* -
 /// about the generated file, which is the Part III C.1 class.
@@ -1470,7 +1470,7 @@ fn a_sum_of_constants_that_cannot_fit_is_refused_here() {
             "fn main() { let a: i32 = 2000000000\nlet b = a\nlet c = b * 2 }",
             "4000000000",
         ),
-        // Negation past the floor, which has no matching positive (ADR-043 D3).
+        // Negation past the floor, which has no matching positive (ADR-285 D7).
         (
             "fn main() { let a: i32 = 2147483647\nlet b = -a - 2 }",
             "-2147483649",
@@ -1538,7 +1538,7 @@ fn a_sum_this_checker_cannot_evaluate_is_not_refused() {
 
 // --- a division by a constant zero (`NK1118`) -------------------------------
 
-/// ADR-043 D5.5. The same mechanism found the same class one operator over:
+/// ADR-285 D29.5. The same mechanism found the same class one operator over:
 /// `rustc`'s `unconditional_panic`, saying *"attempt to divide `1_i32` by
 /// zero"* about the generated file.
 #[test]
@@ -1565,7 +1565,7 @@ fn a_division_by_a_constant_zero_is_refused_here() {
 }
 
 /// A divisor this checker cannot prove is zero says nothing: that division
-/// aborts at run time, naming the Nikaia line (ADR-044).
+/// aborts at run time, naming the Nikaia line (ADR-300).
 #[test]
 fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
     for source in [
@@ -1593,7 +1593,7 @@ fn a_divisor_that_is_not_a_proven_zero_is_not_mentioned() {
 /// * `assert c` - a keyword this language does not have;
 /// * `unsafe { … }` - the same, with a block after it;
 /// * `let n = 1_000` - which *was* `1` beside the name `_000`, and is the
-///   number `1000` since [ADR-136](../../../docs/specification/adr/adr-136.md).
+///   number `1000` since [ADR-285](../../../docs/specification/adr/adr-285.md).
 ///   It stands here as `_000` alone, which is the part of that reading the
 ///   language kept: a **leading** underscore is a name.
 #[test]
@@ -1648,7 +1648,7 @@ fn a_name_something_declares_is_not_refused() {
 }
 
 /// **The three withdrawn names are ordinary names again once something declares
-/// them** ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
+/// them** ([ADR-277](../../../docs/specification/adr/adr-277.md) D2).
 ///
 /// This used to be about the opposite: a `fn { … }` declared no parameter list, so
 /// its body walked with `a` in scope nowhere, and the automatic names had to be
@@ -1674,7 +1674,7 @@ fn a_declared_a_is_an_ordinary_name() {
 
 /// **`self` is the one reserved word the grammar has to accept as a name**, and
 /// this is where declaring it is refused
-/// ([ADR-051](../../../docs/specification/adr/adr-051.md)).
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md)).
 ///
 /// Every other reserved word is excluded from the grammar's `NAME` rule, so
 /// `let fn = 3` does not parse. `self` cannot be: `self.min` refers to it, and
@@ -1713,7 +1713,7 @@ fn declaring_a_name_called_self_is_refused() {
 /// turns out to belong: `fn f(self: i64)` never parsed at all, because the
 /// receiver rule takes the word and the `: i64` has nowhere to go. It says so
 /// in a sentence now rather than *"expected `)`; found `:`"*
-/// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md) D4).
 #[test]
 fn a_parameter_called_self_is_refused_by_the_grammar() {
     let error = parse_to_ast("fn f(self: i64) -> i64 { return 1 }").expect_err("refused");
@@ -1749,19 +1749,19 @@ impl Tally {
 // --- `as` names a type this language offers (Part I 2.2) ---------------------
 
 /// `NK1122`, and the hole it closes was an **escape hatch nobody decided**
-/// ([ADR-054](../../../docs/specification/adr/adr-054.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D14).
 ///
 /// The target of an `as` went to the language below unread, so a cast named any
 /// Rust type at all and was emitted verbatim. Two things followed: a program
 /// could hold a value of a type Part I 2.2 has no word for, and `-3 as usize`
 /// became 18,446,744,073,709,551,613 — silently, in a language where a
 /// conversion that does not fit aborts. The same conversion at an index has
-/// reported as an access out of bounds since ADR-048 D1; written by hand it
+/// reported as an access out of bounds since ADR-285 D1; written by hand it
 /// reported nothing at all.
 #[test]
 fn a_cast_to_a_type_the_page_does_not_offer_is_refused() {
     // `u32` and `u64` left this list at 0.0.250: a program asked
-    // (ADR-248 D1).
+    // (ADR-285 D3).
     for into in ["usize", "isize", "u128", "i8", "i16", "i128"] {
         let (code, message) = one(&format!(
             "fn main() {{ let n: i64 = 3\n let x = n as {into} }}"

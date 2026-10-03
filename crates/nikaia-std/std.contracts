@@ -7,7 +7,7 @@
 # of: whether it may pause (`sync`), whether it may fail and with what
 # (`throws`), and what its result may point into (`returns`).
 #
-# **Every entry here names what it throws** (ADR-158 D1). That was not always
+# **Every entry here names what it throws** (ADR-280 D5). That was not always
 # so: every one of them wrote `throws = ["?"]` - *something this compiler
 # cannot name*, ADR-024 D1's absence of a claim - because these functions fail
 # with Rust's errors and no Nikaia type stood for one. Nine entries throw, and
@@ -36,7 +36,7 @@
 # what makes the column worth having: a caller that had to assume the worst
 # about `str::len` would have to own everything it ever passes.
 #
-# **Present, `sync` says which kind of promise it is** (ADR-027). `sync = true`
+# **Present, `sync` says which kind of promise it is** (ADR-288). `sync = true`
 # is one the source made and the compiler checked; `sync = "inferred"` is one
 # the body implies, derived from the calls it makes. A caller uses them
 # identically - both mean "this cannot pause" - and a *diff* must not, because
@@ -52,7 +52,7 @@
 # is still checked, and the type is not claimed because there is no one type.
 #
 # `touches` says which resources a function reaches and whether it changes them
-# (ADR-033, Part I 8.1.1). It is what lets two operations that meet on nothing
+# (ADR-292, Part I 8.1.1). It is what lets two operations that meet on nothing
 # run at the same time. **Absent means it touches everything**, which is the
 # opposite of how an absent `throws` reads and is deliberate: an effect nobody
 # described has to order against everything, or a missing contract would make a
@@ -64,31 +64,31 @@
 # two touches of different kinds never conflict, so a kind the compiler did not
 # know would be disjoint from every kind there is: a typo here would buy an
 # overlap rather than fail to buy one. A word from outside the list is answered
-# the way ADR-033 D4 answers everything it cannot read - the function reaches
+# the way ADR-292 D3 answers everything it cannot read - the function reaches
 # everything and keeps its place - and the list grows when a function needs it
-# (ADR-028 D5), never before.
+# (ADR-288 D11), never before.
 #
 # **`touches = []` is a claim about resources and not about memory.** A function
 # that changes something it was handed - `Vec::push`, `String::push_str`,
 # `HashMap::entry` - reaches no *resource*, and writing `touches = []` on it
-# would still be true in ADR-033 D2's terms and wrong to write: the ordering
+# would still be true in ADR-292 D3's terms and wrong to write: the ordering
 # analysis finds a data dependency by comparing what a statement binds against
 # what the next one mentions, and `xs.push(a)` twice binds nothing and mentions
-# `xs` in both. Memory is the borrow checker's question (ADR-033 D3) and this
+# `xs` in both. Memory is the borrow checker's question (ADR-292 D3) and this
 # analysis does not have its answer, so the functions that change what they are
 # given say nothing here and keep their order. The same goes for a function
 # that runs a lambda - `Vec::sort_by_key`, `Entry::and_modify` - where a
 # `touches = []` would be a claim about somebody else's code.
 #
 # **And `sync`'s answer to that does not transfer here.** `sync = "sync(f)"`
-# (ADR-029 D3) lets a higher-order function say "the lambda decides", sound
+# (ADR-288 D15) lets a higher-order function say "the lambda decides", sound
 # because `sync` is a fact about a whole *function* and the lambda's body is
 # walked as part of the function that writes it. `touches` is consumed per
 # **statement**, and nothing walks a lambda for an effect - so "the lambda
 # decides", read as "this call adds nothing", would buy an overlap on an
 # incomplete touch set. There is no `touches = "sync(f)"`, and the entry a
 # higher-order function would need says *add* what the lambda reaches rather
-# than assume it away (ADR-029 D3, and `contracts::order`'s `Expr::Closure`
+# than assume it away (ADR-288 D15, and `contracts::order`'s `Expr::Closure`
 # arm).
 #
 # `crosses` on a `[type."…"]` says a value of that type **may cross a thread**
@@ -177,7 +177,7 @@ touches = ["stderr write"]
 locks = true
 signature = "(text: ?)"
 
-# **A file written through a buffer** ([ADR-239](../../docs/specification/adr/adr-239.md)
+# **A file written through a buffer** ([ADR-297](../../docs/specification/adr/adr-297.md)
 # D5): the first type here whose cleanup needs I/O. `write` holds, `flush`
 # writes, and a writer nobody flushed is flushed by its cleanup where it dies -
 # which can fail, so the function that owns one can fail with it.
@@ -221,7 +221,7 @@ touches = ["file(path) write"]
 throws = ["io::IoError"]
 signature = "(mut self: ref Writer)"
 
-# **Where a value with a cleanup dies** ([ADR-239](../../docs/specification/adr/adr-239.md)
+# **Where a value with a cleanup dies** ([ADR-297](../../docs/specification/adr/adr-297.md)
 # D2). The compiler records one of these as a call wherever such a value may
 # die, and the analyses read it as they read any call: it pauses, and - where
 # the value's cleanup can fail - it fails with a `cleanup::Failure`, which names
@@ -237,7 +237,7 @@ touches = []
 throws = ["cleanup::Failure"]
 signature = "()"
 
-# **`close()`**, on any value with a cleanup (ADR-239 D3): the cleanup now, its
+# **`close()`**, on any value with a cleanup (ADR-297 D4): the cleanup now, its
 # failure this call's, and nothing owed afterwards.
 # Run the value's cleanup now, and hand back its failure as this call's.
 #
@@ -305,7 +305,7 @@ signature = "(path: ?, root: ref fs::Root) -> String"
 # symlink pointing away - is left out rather than failing the walk. It fails
 # where the directory itself cannot be read, and where a name under it is not
 # UTF-8. The names came from the program's own machine, so they are **trusted**
-# (ADR-195 D4).
+# (ADR-290 D14).
 [fn."fs::walk"]
 pub = true
 touches = ["file(path) read"]
@@ -440,15 +440,15 @@ signature = "() -> String"
 pub = true
 sync = "sync(f)"
 # The list goes in by value and a new one comes out, which is what the language
-# below's trait does; `U` is what the lambda comes to (ADR-212 D5).
+# below's trait does; `U` is what the lambda comes to (ADR-293 D20).
 signature = "[T, U](self: Vec[T], f: fn(T) -> U) -> Vec[U]"
 
 # --- Written by hand: the collections and text the language below provides ---
 #
 # `Vec`, `HashMap`, `str` and `String` are Rust's, reached through Nikaia's
 # spellings, and a compiler that does not read Rust cannot infer them. They are
-# here because ADR-028 gave them a second job: the type checker resolves
-# `xs.push(x)` only if it knows what `xs` is, and the `sync` inference (ADR-027)
+# here because ADR-288 gave them a second job: the type checker resolves
+# `xs.push(x)` only if it knows what `xs` is, and the `sync` inference (ADR-288)
 # can only vouch for a method call the checker resolved. Every one of these was
 # **observed being asked for** by a program in this repository; none is here
 # speculatively, because a wrong entry does not merely fail to help - it makes
@@ -458,7 +458,7 @@ signature = "[T, U](self: Vec[T], f: fn(T) -> U) -> Vec[U]"
 # an entry does claim is its **arity**, which is checked - so the risk of being
 # wrong here is real and the corpus is what holds it down.
 #
-# **A signature may name its receiver's type arguments** (ADR-031): `V` in
+# **A signature may name its receiver's type arguments** (ADR-288): `V` in
 # `HashMap::entry` is whatever the map holds, bound at the call site and
 # substituted away. A variable that stays unbound becomes `?`, never a name.
 # The rule for where one may appear is narrow and deliberate: **in what flows
@@ -470,11 +470,11 @@ signature = "[T, U](self: Vec[T], f: fn(T) -> U) -> Vec[U]"
 #
 # **A higher-order method says `sync = "sync(f)"`.** Whether `and_modify` pauses
 # depends on the lambda it is given, and the ledger can say "it depends" since
-# ADR-029 D3: `sync(f)` names the parameter that decides, and a caller reads it
+# ADR-288 D15: `sync(f)` names the parameter that decides, and a caller reads it
 # as "this call adds no pausing of its own". `sync = true` here would be a
 # promise about somebody else's code, and before `from` existed the honest
 # alternative was to say nothing and cost every caller its inferred `sync`.
-# The bound is ADR-029 D4: `from` is for a lambda that runs *before the call
+# The bound is ADR-288 D16: `from` is for a lambda that runs *before the call
 # returns*, because that is the only case whose calls the caller has already
 # counted. `a_detached_lambda_may_not_use_from` holds every `from` entry in this
 # file to it.
@@ -499,7 +499,7 @@ sync = true
 touches = []
 signature = "(self) -> f64"
 
-# ## Arithmetic that does not abort (ADR-043 D2, D3)
+# ## Arithmetic that does not abort (ADR-285 D6, D7)
 #
 # An overflow aborts, always (D1). These are how a program says it means
 # something else, and they are named rather than spelled with a sign: both are
@@ -507,7 +507,7 @@ signature = "(self) -> f64"
 # one would have to be written with `&`, which is borrowing here.
 #
 # **For `i32` and `i64` and no other integer type.** Part I 2.2 names those two,
-# and ADR-028 D5's rule is that an entry exists because a program asked for it:
+# and ADR-288 D11's rule is that an entry exists because a program asked for it:
 # the compiler accepts `u32` and the rest, but the specification does not offer
 # them, so entries for them would be speculation about a surface that is not
 # promised. The day Part I 2.2 grows, these grow with it.
@@ -745,7 +745,7 @@ touches = []
 signature = "(self) -> i64"
 
 # **Truncation has a name**, and the name carries the destination
-# ([ADR-043](../../docs/specification/adr/adr-043.md) D7). Since D4 a conversion
+# ([ADR-285](../../docs/specification/adr/adr-285.md) D13). Since D4 a conversion
 # that may not fit aborts, so this is the only way left to say "keep the low
 # digits" - said rather than assumed, exactly as `wrapping_` is said.
 #
@@ -756,7 +756,7 @@ signature = "(self) -> i64"
 # The sources are the two a Nikaia program can have a narrowing conversion out
 # of: the larger integer and a floating-point number. There is no
 # `truncating_f64` - nothing narrows *to* one in a program written in the types
-# Part I 2.2 offers - and there is no `truncating_usize` either, since ADR-048 D1:
+# Part I 2.2 offers - and there is no `truncating_usize` either, since ADR-285 D1:
 # a length is an `i64`, the machine-width type left the surface a program can
 # write, and nothing narrows out of a type nobody can hold.
 #
@@ -796,7 +796,7 @@ touches = []
 signature = "(self) -> i64"
 
 # **`u64` and `u32` have the arithmetic names every integer has**
-# ([ADR-248](../../docs/specification/adr/adr-248.md) D1): wrapping and stopping
+# ([ADR-285](../../docs/specification/adr/adr-285.md) D3): wrapping and stopping
 # at the limit, for the two unsigned types a program asked for. No `_neg` and no
 # `_abs`, which an unsigned number has nothing to say with.
 
@@ -942,7 +942,7 @@ sync = true
 touches = []
 signature = "(self, u64) -> u64"
 
-# **Keeping the low digits into an unsigned type** (ADR-043 D7, ADR-248 D1):
+# **Keeping the low digits into an unsigned type** (ADR-285 D13, ADR-285 D3):
 # `hash.truncating_u32()` is the low half of a `u64`, said rather than assumed.
 
 # The low 32 bits of a `u64`, as a `u32`.
@@ -988,7 +988,7 @@ signature = "[K, V](mut self: ref collections::HashMap[K, V], key: ?) -> Entry[V
 
 # `key: ?` and not `key: K`, deliberately. Rust's `get` takes anything the key
 # borrows as, so `m.get("x")` on a `HashMap[String, …]` is correct and `K`
-# would reject it. The rule is ADR-031's: a variable says what flows *out*, and
+# would reject it. The rule is ADR-288's: a variable says what flows *out*, and
 # `?` stays for what flows *in*.
 # **A key may not be there**, which is what `-> V` used to deny.
 #
@@ -1009,10 +1009,10 @@ sync = true
 touches = []
 signature = "[K, V](self: ref collections::HashMap[K, V], key: ?) -> V?"
 
-# **Written into, by name** ([ADR-215](../../docs/specification/adr/adr-215.md)
+# **Written into, by name** ([ADR-293](../../docs/specification/adr/adr-293.md)
 # D1): `m[k] = v` is this language's form, and this is the same write under the
 # name the language below gives it, for a program that wants the value it
-# replaced. The map keeps both, so both are handed over (ADR-213 D3).
+# replaced. The map keeps both, so both are handed over (ADR-293 D29).
 # Put a value in the map under this key, and hand back the one it replaced, or
 # nothing where the key was not there.
 #
@@ -1248,7 +1248,7 @@ touches = []
 signature = "[K, V](self: ref collections::HashMap[K, V]) -> Seq[ref V] sync sized"
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
-# is what `sync(f)` says (ADR-029). Sound because the lambda runs *during* the
+# is what `sync(f)` says (ADR-288). Sound because the lambda runs *during* the
 # call: its body belongs to the function that writes it, and its calls are
 # counted there. A method that **stored** its lambda could not say this.
 # Change the value that is already there, and leave an empty place alone.
@@ -1297,7 +1297,7 @@ signature = "[V](self: Entry[V], f: fn()) -> ref V"
 # ADR-042 D2 sees a container through to what it holds wherever its ledger
 # records a `deref`, and D2's own note says `Shared` is seen through "the moment
 # it has a `deref` entry, with no further decision". This is that entry. `T` is
-# bound by the receiver (ADR-031), which is why one line answers for every
+# bound by the receiver (ADR-288), which is why one line answers for every
 # `Shared` a program writes rather than for one instantiation.
 # What the handle holds.
 #
@@ -1313,7 +1313,7 @@ signature = "[T](self: ref Shared[T]) -> ref(self) T"
 # `examples/` named it as the callee nobody had described, which is what asked
 # for the entry. **The key stays `String::new`** and the spelling is `String()`
 # (ADR-140 D2): the key is what the lowering writes, and the lowering is name
-# for name (ADR-011 D2).
+# for name (ADR-296 D17).
 # Text with nothing in it. It is written `String()`.
 [fn."String::new"]
 pub = true
@@ -1321,7 +1321,7 @@ sync = true
 touches = []
 signature = "() -> String"
 
-# The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).
+# The text's UTF-8, one byte at a time ([ADR-285](../../docs/specification/adr/adr-285.md) D4).
 #
 # They are **bytes** and not characters: a character outside ASCII is more than
 # one of them. A hash is over these.
@@ -1393,7 +1393,7 @@ signature = "(self: ref Vec[?]) -> i64"
 # its length in its type (ADR-152), and below it is `[T; N]`, which has `.len()`
 # and `.is_empty()` the same as a slice does. Without these entries `xs.len()`
 # on one resolved to nothing — which lowered and ran, and cost the *enclosing*
-# function its touch set, because an unresolved call is unknown (ADR-033). The
+# function its touch set, because an unresolved call is unknown (ADR-292). The
 # visible price was a build-time body: `for i in 0..<xs.len()` made `squares`
 # uncallable from a `comptime` with *nothing says what it touches*, while the
 # same loop written `0..<5` was fine.
@@ -1469,7 +1469,7 @@ signature = "() -> Vec[?]"
 # **`drain` takes the elements away** (ADR-094 D4). A `for` lends, so the body
 # that hands an element to something which keeps it says so here - and below it
 # is `into_iter`, because what D4 writes is *removing a name from scope*.
-# A copy of the list ([ADR-215](../../docs/specification/adr/adr-215.md) D4):
+# A copy of the list ([ADR-293](../../docs/specification/adr/adr-293.md) D24):
 # written `to_owned` below, which copies a view of a list as well as a list.
 # A copy of the list, owned by whoever asked for it.
 [fn."Vec::clone"]
@@ -1521,7 +1521,7 @@ signature = "[K, V](self: collections::HashMap[K, V]) -> Seq[(K, V)] sync sized"
 # gives the 35 unanswered method calls of ADR-105 §1 somewhere to resolve.
 #
 # **And three words about the sequence as a whole**
-# ([ADR-212](../../docs/specification/adr/adr-212.md) D1): `ends` - it can be
+# ([ADR-293](../../docs/specification/adr/adr-293.md) D16): `ends` - it can be
 # walked from the back; `sized` - its length is known before it is walked;
 # `replays` - walking it does not use it up, which only a range does. In a
 # receiver's position they are a **demand** (`rev` writes `Seq[T] ends`); on a
@@ -1571,11 +1571,11 @@ touches = []
 signature = "[T](self: Seq[T], sep: ref String) -> String"
 
 # `sync = "sync(f)"` for the reason `list::ListExt::map` has it: the step is the
-# lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
+# lambda, so the caller's own claim is what decides ([ADR-288](../../docs/specification/adr/adr-288.md)
 # D3). The **result's** step words are left off for the same reason, one level
 # down: a step of this may pause exactly when the lambda may, and the type
 # language has no way to say *whatever the lambda says*. What its elements
-# **are** it does say since ADR-212 D5: `U` is what the lambda comes to.
+# **are** it does say since ADR-293 D20: `U` is what the lambda comes to.
 # Each element through a function.
 #
 # The elements are produced as they are asked for, so nothing is walked until
@@ -1598,7 +1598,7 @@ touches = []
 # more than `?`.
 signature = "[T](self: Seq[T], f: fn(T)) -> Seq[T] ends"
 
-# --- The rest of a pipeline ([ADR-212](../../docs/specification/adr/adr-212.md) D5)
+# --- The rest of a pipeline ([ADR-293](../../docs/specification/adr/adr-293.md) D20)
 #
 # None of these allocates: each is the language below's own adapter, walked one
 # element at a time, and a chain of them is one loop. `step_by`, `take`, `skip`
@@ -1752,7 +1752,7 @@ signature = "(self: ref Vec[String], sep: ref String) -> String"
 # **Putting a value in at a position** (0.0.355). Nothing described it, so
 # `out.insert(at, n)` with an `i64` position reached `rustc` as *expected
 # `usize`, found `i64`* about a generated file; the position is converted as
-# `chunks`' count is (ADR-212 D5).
+# `chunks`' count is (ADR-293 D20).
 # Put a value in at a position, moving everything from there on one further.
 #
 # The list **keeps** the value, so what is handed over is given away rather
@@ -1768,7 +1768,7 @@ signature = "[T](mut self: ref Vec[T], at: i64, value: T)"
 # D8 step 1): without it a list of `n` zeros was `n` pushes, which cost the
 # solver's big-integer kernel 4 % and its watch lists 8 % against the same
 # loop in Rust (`docs/solver-workload.md` §8). The length is converted as
-# `insert`'s position is (ADR-212 D5).
+# `insert`'s position is (ADR-293 D20).
 # Make the list `length` long: cut it there, or add `value` at the end until
 # it is.
 #
@@ -1804,13 +1804,13 @@ sync = true
 touches = []
 signature = "(mut self: ref Vec[?])"
 
-# Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
+# Part II 12.2's four doors ([ADR-281](../../docs/specification/adr/adr-281.md)).
 # Written down so the checker can resolve them: without an entry a call is "a
 # method nothing describes", which costs the value its plain shape - and 12.2's
 # own idiom cannot be `sync`, which `docs/mutex-floor.md` §3.1 found before these
 # existed.
 #
-# `sync = "sync(f)"` (ADR-029 D3) on the two that take a lambda: the lambda
+# `sync = "sync(f)"` (ADR-288 D15) on the two that take a lambda: the lambda
 # decides, which is the whole of ADR-005 D6's rule - the door itself never
 # pauses, and what runs inside it is the caller's own code. Waiting to acquire is
 # not pausing: the rule is about a suspension point while a lock is *held*, and
@@ -1818,7 +1818,7 @@ signature = "(mut self: ref Vec[?])"
 #
 # `get` and `set` carry no `sync` line and need none, for a stronger reason than
 # the other two have: while the lock is open in either, no code of the user's
-# runs at all (ADR-039 D10).
+# runs at all (ADR-281 D10).
 # A copy of what the lock holds.
 #
 # What comes back is **stamped**: it carries where it came from, so a `set`
@@ -1843,7 +1843,7 @@ locks = true
 signature = "[T](self: ref Locked[T], value: T)"
 
 
-# **The one door for a stamped value** (ADR-111 D5). `kasse.set(neu; after:
+# **The one door for a stamped value** (ADR-281 D26). `kasse.set(neu; after:
 # stand)` is a different operation from `set` - it compares and may fail - so it
 # is a different entry, and its key is spelled the way it is *written* rather
 # than the way it lowers: `set(after)` is not a method name a program can write,
@@ -1873,7 +1873,7 @@ keeps = ["value"]
 locks = true
 signature = "[T](self: ref Locked[T], value: T, seen: ref T)"
 
-# **Reads in place and may not change what it is handed** (ADR-059 D1): the one
+# **Reads in place and may not change what it is handed** (ADR-281 D11): the one
 # door that answers a question about a large value without copying it.
 # Read what the lock holds, in place, without copying it.
 #
@@ -1905,21 +1905,21 @@ sync = "sync(f)"
 locks = true
 signature = "[T](self: ref Locked[T], f: fn(T))"
 
-# `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
+# `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-281 D3): a value
 # several parts own at once and any of them may change. **It is one name here and
-# two hulls below** (ADR-064 D1) - the count and the lock - and the name is what
+# two hulls below** (ADR-281 D1) - the count and the lock - and the name is what
 # the checker, this ledger and every message carry; only the emitter expands it.
 #
 # **The four doors are the same four** — and the witness door with them
-# (ADR-111 D5) — so these entries are `Locked`'s with one name changed. They are here rather than reached through a `deref` because there
+# (ADR-281 D26) — so these entries are `Locked`'s with one name changed. They are here rather than reached through a `deref` because there
 # is no `&` straight through a lock (Part I 6.2): you get in by opening it, and
 # then what the lambda sees is an ordinary view.
 #
 # There is no constructor entry for the same reason there is none for `Locked` or
-# `Shared`: this ledger's type language binds `T` from the **receiver** (ADR-031),
+# `Shared`: this ledger's type language binds `T` from the **receiver** (ADR-288),
 # and a constructor has none - the type argument would have to come from what is
 # handed in. So `SharedMut(0)` is the compiler's to type, the way `T?`'s `Some(…)`
-# is (ADR-064 D2).
+# is (ADR-281 D2).
 # A copy of what this value holds.
 #
 # What comes back is **stamped**: it carries where it came from, so a `set`
@@ -1976,17 +1976,17 @@ touches = ["lock write"]
 sync = "sync(f)"
 signature = "[T](self: ref SharedMut[T], f: fn(T))"
 
-# **The two doors over several locks** (Part II 12.3, ADR-065). They take the
+# **The two doors over several locks** (Part II 12.3, ADR-281). They take the
 # locks and then the block, and the acquisition order is by address so that two
 # tasks naming the same two locks the other way round still take them alike.
 #
-# **No `signature`, and that is the decision rather than a gap** (ADR-065 D1).
-# This ledger's type language binds `T` from a receiver (ADR-031); a door over
+# **No `signature`, and that is the decision rather than a gap** (ADR-281 D17).
+# This ledger's type language binds `T` from a receiver (ADR-288); a door over
 # several locks has none, the locks hold different types, and how many there are
 # is open. So the compiler types these itself, the way it types `SharedMut(0)`.
 # What the ledger *can* say is the `sync` column, and that is the half a caller
 # needs: an acquisition adds no pausing of its own, so the block decides - the
-# same shape `access` has, for the same reason (ADR-029 D3).
+# same shape `access` has, for the same reason (ADR-288 D15).
 # Read several locked values at once, in place.
 #
 # The locks are taken in one order however they are written, so two tasks
@@ -2016,7 +2016,7 @@ pub = true
 sync = "sync(f)"
 signature = "[T](mut self: ref Vec[T], f: fn(ref T)) -> ?"
 
-# The text's UTF-8, one byte at a time ([ADR-248](../../docs/specification/adr/adr-248.md) D6).
+# The text's UTF-8, one byte at a time ([ADR-285](../../docs/specification/adr/adr-285.md) D4).
 #
 # They are **bytes** and not characters: a character outside ASCII is more than
 # one of them. A hash is over these.
@@ -2058,8 +2058,8 @@ touches = []
 signature = "(self: ref String) -> bool"
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
-# (ADR-054 D2). The conversion is emitted at the call and a negative count
-# aborts saying so - the parameter direction of ADR-048 D1, which that record
+# (ADR-285 D15). The conversion is emitted at the call and a negative count
+# aborts saying so - the parameter direction of ADR-285 D1, which that record
 # left open and named this entry as the one site it had.
 # The text written `n` times, one after another.
 #
@@ -2222,7 +2222,7 @@ sync = true
 touches = []
 signature = "(self: ref String) -> ref(self) String"
 
-# **What cuts text into views says so** ([ADR-225](../../docs/specification/adr/adr-225.md)
+# **What cuts text into views says so** ([ADR-282](../../docs/specification/adr/adr-282.md)
 # D1). Each hands back views into the text it is called on, which is what lets
 # the checker ask whether one is kept where text of its own is wanted. A
 # `String` receiver finds these as well: text of its own lends itself as a view.
@@ -2277,9 +2277,9 @@ signature = "(self: ref String) -> Seq[ref(self) String] sync ends"
 # --- Inferred from `src/*.nika` ----------------------------------------------
 
 # `touches = []` is a **claim** and not a blank: it reaches nothing, so it orders
-# against nothing (ADR-033 D4). It is written here because this entry is checked
+# against nothing (ADR-292 D3). It is written here because this entry is checked
 # against the `.nika` source that produces it, and `touch::infer` reads that body
-# and answers the same ([ADR-067](adr-067) D2) - the two must agree.
+# and answers the same ([ADR-288](adr-067) D2) - the two must agree.
 # The value of a decimal digit: `'7'` is `7`.
 #
 # A character that is not a digit is not a question this answers: it hands
@@ -2308,7 +2308,7 @@ signature = "(text: ref String) -> i64?"
 # cross a thread** (`crosses`, ADR-005 §1 Group B). Its parts are Rust, so
 # `contracts::send` cannot walk them and would answer "nobody said" - which is
 # not permission, and would have cost `cli::args` the overlapping that the
-# `touches` line above bought it (ADR-033 §8.1). The claim is a promise about a
+# `touches` line above bought it (ADR-292). The claim is a promise about a
 # Rust type, written here and reviewed like code, exactly as `sync = true` is.
 # **Text a C library owns**
 # ([ADR-147](../../docs/specification/adr/adr-147.md) D4). An opaque handle with
@@ -2349,7 +2349,7 @@ pub = true
 sync = true
 touches = []
 # The doc below already said it: *the same failure `fs::read_to_string` has*.
-# Since ADR-158 D1 that failure has a name, so this says it in the column too.
+# Since ADR-280 D5 that failure has a name, so this says it in the column too.
 throws = ["io::IoError"]
 signature = "(self) -> String"
 
@@ -2390,7 +2390,7 @@ compares = true
 # variant names only by the path a program wrote, and `fs::Root::Dir("site")`
 # reached `rustc` as a `&str` where `fs.rs` declares `Dir(String)`: the literal
 # is made a `String` of its own only where the checker knows the payload is one
-# (ADR-207 D2), and for a `std` enum it knows that from this column alone.
+# (ADR-282 D4), and for a `std` enum it knows that from this column alone.
 variants = ["Dir(String)", "Anywhere"]
 
 # A file held as memory: the pages arrive as they are touched rather than being
@@ -2399,7 +2399,7 @@ variants = ["Dir(String)", "Anywhere"]
 # It reads as text through the ordinary `ref String` surface.
 [type."fs::Mapped"]
 pub = true
-# **Reading it is a page fault** (ADR-169 D1): the pages arrive as they are
+# **Reading it is a page fault** (ADR-281 D34): the pages arrive as they are
 # touched, so `mapped[i]` is a disk read with no call in the source to hang a
 # `touches` on. It neither suspends nor takes a lock, which is why neither
 # `NK2202` nor `NK2203` has anything to say about it and `NK2201` does.
@@ -2433,14 +2433,14 @@ compares = true
 # `NK1151` asked for an `else` on a `match` that had covered every variant — a
 # correct program refused, with a way out that makes *this type gaining a
 # variant* silent forever after, which is the one thing
-# [ADR-146](../../docs/specification/adr/adr-146.md) D1 exists to prevent.
+# [ADR-291](../../docs/specification/adr/adr-291.md) D19 exists to prevent.
 #
 # Each carries what it was about, which is
-# [ADR-158](../../docs/specification/adr/adr-158.md) D1's *the variant is the
+# [ADR-280](../../docs/specification/adr/adr-280.md) D5's *the variant is the
 # kind and it carries the thing*.
 variants = ["NotFound(String)", "PermissionDenied(String)", "NotText(String)", "Outside(String)", "Other(String)"]
 
-# **What a parse fails with** ([ADR-173](../../docs/specification/adr/adr-173.md)
+# **What a parse fails with** ([ADR-296](../../docs/specification/adr/adr-296.md)
 # D1), and the end of the last `"?"` in this tree. A `dsl` entry rule's ledger
 # entry wrote `throws = ["?"]` because a parse fails with a rendered string and
 # a string is not a type; seven of the corpus' eight `main`s carried that into
@@ -2505,7 +2505,7 @@ pub = true
 # way of saying it can pause - and the emitter turns that into the `.await`
 # (ADR-055 D2).
 #
-# `T` is bound by the receiver (ADR-031), so one line answers for every
+# `T` is bound by the receiver (ADR-288), so one line answers for every
 # `TaskHandle` a program writes. It takes `self` by value because a value can
 # only be joined once.
 #
@@ -2521,8 +2521,8 @@ pub = true
 signature = "[T](self: TaskHandle[T]) -> T"
 
 # **One mechanism, said three ways rather than three things**
-# ([ADR-148](../../docs/specification/adr/adr-148.md) D3): a program's own
-# cancel, a `select`'s loser and ADR-129's C `cancel` do the same thing to a
+# ([ADR-292](../../docs/specification/adr/adr-292.md) D14): a program's own
+# cancel, a `select`'s loser and ADR-284's C `cancel` do the same thing to a
 # task - it stops at its current pause point, its values are torn down, and a
 # `cleanup` that pauses is adopted by the runtime.
 #
@@ -2558,7 +2558,7 @@ pub = true
 #
 # **The language learns nothing here** (D4): no keyword, no suffix literal, no
 # type in the grammar. What it costs is this block - one type, ten methods and
-# one call - and the reason it is ten rather than five is ADR-048's two integer
+# one call - and the reason it is ten rather than five is ADR-285's two integer
 # types: `5` is an `i32` where nothing asks otherwise and `count.minutes()` on a
 # length is an `i64`, so a file holding both needs both halves or one of the two
 # is refused in the language below's words (Part III C.1).
@@ -2674,12 +2674,12 @@ signature = "(span: time::Duration)"
 # --- Message passing (ADR-149) -----------------------------------------------
 #
 # **No language construct** (D1): two values, two methods, and the tuple `let`
-# that binds them was already built (ADR-098). What this block costs is four
+# that binds them was already built (ADR-291). What this block costs is four
 # entries.
 #
 # `-> (Sender[T], Receiver[T])` names the shape a `let` destructures. The
 # variable stays unbound - nothing at the call says what the channel carries -
-# so it becomes `?`, which is ADR-031's rule and is enough: what the two methods
+# so it becomes `?`, which is ADR-288's rule and is enough: what the two methods
 # need from it is the *type name*, so that `tx.send(…)` resolves to the entry
 # below and takes the `.await` its missing `sync` line asks for.
 # A channel of `capacity` values, and its two ends.
@@ -2771,11 +2771,11 @@ pub = true
 
 # --- `process`: another program, started and waited for (ADR-243) ----------
 #
-# [ADR-195](../../docs/specification/adr/adr-195.md) D4 put a subprocess in
+# [ADR-290](../../docs/specification/adr/adr-290.md) D14 put a subprocess in
 # `std` on the socket's own argument: an operating-system resource, not a
 # protocol. **No `touches`**, which is the claim that it touches everything: a
 # child may write any file this program reads, so it keeps its place against
-# every other effect (ADR-033 D4's reading of an absent column).
+# every other effect (ADR-292 D3's reading of an absent column).
 #
 # **What it hands back is `untrusted`**: the program that ran may have printed
 # what somebody else sent it, and a map keyed on its output is hashed with the
@@ -2794,7 +2794,7 @@ fields = ["pub code: i64", "pub ok: bool", "pub stdout: String", "pub stderr: St
 # **`args: Vec[String]`, handed over**, and not `?`: an empty list has no
 # element type of its own, and a parameter that names none left `run("pwd", [])`
 # for `rustc` to guess at (ADR-135 D2 - the use answers it). A list of literals
-# is built into text of its own where it is kept (ADR-207 D2), so the ordinary
+# is built into text of its own where it is kept (ADR-282 D4), so the ordinary
 # call is written as it reads.
 # Start a program, wait for it to finish, and hand back what it said.
 #
@@ -2811,9 +2811,9 @@ provenance = "untrusted"
 keeps = ["args"]
 signature = "(program: ref String, args: Vec[String]; dir: ref String = \".\") -> process::Output"
 
-# --- `net`: the socket `std` lends (ADR-194 D1) ------------------------------
+# --- `net`: the socket `std` lends (ADR-289 D6) ------------------------------
 #
-# [ADR-069](../../docs/specification/adr/adr-069.md) D2's subtraction carried one
+# [ADR-289](../../docs/specification/adr/adr-289.md) D2's subtraction carried one
 # item further: what was pushed out of `std` is the *protocol and the framework*,
 # and a socket is neither - it is an operating-system resource of exactly the kind
 # `fs` and `io` already own. The `http` package is Nikaia and cannot syscall, so
@@ -2822,7 +2822,7 @@ signature = "(program: ref String, args: Vec[String]; dir: ref String = \".\") -
 # **`touches` says `socket` and never which socket**, for the reason `lock` says
 # `lock`: a listener could be named by its address and a *connection* is what a
 # program actually touches, and telling two of those apart is the alias analysis
-# ADR-039 D4 refuses to make a program's compilation depend on. Two reads do not
+# ADR-281 D30 refuses to make a program's compilation depend on. Two reads do not
 # conflict - reads never do - and a write orders against every socket touch.
 #
 # **Nothing here is `sync`**, and that is the point: `accept`, `read` and `write`
@@ -2931,17 +2931,17 @@ sync = true
 touches = ["socket write"]
 signature = "(self: Connection)"
 
-# --- `http1`: HTTP/1.1's text half (ADR-194 D5) -------------------------------
+# --- `http1`: HTTP/1.1's text half (ADR-289 D13) -------------------------------
 #
 # **Not named `http`**, and that is not a taste: a program reaches a *package* by
-# that word (ADR-069 D1), and a `std` module of the same name would make
+# that word (ADR-289 D1), and a `std` module of the same name would make
 # `http::Response` mean two things. This file's own note about a crate's word
 # colliding with a module's says what that day costs; this is the day not to
 # create one.
 #
 # **The parser is Rust and moving it into a Nikaia grammar is a later step**
 # (D5): self-hosting the protocol is not the MVP, and the route it will take is
-# ADR-196 D2's.
+# ADR-290 D17's.
 #
 # `sync = true` on all of it: this is text handling over bytes that are already
 # there. It cannot pause and it reaches no resource, which is what lets a server
@@ -3048,7 +3048,7 @@ sync = true
 touches = []
 signature = "(self: ref Head) -> ref(self) String"
 
-# The path, **without** the query string, and **not decoded** (ADR-018 D4, which
+# The path, **without** the query string, and **not decoded** (ADR-289 D20, which
 # writes `path()` and `query()` as two things).
 [fn."http1::Head::path"]
 pub = true
@@ -3066,7 +3066,7 @@ sync = true
 touches = []
 signature = "(self: ref Head) -> ref(self) String"
 
-# **`String?` and not an empty string** (ADR-018 D4: *Kap 3.5's nullable*): a name
+# **`String?` and not an empty string** (ADR-289 D20: *Kap 3.5's nullable*): a name
 # the client did not write and one it wrote empty are two different facts, and a
 # server that read them as one would answer a question nobody asked.
 # What the query string says under this name, or nothing where it says nothing.
@@ -3083,7 +3083,7 @@ signature = "(self: ref Head, name: ?) -> ref(self) String?"
 
 # What the client sent under this name, or nothing where it sent none.
 #
-# **Case-insensitive, as the protocol is** (ADR-018 D4). Where a client sent the
+# **Case-insensitive, as the protocol is** (ADR-289 D20). Where a client sent the
 # same name twice this is the **first**: joining them with a comma is what the
 # protocol says a *list-valued* header means, and which headers those are is not
 # something this module knows.

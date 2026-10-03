@@ -1,4 +1,4 @@
-# **The Rust the toolchain's own Nikaia reads** (ADR-252 D4.3), described as
+# **The Rust the toolchain's own Nikaia reads** (ADR-294 D9.3), described as
 # `nikaia describe` describes a crate for a program: a claim reviewed like
 # code. `nikaia lower-std` checks a module of `src/tools/` against `std`'s
 # ledger and this one; a program never reads it.

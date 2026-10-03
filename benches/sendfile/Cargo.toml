@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 # `sendfile(2)`, `mmap(2)` and `F_SETPIPE_SZ`. Not a dependency of `std` and
 # not proposed as one: this crate measures the mechanisms a future
-# `std::http` might pick between, and the picking is what ADR-058 decides.
+# `std::http` might pick between, and the picking is what ADR-289 decides.
 libc = "0.2"
 
 # ADR-038 D3's completion half, target-gated exactly as `nikaia-std` gates it:

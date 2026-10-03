@@ -3,7 +3,7 @@
 // **The `html` template DSL (ADR-017), split where the template is written.**
 //
 // The fifth piece of the compiler moved from Rust to Nikaia (0.0.252), by
-// ADR-196's route and on ADR-250's road: lowered ahead of time by
+// ADR-290's route and on ADR-294's road: lowered ahead of time by
 // `nikaia lower-std` to `template.rs` beside it, `include!`d as
 // `nikaia_std::tools::template`, and called from the compiler's
 // `emit::template`, which is left holding the conversion to its own error type.
@@ -92,7 +92,7 @@ pub enum Segment {
     ///
     /// Written as an *element* because the file is markup and an editor that
     /// highlights it keeps working. The collection carries `:` because it is
-    /// captured from the enclosing scope (ADR-007 D4) - the colon is where the
+    /// captured from the enclosing scope (ADR-296 D4) - the colon is where the
     /// template's names end and the program's begin.
     For { binding: String, collection: String, body: Vec[Segment] },
 }
@@ -291,7 +291,7 @@ impl Splitter {
         let binding = words[0].clone()
         let written = words[2].clone()
         if !written.starts_with(":") {
-            throw Refused::Because(f"`{written}` is captured from the enclosing scope, so it is written `:{written}` - the colon is where the template's names end and the program's begin (ADR-007 D4)")
+            throw Refused::Because(f"`{written}` is captured from the enclosing scope, so it is written `:{written}` - the colon is where the template's names end and the program's begin (ADR-296 D4)")
         }
         let mut collection: String = ""
         let mut first = true

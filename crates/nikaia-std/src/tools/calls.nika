@@ -1,9 +1,9 @@
 // crates/nikaia-std/src/tools/calls.nika
 //
 // **What a call resolves to, by one rule for every analysis** - the compiler's
-// `contracts::sync::reached`, moved from Rust (ADR-250, #125). `sync`,
+// `contracts::sync::reached`, moved from Rust (ADR-294, #125). `sync`,
 // `throws` and `touches` each walk a body and ask this of every expression;
-// ADR-028 recorded what two answers would cost - two analyses that have to
+// ADR-288 recorded what two answers would cost - two analyses that have to
 // agree about what `stats.add(5)` goes to, and eventually do not.
 //
 // What stays Rust is the walk that hands it each expression: it reads the
@@ -22,7 +22,7 @@ pub enum Callee {
     Library { key: String, never_pauses: bool },
     /// A method call: `stats.add(5)` names `add` and says nothing about what
     /// `stats` is. Not "unknown" but **asked elsewhere** - the type checker
-    /// resolves the receiver (ADR-028), and each analysis merges its answer.
+    /// resolves the receiver (ADR-288), and each analysis merges its answer.
     Method,
     /// A call nobody can name: a name no ledger knows (`null` where there is
     /// no name at all), or a construct that runs something - `spawn`, a `dsl`

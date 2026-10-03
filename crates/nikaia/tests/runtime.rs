@@ -176,7 +176,7 @@ fn one_binary_runs_on_both_mechanisms_and_prints_the_same_thing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **[ADR-050](../../../docs/specification/adr/adr-050.md) D2, end to end: an
+/// **[ADR-292](../../../docs/specification/adr/adr-292.md) D2, end to end: an
 /// `overlap` prints what the sequential program printed.**
 ///
 /// The claim the whole construct rests on is that putting two reads in flight
@@ -216,7 +216,7 @@ fn an_overlap_prints_what_the_sequential_program_printed() {
     let sequential = lower(&in_order, READS_AND_WRITES, &[]);
     assert!(
         !sequential.contains("task::overlap"),
-        "a program that did not ask must not overlap (ADR-050 D1):\n{sequential}"
+        "a program that did not ask must not overlap (ADR-292 D1):\n{sequential}"
     );
 
     let overlapped = build(&together, READS_OVERLAPPED, &[]);
@@ -273,7 +273,7 @@ fn the_emitted_main_starts_the_runtime_before_the_program() {
     );
     assert!(
         entry.find("__nikaia_main()").unwrap() < entry.find("finish()").unwrap(),
-        "the drain has to be after the program's last statement (ADR-006 D5)"
+        "the drain has to be after the program's last statement (ADR-297 D6)"
     );
 
     std::fs::remove_dir_all(&dir).ok();

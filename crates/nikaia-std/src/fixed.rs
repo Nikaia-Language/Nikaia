@@ -13,7 +13,7 @@
 //!
 //! Which buys three things. A `Fixed` is a **value** a program may pass and
 //! store. The emitter stays one that knows no types
-//! ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), because there is
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), because there is
 //! nothing to write but a `const`. And the threshold lives in the data — a
 //! table with no displacements is a small one — rather than as a branch in the
 //! compiler.

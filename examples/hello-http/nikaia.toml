@@ -1,4 +1,4 @@
-# The consumer that exercises ADR-069 D1's path arm for a **Nikaia** package.
+# The consumer that exercises ADR-289 D1's path arm for a **Nikaia** package.
 #
 # The `type = "rust"` arm has `examples/foreign-runtime/`; this is the other
 # one, and until this directory existed nothing in the corpus wrote it.
@@ -10,7 +10,7 @@ version = "0.1.0"
 user-parallelism = "no"
 
 # **A path is relative to this file**, whichever arm of `[dependencies]` it is
-# in ([ADR-197](../../docs/specification/adr/adr-197.md) D1). The two used to be
+# in ([ADR-286](../../docs/specification/adr/adr-286.md) D16). The two used to be
 # resolved against different things - a Nikaia package against this directory
 # and a Rust crate against the *generated* manifest - which is why
 # `examples/foreign-runtime/serve` climbed four levels and this one climbs one,

@@ -82,7 +82,7 @@ fn a_rejected_frame_is_reported_on_the_nika_line_that_caused_it() {
     let error = &errors[0];
 
     // The backend's message is already about the Nikaia source, because the
-    // lowering is name for name (ADR-011 D2) - `NAME` and `MEASUREMENT` are
+    // lowering is name for name (ADR-296 D17) - `NAME` and `MEASUREMENT` are
     // the user's own rule names. Only the position had to be corrected.
     assert!(
         error.message.contains("until"),
@@ -235,7 +235,7 @@ fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
 /// A note that tells the reader about **Rust** rather than about their program
 /// is dropped; one they can act on is kept.
 ///
-/// ADR-012: a diagnostic is about the `.nika` file the user wrote. Most of what
+/// ADR-300: a diagnostic is about the `.nika` file the user wrote. Most of what
 /// the backend says survives translation because it is true in either language -
 /// a literal that does not fit a range does not fit it here either. Two classes
 /// do not, and the test for both is whether the reader can act on it: a lint
@@ -248,7 +248,7 @@ fn a_trait_bound_error_from_cargo_is_placed_in_the_nika_file() {
 ///
 /// **One of them stopped being kept.** *"consider using the type `u32`"* was
 /// kept on the same ground - it compiles - and
-/// [ADR-048](../../../docs/specification/adr/adr-048.md) D2 took it away: the
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D2 took it away: the
 /// numeric surface is the one Part I 2.2 names, and `u32` is deliberately not on
 /// it. A remedy that works is kept; one that leads out of the language is not.
 #[test]
@@ -272,7 +272,7 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
         ),
         // Dropped: a remedy in a type the specification does not offer. It was
         // kept here once, checked - `let x: u32 = 3000000000` compiles - and
-        // ADR-048 D2 is what changed: the numeric surface is the one Part I 2.2
+        // ADR-285 D2 is what changed: the numeric surface is the one Part I 2.2
         // names, and `u32` is deliberately not on it. The answer here is `i64`,
         // or a use that widens the literal.
         ("consider using the type `u32` instead", false),

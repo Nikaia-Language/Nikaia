@@ -1,4 +1,4 @@
-# The `http` package (ADR-069 D1).
+# The `http` package (ADR-289 D1).
 #
 # It is here rather than in `std` because a keyword's worth of the argument is
 # this: subtract what needs the compiler - the untrusted-path rule, escaping by

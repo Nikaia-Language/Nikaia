@@ -14,7 +14,7 @@
 //!
 //! *And the record's own §5 said it could not be built yet* — *`std.contracts`
 //! writes `throws = ["?"]` on every entry, so there is no set to diff*. That
-//! stopped being true when [ADR-158](../../../docs/specification/adr/adr-158.md)
+//! stopped being true when [ADR-280](../../../docs/specification/adr/adr-280.md)
 //! gave `std` its error type: the file has nine `throws` lines now, seven of
 //! them `io::IoError` and two `Overtaken`, and **not one** is `["?"]`. What is
 //! left of that spelling is a **grammar** rule's entry, which is

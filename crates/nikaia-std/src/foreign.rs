@@ -25,7 +25,7 @@
 /// `#[track_caller]` so that the location the panic hook is handed is the
 /// **caller's** — the line of the generated file that made the call — and not a
 /// line of this file, which
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table would have
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D9's table would have
 /// nothing to look up for.
 #[cold]
 #[inline(never)]

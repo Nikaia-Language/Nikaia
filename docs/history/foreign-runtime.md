@@ -7,8 +7,8 @@
 (which asked for this early), [ADR-002](../specification/adr/adr-002.md) D1 (the crates.io promise),
 [ADR-037](../specification/adr/adr-037.md) D2/D3 and §3 (`user_parallelism`, `Shared`, the structural
 `Send` check), [ADR-005](../specification/adr/adr-005.md) D7 and §1 Group B (where that check was
-decided), [ADR-006](../specification/adr/adr-006.md) D3 (a cancelled cleanup parks with *our*
-runtime), [ADR-033](../specification/adr/adr-033.md) D4 (fail-closed `touches`)
+decided), [ADR-006](adr/adr-006.md) D3 (a cancelled cleanup parks with *our*
+runtime), [ADR-033](adr/adr-033.md) D4 (fail-closed `touches`)
 **The programs:** [`examples/foreign-runtime/`](../../examples/foreign-runtime), driven by
 `crates/nikaia/tests/foreign_runtime.rs`
 
@@ -93,7 +93,7 @@ fn main() {
 about, because "Nikaia cannot call Rust" would be the wrong lesson — it can, directly, with no
 annotation and no `extern` block at all. `hyper_shim::serve_once(18080)` lowers to
 `hyper_shim::serve_once(18080)`, because Stage 0 lowers name for name
-([ADR-011](../specification/adr/adr-011.md) D2) and a qualified path is emitted as written. The
+([ADR-011](adr/adr-011.md) D2) and a qualified path is emitted as written. The
 generated Rust is an ordinary crate in an ordinary Cargo package, so any Rust function whose
 signature Nikaia can *spell* is callable.
 
@@ -209,7 +209,7 @@ and ADR-037 §3 all exist to prevent, arriving through a foreign call rather tha
 > **Both halves above went stale, and the correction is kept beside them rather than written over
 > them**, because what this page is for is the finding and the finding includes how it was reasoned.
 >
-> **`Shared` is built.** [ADR-064](../specification/adr/adr-064.md) gave the shared mutable type its
+> **`Shared` is built.** [ADR-064](adr/adr-064.md) gave the shared mutable type its
 > name and constructor, and Part II 12.2's counter compiles and runs at both settings. So *"Nikaia
 > has no `Rc` to send"* is no longer the reason the answer is no.
 >
@@ -270,7 +270,7 @@ It is refused. Four things about *how* are the finding:
 
 `crates/nikaia/src/diagnostics/translate` maps a byte offset in the emitted Rust back to the
 `.nika` span that produced it, through `emit::SourceMap`
-([ADR-012](../specification/adr/adr-012.md)). Fed the same `rustc` JSON by hand, it does the right
+([ADR-012](adr/adr-012.md)). Fed the same `rustc` JSON by hand, it does the right
 thing:
 
 ```text
@@ -304,7 +304,7 @@ crossed: not Send (refcount 1) on tokio-rt-worker, called from main
 
 Nikaia contributes nothing to this outcome, and nothing to the previous one either: the whole of
 D7's first rule is, today, whatever `Send` bound the foreign crate's author happened to write.
-[ADR-033](../specification/adr/adr-033.md) D4 already names this case for the *ordering* question —
+[ADR-033](adr/adr-033.md) D4 already names this case for the *ordering* question —
 "anything reached through `unsafe`" — and it is the same case here. What is worth being explicit
 about is that **a structural `Send` check in the frontend would not have caught this one either**:
 the value it would check is `Send`-by-declaration at the point Nikaia can see it. Only the callee's
@@ -320,14 +320,14 @@ the foreign crate is honest, and a note to that effect belongs next to it.
 > across is a cleanup that may never run.
 > — [ADR-038](../specification/adr/adr-038.md) D7
 
-[ADR-006](../specification/adr/adr-006.md) is unbuilt, so this cannot be run. The argument below is
+[ADR-006](adr/adr-006.md) is unbuilt, so this cannot be run. The argument below is
 the deliverable. It concludes that **the rule is right and its stated reason is the least of five**,
 and that a cheaper alternative to refusal exists which ADR-038 did not consider.
 
 ### 4.1 What goes wrong, in order of severity
 
 **(a) On the ordinary path, `cleanup()` is never called at all — and that is worse than the
-cancellation case D7 names.** [ADR-006](../specification/adr/adr-006.md) D1 inserts `cleanup()` on
+cancellation case D7 names.** [ADR-006](adr/adr-006.md) D1 inserts `cleanup()` on
 every exit path *of a Nikaia block*, during lowering. A value handed to a foreign function leaves
 Nikaia's control flow at that call: the frontend sees a `let` and a call, and whatever eventually
 destroys the value is Rust the frontend never lowered. So there is no inserted `cleanup().await`,
@@ -337,7 +337,7 @@ Rust's `Drop` runs, which is `drop()`, the last-resort synchronous fallback. Par
 reason — the parked queue not being drained — is about *cancellation*; this is the normal case and
 it fails earlier and more completely.
 
-**(b) D5's shutdown drain cannot even report it.** [ADR-006](../specification/adr/adr-006.md) D5 waits
+**(b) D5's shutdown drain cannot even report it.** [ADR-006](adr/adr-006.md) D5 waits
 at exit for "parked cleanups and detached tasks", and on expiry warns, "naming every resource that
 did not finish cleanly" (`NK2603`). A value owned by a foreign task is neither a parked cleanup nor
 a detached task. The drain is satisfied, the deadline is not exceeded, the program exits `0`, and
@@ -345,7 +345,7 @@ the warning that exists precisely to prevent silent data loss has nothing to nam
 invisible by construction**, which is the property that makes it worse than a hang.
 
 **(c) The `throws` obligation is accounted for at a scope exit that never happens.**
-[ADR-006](../specification/adr/adr-006.md) D4 makes the inserted `cleanup()` a real call site: a
+[ADR-006](adr/adr-006.md) D4 makes the inserted `cleanup()` a real call site: a
 `cleanup()` that declares `throws IoError` gives the enclosing function a `throws` it did not write
 (`NK2601`), and the ledger records it. Hand the value to a foreign call and the enclosing function
 keeps the obligation in its signature while the call that justified it is gone. Worse, if the
@@ -359,7 +359,7 @@ the two records collide mechanically rather than in bookkeeping. `cleanup()` is 
 function, so in the lowered program it is a future whose wakers come from *our* runtime — and
 [ADR-038](../specification/adr/adr-038.md) D3/D4 put those completions on our I/O thread, on
 `io_uring` where the machine has it. A `tokio` task polling that future is a second runtime nested
-inside the first. [ADR-006](../specification/adr/adr-006.md) D5's own "honest limit" already names the
+inside the first. [ADR-006](adr/adr-006.md) D5's own "honest limit" already names the
 shape of what follows: *"FFI that blocks the thread rather than pausing will block a single-threaded
 event loop and with it the deadline timer."* A cleanup awaiting our runtime from inside a foreign
 task is that hazard with the arrow reversed, and the thing it can stall is the timer that is
@@ -399,7 +399,7 @@ Three notes on building it:
   ([ADR-024](../specification/adr/adr-024.md)) are the raw material and nothing reads them that way.
 
 The diagnostic belongs next to `NK2602` and has a way out that already exists —
-[ADR-006](../specification/adr/adr-006.md) D4's explicit `close()`, which consumes the resource and
+[ADR-006](adr/adr-006.md) D4's explicit `close()`, which consumes the resource and
 returns the error normally:
 
 ```text
@@ -442,7 +442,7 @@ down as rejected rather than unconsidered.
 
 > What needs no rule: the ledger knows nothing about a foreign crate's effects, so `touches` is
 > absent, so it reaches everything and orders against everything
-> ([ADR-033](../specification/adr/adr-033.md) D4). Fail-closed polarity means interop cannot silently
+> ([ADR-033](adr/adr-033.md) D4). Fail-closed polarity means interop cannot silently
 > break the ordering guarantee — it only makes programs that use it slower.
 > — [ADR-038](../specification/adr/adr-038.md) D7
 
@@ -469,7 +469,7 @@ pair with a foreign call in it is kept in order, and the reason given is the abs
 not something that happens to coincide with it. The emitter agrees: exactly one overlap in the
 lowered program, inside `control`.
 
-*(Updated for [ADR-033](../specification/adr/adr-033.md) D10. That overlap was a `task::both` when this
+*(Updated for [ADR-033](adr/adr-033.md) D10. That overlap was a `task::both` when this
 was written and is now `task::read_pair` — the control is two file reads, and two reads are carried
 by the runtime with no thread of the program's in them. Which also means the `--user-parallelism yes`
 in the command above is no longer needed to see it: the assertion on every `cargo test` runs at both
@@ -544,7 +544,7 @@ this note is where a reader of §6 finds out.
 3. **`E0277` is in [ADR-005](../specification/adr/adr-005.md) D7's enumerated
    classes.** §3.3's fourth finding, recorded where the promise lives.
 4. **D7's second rule — refuse or wrap — is still open.** §4.3 is unchanged and
-   still the argument; [ADR-006](../specification/adr/adr-006.md) is unbuilt, so
+   still the argument; [ADR-006](adr/adr-006.md) is unbuilt, so
    nothing has been built that would decide it.
 
 And the addition §6 asked for rather than a decision: D7's first rule now says
@@ -567,7 +567,7 @@ question standing directly in front of `Shared`, and it was not on §6's list.
 **Date:** September 22, 2026. Added rather than edited in, for §7's reason: what
 is above is what was measured, and this is what changed.
 
-[ADR-193](../specification/adr/adr-193.md) D1 gave a description a `threads`
+[ADR-193](adr/adr-193.md) D1 gave a description a `threads`
 column — three values, hand-written, the absence meaning *nobody said* — and D2
 made `NK2502` ask a **described** call where the word says `true`. Before that,
 the refusal asked its question only of a call *nothing* describes, which is
@@ -616,20 +616,20 @@ So the experiment's own finding moves, and the new one is sharper than the old:
 * **What `unsafe impl Send` defeats is `rustc`**, not a description. A crate
   that lies in `unsafe` Rust still has to lie in its `.contracts` file to get
   past this, and that file is committed and reviewed like code
-  ([ADR-104](../specification/adr/adr-104.md) D5) — which is a different thing to
+  ([ADR-104](adr/adr-104.md) D5) — which is a different thing to
   ask of an author than a bound the compiler infers.
 * **What is *not* claimed**: none of this is soundness. A description that says
   `crosses = true` about a type holding an `Rc` gets exactly as far as it did
   before. The column moves who has to be honest, and says so out loud
-  ([ADR-193](../specification/adr/adr-193.md) D3).
+  ([ADR-193](adr/adr-193.md) D3).
 
 **And §2.2's sentence about the path is superseded**, which is worth saying
 because it is the reason none of this could be measured until now. That section
 records `{ path = "../../../../shim" }` as *relative to the generated
-`Cargo.toml`*, and it was, until [ADR-053](../specification/adr/adr-053.md) D1 gave
+`Cargo.toml`*, and it was, until [ADR-053](adr/adr-053.md) D1 gave
 every package a member directory of its own and left every one of those `..`
 one short. All three projects here were unbuildable from that day until
-[ADR-197](../specification/adr/adr-197.md), and nothing said so: the tests that
+[ADR-197](adr/adr-197.md), and nothing said so: the tests that
 build them fetch `hyper` from crates.io and are `#[ignore]`d, and CI does not
 run ignored tests. A `path` is relative to `nikaia.toml` now, so the three
 manifests say `../shim`.

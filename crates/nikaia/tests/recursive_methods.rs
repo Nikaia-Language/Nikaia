@@ -7,7 +7,7 @@
 //! built for a call the emitter can **name** — a free function, resolved the
 //! way it resolves anything. A method is not one: `stats.add(5)` names `add`,
 //! and only the type checker knows what it goes to
-//! ([ADR-028](../../../docs/specification/adr/adr-028.md)), so a cycle through
+//! ([ADR-288](../../../docs/specification/adr/adr-288.md)), so a cycle through
 //! one reached `rustc` as *recursion in an async fn requires boxing*, about a
 //! file nobody wrote — [Part III
 //! C.1](../../../docs/specification/30-nikaia-tooling.md).

@@ -2,7 +2,7 @@
 //! ([ADR-152](../../../docs/specification/adr/adr-152.md)).
 //!
 //! Two records pointed here and neither had its own answer.
-//! [ADR-127](../../../docs/specification/adr/adr-127.md) §4 left a C value
+//! [ADR-284](../../../docs/specification/adr/adr-284.md) left a C value
 //! struct's `[f64; 3]` field undecided, and
 //! [ADR-135](../../../docs/specification/adr/adr-135.md) §4 left *a container
 //! that does not allocate*, which the bare-metal profile of
@@ -157,7 +157,7 @@ fn an_array_of_numbers_is_passed_by_value() {
     assert!(rust.contains("sum([1, 2, 3])"), "{rust}");
 }
 
-/// **A struct's field**, which is [ADR-127](../../../docs/specification/adr/adr-127.md)
+/// **A struct's field**, which is [ADR-284](../../../docs/specification/adr/adr-284.md)
 /// §4's position — the one that pointed here.
 #[test]
 fn a_struct_field_holds_one() {

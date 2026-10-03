@@ -1,7 +1,7 @@
 //! A `comptime` binding where an item stands
-//! ([ADR-097](../../../docs/specification/adr/adr-097.md)).
+//! ([ADR-287](../../../docs/specification/adr/adr-287.md)).
 //!
-//! [ADR-073](../../../docs/specification/adr/adr-073.md) D2 decided **both**
+//! [ADR-287](../../../docs/specification/adr/adr-287.md) D3 decided **both**
 //! places and built one: `comptime MAX = 1000` at the top of a file was a parse
 //! error while the same line inside a body parsed, folded and ran. Part I 9.2
 //! already lists **Constants** among the items `pub` applies to, so the rule for
@@ -100,7 +100,7 @@ fn a_function_above_the_constant_still_sees_it() {
 }
 
 /// **`NK1127` reaches the item form too**, which it has to: the refusal is what
-/// the word is for ([ADR-073](../../../docs/specification/adr/adr-073.md) D3 —
+/// the word is for ([ADR-287](../../../docs/specification/adr/adr-287.md) D4 —
 /// a `let` may fold, a `comptime` **must**), and a place where it did not fire
 /// would be a place where `comptime` quietly means `let`.
 ///

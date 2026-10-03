@@ -80,7 +80,7 @@ point 3 is [`open-decisions.md`](open-decisions.md)'s entry on one text type.
    is one where the ledger says the callee keeps the value, and the diff
    narration of 13.5 already handles a contract that changes. Keep `&` in the
    *type grammar* only where a struct stores a view (that is where the buffer
-   is named, and ADR-008 D1 needs it).
+   is named, and ADR-283 D1 needs it).
 2. `for x in xs` lends by default. Consuming iteration is spelled
    (`for x in xs.drain()` or `take xs`), because it is the rare case and it is
    the one that removes a name from scope.
@@ -112,7 +112,7 @@ The reason given is effect polymorphism: a wrapper's `sync` would have to follow
 its parameter's. But 13.5 already solved exactly that for `std` with
 `sync = "from(f)"`, and it is a mechanism, not a `std` privilege.
 
-*Decided since:* [ADR-102](specification/adr/adr-102.md).
+*Decided since:* [ADR-277](specification/adr/adr-277.md).
 
 **Recommendation:** add the function type `fn(A, B) -> R` to the type grammar,
 record `from(f)` for any function that runs its parameter during the call, and
@@ -149,14 +149,14 @@ this toolchain is well past.
 `sync`. The implementation is checked against the declaration the way `NK2202`
 already checks a body against its own `sync`. Emit `async fn` in the trait
 where the declaration allows a pause. *Decided since:*
-[ADR-109](specification/adr/adr-109.md), with Rust 1.75 as the floor of the
+[ADR-288](specification/adr/adr-288.md), with Rust 1.75 as the floor of the
 language below.
 
 ### 1.4 Two integer widths, and the default is the narrow one
 
 `let count = 42` is an `i32`; `xs.len()` is an `i64`; `1brc.nika` writes `sum:
 first as i64` and `self.sum += temp as i64` because a temperature read as an
-`i32` meets a sum that is not. The widening rule of ADR-060 makes literals
+`i32` meets a sum that is not. The widening rule of ADR-285 makes literals
 flexible and then names pin them, so mixed arithmetic through a name needs the
 cast every time. Rust made the same choice and Rust programmers complain about
 it; Go, Swift, Kotlin and every scripting language default to 64 bits.
@@ -234,7 +234,7 @@ Part I 6.3:
 > entries is not copied to append one. It hands your block the value itself.
 > `protokoll.access fn(log) { log.add("gebucht") }`
 
-Part II 12.2, ADR-059 D1:
+Part II 12.2, ADR-281 D11:
 
 > `access` is for reading in place … and it **may not change it**.
 
@@ -246,10 +246,10 @@ and the example in it is a program that does not compile.
 
 **Recommendation:** fix 6.3 today. Then reconsider whether an in-place *write*
 door is needed after all: `update fn(old) { let mut v = old; v.push(x); v }` is
-a move in and out of the lock, which is what ADR-059 D2 argues, but it is three
+a move in and out of the lock, which is what ADR-281 D12 argues, but it is three
 lines for `push` and it moves the value out of the lock for the duration of the
 block — a panic inside leaves the lock empty at `no` and poisoned at `yes`.
-*Decided since:* [ADR-110](specification/adr/adr-110.md) — `update fn(mut v)`,
+*Decided since:* [ADR-281](specification/adr/adr-281.md) — `update fn(mut v)`,
 one form, copy or address by type, and the retry permitted where the copy is
 free.
 
@@ -274,7 +274,7 @@ the statements and the receiver types), or drop `get` from `SharedMut` and keep
 it on `Locked`/copies only, so read-modify-write has no cheap spelling and
 `update` is the only door for it.
 
-*Decided since:* [ADR-111](specification/adr/adr-111.md), and neither of the
+*Decided since:* [ADR-281](specification/adr/adr-281.md), and neither of the
 two: the value is **stamped** `Seen[T]` on the way out, the stamp travels
 through calls, fields and time because types do, and a `set` given one — or
 under a condition made of one — is refused wherever the read was. No dataflow,
@@ -287,7 +287,7 @@ is gone. The language already has the mechanism for exactly this case — a
 cleanup failure while an error is unwinding is *attached as a secondary error*
 (6.4) — and `overlap` should use it. An operator reading a log wants to know
 that two of three loads failed, not one. *Decided since:*
-[ADR-115](specification/adr/adr-115.md) — one `secondary` list on every
+[ADR-292](specification/adr/adr-292.md) — one `secondary` list on every
 error, for both cases, in written order, with the block as the place failures
 are combined.
 
@@ -300,7 +300,7 @@ own reasoning — *the page is worth nothing if it did not land* — applies. Th
 exit status is unspecified, so a supervisor sees success.
 
 **Recommendation:** a non-zero exit, and the warning goes to the panic hook's
-path, not stdout. *Decided since:* [ADR-112](specification/adr/adr-112.md) —
+path, not stdout. *Decided since:* [ADR-297](specification/adr/adr-297.md) —
 exit status 70, the message on the panic path, and no setting that makes it a
 `0`.
 
@@ -314,8 +314,8 @@ the specification has written down as a rule.
 
 **Recommendation:** lower `?.` through `as_ref()` (a view) unless the member's
 type is a copy; the result is a `T?` of a view, which 6.6 already knows how to
-keep alive. *Decided since:* [ADR-113](specification/adr/adr-113.md), as
-recommended; ADR-052 D8's translation of the move goes with the move.
+keep alive. *Decided since:* [ADR-278](specification/adr/adr-278.md), as
+recommended; ADR-278 D16's translation of the move goes with the move.
 
 ### 2.7 A map index that reads panics and one that writes inserts
 
@@ -324,7 +324,7 @@ aborts; `.get(k)` hands back a `T?`. Three behaviours behind one bracket. Not
 new — Rust and Python do it — but a language that made `null` a type of its own
 so that absence is visible at the type has no reason to keep an abort behind
 `[]`. Recommend `m[k]` yields `T?` on a map, or is refused in favour of `get`.
-*Decided since:* [ADR-114](specification/adr/adr-114.md) — `m[k]` on a map is
+*Decided since:* [ADR-293](specification/adr/adr-293.md) — `m[k]` on a map is
 a `T?`, a list keeps its abort, and `+=` on a map slot is written out with
 `??`.
 
@@ -340,14 +340,14 @@ Ordered by how early a newcomer meets it. Each was reproduced unless marked
 | construct | today |
 | :--- | :--- |
 | `else if` | **parse error** — `expected '{'; found 'if'`. Every language has it; the examples work around it with nested blocks and sequential `if`s (`http/src/main.nika:status_line`). *Decided since:* [ADR-132](specification/adr/adr-132.md) — an `else` whose block is one `if`, braces left out; not built. |
-| `let (a, b) = pair` | was a parse error at `61849da`; **built since** by [ADR-098](specification/adr/adr-098.md), a flat tuple of names. |
+| `let (a, b) = pair` | was a parse error at `61849da`; **built since** by [ADR-291](specification/adr/adr-291.md), a flat tuple of names. |
 | `[1, 2, 3]` | parse error. A list literal is the first thing a scripting-language reader types. `Vec::new()` then `push`, four times, is what `n-body.nika` and `jumps.nika` do instead. *Built since:* [ADR-135](specification/adr/adr-135.md) — `[]` takes its element type from the first use and is refused where none says one, and a `[` at the start of a line begins a literal. `n-body.nika` and `jumps.nika` write the literal now. |
-| `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. *Built since:* [ADR-136](specification/adr/adr-136.md) — the four forms, and the radix is a spelling so `0xFF` is `255`. |
-| tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. *Decided since:* [ADR-137](specification/adr/adr-137.md) — the six, a guard is `if`, and `..` in a pattern is inclusive, so `..<` becomes the exclusive range everywhere and `..=` goes. **Built**: the range spelling first, then the six shapes. `calc.nika` matches `step`. |
-| `..` rest in a struct pattern | parse error *(spec status)*. *Decided since:* [ADR-137](specification/adr/adr-137.md) D1, with the other five. |
-| a bare `throw` as a match arm | parse error; must be `{ throw error }`. *Built since:* [ADR-138](specification/adr/adr-138.md) — `throw`, `return`, `break` and `continue` are expressions of the never type. |
+| `1_000_000`, `0xFF`, `0b1010` | `NK1117: nothing declares _000_000`. A language with `u8`, `Bytes`, `wrapping_shl`, an x86 DSL and a benchmark full of physical constants has no hex and no digit groups. *Built since:* [ADR-285](specification/adr/adr-285.md) — the four forms, and the radix is a spelling so `0xFF` is `255`. |
+| tuple, or-, range-, guarded, nested patterns in `match` | parse error on `(1, y) =>`. `calc.nika` matches `step.0` because it cannot match `step`. Six pattern shapes, none composable. *Decided since:* [ADR-291](specification/adr/adr-291.md) — the six, a guard is `if`, and `..` in a pattern is inclusive, so `..<` becomes the exclusive range everywhere and `..=` goes. **Built**: the range spelling first, then the six shapes. `calc.nika` matches `step`. |
+| `..` rest in a struct pattern | parse error *(spec status)*. *Decided since:* [ADR-291](specification/adr/adr-291.md) D10, with the other five. |
+| a bare `throw` as a match arm | parse error; must be `{ throw error }`. *Built since:* [ADR-276](specification/adr/adr-276.md) — `throw`, `return`, `break` and `continue` are expressions of the never type. |
 | block comments, doc comments | none. Doc comments matter here more than elsewhere: the ledger ships and the prompt bundle is on the roadmap, and neither has anywhere to take a sentence about a function from. *Decided since:* [ADR-134](specification/adr/adr-134.md) — `/* … */`, nesting, not a doc comment; and [ADR-139](specification/adr/adr-139.md) — a doc comment is a language feature and the ledger carries it in a derived `doc` column. **Both are built** for an item; a field's and a variant's wait on `nikaia doc`. |
-| a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-093](specification/adr/adr-093.md). |
+| a function that never returns | needed an unreachable `return 0` at `61849da`; **built since** by [ADR-276](specification/adr/adr-276.md). |
 
 None of these needs a decision any more. **Every row has a record**, and the
 five that turned out to carry a question in them — what an empty literal is, how
@@ -370,15 +370,15 @@ message where a name cannot" — is exactly what `NK1117`'s help text already
 does for `assert` and `unsafe`.
 
 **Recommendation:** `from` becomes contextual; `with`, `quote`, `macro` are
-un-reserved (the direction ADR-051 says costs nothing); `const` and `loop` stay
+un-reserved (the direction ADR-298 says costs nothing); `const` and `loop` stay
 only while their reopening conditions are live. *Decided since:*
 [ADR-116](specification/adr/adr-116.md) — `from` is a name outright, not
 contextual, and the build-time read is `asset("…")`; and
-[ADR-117](specification/adr/adr-117.md) frees `loop`, `const`, `macro` and
+[ADR-298](specification/adr/adr-298.md) frees `loop`, `const`, `macro` and
 `quote`, moving their messages to `NK1117`'s help. `with` stays, for the
 copy-with-changes construct the language lacks — its own record.
 Beside the words, `_`: it was a name the parser knew only in a `match` arm.
-[ADR-126](specification/adr/adr-126.md) makes it the ignore pattern — a tuple
+[ADR-291](specification/adr/adr-291.md) makes it the ignore pattern — a tuple
 position, a parameter, a `match` arm, and nowhere else — and refuses
 `let _ = expr` with `NK1144`.
 
@@ -401,7 +401,7 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   ledger keeps the key, because that is what the lowering writes; a **package's**
   types (`Raw`, `Server`) follow the same rule the day their ledger exists.
 * **Path separator**: `Op::Times`, `Summary::merge`, `http::Request` — and
-  `Json.value(input)`, `T.fields` (ADR-082, 10.3) with a dot. Same kind of
+  `Json.value(input)`, `T.fields` (ADR-296, 10.3) with a dot. Same kind of
   thing, two spellings. *Decided and **built**:*
   [ADR-140](specification/adr/adr-140.md) D3 — `::` everywhere, with `NK1147`
   naming it; `T::fields` is a page edit, since that construct is itself unbuilt.
@@ -409,9 +409,9 @@ position, a parameter, a `match` arm, and nowhere else — and refuses
   (7.1) and `fn f() -> String throws` (3.3, every example). The parser takes
   both. One order; after the type reads best. *Decided and **built**:*
   [ADR-140](specification/adr/adr-140.md) D4 — after the type, which is the
-  order [ADR-102](specification/adr/adr-102.md) D1 already fixed for a function
+  order [ADR-277](specification/adr/adr-277.md) D6 already fixed for a function
   *type*; the pre-arrow form is a parse error that names the order.
-* **`use`**: for a package *no name is brought in* (ADR-046) — but `use
+* **`use`**: for a package *no name is brought in* (ADR-286) — but `use
   std::collections::HashMap` brings in `HashMap`, and `Vec` and `String` need
   no `use` at all. Probe confirms the import works. Two rules for one keyword,
   and the one the spec argues for is the one `std` does not follow.
@@ -494,14 +494,14 @@ designed:
 
 None of this is wrong; all of it is undocumented and looks like the tool it is
 built on. It deserves the same pass Part I got: one page, every built-in, one
-spelling for actions. *Decided since:* [ADR-120](specification/adr/adr-120.md)
+spelling for actions. *Decided since:* [ADR-296](specification/adr/adr-296.md)
 — Part II 10.8 is the page, the action is the block after the pattern, `tag`
 and `digit1` go; the case convention (ANTLR's), `WS` (pest's `WHITESPACE`),
 `=>` and `# "…"` stay, with precedent on their side.
 
 ### 3.7 Smaller things, each real
 
-* `x ?? y` binds so loosely that ADR-089 had to rule the fallback to *one value
+* `x ?? y` binds so loosely that ADR-279 had to rule the fallback to *one value
   or a bracketed expression* — a symptom of `??` sitting below the range
   operator in the precedence table. Put it where C# and Kotlin put it (just
   above the comparisons) and the rule goes away.
@@ -549,7 +549,7 @@ Short, because it does not need defending:
   (*refuse only what is certainly wrong*). The gaps in §1 and §2 are mostly
   places where the rule is stated and the check is not yet there, and the
   discipline is what makes them findable.
-* **`overlap { … }` instead of automatic reordering** (ADR-050). Withdrawing
+* **`overlap { … }` instead of automatic reordering** (ADR-292). Withdrawing
   the inference was the right call.
 
 ---

@@ -7,5 +7,5 @@ rust-version = "1.88"
 
 # **No dependencies** (ADR-270 D1): not the compiler, not its syntax tree, not
 # a crate from crates.io. That is what lets another language feed it, and what
-# makes it a leaf for self-hosting (ADR-250).
+# makes it a leaf for self-hosting (ADR-294).
 [dependencies]

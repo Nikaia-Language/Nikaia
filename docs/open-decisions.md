@@ -21,13 +21,13 @@ blocked by a question, the question comes here in that shape.
 
 ### How a schema is bound while the program is built
 
-**What is blocked.** The examples of [ADR-143](specification/adr/adr-143.md)
+**What is blocked.** The examples of [ADR-299](specification/adr/adr-299.md)
 D3 and Part III 17.1 bind the schema a statement is checked against with
 `let app = comptime asset("schema.sql")` at the top of a file. That line is
 not the language as the rest of the specification writes it: a `let` is a
 statement, not an item, and a value computed while the program is built is
 declared `comptime NAME: T = …` (Part II 7, [ADR-116](specification/adr/adr-116.md)).
-[ADR-254](specification/adr/adr-254.md) D5 makes the schema's *name* decide
+[ADR-299](specification/adr/adr-299.md) D11 makes the schema's *name* decide
 which connection a statement may run on, so the spelling now matters.
 
 **Why it is the owner's.** Two accepted texts write the same line, and the
@@ -94,7 +94,7 @@ written, and (2) removes two of the three places it shows.
 `dsl mysql { … } eod`: the grammar is the package's, but the block names it
 without the package. Part I 9.2 says a name from a package is reached through
 the package's name, and `dsl nikaia_sql::mysql {` does not parse
-(*Expected `from` or `{` here*). [ADR-143](specification/adr/adr-143.md) D1
+(*Expected `from` or `{` here*). [ADR-299](specification/adr/adr-299.md) D1
 writes `dsl sqlite` for a package called `sqlite`, where the two names happen
 to coincide.
 

@@ -36,7 +36,7 @@ pub struct Table {
 /// The same hash `nikaia_std::fixed` computes, over the same bytes.
 ///
 /// **Written in Nikaia** (0.0.250): `nikaia-std/src/tools/fixed.nika`, the
-/// program [ADR-248](../../../docs/specification/adr/adr-248.md) was decided
+/// program [ADR-285](../../../docs/specification/adr/adr-285.md) was decided
 /// for. It is still two implementations of one function - that one and the
 /// lookup `nikaia_std::fixed` runs - and what holds them together is not care
 /// but `crates/nikaia/tests/fixed_map.rs`, which **runs** a program over both

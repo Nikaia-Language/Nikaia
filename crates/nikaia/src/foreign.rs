@@ -1,7 +1,7 @@
 // crates/nikaia/src/foreign.rs
 //
 // A crate is described before it is called - `NK2504`
-// ([ADR-104](../../docs/specification/adr/adr-104.md) D1).
+// ([ADR-290](../../docs/specification/adr/adr-290.md) D1).
 //
 // ## What this is for
 //
@@ -47,7 +47,7 @@ pub fn head_of(name: &str) -> &str {
 /// or item it was written in.
 ///
 /// The walk [`check`] runs, handed out rather than copied
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D2): what the refusal
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D2): what the refusal
 /// asks about is which crates a program reaches into, and what `nikaia
 /// describe` asks is which *names* of one it reaches — the same walk, read one
 /// segment further.
@@ -98,7 +98,7 @@ pub fn check(
 }
 
 /// `NK2505`: the crate moved and its description did not
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5, on
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D5, on
 /// [ADR-100](../../docs/specification/adr/adr-100.md) D3's rule).
 ///
 /// **The same rule as a stale ledger's, with the one difference that matters.**

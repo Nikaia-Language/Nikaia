@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Attribute a callgrind profile's cost to `Ty` (ADR-257 D5).
+"""Attribute a callgrind profile's cost to `Ty` (ADR-294 D16).
 
 A function is **in the set** when its name says it clones, drops or compares
 something whose type mentions `contracts::ty::Ty` (the build must use v0
 mangling, which keeps generic arguments in the name). The cost charged to the
 set is the inclusive cost of every call **from outside the set into it**, so a
 clone inside a clone is not counted twice. What the optimiser inlined into a
-caller outside the set is not a call and is not counted (ADR-257 E6).
+caller outside the set is not a call and is not counted (ADR-294 E6).
 
 Two sets are reported:
 

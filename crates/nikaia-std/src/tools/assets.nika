@@ -2,7 +2,7 @@
 //
 // The files a build may read while it builds (ADR-072, ADR-116 D2) - what the
 // compiler's `assets` decides about a list and a path without touching a
-// file, moved from Rust (ADR-250, #125). Reading the files, the lock that
+// file, moved from Rust (ADR-294, #125). Reading the files, the lock that
 // records what was read and the digest stay Rust.
 //
 // A build given no list reads nothing (D1); a file is named in three places,

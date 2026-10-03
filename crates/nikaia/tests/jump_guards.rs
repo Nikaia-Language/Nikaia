@@ -1,5 +1,5 @@
 //! **A jump may carry its condition after it**
-//! ([ADR-255](../../../docs/specification/adr/adr-255.md)).
+//! ([ADR-276](../../../docs/specification/adr/adr-276.md)).
 //!
 //! `return 250 if speed > 250` is `if speed > 250 { return 250 }`, and the
 //! same for `throw`, `break` and `continue`. Each test runs the program,

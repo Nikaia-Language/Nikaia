@@ -42,7 +42,7 @@ graph TD
         in the toolchain ([ADR-004](specification/adr/adr-004.md) D1).
     *   **Diagnostics**: `rustc --error-format=json` read back and reported
         against the `.nika` line that caused it
-        ([ADR-012](specification/adr/adr-012.md)).
+        ([ADR-300](specification/adr/adr-300.md)).
 *   **Dependencies**: `orchestrator`, `winnow-grammar`.
 
 ### 2. The manager: `crates/orchestrator`
