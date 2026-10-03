@@ -1376,3 +1376,28 @@ fn text_moved_whole_into_a_tuple_or_a_list() {
         "f0 n0\nf1 n1\n2\n",
     );
 }
+
+/// **A literal in an f-string's hole keeps the type its place gives it.**
+/// What the checker records against a node is keyed by the node's address,
+/// and the hole was read as a copy by the checker and as another copy by the
+/// emitter: the two met only where the allocator handed back the same
+/// address, so `let s = f"{double(3000000000)}"` came out `3000000000i64` for a
+/// `u32` parameter - and any other walk between the two moved the address
+/// (found moving `sharing`'s walk into Nikaia, #125). The hole is read where it
+/// stands, by both.
+#[test]
+fn a_literal_in_a_hole_keeps_the_type_its_place_gives_it() {
+    let source = "\
+fn double(x: u32) -> u32 {
+    return x * 2
+}
+
+fn main() {
+    println(f\"{double(7)}\")
+    let s = f\"{double(2000000000)}\"
+    println(s)
+    println(f\"{double(1500000000)}\")
+}
+";
+    runs("hole-literal-type", source, "14\n4000000000\n3000000000\n");
+}

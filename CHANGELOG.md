@@ -25,8 +25,16 @@ each candidate's `keeps` column, which is what the fixpoint is still filling,
 so every method of the package answered *keeps nothing* - a `fallback` handed
 to `Slots::force`, which stores it, was lent, and the declaration
 `&Option<Fallback>` met a method wanting the value. A candidate of the package
-is now asked through the fixpoint, as a free call is. 22.7 % of the toolchain
-is Nikaia.
+is now asked through the fixpoint, as a free call is.
+
+And one that was there before it, which the new walk's allocations brought
+out: **a literal in an f-string's hole keeps the type its place gives it.**
+What the checker records against a node is keyed by the node's address, and
+the checker and the emitter each read a hole as a copy of its own - they met
+only where the allocator handed back the same address, so `let s =
+f"{double(3000000000)}"` came out `3000000000i64` for a `u32` parameter on main
+already. Both now read a hole where it stands in the tree, unless the tier pass
+wraps something inside it. 22.7 % of the toolchain is Nikaia.
 
 ## [0.0.400] — 2026-10-03
 
