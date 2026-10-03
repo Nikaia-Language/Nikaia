@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.375] — 2026-10-03
+
+**The sharing records and the `--sharing` report are Nikaia** (#125,
+ADR-250). The closed list of reasons a count stays atomic (`Fallback`, ADR-037
+D8) with each one's remedy, what one `Shared` value got (`Decision`) and all
+of them (`Sharing`), turning every count plain where nothing can cross
+(ADR-061 D2), the report's text, the slot keys, what holds a `Shared` or a
+word, the sentences a decision is explained with, and what `Shared[T]` and
+`Locked[T]` lower to moved into `tools/sharing.nika`. The union-find over
+handles and the walk of the bodies stay in Rust for now. 17.9 % of the
+toolchain is Nikaia.
+
+The move found three defects, fixed in the compiler (ADR-250 D3):
+
+* **A `T?` compared with a `T` is refused** (`NK1102`, Part I 2.3). It reached
+  the language below as *expected `Option<i64>`, found `i64`*; the help hands
+  over `(x ?? fallback) == y` and `x != null`.
+* **Text literals beside a `String?` call and `null` meet at `String?`**
+  (ADR-207 D2): `match e { A => "a", B => kind(b), C => null }` was *`match`
+  arms have incompatible types* below, and a `match` of literals and `null`
+  alone was refused as a view returned for a `String`.
+* **Whether a type copies is asked across the package**: a `Count` declared in
+  another file of the package was not known to copy, so `m[k] ?? Count::Atomic`
+  was refused as a view beside a value of its own (`NK1185`).
+
+`std`'s ledger describes `BTreeMap::keys`.
+
 ## [0.0.374] — 2026-10-03
 
 **The view states are solved in Nikaia** (#125, ADR-250). The analysis half

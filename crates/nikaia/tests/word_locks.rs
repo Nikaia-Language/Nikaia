@@ -132,6 +132,7 @@ fn the_explanation_names_the_row() {
     assert_eq!(a.count, Count::Atomic);
     assert!(
         a.kept_its_lock
+            .as_ref()
             .is_some_and(|why| why.contains("a door over several locks")),
         "{a:#?}"
     );

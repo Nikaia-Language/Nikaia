@@ -5154,6 +5154,282 @@ pub fn word_in(line: &str, column: i64, word: &str) -> (i64, i64) {
 fn a_wordy_char(c: char) -> bool { c.is_alphanumeric() || c == '_' }
 
 
+// --- sharing.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fallback {
+    PublicSignature,
+    PublicField,
+    UnseenCall,
+    UnseenMethod,
+    UncoveredArgument,
+    UnseenOrigin,
+    ForeignFile,
+}
+
+impl Fallback {
+    pub fn as_str(&self) -> String {
+        match self {
+            Fallback::PublicSignature => String::from("a public signature"),
+            Fallback::PublicField => String::from("a public field"),
+            Fallback::UnseenCall => String::from("a call nothing describes"),
+            Fallback::UnseenMethod => String::from("a method nothing describes"),
+            Fallback::UncoveredArgument => String::from("an argument position no contract covers"),
+            Fallback::UnseenOrigin => String::from("an origin this analysis cannot see"),
+            Fallback::ForeignFile => String::from("a slot another file owns"),
+        }
+    }
+    pub fn remedy(&self) -> String {
+        match self {
+            Fallback::PublicSignature => String::from("nothing here - whether it crosses is decided by callers this build does not read, so an answer would be a promise about somebody else's code"),
+            Fallback::PublicField => String::from("keep the field out of the published surface, or accept the atomic - code this build does not read can take the value out of it"),
+            Fallback::UnseenCall => String::from("describe the callee in a ledger, so the compiler can see what it does"),
+            Fallback::UnseenMethod => String::from("describe the callee in a ledger, so the compiler can see what it does"),
+            Fallback::UncoveredArgument => String::from("describe the callee in a ledger, so the compiler can see what it does"),
+            Fallback::UnseenOrigin => String::from("write down the call the value came out of, so this analysis can follow it to the allocation"),
+            Fallback::ForeignFile => String::from("nothing here - the file that declares the field or the function decides its count, and this run reads only one of the two"),
+        }
+    }
+}
+
+pub fn every_fallback() -> Vec<Fallback> { vec![Fallback::PublicSignature, Fallback::PublicField, Fallback::UnseenCall, Fallback::UnseenMethod, Fallback::UncoveredArgument, Fallback::UnseenOrigin, Fallback::ForeignFile] }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    pub function: String,
+    pub value: String,
+    pub ty: String,
+    pub count: Count,
+    pub why: Option<String>,
+    pub fallback: Option<Fallback>,
+    pub duplications: Vec<String>,
+    pub copied_out: Vec<String>,
+    pub kept_its_lock: Option<String>,
+}
+
+impl Decision {
+    pub fn undecided(&self) -> bool { self.fallback.is_some() }
+}
+
+#[derive(Debug, Clone)]
+pub struct Sharing {
+    pub decisions: Vec<Decision>,
+    pub summaries: collections::BTreeMap<String, Vec<Class>>,
+    pub counts: collections::BTreeMap<String, Count>,
+}
+
+impl Sharing {
+    pub fn count_of(&self, function: &str, value: &str) -> Count { nikaia_std::index::or(*nikaia_std::index::get(&self.counts, &(slot(function, value))), || Count::Atomic) }
+}
+
+pub fn every_count_plain(sharing: &mut Sharing) {
+    for i in 0..sharing.decisions.len() as i64 {
+        sharing.decisions[nikaia_std::index::at(i)].count = Count::Plain;
+        sharing.decisions[nikaia_std::index::at(i)].why = None;
+        sharing.decisions[nikaia_std::index::at(i)].fallback = None;
+    }
+    let mut keys: Vec<String> = vec![];
+    for key in sharing.counts.keys() { keys.push(key.to_owned()); }
+    for key in keys.iter() { sharing.counts.insert(key.to_owned(), Count::Plain); }
+    let mut functions: Vec<String> = vec![];
+    for key in sharing.summaries.keys() { functions.push(key.to_owned()); }
+    for function in functions.iter() {
+        let classes = nikaia_std::index::or(match *nikaia_std::index::get(&sharing.summaries, function) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || vec![].into());
+        let mut plain: Vec<Class> = vec![];
+        for class in classes.iter() { plain.push(Class { members: class.members.to_owned(), count: Count::Plain }); }
+        sharing.summaries.insert(function.to_owned(), plain);
+    }
+}
+
+pub fn sharing_report(sharing: &Sharing) -> String {
+    if sharing.decisions.is_empty() { return String::from("no `Shared` value here, so there is nothing to choose.\n"); }
+    let mut out: String = String::from("");
+    let mut at: String = String::from("");
+    let mut atomic: i64 = 0;
+    let mut undecided = 0;
+    let mut caught: Vec<String> = vec![];
+    for decision in sharing.decisions.iter() {
+        if at != decision.function {
+            out.push_str(&format!("{}:\n", decision.function));
+            at = decision.function.to_owned();
+        }
+        let count = decision.count.as_str();
+        out.push_str(&format!("    {} `{}` ({})\n", padded_right(&count, 7), decision.value, decision.ty));
+        out.push_str(&why_line(decision));
+        out.push_str(&kept_line((decision.kept_its_lock).as_deref()));
+        for site in decision.copied_out.iter() { out.push_str(&format!("             copied out: {} each time - `access` reads it in place\n", site)); }
+        if decision.duplications.is_empty() { out.push_str("             one handle, so the count is never stepped\n"); }
+        for site in decision.duplications.iter() { out.push_str(&format!("             duplicated: {}\n", site)); }
+        if decision.count != Count::Plain { atomic += 1; }
+        if decision.undecided() {
+            undecided += 1;
+            caught.push(fallback_text((decision.fallback).as_ref()));
+        }
+    }
+    let all = sharing.decisions.len() as i64;
+    let plain = all - atomic;
+    out.push_str(&format!("\n{} `Shared` value(s): {} plain, {} atomic, of which {} because this analysis could not decide.\n", all, plain, atomic, undecided));
+    out.push_str("An atomic count is the safe default. A plain count is an optimisation, and where it isn't taken the reason is one of these:\n");
+    for fallback in every_fallback() {
+        let said = fallback.as_str();
+        let mark = if caught.contains(&said) { "*" } else { " " };
+        let remedy = fallback.remedy();
+        out.push_str(&format!("  {} {} - {}\n", mark, said, remedy));
+    }
+    out.push_str("The ones that need a contract get sharper as `std`'s contracts grow.\n");
+    out
+}
+
+fn fallback_text(fallback: Option<&Fallback>) -> String {
+    let row = match fallback { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    row.as_str()
+}
+
+fn kept_line(kept: Option<&str>) -> String {
+    let said = match kept { Some(__nikaia_value) => __nikaia_value, None => return String::from("") };
+    format!("             {}\n", said)
+}
+
+fn why_line(decision: &Decision) -> String { why_said(decision, (decision.why).as_deref()) }
+
+fn why_said(decision: &Decision, said: Option<&str>) -> String {
+    let why = match said { Some(__nikaia_value) => __nikaia_value, None => return String::from("             nothing crosses a thread with it, so the count is lowered\n") };
+    if decision.undecided() { return format!("             could not decide: {}\n", why); }
+    if decision.count == Count::Word { return format!("             crosses: {}\n             a word, and no door over several locks takes it, so its `update` is a compare-and-swap and there is no lock\n", why); }
+    format!("             crosses: {}\n", why)
+}
+
+pub fn slot(function: &str, name: &str) -> String { format!("{}::{}", function, name) }
+
+pub fn split_slot(key: &str) -> (String, String) {
+    let parts: Vec<&str> = key.split("::").collect::<Vec<_>>();
+    if parts.len() < 2 { return (String::from(""), key.to_owned()); }
+    let name = (*nikaia_std::index::get(&parts, nikaia_std::index::at(parts.len() as i64 - 1))).to_owned();
+    let mut function: Vec<String> = vec![];
+    for i in 0..parts.len() as i64 - 1 { function.push((*nikaia_std::index::get(&parts, (i) as usize)).to_owned()); }
+    (function.join("::"), name)
+}
+
+pub fn holds_a_word(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; !view && name == "SharedMut" && args.len() == 1 && a_word(nikaia_std::index::get(&args, 0)) },
+        _ => false,
+    }
+}
+
+const WORD_TYPES: [&str; 12] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char"];
+
+fn a_word(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; !view && args.is_empty() && one_of(&WORD_TYPES, name) },
+        _ => false,
+    }
+}
+
+pub fn held_that_does_not_copy(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Named { name, args, .. } => a_held_value(ty, name, args),
+        _ => None,
+    }
+}
+
+fn a_held_value(ty: &Ty, name: &str, args: &[Ty]) -> Option<String> {
+    if name != "SharedMut" || args.len() != 1 || holds_a_word(ty) || (*nikaia_std::index::get(&args, 0)).is_unknown() { return None; }
+    Some((*nikaia_std::index::get(&args, 0)).text())
+}
+
+pub fn literal_type(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::LitStr { .. } => Some(String::from("String")),
+        Expr::LitInterpolated { .. } => Some(String::from("String")),
+        Expr::LitInt { .. } => Some(String::from("i64")),
+        Expr::LitFloat(_) => Some(String::from("f64")),
+        Expr::LitBool(_) => Some(String::from("bool")),
+        Expr::LitChar(_) => Some(String::from("char")),
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); literal_type(expr) },
+        _ => None,
+    }
+}
+
+pub fn published_reason(key: &str, at: &str) -> String {
+    if at == RESULT_POSITION { return format!("`{}` is public and hands a `Shared` back, so what the caller does with it is in a unit this build cannot see", key); }
+    format!("`{}` is public, so its callers are in a unit this build cannot see, and one of them may cross a thread with it", key)
+}
+
+pub fn handed_on_to(key: &str, param: &str) -> String { format!("handed to `{}` as `{}`, which takes a handle of its own", key, param) }
+
+pub fn unseen(callee: Option<&str>) -> String {
+    let named = nikaia_std::index::or(callee, || "the callee");
+    format!("the compiler knows nothing about `{}`, so it has to assume it might start a thread", named)
+}
+
+pub fn by_value_shared(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, view, .. } => { let view = *view; !view && (name == "Shared" || name == "SharedMut") },
+        _ => false,
+    }
+}
+
+pub fn is_hull(name: &str) -> bool { name == "Shared" || name == "SharedMut" || name == "Locked" }
+
+pub fn holds_shared(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } => name == "Shared" || name == "SharedMut" || any_holds_shared(args),
+        Ty::Tuple(parts) => any_holds_shared(parts),
+        _ => false,
+    }
+}
+
+fn any_holds_shared(types: &[Ty]) -> bool {
+    for ty in types.iter() { if holds_shared(ty) { return true; } }
+    false
+}
+
+pub fn shared_fields(ty: &str, asked: &Asked<'_>) -> Vec<String> {
+    let name = without_a_view(ty);
+    let contract = match ledger_type(&name, asked.own, asked.library) { Some(__nikaia_value) => __nikaia_value, None => return vec![] };
+    let mut out: Vec<String> = vec![];
+    for field in contract.fields.iter() { if holds_shared(&field.ty) { out.push(format!("{}.{}", name, field.name)); } }
+    out
+}
+
+pub fn declared_field_type(ty: &str, field: &str, asked: &Asked<'_>) -> Option<Ty> {
+    let contract = match ledger_type(&without_a_view(ty), asked.own, asked.library) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    for declared in contract.fields.iter() { if declared.name == field { return Some(declared.ty.clone()); } }
+    None
+}
+
+fn without_a_view(ty: &str) -> String {
+    let mut out: String = String::from("");
+    let mut leading = true;
+    for c in ty.chars() {
+        if leading && c == '&' { continue; }
+        leading = false;
+        out.push(c);
+    }
+    out
+}
+
+pub fn rust_name(count: Count) -> String {
+    match count {
+        Count::Plain => String::from("std::rc::Rc"),
+        Count::Word => String::from("std::sync::Arc"),
+        Count::Atomic => String::from("std::sync::Arc"),
+    }
+}
+
+pub fn lock_name(count: Count) -> String {
+    match count {
+        Count::Plain => String::from("nikaia_std::lock::Local"),
+        Count::Word => String::from("nikaia_std::lock::Word"),
+        Count::Atomic => String::from("nikaia_std::lock::Crossing"),
+    }
+}
+
+
 // --- signature.nika ---
 
 #[derive(Debug, Clone)]
@@ -6844,7 +7120,7 @@ pub fn check_impls(names: &winnow_grammar::InternerContext, items: &[Spanned<Ite
     found
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Wanted {
     known: bool,
     receiver: Option<Receiver>,
@@ -9475,6 +9751,10 @@ pub mod rust {
 pub mod rustc_words {
     #[allow(unused_imports)]
     pub use super::{in_this_language, is_rust_internal, both_sides_the_same, said, headed, word_in};
+}
+pub mod sharing {
+    #[allow(unused_imports)]
+    pub use super::{Fallback, every_fallback, Decision, Sharing, every_count_plain, sharing_report, slot, split_slot, holds_a_word, held_that_does_not_copy, literal_type, published_reason, handed_on_to, unseen, by_value_shared, is_hull, holds_shared, shared_fields, declared_field_type, rust_name, lock_name};
 }
 pub mod signature {
     #[allow(unused_imports)]

@@ -106,16 +106,6 @@ use super::{Ledger, send, ty::Ty};
 use crate::contracts::SignatureOps;
 use crate::contracts::ty::TyOps;
 
-/// The type whose count this is about.
-const SHARED: &str = "Shared";
-
-/// The shared mutable type, which is a **count around a lock**
-/// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D1) - so everything
-/// this file decides about a count, it decides about one of these too. It is one
-/// name up to the emitter, which is why it is matched by name here rather than
-/// being seen as the `Shared` it expands to.
-const SHARED_MUT: &str = "SharedMut";
-
 /// The name of the slot standing for what a function hands back.
 const RESULT: &str = "<result>";
 
@@ -129,156 +119,18 @@ const FIELDS: &str = "<field>";
 /// lambda is over-approximate, which is the safe direction.
 const PARALLEL: &[&str] = &["par_iter", "par_fold", "par_map"];
 
-/// Every reason this analysis answers `atomic` **because nothing decided it**,
-/// as a closed list.
-///
-/// The list is the deliverable and not a detail. ADR-010 D1 asks a fail-closed
-/// analysis to name what it could not see, ADR-037 D8 asks "would an override
-/// help?" of every row of it, and the answer is no for every row - the first
-/// five want a **contract** and the last one is a promise about somebody else's
-/// code. A row added here is a row that has to be answered there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Fallback {
-    /// The value is a parameter or the result of a **public** function, so its
-    /// callers are in a unit this build never reads.
-    PublicSignature,
-    /// The value is held by a **public field of a public type**, which code this
-    /// build never reads may take out of it.
-    PublicField,
-    /// The value was handed to a **call** nothing written down describes.
-    UnseenCall,
-    /// The value was handed to a **method** nothing written down describes.
-    UnseenMethod,
-    /// The value was handed over in an **argument position** no contract covers.
-    UncoveredArgument,
-    /// The handle exists and this analysis did not watch its allocation being
-    /// made - it came out of a call, an index, a field of a type whose `fields`
-    /// are unrecorded, or some other expression nothing here accounts for.
-    UnseenOrigin,
-    /// The slot belongs to **another file of this package**, whose own run of
-    /// this analysis decides its count.
-    ///
-    /// This analysis runs once per file (`analyse_program` takes one `Parsed`),
-    /// so neither run sees the whole of such a slot: the declaring file sees the
-    /// slot and not this value, this one the value and not what the slot was
-    /// decided to be. Measured, before this row existed - a public **field**
-    /// declared in `pool.nika` and filled in `main.nika`:
-    ///
-    /// ```text
-    /// pub db: std::sync::Arc<Conn>,      // decided in pool.nika
-    /// let c: std::rc::Rc<Conn> = …       // decided in main.nika
-    /// ```
-    ///
-    /// and, in exactly the same way, a public **parameter**: `hold(c)` where
-    /// `hold` is declared in another file expects an `Arc` and is handed an `Rc`.
-    /// `rustc` refused both, about a file nobody wrote (Part III, C.1). The
-    /// answer is the polarity this analysis already runs on: where it cannot
-    /// prove that nothing crosses, it does not lower.
-    ForeignFile,
-}
-
-impl Fallback {
-    /// Every row, for a report that enumerates rather than summarises.
-    pub const ALL: &'static [Fallback] = &[
-        Fallback::PublicSignature,
-        Fallback::PublicField,
-        Fallback::UnseenCall,
-        Fallback::UnseenMethod,
-        Fallback::UncoveredArgument,
-        Fallback::UnseenOrigin,
-        Fallback::ForeignFile,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Fallback::PublicSignature => "a public signature",
-            Fallback::PublicField => "a public field",
-            Fallback::UnseenCall => "a call nothing describes",
-            Fallback::UnseenMethod => "a method nothing describes",
-            Fallback::UncoveredArgument => "an argument position no contract covers",
-            Fallback::UnseenOrigin => "an origin this analysis cannot see",
-            Fallback::ForeignFile => "a slot another file owns",
-        }
-    }
-
-    /// What a person would do about it, which is ADR-037 D8's whole answer: for
-    /// five of the seven, write the contract; for the other two, nothing, because
-    /// the answer belongs to code this run does not read.
-    pub fn remedy(self) -> &'static str {
-        match self {
-            Fallback::PublicSignature => {
-                "nothing here - whether it crosses is decided by callers this build does not \
-                 read, so an answer would be a promise about somebody else's code"
-            }
-            Fallback::PublicField => {
-                "keep the field out of the published surface, or accept the atomic - code this \
-                 build does not read can take the value out of it"
-            }
-            Fallback::UnseenCall | Fallback::UnseenMethod | Fallback::UncoveredArgument => {
-                "describe the callee in a ledger, so the compiler can see what it does"
-            }
-            Fallback::UnseenOrigin => {
-                "write down the call the value came out of, so this analysis can follow it to \
-                 the allocation"
-            }
-            Fallback::ForeignFile => {
-                "nothing here - the file that declares the field or the function decides its \
-                 count, and this run reads only one of the two"
-            }
-        }
-    }
-}
-
-/// What this analysis chose for one `Shared` value, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decision {
-    /// The function the value is written in, as a ledger key
-    /// (`Counter::record`).
-    pub function: String,
-    /// The name the source gives it, or `<result>` for what a function hands
-    /// back.
-    pub value: String,
-    /// Its type, as written.
-    pub ty: String,
-    pub count: Count,
-    /// What kept the count atomic, in the words a user would be told. `None`
-    /// for a plain one, which needs no excuse.
-    pub why: Option<String>,
-    /// Which row of [`Fallback`] this is, where it is one. `None` where the
-    /// analysis *found* the crossing rather than failing to rule one out - a
-    /// `spawn` is a crossing, not a mystery.
-    pub fallback: Option<Fallback>,
-    /// Every place a second handle on this allocation is made, in the words a
-    /// user would be told ([ADR-040](../../../../docs/specification/adr/adr-040.md)
-    /// D5).
-    ///
-    /// D1 makes a handle duplicated where it is handed on **by value**, and there
-    /// is no method to call - so the place one step of the count is paid is
-    /// unwritten in the source. D5 asks for it to be readable somewhere, and this
-    /// is that somewhere: the count is already printed here, so what an extra
-    /// handle costs is printed beside it.
-    ///
-    /// **A borrow contributes nothing**, which is D1's own correction: lending the
-    /// inner value out hands no handle on, so there is nothing to duplicate and no
-    /// instruction to pay.
-    pub duplications: Vec<String>,
-    /// **Where a `get` copies the whole value out of the lock**
-    /// ([ADR-238](../../../../docs/specification/adr/adr-238.md) D3): the
-    /// value is one that does not copy cheaply, a text or a list, and `access`
-    /// would have read it in place.
-    pub copied_out: Vec<String>,
-    /// Why a word-sized value that crosses kept its lock, where it did
-    /// (ADR-238 D2).
-    pub kept_its_lock: Option<&'static str>,
-}
-
-impl Decision {
-    /// Whether the atomic count is the floor holding rather than a crossing
-    /// this analysis found. The list ADR-010 D1 asks to be named.
-    pub fn undecided(&self) -> bool {
-        self.fallback.is_some()
-    }
-}
+/// Every reason this analysis answers `atomic` **because nothing decided it**
+/// ([`Fallback`]), what it chose for one value ([`Decision`]) and for all of
+/// them ([`Sharing`]) are records of `tools/sharing.nika` (ADR-250, #125).
+pub use nikaia_std::tools::sharing::{
+    Decision, Fallback, Sharing, every_fallback, lock_name, rust_name,
+};
+use nikaia_std::tools::sharing::{
+    by_value_shared, declared_field_type, every_count_plain, handed_on_to, held_that_does_not_copy,
+    holds_a_word, holds_shared, is_hull, literal_type, published_reason, shared_fields, slot,
+    split_slot, unseen,
+};
+use nikaia_std::tools::views::Asked;
 
 /// What stays Rust of a [`Class`] (ADR-257 step (b)): reading one back.
 pub trait ClassOps: Sized {
@@ -289,70 +141,6 @@ impl ClassOps for Class {
     /// Read one back from the ledger.
     fn parse(text: &str) -> Option<Self> {
         nikaia_std::tools::ledger::class_of(text)
-    }
-}
-
-/// Everything one program's `Shared` values got, and the summary the ledger
-/// keeps.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Sharing {
-    /// One per `Shared` value a person wrote, sorted by function and then by
-    /// name, because a report is read and compared.
-    pub decisions: Vec<Decision>,
-    /// Per function key, the allocation classes of its caller-visible
-    /// positions. What [`super::FnContract::sharing`] records.
-    pub summaries: BTreeMap<String, Vec<Class>>,
-    /// The count every slot's class got, by the slot key `function::value`.
-    ///
-    /// [`Sharing::decisions`] is the **report** - one line per value a person
-    /// wrote - and it leaves the internal slots out: a function's `<result>`,
-    /// and a `<struct>.<field>`. The **emitter** needs all of them, because
-    /// `Shared[T]` is written at those positions too and every one of them has
-    /// to be lowered to the type its class was given. So this is the same
-    /// answer, keyed for a lookup rather than shaped for a reader.
-    ///
-    /// It is handed to the emitter the way `check::Checked::fallible_loops` and
-    /// `fallible_methods` are: computed where the knowledge is, looked up where
-    /// the code is written. A slot this map has no entry for gets
-    /// [`Count::Atomic`] from [`Sharing::count_of`], because that is the floor
-    /// (ADR-037 D6) and a site nothing is known about may not be lowered.
-    pub counts: BTreeMap<String, Count>,
-}
-
-impl Sharing {
-    /// Every count plain, because nothing can cross
-    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D2).
-    ///
-    /// Applied to the finished answer rather than instead of computing it, so
-    /// that the **duplication** sites - which are about handing a handle on and
-    /// not about threads - are kept exactly as they were found, and so that one
-    /// run of this analysis is one code path at both settings.
-    fn all_plain(mut self) -> Sharing {
-        for decision in &mut self.decisions {
-            decision.count = Count::Plain;
-            decision.why = None;
-            decision.fallback = None;
-        }
-        for count in self.counts.values_mut() {
-            *count = Count::Plain;
-        }
-        for classes in self.summaries.values_mut() {
-            for class in classes.iter_mut() {
-                class.count = Count::Plain;
-            }
-        }
-        self
-    }
-
-    /// The count one slot's class got, with the floor where nothing is known.
-    ///
-    /// `value` is the name the source gives it, `<result>` for what a function
-    /// hands back, or `<struct>.<field>` under `<field>` for a field.
-    pub fn count_of(&self, function: &str, value: &str) -> Count {
-        self.counts
-            .get(&slot(function, value))
-            .copied()
-            .unwrap_or(Count::Atomic)
     }
 }
 
@@ -420,11 +208,14 @@ pub fn analyse_program(
             _ => {}
         }
     }
-    let sharing = analysis.decide();
-    match crossings_are_possible {
-        true => sharing,
-        false => sharing.all_plain(),
+    let mut sharing = analysis.decide();
+    // Every count plain, because nothing can cross (ADR-061 D2): applied to
+    // the finished answer, so the duplication sites are kept as they were
+    // found and one run of this analysis is one code path at both settings.
+    if !crossings_are_possible {
+        every_count_plain(&mut sharing);
     }
+    sharing
 }
 
 /// Every `Shared` value in a program, and which count it would get.
@@ -466,103 +257,12 @@ pub fn report(
     library: &Ledger,
     crossings_are_possible: bool,
 ) -> String {
-    let sharing = analyse_program(parsed, own, library, crossings_are_possible);
-    if sharing.decisions.is_empty() {
-        // "here" and not "in this program": a report is about one file, and a
-        // package of several files is several of them (`project::explain`).
-        return "no `Shared` value here, so there is nothing to choose.\n".to_string();
-    }
-
-    let mut out = String::new();
-    let mut at: Option<&str> = None;
-    for decision in &sharing.decisions {
-        if at != Some(decision.function.as_str()) {
-            out.push_str(&format!("{}:\n", decision.function));
-            at = Some(&decision.function);
-        }
-        out.push_str(&format!(
-            "    {:<7} `{}` ({})\n",
-            decision.count.as_str(),
-            decision.value,
-            decision.ty,
-        ));
-        match (&decision.why, decision.fallback) {
-            (Some(why), Some(_)) => {
-                out.push_str(&format!("             could not decide: {why}\n"))
-            }
-            (Some(why), None) if decision.count == Count::Word => {
-                out.push_str(&format!("             crosses: {why}\n"));
-                out.push_str(
-                    "             a word, and no door over several locks takes it, so its \
-                     `update` is a compare-and-swap and there is no lock\n",
-                );
-            }
-            (Some(why), None) => out.push_str(&format!("             crosses: {why}\n")),
-            (None, _) => out.push_str(
-                "             nothing crosses a thread with it, so the count is lowered\n",
-            ),
-        }
-        if let Some(kept) = decision.kept_its_lock {
-            out.push_str(&format!("             {kept}\n"));
-        }
-        for site in &decision.copied_out {
-            out.push_str(&format!(
-                "             copied out: {site} each time - `access` reads it in place\n"
-            ));
-        }
-        // ADR-040 D5: a handle is duplicated where it is handed on by value, and
-        // the source does not say so - one step of the count is paid there. So the
-        // places are named beside the count, which is the output D5 asks for.
-        match decision.duplications.as_slice() {
-            [] => out.push_str("             one handle, so the count is never stepped\n"),
-            sites => {
-                for site in sites {
-                    out.push_str(&format!("             duplicated: {site}\n"));
-                }
-            }
-        }
-    }
-
-    let atomic = sharing
-        .decisions
-        .iter()
-        .filter(|d| d.count != Count::Plain)
-        .count();
-    let undecided: BTreeSet<Fallback> = sharing
-        .decisions
-        .iter()
-        .filter_map(|d| d.fallback)
-        .collect();
-    out.push_str(&format!(
-        "\n{} `Shared` value(s): {} plain, {} atomic, of which {} because this analysis \
-         could not decide.\n",
-        sharing.decisions.len(),
-        sharing.decisions.len() - atomic,
-        atomic,
-        sharing.decisions.iter().filter(|d| d.undecided()).count(),
-    ));
-    out.push_str(
-        "An atomic count is the safe default. A plain count is an optimisation, and where \
-         it isn't taken the reason is one of these:\n",
-    );
-    for fallback in Fallback::ALL {
-        out.push_str(&format!(
-            "  {} {} - {}\n",
-            match undecided.contains(fallback) {
-                true => "*",
-                false => " ",
-            },
-            fallback.as_str(),
-            fallback.remedy(),
-        ));
-    }
-    out.push_str("The ones that need a contract get sharper as `std`'s contracts grow.\n");
-    out
-}
-
-/// One handle, named by the function it is written in.
-fn slot(function: &str, name: &str) -> String {
-    format!("{function}::{name}")
+    nikaia_std::tools::sharing::sharing_report(&analyse_program(
+        parsed,
+        own,
+        library,
+        crossings_are_possible,
+    ))
 }
 
 /// Everything a file declares that a slot can belong to.
@@ -859,7 +559,7 @@ impl<'a> Analysis<'a> {
                     self.force(
                         &key,
                         &name,
-                        published(&key, &name),
+                        published_reason(&key, &name),
                         Some(Fallback::PublicSignature),
                     );
                 }
@@ -868,11 +568,11 @@ impl<'a> Analysis<'a> {
                 // being one, and the field's class is then as exposed as a
                 // parameter is. `send::crossing`'s walk through the ledger's
                 // `fields`, run the other way round.
-                for field in shared_fields(&ty.text(), self.own, self.library) {
+                for field in shared_fields(&ty.text(), &self.asked()) {
                     self.force(
                         FIELDS,
                         &field,
-                        published(&key, &name),
+                        published_reason(&key, &name),
                         Some(Fallback::PublicSignature),
                     );
                 }
@@ -887,16 +587,16 @@ impl<'a> Analysis<'a> {
                     self.force(
                         &key,
                         RESULT,
-                        published(&key, RESULT),
+                        published_reason(&key, RESULT),
                         Some(Fallback::PublicSignature),
                     );
                 }
             } else if *is_public {
-                for field in shared_fields(&ty.text(), self.own, self.library) {
+                for field in shared_fields(&ty.text(), &self.asked()) {
                     self.force(
                         FIELDS,
                         &field,
-                        published(&key, RESULT),
+                        published_reason(&key, RESULT),
                         Some(Fallback::PublicSignature),
                     );
                 }
@@ -964,7 +664,7 @@ impl<'a> Analysis<'a> {
                                     [held] => match literal_type(held) {
                                         Some(held) => Ty::Named {
                                             name: text.to_string(),
-                                            args: vec![Ty::named(held)],
+                                            args: vec![Ty::named(&held)],
                                             view: false,
                                         },
                                         None => Ty::named(text),
@@ -1187,7 +887,7 @@ impl<'a> Analysis<'a> {
             self.force(function, name, why.to_string(), fallback);
             return;
         }
-        for field in shared_fields(&ty.text(), self.own, self.library) {
+        for field in shared_fields(&ty.text(), &self.asked()) {
             self.force(FIELDS, &field, why.to_string(), fallback);
         }
     }
@@ -1230,7 +930,7 @@ impl<'a> Analysis<'a> {
             Expr::Field { base, name } => {
                 let base = self.names_the_type(base, scope)?;
                 let field = self.parsed.text(*name).to_string();
-                let ty = field_type(&base, &field, self.own, self.library)?;
+                let ty = declared_field_type(&base, &field, &self.asked())?;
                 if !holds_shared(&ty) {
                     return None;
                 }
@@ -1363,7 +1063,7 @@ impl<'a> Analysis<'a> {
                             // the field, and therefore for every handle that
                             // ever joins it.
                             let declared =
-                                field_type(&struct_name, &field_name, self.own, self.library);
+                                declared_field_type(&struct_name, &field_name, &self.asked());
                             if let Some(ty) = declared.filter(holds_shared) {
                                 self.note(FIELDS, &field_slot, ty, true, false);
                                 match self.slot_of(function, &value, scope) {
@@ -1501,7 +1201,7 @@ impl<'a> Analysis<'a> {
                 {
                     let (key, param) = (key.clone(), param.clone());
                     let (at, name) = split_slot(&source);
-                    self.duplicates(&at, &name, handed_to(&key, &param));
+                    self.duplicates(&at, &name, handed_on_to(&key, &param));
                     self.join(&source, &slot(&key, &param));
                 }
                 self.expr(function, arg, scope);
@@ -1514,7 +1214,7 @@ impl<'a> Analysis<'a> {
                         // ADR-040 D1: a handle handed on **by value** is
                         // duplicated; one the callee only borrows is not.
                         if by_value_shared(param_ty) {
-                            self.duplicates(function, &handle, handed_to(&key, &param));
+                            self.duplicates(function, &handle, handed_on_to(&key, &param));
                         }
                         self.join(&slot(function, &handle), &slot(&key, &param));
                     }
@@ -1684,11 +1384,13 @@ impl<'a> Analysis<'a> {
                     kept_its_lock: match (count, a_word) {
                         (Count::Atomic, true) if held.contains(&root) => Some(
                             "a word, but a door over several locks takes it, and a \
-                             compare-and-swap cannot be held, so it keeps its lock",
+                             compare-and-swap cannot be held, so it keeps its lock"
+                                .to_string(),
                         ),
                         (Count::Atomic, true) => Some(
                             "a word, but the floor answered for it rather than a crossing, \
-                             so it keeps its lock",
+                             so it keeps its lock"
+                                .to_string(),
                         ),
                         _ => None,
                     },
@@ -1726,6 +1428,15 @@ impl<'a> Analysis<'a> {
 }
 
 impl Analysis<'_> {
+    /// The interner and the two ledgers, as the Nikaia half reads them.
+    fn asked(&self) -> Asked<'_> {
+        Asked {
+            names: &self.parsed.interner,
+            own: self.own,
+            library: self.library,
+        }
+    }
+
     /// The qualified name a call names, where it names one.
     /// Whether a receiver is a walk that runs in parallel: a `par_iter()`, a
     /// name bound to one, or a walk chained onto either.
@@ -1751,193 +1462,5 @@ impl Analysis<'_> {
             ),
             _ => None,
         }
-    }
-}
-
-/// What a `SharedMut` holds, where it is a value that does not copy cheaply:
-/// anything that is not a word (ADR-238 D3). A hull whose content nobody named
-/// says nothing.
-fn held_that_does_not_copy(ty: &Ty) -> Option<String> {
-    match ty {
-        Ty::Named { name, args, .. } if name == SHARED_MUT => match args.as_slice() {
-            [held] if !holds_a_word(ty) && !held.is_unknown() => Some(held.text()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The type a literal is: a word-sized one, or text.
-fn literal_type(expr: &Expr) -> Option<&'static str> {
-    match expr {
-        Expr::LitStr { .. } | Expr::LitInterpolated { .. } => Some("String"),
-        Expr::LitInt { .. } => Some("i64"),
-        Expr::LitFloat(_) => Some("f64"),
-        Expr::LitBool(_) => Some("bool"),
-        Expr::LitChar(_) => Some("char"),
-        Expr::Unary { expr, .. } => literal_type(expr),
-        _ => None,
-    }
-}
-
-/// **A `SharedMut` of a value that fits a machine word** (ADR-238 D1): a
-/// number, a truth value or a character.
-fn holds_a_word(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, args, view: false }
-        if name == SHARED_MUT
-            && matches!(args.as_slice(), [Ty::Named { name: held, args: none, view: false }]
-                if none.is_empty()
-                    && matches!(held.as_str(), "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
-                        | "u32" | "u64" | "f32" | "f64" | "bool" | "char")))
-}
-
-/// The sentence a published position gets.
-fn published(key: &str, at: &str) -> String {
-    match at == RESULT {
-        true => format!(
-            "`{key}` is public and hands a `Shared` back, so what the caller does with it is in \
-             a unit this build cannot see"
-        ),
-        false => format!(
-            "`{key}` is public, so its callers are in a unit this build cannot see, and one of \
-             them may cross a thread with it"
-        ),
-    }
-}
-
-/// The sentence a duplication at a call gets.
-///
-/// No line number: an `Expr` carries no span in this AST, which is the same limit
-/// `check::Checked::fallible_methods` records about a method call. The callee and
-/// the position it takes the handle in are what there is to say, and they are
-/// enough to find the line.
-fn handed_to(key: &str, param: &str) -> String {
-    format!("handed to `{key}` as `{param}`, which takes a handle of its own")
-}
-
-/// The sentence a call nothing describes gets.
-fn unseen(callee: Option<&str>) -> String {
-    format!(
-        "the compiler knows nothing about `{}`, so it has to assume it might start a thread",
-        callee.unwrap_or("the callee")
-    )
-}
-
-/// `"Counter::record"` back into its two halves.
-fn split_slot(key: &str) -> (String, String) {
-    match key.rsplit_once("::") {
-        Some((function, name)) => (function.to_string(), name.to_string()),
-        None => (String::new(), key.to_string()),
-    }
-}
-
-/// Whether a position takes a handle on a shared value **by value**.
-///
-/// `Shared[T]` does; `&Shared[T]` does not, and the difference is
-/// [ADR-040](../../../../docs/specification/adr/adr-040.md) D1's correction:
-/// lending the inner value out hands no handle on, so nothing is duplicated and
-/// no atomic instruction is paid. A type that merely *holds* a `Shared` does not
-/// either - a struct is carried by whatever holds it, which is D1's own scope
-/// note.
-fn by_value_shared(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED || name == SHARED_MUT)
-}
-
-/// The three types a program makes a hull of by calling their name
-/// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2).
-fn is_hull(name: &str) -> bool {
-    matches!(name, SHARED | SHARED_MUT | "Locked")
-}
-
-/// Whether a type is, or holds, a `Shared`.
-fn holds_shared(ty: &Ty) -> bool {
-    match ty {
-        Ty::Named { name, args, .. } => {
-            name == SHARED || name == SHARED_MUT || args.iter().any(holds_shared)
-        }
-        Ty::Tuple(parts) => parts.iter().any(holds_shared),
-        _ => false,
-    }
-}
-
-/// What the ledgers say about a type, by the name a program writes.
-fn described<'a>(
-    ty: &str,
-    own: &'a Ledger,
-    library: &'a Ledger,
-) -> Option<&'a super::TypeContract> {
-    let name = ty.trim_start_matches('&');
-    let suffix = format!("::{name}");
-    [own, library].into_iter().find_map(|ledger| {
-        ledger.types.get(name).or_else(|| {
-            ledger
-                .types
-                .iter()
-                .find(|(key, _)| key.ends_with(&suffix))
-                .map(|(_, contract)| contract)
-        })
-    })
-}
-
-/// The `<struct>.<field>` slots a type reaches that hold a `Shared`, through the
-/// ledger's `fields` (ADR-024, the walk ADR-029 established).
-fn shared_fields(ty: &str, own: &Ledger, library: &Ledger) -> Vec<String> {
-    let name = ty.trim_start_matches('&');
-    let Some(contract) = described(ty, own, library) else {
-        return Vec::new();
-    };
-    contract
-        .fields
-        .iter()
-        .filter(|field| holds_shared(&field.ty))
-        .map(|field| format!("{name}.{}", field.name))
-        .collect()
-}
-
-/// One field's declared type, through the same lookup.
-fn field_type(ty: &str, field: &str, own: &Ledger, library: &Ledger) -> Option<Ty> {
-    described(ty, own, library)?
-        .fields
-        .iter()
-        .find(|declared| declared.name == field)
-        .map(|declared| declared.ty.clone())
-}
-
-/// What `Shared[T]` lowers to, which since ADR-037 D6 is one type with one
-/// optimisation on top of it.
-///
-/// D6 decides that the floor is `std::sync::Arc`; D7 decides that a value this
-/// analysis proves never crosses may be `std::rc::Rc` instead.
-///
-/// Named here rather than in `emit` because the answer is **per value**: the
-/// emitter asks it of the count this file gave a particular position, which is
-/// why `emit::Emitter::map_name` could not have answered it. The full path and no
-/// `use`, because the emitted file writes every `std` type that way and two names
-/// as common as these are two a program may have of its own.
-pub fn rust_name(count: Count) -> &'static str {
-    match count {
-        Count::Plain => "std::rc::Rc",
-        Count::Word | Count::Atomic => "std::sync::Arc",
-    }
-}
-
-/// What `Locked[T]` lowers to, which is the **same answer to the same question**
-/// ([ADR-057](../../../../docs/specification/adr/adr-057.md) D3).
-///
-/// A lock is only reachable from two places through a shared handle, so the count
-/// this file gave that handle decides the lock inside it: one analysis, two
-/// decisions, no second pass. Every one of [`Fallback`]'s reasons to decline
-/// carries over unchanged, and so does the polarity — where nothing is proved,
-/// the shape that is safe.
-///
-/// The two shapes report the same thing when a program re-enters one lock (D4),
-/// which is what makes choosing between them invisible to a reader. That is
-/// `nikaia_std::lock`'s business and the reason the crossing one carries an owner
-/// check.
-pub fn lock_name(count: Count) -> &'static str {
-    match count {
-        Count::Plain => "nikaia_std::lock::Local",
-        Count::Word => "nikaia_std::lock::Word",
-        Count::Atomic => "nikaia_std::lock::Crossing",
     }
 }
