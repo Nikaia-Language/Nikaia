@@ -1,0 +1,104 @@
+// crates/nikaia-std/src/tools/lends.nika
+//
+// Whether a callee **lends** a parameter, so that the compiler writes the
+// reference and the caller does not (ADR-094 D1, D2) - the rule the
+// compiler's `contracts::keeps` answers from the `keeps` column, moved from
+// Rust (ADR-250, #125). The walk that fills the column stays Rust.
+//
+// One answer with three readers - the emitter writing the declaration, the
+// emitter writing the call, and the checker refusing a `&` somebody wrote -
+// because two of the three disagreeing is a `&&T` or a moved value.
+
+// The names whose values are copied when handed on: the numbers, the two
+// machine-width names (ADR-147 D2), a span of time (ADR-150 D1), and the
+// hulls, whose handing on duplicates a count (ADR-040 D1, D5).
+comptime COPIED: Array[ref String, 18] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "Duration", "Shared", "SharedMut", "Locked"]
+
+/// Whether a callee lends the parameter at `at`. The position has to exist,
+/// not be the receiver and not be `mut` (ADR-094 D3); then either its type is
+/// written as a view - the `&` the author wrote, at a function and at a
+/// method alike - or, at a function, its value **moves**, no ledger in
+/// `copying` says the type copies (ADR-252 D4.1), and the body does not keep
+/// it. A method's inferred lending waits on the emitter knowing which entry a
+/// call goes to (ADR-028).
+pub fn lends_in(contract: ref FnContract, at: i64, copying: ref Vec[ref Ledger]) -> bool {
+    return lends_from(contract.signature, contract.keeps, at, copying)
+}
+
+fn lends_from(written: ref Signature?, keeps: ref Vec[String], at: i64, copying: ref Vec[ref Ledger]) -> bool {
+    let signature = written ?? return false
+    let mut position = 0
+    for (name, ty) in signature.params {
+        if position == at {
+            if signature.mutable.contains(name) || name == "self" {
+                return false
+            }
+            if ty.is_a_view() {
+                return true
+            }
+            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !keeps.contains(name)
+        }
+        position += 1
+    }
+    return false
+}
+
+/// Whether a ledger says values of `ty` are copies.
+pub fn a_ledger_copies(ty: ref Ty, copying: ref Vec[ref Ledger]) -> bool {
+    return match ty {
+        Ty::Named { name, view, .. } => !view && described_as_copying(name, copying),
+        Ty::Nullable(inner) => a_ledger_copies(inner, copying),
+        else => false,
+    }
+}
+
+fn described_as_copying(name: ref String, copying: ref Vec[ref Ledger]) -> bool {
+    for ledger in copying {
+        let described = ledger.types[name] ?? continue
+        if described.copies {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether a value of this type is **moved** when it is handed on, rather
+/// than copied - and whether this compiler can say so at all: a type it cannot
+/// name, a type variable and anything else unknown answer no, because what
+/// hangs on it is a reference the compiler would write. An array copies as its
+/// elements do (ADR-152 D2); a function value moves (ADR-102 D1); a nullable
+/// and a tuple move where a part does.
+pub fn moves(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, view } => a_name_that_moves(name, args, view),
+        Ty::Fn { .. } => true,
+        Ty::Nullable(inner) => moves(inner),
+        Ty::Tuple(parts) => any_moves(parts),
+        else => false,
+    }
+}
+
+fn a_name_that_moves(name: ref String, args: ref Vec[Ty], view: bool) -> bool {
+    let base = base_name(name)
+    if base == ARRAY {
+        return any_moves(args)
+    }
+    if view {
+        return false
+    }
+    for one in COPIED {
+        if one == base {
+            return false
+        }
+    }
+    return true
+}
+
+fn any_moves(types: ref Vec[Ty]) -> bool {
+    for one in types {
+        if moves(one) {
+            return true
+        }
+    }
+    return false
+}

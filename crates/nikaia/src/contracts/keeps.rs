@@ -72,142 +72,25 @@ pub fn lends(contract: &super::FnContract, at: usize) -> bool {
 /// nobody wrote. Only a ledger's `copies = true` answers here; a type this
 /// program declares is still lent, and reading its copy is the same step for
 /// the types a unit declares.
+///
+/// The rule is `tools/lends.nika`'s (ADR-250, #125), with the three below.
 pub fn lends_in(contract: &super::FnContract, at: usize, copying: &[&super::Ledger]) -> bool {
-    let Some(signature) = contract.signature.as_ref() else {
-        return false;
-    };
-    let Some((name, ty)) = signature.params.get(at) else {
-        return false;
-    };
-    // **A method's arguments are not lent yet**, and the reason is the one
-    // `touches` gives for asking a weaker question: which entry `acc.record(m)`
-    // goes to is the type checker's answer and the emitter has none
-    // ([ADR-028](../../../docs/specification/adr/adr-028.md)). The declaration
-    // is written off this column and the call is not, so a call the checker
-    // does not walk — a grammar action's fold lambda, say — would pass a value
-    // into a `&T` parameter and `rustc` would say so about a file nobody wrote.
-    //
-    // A free function has neither half of that problem: the emitter resolves
-    // its callee by name, exactly as it resolves everything else.
-    // **A `mut` parameter is a third state and not this one**
-    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3): it lowers to
-    // `&mut T`, written off the declaration rather than off this column, and
-    // both answering would put two references on one parameter.
-    //
-    // **A parameter declared a view is the exception, at a method too**: its
-    // declaration is the `&` the author wrote and not this column's, so the
-    // call and the declaration cannot part - and a `String` of the caller's
-    // handed to `self.id(key)` for a `key: ref String` needs the `&` the
-    // compiler writes, which it was refused for as `NK1102` (found moving
-    // `sharing`'s classes into Nikaia, #125).
-    !signature.mutable.contains(name)
-        && name != "self"
-        && (ty.is_a_view()
-            || (!signature.takes_a_receiver()
-                && moves(ty)
-                && !a_ledger_copies(ty, copying)
-                && !contract.keeps.contains(name)))
+    nikaia_std::tools::lends::lends_in(contract, at as i64, copying)
 }
 
 /// Whether a ledger says values of `ty` are copies.
 pub fn a_ledger_copies(ty: &super::ty::Ty, copying: &[&super::Ledger]) -> bool {
-    use super::ty::Ty;
-    match ty {
-        Ty::Named {
-            name, view: false, ..
-        } => copying
-            .iter()
-            .any(|ledger| ledger.types.get(name).is_some_and(|t| t.copies)),
-        Ty::Nullable(inner) => a_ledger_copies(inner, copying),
-        _ => false,
-    }
+    nikaia_std::tools::lends::a_ledger_copies(ty, copying)
 }
 
 /// Whether a value of this type is **moved** when it is handed on, rather than
-/// copied — and whether this compiler can say so at all.
-///
-/// The same question `NK2101` asks about a task
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1), asked one
-/// position over and answered more narrowly in one place: `Unknown`, a type
-/// variable and a function type answer **no** here, because what hangs on it is
-/// a reference this compiler would *write* rather than a refusal it would
-/// withhold. A refusal on a guess is refusing a correct program; a reference on
-/// a guess is a program that does not compile.
+/// copied — and whether this compiler can say so at all: `Unknown`, a type
+/// variable and a function type's absence of an answer are **no**, because what
+/// hangs on it is a reference this compiler would *write*
+/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1, ADR-147 D2,
+/// ADR-150 D1, ADR-152 D2, ADR-102 D1).
 pub fn moves(ty: &super::ty::Ty) -> bool {
-    use super::ty::Ty;
-    match ty {
-        // **An array copies as its elements do**
-        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D2): `N`
-        // elements inline and nothing allocated, so `Array[i64, 3]` is copied
-        // the way a tuple of three `i64` is and `Array[String, 3]` is moved the
-        // way one of three `String` is. The count among the arguments answers
-        // **no** on its own, which is what makes `any` right here.
-        Ty::Named { name, args, .. } if super::ty::base(name) == super::ty::ARRAY => {
-            args.iter().any(moves)
-        }
-        Ty::Named { name, view, .. } => {
-            !view
-                && !matches!(
-                    super::ty::base(name),
-                    "i8" | "i16"
-                        | "i32"
-                        | "i64"
-                        // **The two machine-width names are copied too**, and
-                        // their absence here was a defect the C boundary found
-                        // ([ADR-147](../../../docs/specification/adr/adr-147.md)
-                        // D2): a declaration writing `count: usize` got a `&`
-                        // in front of its argument, because a type this list
-                        // does not name is one that **moves**. No program could
-                        // write one before - a length is an `i64` and the
-                        // machine-width type left the surface
-                        // ([ADR-048](../../../docs/specification/adr/adr-048.md)
-                        // D1) - so the first declaration to name one is the
-                        // first program to meet it.
-                        | "isize"
-                        | "usize"
-                        | "u8"
-                        | "u16"
-                        | "u32"
-                        | "u64"
-                        | "f32"
-                        | "f64"
-                        | "bool"
-                        | "char"
-                        // **A span of time is a number of ticks**
-                        // ([ADR-150](../../../docs/specification/adr/adr-150.md)
-                        // D1), so it copies - and a `Duration` missing from
-                        // this list was the `usize` defect one type over: the
-                        // first program to write `sleep(50.millis())` got a `&`
-                        // in front of its argument, because a type this list
-                        // does not name is one that **moves**.
-                        | "Duration"
-                        // A hull is a handle: handing one on duplicates the
-                        // count rather than taking the value away
-                        // (ADR-040 D1, D5).
-                        | "Shared"
-                        | "SharedMut"
-                        | "Locked"
-                )
-        }
-        // **A function value moves**, which is what
-        // [ADR-102](../../../docs/specification/adr/adr-102.md) D1's parameter
-        // needed: it lowers to `impl AsyncFn(A) -> R`, an opaque type with no
-        // `Copy`, so a `listen` that hands its handler to an `answer` inside a
-        // loop hands it away the first time round. `rustc` said so about a file
-        // nobody wrote - *use of moved value: `handler`* - which is [Part III
-        // C.1](../../../docs/specification/30-nikaia-tooling.md).
-        //
-        // It is the answer for Part I 5.4 C's **immediate** context read off the
-        // body rather than off a word: a parameter the body only calls or passes
-        // on is not in `keeps`, so `lends` says to write the `&` - and `&F` is a
-        // function too, which is why one `&` is all it takes.
-        Ty::Fn { .. } => true,
-        // A nullable of data is still data: `Option<String>` moves.
-        Ty::Nullable(inner) => moves(inner),
-        // A tuple moves where any part does; one of copied parts is copied.
-        Ty::Tuple(parts) => parts.iter().any(moves),
-        _ => false,
-    }
+    nikaia_std::tools::lends::moves(ty)
 }
 
 /// What one function's body does with each of its parameters.

@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.384] — 2026-10-03
+
+**Whether a callee lends a parameter is decided in Nikaia** (#125, ADR-250).
+The rule the declaration, the call and the checker all read (ADR-094 D1, D2)
+moved into `tools/lends.nika` with its two questions: whether a ledger says a
+type copies (ADR-252 D4.1), and whether a value moves when it is handed on -
+an array as its elements (ADR-152 D2), a function value always (ADR-102 D1),
+the numbers, the machine-width names, a `Duration` and the hulls never. The
+walk that fills the `keeps` column stays Rust. 19.0 % of the toolchain is
+Nikaia.
+
 ## [0.0.383] — 2026-10-03
 
 **What a method's name says about text, and which containers text is followed
