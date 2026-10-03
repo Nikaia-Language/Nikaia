@@ -1081,10 +1081,21 @@ impl Walk<'_> {
                 }
                 out
             }
+            // **And into a list or a tuple whole**, for the same reason:
+            // `named.push((first, called))` for a `called` a call made moves
+            // the text into the tuple, and counted as a view the `let` went
+            // into the frame's keep and the tuple was handed a reference its
+            // `String` refused (found moving `modules`' `use` check into
+            // Nikaia, #125).
             Expr::ListLit { items, .. } | Expr::Tuple(items) => {
                 let mut out = BTreeSet::new();
                 for item in items {
-                    out.extend(self.origins(item));
+                    match self.is_the_buffer(item) {
+                        true => {
+                            let _ = self.origins(item);
+                        }
+                        false => out.extend(self.origins(item)),
+                    }
                 }
                 out
             }

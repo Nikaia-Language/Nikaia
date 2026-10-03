@@ -1,0 +1,101 @@
+// crates/nikaia-std/src/tools/modules.nika
+//
+// What a file of a package declares, and whether its `use` lines name what
+// the package may reach - the two questions the compiler's `modules` asks of
+// one parsed file, moved from Rust (ADR-250, #125). Reading the files, the
+// manifest and the ledgers stays Rust.
+
+use std::collections
+
+/// The names a file declares: what one package's namespace counts
+/// (ADR-047 D1). A method belongs to its type and a grammar's rule to its
+/// grammar, so neither is among them; a `trait` and a `grammar` are
+/// (ADR-144 D2).
+pub fn declared_names(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[String] {
+    let mut out: Vec[String] = []
+    for item in items {
+        let name = name_declared(names, item.node)
+        if name.len() > 0 {
+            out.push(name)
+        }
+    }
+    return out
+}
+
+/// **Every `use` in a file, against the packages it may name** (ADR-046 D2,
+/// D4, D5), and the refusal for the first that is wrong, or nothing. `use`
+/// makes a package reachable and brings no name in, so there are four things
+/// to say no to, each with the way out (Part III C.2): a path rather than a
+/// package; the same name twice; a name no dependency declares, where a file
+/// alone has none at all; and a file beside this one, whose package already
+/// sees it. `beside` says whether `<package>.nika` is a file next to this one.
+pub fn a_use_refused(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], here: ref String, reachable: ref collections::BTreeSet[String], alone: bool, beside: fn(ref String) -> bool sync) -> String? {
+    // What each `use` names, and what this file calls it: the two differ
+    // exactly where an alias is written (ADR-046 D3). A path first, and every
+    // one of them, because it is the only shape that is wrong about itself.
+    let mut named: Vec[(String, String)] = []
+    for item in items {
+        let segments = use_segments(names, item.node)
+        if segments.len() == 0 || segments[0] == "std" {
+            continue
+        }
+        let first = segments[0].clone()
+        if segments.len() > 1 {
+            let written = segments.join("::")
+            return f"`use {written}` in {here}: `use` takes a package name only, not a path into it. Write `use {first}`, and `{written}` where you need it."
+        }
+        let called = alias_of(names, item.node)
+        if called.len() > 0 {
+            named.push((first, called))
+        } else {
+            named.push((first.clone(), first))
+        }
+    }
+    // **D5 before D4**: a name written twice is a fact about this file, and
+    // the name counted is the one this file introduces - the alias.
+    let mut once: collections::BTreeSet[String] = collections::BTreeSet()
+    for (_, called) in named {
+        if once.contains(called) {
+            return f"`{called}` is used twice in {here}. Two packages can't have the same name in one file. Write `use … as …` to give one of them another name."
+        }
+        once.insert(called.clone())
+    }
+    for (package, _) in named {
+        if reachable.contains(package) {
+            continue
+        }
+        // **Alone before beside**: outside a project nothing beside a file
+        // is read, so the advice about a package's files would be about a
+        // package this file is not part of.
+        if alone {
+            return f"`use {package}` in {here}: a single file outside a project has no dependencies, so there's no `{package}` to use.\nDependencies are declared in a project's `nikaia.toml`. Put this file in a project whose `nikaia.toml` declares it:\n    [dependencies]\n    {package} = {{ path = \"../{package}\" }}"
+        }
+        if beside(package) {
+            return f"`use {package}` in {here}: the files of a package already see each other, so there's nothing to bring in. Remove the line and use the name directly."
+        }
+        return f"`use {package}` in {here}: there's no dependency called `{package}`.\nAdd it to the project's `[dependencies]` under that name:\n    [dependencies]\n    {package} = {{ path = \"../{package}\" }}"
+    }
+    return null
+}
+
+// The segments a `use` names, or none for any other item.
+fn use_segments(names: ref winnow_grammar::InternerContext, item: ref Item) -> Vec[String] {
+    let mut out: Vec[String] = []
+    match item {
+        Item::Import { path, .. } => {
+            for segment in path {
+                out.push(names.resolve(segment).clone())
+            }
+        }
+        else => {}
+    }
+    return out
+}
+
+// What a `use … as …` calls its package, or nothing.
+fn alias_of(names: ref winnow_grammar::InternerContext, item: ref Item) -> String {
+    return match item {
+        Item::Import { alias, .. } => a_symbols_text(names, alias),
+        else => "",
+    }
+}
