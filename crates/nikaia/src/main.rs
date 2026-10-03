@@ -65,6 +65,16 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "NAME:LEVEL")]
     pub optimization: Vec<String>,
 
+    /// What a claim the compiler shows false with values is
+    /// ([ADR-269](../../../docs/specification/adr/adr-269.md) D8): `error`,
+    /// the default, refuses the program; `warn` builds it and checks the
+    /// claim where it is reached.
+    ///
+    /// The bypass for the day a better prover refutes what an older one let
+    /// through. Overrides `nikaia.toml`'s `[build] refuted-claims`.
+    #[arg(long, global = true, value_name = "error|warn")]
+    pub refuted_claims: Option<String>,
+
     /// Verify the Borrow Contract Ledger instead of updating it (Part III,
     /// 13.5).
     ///
@@ -553,6 +563,9 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
                 args.allow_read_from_list.as_deref(),
             )?;
             project.settings.optimize(&args.optimization)?;
+            project
+                .settings
+                .refutations(args.refuted_claims.as_deref())?;
             return drive(args, &project, "run", program_args);
         }
         Command::Run {
@@ -590,6 +603,9 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         args.user_parallelism.as_deref(),
     )?;
     project.settings.optimize(&args.optimization)?;
+    project
+        .settings
+        .refutations(args.refuted_claims.as_deref())?;
     drive(args, &project, subcommand, &program_args)
 }
 
@@ -631,6 +647,9 @@ fn test_command(
         args.user_parallelism.as_deref(),
     )?;
     project.settings.optimize(&args.optimization)?;
+    project
+        .settings
+        .refutations(args.refuted_claims.as_deref())?;
     let tests =
         nikaia::modules::Program::read_for_tests(&project.entry(), &project.packages()?, true)?
             .tests;
@@ -661,6 +680,7 @@ fn test_command(
             let mut built = Project::open(&start, args.target.as_deref(), Some(setting))?;
             built.settings.tests = testing;
             built.settings.optimize(&args.optimization)?;
+            built.settings.refutations(args.refuted_claims.as_deref())?;
             let (code, binary) = built.drive_to(
                 "build",
                 &[],
@@ -730,6 +750,7 @@ fn single_file(args: &Cli, input: &std::path::Path, verb: Verb<'_>) -> Result<()
         args.user_parallelism.as_deref(),
     )?;
     settings.optimize(&args.optimization)?;
+    settings.refutations(args.refuted_claims.as_deref())?;
     if let Some(missing) = settings.build.target.unbuildable() {
         refuse!(
             "cannot build for `{}` yet: {missing}",

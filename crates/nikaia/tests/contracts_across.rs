@@ -79,21 +79,29 @@ fn nikaia(dir: &Path, args: &[&str]) -> Output {
 
 /// **D5, D7**: the ledger publishes the contract, the consumer proves what it
 /// can - `lib::clamp`'s `result >= 0` proves `c >= 0`, and its calls with
-/// numbers it knows take the unchecked entry - checks what it cannot where
-/// the call stands, and the failure there names the precondition and the
-/// caller's line.
+/// numbers it knows take the unchecked entry - carries back what `ratio`
+/// cannot show to `ratio`'s entry (D15), checks it where `main` calls
+/// `ratio`, and the failure there names the precondition, the `assert` in the
+/// other package it came from, and the caller's line.
 #[test]
 fn a_contract_is_published_proved_and_checked_across_packages() {
     let dir = the_two("contracts-across");
-    let run = nikaia(&dir.join("app"), &["run"]);
+    // `ratio(1, 0)` is shown to break the contract while the program is
+    // built (D8): refused, and run here with the bypass.
+    let refused = nikaia(&dir.join("app"), &["build"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("error[NK1207]"));
+    let run = nikaia(&dir.join("app"), &["run", "--refuted-claims", "warn"]);
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(!run.status.success(), "{stdout}{stderr}");
     assert_eq!(stdout, "25 0 4 50\n", "{stderr}");
     assert!(
-        stderr.contains("main.nika:4")
-            && stderr.contains("precondition of `lib::percent`: `whole > 0`")
-            && stderr.contains("whole is 0"),
+        stderr.contains("main.nika:12")
+            && stderr.contains(
+                "precondition of `ratio`: `b > 0`, from `assert(whole > 0)` in `lib::percent`"
+            )
+            && stderr.contains("b is 0"),
         "{stderr}"
     );
 
@@ -115,6 +123,8 @@ fn a_contract_is_published_proved_and_checked_across_packages() {
             "src/main.nika",
             "--output",
             &lowered.to_string_lossy(),
+            "--refuted-claims",
+            "warn",
         ],
     );
     assert!(
@@ -125,10 +135,11 @@ fn a_contract_is_published_proved_and_checked_across_packages() {
     let rust = std::fs::read_to_string(&lowered).expect("the lowering");
     assert!(rust.contains("lib::percent__unchecked(1, total)"), "{rust}");
     assert!(rust.contains("lib::shifted__unchecked(5, 1)"), "{rust}");
-    assert!(
-        rust.contains("(if !((b.clone() as i128) > (0i128))"),
-        "{rust}"
-    );
+    // `ratio` relies on its own precondition, so its call is unchecked; the
+    // call that passes `2` proves it, and the one that passes `0` checks it.
+    assert!(rust.contains("lib::percent__unchecked(a, b)"), "{rust}");
+    assert!(rust.contains("ratio__unchecked(1, 2)"), "{rust}");
+    assert!(rust.contains("(if !((0i128) > (0i128))"), "{rust}");
     // `c >= 0` is proved from what `lib::clamp` ensures: no check is left.
     assert!(!rust.contains("assert(c >= 0)"), "{rust}");
     std::fs::remove_dir_all(&dir).ok();

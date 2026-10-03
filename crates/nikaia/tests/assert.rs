@@ -26,7 +26,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 /// Through the command line, as a user runs it: the file has a name, so an
 /// abort names the `.nika` line (ADR-300) - which is half of what D2 says a
 /// false claim reports.
-fn run(purpose: &str, source: &str, parallel: &str) -> Output {
+fn run_with(purpose: &str, source: &str, parallel: &str, flags: &[&str]) -> Output {
     let dir = common::scratch_dir(&format!("assert-{purpose}"));
     let input = dir.join("claims.nika");
     std::fs::write(&input, source).expect("write the source");
@@ -35,6 +35,7 @@ fn run(purpose: &str, source: &str, parallel: &str) -> Output {
         .current_dir(&dir)
         .args(["lower", "claims.nika", "--output", "claims.rs"])
         .args(["--user-parallelism", parallel])
+        .args(flags)
         .output()
         .expect("the nikaia binary runs");
     assert!(
@@ -65,9 +66,36 @@ fn run(purpose: &str, source: &str, parallel: &str) -> Output {
 fn outcome(purpose: &str, source: &str) -> (bool, String, String) {
     let found = findings(source);
     assert!(found.is_empty(), "{purpose}: {found:#?}");
+    outcome_with(purpose, source, &[])
+}
+
+/// **A program with a claim the compiler shows false** (ADR-269 D8): refused
+/// as it is, and built with `--refuted-claims warn`, the bypass, so that the
+/// check where the claim is reached can be seen to fail.
+fn outcome_refuted(purpose: &str, source: &str) -> (bool, String, String) {
+    let found = findings(source);
+    assert!(
+        !found.is_empty() && found.iter().all(|f| f.code == "NK1207"),
+        "{purpose}: {found:#?}"
+    );
+    let dir = common::scratch_dir(&format!("assert-{purpose}-refused"));
+    std::fs::write(dir.join("claims.nika"), source).expect("write the source");
+    let refused = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .current_dir(&dir)
+        .args(["lower", "claims.nika", "--output", "claims.rs"])
+        .output()
+        .expect("the nikaia binary runs");
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{purpose}: {said}");
+    assert!(said.contains("error[NK1207]"), "{purpose}: {said}");
+    std::fs::remove_dir_all(&dir).ok();
+    outcome_with(purpose, source, &["--refuted-claims", "warn"])
+}
+
+fn outcome_with(purpose: &str, source: &str, flags: &[&str]) -> (bool, String, String) {
     let mut seen = Vec::new();
     for parallel in ["no", "yes"] {
-        let out = run(purpose, source, parallel);
+        let out = run_with(purpose, source, parallel, flags);
         seen.push((
             out.status.success(),
             String::from_utf8_lossy(&out.stdout).to_string(),
@@ -149,10 +177,12 @@ fn a_false_claim_stops_the_program_when_it_runs() {
 
 /// **A claim carried back to the entry fails at the call that breaks it**
 /// (ADR-269 D15, D20, D21), with the `assert`'s message, the condition at the
-/// entry, the `assert` it came from and the parameter's value.
+/// entry, the `assert` it came from and the parameter's value. The compiler
+/// shows the call false, so the program is refused (D8) and built here with
+/// the bypass.
 #[test]
 fn a_computed_precondition_fails_at_the_call() {
-    let (ok, stdout, stderr) = outcome(
+    let (ok, stdout, stderr) = outcome_refuted(
         "computed",
         "fn twice(n: i64) -> i64 sync {\n\
          \x20   let blank = n * 2\n\
@@ -177,10 +207,13 @@ fn a_computed_precondition_fails_at_the_call() {
 }
 
 /// **A call that does not prove a precondition checks it, and its failure
-/// names the call** (ADR-269 D5): the caller broke the contract.
+/// names the call** (ADR-269 D5): the caller broke the contract. `report`
+/// cannot show `total > 0` either, so the claim is carried back to its entry
+/// (D15) and the call that fails is `main`'s, which passed the `0` - shown
+/// false while it is built (D8), so built here with the bypass.
 #[test]
 fn a_broken_precondition_names_the_caller() {
-    let (ok, stdout, stderr) = outcome(
+    let (ok, stdout, stderr) = outcome_refuted(
         "precondition",
         "fn percent(part: i64, whole: i64) -> i64 sync {\n\
          \x20   assert(whole > 0)\n\
@@ -199,8 +232,11 @@ fn a_broken_precondition_names_the_caller() {
     assert!(!ok, "{stdout}");
     assert_eq!(stdout, "25\n");
     assert!(
-        stderr.contains("claims.nika:7")
-            && stderr.contains("precondition of `percent`: `whole > 0`"),
+        stderr.contains("claims.nika:12")
+            && stderr.contains(
+                "precondition of `report`: `total > 0`, from `assert(whole > 0)` in `percent`"
+            )
+            && stderr.contains("total is 0"),
         "{stderr}"
     );
 }

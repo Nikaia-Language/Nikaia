@@ -165,6 +165,8 @@ pub fn prove(
         foreign: BTreeMap::new(),
         claims,
         preconditions: BTreeMap::new(),
+        known: BTreeMap::new(),
+        edges: BTreeSet::new(),
         candidates: BTreeMap::new(),
         postconditions: BTreeMap::new(),
         broken: BTreeSet::new(),
@@ -174,10 +176,25 @@ pub fn prove(
         in_test: false,
         arena: Arena::new(),
     };
-    // Pass 1: which parameter claims are preconditions (D5). A function's own
-    // preconditions depend only on its own body.
-    prover.every_body();
-    let preconditions = std::mem::take(&mut prover.preconditions);
+    // Pass 1: which parameter claims are preconditions (D5) - a function's
+    // own `assert`s, and what its calls ask that it cannot show (D15). The
+    // second depends on the callees' preconditions, so the pass repeats with
+    // the last one's until nothing changes. A call inside a cycle is never
+    // carried back, so every chain of carrying is at most as long as the
+    // functions are many.
+    let bound = parsed.program.items.len() + 2;
+    let mut preconditions = BTreeMap::new();
+    for _ in 0..bound {
+        prover.known = preconditions;
+        prover.preconditions = BTreeMap::new();
+        prover.candidates = BTreeMap::new();
+        prover.every_body();
+        preconditions = std::mem::take(&mut prover.preconditions);
+        if same_preconditions(&prover.arena, &preconditions, &prover.known) {
+            break;
+        }
+    }
+    prover.known = BTreeMap::new();
     prover.collecting = false;
     prover.preconditions = preconditions;
     // **Pass 2, until nothing changes: every claim and every call**, with
@@ -307,12 +324,16 @@ impl PreClaim {
     /// What a failed check of it says: the condition, and where a computed
     /// one came from (ADR-269 D21).
     fn message(&self, function: &str) -> String {
-        match &self.computed {
-            Some(computed) => format!(
+        match (&self.computed, &self.origin) {
+            (Some(computed), Some(origin)) => format!(
+                "precondition of `{function}`: `{computed}`, from `assert({})` in `{origin}`",
+                self.written
+            ),
+            (Some(computed), None) => format!(
                 "precondition of `{function}`: `{computed}`, from `assert({})`",
                 self.written
             ),
-            None => format!("precondition of `{function}`: `{}`", self.written),
+            (None, _) => format!("precondition of `{function}`: `{}`", self.written),
         }
     }
 }
@@ -354,6 +375,13 @@ struct PreClaim {
     computed: Option<String>,
     /// The `assert`'s `message:`, where it is text as written.
     message: Option<String>,
+    /// **The function the `assert` stands in**, where it is not this one:
+    /// a callee's precondition carried back through a call (ADR-269 D15).
+    origin: Option<String>,
+    /// The call it was carried back from - where it starts, the callee and
+    /// the claim's place in the callee's list - so that the second pass
+    /// knows the call needs no check of its own.
+    site: Option<(usize, String, usize)>,
 }
 
 struct Prover<'a> {
@@ -366,6 +394,13 @@ struct Prover<'a> {
     foreign: BTreeMap<String, Option<Foreign>>,
     claims: &'a BTreeSet<(usize, String)>,
     preconditions: BTreeMap<String, Precondition>,
+    /// **The preconditions of the walk before**, which the first pass reads
+    /// at a call to carry a callee's precondition back (ADR-269 D15): the
+    /// pass repeats until they stop changing.
+    known: BTreeMap<String, Precondition>,
+    /// Which function calls which, by name: a call inside a cycle is not
+    /// carried back, so that recursion cannot grow a precondition forever.
+    edges: BTreeSet<(String, String)>,
     /// Pass 1's postconditions, before any exit is asked (ADR-269 D17).
     candidates: BTreeMap<String, Vec<PostClaim>>,
     /// The postconditions standing in this walk: callers read them.
@@ -403,6 +438,18 @@ struct Scope {
     /// and the guards passed, at the entry. `None` once a loop, a lambda or a
     /// block this walk cannot see stands between the entry and here (D3).
     path: Option<Vec<TermId>>,
+    /// **Whether every state the facts allow is one the program reaches
+    /// here** - unless it stops or leaves before, which no claim is about.
+    /// Facts are as a rule weaker than what is true: a condition the prover
+    /// cannot read, a fact dropped with a name bound again, a loop that may
+    /// end early each narrow what reaches a point without a fact saying how.
+    /// Only where nothing did can a value the facts allow be shown to reach
+    /// a claim that is false for it (ADR-269 D8).
+    exact: bool,
+    /// The whole numbers the facts do not pin to what the program computes:
+    /// a parameter, whatever its callers pass; a call's result, of which
+    /// only its postconditions are known; a length nobody counted.
+    loose: BTreeSet<String>,
 }
 
 impl Scope {
@@ -415,8 +462,15 @@ impl Scope {
         self.entry.remove(name);
         self.entry.remove(&length);
         self.locals.insert(name.to_string());
+        self.loose.remove(name);
+        self.loose.remove(&length);
+        let before = self.facts.len();
         self.facts
             .retain(|fact| !arena.mentions(*fact, name) && !arena.mentions(*fact, &length));
+        // What a dropped fact said about another name is lost with it.
+        if self.facts.len() != before {
+            self.exact = false;
+        }
     }
 
     /// `name` is a list or text that does not change, so `name.len()` is a
@@ -431,6 +485,8 @@ impl Scope {
             let n = arena.int(n);
             self.facts.push(arena.eq(len, n));
             self.entry.insert(length, n);
+        } else {
+            self.loose.insert(length);
         }
     }
 
@@ -449,6 +505,8 @@ impl Scope {
             facts: Vec::new(),
             entry: BTreeMap::new(),
             path: None,
+            exact: false,
+            loose: BTreeSet::new(),
         }
     }
 }
@@ -468,6 +526,8 @@ struct Where {
     free: bool,
     /// Inside a lambda, whose `return` is not the function's.
     lambda: bool,
+    /// The function `throws`, so a call in it may leave it.
+    throws: bool,
 }
 
 impl<'a> Prover<'a> {
@@ -495,6 +555,7 @@ impl<'a> Prover<'a> {
                         top: true,
                         free: false,
                         lambda: false,
+                        throws: true,
                     };
                     self.block(body, &mut Scope::default(), &at);
                     self.in_test = false;
@@ -513,6 +574,7 @@ impl<'a> Prover<'a> {
             args,
             body,
             is_public,
+            can_throw,
             ..
         } = &item.node
         else {
@@ -533,6 +595,7 @@ impl<'a> Prover<'a> {
             .is_some_and(crate::modules::is_a_test_function);
         let mut scope = Scope {
             path: Some(Vec::new()),
+            exact: true,
             ..Scope::default()
         };
         let mut params = BTreeSet::new();
@@ -545,6 +608,7 @@ impl<'a> Prover<'a> {
             let ty = self.parsed.text(arg.ty.name);
             if !arg.mutable && arg.ty.generics.is_empty() && is_whole_number(ty) {
                 scope.ints.insert(arg_name.clone());
+                scope.loose.insert(arg_name.clone());
                 params.insert(arg_name.clone());
                 let at_entry = self.arena.var(&arg_name);
                 scope.entry.insert(arg_name.clone(), at_entry);
@@ -579,6 +643,7 @@ impl<'a> Prover<'a> {
             top: true,
             free,
             lambda: false,
+            throws: *can_throw,
         };
         self.in_test = was_a_test;
         let leaves = self.block(body, &mut scope, &at);
@@ -607,6 +672,14 @@ impl<'a> Prover<'a> {
             }
             if self.stmt(stmt, scope, at) {
                 return true;
+            }
+            // A statement that may leave for some states and not for others
+            // narrows what goes on past it, and only an `if` the prover reads
+            // says how (`expr_stmt`).
+            if !matches!(stmt.node, Stmt::Expr(Expr::If { .. }))
+                && leaves_stmt(self.parsed, &stmt.node, &|e| self.throwing(e, at), true)
+            {
+                scope.exact = false;
             }
         }
         false
@@ -656,6 +729,7 @@ impl<'a> Prover<'a> {
                     scope.rebind(&self.arena, &name);
                     if tainted {
                         scope.tainted.insert(name.clone());
+                        scope.loose.insert(name.clone());
                     }
                 }
                 if let [only] = names.as_slice()
@@ -675,6 +749,8 @@ impl<'a> Prover<'a> {
                         if !self.arena.mentions(value_lin, &name) {
                             let named = self.arena.var(&name);
                             scope.facts.push(self.arena.eq(named, value_lin));
+                        } else {
+                            scope.loose.insert(name.clone());
                         }
                         // At the entry the value is what it read there, so
                         // a shadowing `let` is no trouble here.
@@ -683,6 +759,7 @@ impl<'a> Prover<'a> {
                         }
                     } else if typed_whole || called.as_ref().is_some_and(|(whole, _)| *whole) {
                         scope.ints.insert(name.clone());
+                        scope.loose.insert(name.clone());
                     }
                     if let Some((true, facts)) = &called {
                         scope.facts.extend(facts.iter().copied());
@@ -771,6 +848,18 @@ impl<'a> Prover<'a> {
                         } else {
                             self.arena.lt(n, high)
                         });
+                    } else {
+                        inner.loose.insert(name.clone());
+                    }
+                    // **Every value of the range reaches the body** only where
+                    // no turn can end the loop early: after a `break` the
+                    // values left are never reached.
+                    if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
+                        inner.loose.insert(name);
+                    }
+                } else {
+                    for binding in bindings {
+                        inner.loose.insert(self.parsed.text(*binding).to_string());
                     }
                 }
                 // A claim in a loop, or after one, is not carried back to
@@ -778,17 +867,25 @@ impl<'a> Prover<'a> {
                 inner.path = None;
                 self.block(body, &mut inner, &nested);
                 scope.path = None;
+                if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
+                    scope.exact = false;
+                }
                 false
             }
             Stmt::While { cond, body } => {
                 self.expr(cond, span, scope, &nested);
                 let mut inner = scope.clone();
                 inner.path = None;
+                // Which turns there are depends on what the loop changes.
+                inner.exact = false;
                 scope.path = None;
                 if let Some(holds) = claim(&mut self.arena, self.parsed, cond, &inner) {
                     inner.facts.push(holds);
                 }
                 self.block(body, &mut inner, &nested);
+                if leaves_block(self.parsed, body, &|e| self.throwing(e, at), false) {
+                    scope.exact = false;
+                }
                 false
             }
             Stmt::Return(value) => {
@@ -842,6 +939,10 @@ impl<'a> Prover<'a> {
                 if let Some(holds) = &holds {
                     then_scope.facts.push(*holds);
                 }
+                // A branch on a condition the prover cannot read is reached
+                // by some states and not others, and no fact says which.
+                then_scope.exact &= holds.is_some();
+                let cond_leaves = leaves_expr(self.parsed, cond, &|e| self.throwing(e, at), true);
                 self.on_the_path(&mut then_scope, holds);
                 let then_leaves = self.block(then_branch, &mut then_scope, &nested);
                 let else_leaves = match else_branch {
@@ -850,6 +951,7 @@ impl<'a> Prover<'a> {
                         if let Some(fails) = &fails {
                             else_scope.facts.push(*fails);
                         }
+                        else_scope.exact &= fails.is_some();
                         self.on_the_path(&mut else_scope, fails);
                         self.block(block, &mut else_scope, &nested)
                     }
@@ -864,14 +966,36 @@ impl<'a> Prover<'a> {
                             scope.facts.push(fails);
                         }
                         self.on_the_path(scope, fails);
+                        scope.exact &= fails.is_some()
+                            && !else_branch.as_ref().is_some_and(|b| {
+                                leaves_block(self.parsed, b, &|e| self.throwing(e, at), true)
+                            });
                     }
                     (false, true) => {
                         if let Some(holds) = holds {
                             scope.facts.push(holds);
                         }
                         self.on_the_path(scope, holds);
+                        scope.exact &= holds.is_some()
+                            && !leaves_block(
+                                self.parsed,
+                                then_branch,
+                                &|e| self.throwing(e, at),
+                                true,
+                            );
                     }
-                    (false, false) => {}
+                    (false, false) => {
+                        if leaves_block(self.parsed, then_branch, &|e| self.throwing(e, at), true)
+                            || else_branch.as_ref().is_some_and(|b| {
+                                leaves_block(self.parsed, b, &|e| self.throwing(e, at), true)
+                            })
+                        {
+                            scope.exact = false;
+                        }
+                    }
+                }
+                if cond_leaves {
+                    scope.exact = false;
                 }
                 false
             }
@@ -966,6 +1090,8 @@ impl<'a> Prover<'a> {
                     computed: (!as_written).then(|| term_text(&self.arena, term)),
                     written: crate::check::written(self.parsed, cond),
                     message,
+                    origin: None,
+                    site: None,
                 };
                 self.preconditions
                     .entry(function.clone())
@@ -1019,16 +1145,39 @@ impl<'a> Prover<'a> {
         if let Some(values) = refuted.as_ref().filter(|_| !self.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
-                severity: Severity::Warning,
+                severity: Severity::Error,
                 span,
                 code: "NK1207",
                 message: format!("`{written}` is false every time it is reached."),
+                notes: vec![format!(
+                    "What is known before it rules the claim out: {}.",
+                    shown(values)
+                )],
+                help: Some(
+                    "If the claim is right, the code before it is wrong; if the code is right, \
+                     the claim is."
+                        .to_string(),
+                ),
+                labels: Vec::new(),
+            });
+        }
+        // **False for some of the values that reach it** (D8): the same
+        // warning, with one such state.
+        let sometimes = match (claim, &refuted) {
+            (Some(claim), None) if !tainted_claim => self.breaks_when(scope, claim),
+            _ => None,
+        };
+        if let Some(values) = sometimes.as_ref().filter(|_| !self.collecting) {
+            let written = crate::check::written(self.parsed, cond);
+            self.out.findings.push(Finding {
+                severity: Severity::Error,
+                span,
+                code: "NK1207",
+                message: format!("`{written}` is false when {}.", shown(values)),
                 notes: vec![
-                    format!(
-                        "What is known before it rules the claim out: {}.",
-                        shown(values)
-                    ),
-                    "It is checked when the program runs, and stops it there.".to_string(),
+                    "That state reaches it: what is known here pins every name the claim \
+                     depends on."
+                        .to_string(),
                 ],
                 help: Some(
                     "If the claim is right, the code before it is wrong; if the code is right, \
@@ -1042,6 +1191,8 @@ impl<'a> Prover<'a> {
             rejected
         } else if let Some(values) = &refuted {
             format!("it is false every time it is reached ({})", shown(values))
+        } else if let Some(values) = &sometimes {
+            format!("it is false when {}", shown(values))
         } else if claim.is_none() {
             "it is not a comparison of whole numbers the prover reads".to_string()
         } else if only_params && let Some(no) = at.no_precondition {
@@ -1096,7 +1247,16 @@ impl<'a> Prover<'a> {
             if scope.locals.contains(&callee) {
                 continue;
             }
-            if let Some(pre) = self.preconditions.get(&callee).cloned() {
+            if let Some(caller) = &at.function {
+                self.edges.insert((caller.clone(), callee.clone()));
+            }
+            // The first pass reads the walk before's preconditions: its own
+            // are still being found.
+            let pre = match self.collecting {
+                true => self.known.get(&callee).cloned(),
+                false => self.preconditions.get(&callee).cloned(),
+            };
+            if let Some(pre) = pre {
                 let Some(Item::Fn { args: params, .. }) = self.function_named(&callee) else {
                     continue;
                 };
@@ -1104,7 +1264,7 @@ impl<'a> Prover<'a> {
                     .iter()
                     .map(|p| self.parsed.text(p.name).to_string())
                     .collect();
-                self.a_call(&callee, &params, &pre.claims, &args, span, scope);
+                self.a_call(&callee, &params, &pre.claims, &args, span, scope, at);
             } else if let Some(foreign) = self.foreign_contract(&callee)
                 && !foreign.requires.is_empty()
             {
@@ -1115,6 +1275,7 @@ impl<'a> Prover<'a> {
                     &args,
                     span,
                     scope,
+                    at,
                 );
             }
         }
@@ -1148,8 +1309,11 @@ impl<'a> Prover<'a> {
                     let mut inner = scope.clone();
                     for param in params {
                         inner.rebind(&self.arena, param);
+                        inner.loose.insert(param.clone());
                     }
                     inner.path = None;
+                    // Called as often as the callee likes, or never.
+                    inner.exact = false;
                     inner
                 }
                 None => scope.blind(),
@@ -1167,6 +1331,7 @@ impl<'a> Prover<'a> {
     }
 
     /// A call to a function with a precondition (D5).
+    #[allow(clippy::too_many_arguments)]
     fn a_call(
         &mut self,
         callee: &str,
@@ -1175,12 +1340,10 @@ impl<'a> Prover<'a> {
         args: &[Expr],
         span: Span,
         scope: &Scope,
+        at: &Where,
     ) {
-        if self.collecting {
-            return;
-        }
         let mut reach = Reach::Proved;
-        for pre in claims {
+        for (index, pre) in claims.iter().enumerate() {
             // Each parameter's term as this call gives it, and a list's
             // length as the argument's: `p.len()` in the precondition is the
             // argument's.
@@ -1207,23 +1370,48 @@ impl<'a> Prover<'a> {
             if proved {
                 continue;
             }
+            let site = (span.at(), callee.to_string(), index);
+            if self.collecting {
+                self.carry_back(goal, pre, callee, site, scope, at);
+                continue;
+            }
+            // **Carried back to this function's entry** in the first pass:
+            // its callers prove it, so the call needs no check of its own.
+            if let Some(function) = &at.function
+                && self
+                    .preconditions
+                    .get(function)
+                    .is_some_and(|p| p.claims.iter().any(|c| c.site.as_ref() == Some(&site)))
+            {
+                continue;
+            }
             // **A call that breaks the precondition every time** (ADR-269
             // D8): what is known at the call rules it out. The values shown
             // are the parameters', as this call gives them.
-            if let Some(goal) = goal
-                && let Some(values) = self.refutes(&scope.facts, goal)
-            {
+            let always = match goal {
+                Some(goal) => self.refutes(&scope.facts, goal),
+                None => None,
+            };
+            if let Some(values) = &always {
                 // The precondition's own names: the parameters it reads, and
                 // the lengths of them.
                 let given: BTreeMap<String, i64> = with
                     .iter()
                     .filter(|(name, _)| read.contains(*name))
                     .filter_map(|(name, term)| {
-                        Some((name.clone(), self.arena.int_value((*term)?, &values)?))
+                        Some((name.clone(), self.arena.int_value((*term)?, values)?))
                     })
                     .collect();
-                let (written, from) = match &pre.computed {
-                    Some(computed) => (
+                let (written, from) = match (&pre.computed, &pre.origin) {
+                    (Some(computed), Some(origin)) => (
+                        computed.clone(),
+                        Some(format!(
+                            "The precondition is `assert({})` in `{origin}`, carried back to \
+                             `{callee}`'s entry.",
+                            pre.written
+                        )),
+                    ),
+                    (Some(computed), None) => (
                         computed.clone(),
                         Some(format!(
                             "The precondition is `assert({})` in `{callee}`, carried back to its \
@@ -1231,10 +1419,10 @@ impl<'a> Prover<'a> {
                             pre.written
                         )),
                     ),
-                    None => (pre.written.clone(), None),
+                    (None, _) => (pre.written.clone(), None),
                 };
                 self.out.findings.push(Finding {
-                    severity: Severity::Warning,
+                    severity: Severity::Error,
                     span,
                     code: "NK1207",
                     message: format!(
@@ -1244,10 +1432,46 @@ impl<'a> Prover<'a> {
                     notes: [Some(format!("Here {}.", shown(&given))), from]
                         .into_iter()
                         .flatten()
-                        .chain([
-                            "When the program runs, it stops where the precondition is checked."
-                                .to_string(),
-                        ])
+                        .collect(),
+                    help: Some(format!(
+                        "Pass `{callee}` arguments for which `{written}` holds, or check them \
+                         with a guard before the call."
+                    )),
+                    labels: Vec::new(),
+                });
+            }
+            // **A call that breaks it for some of the values that reach it**
+            // (D8): one such state, and what the parameters are in it.
+            if always.is_none()
+                && let Some(goal) = goal
+                && let Some(values) = self.breaks_when(scope, goal)
+            {
+                let given: BTreeMap<String, i64> = with
+                    .iter()
+                    .filter(|(name, _)| read.contains(*name))
+                    .filter_map(|(name, term)| {
+                        Some((name.clone(), self.arena.int_value((*term)?, &values)?))
+                    })
+                    .collect();
+                let written = pre.computed.clone().unwrap_or_else(|| pre.written.clone());
+                let from = pre.computed.as_ref().map(|_| {
+                    let origin = pre.origin.as_deref().unwrap_or(callee);
+                    format!(
+                        "The precondition is `assert({})` in `{origin}`.",
+                        pre.written
+                    )
+                });
+                self.out.findings.push(Finding {
+                    severity: Severity::Error,
+                    span,
+                    code: "NK1207",
+                    message: format!(
+                        "This call breaks `{callee}`'s precondition `{written}` when {}.",
+                        shown(&values)
+                    ),
+                    notes: [Some(format!("Then {}.", shown(&given))), from]
+                        .into_iter()
+                        .flatten()
                         .collect(),
                     help: Some(format!(
                         "Pass `{callee}` arguments for which `{written}` holds, or check them \
@@ -1283,6 +1507,70 @@ impl<'a> Prover<'a> {
             None => reach,
         };
         self.out.reaches.insert(key, joined);
+    }
+
+    /// **A callee's precondition this function cannot show is its callers'**
+    /// (ADR-269 D15), as an `assert` of it standing at the call would be:
+    /// carried back to the entry, where that reads only the parameters.
+    /// Not where what is known rules it out - that call is warned about
+    /// (D8) - nor through a call that can come back to this function.
+    fn carry_back(
+        &mut self,
+        goal: Option<TermId>,
+        pre: &PreClaim,
+        callee: &str,
+        site: (usize, String, usize),
+        scope: &Scope,
+        at: &Where,
+    ) {
+        let (Some(goal), Some(function), None) = (goal, at.function.clone(), at.no_precondition)
+        else {
+            return;
+        };
+        if self.in_test || self.reaches(callee, &function) {
+            return;
+        }
+        if self.refutes(&scope.facts, goal).is_some() {
+            return;
+        }
+        let Some(term) = self.precondition_at(goal, scope, at) else {
+            return;
+        };
+        let carried = PreClaim {
+            term,
+            computed: Some(term_text(&self.arena, term)),
+            written: pre.written.clone(),
+            message: pre.message.clone(),
+            origin: Some(pre.origin.clone().unwrap_or_else(|| callee.to_string())),
+            site: Some(site),
+        };
+        self.preconditions
+            .entry(function)
+            .or_insert_with(|| Precondition { claims: Vec::new() })
+            .claims
+            .push(carried);
+    }
+
+    /// Whether `from` calls `to`, directly or through others, in what the
+    /// walks so far have seen.
+    fn reaches(&self, from: &str, to: &str) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut next = vec![from.to_string()];
+        while let Some(f) = next.pop() {
+            if f == to {
+                return true;
+            }
+            if !seen.insert(f.clone()) {
+                continue;
+            }
+            next.extend(
+                self.edges
+                    .iter()
+                    .filter(|(caller, _)| *caller == f)
+                    .map(|(_, callee)| callee.clone()),
+            );
+        }
+        false
     }
 
     /// Whether the facts prove the goal: one query to the reference solver
@@ -1519,6 +1807,8 @@ impl<'a> Prover<'a> {
                     computed: (written != *text).then(|| text.clone()),
                     written,
                     message: None,
+                    origin: None,
+                    site: None,
                 });
             }
         }
@@ -1605,6 +1895,91 @@ impl<'a> Prover<'a> {
         Some(values)
     }
 
+    /// **Values that reach a claim and make it false** (ADR-269 D8), where
+    /// it is not false every time: a model of the facts and the claim's
+    /// negation, checked by evaluating it, read where the facts are exactly
+    /// what reaches here (`Scope::exact`) and pin every name the claim
+    /// depends on - no parameter, no call's result, nothing they lean on.
+    /// Then the model is a state the program reaches, unless it stops or
+    /// leaves before. `None` everywhere else.
+    fn breaks_when(&mut self, scope: &Scope, claim: TermId) -> Option<BTreeMap<String, i64>> {
+        if !scope.exact {
+            return None;
+        }
+        // The claim's names, and every name a fact ties them to.
+        let mut names = BTreeSet::new();
+        self.arena.variables(claim, &mut names);
+        loop {
+            let before = names.len();
+            for fact in &scope.facts {
+                let mut read = BTreeSet::new();
+                self.arena.variables(*fact, &mut read);
+                if read.iter().any(|n| names.contains(n)) {
+                    names.extend(read);
+                }
+            }
+            if names.len() == before {
+                break;
+            }
+        }
+        if names
+            .iter()
+            .any(|n| scope.loose.contains(n) || !scope.ints.contains(n))
+        {
+            return None;
+        }
+        let query = Query {
+            arena: &self.arena,
+            facts: &scope.facts,
+            goal: claim,
+        };
+        let Answer::Refuted { model } = FourierMotzkin.check(&query, &Budget::default()) else {
+            return None;
+        };
+        if !verify_model(&query, &model) {
+            return None;
+        }
+        // Every name the state is made of, so that a loop's counter is
+        // shown beside what was computed from it.
+        let values: BTreeMap<String, i64> = names
+            .into_iter()
+            .filter_map(|n| Some((n.clone(), *model.values.get(&n)?)))
+            .collect();
+        (!values.is_empty()).then_some(values)
+    }
+
+    /// Whether a call may throw out of the function `at` is, which `throws`:
+    /// what the callee declares, by its `throws` or its ledger's; a call
+    /// nothing describes may.
+    fn throwing(&self, call: &Expr, at: &Where) -> bool {
+        if !at.throws {
+            return false;
+        }
+        let name = match call {
+            Expr::Call { func, .. } => match &**func {
+                Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+                Expr::Path(_) => qualified(self.parsed, func),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(name) = name else {
+            return true;
+        };
+        if let Some(Item::Fn { can_throw, .. }) = self.function_named(&name) {
+            return *can_throw;
+        }
+        match self
+            .own
+            .functions
+            .get(&name)
+            .or_else(|| self.library.functions.get(&name))
+        {
+            Some(contract) => !contract.fails_with.is_empty(),
+            None => true,
+        }
+    }
+
     fn function_named(&self, name: &str) -> Option<&'a Item> {
         let parsed: &'a Parsed = self.parsed;
         parsed.program.items.iter().map(|i| &i.node).find(|item| {
@@ -1643,6 +2018,89 @@ impl<'a> Prover<'a> {
         });
         tainted
     }
+}
+
+/// **Whether a statement may leave the block it stands in** for some states:
+/// a `return`, a `break`, a `throw`, a `?`, a `continue` where `with_continue`
+/// says it counts, and a call `throwing` says may throw. Inside nested
+/// blocks too, lambdas included: it only ever costs a warning.
+fn leaves_stmt(
+    parsed: &Parsed,
+    stmt: &Stmt,
+    throwing: &dyn Fn(&Expr) -> bool,
+    with_continue: bool,
+) -> bool {
+    match stmt {
+        Stmt::Return(_) | Stmt::Break => return true,
+        Stmt::Continue if with_continue => return true,
+        _ => {}
+    }
+    let mut leaves = false;
+    crate::contracts::sync::visit_stmt(parsed, stmt, &mut |e| {
+        leaves |= leaves_here(e, throwing, with_continue);
+    });
+    let mut blocks = Vec::new();
+    crate::contracts::sync::visit_stmt_blocks(stmt, &mut |b| blocks.push(b));
+    leaves
+        || blocks
+            .into_iter()
+            .any(|b| leaves_block(parsed, b, throwing, with_continue))
+}
+
+fn leaves_block(
+    parsed: &Parsed,
+    block: &Block,
+    throwing: &dyn Fn(&Expr) -> bool,
+    with_continue: bool,
+) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|s| leaves_stmt(parsed, &s.node, throwing, with_continue))
+}
+
+fn leaves_expr(
+    parsed: &Parsed,
+    expr: &Expr,
+    throwing: &dyn Fn(&Expr) -> bool,
+    with_continue: bool,
+) -> bool {
+    let mut leaves = false;
+    crate::contracts::sync::visit_expr(parsed, expr, &mut |e| {
+        leaves |= leaves_here(e, throwing, with_continue);
+    });
+    let mut blocks = Vec::new();
+    crate::contracts::sync::visit_expr_blocks(expr, &mut |b| blocks.push(b));
+    leaves
+        || blocks
+            .into_iter()
+            .any(|b| leaves_block(parsed, b, throwing, with_continue))
+}
+
+fn leaves_here(e: &Expr, throwing: &dyn Fn(&Expr) -> bool, with_continue: bool) -> bool {
+    match e {
+        Expr::Throw(_) | Expr::Return(_) | Expr::Break | Expr::Try(_) => true,
+        Expr::Continue => with_continue,
+        Expr::Call { .. } | Expr::MethodCall { .. } | Expr::SafeMethod { .. } => throwing(e),
+        _ => false,
+    }
+}
+
+/// Whether two walks found the same preconditions, claim by claim.
+fn same_preconditions(
+    arena: &Arena,
+    a: &BTreeMap<String, Precondition>,
+    b: &BTreeMap<String, Precondition>,
+) -> bool {
+    let texts = |m: &BTreeMap<String, Precondition>| -> Vec<(String, Vec<String>)> {
+        m.iter()
+            .map(|(f, p)| {
+                let claims = p.claims.iter().map(|c| term_text(arena, c.term)).collect();
+                (f.clone(), claims)
+            })
+            .collect()
+    };
+    texts(a) == texts(b)
 }
 
 fn refusal(span: Span, message: String, notes: Vec<String>, help: &str) -> Finding {

@@ -4,6 +4,58 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.403] — 2026-10-03
+
+**A claim the compiler shows false with values refuses the program**
+(ADR-269 D8). `NK1207` - an `assert`, or a call to a function with a
+precondition, false every time it is reached or for a value the compiler
+shows reaches it - was a warning, so that a better prover would never refuse
+what an older one built. That is turned round: a program the compiler has
+shown to break its own contract does not build, because fewer defects in
+production is what the language is for, and what a newer prover refuses was
+wrong before it was refused.
+
+The bypass is `[build] refuted-claims = "warn"`, or `--refuted-claims warn`
+for one build: each such claim is a warning with a note and stays D4's check
+where it is reached. It is resolved with the other build options, handed to
+the wrapper, part of the cache key at `warn`, and a word other than `error`
+or `warn` fails the build. The tally counts the refusals apart from the type
+errors (*1 claim shown false*), and the note that the program stops where
+the claim is checked moved to the bypass, where it is true. The tests that
+show a check failing at run time build with the bypass, and first show the
+program refused without it.
+
+## [0.0.402] — 2026-10-03
+
+**A callee's precondition is carried back through the call, and a claim false
+for a value that reaches it is warned about with that value** (ADR-269 D8,
+D15). Two gaps between what ADR-269 says and what `prove.rs` did, found by
+trying the home page's claim that the compiler shows the call that breaks a
+contract, with the value that breaks it.
+
+* **Through a call** (D15): a call is a claim of its own. A callee's
+  precondition the body cannot show, with the arguments in place of the
+  parameters, is carried back to the entry as an `assert` of it would be, so
+  `half(x)` calling `percent(1, x - 2)` asks `x - 2 > 0` of its callers, and
+  `main`'s `half(2)` is the call told, with `x` and the `assert` in `percent`
+  it came from; the call in `half` needs no check. Pass 1 repeats with the
+  last walk's preconditions until they stop changing, and a call that can come
+  back to its function is not carried back, so recursion ends. A failure says
+  where the claim stands: `from assert(whole > 0) in percent`.
+* **For some of the values** (D8): where what is known is exactly what reaches
+  a claim - every name it depends on pinned by constants, `let`s, a range's
+  counter, conditions the prover read and claims checked before, with no
+  parameter, call's result, unread condition or loop that may end early
+  between them - a model of the facts and the claim's negation is a state the
+  program reaches, and `NK1207` shows it: `for i in 0..<10 { percent(1, i) }`
+  is *when `i` is 0*. A `break` before the call, a parameter's range or an
+  unread condition keeps it silent, as before.
+
+Two tests named the call inside the function that could not show the
+precondition; they now name the caller that passed the value, which is D5's
+reason for checking at the call.
+The prover grew by Rust: 22.5 % of the toolchain is Nikaia.
+
 ## [0.0.401] — 2026-10-03
 
 **Which count each `Shared` gets is walked in Nikaia** (#125, ADR-294). The
