@@ -561,3 +561,28 @@ fn main() {
         "alpha! 5 true\nbeta! -1 false"
     );
 }
+
+/// **A parameter the function is lent is a key as it is**: `place: (i64,
+/// String)` that the body only reads is a `&(i64, String)` below, and a `&` in
+/// front of it was a key the map has no `Borrow` for (found moving
+/// `contracts::keep`'s plan into Nikaia, #125).
+#[test]
+fn a_lent_parameter_is_a_map_key_as_it_is() {
+    let source = "\
+use std::collections
+fn width(place: (i64, String), widths: ref collections::BTreeMap[(i64, String), i64]) -> i64 {
+    return widths[place] ?? 0
+}
+fn main() {
+    let a: String = \"a\"
+    let b: String = \"b\"
+    let one: i64 = 1
+    let two: i64 = 2
+    let mut widths: collections::BTreeMap[(i64, String), i64] = collections::BTreeMap()
+    widths.insert((one, a.clone()), 3)
+    println(f\"{width((one, a), widths)} {width((two, b), widths)}\")
+}
+";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    assert_eq!(output("lent-parameter-key", source), "3 0");
+}

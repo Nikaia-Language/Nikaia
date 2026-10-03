@@ -1,0 +1,1472 @@
+// crates/nikaia-std/src/tools/buffers.nika
+//
+// **Where each buffer a body reads lives** (ADR-283) - the walk the compiler's
+// `contracts::keep` runs over a function's body and the plan it decides,
+// moved from Rust (ADR-294, #125). A buffer is text or bytes a body reads -
+// `let text = fs::read_to_string(…)` - or what a call that takes a keep hands
+// back; a view of one is kept alive by a keep, and this decides which keep:
+// the caller's (D2), the frame's, one beside a call, the task's (D3), or one
+// per buffer where what keeps the views drops entries while a loop goes on
+// (D4). What the lowering writes for each is the emitter's, and the ledger's
+// `views` column the fixpoint around this is.
+//
+// The walk is the analysis's, not the shared one: it follows **origins** -
+// where each value's views may point - through every binding, call, field,
+// list and branch, and records where a view leaves the scope that made it.
+
+use std::collections
+
+/// Where a view leaves the scope that made it.
+pub enum Escape {
+    /// Handed back to the caller. Not `Result`: a public name `Result` in
+    /// `std` makes `rustc` spell the real one `std::result::Result` in every
+    /// message, and what reads those messages looks for `` `Result< ``.
+    Returned,
+    /// Kept by a `mut` parameter, or by the subject.
+    Param(String),
+    /// Kept by a local that outlives the buffer's scope.
+    Outer(String),
+    /// Captured by a task.
+    Task,
+}
+
+/// Something views may point into: a buffer this body makes, by its `let`,
+/// or a call to a function that hands back tethered views, whose buffers need
+/// a keep from here.
+pub enum Source {
+    Buffer { at: i64, name: String, ty: String, span: Span },
+    Call { at: i64, callee: String, span: Span },
+}
+
+/// Who owns the keep a buffer, or a call's buffers, go into: the keep this
+/// function was given (D2), one declared first in its body, one declared
+/// just before a statement, the shared keep of its tasks (D3), or one of its
+/// own per buffer, for a container that drops entries (D4).
+pub enum KeepAt {
+    Param,
+    Frame,
+    Local(i64),
+    Task,
+    Element(i64),
+}
+
+/// One function's answer: where each of its buffers lives, and what the
+/// lowering writes for it - the compiler's `Plan`, field for field.
+pub struct BufferPlan {
+    pub key: String,
+    pub first: i64,
+    pub takes_keep: bool,
+    pub frame_keep: bool,
+    pub task_keep: bool,
+    pub local_keeps: collections::BTreeSet[i64],
+    pub puts: collections::BTreeMap[i64, KeepAt],
+    pub calls: collections::BTreeMap[(i64, String), KeepAt],
+    pub tethered: collections::BTreeMap[String, i64],
+    pub element_keepers: collections::BTreeSet[String],
+    pub struct_keepers: collections::BTreeSet[String],
+    pub widths: collections::BTreeMap[String, i64],
+    pub keeper_structs: collections::BTreeMap[String, String],
+    pub held_locals: collections::BTreeSet[String],
+    pub holds: collections::BTreeMap[(i64, String), collections::BTreeMap[i64, collections::BTreeSet[i64]]],
+    pub escapes: Vec[(Source, Escape)],
+    pub refusals: Vec[Finding],
+    pub reputs: collections::BTreeMap[i64, KeepAt],
+}
+
+/// What the walk is asked against, which does not change from one function to
+/// the next: the interner, the two ledgers, the unit's items and what its
+/// declarations say about views.
+pub struct BufferAsk {
+    pub names: ref winnow_grammar::InternerContext,
+    pub own: ref Ledger,
+    pub library: ref Ledger,
+    pub items: ref Vec[Spanned[Item]],
+    pub context: ref KeepContext,
+}
+
+// One local, as far as this walk needs it: the statement that binds it, the
+// blocks it is declared inside (outermost first, each by the statement that
+// opens it, a loop's marked), where its views may point, its written type, and
+// whether it is a parameter, a place views may be kept in (a `mut` parameter,
+// a `ref mut self`), the buffer itself, or text with no type written.
+struct Local {
+    at: i64,
+    path: Vec[(i64, bool)],
+    origins: collections::BTreeSet[(i64, String)],
+    ty: Type?,
+    parameter: bool,
+    keeps: bool,
+    buffer: bool,
+    text: bool,
+}
+
+// A buffer made in the body and the blocks it was made inside.
+struct Sourced {
+    source: Source,
+    path: Vec[(i64, bool)],
+}
+
+// Which origins went into a keeper, by the argument they went in through.
+struct PutsAt {
+    by_arg: collections::BTreeMap[i64, collections::BTreeSet[(i64, String)]],
+}
+
+// The walk's state. Scopes are a stack per name and, per scope, the names it
+// bound - so the innermost binding is the last on its name's stack.
+struct BufferWalk {
+    target: String?,
+    locals: collections::BTreeMap[String, Vec[Local]],
+    frames: Vec[Vec[String]],
+    path: Vec[(i64, bool)],
+    sources: collections::BTreeMap[(i64, String), Sourced],
+    escapes: Vec[((i64, String), Escape)],
+    sheds: collections::BTreeMap[String, Vec[Vec[(i64, bool)]]],
+    puts_into: collections::BTreeMap[(i64, String), PutsAt],
+    struct_puts: collections::BTreeMap[String, String],
+    taken: collections::BTreeMap[String, String],
+    reassigned: collections::BTreeMap[i64, i64],
+    captured: collections::BTreeMap[String, (i64, collections::BTreeSet[(i64, String)])],
+    statement: i64,
+    result_carries: bool,
+    last_seen: collections::BTreeMap[String, Local],
+}
+
+fn open_scope(mut walk: BufferWalk) {
+    walk.frames.push([])
+}
+
+fn close_scope(mut walk: BufferWalk) {
+    if walk.frames.len() == 0 {
+        return
+    }
+    let names = walk.frames[walk.frames.len() - 1].clone()
+    for name in names {
+        let mut stack = walk.locals[name]?.clone() ?? continue
+        if stack.len() > 0 {
+            stack.pop()
+        }
+        walk.locals.insert(name.clone(), stack)
+    }
+    walk.frames.pop()
+}
+
+fn local_of(name: ref String, walk: ref BufferWalk) -> Local? {
+    let stack = walk.locals[name] ?? return null
+    if stack.len() == 0 {
+        return null
+    }
+    return stack[stack.len() - 1].clone()
+}
+
+fn set_local(name: ref String, local: Local, mut walk: BufferWalk) {
+    let mut stack = walk.locals[name]?.clone() ?? return
+    if stack.len() == 0 {
+        return
+    }
+    let last = stack.len() - 1
+    stack[last] = local
+    walk.locals.insert(name.clone(), stack)
+}
+
+fn bind_local(name: String, local: Local, mut walk: BufferWalk) {
+    walk.last_seen.insert(name.clone(), local.clone())
+    let mut stack: Vec[Local] = walk.locals[name]?.clone() ?? []
+    stack.push(local)
+    walk.locals.insert(name.clone(), stack)
+    if walk.frames.len() > 0 {
+        let last = walk.frames.len() - 1
+        walk.frames[last].push(name)
+    }
+}
+
+fn a_local(at: i64, path: ref Vec[(i64, bool)], origins: collections::BTreeSet[(i64, String)], ty: Type?, buffer: bool, text: bool) -> Local {
+    return Local { at: at, path: path.clone(), origins: origins, ty: ty, parameter: false, keeps: false, buffer: buffer, text: text }
+}
+
+/// Every function of one unit, planned against the ledger as it stands.
+pub fn buffer_plans(program: ref Program, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync) -> Vec[BufferPlan] {
+    let mut out: Vec[BufferPlan] = []
+    for item in program.items {
+        match item.node {
+            Item::Fn { .. } => {
+                out.push(plan_of(item.node, null, ask, holes_of, unaliased) ?? continue)
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = ask.names.resolve(target.name).clone()
+                for method in methods {
+                    out.push(plan_of(method.node, owner.clone(), ask, holes_of, unaliased) ?? continue)
+                }
+            }
+            else => {}
+        }
+    }
+    return out
+}
+
+// One function's plan: its parameters and its subject in the outermost scope,
+// the body walked **twice** - so that an origin a loop's later statement gives
+// a local reaches the loop's earlier ones; origins only grow - and what the
+// body ends in handed back where the result can hold a view.
+fn plan_of(item: ref Item, target: String?, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync) -> BufferPlan? {
+    let (name, receiver, args, body) = match item {
+        Item::Fn { name, receiver, args, body, .. } => (name, receiver, args, body),
+        else => return null,
+    }
+    let key = key_of_function(name, target?.clone() ?? "", ask.names)
+    let carries = match item {
+        Item::Fn { ret_type, .. } => carries_maybe(ret_type, ask),
+        else => false,
+    }
+    let mut walk = BufferWalk { target: target, locals: collections::BTreeMap(), frames: [], path: [], sources: collections::BTreeMap(), escapes: [], sheds: collections::BTreeMap(), puts_into: collections::BTreeMap(), struct_puts: collections::BTreeMap(), taken: collections::BTreeMap(), reassigned: collections::BTreeMap(), captured: collections::BTreeMap(), statement: 0, result_carries: carries, last_seen: collections::BTreeMap() }
+    open_scope(walk)
+    for arg in args {
+        let parameter = Local { at: 0, path: [], origins: collections::BTreeSet(), ty: arg.ty.clone(), parameter: true, keeps: arg.mutable && ask.context.carries(ask.names, arg.ty), buffer: false, text: false }
+        bind_local(ask.names.resolve(arg.name).clone(), parameter, walk)
+    }
+    if receiver != null {
+        let subject = receiver ?? return null
+        let keeps = subject.is_mut && walk.target != null && ask.context.borrowing.contains(walk.target?.clone() ?? "")
+        bind_local("self", Local { at: 0, path: [], origins: collections::BTreeSet(), ty: null, parameter: true, keeps: keeps, buffer: false, text: false }, walk)
+    }
+    for _ in 0..<2 {
+        // Back to the parameters' scope, the body's own scope open for its
+        // last expression, which reads the body's locals.
+        while walk.frames.len() > 1 {
+            close_scope(walk)
+        }
+        walk.path = []
+        open_scope(walk)
+        for stmt in body.stmts {
+            walk.statement = stmt.span.start as i64
+            buffer_statement(stmt.node, stmt.span, ask, holes_of, unaliased, walk)
+        }
+        if walk.result_carries && body.stmts.len() > 0 {
+            let last = body.stmts[body.stmts.len() - 1]
+            match last.node {
+                Stmt::Expr(value) => {
+                    walk.statement = last.span.start as i64
+                    let origins = origins_of(value, ask, holes_of, unaliased, walk)
+                    if !is_the_buffer(value, ask, walk) {
+                        escape_all(origins, Escape::Returned, walk)
+                    }
+                }
+                else => {}
+            }
+        }
+        close_scope(walk)
+    }
+    return decide(key, body, walk, ask)
+}
+
+fn carries_maybe(ty: ref Type?, ask: ref BufferAsk) -> bool {
+    let written = ty ?? return false
+    return ask.context.carries(ask.names, written)
+}
+
+fn buffer_block(block: ref Block, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    open_scope(walk)
+    for stmt in block.stmts {
+        walk.statement = stmt.span.start as i64
+        buffer_statement(stmt.node, stmt.span, ask, holes_of, unaliased, walk)
+    }
+    close_scope(walk)
+}
+
+fn nested(at: i64, looping: bool, block: ref Block, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    walk.path.push((at, looping))
+    buffer_block(block, ask, holes_of, unaliased, walk)
+    walk.path.pop()
+}
+
+fn buffer_statement(stmt: ref Stmt, span: ref Span, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    let at = span.start as i64
+    match stmt {
+        Stmt::Let { value, .. } => {
+            spawns_in(value, ask, holes_of, walk)
+            nested_blocks(value, at, ask, holes_of, unaliased, walk)
+            let_statement(stmt, span, ask, holes_of, unaliased, walk)
+        }
+        Stmt::Assign { target, op, value } => {
+            spawns_in(value, ask, holes_of, walk)
+            nested_blocks(value, at, ask, holes_of, unaliased, walk)
+            let origins = origins_of(value, ask, holes_of, unaliased, walk)
+            let root = root_of(ask.names, target) ?? return
+            let whole = op == null && match target {
+                Expr::Variable(_) => true,
+                else => false,
+            }
+            if whole {
+                let bound = local_of(root, walk)
+                if bound != null && (bound?.buffer ?? false) {
+                    walk.reassigned.insert(at, bound?.at ?? 0)
+                }
+                shed(root, walk)
+            }
+            // **A buffer handed over whole is a move**, the rule a `return`
+            // and a `let` already have: `inner = args` takes the buffer along,
+            // so `inner` is the buffer now and no view of it is left behind.
+            if whole && is_the_buffer(value, ask, walk) {
+                let mut local = local_of(root, walk) ?? return
+                local.buffer = true
+                for origin in origins {
+                    local.origins.insert(origin.clone())
+                }
+                set_local(root, local, walk)
+            } else {
+                flow_into(root, origins, walk)
+            }
+        }
+        Stmt::For { bindings, iter, body } => {
+            let origins = origins_of(iter, ask, holes_of, unaliased, walk)
+            walk.path.push((at, true))
+            open_scope(walk)
+            for name in bindings {
+                bind_local(ask.names.resolve(name).clone(), a_local(at, walk.path, origins.clone(), null, false, false), walk)
+            }
+            for inner in body.stmts {
+                walk.statement = inner.span.start as i64
+                buffer_statement(inner.node, inner.span, ask, holes_of, unaliased, walk)
+            }
+            close_scope(walk)
+            walk.path.pop()
+        }
+        Stmt::While { cond, body } => {
+            origins_of(cond, ask, holes_of, unaliased, walk)
+            nested(at, true, body, ask, holes_of, unaliased, walk)
+        }
+        Stmt::Return(value) => {
+            let returned = value ?? return
+            spawns_in(returned, ask, holes_of, walk)
+            nested_blocks(returned, at, ask, holes_of, unaliased, walk)
+            let origins = origins_of(returned, ask, holes_of, unaliased, walk)
+            // Only a result that can hold a view hands one back, and a buffer
+            // handed back whole is a move.
+            if walk.result_carries && !is_the_buffer(returned, ask, walk) {
+                escape_all(origins, Escape::Returned, walk)
+            }
+        }
+        Stmt::Expr(expr) => {
+            spawns_in(expr, ask, holes_of, walk)
+            nested_blocks(expr, at, ask, holes_of, unaliased, walk)
+            effects(expr, ask, holes_of, unaliased, walk)
+        }
+        else => {}
+    }
+}
+
+fn shed(root: ref String, mut walk: BufferWalk) {
+    let mut paths: Vec[Vec[(i64, bool)]] = walk.sheds[root]?.clone() ?? []
+    paths.push(walk.path.clone())
+    walk.sheds.insert(root.clone(), paths)
+}
+
+// A `let`: what it makes - a buffer of its own, a second name for one, or
+// views of what its value points into - and an element taken out of a keeper,
+// which stays what it was in there (ADR-283 D16).
+fn let_statement(stmt: ref Stmt, span: ref Span, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    // What it makes is asked inside the arm, where `ty` is still the field.
+    let (names, value, ty, made) = match stmt {
+        Stmt::Let { names, value, ty, .. } => (names, value, ty, made_here(names, value, ty, ask, unaliased, walk)),
+        else => return,
+    }
+    let at = span.start as i64
+    if names.len() == 1 {
+        let from = taken_from(ask.names, value)
+        if from != null {
+            walk.taken.insert(ask.names.resolve(names[0]).clone(), from ?? "")
+        }
+    }
+    // Text with no type written: what a `.clone()` of it copies (#293).
+    let text = names.len() == 1 && ty == null && copies_text(value, ask, walk)
+    let is_buffer = a_named_buffer(made) || is_the_buffer(value, ask, walk)
+    let mut origins: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    match made {
+        Buffer::Named(buffer) => {
+            let no_callee: String = ""
+            let id = (at, no_callee.clone())
+            if !walk.sources.contains_key(id) {
+                let source = Source::Buffer { at: at, name: ask.names.resolve(names[0]).clone(), ty: buffer.clone(), span: span.clone() }
+                walk.sources.insert(id, Sourced { source: source, path: walk.path.clone() })
+            }
+            origins.insert((at, no_callee))
+        }
+        else => {
+            origins = origins_of(value, ask, holes_of, unaliased, walk)
+        }
+    }
+    for bound in names {
+        bind_local(ask.names.resolve(bound).clone(), a_local(at, walk.path, origins.clone(), ty?.clone(), is_buffer, text), walk)
+    }
+}
+
+fn a_named_buffer(made: ref Buffer) -> bool {
+    return match made {
+        Buffer::Named(_) => true,
+        else => false,
+    }
+}
+
+// What a one-name `let` makes: a copy of text is a buffer of its own (ADR-282
+// D9), and so is the text form of something that is not text (D3); a call
+// that hands back a buffer of its own makes one; and a name declared `String`
+// is text of this frame's own, built or moved here.
+fn made_here(names: ref Vec[winnow_grammar::Symbol], value: ref Expr, ty: ref Type?, ask: ref BufferAsk, unaliased: fn(ref String) -> String sync, walk: ref BufferWalk) -> Buffer {
+    if names.len() != 1 {
+        return Buffer::None
+    }
+    match value {
+        Expr::MethodCall { receiver, method, .. } => {
+            let called = ask.names.resolve(method)
+            if called == "clone" && copies_text(receiver, ask, walk) {
+                return Buffer::Named("String")
+            }
+            if called == "to_string" && formats(receiver, ask, walk) {
+                return Buffer::Named("String")
+            }
+        }
+        else => {}
+    }
+    let found = makes_a_buffer(value, Asked { names: ask.names, own: ask.own, library: ask.library }, unaliased)
+    if a_named_buffer(found) {
+        return found
+    }
+    if !is_the_buffer(value, ask, walk) && declares_text(ask.names, ty) {
+        return Buffer::Named("String")
+    }
+    return found
+}
+
+// **Whether a `clone` here is a copy of text** (ADR-282 D9), which is text of
+// its own and points into nothing: a literal, a name whose type was written
+// as text or that holds text with no type written, and a trimmed text or a
+// copy of one. Anything else is the list's answer, which keeps more.
+fn copies_text(receiver: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
+    return match receiver {
+        Expr::LitStr { .. } => true,
+        Expr::LitInterpolated { .. } => true,
+        Expr::Variable(name) => text_local(ask.names.resolve(name), ask, walk),
+        Expr::MethodCall { receiver, method, .. } => match ask.names.resolve(method) == "trim" || ask.names.resolve(method) == "trim_start" || ask.names.resolve(method) == "trim_end" || ask.names.resolve(method) == "clone" {
+            true => copies_text(receiver, ask, walk),
+            false => false,
+        },
+        else => false,
+    }
+}
+
+fn text_local(name: ref String, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
+    let local = local_of(name, walk) ?? return false
+    if local.text {
+        return true
+    }
+    let ty = local.ty ?? return false
+    let written = ask.names.resolve(ty.name)
+    return (written == "String" || written == "str") && ty.generics.len() == 0
+}
+
+// Whether `to_string` of this makes text rather than handing back the text it
+// is: a name whose written type is something other than text.
+fn formats(receiver: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
+    return match receiver {
+        Expr::Variable(name) => formats_local(ask.names.resolve(name), ask, walk),
+        else => false,
+    }
+}
+
+fn formats_local(name: ref String, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
+    let local = local_of(name, walk) ?? return false
+    let ty = local.ty ?? return false
+    let written = ask.names.resolve(ty.name)
+    return written != "String" && written != "str"
+}
+
+// Whether an expression **is** a buffer rather than a view of one: a name
+// bound to one, or its copy.
+fn is_the_buffer(expr: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> bool {
+    return match expr {
+        Expr::Variable(name) => a_buffer_local(ask.names.resolve(name), walk),
+        Expr::MethodCall { receiver, method, .. } => match ask.names.resolve(method) == "clone" || ask.names.resolve(method) == "to_owned" || ask.names.resolve(method) == "to_string" {
+            true => is_the_buffer(receiver, ask, walk),
+            false => false,
+        },
+        else => false,
+    }
+}
+
+// The struct of views an expression is a value of, where this walk can see it
+// without types: a literal of one, or a name whose type was written as one.
+fn struct_of(expr: ref Expr, ask: ref BufferAsk, walk: ref BufferWalk) -> String? {
+    let name = match expr {
+        Expr::StructLit { name, .. } => ask.names.resolve(name).clone(),
+        Expr::Variable(name) => written_type_of(ask.names.resolve(name), ask, walk) ?? return null,
+        else => return null,
+    }
+    if ask.context.borrowing.contains(name) {
+        return name
+    }
+    return null
+}
+
+fn written_type_of(name: ref String, ask: ref BufferAsk, walk: ref BufferWalk) -> String? {
+    let local = local_of(name, walk) ?? return null
+    let ty = local.ty ?? return null
+    return ask.names.resolve(ty.name).clone()
+}
+
+// Whether `Type::Variant` names a variant of an `enum` this file declares: a
+// value built, not a function called.
+fn a_variant(callee: ref String, ask: ref BufferAsk) -> bool {
+    let segments: Vec[ref String] = callee.split("::").collect()
+    if segments.len() < 2 {
+        return false
+    }
+    let variant = segments[segments.len() - 1]
+    let mut owner: String = ""
+    let mut k = 0
+    for segment in segments {
+        if k == segments.len() - 1 {
+            break
+        }
+        if k > 0 {
+            owner.push_str("::")
+        }
+        owner.push_str(segment)
+        k += 1
+    }
+    for item in ask.items {
+        match item.node {
+            Item::Enum { name, variants, .. } => {
+                if ask.names.resolve(name) == owner {
+                    for one in variants {
+                        if ask.names.resolve(one.name) == variant {
+                            return true
+                        }
+                    }
+                }
+            }
+            else => {}
+        }
+    }
+    return false
+}
+
+// Views with these origins now live in `root` as well. A `mut` parameter or
+// a `ref mut self` keeps them past the call (D2); **a local declared before
+// the buffer, in a scope around it, outlives it** - the loop's list, or a list
+// declared first in the same block, which the language below drops after a
+// buffer declared later.
+fn flow_into(root: ref String, origins: collections::BTreeSet[(i64, String)], mut walk: BufferWalk) {
+    if origins.len() == 0 {
+        return
+    }
+    let mut local = local_of(root, walk) ?? return
+    if local.parameter {
+        if local.keeps {
+            escape_all(origins, Escape::Param(root.clone()), walk)
+        }
+        return
+    }
+    for origin in origins {
+        let found = walk.sources[origin] ?? continue
+        let path = found.path.clone()
+        let around = local.path.len() <= path.len() && a_prefix(local.path, path)
+        if around && local.at < origin.0 {
+            escape(origin.clone(), Escape::Outer(root.clone()), walk)
+        }
+    }
+    for origin in origins {
+        local.origins.insert(origin.clone())
+    }
+    set_local(root, local, walk)
+}
+
+fn a_prefix(short: ref Vec[(i64, bool)], long: ref Vec[(i64, bool)]) -> bool {
+    for k in 0..<short.len() {
+        if short[k].0 != long[k].0 || short[k].1 != long[k].1 {
+            return false
+        }
+    }
+    return true
+}
+
+fn escape_all(origins: ref collections::BTreeSet[(i64, String)], escaping: Escape, mut walk: BufferWalk) {
+    for origin in origins {
+        if walk.sources.contains_key(origin) {
+            escape(origin.clone(), escaping.clone(), walk)
+        }
+    }
+}
+
+// Escapes are a set: one record per source and way out.
+fn escape(origin: (i64, String), escaping: Escape, mut walk: BufferWalk) {
+    for (known, way) in walk.escapes {
+        if known.0 == origin.0 && known.1 == origin.1 && same_escape(way, escaping) {
+            return
+        }
+    }
+    walk.escapes.push((origin, escaping))
+}
+
+fn same_escape(a: ref Escape, b: ref Escape) -> bool {
+    return escape_word(a) == escape_word(b)
+}
+
+// An escape as one word, for comparing and for ordering.
+fn escape_word(escaping: ref Escape) -> String {
+    return match escaping {
+        Escape::Returned => "0",
+        Escape::Param(name) => f"1{name}",
+        Escape::Outer(name) => f"2{name}",
+        Escape::Task => "3",
+    }
+}
+
+// The blocks inside an expression that are not a value's arms: a lambda run
+// during a call, an `if` or `match` in statement position - walked for what
+// their statements do, each as a block nested in this statement.
+fn nested_blocks(expr: ref Expr, at: i64, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    match expr {
+        Expr::Block(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Overlap(block) => nested_keeping_statement(at, block, ask, holes_of, unaliased, walk),
+        Expr::Closure { body, .. } => nested_keeping_statement(at, body, ask, holes_of, unaliased, walk),
+        Expr::Call { func, args, config } => {
+            nested_blocks(func, at, ask, holes_of, unaliased, walk)
+            for arg in args {
+                nested_blocks(arg, at, ask, holes_of, unaliased, walk)
+            }
+            for setting in config {
+                nested_blocks(setting.value, at, ask, holes_of, unaliased, walk)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            nested_blocks(receiver, at, ask, holes_of, unaliased, walk)
+            for arg in args {
+                nested_blocks(arg, at, ask, holes_of, unaliased, walk)
+            }
+            for setting in config {
+                nested_blocks(setting.value, at, ask, holes_of, unaliased, walk)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            nested_blocks(receiver, at, ask, holes_of, unaliased, walk)
+            for arg in args {
+                nested_blocks(arg, at, ask, holes_of, unaliased, walk)
+            }
+            for setting in config {
+                nested_blocks(setting.value, at, ask, holes_of, unaliased, walk)
+            }
+        }
+        Expr::If { then_branch, else_branch, .. } => {
+            nested_keeping_statement(at, then_branch, ask, holes_of, unaliased, walk)
+            nested_keeping_statement(at, else_branch ?? return, ask, holes_of, unaliased, walk)
+        }
+        Expr::TryCatch { expr, handler } => {
+            nested_blocks(expr, at, ask, holes_of, unaliased, walk)
+            nested_keeping_statement(at, handler, ask, holes_of, unaliased, walk)
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                nested_blocks(arm.body, at, ask, holes_of, unaliased, walk)
+            }
+        }
+        Expr::Select(arms) => {
+            for arm in arms {
+                nested_keeping_statement(at, arm.body, ask, holes_of, unaliased, walk)
+            }
+        }
+        else => {}
+    }
+}
+
+fn nested_keeping_statement(at: i64, block: ref Block, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    let statement = walk.statement
+    nested(at, false, block, ask, holes_of, unaliased, walk)
+    walk.statement = statement
+}
+
+// **A `spawn` anywhere in this expression** (D3): every local its body names
+// that carries origins leaves with the task. A buffer a task takes is moved
+// into it, whole.
+fn spawns_in(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut walk: BufferWalk) {
+    let mut bodies: Vec[Expr] = []
+    spawn_bodies(expr, holes_of, bodies)
+    for body in bodies {
+        for name in task_names(body, ask, holes_of) {
+            let local = local_of(name, walk) ?? continue
+            if local.origins.len() == 0 || local.buffer {
+                continue
+            }
+            escape_all(local.origins, Escape::Task, walk)
+            capture(name, local, walk)
+        }
+    }
+}
+
+fn capture(name: ref String, local: ref Local, mut walk: BufferWalk) {
+    let mut held: (i64, collections::BTreeSet[(i64, String)]) = walk.captured[name]?.clone() ?? (local.at, collections::BTreeSet())
+    for origin in local.origins {
+        held.1.insert(origin.clone())
+    }
+    walk.captured.insert(name.clone(), held)
+}
+
+// Every name a task's body mentions, a task inside it included.
+fn task_names(body: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> collections::BTreeSet[String] {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    for one in seen_in_expression(body, ask.names, name_as_it_is, holes_of, no_root, true) {
+        match one {
+            Seen::Name(name) => {
+                out.insert(name.clone())
+            }
+            else => {}
+        }
+    }
+    match body {
+        Expr::Spawn { body, .. } => {
+            for name in task_names(body, ask, holes_of) {
+                out.insert(name)
+            }
+        }
+        else => {}
+    }
+    return out
+}
+
+// The bodies of the `spawn`s among an expression's own parts - the holes of a
+// literal included, the bodies of nested blocks not.
+fn spawn_bodies(expr: ref Expr, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut out: Vec[Expr]) {
+    match expr {
+        Expr::Spawn { body, .. } => out.push(body.clone()),
+        else => {}
+    }
+    for hole in holes_of(expr) {
+        spawn_bodies(hole, holes_of, out)
+    }
+    match expr {
+        Expr::Call { func, args, config } => {
+            spawn_bodies(func, holes_of, out)
+            for arg in args {
+                spawn_bodies(arg, holes_of, out)
+            }
+            for setting in config {
+                spawn_bodies(setting.value, holes_of, out)
+            }
+        }
+        Expr::MethodCall { receiver, args, config, .. } => {
+            spawn_bodies(receiver, holes_of, out)
+            for arg in args {
+                spawn_bodies(arg, holes_of, out)
+            }
+            for setting in config {
+                spawn_bodies(setting.value, holes_of, out)
+            }
+        }
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            spawn_bodies(receiver, holes_of, out)
+            for arg in args {
+                spawn_bodies(arg, holes_of, out)
+            }
+            for setting in config {
+                spawn_bodies(setting.value, holes_of, out)
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            spawn_bodies(lhs, holes_of, out)
+            spawn_bodies(rhs, holes_of, out)
+        }
+        Expr::Unary { expr, .. } => spawn_bodies(expr, holes_of, out),
+        Expr::Try(inner) => spawn_bodies(inner, holes_of, out),
+        Expr::Throw(inner) => spawn_bodies(inner, holes_of, out),
+        Expr::Cast { expr, .. } => spawn_bodies(expr, holes_of, out),
+        Expr::Field { base, .. } => spawn_bodies(base, holes_of, out),
+        Expr::SafeField { base, .. } => spawn_bodies(base, holes_of, out),
+        Expr::Index { base, index } => {
+            spawn_bodies(base, holes_of, out)
+            spawn_bodies(index, holes_of, out)
+        }
+        Expr::Range { start, end, .. } => {
+            spawn_bodies(start, holes_of, out)
+            spawn_bodies(end, holes_of, out)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                spawn_bodies(part, holes_of, out)
+            }
+        }
+        Expr::Coalesce { value, fallback } => {
+            spawn_bodies(value, holes_of, out)
+            spawn_bodies(fallback, holes_of, out)
+        }
+        Expr::TryCatch { expr, .. } => spawn_bodies(expr, holes_of, out),
+        Expr::If { cond, .. } => spawn_bodies(cond, holes_of, out),
+        Expr::Match { value, arms } => {
+            spawn_bodies(value, holes_of, out)
+            for arm in arms {
+                if arm.guard != null {
+                    spawn_bodies(arm.guard ?? continue, holes_of, out)
+                }
+                spawn_bodies(arm.body, holes_of, out)
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for field in fields {
+                spawn_bodies(field.value ?? continue, holes_of, out)
+            }
+        }
+        Expr::ListLit { items, .. } => {
+            for item in items {
+                spawn_bodies(item, holes_of, out)
+            }
+        }
+        Expr::With { base, fields, .. } => {
+            spawn_bodies(base, holes_of, out)
+            for field in fields {
+                spawn_bodies(field.value ?? continue, holes_of, out)
+            }
+        }
+        Expr::Return(value) => spawn_bodies(value ?? return, holes_of, out),
+        Expr::Select(arms) => {
+            for arm in arms {
+                spawn_bodies(arm.value, holes_of, out)
+            }
+        }
+        else => {}
+    }
+}
+
+// What an expression in statement position does to the places views may be
+// kept in: `xs.push(v)`, `m.insert(k, v)`, a removal, a call that keeps into
+// one of its arguments.
+fn effects(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    match expr {
+        Expr::MethodCall { receiver, method, args, .. } => {
+            let root = root_of(ask.names, receiver)
+            if root != null {
+                put_by_method(root ?? "", ask.names.resolve(method), args, ask, holes_of, unaliased, walk)
+            }
+            origins_of(expr, ask, holes_of, unaliased, walk)
+        }
+        Expr::TryCatch { expr, .. } => effects(expr, ask, holes_of, unaliased, walk),
+        Expr::Try(expr) => effects(expr, ask, holes_of, unaliased, walk),
+        else => {
+            origins_of(expr, ask, holes_of, unaliased, walk)
+        }
+    }
+}
+
+// `xs.push(v)`, `m.insert(k, v)`: a method that keeps what it is given puts
+// each argument's views into the receiver's root - the buffer itself, handed
+// over, is a move - and a removal drops an entry.
+fn put_by_method(root: ref String, method: ref String, args: ref Vec[Expr], ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) {
+    if drops_entries(method) {
+        shed(root, walk)
+    }
+    if !keeps_what_it_is_given(method) {
+        return
+    }
+    let mut all: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    for k in 0..<args.len() {
+        let mut of: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+        if !is_the_buffer(args[k], ask, walk) {
+            of = origins_of(args[k], ask, holes_of, unaliased, walk)
+        }
+        put_into(root, k, of, walk)
+        let named = struct_of(args[k], ask, walk)
+        if named != null {
+            walk.struct_puts.insert(root.clone(), named ?? "")
+        }
+        for origin in of {
+            all.insert(origin.clone())
+        }
+    }
+    flow_into(root, all, walk)
+}
+
+fn by_arg_of(puts: ref PutsAt?) -> collections::BTreeMap[i64, collections::BTreeSet[(i64, String)]] {
+    let found = puts ?? return collections::BTreeMap()
+    return found.by_arg.clone()
+}
+
+fn put_into(root: ref String, at: i64, of: ref collections::BTreeSet[(i64, String)], mut walk: BufferWalk) {
+    let key = (walk.statement, root.clone())
+    let mut by_arg: collections::BTreeMap[i64, collections::BTreeSet[(i64, String)]] = by_arg_of(walk.puts_into[key])
+    let mut here: collections::BTreeSet[(i64, String)] = by_arg[at]?.clone() ?? collections::BTreeSet()
+    for origin in of {
+        here.insert(origin.clone())
+    }
+    by_arg.insert(at, here)
+    walk.puts_into.insert(key, PutsAt { by_arg: by_arg })
+}
+
+// **The origins of an expression's value**: where its views may point.
+fn origins_of(expr: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let none: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    return match expr {
+        Expr::Variable(name) => origins_of_local(ask.names.resolve(name), walk),
+        Expr::MethodCall { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
+        Expr::SafeMethod { .. } => method_origins(expr, ask, holes_of, unaliased, walk),
+        Expr::Call { func, args, .. } => call_origins(func, args, ask, holes_of, unaliased, walk),
+        Expr::Field { base, .. } => origins_of(base, ask, holes_of, unaliased, walk),
+        Expr::SafeField { base, .. } => origins_of(base, ask, holes_of, unaliased, walk),
+        Expr::Index { base, index } => {
+            origins_of(index, ask, holes_of, unaliased, walk)
+            origins_of(base, ask, holes_of, unaliased, walk)
+        }
+        // **A buffer handed to a field whole is moved there**, and takes
+        // nothing of this frame's along: `Seg { text }` holds the text.
+        Expr::StructLit { fields, .. } => {
+            let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+            for field in fields {
+                if field.value == null {
+                    let local = local_of(ask.names.resolve(field.name), walk) ?? continue
+                    if !local.buffer {
+                        add_all(local.origins, out)
+                    }
+                    continue
+                }
+                let value = field.value ?? continue
+                let of = origins_of(value, ask, holes_of, unaliased, walk)
+                if !is_the_buffer(value, ask, walk) {
+                    add_all(of, out)
+                }
+            }
+            out
+        }
+        Expr::With { base, fields, .. } => {
+            let mut out = origins_of(base, ask, holes_of, unaliased, walk)
+            for field in fields {
+                add_all(origins_of(field.value ?? continue, ask, holes_of, unaliased, walk), out)
+            }
+            out
+        }
+        // **And into a list or a tuple whole**, for the same reason.
+        Expr::ListLit { items, .. } => items_origins(items, ask, holes_of, unaliased, walk),
+        Expr::Tuple(items) => items_origins(items, ask, holes_of, unaliased, walk),
+        Expr::If { cond, then_branch, else_branch } => {
+            origins_of(cond, ask, holes_of, unaliased, walk)
+            let mut out = tail_origins(then_branch, ask, holes_of, unaliased, walk)
+            if else_branch != null {
+                add_all(tail_origins(else_branch ?? return out, ask, holes_of, unaliased, walk), out)
+            }
+            out
+        }
+        Expr::Match { value, arms } => {
+            origins_of(value, ask, holes_of, unaliased, walk)
+            let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+            for arm in arms {
+                add_all(origins_of(arm.body, ask, holes_of, unaliased, walk), out)
+            }
+            out
+        }
+        Expr::Block(block) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Unsafe(block) => tail_origins(block, ask, holes_of, unaliased, walk),
+        Expr::Unary { expr, .. } => origins_of(expr, ask, holes_of, unaliased, walk),
+        Expr::Try(inner) => origins_of(inner, ask, holes_of, unaliased, walk),
+        Expr::Cast { expr, .. } => origins_of(expr, ask, holes_of, unaliased, walk),
+        Expr::TryCatch { expr, handler } => {
+            let mut out = origins_of(expr, ask, holes_of, unaliased, walk)
+            add_all(tail_origins(handler, ask, holes_of, unaliased, walk), out)
+            out
+        }
+        Expr::Coalesce { value, fallback } => {
+            let mut out = origins_of(value, ask, holes_of, unaliased, walk)
+            add_all(origins_of(fallback, ask, holes_of, unaliased, walk), out)
+            out
+        }
+        // **A hole is code** (ADR-309): a call in `f"{load(p).len()}"` is a
+        // call of this statement, and the text built around it is text of its
+        // own.
+        Expr::LitInterpolated { .. } => {
+            for hole in holes_of(expr) {
+                origins_of(hole, ask, holes_of, unaliased, walk)
+            }
+            none
+        }
+        // A comparison or arithmetic is a value of its own; text joined with
+        // `+` is text of its own.
+        Expr::Binary { lhs, rhs, .. } => {
+            origins_of(lhs, ask, holes_of, unaliased, walk)
+            origins_of(rhs, ask, holes_of, unaliased, walk)
+            none
+        }
+        else => none,
+    }
+}
+
+fn origins_of_local(name: ref String, walk: ref BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let local = local_of(name, walk) ?? return collections::BTreeSet()
+    return local.origins.clone()
+}
+
+fn a_buffer_local(name: ref String, walk: ref BufferWalk) -> bool {
+    let local = local_of(name, walk) ?? return false
+    return local.buffer
+}
+
+fn add_all(from: ref collections::BTreeSet[(i64, String)], mut into: collections::BTreeSet[(i64, String)]) {
+    for one in from {
+        into.insert(one.clone())
+    }
+}
+
+fn items_origins(items: ref Vec[Expr], ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    for item in items {
+        let of = origins_of(item, ask, holes_of, unaliased, walk)
+        if !is_the_buffer(item, ask, walk) {
+            add_all(of, out)
+        }
+    }
+    return out
+}
+
+// A method call: **a removal is a removal wherever it stands**; a method of
+// this package that takes a keep is a source; one that hands back its own -
+// or a copy of text - points into nothing; anything else into what its
+// receiver and its arguments do.
+fn method_origins(call: ref Expr, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let (receiver, method, args) = match call {
+        Expr::MethodCall { receiver, method, args, .. } => (receiver, ask.names.resolve(method).clone(), args),
+        Expr::SafeMethod { receiver, method, args, .. } => (receiver, ask.names.resolve(method).clone(), args),
+        else => return collections::BTreeSet(),
+    }
+    if drops_entries(method) {
+        let root = root_of(ask.names, receiver)
+        if root != null {
+            shed(root ?? "", walk)
+        }
+    }
+    let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    let on_self = match receiver {
+        Expr::Variable(name) => ask.names.resolve(name) == "self",
+        else => false,
+    }
+    let keeping = keeping_method_key(ask.own, walk.target, on_self, method)
+    if keeping != null {
+        add_all(call_source(keeping ?? "", walk), out)
+    }
+    if hands_back_its_own(method) || (method == "clone" && copies_text(receiver, ask, walk)) {
+        for arg in args {
+            origins_of(arg, ask, holes_of, unaliased, walk)
+        }
+        origins_of(receiver, ask, holes_of, unaliased, walk)
+        return out
+    }
+    add_all(origins_of(receiver, ask, holes_of, unaliased, walk), out)
+    for arg in args {
+        add_all(origins_of(arg, ask, holes_of, unaliased, walk), out)
+    }
+    return out
+}
+
+// A call: **to a variant whole** a buffer is moved into the value; a callee
+// that takes a keep is a source, which flows into the arguments it keeps into
+// and out through its result where that is tethered; **a result that holds no
+// view is the call's own**, where a chain of views stops; anything else points
+// where its arguments do.
+fn call_origins(func: ref Expr, args: ref Vec[Expr], ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let callee = written_callee(ask.names, func, unaliased)
+    let named = callee?.clone() ?? ""
+    let variant = callee != null && a_variant(named, ask)
+    let mut out: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    let mut by_args: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    for arg in args {
+        let of = origins_of(arg, ask, holes_of, unaliased, walk)
+        if !(variant && is_the_buffer(arg, ask, walk)) {
+            add_all(of, by_args)
+        }
+    }
+    if callee != null {
+        let mut owned = false
+        if ask.own.functions.contains_key(named) {
+            let contract = ask.own.functions[named] ?? return by_args
+            owned = answered_by(contract, named, args, ask, out, walk)
+        } else if ask.library.functions.contains_key(named) {
+            let contract = ask.library.functions[named] ?? return by_args
+            owned = answered_by(contract, named, args, ask, out, walk)
+        }
+        if owned {
+            return out
+        }
+    }
+    add_all(by_args, out)
+    return out
+}
+
+// What a described callee answers: a source where it takes a keep, flowing
+// into the arguments it keeps into and out through a tethered result - and
+// whether its result is its own, holding no view.
+fn answered_by(contract: ref FnContract, named: ref String, args: ref Vec[Expr], ask: ref BufferAsk, mut out: collections::BTreeSet[(i64, String)], mut walk: BufferWalk) -> bool {
+    if takes_a_keep(contract) {
+        let source = call_source(named, walk)
+        for held in contract.views {
+            if held.state != State::Tethered || held.position == RESULT_POSITION {
+                continue
+            }
+            let at = parameter_index(contract, held.position)
+            if at < 0 || at >= args.len() {
+                continue
+            }
+            let root = root_of(ask.names, args[at]) ?? continue
+            flow_into(root, source.clone(), walk)
+        }
+        for held in contract.views {
+            if held.position == RESULT_POSITION && held.state == State::Tethered {
+                add_all(source, out)
+                break
+            }
+        }
+    }
+    let signature = contract.signature ?? return false
+    let result = signature.result ?? return false
+    return !a_ledger_type_with_a_view(result)
+}
+
+fn parameter_index(contract: ref FnContract, position: ref String) -> i64 {
+    let signature = contract.signature ?? return -1
+    let mut at = 0
+    for (name, _) in signature.params {
+        if name == position {
+            return at
+        }
+        at += 1
+    }
+    return -1
+}
+
+// The origins of what a block ends in, **as the statement it is**: a call there
+// is written by the emitter as part of that statement, and the key a call's
+// keep is found by has to be the one the emitter has in hand.
+fn tail_origins(block: ref Block, ask: ref BufferAsk, holes_of: fn(ref Expr) -> Vec[Expr] sync, unaliased: fn(ref String) -> String sync, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let none: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    if block.stmts.len() == 0 {
+        return none
+    }
+    let last = block.stmts[block.stmts.len() - 1]
+    return match last.node {
+        Stmt::Expr(value) => {
+            let outer = walk.statement
+            walk.statement = last.span.start as i64
+            let origins = origins_of(value, ask, holes_of, unaliased, walk)
+            walk.statement = outer
+            origins
+        }
+        else => none,
+    }
+}
+
+// The source a call to a keeping function stands for, made on first sight -
+// keyed by statement and callee, which is what the emitter has in hand where
+// it writes the call: one keep per callee per statement.
+fn call_source(callee: ref String, mut walk: BufferWalk) -> collections::BTreeSet[(i64, String)] {
+    let id = (walk.statement, callee.clone())
+    if !walk.sources.contains_key(id) {
+        let source = Source::Call { at: walk.statement, callee: callee.clone(), span: Span { start: walk.statement as u32, end: walk.statement as u32 } }
+        walk.sources.insert(id.clone(), Sourced { source: source, path: walk.path.clone() })
+    }
+    let mut one: collections::BTreeSet[(i64, String)] = collections::BTreeSet()
+    one.insert(id)
+    return one
+}
+
+// From what the walk found to what the lowering writes (D2-D5), and the
+// refusals where it cannot. **No permission is asked for** (ADR-283 D5): which
+// buffer lives where is the compiler's decision, shown by `--tethers` and in
+// the ledger rather than demanded of the source.
+fn decide(key: String, body: ref Block, walk: ref BufferWalk, ask: ref BufferAsk) -> BufferPlan {
+    let mut first = -1
+    if body.stmts.len() > 0 {
+        first = body.stmts[0].span.start as i64
+    }
+    let mut plan = BufferPlan { key: key, first: first, takes_keep: false, frame_keep: false, task_keep: false, local_keeps: collections::BTreeSet(), puts: collections::BTreeMap(), calls: collections::BTreeMap(), tethered: collections::BTreeMap(), element_keepers: collections::BTreeSet(), struct_keepers: collections::BTreeSet(), widths: collections::BTreeMap(), keeper_structs: collections::BTreeMap(), held_locals: collections::BTreeSet(), holds: collections::BTreeMap(), escapes: [], refusals: [], reputs: collections::BTreeMap() }
+    for (id, found) in walk.sources {
+        decide_source(id.clone(), found.source, found.path, walk, plan)
+    }
+    // **A kept buffer assigned again goes into the same keep** (#293).
+    for (statement, bound) in walk.reassigned {
+        let keep = plan.puts[bound]?.clone() ?? continue
+        plan.reputs.insert(statement.clone(), keep)
+    }
+    // **One keep per buffer, as many as the widest value needs** (ADR-283 D2).
+    for (place, by_arg) in plan.holds {
+        let mut widest = 1
+        for (_, statements) in by_arg {
+            if statements.len() > widest {
+                widest = statements.len()
+            }
+        }
+        let width = plan.widths[place.1] ?? 1
+        if widest > width {
+            plan.widths.insert(place.1.clone(), widest)
+        } else {
+            plan.widths.insert(place.1.clone(), width)
+        }
+    }
+    // **Which keepers hold structs** (ADR-283 D17): read through the handle.
+    for keeper in plan.element_keepers {
+        let written = keeper_type(keeper, walk)
+        let names_one = struct_of_views_maybe(written, ask)
+        if names_one || walk.struct_puts.contains_key(keeper) {
+            plan.struct_keepers.insert(keeper.clone())
+            let named = keeper_struct(keeper, written, walk, ask)
+            if named != null {
+                plan.keeper_structs.insert(keeper.clone(), named ?? "")
+            }
+        }
+    }
+    for (local, from) in walk.taken {
+        if plan.struct_keepers.contains(from) {
+            plan.held_locals.insert(local.clone())
+        }
+    }
+    element_refusals(walk, ask, plan)
+    return plan
+}
+
+fn struct_of_views_maybe(written: ref Type?, ask: ref BufferAsk) -> bool {
+    let ty = written ?? return false
+    return names_a_struct_of_views(ask.names, ty, ask.context.borrowing)
+}
+
+fn not_held_maybe(written: ref Type?, ask: ref BufferAsk) -> String? {
+    let ty = written ?? return null
+    let mut seen: Vec[String] = []
+    return ask.context.not_held(ask.names, ty, seen)
+}
+
+fn a_sequence_container(written: ref Type?, ask: ref BufferAsk) -> bool {
+    let ty = written ?? return true
+    let container = ask.names.resolve(ty.name)
+    return container == "Vec" || container == "List" || container == "VecDeque" || container == "Deque"
+}
+
+fn keeper_type(keeper: ref String, walk: ref BufferWalk) -> Type? {
+    let local = walk.last_seen[keeper] ?? return null
+    return local.ty?.clone()
+}
+
+fn keeper_struct(keeper: ref String, written: ref Type?, walk: ref BufferWalk, ask: ref BufferAsk) -> String? {
+    if walk.struct_puts.contains_key(keeper) {
+        return walk.struct_puts[keeper]?.clone()
+    }
+    let ty = written ?? return null
+    return struct_in(ask.names, ty, ask.context.borrowing)
+}
+
+// One source: the keep it goes into - the task's where a task takes its views,
+// the caller's where they leave through the result or a parameter, one per
+// buffer where a keeper drops entries across the loop that reads it, the
+// frame's where a local around it keeps them, one beside a call otherwise -
+// or a refusal where a task takes them and they leave as well.
+fn decide_source(id: (i64, String), source: ref Source, path: ref Vec[(i64, bool)], walk: ref BufferWalk, mut plan: BufferPlan) {
+    let mut ways: collections::BTreeMap[String, Escape] = collections::BTreeMap()
+    for (known, way) in walk.escapes {
+        if known.0 == id.0 && known.1 == id.1 {
+            ways.insert(escape_word(way), way.clone())
+        }
+    }
+    let mut leaves = false
+    let mut task = false
+    let mut outer: Vec[String] = []
+    for (_, way) in ways {
+        plan.escapes.push((source.clone(), way.clone()))
+        match way {
+            Escape::Returned => {
+                leaves = true
+            }
+            Escape::Param(_) => {
+                leaves = true
+            }
+            Escape::Task => {
+                task = true
+            }
+            Escape::Outer(name) => outer.push(name.clone()),
+        }
+    }
+    // **A keeper that drops entries across a loop** (D4): the buffer is read
+    // inside a loop the keeper is declared outside of, and the entries are
+    // dropped inside that same loop - while it goes on reading.
+    let mut shedding: Vec[String] = []
+    for keeper in outer {
+        if sheds_across(keeper, path, walk) {
+            shedding.push(keeper.clone())
+        }
+    }
+    if task && leaves {
+        plan.refusals.push(source_refusal(source, "is passed to a task and also returned from this function.", "The task may outlive the caller, or the caller the task, so neither can be the one that keeps the data alive.", "Give the task a copy with `.clone()`, or pass the task only what it needs and return the rest."))
+        return
+    }
+    let mut keep = KeepAt::Frame
+    if task {
+        keep = KeepAt::Task
+        plan.task_keep = true
+    } else if leaves {
+        keep = KeepAt::Param
+        plan.takes_keep = true
+    } else if shedding.len() > 0 {
+        keep = KeepAt::Element(source_at(source))
+        held_one_per_buffer(id.clone(), source, shedding, walk, plan)
+    } else if outer.len() > 0 {
+        plan.frame_keep = true
+    } else {
+        match source {
+            // A buffer nothing keeps past its scope stays what it was.
+            Source::Buffer { .. } => return,
+            // A call's buffers need a keep all the same; one declared just
+            // before the statement lives as long as what the call hands back.
+            Source::Call { at, .. } => {
+                keep = KeepAt::Local(at.clone())
+                plan.local_keeps.insert(at.clone())
+            }
+        }
+    }
+    match source {
+        Source::Buffer { at, .. } => {
+            plan.puts.insert(at.clone(), keep.clone())
+        }
+        Source::Call { at, callee, .. } => {
+            plan.calls.insert((at.clone(), callee.clone()), keep.clone())
+        }
+    }
+    if task {
+        for (name, held) in walk.captured {
+            if held.1.contains(id) {
+                plan.tethered.insert(name.clone(), held.0)
+            }
+        }
+    }
+}
+
+fn sheds_across(keeper: ref String, path: ref Vec[(i64, bool)], walk: ref BufferWalk) -> bool {
+    let sheds = walk.sheds[keeper] ?? return false
+    let declared: Vec[(i64, bool)] = walk.last_seen[keeper]?.path?.clone() ?? []
+    for around in path {
+        if !around.1 || declared_in(declared, around.0) {
+            continue
+        }
+        for shed in sheds {
+            for step in shed {
+                if step.0 == around.0 && step.1 == around.1 {
+                    return true
+                }
+            }
+        }
+    }
+    return false
+}
+
+fn declared_in(declared: ref Vec[(i64, bool)], at: i64) -> bool {
+    for step in declared {
+        if step.0 == at && step.1 {
+            return true
+        }
+    }
+    return false
+}
+
+fn source_at(source: ref Source) -> i64 {
+    return match source {
+        Source::Buffer { at, .. } => at.clone(),
+        Source::Call { at, .. } => at.clone(),
+    }
+}
+
+// The keepers that drop entries hold each view one handle per buffer (D4),
+// and every place that puts a view of this source into one is recorded.
+fn held_one_per_buffer(id: (i64, String), source: ref Source, shedding: ref Vec[String], walk: ref BufferWalk, mut plan: BufferPlan) {
+    for keeper in shedding {
+        plan.element_keepers.insert(keeper.clone())
+    }
+    for (place, puts) in walk.puts_into {
+        if !a_name_among(place.1, shedding) {
+            continue
+        }
+        for (arg, origins) in puts.by_arg {
+            if origins.contains(id) {
+                hold(place.clone(), arg.clone(), source_at(source), plan)
+            }
+        }
+    }
+}
+
+fn hold(place: (i64, String), arg: i64, statement: i64, mut plan: BufferPlan) {
+    let mut by_arg: collections::BTreeMap[i64, collections::BTreeSet[i64]] = plan.holds[place]?.clone() ?? collections::BTreeMap()
+    let mut statements: collections::BTreeSet[i64] = by_arg[arg]?.clone() ?? collections::BTreeSet()
+    statements.insert(statement)
+    by_arg.insert(arg, statements)
+    plan.holds.insert(place.clone(), by_arg)
+}
+
+fn a_name_among(name: ref String, names: ref Vec[String]) -> bool {
+    for one in names {
+        if one == name {
+            return true
+        }
+    }
+    return false
+}
+
+// How a message names a source.
+fn source_named(source: ref Source) -> String {
+    return match source {
+        Source::Buffer { name, ty, .. } => f"`{name}` (a `{ty}` this body reads)",
+        Source::Call { callee, .. } => f"what `{callee}` returns",
+    }
+}
+
+fn source_refusal(source: ref Source, what: ref String, why: ref String, help: ref String) -> Finding {
+    let span = match source {
+        Source::Buffer { span, .. } => span.clone(),
+        Source::Call { span, .. } => span.clone(),
+    }
+    let named = capitalised(source_named(source))
+    return refusal("NK2304", span, f"{named} {what}", [why.clone()], help.clone())
+}
+
+// **D4 holds text one view at a time, and ADR-283 a struct of views one handle
+// per buffer.** What is left - a value with no shape for that, and a struct in
+// a container whose reads are not a sequence's - is said by name.
+fn element_refusals(walk: ref BufferWalk, ask: ref BufferAsk, mut plan: BufferPlan) {
+    let mut found: Vec[Finding] = []
+    for keeper in plan.element_keepers {
+        let written = keeper_type(keeper, walk)
+        let mut whys: Vec[String] = []
+        let held = not_held_maybe(written, ask)
+        if held != null {
+            whys.push(held ?? "")
+        }
+        if walk.struct_puts.contains_key(keeper) {
+            let mut seen: Vec[String] = []
+            let named = walk.struct_puts[keeper]?.clone() ?? ""
+            let why = ask.context.struct_not_held(ask.names, named, seen)
+            if why != null {
+                whys.push(why ?? "")
+            }
+        }
+        let sequence = a_sequence_container(written, ask)
+        // **One message for one container**: where it is not a list, that is
+        // the thing to change.
+        let not_a_list = plan.struct_keepers.contains(keeper) && !sequence
+        if !not_a_list {
+            for why in whys {
+                found.push(element_refusal(keeper, f"it holds {why}, which isn't supported there yet", "Keep text, or structs of text views, in it, or store copies made with `.clone()`.", plan))
+            }
+        } else {
+            found.push(element_refusal(keeper, "it isn't a list, and only a list can hold structs of views here yet", "Keep the structs in a list, or store copies made with `.clone()`.", plan))
+        }
+    }
+    for one in found {
+        plan.refusals.push(one.clone())
+    }
+}
+
+fn element_refusal(keeper: ref String, why: ref String, help: ref String, plan: ref BufferPlan) -> Finding {
+    let mut span = Span::nowhere()
+    for (place, _) in plan.holds {
+        if place.1 == keeper {
+            span = Span { start: place.0 as u32, end: place.0 as u32 }
+            break
+        }
+    }
+    return refusal("NK2304", span, f"`{keeper}` keeps views of data read inside a loop and removes entries as it goes, but {why}.", ["Each view keeps its own data alive here, so that data read for entries that were removed can be freed during the loop."], help.clone())
+}
