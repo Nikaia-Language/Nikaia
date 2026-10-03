@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.392] — 2026-10-03
+
+**The encoder a grammar run prints its result with is written in Nikaia**
+(#125, ADR-250). The statements `grammar_run` writes into the sub-program that
+runs a grammar while the program is built (issue #178) moved into
+`tools/dump.nika`: text through the one escape set, whole numbers, `bool`,
+floats by `{:?}`, a list, an array or a slice as a run, an `enum` by a `match`
+with an arm per variant, a `struct` field by field, and the type that cannot
+cross named before a parser is compiled. Reading the program's declarations
+into the shapes it walks, building and running the sub-project and the decoder
+stay Rust. 19.7 % of the toolchain is Nikaia.
+
 ## [0.0.391] — 2026-10-03
 
 **What the `\` in a written literal means is decided in Nikaia** (#125,

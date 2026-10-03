@@ -1,0 +1,204 @@
+// crates/nikaia-std/src/tools/dump.nika
+//
+// The encoder a grammar run at build time prints its result with (issue #178,
+// ADR-079 D1) - the statements `grammar_run` writes into the sub-program,
+// moved from Rust (ADR-250, #125). Building and running the sub-project, and
+// the decoder that reads what it printed, stay Rust.
+//
+// **Written inline** rather than as a function per type: generating
+// `fn dump_Setting(out: &mut String, v: &Setting<'_>)` would need this to
+// spell every type in Rust - the lifetime a view field adds, the generic
+// arguments a declaration carries - which is the emitter's job and not a
+// second copy of it. Walking the **declaration** and writing the pushes where
+// the value stands needs no type named at all: the recursion is here, and
+// what it writes is loops and field reads.
+//
+// **Generated from the declaration and not from the value**, so a shape a
+// `const` cannot hold is refused before a parser is compiled, with the type
+// that cannot cross named.
+//
+// The form is s-expressions, one per shape a build-time value has: `(i 42)`,
+// `(f 1.5)`, `(b true)`, `(s "…")`, `(l …)`, `(t Name (field …) …)` and
+// `(v Ty Variant …)`.
+
+use std::collections
+
+/// One variant of an `enum` the program declares: its name, what it carries
+/// by position, and whether the declaration named those fields.
+pub struct VariantShape {
+    pub name: String,
+    pub carried: Vec[Ty],
+    pub named: bool,
+}
+
+/// One field of a `struct` the program declares.
+pub struct FieldShape {
+    pub name: String,
+    pub ty: Ty,
+}
+
+/// The `enum`s and `struct`s the program declares, by name, in declaration
+/// order inside each.
+pub struct Shapes {
+    pub enums: collections::BTreeMap[String, Vec[VariantShape]],
+    pub structs: collections::BTreeMap[String, Vec[FieldShape]],
+}
+
+/// A result with no form a `const` can hold: the type, and why.
+pub struct Uncrossable {
+    pub ty: String,
+    pub because: String,
+}
+
+// How deep a declaration may nest before this gives up. A recursive type -
+// `Json::Array(Vec[Json])` - would walk for ever; it has no crossed form
+// either, so the limit is a guard rather than a rule, and the sentence names
+// the type rather than the depth.
+comptime DEEPEST: i64 = 16
+
+/// The statements that push `expr`'s encoding onto `out`, at `depth`, or the
+/// type that cannot cross. `escaped` spells a field name as Rust reads it.
+pub fn dump(shapes: ref Shapes, ty: ref Ty, expr: ref String, depth: i64, escaped: fn(ref String) -> String sync, mut out: String) -> Uncrossable? {
+    if depth > DEEPEST {
+        return uncrossable(ty, "it contains itself, with no end to how deep it goes")
+    }
+    return match ty {
+        Ty::Named { name, args, view } => dump_named(shapes, ty, name, args, view, expr, depth, escaped, out),
+        // **A `&[T]` is a run too** (ADR-179 D1), dumped as the list it views:
+        // the sub-program owns a `Vec` where this stands, so what the encoder
+        // walks is `.iter()` either way.
+        Ty::Pointed { item, slice, mutable } => match slice && !mutable {
+            true => dump_run(shapes, item, expr, depth, escaped, out),
+            false => uncrossable(ty, NO_FORM),
+        },
+        else => uncrossable(ty, NO_FORM),
+    }
+}
+
+comptime NO_FORM: ref String = "a `const` holds an integer, a `bool`, text, a list of those and a `struct` whose fields are those"
+
+fn dump_named(shapes: ref Shapes, ty: ref Ty, name: ref String, args: ref Vec[Ty], view: bool, expr: ref String, depth: i64, escaped: fn(ref String) -> String sync, mut out: String) -> Uncrossable? {
+    let pad = "    ".repeat(depth)
+    // **Text is the only shape with an escape**, and the set is Rust's -
+    // which is what the build-time decoder reads (`tools/escapes.nika`).
+    if name == "str" && view {
+        out.push_str(f"{pad}__nikaia_text(&mut out, {expr});\n")
+        return null
+    }
+    if name == "String" {
+        out.push_str(f"{pad}__nikaia_text(&mut out, &{expr});\n")
+        return null
+    }
+    if name == "bool" {
+        out.push_str(f"{pad}out.push_str(&format!(\"(b {{}})\", {expr}));\n")
+        return null
+    }
+    if is_whole(name) {
+        out.push_str(f"{pad}out.push_str(&format!(\"(i {{}})\", {expr}));\n")
+        return null
+    }
+    // A list, by either spelling, and an `Array[T, N]` with it: what crosses
+    // is the same either way (ADR-079 D1, ADR-152).
+    if (name == "Vec" || name == "List" || name == ARRAY) && args.len() > 0 {
+        return dump_run(shapes, args[0], expr, depth, escaped, out)
+    }
+    // **`{:?}` and not `{}`**, because Rust's `Debug` for a float is the
+    // shortest text that reads back as the same bits - which is what the
+    // decoder then parses, and what a `const` is written from.
+    if name == "f32" || name == "f64" {
+        out.push_str(f"{pad}out.push_str(&format!(\"(f {{:?}})\", {expr}));\n")
+        return null
+    }
+    if shapes.enums.contains_key(name) {
+        return dump_variants(shapes, ty, name, expr, depth, escaped, out)
+    }
+    return dump_fields(shapes, ty, name, expr, depth, escaped, out)
+}
+
+// A run - a list, an array, a slice - as `(l …)`, its items one by one.
+fn dump_run(shapes: ref Shapes, item: ref Ty, expr: ref String, depth: i64, escaped: fn(ref String) -> String sync, mut out: String) -> Uncrossable? {
+    let pad = "    ".repeat(depth)
+    let held = f"__nikaia_{depth}"
+    out.push_str(f"{pad}out.push_str(\"(l\");\n")
+    out.push_str(f"{pad}for {held} in {expr}.iter() {{\n")
+    out.push_str(f"{pad}    out.push(' ');\n")
+    let refused = dump(shapes, item, held, depth + 1, escaped, out)
+    if refused != null {
+        return refused
+    }
+    out.push_str(f"{pad}}}\n")
+    out.push_str(f"{pad}out.push(')');\n")
+    return null
+}
+
+// **An `enum`, by the variant the value *is*.** A declaration cannot say which
+// one that is, so the dump is a `match` with an arm per variant.
+fn dump_variants(shapes: ref Shapes, ty: ref Ty, name: ref String, expr: ref String, depth: i64, escaped: fn(ref String) -> String sync, mut out: String) -> Uncrossable? {
+    let variants = shapes.enums[name] ?? return uncrossable(ty, NO_FORM)
+    let pad = "    ".repeat(depth)
+    out.push_str(f"{pad}match {expr} {{\n")
+    for variant in variants {
+        if variant.named {
+            return uncrossable(ty, f"`{name}::{variant.name}` has named fields, and variants with named fields can't be computed at build time yet")
+        }
+        let mut bound: Vec[String] = []
+        let mut at = 0
+        while at < variant.carried.len() {
+            bound.push(f"__nikaia_p{at}")
+            at += 1
+        }
+        let mut pattern = f"{name}::{variant.name}"
+        if bound.len() > 0 {
+            let joined = bound.join(", ")
+            pattern = f"{name}::{variant.name}({joined})"
+        }
+        out.push_str(f"{pad}    {pattern} => {{\n")
+        out.push_str(f"{pad}        out.push_str(\"(v {name} {variant.name}\");\n")
+        let mut i = 0
+        while i < bound.len() {
+            out.push_str(f"{pad}        out.push(' ');\n")
+            let refused = dump(shapes, variant.carried[i], bound[i], depth + 2, escaped, out)
+            if refused != null {
+                return refused
+            }
+            i += 1
+        }
+        out.push_str(f"{pad}        out.push(')');\n")
+        out.push_str(f"{pad}    }}\n")
+    }
+    out.push_str(f"{pad}}}\n")
+    return null
+}
+
+// A `struct` this program declares, field by field. The order is the
+// declaration's, which is what the decoder reads back.
+fn dump_fields(shapes: ref Shapes, ty: ref Ty, name: ref String, expr: ref String, depth: i64, escaped: fn(ref String) -> String sync, mut out: String) -> Uncrossable? {
+    let fields = shapes.structs[name] ?? return uncrossable(ty, f"`{name}` isn't declared in this program with fields, and the value is built into the program field by field")
+    if fields.len() == 0 {
+        return uncrossable(ty, f"`{name}` declares no fields")
+    }
+    let pad = "    ".repeat(depth)
+    out.push_str(f"{pad}out.push_str(\"(t {name}\");\n")
+    for field in fields {
+        let spelled = escaped(field.name)
+        out.push_str(f"{pad}out.push_str(\" ({field.name} \");\n")
+        let refused = dump(shapes, field.ty, f"{expr}.{spelled}", depth + 1, escaped, out)
+        if refused != null {
+            return refused
+        }
+        out.push_str(f"{pad}out.push(')');\n")
+    }
+    out.push_str(f"{pad}out.push(')');\n")
+    return null
+}
+
+/// Whether a name is one of the whole numbers, which cross as themselves.
+/// **`f32` and `f64` are not here**, and that is not an absence: a float is a
+/// build-time value of its own, written with `{:?}`.
+pub fn is_whole(name: ref String) -> bool {
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize"
+}
+
+fn uncrossable(ty: ref Ty, because: ref String) -> Uncrossable? {
+    return Uncrossable { ty: ty.text(), because: because.clone() }
+}

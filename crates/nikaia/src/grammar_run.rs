@@ -35,6 +35,7 @@ use crate::ast::Item;
 use crate::contracts::ty::Ty;
 use crate::contracts::ty::TyOps;
 use crate::parser::Parsed;
+use nikaia_std::tools::dump::{FieldShape, Shapes, VariantShape};
 
 /// Why a grammar could not be run, where the reason is this compiler's rather
 /// than the input's.
@@ -325,206 +326,33 @@ fn __nikaia_text(out: &mut String, s: &str) {
 }
 "#;
 
-/// **The dump, written inline** rather than as a function per type.
-///
-/// Generating `fn dump_Setting(out: &mut String, v: &Setting<'_>)` would need
-/// this to spell every type in Rust — the lifetime a view field adds, the
-/// generic arguments a declaration carries — which is the emitter's job and not
-/// a second copy of it. Walking the **declaration** and writing the pushes where
-/// the value stands needs no type named at all: the recursion is in this
-/// generator, and what it emits is loops and field reads.
-///
-/// **Generated from the declaration and not from the value**, so a shape a
-/// `const` cannot hold is refused *before* a parser is compiled, with the type
-/// that cannot cross named.
+/// **The dump, written inline**, from the declaration and not from the value,
+/// so a shape a `const` cannot hold is refused *before* a parser is compiled.
+/// **Written in Nikaia** (`tools/dump.nika`, #125); what stays here is reading
+/// the program's declarations into the shapes it walks.
 fn dumper(parsed: &Parsed, result: &Ty) -> Result<String, Wall> {
     let mut out = String::new();
-    dump(parsed, result, "value", 1, &mut out)?;
-    Ok(out)
-}
-
-/// How deep a declaration may nest before this gives up.
-///
-/// A recursive type — `Json::Array(Vec[Json])` — would walk for ever. It has no
-/// crossed form either, so the limit is a guard rather than a rule, and the
-/// sentence a reader gets names the type rather than the depth.
-const DEEPEST: usize = 16;
-
-/// The statements that push `expr`'s encoding onto `out`, at `depth`.
-fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) -> Result<(), Wall> {
-    if depth > DEEPEST {
-        return Err(Wall::NoCrossedForm {
-            ty: ty.text(),
-            because: "it contains itself, with no end to how deep it goes".to_string(),
-        });
-    }
-    let pad = "    ".repeat(depth);
-    match ty {
-        // **Text is the only shape with an escape**, and the set is Rust's —
-        // which is what `build_time::decoded` reads, so what this writes is
-        // what that reads.
-        Ty::Named { name, view, .. } if name == "str" && *view => {
-            out.push_str(&format!("{pad}__nikaia_text(&mut out, {expr});\n"));
-            Ok(())
-        }
-        Ty::Named { name, .. } if name == "String" => {
-            out.push_str(&format!("{pad}__nikaia_text(&mut out, &{expr});\n"));
-            Ok(())
-        }
-        Ty::Named { name, .. } if name == "bool" => {
-            out.push_str(&format!(
-                "{pad}out.push_str(&format!(\"(b {{}})\", {expr}));\n"
-            ));
-            Ok(())
-        }
-        Ty::Named { name, .. } if is_whole(name) => {
-            out.push_str(&format!(
-                "{pad}out.push_str(&format!(\"(i {{}})\", {expr}));\n"
-            ));
-            Ok(())
-        }
-        // **A `&[T]` is a run too** (ADR-179 D1), dumped as the list it views.
-        // The sub-program owns a `Vec` where this stands, which `growing`
-        // above is, so what the encoder walks is `.iter()` either way.
-        Ty::Pointed {
-            item,
-            slice: true,
-            mutable: false,
-        } => {
-            let held = format!("__nikaia_{depth}");
-            out.push_str(&format!("{pad}out.push_str(\"(l\");\n"));
-            out.push_str(&format!("{pad}for {held} in {expr}.iter() {{\n"));
-            out.push_str(&format!("{pad}    out.push(' ');\n"));
-            dump(parsed, item, &held, depth + 1, out)?;
-            out.push_str(&format!("{pad}}}\n"));
-            out.push_str(&format!("{pad}out.push(')');\n"));
-            Ok(())
-        }
-        // A list, by either spelling, and an `Array[T, N]` with it: what
-        // crosses is the same either way (ADR-079 D1, ADR-152).
-        Ty::Named { name, args, .. }
-            if (name == "Vec" || name == "List" || name == crate::contracts::ty::ARRAY)
-                && !args.is_empty() =>
-        {
-            let item = format!("__nikaia_{depth}");
-            out.push_str(&format!("{pad}out.push_str(\"(l\");\n"));
-            out.push_str(&format!("{pad}for {item} in {expr}.iter() {{\n"));
-            out.push_str(&format!("{pad}    out.push(' ');\n"));
-            dump(parsed, &args[0], &item, depth + 1, out)?;
-            out.push_str(&format!("{pad}}}\n"));
-            out.push_str(&format!("{pad}out.push(')');\n"));
-            Ok(())
-        }
-        // **`{:?}` and not `{}`**, because Rust's `Debug` for a float is the
-        // shortest text that reads back as the same bits — which is what the
-        // decoder then parses, and what a `const` is written from.
-        Ty::Named { name, .. } if name == "f32" || name == "f64" => {
-            out.push_str(&format!(
-                "{pad}out.push_str(&format!(\"(f {{:?}})\", {expr}));\n"
-            ));
-            Ok(())
-        }
-        // **An `enum`, by the variant the value *is*.** A declaration cannot
-        // say which one that is, so the dump is a `match` and the generator
-        // writes an arm per variant.
-        Ty::Named { name, .. } if variants_of(parsed, name).is_some() => {
-            let variants = variants_of(parsed, name).expect("just asked");
-            out.push_str(&format!("{pad}match {expr} {{\n"));
-            for (variant, carried, named) in variants {
-                if named {
-                    return Err(Wall::NoCrossedForm {
-                        ty: ty.text(),
-                        because: format!(
-                            "`{name}::{variant}` has named fields, and variants with named \
-                             fields can't be computed at build time yet"
-                        ),
-                    });
-                }
-                let bound: Vec<String> = (0..carried.len())
-                    .map(|at| format!("__nikaia_p{at}"))
-                    .collect();
-                let pattern = match carried.is_empty() {
-                    true => format!("{name}::{variant}"),
-                    false => format!("{name}::{variant}({})", bound.join(", ")),
-                };
-                out.push_str(&format!("{pad}    {pattern} => {{\n"));
-                out.push_str(&format!(
-                    "{pad}        out.push_str(\"(v {name} {variant}\");\n"
-                ));
-                for (held, bound) in carried.iter().zip(&bound) {
-                    out.push_str(&format!("{pad}        out.push(' ');\n"));
-                    dump(parsed, held, bound, depth + 2, out)?;
-                }
-                out.push_str(&format!("{pad}        out.push(')');\n"));
-                out.push_str(&format!("{pad}    }}\n"));
-            }
-            out.push_str(&format!("{pad}}}\n"));
-            Ok(())
-        }
-        // A `struct` this program declares, field by field. The order is the
-        // declaration's, which is what the decoder reads back.
-        Ty::Named { name, .. } => {
-            let Some(fields) = fields_of(parsed, name) else {
-                return Err(Wall::NoCrossedForm {
-                    ty: ty.text(),
-                    because: format!(
-                        "`{name}` isn't declared in this program with fields, and the value \
-                         is built into the program field by field"
-                    ),
-                });
-            };
-            if fields.is_empty() {
-                return Err(Wall::NoCrossedForm {
-                    ty: ty.text(),
-                    because: format!("`{name}` declares no fields"),
-                });
-            }
-            out.push_str(&format!("{pad}out.push_str(\"(t {name}\");\n"));
-            for (field, held) in &fields {
-                let spelled = crate::emit::escaped(field);
-                out.push_str(&format!("{pad}out.push_str(\" ({field} \");\n"));
-                dump(parsed, held, &format!("{expr}.{spelled}"), depth + 1, out)?;
-                out.push_str(&format!("{pad}out.push(')');\n"));
-            }
-            out.push_str(&format!("{pad}out.push(')');\n"));
-            Ok(())
-        }
-        _ => Err(Wall::NoCrossedForm {
-            ty: ty.text(),
-            because: "a `const` holds an integer, a `bool`, text, a list of those and a \
-                      `struct` whose fields are those"
-                .to_string(),
+    let escaped = |name: &str| crate::emit::escaped(name).into_owned();
+    match nikaia_std::tools::dump::dump(&shapes(parsed), result, "value", 1, &escaped, &mut out) {
+        None => Ok(out),
+        Some(refused) => Err(Wall::NoCrossedForm {
+            ty: refused.ty,
+            because: refused.because,
         }),
     }
 }
 
-/// Whether a name is one of the whole numbers, which cross as themselves.
-///
-/// **`f32` and `f64` are not here**, and that is not an absence: a float is a
-/// build-time value of its own ([`crate::build_time::Value::Float`]) and the
-/// arm below writes it with `{:?}`, because the shortest text that reads back
-/// as the same bits is not the text `{}` gives.
-fn is_whole(name: &str) -> bool {
-    matches!(
-        name,
-        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
-    )
-}
-
-/// The variants of an `enum` this program declares: the name, what it carries
-/// by position, and whether the declaration named those fields.
-fn variants_of(parsed: &Parsed, name: &str) -> Option<Vec<(String, Vec<Ty>, bool)>> {
-    parsed
-        .program
-        .items
-        .iter()
-        .find_map(|item| match &item.node {
-            Item::Enum {
-                name: declared,
-                variants,
-                ..
-            } if parsed.text(*declared) == name => Some(
-                variants
+/// The `enum`s and `struct`s this program declares, each by its name; the
+/// first declaration of a name is the one read.
+fn shapes(parsed: &Parsed) -> Shapes {
+    let mut shapes = Shapes {
+        enums: Default::default(),
+        structs: Default::default(),
+    };
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Enum { name, variants, .. } => {
+                let variants = variants
                     .iter()
                     .map(|held| {
                         let (carried, named) = match &held.fields {
@@ -538,38 +366,35 @@ fn variants_of(parsed: &Parsed, name: &str) -> Option<Vec<(String, Vec<Ty>, bool
                                 true,
                             ),
                         };
-                        (parsed.text(held.name).to_string(), carried, named)
+                        VariantShape {
+                            name: parsed.text(held.name).to_string(),
+                            carried,
+                            named,
+                        }
                     })
-                    .collect(),
-            ),
-            _ => None,
-        })
-}
-
-/// The fields of a `struct` this program declares, in declaration order.
-fn fields_of(parsed: &Parsed, name: &str) -> Option<Vec<(String, Ty)>> {
-    parsed
-        .program
-        .items
-        .iter()
-        .find_map(|item| match &item.node {
-            Item::Struct {
-                name: declared,
-                fields,
-                ..
-            } if parsed.text(*declared) == name => Some(
-                fields
+                    .collect();
+                shapes
+                    .enums
+                    .entry(parsed.text(*name).to_string())
+                    .or_insert(variants);
+            }
+            Item::Struct { name, fields, .. } => {
+                let fields = fields
                     .iter()
-                    .map(|field| {
-                        (
-                            parsed.text(field.name).to_string(),
-                            Ty::from_ast(parsed, &field.ty),
-                        )
+                    .map(|field| FieldShape {
+                        name: parsed.text(field.name).to_string(),
+                        ty: Ty::from_ast(parsed, &field.ty),
                     })
-                    .collect(),
-            ),
-            _ => None,
-        })
+                    .collect();
+                shapes
+                    .structs
+                    .entry(parsed.text(*name).to_string())
+                    .or_insert(fields);
+            }
+            _ => {}
+        }
+    }
+    shapes
 }
 
 /// **Reading back what the sub-program wrote.**
