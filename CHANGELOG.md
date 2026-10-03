@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.407] — 2026-10-03
+
+**What a declaration says is read in Nikaia** (ADR-294, #125). The type a
+`.nika` declaration names (`Ty::from_ast`) and the ledger entry a function's
+declaration makes - its key, `pub`, its `sync` word, whether it may fail, its
+signature with bounds, options and `mut` parameters, what its result may point
+into, and whether it changes its subject - move into `tools/declared.nika`.
+Every column about the body is still the inferences' to answer afterwards.
+27.3 % of the toolchain is Nikaia.
+
+**`views`' own reading of a function type agrees with the lowering's**: a
+function type holds a view only where its result does (0.0.405), which the
+check `tools/views.nika` runs had kept in its own copy of the old rule.
+
 ## [0.0.406] — 2026-10-03
 
 **A ledger is written out in Nikaia** (Part III 13.5, ADR-294, #125).
