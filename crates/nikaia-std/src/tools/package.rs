@@ -5999,6 +5999,173 @@ fn class_before(a: &Class, b: &Class) -> bool {
     a.count.rank() < b.count.rank()
 }
 
+const PARALLEL: [&str; 3] = ["par_iter", "par_fold", "par_map"];
+
+pub fn declared_here(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> collections::BTreeSet<String> {
+    let mut out: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, .. } => {
+                let name = *name;
+                out.insert(names.resolve(name).to_owned());
+            },
+            Item::Enum { name, .. } => {
+                let name = *name;
+                out.insert(names.resolve(name).to_owned());
+            },
+            Item::Fn { name, .. } => {
+                let name = *name;
+                let own = a_symbols_text(names, name);
+                if !own.is_empty() { out.insert(own); }
+            },
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    let own = method_name(names, &method.node);
+                    if !own.is_empty() { out.insert(format!("{}::{}", owner, own)); }
+                }
+                out.insert(owner);
+            },
+            _ => { },
+        }
+    }
+    out
+}
+
+fn method_name(names: &winnow_grammar::InternerContext, item: &Item) -> String {
+    match item {
+        Item::Fn { name, .. } => { let name = *name; if name.is_none() { String::from("new") } else { a_symbols_text(names, name) } },
+        _ => String::from(""),
+    }
+}
+
+pub fn allocates_here(expr: &Expr, asked: &Asked<'_>) -> bool {
+    match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitInterpolated { .. } => true,
+        Expr::LitChar(_) => true,
+        Expr::LitBool(_) => true,
+        Expr::LitNull => true,
+        Expr::StructLit { .. } => true,
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); a_call_that_allocates((call_path(func, asked.names)).as_deref(), asked) },
+        Expr::MethodCall { method, .. } => { let method = *method; hands_back_a_plain_value(asked.names.resolve(method), asked) },
+        Expr::SafeMethod { method, .. } => { let method = *method; hands_back_a_plain_value(asked.names.resolve(method), asked) },
+        _ => false,
+    }
+}
+
+fn a_call_that_allocates(path: Option<&str>, asked: &Asked<'_>) -> bool {
+    let callee = match path { Some(__nikaia_value) => __nikaia_value, None => return false };
+    is_hull(callee) || hands_back_a_plain_value(callee, asked)
+}
+
+pub fn hands_back_a_plain_value(callee: &str, asked: &Asked<'_>) -> bool {
+    let suffix = format!("::{}", callee);
+    if has_an_entry(asked.own, callee, &suffix) { return plain_in(asked.own, callee, &suffix); }
+    plain_in(asked.library, callee, &suffix)
+}
+
+fn has_an_entry(ledger: &Ledger, callee: &str, suffix: &str) -> bool {
+    if ledger.functions.contains_key(callee) { return true; }
+    for key in ledger.functions.keys() { if key.ends_with(&suffix) { return true; } }
+    false
+}
+
+fn plain_in(ledger: &Ledger, callee: &str, suffix: &str) -> bool {
+    let exact = *nikaia_std::index::get(&ledger.functions, callee);
+    if exact.is_some() { return a_plain_result(exact); }
+    for (key, contract) in ledger.functions.iter() { if key.ends_with(&suffix) { return a_plain_result(Some(contract)); } }
+    false
+}
+
+fn a_plain_result(contract: Option<&FnContract>) -> bool {
+    let found = match contract { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let signature = match found.signature.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let result = match signature.result.as_ref() { Some(__nikaia_value) => __nikaia_value, None => return false };
+    !result.is_unknown() && !holds_shared(result)
+}
+
+pub fn origin_reason(expr: &Expr, names: &winnow_grammar::InternerContext) -> String {
+    let from = where_it_came_from(expr, names);
+    format!("{}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-033)", from)
+}
+
+fn where_it_came_from(expr: &Expr, names: &winnow_grammar::InternerContext) -> String {
+    match expr {
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); a_call_that_hands_it_back((call_path(func, names)).as_deref()) },
+        Expr::MethodCall { method, .. } => { let method = *method; format!("`{}` hands it back", names.resolve(method)) },
+        Expr::SafeMethod { method, .. } => { let method = *method; format!("`{}` hands it back", names.resolve(method)) },
+        Expr::Field { name, .. } => { let name = *name; format!("it is read out of `{}`", names.resolve(name)) },
+        Expr::Index { .. } => String::from("it is read out of a collection"),
+        _ => String::from("it comes from an expression this analysis does not follow"),
+    }
+}
+
+fn a_call_that_hands_it_back(path: Option<&str>) -> String {
+    let callee = match path { Some(__nikaia_value) => __nikaia_value, None => return String::from("a call hands it back") };
+    format!("`{}` hands it back", callee)
+}
+
+pub fn named_handle(expr: &Expr, names: &winnow_grammar::InternerContext, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
+    match expr {
+        Expr::Variable(name) => { let name = *name; a_handle_in_scope(names.resolve(name), scope) },
+        Expr::Block(block) => a_handle_at_the_tail(block, names, scope),
+        _ => None,
+    }
+}
+
+fn a_handle_in_scope(name: &str, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
+    let ty = match *nikaia_std::index::get(&scope, name) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if holds_shared(&ty) { return Some(name.to_owned()); }
+    None
+}
+
+fn a_handle_at_the_tail(block: &Block, names: &winnow_grammar::InternerContext, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
+    if block.stmts.is_empty() { return None; }
+    match &nikaia_std::index::get(&block.stmts, nikaia_std::index::at(block.stmts.len() as i64 - 1)).node {
+        Stmt::Expr(tail) => named_handle(tail, names, scope),
+        _ => None,
+    }
+}
+
+pub fn named_type(expr: &Expr, names: &winnow_grammar::InternerContext, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
+    match expr {
+        Expr::Variable(name) => { let name = *name; scope_type_name(names.resolve(name), scope) },
+        _ => None,
+    }
+}
+
+fn scope_type_name(name: &str, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
+    let ty = match *nikaia_std::index::get(&scope, name) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(without_a_view(&ty.text()))
+}
+
+pub fn walks_in_parallel(receiver: &Expr, names: &winnow_grammar::InternerContext, parallel: &collections::BTreeSet<String>) -> bool {
+    match receiver {
+        Expr::Variable(name) => { let name = *name; parallel.contains(names.resolve(name)) },
+        Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_parallel_method(names.resolve(method)) || walks_in_parallel(receiver, names, parallel) },
+        _ => false,
+    }
+}
+
+pub fn a_parallel_method(method: &str) -> bool {
+    for one in PARALLEL.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn call_path(func: &Expr, names: &winnow_grammar::InternerContext) -> Option<String> {
+    match func {
+        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Path(segments) => Some(joined_segments(segments, names)),
+        _ => None,
+    }
+}
+
 
 // --- signature.nika ---
 
@@ -10414,7 +10581,7 @@ pub mod rustc_words {
 }
 pub mod sharing {
     #[allow(unused_imports)]
-    pub use super::{Fallback, every_fallback, Decision, Sharing, every_count_plain, sharing_report, slot, split_slot, holds_a_word, held_that_does_not_copy, literal_type, published_reason, handed_on_to, unseen, by_value_shared, is_hull, holds_shared, shared_fields, declared_field_type, rust_name, lock_name, FIELDS, Handle, Forced, Slots, decided};
+    pub use super::{Fallback, every_fallback, Decision, Sharing, every_count_plain, sharing_report, slot, split_slot, holds_a_word, held_that_does_not_copy, literal_type, published_reason, handed_on_to, unseen, by_value_shared, is_hull, holds_shared, shared_fields, declared_field_type, rust_name, lock_name, FIELDS, Handle, Forced, Slots, decided, declared_here, allocates_here, hands_back_a_plain_value, origin_reason, named_handle, named_type, walks_in_parallel, a_parallel_method, call_path};
 }
 pub mod signature {
     #[allow(unused_imports)]

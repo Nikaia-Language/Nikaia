@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.387] — 2026-10-03
+
+**What the sharing walk asks of one expression is Nikaia** (#125, ADR-250).
+The questions `contracts::sharing`'s walk over the bodies asks without its
+state moved into `tools/sharing.nika`: what a file declares that a slot can
+belong to (`Fallback::ForeignFile`), whether a `let` is itself the place the
+first handle is made (ADR-064 D2), what an unseen origin is said to be
+(`Fallback::UnseenOrigin`), the handle and the type a name in scope has, a walk
+that runs in parallel (ADR-235 D1) and the name a call is written with. They
+read borrowed fields beside a jump directly, as ADR-275 allows. 18.9 % of the
+toolchain is Nikaia, of a compiler that grew by the other session's ADR-272.
+
+The move found one defect, fixed in the compiler (ADR-250 D3): **a map's read
+bound by a `let` and handed to a `ref V?` parameter** was written as
+`index::Found`, because the lend in front of the read cancelled its `*`; a
+map's read keeps its `*` now, and the binding is the `Option<&V>` the checker
+types it as.
+
 ## [0.0.386] — 2026-10-03
 
 **What every write into a list keeps in bounds is known of every read from

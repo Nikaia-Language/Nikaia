@@ -469,3 +469,33 @@ fn main() {
     let written = refused.replace("users[1]\n", "users[1]?.clone()\n");
     assert_eq!(output("map-read-cloned", &written), "false");
 }
+
+/// **A map's read bound by a `let` and handed to a `ref V?` parameter**
+/// (0.0.387): the lend in front of the read cancelled its `*`, and the binding
+/// was `index::Found` - which no `ref V?` takes - where the checker had a
+/// `ref V?`. A map's read keeps its `*`. Found moving `sharing`'s leaves into
+/// Nikaia (#125).
+#[test]
+fn a_map_read_bound_and_handed_on_is_the_option() {
+    let source = "\
+use std::collections
+struct Entry { size: i64 }
+fn size_of(entry: ref Entry?) -> i64 {
+    let found = entry ?? return -1
+    return found.size
+}
+fn lookup(m: ref collections::BTreeMap[String, Entry], key: ref String) -> i64 {
+    let exact = m[key]
+    if exact != null {
+        return size_of(exact)
+    }
+    return 0
+}
+fn main() {
+    let mut m: collections::BTreeMap[String, Entry] = collections::BTreeMap()
+    m[\"a\"] = Entry { size: 3 }
+    println(f\"{lookup(m, \"a\")} {lookup(m, \"b\")}\")
+}
+";
+    assert_eq!(output("map-read-bound", source), "3 0");
+}

@@ -743,3 +743,219 @@ fn class_before(a: ref Class, b: ref Class) -> bool {
     }
     return a.count.rank() < b.count.rank()
 }
+
+// ---------------------------------------------------------------------------
+// **What the walk over the bodies asks of one expression**, answered without
+// the walk's state: where a handle is made, why one is unseen, and what a name
+// in scope is.
+
+// Methods that run their lambda on a thread the program asked for: a closed
+// list, so a name this file does not know contributes nothing.
+comptime PARALLEL: Array[ref String, 3] = ["par_iter", "par_fold", "par_map"]
+
+/// Everything a file declares that a slot can belong to: its structs and
+/// enums, its functions, its `impl` targets and their methods as
+/// `Type::method`. A slot whose owner is not here belongs to another file
+/// (`Fallback::ForeignFile`).
+pub fn declared_here(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> collections::BTreeSet[String] {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    for item in items {
+        match item.node {
+            Item::Struct { name, .. } => {
+                out.insert(names.resolve(name).clone())
+            }
+            Item::Enum { name, .. } => {
+                out.insert(names.resolve(name).clone())
+            }
+            Item::Fn { name, .. } => {
+                let own = a_symbols_text(names, name)
+                if own.len() > 0 {
+                    out.insert(own)
+                }
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    let own = method_name(names, method.node)
+                    if own.len() > 0 {
+                        out.insert(f"{owner}::{own}")
+                    }
+                }
+                out.insert(owner)
+            }
+            else => {}
+        }
+    }
+    return out
+}
+
+// A method's own name, `new` for the one written without, or nothing for an
+// item that is not a function.
+fn method_name(names: ref winnow_grammar::InternerContext, item: ref Item) -> String {
+    return match item {
+        Item::Fn { name, .. } => if name == null { "new" } else { a_symbols_text(names, name) },
+        else => "",
+    }
+}
+
+/// **Whether this `let` is itself the place the first handle is made**
+/// (ADR-064 D2): a literal or a struct literal is a plain value by
+/// construction; a hull's own constructor is the allocation; and a call is
+/// one only where a ledger gives it a known result that holds no `Shared`.
+/// Everything else is no, the polarity this analysis runs on.
+pub fn allocates_here(expr: ref Expr, asked: ref Asked) -> bool {
+    return match expr {
+        Expr::LitInt { .. } => true,
+        Expr::LitFloat(_) => true,
+        Expr::LitStr { .. } => true,
+        Expr::LitInterpolated { .. } => true,
+        Expr::LitChar(_) => true,
+        Expr::LitBool(_) => true,
+        Expr::LitNull => true,
+        Expr::StructLit { .. } => true,
+        Expr::Call { func, .. } => a_call_that_allocates(call_path(func, asked.names), asked),
+        Expr::MethodCall { method, .. } => hands_back_a_plain_value(asked.names.resolve(method), asked),
+        Expr::SafeMethod { method, .. } => hands_back_a_plain_value(asked.names.resolve(method), asked),
+        else => false,
+    }
+}
+
+fn a_call_that_allocates(path: ref String?, asked: ref Asked) -> bool {
+    let callee = path ?? return false
+    return is_hull(callee) || hands_back_a_plain_value(callee, asked)
+}
+
+/// Whether a ledger says this callee's result is a value and not a handle:
+/// the program's entry first, then `std`'s, by the name or by its last
+/// segment.
+pub fn hands_back_a_plain_value(callee: ref String, asked: ref Asked) -> bool {
+    let suffix = f"::{callee}"
+    if has_an_entry(asked.own, callee, suffix) {
+        return plain_in(asked.own, callee, suffix)
+    }
+    return plain_in(asked.library, callee, suffix)
+}
+
+fn has_an_entry(ledger: ref Ledger, callee: ref String, suffix: ref String) -> bool {
+    if ledger.functions.contains_key(callee) {
+        return true
+    }
+    for key in ledger.functions.keys() {
+        if key.ends_with(ref suffix) {
+            return true
+        }
+    }
+    return false
+}
+
+fn plain_in(ledger: ref Ledger, callee: ref String, suffix: ref String) -> bool {
+    let exact = ledger.functions[callee]
+    if exact != null {
+        return a_plain_result(exact)
+    }
+    for (key, contract) in ledger.functions {
+        if key.ends_with(ref suffix) {
+            return a_plain_result(contract)
+        }
+    }
+    return false
+}
+
+fn a_plain_result(contract: ref FnContract?) -> bool {
+    let found = contract ?? return false
+    let signature = found.signature ?? return false
+    let result = signature.result ?? return false
+    return !result.is_unknown() && !holds_shared(result)
+}
+
+/// What is said of a handle whose allocation this analysis did not watch
+/// being made (`Fallback::UnseenOrigin`): where it came from.
+pub fn origin_reason(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> String {
+    let from = where_it_came_from(expr, names)
+    return f"{from}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-033)"
+}
+
+fn where_it_came_from(expr: ref Expr, names: ref winnow_grammar::InternerContext) -> String {
+    return match expr {
+        Expr::Call { func, .. } => a_call_that_hands_it_back(call_path(func, names)),
+        Expr::MethodCall { method, .. } => f"`{names.resolve(method)}` hands it back",
+        Expr::SafeMethod { method, .. } => f"`{names.resolve(method)}` hands it back",
+        Expr::Field { name, .. } => f"it is read out of `{names.resolve(name)}`",
+        Expr::Index { .. } => "it is read out of a collection",
+        else => "it comes from an expression this analysis does not follow",
+    }
+}
+
+fn a_call_that_hands_it_back(path: ref String?) -> String {
+    let callee = path ?? return "a call hands it back"
+    return f"`{callee}` hands it back"
+}
+
+/// The handle an expression names in this function's own scope: a name whose
+/// type holds a `Shared`, or the tail of a block that is one.
+pub fn named_handle(expr: ref Expr, names: ref winnow_grammar::InternerContext, scope: ref collections::BTreeMap[String, Ty]) -> String? {
+    return match expr {
+        Expr::Variable(name) => a_handle_in_scope(names.resolve(name), scope),
+        Expr::Block(block) => a_handle_at_the_tail(block, names, scope),
+        else => null,
+    }
+}
+
+fn a_handle_in_scope(name: ref String, scope: ref collections::BTreeMap[String, Ty]) -> String? {
+    let ty = scope[name] ?? return null
+    if holds_shared(ty) {
+        return name.clone()
+    }
+    return null
+}
+
+fn a_handle_at_the_tail(block: ref Block, names: ref winnow_grammar::InternerContext, scope: ref collections::BTreeMap[String, Ty]) -> String? {
+    if block.stmts.len() == 0 {
+        return null
+    }
+    return match block.stmts[block.stmts.len() - 1].node {
+        Stmt::Expr(tail) => named_handle(tail, names, scope),
+        else => null,
+    }
+}
+
+/// The name of the type a name in scope has, without its view.
+pub fn named_type(expr: ref Expr, names: ref winnow_grammar::InternerContext, scope: ref collections::BTreeMap[String, Ty]) -> String? {
+    return match expr {
+        Expr::Variable(name) => scope_type_name(names.resolve(name), scope),
+        else => null,
+    }
+}
+
+fn scope_type_name(name: ref String, scope: ref collections::BTreeMap[String, Ty]) -> String? {
+    let ty = scope[name] ?? return null
+    return without_a_view(ty.text())
+}
+
+/// Whether a receiver is a walk that runs in parallel (ADR-235 D1): a
+/// `par_iter()`, a name bound to one, or a walk chained onto either.
+pub fn walks_in_parallel(receiver: ref Expr, names: ref winnow_grammar::InternerContext, parallel: ref collections::BTreeSet[String]) -> bool {
+    return match receiver {
+        Expr::Variable(name) => parallel.contains(names.resolve(name)),
+        Expr::MethodCall { receiver, method, .. } => a_parallel_method(names.resolve(method)) || walks_in_parallel(receiver, names, parallel),
+        else => false,
+    }
+}
+
+pub fn a_parallel_method(method: ref String) -> bool {
+    for one in PARALLEL {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// The name a call is written with: a bare name, or a path joined by `::`.
+pub fn call_path(func: ref Expr, names: ref winnow_grammar::InternerContext) -> String? {
+    return match func {
+        Expr::Variable(name) => names.resolve(name).clone(),
+        Expr::Path(segments) => joined_segments(segments, names),
+        else => null,
+    }
+}
