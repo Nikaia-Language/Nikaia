@@ -499,3 +499,65 @@ fn main() {
 ";
     assert_eq!(output("map-read-bound", source), "3 0");
 }
+
+/// **A name of the map's value type after `??` is lent** (ADR-279 D7):
+/// `m[k] ?? spare` over a map of lists is a view whichever side answers, as
+/// `r ?? spare` is over a `ref T?`. It was `NK1185`, which sent a program to
+/// copy the map's list to read it (found moving `describe`'s draft into
+/// Nikaia, #125).
+#[test]
+fn a_named_fallback_beside_a_map_read_is_lent() {
+    let source = "\
+use std::collections
+fn count(items: ref Vec[String]) -> i64 {
+    return items.len()
+}
+fn main() {
+    let mut m: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    m[\"a\"] = [\"x\", \"y\"]
+    let none: Vec[String] = []
+    let keys: Vec[String] = [\"a\", \"b\"]
+    for key in keys {
+        let items = m[key] ?? none
+        println(f\"{key} {count(items)} {count(m[key] ?? none)}\")
+    }
+}
+";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    let lowered = lowered(source);
+    assert!(lowered.contains("|| &none"), "{lowered}");
+    assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
+    assert_eq!(output("map-fallback-lent", source), "a 2 2\nb 0 0");
+}
+
+/// **A name bound to a map read beside a jump is a view, and is handed on
+/// as one**: `let at = m[k] ?? continue` binds a `&String`, so the next map
+/// read, a `contains_key` and a call that only reads it take it as it is - a
+/// `&` in front was a `&&String` with no `Borrow` (#125).
+#[test]
+fn a_view_bound_beside_a_jump_is_handed_on_as_it_is() {
+    let source = "\
+use std::collections
+fn shout(text: ref String) -> String {
+    return f\"{text}!\"
+}
+fn main() {
+    let mut names: collections::BTreeMap[String, String] = collections::BTreeMap()
+    names[\"a\"] = \"alpha\"
+    names[\"b\"] = \"beta\"
+    let mut sizes: collections::BTreeMap[String, i64] = collections::BTreeMap()
+    sizes[\"alpha\"] = 5
+    let keys: Vec[String] = [\"a\", \"b\", \"c\"]
+    for key in keys {
+        let at = names[key] ?? continue
+        let size = sizes[at] ?? -1
+        println(f\"{shout(at)} {size} {sizes.contains_key(at)}\")
+    }
+}
+";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    assert_eq!(
+        output("view-beside-a-jump", source),
+        "alpha! 5 true\nbeta! -1 false"
+    );
+}

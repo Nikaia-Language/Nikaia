@@ -75,6 +75,7 @@ COMPILER_NIKA = {
     "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390)",
     "escapes.nika": "build_time: what the `\\` in a written literal means, the escape nothing names, and a value spelled back as a literal (0.0.391)",
     "dump.nika": "grammar_run: the encoder a grammar run at build time prints its result with, written from the declaration (0.0.392)",
+    "describe.nika": "describe: what a description holds - the entries, the types they name, what the describer saw and did not claim (0.0.394)",
 }
 
 
