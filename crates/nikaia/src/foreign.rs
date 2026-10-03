@@ -176,21 +176,9 @@ fn written(parsed: &Parsed) -> Vec<(String, Span)> {
         .collect()
 }
 
-/// **Every bare name a block mentions**, by the same walk, and whether it met
-/// a `spawn` it did not read into: what a body keeps is asked of the names it
-/// reaches (`contracts::keep`, `contracts::keeps`).
-pub(crate) fn names_in_block(parsed: &Parsed, block: &crate::ast::Block) -> (Vec<String>, bool) {
-    named(nikaia_std::tools::foreign::seen_in(
-        block,
-        &parsed.interner,
-        &|name: &str| parsed.unaliased(name),
-        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
-        &|_: &str| -1,
-        true,
-    ))
-}
-
-/// The same from one expression, and the blocks it holds.
+/// **Every bare name an expression mentions**, by the walk in Nikaia, and
+/// whether it met a `spawn` it did not read into: what a body keeps is asked
+/// of the names it reaches (`contracts::keep`).
 pub(crate) fn names_in_expression(parsed: &Parsed, expr: &Expr) -> (Vec<String>, bool) {
     named(nikaia_std::tools::foreign::seen_in_expression(
         expr,
