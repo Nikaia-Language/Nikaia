@@ -7845,6 +7845,27 @@ impl<'a> Checker<'a> {
             Ty::Pointed { slice: true, .. } => Some(ty::ARRAY),
             _ => None,
         };
+        // **A copy of a number, a `bool`, a `char` or a tuple is the derived
+        // one** too, for the reason a declared record's is below: no ledger
+        // describes it because nothing has to. Answered as *nothing describes
+        // this method*, `at.clone()` on an `i64` and `id.clone()` on an
+        // `(i64, String)` made every function around them `async`, found
+        // moving `contracts::keep`'s walk into Nikaia (ADR-294).
+        if entry == "clone" && args.is_empty() {
+            match &on {
+                Ty::Tuple(_) => return on.clone(),
+                Ty::Named { name, args, .. }
+                    if args.is_empty() && (is_number(name) || name == "bool" || name == "char") =>
+                {
+                    return Ty::Named {
+                        name: name.clone(),
+                        args: Vec::new(),
+                        view: false,
+                    };
+                }
+                _ => {}
+            }
+        }
         let Some(name) = name else {
             // The receiver's type is not known, so neither is what this
             // calls. Recorded, because "I could not find out" is an
@@ -15695,10 +15716,17 @@ impl<'a> Checker<'a> {
             // continue` - is a reference already, and a `&` in front of it
             // was a `&&String` the map has no `Borrow` for (found moving
             // `describe`'s draft into Nikaia, #125).
+            //
+            // **And so is a parameter the function is lent** by inference
+            // (ADR-279): `place: (i64, String)` only read is a `&(i64,
+            // String)` below, and `&place` was a key the map has no `Borrow`
+            // for (found moving `contracts::keep`'s plan into Nikaia, #125).
             false => match found.is_a_view()
                 || matches!(index, Expr::LitStr { .. })
                 || matches!(index, Expr::Variable(name)
                     if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+                || (!matches!(found, Ty::Named { name, .. } if matches!(ty::base(name), "String" | "str"))
+                    && self.a_lent_parameter(index))
             {
                 true => KeyForm::AsIs,
                 false => KeyForm::Lent,

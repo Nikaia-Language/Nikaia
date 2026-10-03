@@ -77,6 +77,7 @@ COMPILER_NIKA = {
     "dump.nika": "grammar_run: the encoder a grammar run at build time prints its result with, written from the declaration (0.0.392)",
     "describe.nika": "describe: what a description holds - the entries, the types they name, what the describer saw and did not claim (0.0.394)",
     "keeps.nika": "contracts::keeps: what a body does with each of its parameters - the walk, what one expression keeps, and the method candidates (0.0.400)",
+    "buffers.nika": "contracts::keep: where each buffer lives - the walk that follows a view to every place it leaves, and the plan of keeps and refusals (0.0.404)",
 }
 
 

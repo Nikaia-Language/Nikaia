@@ -237,3 +237,29 @@ fn main() {
     assert!(!rust.contains("async fn"), "{rust}");
     runs("declared-clone", source, "3 n\n");
 }
+
+/// **Nor does a copy of a number or a tuple**, for the same reason: no ledger
+/// describes `i64::clone`, and answered as a method nothing describes, every
+/// function around `at.clone()` was lowered `async` (found moving
+/// `contracts::keep`'s walk into Nikaia, ADR-294).
+#[test]
+fn a_clone_of_a_number_or_a_tuple_is_sync() {
+    let source = r#"fn first(pair: (i64, String)) -> i64 {
+    let copy = pair.clone()
+    return copy.0.clone()
+}
+
+fn main() {
+    let at: i64 = 4
+    let x: String = "x"
+    let pair = (at.clone(), x)
+    println(first(pair))
+}
+"#;
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust;
+    assert!(!rust.contains("async fn"), "{rust}");
+    runs("number-clone", source, "4\n");
+}

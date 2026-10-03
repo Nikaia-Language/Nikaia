@@ -176,33 +176,6 @@ fn written(parsed: &Parsed) -> Vec<(String, Span)> {
         .collect()
 }
 
-/// **Every bare name an expression mentions**, by the walk in Nikaia, and
-/// whether it met a `spawn` it did not read into: what a body keeps is asked
-/// of the names it reaches (`contracts::keep`).
-pub(crate) fn names_in_expression(parsed: &Parsed, expr: &Expr) -> (Vec<String>, bool) {
-    named(nikaia_std::tools::foreign::seen_in_expression(
-        expr,
-        &parsed.interner,
-        &|name: &str| parsed.unaliased(name),
-        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
-        &|_: &str| -1,
-        true,
-    ))
-}
-
-fn named(seen: Vec<Seen>) -> (Vec<String>, bool) {
-    let mut names = Vec::new();
-    let mut a_spawn = false;
-    for one in seen {
-        match one {
-            Seen::Name(name) => names.push(name),
-            Seen::Spawn { .. } => a_spawn = true,
-            _ => {}
-        }
-    }
-    (names, a_spawn)
-}
-
 /// What the walk meets, paths and calls: `root_at` says where a callee's
 /// `root` parameter stands, for `--trust`, and `-1` where nobody asks.
 pub(crate) fn seen(parsed: &Parsed, root_at: &impl Fn(&str) -> i64) -> Vec<Seen> {

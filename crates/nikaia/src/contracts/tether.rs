@@ -186,12 +186,6 @@ fn function_key(
     }
 }
 
-/// **A name declared `String` holds text of this frame's own**
-/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D4).
-pub(crate) fn declares_text(parsed: &Parsed, ty: Option<&crate::ast::Type>) -> bool {
-    nikaia_std::tools::tether::declares_text(&parsed.interner, ty)
-}
-
 /// Whether this expression hands back a buffer of its own
 /// (`tools/tether.nika`).
 pub(crate) fn makes_a_buffer(
