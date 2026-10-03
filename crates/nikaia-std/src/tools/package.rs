@@ -3163,6 +3163,70 @@ fn is_word_char(c: char) -> bool { is_lower(c) || c >= 'A' && c <= 'Z' || c >= '
 fn is_lower(c: char) -> bool { c >= 'a' && c <= 'z' }
 
 
+// --- lends.nika ---
+
+const COPIED: [&str; 18] = ["i8", "i16", "i32", "i64", "isize", "usize", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char", "Duration", "Shared", "SharedMut", "Locked"];
+
+pub fn lends_in(contract: &FnContract, at: i64, copying: &[&Ledger]) -> bool { lends_from((contract.signature).as_ref(), &contract.keeps, at, copying) }
+
+fn lends_from(written: Option<&Signature>, keeps: &[String], at: i64, copying: &[&Ledger]) -> bool {
+    let signature = match written { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let mut position: i64 = 0;
+    for (name, ty) in signature.params.iter() {
+        if position == at {
+            if nikaia_std::list::contains(&signature.mutable, name) || name == "self" { return false; }
+            if ty.is_a_view() { return true; }
+            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !nikaia_std::list::contains(&keeps, name);
+        }
+        position += 1;
+    }
+    false
+}
+
+pub fn a_ledger_copies(ty: &Ty, copying: &[&Ledger]) -> bool {
+    match ty {
+        Ty::Named { name, view, .. } => { let view = *view; !view && described_as_copying(name, copying) },
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); a_ledger_copies(inner, copying) },
+        _ => false,
+    }
+}
+
+fn described_as_copying(name: &str, copying: &[&Ledger]) -> bool {
+    for ledger in copying.iter() {
+        let ledger = *ledger;
+        let described = match *nikaia_std::index::get(&ledger.types, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if described.copies { return true; }
+    }
+    false
+}
+
+pub fn moves(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; a_name_that_moves(name, args, view) },
+        Ty::Fn { .. } => true,
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); moves(inner) },
+        Ty::Tuple(parts) => any_moves(parts),
+        _ => false,
+    }
+}
+
+fn a_name_that_moves(name: &str, args: &[Ty], view: bool) -> bool {
+    let base = base_name(name);
+    if base == ARRAY { return any_moves(args); }
+    if view { return false; }
+    for one in COPIED.iter() {
+        let one = *one;
+        if one == base { return false; }
+    }
+    true
+}
+
+fn any_moves(types: &[Ty]) -> bool {
+    for one in types.iter() { if moves(one) { return true; } }
+    false
+}
+
+
 // --- locks.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10305,6 +10369,10 @@ pub mod keep {
 pub mod ledger {
     #[allow(unused_imports)]
     pub use super::{LedgerLine, Refused, LedgerText, LedgerValue, unquote, list, read, touch_of, held_of, class_of, variant_of, signature_of, Spelling, SignatureText, spelled_signature, Spelled, spell};
+}
+pub mod lends {
+    #[allow(unused_imports)]
+    pub use super::{lends_in, a_ledger_copies, moves};
 }
 pub mod locks {
     #[allow(unused_imports)]
