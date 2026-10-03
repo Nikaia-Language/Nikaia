@@ -12,6 +12,7 @@ members = [
     "benches/handler",
     "benches/sendfile",
     "benches/envelope",
+    "benches/brc",
 ]
 # One crate per `unsafe` topic, each its own workspace with its own checks
 # (ADR-218). The crates here reach them as path dependencies.

@@ -93,6 +93,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "brc-bench"
+version = "0.0.0"
+dependencies = [
+ "memchr",
+ "memmap2",
+]
+
+[[package]]
 name = "c-text"
 version = "0.1.0"
 
