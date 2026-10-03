@@ -8202,6 +8202,15 @@ impl<'p> Emitter<'p> {
                         out.push(")");
                         return Ok(());
                     }
+                    // **A map's read lent is the option it already is**: `*get(…)`
+                    // is the `Option<&V>` a `ref V?` is, and cancelling the `*`
+                    // against the lend left `index::Found`, which no `ref V?`
+                    // parameter takes (found moving `sharing`'s leaves into
+                    // Nikaia, #125). A sequence's read keeps the cancelling.
+                    if self.map_key(flow.statement, index, false).is_some() {
+                        let _ = out.take_lend();
+                        return self.index_read(out, base, index, depth, flow, true);
+                    }
                     let lent = !self.slices(flow.statement, index) && out.take_lend();
                     return self.index_read(out, base, index, depth, flow, !lent);
                 }

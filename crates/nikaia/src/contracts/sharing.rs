@@ -109,13 +109,6 @@ use crate::contracts::ty::TyOps;
 /// The name of the slot standing for what a function hands back.
 const RESULT: &str = "<result>";
 
-/// Methods that run their lambda on a thread the program asked for.
-///
-/// A closed list for the same reason `send::PLAIN` is one: a name this file does
-/// not know contributes nothing, and the walk that finds the names inside the
-/// lambda is over-approximate, which is the safe direction.
-const PARALLEL: &[&str] = &["par_iter", "par_fold", "par_map"];
-
 /// Every reason this analysis answers `atomic` **because nothing decided it**
 /// ([`Fallback`]), what it chose for one value ([`Decision`]) and for all of
 /// them ([`Sharing`]) are records of `tools/sharing.nika` (ADR-250, #125).
@@ -268,36 +261,7 @@ pub fn report(
 /// function, or a `Type::method`. Which of them this file declares is what says
 /// whether this run of the analysis can see the whole of that slot.
 fn declared_here(parsed: &Parsed) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Struct { name, .. } | Item::Enum { name, .. } => {
-                names.insert(parsed.text(*name).to_string());
-            }
-            Item::Fn {
-                name: Some(name), ..
-            } => {
-                names.insert(parsed.text(*name).to_string());
-            }
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    if let Item::Fn { name, .. } = &method.node {
-                        let own = match name {
-                            Some(name) => parsed.text(*name).to_string(),
-                            None => "new".to_string(),
-                        };
-                        names.insert(format!("{target}::{own}"));
-                    }
-                }
-                names.insert(target);
-            }
-            _ => {}
-        }
-    }
-    names
+    nikaia_std::tools::sharing::declared_here(&parsed.interner, &parsed.program.items)
 }
 
 /// Handles joined into allocation classes, with a reason recorded against the
@@ -609,49 +573,7 @@ impl<'a> Analysis<'a> {
     /// (ADR-024 D1) and is answered no, because a call that may hand a handle back
     /// is a handle whose allocation is elsewhere. Everything else is no.
     fn allocates_here(&self, value: &Expr) -> bool {
-        match value {
-            Expr::LitInt { .. }
-            | Expr::LitFloat(_)
-            | Expr::LitStr { .. }
-            | Expr::LitInterpolated { .. }
-            | Expr::LitChar(_)
-            | Expr::LitBool(_)
-            | Expr::LitNull
-            | Expr::StructLit { .. } => true,
-            // **A hull's own constructor is the allocation**, and the one case
-            // where a call handing a hull back is *not* a reason to decline
-            // ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2). It is
-            // the line the hull is made on, which is the whole question here.
-            Expr::Call { func, .. } => match self.path_of(func).as_deref() {
-                Some(name) if is_hull(name) => true,
-                other => self.hands_back_a_plain_value(other),
-            },
-            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
-                self.hands_back_a_plain_value(Some(self.parsed.text(*method)))
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether a ledger says this callee's result is a value and not a handle.
-    fn hands_back_a_plain_value(&self, callee: Option<&str>) -> bool {
-        let Some(callee) = callee else {
-            return false;
-        };
-        let suffix = format!("::{callee}");
-        let contract = [self.own, self.library].into_iter().find_map(|ledger| {
-            ledger.functions.get(callee).or_else(|| {
-                ledger
-                    .functions
-                    .iter()
-                    .find(|(key, _)| key.ends_with(&suffix))
-                    .map(|(_, contract)| contract)
-            })
-        });
-        contract
-            .and_then(|contract| contract.signature.as_ref())
-            .and_then(|signature| signature.result.as_ref())
-            .is_some_and(|result| !result.is_unknown() && !holds_shared(result))
+        nikaia_std::tools::sharing::allocates_here(value, &self.asked())
     }
 
     /// A handle whose allocation this analysis did not watch being made.
@@ -662,28 +584,10 @@ impl<'a> Analysis<'a> {
     /// result back (ADR-005 §5.2's `task::both` row), so a `Shared` that came
     /// out of a call is a `Shared` that crosses.
     fn origin_unseen(&mut self, function: &str, name: &str, value: &Expr) {
-        let from = match value {
-            Expr::Call { func, .. } => match self.path_of(func) {
-                Some(path) => format!("`{path}` hands it back"),
-                None => "a call hands it back".to_string(),
-            },
-            Expr::MethodCall { method, .. } | Expr::SafeMethod { method, .. } => {
-                format!("`{}` hands it back", self.parsed.text(*method))
-            }
-            Expr::Field { name, .. } => {
-                format!("it is read out of `{}`", self.parsed.text(*name))
-            }
-            Expr::Index { .. } => "it is read out of a collection".to_string(),
-            _ => "it comes from an expression this analysis does not follow".to_string(),
-        };
         self.force(
             function,
             name,
-            format!(
-                "{from}, so this analysis did not watch the allocation being made - and the \
-                 count belongs to the allocation. A call handed to another thread hands its \
-                 result back across one (ADR-033)"
-            ),
+            nikaia_std::tools::sharing::origin_reason(value, &self.parsed.interner),
             Some(Fallback::UnseenOrigin),
         );
     }
@@ -720,18 +624,9 @@ impl<'a> Analysis<'a> {
     /// The handle an expression names, where it names one in this function's own
     /// scope.
     fn names_a_handle(&self, expr: &Expr, scope: &BTreeMap<String, Ty>) -> Option<(String, Ty)> {
-        match expr {
-            Expr::Variable(name) => {
-                let name = self.parsed.text(*name).to_string();
-                let ty = scope.get(&name)?;
-                holds_shared(ty).then(|| (name, ty.clone()))
-            }
-            Expr::Block(block) => match block.stmts.last().map(|s| &s.node) {
-                Some(Stmt::Expr(tail)) => self.names_a_handle(tail, scope),
-                _ => None,
-            },
-            _ => None,
-        }
+        let name = nikaia_std::tools::sharing::named_handle(expr, &self.parsed.interner, scope)?;
+        let ty = scope.get(&name)?.clone();
+        Some((name, ty))
     }
 
     /// The slot an expression names, where this analysis has one for it.
@@ -769,13 +664,7 @@ impl<'a> Analysis<'a> {
 
     /// The name of the type an expression has, where the scope says.
     fn names_the_type(&self, expr: &Expr, scope: &BTreeMap<String, Ty>) -> Option<String> {
-        match expr {
-            Expr::Variable(name) => {
-                let name = self.parsed.text(*name).to_string();
-                Some(scope.get(&name)?.text().trim_start_matches('&').to_string())
-            }
-            _ => None,
-        }
+        nikaia_std::tools::sharing::named_type(expr, &self.parsed.interner, scope)
     }
 
     fn expr(&mut self, function: &str, expr: &Expr, scope: &mut BTreeMap<String, Ty>) {
@@ -849,7 +738,7 @@ impl<'a> Analysis<'a> {
                 // ([ADR-235](../../../../docs/specification/adr/adr-235.md) D1):
                 // `xs.par_iter().map fn …` hands its lambda to `map`, and the
                 // lambda is what runs on every core.
-                if PARALLEL.contains(&method.as_str()) || self.walks_in_parallel(receiver) {
+                if nikaia_std::tools::sharing::a_parallel_method(&method) || self.walks_in_parallel(receiver) {
                     let why = format!(
                         "a lambda handed to `{method}` uses it, and that lambda runs on a \
                          thread the program asked for"
@@ -1126,26 +1015,14 @@ impl Analysis<'_> {
     /// Whether a receiver is a walk that runs in parallel: a `par_iter()`, a
     /// name bound to one, or a walk chained onto either.
     fn walks_in_parallel(&self, receiver: &Expr) -> bool {
-        match receiver {
-            Expr::Variable(name) => self.parallel_names.contains(self.parsed.text(*name)),
-            Expr::MethodCall {
-                receiver, method, ..
-            } => PARALLEL.contains(&self.parsed.text(*method)) || self.walks_in_parallel(receiver),
-            _ => false,
-        }
+        nikaia_std::tools::sharing::walks_in_parallel(
+            receiver,
+            &self.parsed.interner,
+            &self.parallel_names,
+        )
     }
 
     fn path_of(&self, func: &Expr) -> Option<String> {
-        match func {
-            Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
-            Expr::Path(segments) => Some(
-                segments
-                    .iter()
-                    .map(|s| self.parsed.text(*s))
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            ),
-            _ => None,
-        }
+        nikaia_std::tools::sharing::call_path(func, &self.parsed.interner)
     }
 }
