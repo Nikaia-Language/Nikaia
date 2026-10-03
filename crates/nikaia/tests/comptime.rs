@@ -1,9 +1,9 @@
 //! **`comptime`** — Part II 10.2,
-//! [ADR-073](../../../docs/specification/adr/adr-073.md).
+//! [ADR-287](../../../docs/specification/adr/adr-287.md).
 //!
 //! The keyword's whole content is a **demand** rather than an ability (D3). The
 //! compiler folded constants before this existed — a `let` bound to `2 * 3` is
-//! folded twice on the way through ([ADR-063](../../../docs/specification/adr/adr-063.md))
+//! folded twice on the way through ([ADR-285](../../../docs/specification/adr/adr-285.md))
 //! — so what `comptime` adds is that the fold *has* to succeed, and that a program
 //! which cannot be folded is refused rather than quietly computed while it runs.
 //!
@@ -73,7 +73,7 @@ const FOUR: &str = "fn main() {\n\
 ///
 /// Note which word is on which side. Nikaia writes `comptime`, because the
 /// keyword says *when* rather than *whether it changes*
-/// ([ADR-077](../../../docs/specification/adr/adr-077.md)); the language below
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md)); the language below
 /// writes `const`, because that is Rust's word for the same slot.
 #[test]
 fn what_reaches_the_language_below_is_the_folded_value() {
@@ -87,7 +87,7 @@ fn what_reaches_the_language_below_is_the_folded_value() {
 
 /// The type is written where the program wrote one and inferred where it did
 /// not (D4) — and a constant no `i32` holds takes the next type that does,
-/// which is [ADR-063](../../../docs/specification/adr/adr-063.md)'s widening
+/// which is [ADR-285](../../../docs/specification/adr/adr-285.md)'s widening
 /// reaching a second position rather than a rule of its own.
 #[test]
 fn the_type_is_written_or_the_first_one_that_holds_it() {
@@ -114,7 +114,7 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 ///
 /// **This test used to hold `comptime GREET = "hallo"`**, because text at build
 /// time did not exist and a refusal was the whole of what a string literal got.
-/// It does exist now ([ADR-079](../../../docs/specification/adr/adr-079.md) D1,
+/// It does exist now ([ADR-311](../../../docs/specification/adr/adr-311.md) D1,
 /// 0.0.112), so the example moved to one that still cannot fold.
 ///
 /// **And the reason 0.0.112 gave for it was wrong**, which 0.0.113 corrects
@@ -178,7 +178,7 @@ fn a_comptime_binding_over_text_folds() {
 }
 
 /// **A list of text crosses element for element**
-/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1).
 ///
 /// D1's rule is that a build-time value the program cannot own reaches it as a
 /// view: a list crosses as an `Array[T, N]` and text as a `&str`. An array of

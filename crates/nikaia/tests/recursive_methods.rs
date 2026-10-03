@@ -7,7 +7,7 @@
 //! built for a call the emitter can **name** — a free function, resolved the
 //! way it resolves anything. A method is not one: `stats.add(5)` names `add`,
 //! and only the type checker knows what it goes to
-//! ([ADR-028](../../../docs/specification/adr/adr-028.md)), so a cycle through
+//! ([ADR-288](../../../docs/specification/adr/adr-288.md)), so a cycle through
 //! one reached `rustc` as *recursion in an async fn requires boxing*, about a
 //! file nobody wrote — [Part III
 //! C.1](../../../docs/specification/30-nikaia-tooling.md).
@@ -99,7 +99,7 @@ fn a_cycle_of_two_pausing_methods_is_boxed() {
 /// **A method that does not close a cycle is not boxed**, which is the half
 /// that says this is a measurement and not a pointer on every method call: a
 /// box is an allocation per call, and one that buys nothing is one nobody asked
-/// for ([ADR-040](../../../docs/specification/adr/adr-040.md) D1's polarity).
+/// for ([ADR-312](../../../docs/specification/adr/adr-312.md) D1's polarity).
 #[test]
 fn a_pausing_method_that_does_not_recur_is_not_boxed() {
     let rust = compiles(

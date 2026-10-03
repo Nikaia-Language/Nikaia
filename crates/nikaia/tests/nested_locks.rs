@@ -1,5 +1,5 @@
 //! A lock taken while a lock is held is refused
-//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D2, `NK2203`).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D28, `NK2203`).
 //!
 //! Part II 12.3 called manual nesting an anti-pattern and *"often a
 //! compile-time error"*. D2 makes *often* into **always**, and with that no
@@ -12,7 +12,7 @@
 //! both are the same answer here.
 //!
 //! **A `println` is one of these**, and it is the case
-//! [ADR-067](../../../docs/specification/adr/adr-067.md) D1 was written about:
+//! [ADR-288](../../../docs/specification/adr/adr-288.md) D21 was written about:
 //! it never pauses, so `sync` says nothing about it, and it takes standard
 //! output's own lock while yours is open. Two conditions and not one.
 
@@ -83,7 +83,7 @@ fn the_write_door_holds_one_open() {
     ));
 }
 
-/// **`get` and `set` do not**, and [ADR-039](../../../docs/specification/adr/adr-039.md)
+/// **`get` and `set` do not**, and [ADR-281](../../../docs/specification/adr/adr-281.md)
 /// D10 says why: while the lock is open in either of them no code of the
 /// program's runs, so there is nothing that could take a second one.
 #[test]
@@ -146,7 +146,7 @@ fn a_callee_nothing_describes_refuses_nothing() {
 
 /// **A `spawn` inside a door is not a chain**, because its body runs later and
 /// elsewhere — the same split `contracts::locks` makes when it builds the
-/// column ([ADR-039](../../../docs/specification/adr/adr-039.md) D3).
+/// column ([ADR-281](../../../docs/specification/adr/adr-281.md) D29).
 #[test]
 fn a_task_started_inside_a_door_is_not_the_doors_reach() {
     assert!(!refused(
@@ -234,7 +234,7 @@ fn a_field_code_is_assigned_into_is_not_answered_by_the_literal_alone() {
          \x20   a.access fn(x) { button.on_click() }\n\
          }\n",
     );
-    // Undecided is not a refusal (ADR-039 D3's third value): the runtime check
+    // Undecided is not a refusal (ADR-281 D29's third value): the runtime check
     // is where this program stands, as every undecided one does.
     assert!(!found.iter().any(|f| f.code == "NK2203"), "{found:#?}");
 }

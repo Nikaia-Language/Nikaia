@@ -1,6 +1,6 @@
 //! The I/O threads, and the boundary that keeps user code off them.
 //!
-//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D4 starts one of
+//! [ADR-303](../../../../docs/specification/adr/adr-303.md) D4 starts one of
 //! these before the first statement the user wrote, so that an operation costs
 //! no thread wake-up. [ADR-037](../../../../docs/specification/adr/adr-037.md)
 //! D2 says whose thread it is: *the compiler's*, not the user's - which is the
@@ -73,7 +73,7 @@ pub(super) enum Op {
         want: usize,
         reply: Sender<io::Result<Vec<u8>>>,
     },
-    /// Stop after everything already queued. What shutdown sends (ADR-006 D5).
+    /// Stop after everything already queued. What shutdown sends (ADR-297 D6).
     Stop,
 }
 
@@ -108,7 +108,7 @@ pub(super) struct Workers {
     inbox: Mutex<Sender<Op>>,
     /// Operations queued and not yet answered. Shutdown's deadline watches
     /// this, and it is what makes the drain bounded rather than hopeful
-    /// (ADR-006 D5).
+    /// (ADR-297 D6).
     pending: Arc<AtomicUsize>,
     threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
@@ -156,7 +156,7 @@ impl Workers {
     /// A child process runs for as long as it runs, and an I/O worker that
     /// waited on one would hold up every read queued behind it - `io-workers`
     /// is `1` by default, which is the ceiling
-    /// [ADR-199](../../../../docs/specification/adr/adr-199.md) took away from
+    /// [ADR-303](../../../../docs/specification/adr/adr-303.md) took away from
     /// readiness waits. So the wait gets a thread, and everything a worker's
     /// reply does after the operation this does too: the reply goes in its
     /// channel, **both bells** ring, and the operation counts in `pending` from
@@ -189,7 +189,7 @@ impl Workers {
         self.pending.load(Ordering::SeqCst)
     }
 
-    /// Drain, bounded by `deadline`, then stop (ADR-006 D5).
+    /// Drain, bounded by `deadline`, then stop (ADR-297 D6).
     ///
     /// Returns how many operations had not finished when the deadline expired,
     /// which is what the warning names. This cannot hang: the timer is the
@@ -357,7 +357,7 @@ mod tests {
     }
 
     /// The drain is bounded by the clock and not by the work, which is the
-    /// half of ADR-006 D5 that cannot hang.
+    /// half of ADR-297 D6 that cannot hang.
     ///
     /// **A read of a FIFO nobody writes to**, which used to be a readiness wait
     /// on a socket nobody writes to. Readiness is not a worker operation any

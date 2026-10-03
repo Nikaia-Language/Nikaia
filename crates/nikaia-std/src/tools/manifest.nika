@@ -1,14 +1,14 @@
 // crates/nikaia-std/src/tools/manifest.nika
 //
 // **What `nikaia.toml` may say, and what each key does** (ADR-037 D5,
-// ADR-002 D1, ADR-047 D2, Part III 13.3).
+// ADR-002 D1, ADR-286 D15, Part III 13.3).
 //
-// The seventh piece of the compiler moved from Rust to Nikaia, by ADR-196's
-// route and on ADR-250's road: lowered ahead of time by `nikaia lower-std` to
+// The seventh piece of the compiler moved from Rust to Nikaia, by ADR-290's
+// route and on ADR-294's road: lowered ahead of time by `nikaia lower-std` to
 // `manifest.rs` beside it, `include!`d as `nikaia_std::tools::manifest`, and
 // called from the compiler's `Manifest::parse`.
 //
-// **The `toml` crate stays behind the adapter** (ADR-250 §3): the compiler
+// **The `toml` crate stays behind the adapter** (ADR-294): the compiler
 // reads the file with it and hands this module keys, table names and the words
 // a value says - plain text. What moved is every decision the manifest makes:
 // which `[build]` keys exist, which have moved and which are withdrawn, which
@@ -35,7 +35,7 @@ pub fn known() -> Vec[String] {
 // A key this compiler had and no longer has, with what to do instead, or
 // nothing. A withdrawn key decides **nothing anywhere**, and a build that
 // ignored it would run a program that differs from the file describing it.
-// `ordering` is ADR-050 D7: it turned off the reordering D1 withdrew.
+// `ordering` is ADR-292 D7: it turned off the reordering D1 withdrew.
 fn withdrawn(key: ref String) -> String {
     if key == "ordering" {
         return "statements run in the order they are written, so there's nothing left for it to turn off. To run two things together, write `overlap { … }`; `--overlaps` shows which branches did"
@@ -44,7 +44,7 @@ fn withdrawn(key: ref String) -> String {
 }
 
 // A key the manifest still accepts and the compiler no longer reads, with where
-// it went, or nothing. `cleanup-deadline` is ADR-038 D5's move: how long a
+// it went, or nothing. `cleanup-deadline` is ADR-303 D5's move: how long a
 // program waits at exit is an operating property, tuned by whoever runs it.
 fn moved(key: ref String) -> String {
     if key == "cleanup-deadline" {
@@ -101,7 +101,7 @@ pub fn codegen_key(target: ref String, key: ref String) throws {
 }
 
 /// Which of the three shapes a `[dependencies]` entry is (ADR-002 D1,
-/// ADR-047 D2).
+/// ADR-286 D15).
 pub enum DependencyShape {
     /// `type = "rust"`: a crate, handed to Cargo without the marker.
     Rust,
@@ -129,7 +129,7 @@ pub fn dependency(name: ref String, typed: bool, kind: ref String, has_path: boo
 }
 
 /// The name a program writes for the crate a manifest key declares
-/// (ADR-104 D1): `hyper-shim` is `hyper_shim::serve_once`, because that is the
+/// (ADR-290 D1): `hyper-shim` is `hyper_shim::serve_once`, because that is the
 /// crate name Cargo makes of the key.
 pub fn crate_name(key: ref String) -> String {
     let mut name: String = ""

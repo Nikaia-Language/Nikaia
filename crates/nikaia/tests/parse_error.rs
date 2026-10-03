@@ -1,5 +1,5 @@
 //! What a parse fails with — `ParseError`
-//! ([ADR-173](../../../docs/specification/adr/adr-173.md)).
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md)).
 //!
 //! A `dsl` entry rule's ledger entry wrote `throws = ["?"]` — *something this
 //! compiler cannot name* — because a parse fails with a **rendered string** and
@@ -7,7 +7,7 @@
 //!
 //! **And naming it turned up something worse than a missing name.** A grammar's
 //! entry is written straight into the ledger
-//! ([ADR-082](../../../docs/specification/adr/adr-082.md) D1) rather than
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D24) rather than
 //! inferred from an `Item::Fn`, so the `throws` fixpoint — which walks the
 //! graph it built from functions — had no set for it and **what a parse threw
 //! reached no caller at all**. That was invisible while the entry threw `"?"`:
@@ -70,7 +70,7 @@ fn what_a_parse_throws_reaches_its_caller() {
 }
 
 /// **A parse beside an `io::IoError` is a sum of two named members**
-/// ([ADR-160](../../../docs/specification/adr/adr-160.md) D1) — which is what
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D15) — which is what
 /// naming this buys: a program can tell *the file was not there* from *the file
 /// was not the shape the grammar says*.
 #[test]

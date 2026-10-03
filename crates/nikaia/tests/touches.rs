@@ -1,8 +1,8 @@
 //! `touches` is read off a body, like the three derived columns beside it
-//! ([ADR-067](../../../docs/specification/adr/adr-067.md) D2).
+//! ([ADR-288](../../../docs/specification/adr/adr-288.md) D22).
 //!
 //! It was specified with the same fail-closed polarity as `sync`, `throws` and
-//! `sharing` ([ADR-033](../../../docs/specification/adr/adr-033.md) D4) and was
+//! `sharing` ([ADR-292](../../../docs/specification/adr/adr-292.md) D3) and was
 //! the one of the four that never got an inference — so every function a `.nika`
 //! file declared answered *"nobody said"*, which means *"it touches
 //! everything"*. Safe, and useless: the walk stopped at the first call out of
@@ -49,11 +49,11 @@ fn what_a_callee_reaches_is_what_the_caller_reaches() {
     assert_eq!(found, vec!["stdout write".to_string()]);
 }
 
-/// **A lock is a resource** ([ADR-067](../../../docs/specification/adr/adr-067.md)
+/// **A lock is a resource** ([ADR-288](../../../docs/specification/adr/adr-288.md)
 /// D3), named the day the doors existed and not before.
 ///
 /// It says *a* lock and never *which*, which is
-/// [ADR-039](../../../docs/specification/adr/adr-039.md) D4's decision: telling
+/// [ADR-281](../../../docs/specification/adr/adr-281.md) D30's decision: telling
 /// two handles apart would make whether a program compiles depend on whether that
 /// proof happened to succeed.
 #[test]

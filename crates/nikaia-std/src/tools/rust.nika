@@ -3,9 +3,9 @@
 // A Rust file's public surface, read by a Nikaia grammar.
 //
 // **This is the reading half of `nikaia describe`**
-// ([ADR-195](../../../../docs/specification/adr/adr-195.md) D3), written in the
+// ([ADR-290](../../../../docs/specification/adr/adr-290.md) D13), written in the
 // language the command belongs to. It reaches the compiler - which is Rust -
-// the way [ADR-196](../../../../docs/specification/adr/adr-196.md) D1 says such a
+// the way [ADR-290](../../../../docs/specification/adr/adr-290.md) D16 says such a
 // thing reaches Rust: lowered ahead of time by `nikaia lower-std`, committed as
 // the `rust.rs` beside this file, and `include!`d into
 // `nikaia_std::tools::rust`. The
@@ -18,7 +18,7 @@
 // under `tools/` and must not be in that file. It lives in this crate at all
 // because this crate is where the release step already looks for `.nika`
 // sources ([ADR-002](../../../../docs/specification/adr/adr-002.md) D4,
-// [ADR-195](../../../../docs/specification/adr/adr-195.md) D2), and for no
+// [ADR-290](../../../../docs/specification/adr/adr-290.md) D12), and for no
 // other reason.
 //
 // **And writing it is refused, in this language's words**: `use std::tools` is
@@ -63,7 +63,7 @@
 // ## What it does not read
 //
 // Stated rather than guessed at, which is
-// [ADR-104](../../../../docs/specification/adr/adr-104.md) D4's own rule - an
+// [ADR-290](../../../../docs/specification/adr/adr-290.md) D4's own rule - an
 // absence of a claim is never a claim:
 //
 //   * **an item a macro generates**, which is not in the text and which no
@@ -95,7 +95,7 @@ pub struct Fun {
     pub generics: ref String,
     // Every path this body calls, in the order it calls them, with duplicates.
     //
-    // **The other row's evidence** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    // **The other row's evidence** ([ADR-290](../../../../docs/specification/adr/adr-290.md)
     // D4). A bound is what a function asks of its caller; a **call** is what it
     // does, and the two answer different questions - `across_a_thread_unchecked`
     // has no bound, because an `unsafe impl Send` took it away, and only
@@ -113,10 +113,10 @@ pub struct Fun {
     // thread carries `Send`, so a foreign function that takes a value across a
     // thread boundary in safe Rust demands it of its caller - and says so here
     // or in `generics` above
-    // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D4). A reader
+    // ([ADR-290](../../../../docs/specification/adr/adr-290.md) D9). A reader
     // that dropped this would see half the bounds a crate writes.
     pub wheres: ref String,
-    // `async fn` - a plain `fn` is `sync` (ADR-104 D3).
+    // `async fn` - a plain `fn` is `sync` (ADR-290 D3).
     pub pauses: bool,
     pub parts: Vec[Part],
     // The text after `->`, or empty where there is none. Empty is *no result
@@ -132,7 +132,7 @@ pub struct Rec {
     pub parts: Vec[Part],
     // The text inside each `#[derive(…)]` in front of it, one entry per
     // attribute, as written: `Clone, Copy, PartialEq`. Whether the type copies
-    // and compares is read from these ([ADR-252](../../../../docs/specification/adr/adr-252.md)
+    // and compares is read from these ([ADR-294](../../../../docs/specification/adr/adr-294.md)
     // D4.3), and splitting them is string work for whoever reads them.
     pub derives: Vec[ref String],
 }
@@ -142,7 +142,7 @@ pub struct Rec {
 // `via` is the trait of an `impl Trait for Type`, and empty for every other
 // scope. It is kept apart from `name` because they answer different questions:
 // the methods inside belong to the *type*, and `unsafe impl Send for X` is a
-// claim about the *trait* - which is the one ADR-193 D4's flag is after.
+// claim about the *trait* - which is the one ADR-290 D9's flag is after.
 pub struct Group {
     pub what: ref String,
     pub name: ref String,
@@ -172,14 +172,14 @@ pub enum RustItem {
     // **Reported rather than skipped**, for the reason a private `mod` is: a
     // private function is not an entry and is on the way to one. `on_one_worker`
     // in `examples/foreign-runtime/shim` is the case
-    // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D4) - nothing
+    // ([ADR-290](../../../../docs/specification/adr/adr-290.md) D9) - nothing
     // outside the crate can call it, and it is the only thing between
     // `across_a_thread_unchecked` and a `tokio::spawn`. A reader that threw it
     // away could not follow the calls at all.
     Hidden(Fun),
     // A plain `use`, kept as the text between the keyword and the semicolon.
     //
-    // **What a name in this file means** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    // **What a name in this file means** ([ADR-290](../../../../docs/specification/adr/adr-290.md)
     // D4): `use tokio::spawn; spawn(x)` and `tokio::spawn(x)` are one function
     // and two strings, and a reader of `Fun::calls` that did not have this
     // table would miss every crate that imports what it calls. It offers

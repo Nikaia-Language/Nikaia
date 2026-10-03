@@ -1,5 +1,5 @@
 //! **A word-sized value that crosses is the word itself**
-//! ([ADR-238](../../../docs/specification/adr/adr-238.md), ADR-110 D2 and D3):
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md), ADR-281 D13 and D14):
 //! its `update` runs the block on a copy and compare-and-swaps it in, and no
 //! lock is taken. A value a door over several locks holds, a published one and
 //! one that is not a word keep the lock; each program prints the same at both

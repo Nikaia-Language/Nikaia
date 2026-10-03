@@ -1,8 +1,8 @@
 // crates/nikaia-std/src/tools/sync.nika
 //
-// Which functions of a package keep their claim to be `sync` (ADR-027 D1) -
+// Which functions of a package keep their claim to be `sync` (ADR-288 D1) -
 // the fixpoint the compiler's `contracts::sync` runs over the calls it
-// collected, moved from Rust (ADR-250, #125). Collecting the calls out of the
+// collected, moved from Rust (ADR-294, #125). Collecting the calls out of the
 // bodies, resolving them and writing the ledger stay Rust.
 //
 // The fixpoint is a **greatest** one: every candidate starts `sync` and loses
@@ -18,9 +18,9 @@ pub struct SyncReach {
     pub blocked: bool,
     /// The functions of this package it calls.
     pub calls: collections::BTreeSet[String],
-    /// The code parameters that may pause and that it calls (ADR-244 D2).
+    /// The code parameters that may pause and that it calls (ADR-288 D29).
     pub through_code: collections::BTreeSet[String],
-    /// It pauses itself, at a statement of its own body (ADR-244 D5).
+    /// It pauses itself, at a statement of its own body (ADR-288 D32).
     pub pauses_here: bool,
 }
 
@@ -48,7 +48,7 @@ pub fn sync_holds(graph: ref collections::BTreeMap[String, SyncReach]) -> collec
     return holds
 }
 
-/// The functions that pause **only where their lambdas do** (ADR-244 D2):
+/// The functions that pause **only where their lambdas do** (ADR-288 D29):
 /// nothing they reach blocks, every function of the package they call holds,
 /// and they call a code parameter that may pause. By key, those parameters.
 pub fn paused_only_by_code(graph: ref collections::BTreeMap[String, SyncReach], holds: ref collections::BTreeMap[String, bool]) -> collections::BTreeMap[String, Vec[String]] {
@@ -69,7 +69,7 @@ pub fn paused_only_by_code(graph: ref collections::BTreeMap[String, SyncReach], 
     return out
 }
 
-/// **Why a function that does not hold pauses** (ADR-244 D5): the shortest
+/// **Why a function that does not hold pauses** (ADR-288 D32): the shortest
 /// way through the package's calls, from `start` to a function that pauses
 /// itself or blocks. Breadth-first and in key order, so the answer is the same
 /// on every build; the last name is where the pause is. Empty where none is

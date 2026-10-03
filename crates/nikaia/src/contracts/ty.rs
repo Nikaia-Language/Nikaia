@@ -6,7 +6,7 @@
 // `Unknown`, which is not a type but the absence of a claim - see below. The
 // subtraction is the interner: a ledger is a file, so a name here is text, and
 // two types are the same when they are written the same. That is name-for-name
-// (ADR-011 D2) applied to types: nothing resolves a module or an alias, so
+// (ADR-296 D17) applied to types: nothing resolves a module or an alias, so
 // `postgres::Connection` and `Connection` are different types, which is correct
 // for a compiler that does not know they are not.
 //
@@ -29,7 +29,7 @@
 use crate::ast;
 use crate::parser::Parsed;
 
-/// `Ty` and `Shape` are declared in Nikaia ([ADR-257](../../../docs/specification/adr/adr-257.md)
+/// `Ty` and `Shape` are declared in Nikaia ([ADR-294](../../../docs/specification/adr/adr-294.md)
 /// D1): `nikaia-std/src/tools/ty.nika`, with the words below, the text a type
 /// is written as, and what the checker asks of one.
 pub use nikaia_std::tools::ty::{
@@ -38,8 +38,8 @@ pub use nikaia_std::tools::ty::{
 };
 
 /// **What `T::fields` walks**, one element of it
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2,
-/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D2,
+/// [ADR-304](../../../docs/specification/adr/adr-304.md)).
 ///
 /// A name **no program can write**: `$` is not in an identifier, so a reader
 /// never meets it and a `.nika` file cannot declare one. It is the type a
@@ -60,7 +60,7 @@ pub const VARIANT: &str = "$Variant";
 
 /// A type's own name, with the module it lives in taken off.
 ///
-/// **Since [ADR-154](../../../docs/specification/adr/adr-154.md) D3 a `std`
+/// **Since [ADR-313](../../../docs/specification/adr/adr-313.md) D3 a `std`
 /// type carries its module**: `collections::HashMap`, `time::Duration`,
 /// `foreign::CStr`. The module says where the name is *reached from* and the
 /// last segment is the type, so every rule here that names a type by hand — the
@@ -83,7 +83,7 @@ pub fn base(name: &str) -> &str {
 /// and the type a `.nika` declaration names, which reads this compiler's tree.
 /// What the checker asks of a type (`fits`, `erase`, `is_a_view`, …) and the
 /// walks over one (`bind`, `substitute`, `qualify`, `renamed`) are
-/// `tools/ty.nika`'s since ADR-257 step (d) (0.0.295). An extension trait,
+/// `tools/ty.nika`'s since ADR-294 step (d) (0.0.295). An extension trait,
 /// because the type is `nikaia-std`'s and an inherent `impl` belongs to the
 /// crate that declares it.
 pub trait TyOps {
@@ -112,7 +112,7 @@ impl TyOps for Ty {
     }
 
     /// **What a lock handed out**
-    /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
+    /// ([ADR-281](../../../../docs/specification/adr/adr-281.md) D22).
     ///
     /// `Seen[T]` is a type here and in the ledger's type language, and it is
     /// **not** a type in the language below: the emitter erases it, so a
@@ -130,7 +130,7 @@ impl TyOps for Ty {
         }
     }
 
-    /// Read one back: `tools/ty.nika`'s `parse` (ADR-257 step (c)), which reads
+    /// Read one back: `tools/ty.nika`'s `parse` (ADR-294 step (c)), which reads
     /// what [`Ty::text`] writes and the older spellings a ledger may still hold.
     fn parse(text: &str) -> Ty {
         nikaia_std::tools::ty::parse(text)
@@ -168,7 +168,7 @@ impl TyOps for Ty {
                 mutable: ty.is_mut,
             };
         }
-        // **What the C boundary lends** (ADR-147 D1), read before the tuple for
+        // **What the C boundary lends** (ADR-302 D5), read before the tuple for
         // its reason: the element sits where a tuple's parts sit, and the
         // branches below would read it as an argument of a type called `slice`.
         if ty.is_slice || ty.is_mut {
@@ -186,7 +186,7 @@ impl TyOps for Ty {
                 },
             };
             // **A `?` on one of these is the *pointee's***
-            // ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which
+            // ([ADR-302](../../../docs/specification/adr/adr-302.md) D14), which
             // is where it parts company with Part I 2.3's own reading of a
             // trailing `?`. A view at the C boundary lives for the call and is
             // never absent, so a nullable view would be a shape nothing writes;
@@ -212,7 +212,7 @@ impl TyOps for Ty {
             );
         }
         // **A parameter that is code**
-        // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), read
+        // ([ADR-277](../../../docs/specification/adr/adr-277.md) D6), read
         // before the `?` for the tuple's reason: what a `fn(…)?` would mean is
         // not written anywhere, and the grammar gives the form no `?` to begin
         // with.
@@ -240,12 +240,12 @@ impl TyOps for Ty {
         // `unaliased`, because a type may be written with this file's own
         // name for the package that declares it - `h::Request` where the file
         // wrote `use http as h`
-        // ([ADR-046](../../../../docs/specification/adr/adr-046.md) D3). One
+        // ([ADR-286](../../../../docs/specification/adr/adr-286.md) D12). One
         // call here rather than one at every reader of a type, which is why the
         // map is on `Parsed` and not on a pass of its own.
         let name = parsed.unaliased(parsed.text(ty.name));
         // **Text that is a view or its own per value is read as text of its
-        // own** ([ADR-223](../../../docs/specification/adr/adr-223.md) D3):
+        // own** ([ADR-282](../../../docs/specification/adr/adr-282.md) D15):
         // below it is `EitherText`, which is lent as a `&str` and copied by
         // `.clone()` exactly as a `String` is. What goes *into* one is the
         // checker's to accept per position (`expected_either`,
@@ -260,7 +260,7 @@ impl TyOps for Ty {
         // **A view of `String` is a view of text**
         // ([ADR-184](../../../docs/specification/adr/adr-184.md) D2), the same
         // normalisation [`Ty::parse`] makes at the other door. Text is one type
-        // ([ADR-107](../../../docs/specification/adr/adr-107.md)) and `str` is
+        // ([ADR-282](../../../docs/specification/adr/adr-282.md)) and `str` is
         // the compiler's own noun for a view of it — so `ref String` written in
         // a signature and `ref String` printed for a literal have to arrive as
         // one thing, or the message is *this is `ref String`, and the `let`
@@ -363,7 +363,7 @@ mod tests {
 mod fn_type_tests {
     use super::*;
 
-    /// A function type reads back the way it was written (ADR-029).
+    /// A function type reads back the way it was written (ADR-288).
     #[test]
     fn a_function_type_round_trips() {
         for text in ["fn()", "fn(ref Stats)", "fn(ref String, i64)", "fn(?)"] {

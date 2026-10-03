@@ -63,7 +63,7 @@ pub mod task;
 pub mod tether;
 /// **An index the compiler proved inside**, read and written without its
 /// check: `--optimization=remove-bounds-checks`
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D5). The generated code
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D5). The generated code
 /// calls it inside `unsafe`, at an index its proof covers, and nowhere else.
 pub use proven_index as proven;
 pub mod time;
@@ -92,9 +92,9 @@ pub mod text {
 /// it.
 ///
 /// It lives in this crate anyway because this is where `nikaia lower-std`
-/// already looks for `.nika` sources (ADR-002 D4, ADR-195 D2), and because the
+/// already looks for `.nika` sources (ADR-002 D4, ADR-290 D12), and because the
 /// compiler - which is Rust - reaches what is in here as an ordinary Rust
-/// module (ADR-196 D1). That is the whole interface: a call.
+/// module (ADR-290 D16). That is the whole interface: a call.
 ///
 /// **What none of it is, is *refused***, and that is a defect rather than a
 /// decision: `use std::tools` in a Nikaia program lowers, and `rustc` is what
@@ -110,7 +110,7 @@ pub mod text {
 /// and has moved a `.nika` to a better line before (`ref Array` for a list only
 /// read, 0.0.252).
 ///
-/// **And `clone_on_copy`, for as long as ADR-252 D4.1 is half built.** A type
+/// **And `clone_on_copy`, for as long as ADR-294 D9.1 is half built.** A type
 /// whose every part is a copy derives `Copy` (0.0.264), and the language does
 /// not yet read its values as copies: a `.nika` that keeps one past a move
 /// writes `.clone()` (`template.nika`'s `at.clone()`), as it must, and the Rust
@@ -118,14 +118,14 @@ pub mod text {
 /// `.clone()` is not written and this goes.
 ///
 /// **And `manual_map`, for a `?.` on a method**
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md)): the reach is a
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md)): the reach is a
 /// `match` below because a method may pause or fail, and neither an `.await`
 /// nor a `?` works inside the closure `.map` takes. Where the method does
 /// neither, the `match` is the same thing written longer, which is what the
-/// lint says (`ty.nika`'s `result?.text()`, ADR-257).
+/// lint says (`ty.nika`'s `result?.text()`, ADR-294).
 ///
 /// **And eight that say how the lowering writes, not what it does**
-/// (`ledger.nika`'s reader, ADR-257 step (c)): a written `return` at a
+/// (`ledger.nika`'s reader, ADR-294 step (c)): a written `return` at a
 /// function's end, `Ok(f()?)` where a failure passes through unchanged, a
 /// closure around a constructor for `??`'s fallback, a `match` over a
 /// reach that a `?` would say shorter, and a `ref Vec[T]` parameter that
@@ -133,7 +133,7 @@ pub mod text {
 /// the language writes a range test, a copied binding handed straight back
 /// (`Ty::Named { view, .. } => view` is `let view = *view; view`), and a
 /// `match` with one pattern beside an empty `else`, which is how the language
-/// writes what Rust calls `if let` (`ty.nika`'s walks, ADR-257 step (d)). Each
+/// writes what Rust calls `if let` (`ty.nika`'s walks, ADR-294 step (d)). Each
 /// is the same machine code as the shorter spelling. So is `&*value` where the
 /// grammar's input is already a view (`grammar::parse`, 0.0.297): the
 /// lowering writes one form for owned text, a mapping and a view alike.
@@ -156,7 +156,7 @@ pub mod text {
     clippy::needless_option_as_deref
 )]
 pub mod tools {
-    // **One package, one file** ([ADR-261](../../../docs/specification/adr/adr-261.md)):
+    // **One package, one file** ([ADR-294](../../../docs/specification/adr/adr-294.md)):
     // every `.nika` in `src/tools` shares one namespace, as the files of a
     // package do, and `nikaia lower-std` lowers them into `package.rs`. At its
     // end stands one module per file - `tools::ty`, `tools::ledger` - naming
@@ -190,13 +190,13 @@ pub mod tools {
     // --- ast.nika ---
 
     /// The longest source the compiler reads: a `Span` holds a byte offset
-    /// in a `u32` (ADR-252 D2).
+    /// in a `u32` (ADR-294 D7).
     pub const LONGEST_SOURCE: usize = u32::MAX as usize;
 
     /// A byte offset as a `Span` holds it. The 4 GiB refusal in
     /// `parser::parse` is what makes this total.
     pub fn offset(at: usize) -> u32 {
-        u32::try_from(at).expect("a source is at most 4 GiB (ADR-252 D2)")
+        u32::try_from(at).expect("a source is at most 4 GiB (ADR-294 D7)")
     }
 
     impl Span {
@@ -214,7 +214,7 @@ pub mod tools {
         }
 
         /// The byte it starts at, which is the key the checker files its
-        /// answers under (ADR-028).
+        /// answers under (ADR-288).
         pub fn at(self) -> usize {
             self.start as usize
         }
@@ -507,7 +507,7 @@ pub mod prelude {
     pub use crate::channel;
     pub use crate::channel::{Receiver, Sender};
     // **The one shared buffer**
-    // ([ADR-156](../../../docs/specification/adr/adr-156.md) D1): `Bytes` is a
+    // ([ADR-283](../../../docs/specification/adr/adr-283.md) D19): `Bytes` is a
     // language type, written bare, so the generated Rust has to find it
     // without a `use` the program did not write.
     // **`panic`** ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md),
@@ -523,20 +523,20 @@ pub mod prelude {
     pub use crate::cli;
     pub use crate::collections;
     // **How a value goes into text both kinds flow into**
-    // ([ADR-224](../../../docs/specification/adr/adr-224.md) D2): the tier
+    // ([ADR-282](../../../docs/specification/adr/adr-282.md) D5): the tier
     // pass writes `value.into_either()` (and `into_either_maybe`,
     // `either_items`) into the program, and a method needs its trait in scope.
     pub use crate::either_text::{EitherItems, EitherPairs, IntoEither, IntoEitherMaybe};
     pub use crate::error::Full;
     pub use crate::seq::Join as _;
     // **The C boundary's one `std` type**
-    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
+    // ([ADR-302](../../../docs/specification/adr/adr-302.md) D8): a program
     // that declares `fn getenv(name: &[u8]) -> CStr` has to be able to name
-    // it, and until [ADR-154](../../../docs/specification/adr/adr-154.md)
+    // it, and until [ADR-313](../../../docs/specification/adr/adr-313.md)
     // decides what the prelude is, this is how a name reaches a program.
     pub use crate::foreign::CStr;
     pub use crate::fs;
-    // **The socket `std` lends** (ADR-194 D1). Here for `fs`'s reason: a module
+    // **The socket `std` lends** (ADR-289 D6). Here for `fs`'s reason: a module
     // a program reaches through its prefix has to be in scope in the generated
     // file, and nothing a program writes says where it comes from.
     pub use crate::net;
@@ -545,7 +545,7 @@ pub mod prelude {
     // generated file.
     pub use crate::process;
     // **What a parse fails with**
-    // ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): written bare,
+    // ([ADR-296](../../../docs/specification/adr/adr-296.md) D38): written bare,
     // like `Overtaken`, because a program never writes a path to it — it
     // arrives in a `catch`, and the generated file has to find it there
     // without a `use` the program did not write.
@@ -553,7 +553,7 @@ pub mod prelude {
     pub use crate::grammar::ParseError;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;
-    // **HTTP/1.1's text half** ([ADR-194](../../../docs/specification/adr/adr-194.md)
+    // **HTTP/1.1's text half** ([ADR-289](../../../docs/specification/adr/adr-289.md)
     // D5), which the `http` package calls. **Not named `http`**: a program
     // reaches a *package* by that word, and a `std` module of the same name
     // would make `http::Response` mean two things.
@@ -571,14 +571,14 @@ pub mod prelude {
     pub use crate::time::{Duration, DurationExt, sleep};
     // `rt` is in the prelude so that the `fn main` the emitter writes can name
     // `rt::start` without a `use` the program did not ask for. Nothing in a
-    // `.nika` file reaches it: ADR-038 D3's whole point is that a program says
+    // `.nika` file reaches it: ADR-303 D3's whole point is that a program says
     // `fs::read_to_string(p)` and the runtime is invisible.
     pub use crate::rt;
     pub use crate::text::digit_value;
     pub use std::collections::HashMap;
 
     // **The modules a `.nika` file reaches through a prefix**
-    // ([ADR-154](../../../docs/specification/adr/adr-154.md) D3, D5): `use
+    // ([ADR-313](../../../docs/specification/adr/adr-313.md) D3, D8): `use
     // std::text` then `text::digit_value`, and the same for the rest. They are
     // here because the generated Rust writes the prefix the source wrote — the
     // **emitter's** prelude is not the program's list, and this is the half
@@ -588,7 +588,7 @@ pub mod prelude {
 }
 
 /// **What `use std::collections` reaches**
-/// ([ADR-154](../../../docs/specification/adr/adr-154.md) D3).
+/// ([ADR-313](../../../docs/specification/adr/adr-313.md) D3).
 ///
 /// A module of this crate and not a re-export of the language below's, because
 /// one name in it is **ours**: which hash a map gets follows the provenance of

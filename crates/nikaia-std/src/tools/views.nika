@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/views.nika
 //
 // Where a naked view parameter's view ends up - `NK2302`. Moved from the
-// compiler's `views` (ADR-250, #125); the reasoning below is that module's.
+// compiler's `views` (ADR-294, #125); the reasoning below is that module's.
 //
 // A view (`ref String`, `ref Array[u8]`, `ref T`) is a slice of a buffer
 // somebody else owns (Part I, 6.6). A struct that holds one says so in its own
@@ -22,7 +22,7 @@
 // is never a destination, because deciding one needs to know which buffer each
 // local views.
 //
-// **A destination that already names the buffer** (ADR-008 D1): where the
+// **A destination that already names the buffer** (ADR-283 D1): where the
 // destination is a field of the subject, or of a struct built inside an `impl`
 // whose target holds a view, the parameter is written as a view of that buffer
 // rather than refused - `Stored.carried`, which the emitter reads. The refusal
@@ -119,7 +119,7 @@ enum Root {
 
 /// Every naked view parameter in this unit whose view is stored, in source
 /// order. `own_buffer` says whether a `let`'s value is a buffer of its own
-/// (ADR-209 §6) - the compiler's `tether` answers it.
+/// (ADR-283) - the compiler's `tether` answers it.
 pub fn views_stored(asked: ref Asked, items: ref Vec[Spanned[Item]], own_buffer: fn(ref Expr) -> bool sync) -> Vec[Stored] {
     let unit = Unit { borrowing: borrowing_types(asked.names, items), fields: view_fields(asked.names, items) }
     let mut found: Vec[Stored] = []
@@ -545,8 +545,8 @@ fn walk_block(unit: ref Unit, asked: ref Asked, block: ref Block, tail: bool, ow
         let span = block.stmts[i].span.clone()
         match block.stmts[i].node {
             // **Every name**, because a view carried into a tuple reaches each
-            // part of it (ADR-098). **A buffer of its own carries no view of
-            // the parameter** (ADR-209 §6).
+            // part of it (ADR-291). **A buffer of its own carries no view of
+            // the parameter** (ADR-283).
             Stmt::Let { names, value, .. } => {
                 if mentions(unit, asked, here, value) && !own_buffer(value) {
                     for name in names {
@@ -685,7 +685,7 @@ fn returned(unit: ref Unit, asked: ref Asked, value: ref Expr, span: ref Span, m
 }
 
 // Whether this expression is a call whose result points into something that
-// is **not** a carrier of the view (`returns = "borrows(a | b)"`, ADR-098).
+// is **not** a carrier of the view (`returns = "borrows(a | b)"`, ADR-291).
 // Everything unwritten reads as *nobody said*, where the refusal stands
 // (ADR-010 D1).
 fn hands_back_another_buffer(unit: ref Unit, asked: ref Asked, here: ref Here, value: ref Expr) -> bool {
@@ -990,7 +990,7 @@ fn mentions(unit: ref Unit, asked: ref Asked, here: ref Here, node: ref Expr) ->
         Expr::Overlap(block) => block_mentions(unit, asked, here, block),
         Expr::Closure { body, .. } => block_mentions(unit, asked, here, body),
         // An arm holds both: what is raced is an expression, and what runs if
-        // it wins is a block (ADR-148 D1).
+        // it wins is a block (ADR-292 D12).
         Expr::Select(arms) => select_mentions(unit, asked, here, arms),
         Expr::TryCatch { expr, handler } => mentions(unit, asked, here, expr) || block_mentions(unit, asked, here, handler),
         Expr::Break => false,

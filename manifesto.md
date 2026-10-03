@@ -145,14 +145,15 @@ Nikaia compiles through the Rust toolchain, so it inherits the borrow checker's 
 but you never write `'a`. Borrow contracts are inferred whole-program and written to an
 auditable ledger; the cases that are genuinely inexpressible in safe Rust (a slice stored in
 a struct, a task borrowing from its parent) get real language constructs instead of a lecture.
-→ [ADR-005](docs/specification/adr/adr-005.md), [ADR-008](docs/specification/adr/adr-008.md)
+→ [ADR-005](docs/specification/adr/adr-005.md), [ADR-283](docs/specification/adr/adr-283.md)
 
 **3. One source, every runtime.**
 You write `Shared[T]`. What it becomes underneath is the compiler's: the atomic reference count
 is the floor, and a value it can **prove** never crosses a thread gets the plain one instead —
-decided per value rather than per build ([ADR-037](docs/specification/adr/adr-037.md) D7). The
+decided per value ([ADR-037](docs/specification/adr/adr-037.md) D7), and where the build runs
+your code on one thread every count is plain ([ADR-312](docs/specification/adr/adr-312.md) D10). The
 lock in `Locked[T]` is decided the same way and off the same answer
-([ADR-057](docs/specification/adr/adr-057.md)), and so is where `spawn`'s tasks run.
+([ADR-281](docs/specification/adr/adr-281.md) D5-D7), and so is where `spawn`'s tasks run.
 Your source file does not encode the deployment decision, so changing it is a line in
 `nikaia.toml`, not a refactor.
 
@@ -169,7 +170,7 @@ with the same syntax, embedded DSLs get their own real syntax (SQL, JavaScript, 
 of stringly-typed interpolation, and a grammar rule marked `@frame` can be folded in parallel
 with `par_fold` — with the compiler *verifying* the resynchronization property rather than
 trusting your word for it. This is why parsing benchmarks are a first-class target, not a demo.
-→ [ADR-007](docs/specification/adr/adr-007.md), [ADR-009](docs/specification/adr/adr-009.md)
+→ [ADR-296](docs/specification/adr/adr-296.md)
 
 **6. The compiler tracks where your data came from.**
 Trust is a property of the *source*, not of how you build: bytes off a socket are untrusted,
@@ -181,7 +182,7 @@ instead of making every program pay for the worst case — or, worse, making you
 **7. No garbage collector.**
 Deterministic teardown via ownership and RAII, including under implicit async, where "when
 does this file close" is otherwise a genuinely hard question.
-→ [ADR-006](docs/specification/adr/adr-006.md)
+→ [ADR-297](docs/specification/adr/adr-297.md)
 
 ### How is that even possible?
 

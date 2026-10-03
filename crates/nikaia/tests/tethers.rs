@@ -1,5 +1,5 @@
 //! Which of Part I 6.6's states each view in a signature is in
-//! ([ADR-008](../../../docs/specification/adr/adr-008.md) D2, D7).
+//! ([ADR-283](../../../docs/specification/adr/adr-283.md) D2, D5).
 //!
 //! **The analysis alone.** Only one of the three states is a representation
 //! this compiler emits — Borrowed is the language below's own lifetime, Owned
@@ -53,7 +53,7 @@ fn a_view_parameter_borrows() {
 ///
 /// This is the state that is **not built**. What stands in its place today is
 /// the backend refusing the program on the Nikaia line, which is
-/// [ADR-008](../../../docs/specification/adr/adr-008.md) D5's residual hard
+/// [ADR-283](../../../docs/specification/adr/adr-283.md) D3's residual hard
 /// error.
 #[test]
 fn a_result_built_from_a_local_buffer_tethers() {
@@ -73,7 +73,7 @@ fn a_result_built_from_a_local_buffer_tethers() {
 }
 
 /// **A view of text that outlives the program borrows**, which is
-/// [ADR-008](../../../docs/specification/adr/adr-008.md) D9's own example: it
+/// [ADR-283](../../../docs/specification/adr/adr-283.md) D7's own example: it
 /// borrows from nothing and is still the cheapest state.
 #[test]
 fn a_result_that_is_static_text_borrows() {
@@ -203,7 +203,7 @@ const COUNTING: &str = "grammar Calc {\n\
                         }\n";
 
 /// **A parse hands back views into the text it was given**
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D24,
 /// [ADR-186](../../../docs/specification/adr/adr-186.md) D1).
 ///
 /// The buffer is the caller's `input`, which outlives the call — the same
@@ -232,7 +232,7 @@ fn a_grammar_entry_that_hands_back_a_number_holds_nothing() {
 }
 
 /// **The whole corpus is the free case**, which is
-/// [ADR-008](../../../docs/specification/adr/adr-008.md) §3's worked check read
+/// [ADR-283](../../../docs/specification/adr/adr-283.md)'s worked check read
 /// off the analysis rather than asserted: *nothing is allocated per row and no
 /// refcount traffic occurs in the parallel section.*
 ///
@@ -284,7 +284,7 @@ fn nothing_in_the_corpus_needs_a_tether() {
 // --- The word above a struct ---
 
 /// **`@borrowed` is gone, and no attribute stands above a `struct`**
-/// ([ADR-201](../../../docs/specification/adr/adr-201.md) D1).
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4).
 ///
 /// Removed rather than left parsing, which is the decision and not a tidy-up: a
 /// word whose presence and absence look identical on the page is one a reader
@@ -313,8 +313,8 @@ fn no_attribute_stands_above_a_struct() {
 }
 
 /// **No word is needed for a tether**
-/// ([ADR-209](../../../docs/specification/adr/adr-209.md) D5, withdrawing
-/// [ADR-201](../../../docs/specification/adr/adr-201.md) D2): where a buffer
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4, withdrawing
+/// [ADR-283](../../../docs/specification/adr/adr-283.md) D4): where a buffer
 /// lives is the compiler's decision, shown by `--tethers` and the ledger, and
 /// `@tethers` is not a word of this language.
 #[test]
@@ -323,7 +323,7 @@ fn no_word_is_written_for_a_tether() {
 }
 
 /// **A view of a buffer the body owns is tethered, not refused**, with no word
-/// written anywhere (ADR-209 D2, D5).
+/// written anywhere (ADR-283 D10, D4).
 #[test]
 fn a_view_of_a_buffer_the_body_owns_is_tethered() {
     let source = "struct Token { text: ref String }\n\n\

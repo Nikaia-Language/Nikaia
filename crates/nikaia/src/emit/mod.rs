@@ -19,7 +19,7 @@
 // guessing a receiver would be a semantic decision made in a printer.
 //
 // It emits a [`SourceMap`] alongside the code, because a transpiler that only
-// emits code can only be told about errors in a file nobody wrote (ADR-012).
+// emits code can only be told about errors in a file nobody wrote (ADR-300).
 
 use crate::contracts::LedgerOps;
 use std::collections::{HashMap, HashSet};
@@ -40,11 +40,11 @@ use crate::parser::Parsed;
 use crate::{refused, refused_at};
 
 /// One branch of an `overlap { … }`, where the schedule and the written order
-/// differ and the results have to be put back (ADR-050 D2, D6).
+/// differ and the results have to be put back (ADR-292 D2, D6).
 const BRANCH: &str = "__nikaia_branch_";
 
 /// The name a `select` arm's winning value arrives under, where it has to be
-/// unwrapped before the arm's own binding sees it (ADR-148 D1).
+/// unwrapped before the arm's own binding sees it (ADR-292 D12).
 const WINNER: &str = "__nikaia_won";
 
 /// What the variants of `std`'s `Race<n>` are called, in written order.
@@ -106,7 +106,7 @@ pub enum UserParallelism {
 }
 
 /// **Whether the program carries the runtime re-entrancy check**
-/// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
+/// ([ADR-281](../../docs/specification/adr/adr-281.md) D36).
 ///
 /// Taking a lock while a lock is held is refused when the program is compiled
 /// (`NK2203`, Part II 12.3), so under D2 this check cannot fire in a correct
@@ -120,7 +120,7 @@ pub enum UserParallelism {
 ///
 /// It is not named *debug* and is not a development aid to be removed later. It
 /// is a guarantee that can be declined, which is
-/// [ADR-033](../../docs/specification/adr/adr-033.md) D8's precedent.
+/// [ADR-292](../../docs/specification/adr/adr-292.md) D7's precedent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReentrancyCheck {
     /// `yes` — the default. The program carries the check.
@@ -152,7 +152,7 @@ impl ReentrancyCheck {
     }
 }
 
-/// The build switches together (ADR-037, [ADR-039](../../docs/specification/adr/adr-039.md) D8).
+/// The build switches together (ADR-037, [ADR-281](../../docs/specification/adr/adr-281.md) D36).
 ///
 /// One value rather than three parameters: a fourth switch is then a field, not
 /// a change at every call site.
@@ -162,12 +162,12 @@ pub struct Build {
     pub user_parallelism: UserParallelism,
     pub reentrancy_check: ReentrancyCheck,
     /// `--optimization=remove-bounds-checks:<level>`
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1): how hard the
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1): how hard the
     /// compiler works to prove an index inside. Nothing a program means
     /// depends on it.
     pub bounds: crate::bounds::BoundsChecks,
     /// `--optimization=remove-overflow-checks:<level>`
-    /// ([ADR-272](../../docs/specification/adr/adr-272.md) D1).
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D6).
     pub overflow: crate::bounds::OverflowChecks,
 }
 
@@ -200,17 +200,17 @@ impl Build {
     ///
     /// This gates `task::both` and nothing else. `task::both(|| …, || …)` puts
     /// two user closures on two threads, so it is out at
-    /// `user_parallelism = no` whatever the analysis says - ADR-033 decides
+    /// `user_parallelism = no` whatever the analysis says - ADR-292 decides
     /// whether two operations *may* overlap, and this decides whether there is
     /// anything to overlap them with. A target without threads answers no for
     /// the second reason: `rayon::join` does not link on `wasm32-unknown`
     /// (Part III 15.3).
     ///
     /// **Not the same question as [`Build::overlaps_operations`]**, and the
-    /// whole of ADR-033 D10 is that difference. "Two pieces of your code at
+    /// whole of ADR-292 D6 is that difference. "Two pieces of your code at
     /// once" is forbidden at `no`; "two operations in flight at once" is not,
     /// and never was - Part I 8.4's runtime has had a second thread at `no`
-    /// since ADR-038 D4, and it is safe precisely because *user code never
+    /// since ADR-303 D4, and it is safe precisely because *user code never
     /// runs there*. What `no` forbids is that anything **you** wrote is in
     /// flight twice at once (Part I 1.2), which is why the word in
     /// `user_parallelism` is `user`.
@@ -218,7 +218,7 @@ impl Build {
         self.user_parallelism.is_concurrent() && self.target.has_threads()
     }
 
-    /// **May two operations be in flight at the same time?** (ADR-033 D10.)
+    /// **May two operations be in flight at the same time?** (ADR-292 D6.)
     ///
     /// True at **both** settings of `user_parallelism`, because the vehicle it
     /// gates carries no code the program wrote: two reads handed to the
@@ -227,7 +227,7 @@ impl Build {
     /// user's is in flight twice, so ADR-037 D2's promise is untouched - and
     /// `nikaia_std::rt` keeps it by construction rather than by convention,
     /// since an I/O worker's inbox takes operations and no variant of one can
-    /// carry a closure (ADR-038 §4.2).
+    /// carry a closure (ADR-303).
     ///
     /// What it asks of the build is therefore only whether `std`'s runtime is
     /// there at all. `user_parallelism` has no say in it; the *target* does.
@@ -295,7 +295,7 @@ impl Target {
         matches!(self, Target::X86_64Linux | Target::Aarch64Linux)
     }
 
-    /// Whether `std`'s own runtime exists for this machine (ADR-038 D4): the
+    /// Whether `std`'s own runtime exists for this machine (ADR-303 D4): the
     /// I/O worker that is running before `main`, and the completion queue where
     /// the kernel has one.
     ///
@@ -363,12 +363,12 @@ impl UserParallelism {
 }
 
 /// The lifetime the parser backend gives its input. A Nikaia view (`&str`) is
-/// tied to it, which is the whole of what `&` means here: ADR-008 - a view
+/// tied to it, which is the whole of what `&` means here: ADR-283 - a view
 /// marker, never an annotation the user writes.
 const INPUT_LIFETIME: &str = "'a";
 
 /// How a view's lifetime is spelled here. The source never says either way
-/// (ADR-008); the position does.
+/// (ADR-283); the position does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Lifetimes {
     /// What a `&` becomes.
@@ -408,7 +408,7 @@ impl Lifetimes {
     /// a function that borrowed nothing can only point at something that
     /// outlives the program. And it is safe to write even where the body cannot
     /// honour it - `rustc` still checks the body, and refuses the Nikaia line
-    /// through [ADR-012](../../../docs/specification/adr/adr-012.md) rather than
+    /// through [ADR-300](../../../docs/specification/adr/adr-300.md) rather than
     /// the generated one. So this never accepts a wrong program and never
     /// refuses a right one.
     const STATIC: Lifetimes = Lifetimes {
@@ -416,7 +416,7 @@ impl Lifetimes {
         params: "'static",
     };
     /// **The keep a tethered function is given**
-    /// ([ADR-209](../../../docs/specification/adr/adr-209.md) D2): its views
+    /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D10): its views
     /// point into the caller's keep, and live as long as it.
     const KEPT: Lifetimes = Lifetimes {
         reference: "&'k ",
@@ -429,7 +429,7 @@ impl Lifetimes {
         params: "'a",
     };
     /// A tethered value read through its handle, for as long as it is borrowed
-    /// (ADR-209 D3).
+    /// (ADR-283 D11).
     const SHORTENED: Lifetimes = Lifetimes {
         reference: "&'s ",
         params: "'s",
@@ -473,7 +473,7 @@ pub struct Lowered {
     pub published: std::collections::BTreeMap<String, crate::prove::Published>,
 }
 
-/// **[ADR-044](../../../docs/specification/adr/adr-044.md) D1's table, as a Rust
+/// **[ADR-300](../../../docs/specification/adr/adr-300.md) D9's table, as a Rust
 /// item to append to a program.**
 ///
 /// One row per line of the generated file that came from a `.nika` line: the
@@ -547,7 +547,7 @@ pub fn abort_table(rust: &str, map: &SourceMap, paths: &[String], sources: &[&st
     }
 
     let mut out = String::new();
-    out.push_str("\n// ADR-044 D1: the generated line, and the `.nika` line it came from.\n");
+    out.push_str("\n// ADR-300 D9: the generated line, and the `.nika` line it came from.\n");
     out.push_str(&format!(
         "const {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[\n"
     ));
@@ -604,7 +604,7 @@ impl SourceMap {
     /// into a larger file - and tagged with which file it came from.
     ///
     /// A program of several modules is emitted one module at a time and joined;
-    /// this is what keeps ADR-012's promise across the join. Without it a
+    /// this is what keeps ADR-300's promise across the join. Without it a
     /// `rustc` message about the third module would be traded back for a place
     /// in the first.
     pub fn placed(mut self, by: usize, unit: usize) -> SourceMap {
@@ -651,11 +651,11 @@ const REACHED: &str = "__nikaia_it";
 /// [`contracts::order::block_mentions`](crate::contracts::order::block_mentions)
 /// is asked about it — and a second spelling of one name is a binding that goes
 /// unread while the walk looks for the other
-/// ([ADR-090](../../docs/specification/adr/adr-090.md)).
+/// ([ADR-308](../../docs/specification/adr/adr-308.md)).
 const CAUGHT: &str = "error";
 
 /// Where the local holding a caught error's **site** is kept
-/// ([ADR-157](../../docs/specification/adr/adr-157.md) D2).
+/// ([ADR-280](../../docs/specification/adr/adr-280.md) D10).
 ///
 /// A named channel's envelope is opened at the handler's binding, so the error
 /// the source names is the author's own value — and `throw error` needs the
@@ -739,7 +739,7 @@ pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
 }
 
 /// The same, told what this build may read while it builds
-/// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+/// ([ADR-310](../../docs/specification/adr/adr-310.md)).
 ///
 /// **A second entry point rather than a field on [`Build`]**, for the reason
 /// `beside` is a parameter: `Build` is the machine and the switches, copied
@@ -779,7 +779,7 @@ pub fn emit_std(parsed: &Parsed) -> Result<Lowered> {
 
 /// The same, for a module that reads Rust it was handed described: a tool of
 /// `nikaia-std`'s, whose tree names are `winnow_grammar::Symbol`s
-/// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.3).
+/// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.3).
 pub fn emit_std_against(
     parsed: &Parsed,
     beside: &[&Parsed],
@@ -810,7 +810,7 @@ pub fn emit_std_against(
 }
 
 /// [`emit_std_against`]'s items and nothing else, for one file of the
-/// toolchain's package (ADR-261): the package writes one preamble for all of
+/// toolchain's package (ADR-294): the package writes one preamble for all of
 /// them.
 pub fn emit_std_items_against(
     parsed: &Parsed,
@@ -868,7 +868,7 @@ pub fn emit_module_body(
 
 /// The same, saying whether these items are the crate root's.
 ///
-/// Only the crate root may carry the `fn main` Rust runs, and ADR-038 D4 makes
+/// Only the crate root may carry the `fn main` Rust runs, and ADR-303 D4 makes
 /// that one generated function rather than the program's own - so a module is
 /// emitted with `false` and a `main` in it stays as written.
 #[allow(clippy::too_many_arguments)]
@@ -881,13 +881,13 @@ pub fn emit_module_body_at(
     build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
-    // **The described crates' boundary** (ADR-237 D1), for whether a call into
+    // **The described crates' boundary** (ADR-290 D20), for whether a call into
     // one can fail. Empty where the program declares none.
     described: &crate::contracts::Ledger,
     entry: bool,
     // **And what it may read**, for the same reason one line up: the check the
     // emitter runs has to be the check that refused, or the two halves
-    // disagree about one program ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    // disagree about one program ([ADR-310](../../docs/specification/adr/adr-310.md)).
     reads: &Reads,
 ) -> Result<Lowered> {
     Emitter::with_contracts(
@@ -917,7 +917,7 @@ pub struct Needs {
     pub fails: bool,
     /// Kap 4.7 across a package: every trait an `impl` in this unit names with
     /// a package in front of it
-    /// ([ADR-095](../../docs/specification/adr/adr-095.md)).
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md)).
     ///
     /// Rust needs a trait **in scope** before its methods can be called, and
     /// `impl http::Handler for Fixed` does not put it there. So a trait a
@@ -925,7 +925,7 @@ pub struct Needs {
     /// backend's words about the generated file: *"trait `Handler` … is
     /// implemented but not in scope; perhaps you want to import it"* — a rule
     /// the program has no way to satisfy, because Nikaia has no import to
-    /// write ([ADR-046](../../docs/specification/adr/adr-046.md) D2 brings no
+    /// write ([ADR-286](../../docs/specification/adr/adr-286.md) D11 brings no
     /// names in).
     ///
     /// The **same shape in one file compiles**, which is what says this is one
@@ -1003,7 +1003,7 @@ impl Needs {
             out.push_str("#[allow(unused_imports)]\npub use nikaia_std::error::Full;\n");
         }
         // **A trait reached across a package is imported**
-        // ([ADR-095](../../docs/specification/adr/adr-095.md)). Written as the
+        // ([ADR-286](../../docs/specification/adr/adr-286.md)). Written as the
         // path the program already wrote, because that is the path the
         // generated crate resolves: `impl http::Handler for Fixed` names the
         // crate `http`, and so does this.
@@ -1029,7 +1029,7 @@ impl Needs {
 /// for ConfigError` ([ADR-023](../../docs/specification/adr/adr-023.md) D3) -
 /// carries no `::` either, so it is left alone by the same test.
 /// What each `extern "C"` declaration in this file takes
-/// ([ADR-147](../../docs/specification/adr/adr-147.md) D1), by the name a call
+/// ([ADR-302](../../docs/specification/adr/adr-302.md) D5), by the name a call
 /// writes.
 fn foreign_params(parsed: &Parsed) -> std::collections::BTreeMap<String, Vec<Type>> {
     let mut out = std::collections::BTreeMap::new();
@@ -1053,7 +1053,7 @@ fn foreign_params(parsed: &Parsed) -> std::collections::BTreeMap<String, Vec<Typ
 }
 
 /// The opaque handles this file declares, by name, with the function that ends
-/// each one's life ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+/// each one's life ([ADR-302](../../docs/specification/adr/adr-302.md) D7).
 fn opaque_handles(parsed: &Parsed) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     for item in &parsed.program.items {
@@ -1071,7 +1071,7 @@ fn opaque_handles(parsed: &Parsed) -> std::collections::BTreeMap<String, String>
 }
 
 /// What each `extern "C"` declaration hands back, by the name a call writes
-/// ([ADR-155](../../docs/specification/adr/adr-155.md) D3).
+/// ([ADR-302](../../docs/specification/adr/adr-302.md) D12).
 fn foreign_results(parsed: &Parsed) -> std::collections::BTreeMap<String, Type> {
     let mut out = std::collections::BTreeMap::new();
     for item in &parsed.program.items {
@@ -1123,13 +1123,13 @@ fn std_ledger() -> &'static crate::contracts::Ledger {
 /// instead, which is what found them.
 ///
 /// `gen` is in since the emitted code is Edition 2024, which reserves it
-/// (ADR-220). `union` is deliberately **absent**: Rust takes it as an
+/// (ADR-305). `union` is deliberately **absent**: Rust takes it as an
 /// identifier, so escaping it would be a change nothing asked for.
 ///
 /// `crate`, `super`, `self` and `Self` are absent for the opposite reason —
 /// **Rust forbids a raw identifier for exactly those four**, so there is no
 /// escape to write. They are refused instead (`NK1128`, and `NK1119` for
-/// `self`), which is [ADR-076](../../../docs/specification/adr/adr-076.md) D3.
+/// `self`), which is [ADR-298](../../../docs/specification/adr/adr-298.md) D11.
 const RESERVED_BELOW: &[&str] = &[
     "abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "gen",
     "loop", "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type",
@@ -1138,7 +1138,7 @@ const RESERVED_BELOW: &[&str] = &[
 
 /// A source name, written so the language below can read it.
 ///
-/// **This is [ADR-011](../../../docs/specification/adr/adr-011.md) D2 paying one
+/// **This is [ADR-296](../../../docs/specification/adr/adr-296.md) D17 paying one
 /// of its bills.** The emitter writes a name for a name and resolves nothing, so
 /// a Nikaia name that Rust happens to spell as a keyword went out verbatim and
 /// `rustc` answered *"expected identifier, found keyword `type`"* about a file
@@ -1147,13 +1147,13 @@ const RESERVED_BELOW: &[&str] = &[
 /// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
 ///
 /// **Escaped rather than reserved**, which is
-/// [ADR-076](../../../docs/specification/adr/adr-076.md) D1: reserving these
+/// [ADR-298](../../../docs/specification/adr/adr-298.md) D9: reserving these
 /// words in Nikaia would let the backend decide what this language's vocabulary
 /// is, and `type` is the field name of every tagged record anybody has ever
 /// written.
 ///
 /// **`const` and `loop` joined the list when they left Nikaia's own**
-/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D1), which is that
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md) D6), which is that
 /// record's *answered as it is for `type`*: they were not here before because a
 /// Nikaia name could not be one of them, and now it can. `macro` was already
 /// here, and `quote` is a keyword in neither language. The three the backend
@@ -1228,7 +1228,7 @@ struct Emitter<'p> {
     /// statement starts at. Handed over exactly as `fallible_loops` is.
     pausing_loops: std::collections::BTreeSet<usize>,
     /// The `for`s over a name holding a sequence, which is handed over rather
-    /// than lent ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    /// than lent ([ADR-293](../../docs/specification/adr/adr-293.md) D19).
     owned_loops: std::collections::BTreeSet<usize>,
     /// The lent `for` bindings read by value at the body's head
     /// ([`check::Checked::copied_loop_bindings`]).
@@ -1242,42 +1242,42 @@ struct Emitter<'p> {
     /// [`check::Checked::changed_elements`].
     changed_elements: std::collections::BTreeSet<(usize, String)>,
     /// The arguments that are a count in `usize` below, by the entry the checker
-    /// resolved ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
+    /// resolved ([ADR-293](../../docs/specification/adr/adr-293.md) D20).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
     /// How a key goes into a map's brackets where the map's keys are owned
-    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D27).
     map_keys: std::collections::BTreeMap<(usize, String, bool), crate::check::KeyForm>,
-    /// Indexes that are a range kept in a name (ADR-215 D3).
+    /// Indexes that are a range kept in a name (ADR-293 D23).
     slice_indices: std::collections::BTreeSet<(usize, String)>,
     /// [`check::Checked::list_indices`], kept only where [`crate::bounds`]
     /// proved the position inside: the indexes written without their check
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D5).
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D5).
     proven_indices: std::collections::HashSet<usize>,
     /// [`check::Checked::arithmetic`], kept only where [`crate::bounds`]
     /// proved the operation stays inside its type: written `<T>::wrapping_*`
-    /// ([ADR-272](../../docs/specification/adr/adr-272.md) D5).
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D10).
     proven_arithmetic: std::collections::HashMap<usize, String>,
-    /// `std` copies, written `to_owned` (ADR-215 D4).
+    /// `std` copies, written `to_owned` (ADR-293 D24).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// Whether the `?.` being written copies the view it reached, which is
     /// `owned_copies` asked of the receiver the `match` bound.
     reached_copy: std::cell::Cell<bool>,
-    /// `.to_string()` on text, written as its receiver (ADR-216 D4).
+    /// `.to_string()` on text, written as its receiver (ADR-282 D8).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
-    /// `??`s that lend their left side, and how it is opened (ADR-259 D1).
+    /// `??`s that lend their left side, and how it is opened (ADR-279 D5).
     lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
     /// **`std`'s count of a sequence**, by statement and receiver shape, which
     /// gets the conversion a length gets (Part I 2.2).
     counted: std::collections::BTreeSet<(usize, String)>,
     /// **The names a `match` arm binds as a view**, by the arm's pattern
-    /// (ADR-242): written `ref name`, so the scrutinee stays whole.
+    /// (ADR-291): written `ref name`, so the scrutinee stays whole.
     lent_bindings: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
     /// **A guard that reads names bound inside a boxed part**, by the arm's
     /// pattern, and which of them copy (ADR-246 D5 item 2).
     guards_inside_boxes: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>>,
     /// `check::Checked::lent_scrutinees`.
     lent_scrutinees: std::collections::BTreeSet<usize>,
-    /// `collect()` into a declared map, set or text (ADR-227 D1).
+    /// `collect()` into a declared map, set or text (ADR-293 D25).
     collected_into: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::copied_walks` (ADR-231 D1).
     copied_walks: std::collections::BTreeSet<(usize, String)>,
@@ -1287,7 +1287,7 @@ struct Emitter<'p> {
     kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
     /// The first lines of the function body being written: a published
     /// parameter both kinds of text flow into, taken as it goes in
-    /// (ADR-232 D1).
+    /// (ADR-282 D23).
     either_prelude: std::cell::RefCell<Vec<String>>,
     /// `check::Checked::kept_hulls` (ADR-230 D4).
     kept_hulls: std::collections::BTreeMap<(usize, String), Vec<String>>,
@@ -1317,14 +1317,14 @@ struct Emitter<'p> {
     /// ([ADR-094](../../docs/specification/adr/adr-094.md) D4), by the byte the
     /// statement starts at. Answered by the checker for the reason every set
     /// beside it is: it is a question about the type, and this has none
-    /// (ADR-028).
+    /// (ADR-288).
     lent_lets: std::collections::BTreeSet<usize>,
     /// [`crate::check::Checked::lent_returns`]: the `return`s whose value is a
     /// view of the subject, so the `&` is this file's to write
     /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1's third
     /// position). Handed over exactly as `lent_lets` is, and for the same
     /// reason: which place is a view of what is a question about types, and
-    /// this file keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    /// this file keeps none ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     lent_returns: std::collections::BTreeSet<usize>,
     /// [`crate::check::Checked::compares`] and its total half: which declared
     /// types derive `PartialEq`, and which of those also derive `Eq`
@@ -1332,7 +1332,7 @@ struct Emitter<'p> {
     ///
     /// Decided by the checker for the reason every set beside it is: whether
     /// every part of a type compares is a question about types, and this file
-    /// keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    /// keeps none ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     compares: std::collections::BTreeSet<String>,
     compares_totally: std::collections::BTreeSet<String>,
     /// Which declared types derive `Copy` ([`check::Checked::copies`]).
@@ -1341,22 +1341,22 @@ struct Emitter<'p> {
     /// **view** ([`check::Checked::viewed_numbers`]), by the statement's byte
     /// and the name. Handed over exactly as `lent_lets` is, and for the same
     /// reason: which name is a view is a question about the scope, and this
-    /// keeps none (ADR-028).
+    /// keeps none (ADR-288).
     viewed_numbers: std::collections::BTreeSet<(usize, String)>,
     /// The list literals that are an **array**
     /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), by the byte the
     /// `[` stands at. `vec![…]` for one that is not in here and `[…]` for one
     /// that is; the checker decides, because the decision is a type's
-    /// (ADR-028).
+    /// (ADR-288).
     array_literals: std::collections::BTreeSet<usize>,
     /// The text literals that lower to a `String` of their own
-    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), by the byte
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D4), by the byte
     /// the opening quote stands at. `"x"` for one that is not in here and
     /// `String::from("x")` for one that is; the checker decides, for
     /// `array_literals`' reason.
     owned_texts: std::collections::BTreeSet<usize>,
     /// **Where each buffer lives**, per function
-    /// ([ADR-209](../../docs/specification/adr/adr-209.md)): the keep plan,
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md)): the keep plan,
     /// computed once over the unit against the package's ledger.
     keep_plans: HashMap<String, crate::contracts::keep::Plan>,
     /// `check::Checked::view_fallbacks`.
@@ -1382,7 +1382,7 @@ struct Emitter<'p> {
     wrappers: std::cell::RefCell<Vec<String>>,
     /// Writing a keeper whose views are held one handle per buffer (D4): `ref
     /// String` is `Held` while this is set, and a struct of views a `Holding`
-    /// with this many keeps ([ADR-221](../../docs/specification/adr/adr-221.md)).
+    /// with this many keeps ([ADR-283](../../docs/specification/adr/adr-283.md)).
     holding: std::cell::RefCell<Option<usize>>,
     /// The arguments of the call being written that are held (D4): argument
     /// position and the buffer statements whose keeps hold it, one per keep
@@ -1404,26 +1404,26 @@ struct Emitter<'p> {
     ///
     /// Handed over exactly as `fallible_loops` is, and for the reason stated
     /// there: `stats.add(5)` names `add` and says nothing about what `stats`
-    /// is, so only the type checker can say what it calls (ADR-028). Nothing
+    /// is, so only the type checker can say what it calls (ADR-288). Nothing
     /// here resolves a receiver.
     fallible_methods: std::collections::BTreeSet<(usize, String)>,
     /// The `set` calls that carry a **witness**
-    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), by the byte
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26), by the byte
     /// their statement starts at (`check::Checked::witnessed_sets`).
     ///
     /// `kasse.set(neu; after: stand)` lowers to `set_after(neu, stand)`, which
     /// compares and stores while the lock is open once. Whether the receiver is
-    /// a lock at all is the type checker's answer and not this file's (ADR-028),
+    /// a lock at all is the type checker's answer and not this file's (ADR-288),
     /// which is why it arrives rather than being worked out — a user-defined
     /// `set` with an `after:` option of its own is left alone.
     witnessed_sets: std::collections::BTreeSet<usize>,
     /// The lambda arguments written as a closure returning a **boxed future**
-    /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1), by the byte
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D11), by the byte
     /// their statement starts at and the argument's position
     /// (`check::Checked::future_lambdas`).
     ///
     /// Which shape a parameter takes is a question about its **type**, and this
-    /// file has none ([ADR-028](../../../docs/specification/adr/adr-028.md)) —
+    /// file has none ([ADR-288](../../../docs/specification/adr/adr-288.md)) —
     /// the same arrangement `lent_args` and `nullable_args` arrive by.
     future_lambdas: std::collections::BTreeSet<(usize, usize)>,
     /// Of those, the ones whose parameter the callee **runs**, which take an
@@ -1431,13 +1431,13 @@ struct Emitter<'p> {
     /// (`check::Checked::run_lambdas`).
     run_lambdas: std::collections::BTreeSet<(usize, usize)>,
     /// **The functions whose body is a settle point's**, and whether the settle
-    /// point can fail each ([ADR-239](../../docs/specification/adr/adr-239.md)
+    /// point can fail each ([ADR-297](../../docs/specification/adr/adr-297.md)
     /// D2, D3).
     settle_fns: std::collections::BTreeMap<String, bool>,
     /// **The `let`s whose block is settled where it ends**, and whether what
-    /// they bind can fail its cleanup (ADR-239 D2).
+    /// they bind can fail its cleanup (ADR-297 D2).
     settle_lets: std::collections::BTreeMap<usize, bool>,
-    /// **This program's types with a cleanup that can pause** (ADR-239 D1):
+    /// **This program's types with a cleanup that can pause** (ADR-297 D1):
     /// written as `Cleaned<T>`, whose `Drop` parks it.
     cleaned_types: std::collections::BTreeSet<String>,
     /// The lambdas that pause, handed to a `std` entry, and what the call is
@@ -1449,14 +1449,14 @@ struct Emitter<'p> {
     /// The same arrangement, one ledger column over: `throws` becomes a `?` and
     /// *can pause* becomes an `.await`. The emitter cannot ask this one itself
     /// for a method, because only a type checker knows what `stats.add(5)` goes
-    /// to (ADR-028).
+    /// to (ADR-288).
     pausing_methods: std::collections::BTreeSet<(usize, String)>,
     /// The conversions that **narrow**, by the byte their statement starts at
     /// and the type converted to
-    /// ([ADR-043](../../../docs/specification/adr/adr-043.md) D4).
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D12).
     ///
     /// Handed over for the reason the two above are: `as i32` narrows or widens
-    /// depending on what it is *given*, and nothing here knows that (ADR-028).
+    /// depending on what it is *given*, and nothing here knows that (ADR-288).
     /// The emitter writes the checked conversion and never decides which one it
     /// is.
     narrowing_casts: std::collections::BTreeMap<(usize, String), crate::check::Narrowing>,
@@ -1480,7 +1480,7 @@ struct Emitter<'p> {
     /// Part I 2.3: the statements where a plain value stands in a nullable slot,
     /// and **which** of the two wraps this emitter writes there
     /// (`check::Checked::nullable_sites`,
-    /// [ADR-068](../../../docs/specification/adr/adr-068.md)).
+    /// [ADR-278](../../../docs/specification/adr/adr-278.md)).
     nullable_sites: std::collections::BTreeMap<usize, crate::check::Wrap>,
     /// The `+`s that join text, by the byte their operator starts at
     /// ([ADR-081](../../docs/specification/adr/adr-081.md) D2).
@@ -1491,10 +1491,10 @@ struct Emitter<'p> {
     concatenations: std::collections::BTreeSet<usize>,
     /// What each `comptime` is written as below - its type and its value - by the
     /// byte its statement starts at (`check::Checked::comptime_values`,
-    /// [ADR-073](../../docs/specification/adr/adr-073.md) D3, D4).
+    /// [ADR-287](../../docs/specification/adr/adr-287.md) D4, D5).
     ///
     /// Here for the reason every table beside it is: this has neither types nor
-    /// a scope ([ADR-028](../../docs/specification/adr/adr-028.md)), and a
+    /// a scope ([ADR-288](../../docs/specification/adr/adr-288.md)), and a
     /// `const` needs both - a type because Rust's `const` takes one, and a
     /// scope because `const PAIR = PAGE * 2` folds only for something that
     /// knows what `PAGE` is. A statement with no entry never arrives, because
@@ -1509,9 +1509,9 @@ struct Emitter<'p> {
     /// arrives: the checker refused it as `NK1173` first.
     with_types: std::collections::BTreeMap<usize, String>,
     /// **What a `T::fields` loop was unrolled over**
-    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2), handed over by
+    /// ([ADR-304](../../docs/specification/adr/adr-304.md) D6), handed over by
     /// the checker because this emitter has no types
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) and a type argument
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)) and a type argument
     /// is what decides which copy a call means.
     unrolled: std::collections::BTreeMap<(String, String), Vec<crate::contracts::FieldContract>>,
     /// The functions whose body walks a type's fields, whether or not anything
@@ -1530,7 +1530,7 @@ struct Emitter<'p> {
     /// the field's own name.
     at_field: std::cell::RefCell<Option<(String, String)>>,
     /// Whether the code parameter being written is one the body **runs**
-    /// ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
     ///
     /// Set around the one `ty_counted` call that writes a parameter's type, for
     /// the reason `specialising` above is a cell: the type writer takes a type
@@ -1552,7 +1552,7 @@ struct Emitter<'p> {
     /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
     /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
     lent_reaches: std::collections::BTreeSet<(usize, String)>,
-    /// `check::Checked::held_reaches` (ADR-228 D1).
+    /// `check::Checked::held_reaches` (ADR-278 D21).
     held_reaches: std::collections::BTreeSet<(usize, String)>,
     /// The receivers held before the statement being written, by address, and
     /// the name each is held under.
@@ -1631,13 +1631,13 @@ struct Emitter<'p> {
     /// A call **by name** reads its options off the callee's contract here
     /// (`options_of`); a method cannot, because finding the entry means
     /// resolving the receiver and this has no types
-    /// ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     method_options: std::collections::BTreeMap<(usize, String), Vec<(String, String)>>,
     /// The handles a task's body uses, by the byte the statement starts at and
     /// the name (`check::Checked::task_handles`).
     ///
     /// A task takes what it names **by value**, and a handle handed on by value
-    /// is duplicated ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
+    /// is duplicated ([ADR-312](../../../docs/specification/adr/adr-312.md) D1).
     /// For a call the callee's signature answers it; a task's body has no
     /// signature, so the checker answers it and this writes the step.
     task_handles: std::collections::BTreeSet<(usize, String)>,
@@ -1655,13 +1655,13 @@ struct Emitter<'p> {
     own_contracts: crate::contracts::Ledger,
     library: &'static crate::contracts::Ledger,
     /// **The described crates' boundary**
-    /// ([ADR-237](../../docs/specification/adr/adr-237.md) D1). Asked one
+    /// ([ADR-290](../../docs/specification/adr/adr-290.md) D20). Asked one
     /// question, whether a call into one can fail - and deliberately not
     /// merged into `library`, whose `sync = false` means *await it*: a
     /// described function that may block is an ordinary Rust call.
     described: crate::contracts::Ledger,
     /// The types **this unit declares and gives an `impl Error`**
-    /// ([ADR-157](../../docs/specification/adr/adr-157.md) D1).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D9).
     ///
     /// What is thrown implements `Error` and the `impl` line says so (Part I
     /// 7.1, `NK1161`), so this is the set a failure channel may be named after:
@@ -1670,13 +1670,13 @@ struct Emitter<'p> {
     declared_errors: std::collections::BTreeSet<String>,
     /// Every distinct error set of two or more named members in this unit, and
     /// the type that stands for it
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D15).
     ///
     /// Held rather than derived per question, because a `catch` deep inside a
     /// body needs the **name** and a name computed on the spot has nowhere to
     /// live.
     sums: std::collections::BTreeMap<Vec<String>, String>,
-    /// ADR-033: whether two statements that meet on nothing may overlap.
+    /// ADR-292: whether two statements that meet on nothing may overlap.
     /// What the program's `impl` blocks declare, which is what makes the fold
     /// adapter of D2 a lookup rather than a guess.
     methods: HashMap<(Symbol, Symbol), Method>,
@@ -1694,22 +1694,22 @@ struct Emitter<'p> {
     /// ADR-010: nobody outside the program chose the bytes its maps are keyed
     /// by, so a map may have the fast hash.
     trusted_input: bool,
-    /// ADR-007 D5: the functions that accept a DSL's deferred parameters, by
+    /// ADR-296 D5: the functions that accept a DSL's deferred parameters, by
     /// name. A `;` at a call means options everywhere else, and this is what
     /// says which calls mean the other thing.
     dsl_drivers: HashSet<String>,
     /// **What an `extern "C"` declaration takes, by name and position**
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D5).
     ///
     /// A declaration says `&[u8]` and C wants a pointer, so the *call* is where
     /// the pointer is made — `bytes.as_ptr()` rather than `bytes`. It is read
     /// from this file's own items rather than handed over by the checker, which
     /// is the one place that arrangement works: the emitter resolves a free
-    /// call by name already ([ADR-011](../../docs/specification/adr/adr-011.md)
+    /// call by name already ([ADR-296](../../docs/specification/adr/adr-296.md)
     /// D2), and a foreign declaration is a name in this very file.
     foreign_params: std::collections::BTreeMap<String, Vec<Type>>,
     /// **The opaque handles this file declares, and what releases each**
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D7).
     ///
     /// A handle is **lent** to every declaration but one: it is the address by
     /// value, and the caller keeps the value so its `cleanup` still runs at the
@@ -1718,14 +1718,14 @@ struct Emitter<'p> {
     /// must not be released twice.
     opaque_handles: std::collections::BTreeMap<String, String>,
     /// What each `extern "C"` declaration hands back, by the name a call writes
-    /// ([ADR-155](../../docs/specification/adr/adr-155.md) D3). A handle needs
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D12). A handle needs
     /// its hull put on at the call, and whether the declaration said `?`
     /// decides which one.
     foreign_results: std::collections::BTreeMap<String, Type>,
     /// Whether these items are the crate root - the one file that may carry
     /// the program's entry point.
     ///
-    /// [ADR-038](../../../docs/specification/adr/adr-038.md) D4 starts the
+    /// [ADR-303](../../../docs/specification/adr/adr-303.md) D4 starts the
     /// runtime before the first statement the user wrote, and the way to do
     /// that is to write the `fn main` Rust runs and call the program's own
     /// `main` from inside it. That may only happen once per program, so a
@@ -1753,7 +1753,7 @@ impl Method {
 
 /// How `Self::dsl` is spelled in the source, and what it becomes below.
 ///
-/// ADR-007 D5 gives a driver one way to name the type a DSL string generates,
+/// ADR-296 D5 gives a driver one way to name the type a DSL string generates,
 /// and the emitted Rust needs a name for it that no program can collide with.
 const SELF_DSL: &str = "Self::dsl";
 const DSL_PARAMETER: &str = "NikaiaDsl";
@@ -1804,13 +1804,13 @@ const UNCHECKED: &str = "__unchecked";
 /// D7).
 use crate::contracts::ty::ARRAY;
 
-/// **`std`'s own handle** ([ADR-147](../../docs/specification/adr/adr-147.md)
+/// **`std`'s own handle** ([ADR-302](../../docs/specification/adr/adr-302.md)
 /// D4): text a C library owns, which no `extern "C"` block declares because
 /// `std` does.
 const C_STRING: &str = "CStr";
 
 /// A written type's own name, with the module it is reached through taken off
-/// ([ADR-154](../../docs/specification/adr/adr-154.md) D3).
+/// ([ADR-313](../../docs/specification/adr/adr-313.md) D3).
 ///
 /// `foreign::CStr` is what a declaration writes now; what this file asks about
 /// is the **type**, which is the last segment. The full name is what goes into
@@ -1821,20 +1821,20 @@ fn base(name: &str) -> &str {
 
 const SHARED: &str = "Shared";
 /// Part I 6.3's lock, whose shape is decided per value
-/// ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 const LOCKED: &str = "Locked";
 
 /// The shared mutable type, which is **one name here and two hulls below**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D1).
 ///
 /// It is a name the checker carries and only this module expands, which is the
 /// whole of D1: a name that resolved away early would put a spelling nobody wrote
-/// into every message about it ([ADR-039](../../../docs/specification/adr/adr-039.md)
+/// into every message about it ([ADR-281](../../../docs/specification/adr/adr-281.md)
 /// D9 named that as what one name buys).
 const SHARED_MUT: &str = "SharedMut";
 
 /// Whose the one error type in a function's set is
-/// ([ADR-159](../../docs/specification/adr/adr-159.md) D1, D2).
+/// ([ADR-280](../../docs/specification/adr/adr-280.md) D9, D13).
 ///
 /// The difference decides the **envelope**. A type this unit declares is one
 /// the program `throw`s, so the failure has a site and travels in a
@@ -1847,7 +1847,7 @@ enum Named<'a> {
 }
 
 /// What a generated error sum is called
-/// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+/// ([ADR-280](../../docs/specification/adr/adr-280.md) D15).
 ///
 /// A program never writes it: a `catch` matches on the **members'** variants
 /// ([ADR-023](../../docs/specification/adr/adr-023.md) D4), so this name exists
@@ -1860,11 +1860,11 @@ const SUM: &str = "__NikaiaThrows_";
 const PANIC: &str = "panic";
 
 /// Where a write through the brackets holds its value while the read in it
-/// finishes ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+/// finishes ([ADR-293](../../docs/specification/adr/adr-293.md) D2).
 const STORED: &str = "__nikaia_stored";
 
 /// The name an arm's value is bound to before it is put back in an `Ok`
-/// ([ADR-164](../../docs/specification/adr/adr-164.md) D1).
+/// ([ADR-292](../../docs/specification/adr/adr-292.md) D18).
 ///
 /// **The binding is what keeps `rustc` quiet.** `Ok({ … })` around a block
 /// holding one expression is `unused_braces` — a warning about a file nobody
@@ -1899,14 +1899,14 @@ fn variant_slot(owner: &str, variant: &str, at: usize) -> String {
 /// What the program's own `main` is called in the emitted Rust.
 ///
 /// `fn main` belongs to the runtime now
-/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D4): it starts the
+/// ([ADR-303](../../../docs/specification/adr/adr-303.md) D4): it starts the
 /// I/O worker, calls this, and drains. The name is spelled so that no Nikaia
 /// program plausibly collides with it, and a `rustc` diagnostic about the
 /// program's body still lands on the `.nika` source because the body's spans
-/// are unchanged (ADR-012).
+/// are unchanged (ADR-300).
 const PROGRAM_MAIN: &str = "__nikaia_main";
 
-/// The generated name of [ADR-044](../../../docs/specification/adr/adr-044.md)
+/// The generated name of [ADR-300](../../../docs/specification/adr/adr-300.md)
 /// D1's table. `__nikaia_` for the same reason `__nikaia_main` is: a name a
 /// program could also have chosen would be a name this compiler took from it.
 const ABORT_TABLE: &str = "__NIKAIA_SITES";
@@ -1931,7 +1931,7 @@ const ABORT_TABLE: &str = "__NIKAIA_SITES";
 ///
 /// So the rewrite is allowed where this says [`Tail::Return`] and nowhere else.
 /// Everywhere else a `return` stays a `return`, which is always a legal Rust
-/// statement and always means what the source meant - ADR-011 D2's "the
+/// statement and always means what the source meant - ADR-296 D17's "the
 /// lowering is syntactic and never guesses a meaning", applied to the one place
 /// it had been guessing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1949,7 +1949,7 @@ enum Tail {
 
 impl Tail {
     /// Whether the last statement is the block's value at all - which is what
-    /// decides the semicolon, and what ADR-033's grouping may not take.
+    /// decides the semicolon, and what ADR-292's grouping may not take.
     fn is_value(self) -> bool {
         !matches!(self, Tail::Statement)
     }
@@ -1967,7 +1967,7 @@ impl Tail {
 /// ([`crate::contracts::sharing`]).
 ///
 /// `declared_by` is the trait an `impl` names, where it names one, and it
-/// exists because [ADR-109](../../docs/specification/adr/adr-109.md) D2 makes
+/// exists because [ADR-288](../../docs/specification/adr/adr-288.md) D25 makes
 /// the **declaration** the wider claim: a trait method without `sync` may
 /// pause, so its implementations are `async fn` whether or not their own
 /// bodies do. A body that never pauses under such a declaration is correct and
@@ -1994,7 +1994,7 @@ struct Declared<'a> {
     /// value rather than a statement like any other.
     returns_value: bool,
     /// The code parameters of this declaration whose type may pause
-    /// ([ADR-122](../../docs/specification/adr/adr-122.md) D1): a call to one
+    /// ([ADR-277](../../docs/specification/adr/adr-277.md) D11): a call to one
     /// of these carries an `.await`.
     awaited: &'a [Symbol],
     /// The ledger key of the function these statements are in: `main`, or
@@ -2004,20 +2004,20 @@ struct Declared<'a> {
     /// segment (ADR-023 D6: a `throw` in `main` says `main`).
     key: &'a str,
     /// The type this function's failures travel in, exactly as the signature
-    /// above wrote it ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+    /// above wrote it ([ADR-292](../../docs/specification/adr/adr-292.md) D17).
     ///
     /// A vehicle that takes fallible branches - `overlap`, `select` - has to
     /// name an error type for the `async` blocks it writes, because one with a
     /// `?` in it and nothing to infer from is *type annotations needed* about a
     /// file nobody wrote. Naming the box was right while every channel was one;
-    /// since [ADR-157](../../docs/specification/adr/adr-157.md) a channel can
+    /// since [ADR-280](../../docs/specification/adr/adr-280.md) a channel can
     /// be a `Thrown<E>`, a library's type bare or a generated sum, and the `?`
     /// on the branch has to convert into whichever it is.
     channel: &'a str,
 }
 
 /// **The oldest Rust a Nikaia installation works with**
-/// ([ADR-219](../../docs/specification/adr/adr-219.md)).
+/// ([ADR-305](../../docs/specification/adr/adr-305.md)).
 ///
 /// **Measured, not derived**: the whole test suite - the compiler, `std`, and
 /// every program the tests emit and compile - passes on this version, and CI
@@ -2062,7 +2062,7 @@ struct Flow<'a> {
     caught: bool,
     /// What is being emitted is a `catch`'s **handler**, and the error it was
     /// handed came through a **named** channel
-    /// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D10).
     ///
     /// One statement in a handler reads it: `throw error`, which passes the
     /// error on with the site it was raised at rather than wrapping it again.
@@ -2071,21 +2071,21 @@ struct Flow<'a> {
     /// `error` or none.
     caught_named: bool,
     /// The **sum** the error a handler was handed travels in, where it is one
-    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D17).
     ///
     /// `match error { … }` reads it: the patterns the source writes name
     /// variants of the sum's **members**, so the match has to be taken apart by
     /// member, and the sum's own name is what the outer arms are written with.
     caught_sum: Option<&'a str>,
     /// The **member** of that sum whose arm is being written, where one is
-    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D17).
     ///
     /// `throw error` reads it: inside a member's arm the handler holds the
     /// member, so passing the error on is putting it back in the variant it
     /// came out of.
     caught_member: Option<&'a str>,
     /// What is being emitted is a **place** rather than a value
-    /// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+    /// ([ADR-293](../../../docs/specification/adr/adr-293.md) D4).
     ///
     /// The left of an assignment is the only one: `self.bodies[0].vx = …`
     /// writes **through** the index, so the brackets there are the language
@@ -2096,7 +2096,7 @@ struct Flow<'a> {
     /// back, so a block arm's last statement keeps its semicolon, as an `if`
     /// in statement position does. Without it `ledger.sources.insert(…)` at
     /// the end of an arm was the arm's value (found moving the ledger's reader
-    /// into Nikaia, ADR-257).
+    /// into Nikaia, ADR-294).
     arms_are_statements: bool,
     /// The byte the statement being emitted starts at.
     ///
@@ -2120,7 +2120,7 @@ struct Flow<'a> {
     function: &'a str,
     /// This expression **is** the guarded half of a `catch`, rather than
     /// sitting somewhere inside it
-    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D3).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D18).
     ///
     /// `caught` reaches inward, because in `outer(inner()) catch { … }` the
     /// handler runs for either call. This does not: it is set on the one
@@ -2130,7 +2130,7 @@ struct Flow<'a> {
     /// like any other value.
     handled_here: bool,
     /// The type the enclosing function's failures travel in
-    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D2).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D17).
     ///
     /// Read by the two vehicles that wrap a fallible branch in an `Ok`:
     /// `overlap` and `select` write the error type out, and it has to be the
@@ -2159,7 +2159,7 @@ struct Flow<'a> {
     /// body starts a `Flow` of its own, which is the boundary it does not cross.
     in_lambda: bool,
     /// The lambda parameters written **`mut`** that are in scope here
-    /// ([ADR-110](../../docs/specification/adr/adr-110.md) D1).
+    /// ([ADR-281](../../docs/specification/adr/adr-281.md) D12).
     ///
     /// `kasse.update fn(mut v) { v += 100 }` lowers to a closure whose
     /// parameter is `&mut T`, because D1 hands the block the **address** in the
@@ -2174,14 +2174,14 @@ struct Flow<'a> {
     /// `update` block does not lose the dereference for a name it captures.
     changed: &'a [Symbol],
     /// The **code parameters whose type may pause**
-    /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1) that are in
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D11) that are in
     /// scope here.
     ///
     /// Such a parameter lowers to a closure returning a boxed future, so a call
     /// to it is a call that hands back a future and carries an `.await`. The
     /// emitter can answer this one itself — the type is written in the
     /// declaration it is standing in, which is not the case for anything
-    /// `pausing_key` looks up ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    /// `pausing_key` looks up ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     ///
     /// **It does not accumulate the way `changed` does.** A lambda written
     /// inside the body has parameters of its own, and a name it binds is not
@@ -2192,7 +2192,7 @@ struct Flow<'a> {
     ///
     /// It is here for the reason `function` is: the count a `Shared` was given is
     /// keyed by the function and the name (`contracts::sharing`), and a hull
-    /// written by a **call** ([ADR-064](../../../docs/specification/adr/adr-064.md)
+    /// written by a **call** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     /// D2) has to look that up from inside an expression. An expression carries no
     /// span and no name of its own.
     ///
@@ -2200,7 +2200,7 @@ struct Flow<'a> {
     /// never a wrong answer - only a slower one.
     bound: &'a str,
     /// What is being emitted is **inside a constant this pass decided to write
-    /// in the wider type** ([ADR-063](../../../docs/specification/adr/adr-063.md)
+    /// in the wider type** ([ADR-285](../../../docs/specification/adr/adr-285.md)
     /// D1), so every integer literal in it carries the `i64` suffix.
     ///
     /// It reaches inward, and it can only reach literals: an expression folds
@@ -2277,7 +2277,7 @@ impl<'a> Flow<'a> {
     }
 
     /// The guarded half of a `catch`, where that half is a block that **joins**
-    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D3).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D18).
     ///
     /// The `match` is written around this expression, so its outcome has to be
     /// the `Result` the handler takes apart rather than the value a
@@ -2291,7 +2291,7 @@ impl<'a> Flow<'a> {
     }
 
     /// The left of an assignment
-    /// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+    /// ([ADR-293](../../../docs/specification/adr/adr-293.md) D4).
     fn place(self) -> Self {
         Flow {
             in_a_place: true,
@@ -2300,7 +2300,7 @@ impl<'a> Flow<'a> {
     }
 
     /// The surroundings a `catch`'s **handler** is emitted in
-    /// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D10).
     ///
     /// The handler runs outside the guard — a failure raised *there* leaves
     /// the function like any other — so this is the flow the `catch` was
@@ -2314,7 +2314,7 @@ impl<'a> Flow<'a> {
     }
 
     /// The same, for a handler whose error travels in a **sum**
-    /// ([ADR-160](../../../docs/specification/adr/adr-160.md) D3).
+    /// ([ADR-280](../../../docs/specification/adr/adr-280.md) D17).
     ///
     /// A shorter lifetime than the flow it came from, and that is the point:
     /// the sum's name is the emitter's and outlives the handler being written,
@@ -2377,7 +2377,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The same, told what this build may read
-    /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    /// ([ADR-310](../../docs/specification/adr/adr-310.md)).
     fn new_reading(
         parsed: &'p Parsed,
         build: Build,
@@ -2404,7 +2404,7 @@ impl<'p> Emitter<'p> {
         build: Build,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
-        // **The described crates' boundary** (ADR-237 D1): whether a call into
+        // **The described crates' boundary** (ADR-290 D20): whether a call into
         // one can fail, and what it keeps, which the propagation below asks.
         described: &crate::contracts::Ledger,
         reads: &Reads,
@@ -2473,9 +2473,9 @@ impl<'p> Emitter<'p> {
         // something whose step can fail, because it infers the iterator's type
         // and reads the ledger. Matching on the name `io::lines` here would
         // have caught the one-line form and quietly missed
-        // `let s = io::lines()` followed by `for line in s`. ADR-028 for the
+        // `let s = io::lines()` followed by `for line in s`. ADR-288 for the
         // method calls: a receiver's type is the type checker's to know, and
-        // there is one type checker (ADR-028).
+        // there is one type checker (ADR-288).
         let propagation =
             crate::check::propagation_against(parsed, beside, &own_contracts, described, reads);
         let proven = crate::bounds::proven(
@@ -2508,7 +2508,7 @@ impl<'p> Emitter<'p> {
             borrowing: borrowing_structs(parsed),
             tethered: tethered_types(&own_contracts),
             // **An error another file of the package declares is the
-            // package's own** (Part I 9.1, ADR-261): its `impl Error` is in
+            // package's own** (Part I 9.1, ADR-294): its `impl Error` is in
             // that file, and a function here that throws it travels in its
             // envelope, as one written beside the `impl` does.
             declared_errors: std::iter::once(parsed)
@@ -2690,12 +2690,12 @@ impl<'p> Emitter<'p> {
     }
 
     /// The name of a function whose body walks a type's fields, where this item
-    /// is one ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    /// is one ([ADR-304](../../docs/specification/adr/adr-304.md) D6).
     ///
     /// Read off the **checker's** answer rather than off the body, which is
     /// this emitter's rule everywhere: what a type is, and therefore which
     /// functions were instantiated with what, is the checker's
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)).
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)).
     fn walks_a_shape(&self, item: &Item) -> Option<String> {
         let Item::Fn {
             name: Some(name), ..
@@ -2722,7 +2722,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The fields a `for` over `T::fields` walks, where this is one
-    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    /// ([ADR-304](../../docs/specification/adr/adr-304.md) D6).
     ///
     /// Asked of the **iterated expression** rather than of the statement,
     /// because that is where the shape is named — and answered from the
@@ -2759,7 +2759,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **The field this unrolled turn stands at**, where `base.member` is a
-    /// read of the loop's own binding ([ADR-181](../../docs/specification/adr/adr-181.md)
+    /// read of the loop's own binding ([ADR-304](../../docs/specification/adr/adr-304.md)
     /// D2).
     ///
     /// `None` everywhere else, which is every program that does not walk a
@@ -2796,10 +2796,10 @@ impl<'p> Emitter<'p> {
         self.write_error_sums(&mut out);
         for item in &self.parsed.program.items {
             // **One copy per type it was used with, and no generic original**
-            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // ([ADR-304](../../docs/specification/adr/adr-304.md) D6): the
             // generic body holds a loop over a shape, which has no form in the
             // language below. It is **unrolled**, which is
-            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one loop*
+            // [ADR-304](../../docs/specification/adr/adr-304.md) D5's *one loop*
             // arrived at rather than added - `T::fields` is known while the
             // program is built, so there is no run-time reading to rule out.
             if let Some(name) = self.walks_a_shape(&item.node) {
@@ -2820,10 +2820,10 @@ impl<'p> Emitter<'p> {
                 continue;
             }
             // **One copy per type it was used with, and no generic original**
-            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // ([ADR-304](../../docs/specification/adr/adr-304.md) D6): the
             // generic body holds a loop over a shape, which has no form in the
             // language below. It is **unrolled**, which is
-            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one
+            // [ADR-304](../../docs/specification/adr/adr-304.md) D5's *one
             // loop* arrived at rather than added — `T::fields` is known while
             // the program is built, so there is no run-time reading to rule
             // out.
@@ -2894,10 +2894,10 @@ impl<'p> Emitter<'p> {
 
         for item in &self.parsed.program.items {
             // **One copy per type it was used with, and no generic original**
-            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // ([ADR-304](../../docs/specification/adr/adr-304.md) D6): the
             // generic body holds a loop over a shape, which has no form in the
             // language below. It is **unrolled**, which is
-            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one loop*
+            // [ADR-304](../../docs/specification/adr/adr-304.md) D5's *one loop*
             // arrived at rather than added - `T::fields` is known while the
             // program is built, so there is no run-time reading to rule out.
             if let Some(name) = self.walks_a_shape(&item.node) {
@@ -2918,10 +2918,10 @@ impl<'p> Emitter<'p> {
                 continue;
             }
             // **One copy per type it was used with, and no generic original**
-            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // ([ADR-304](../../docs/specification/adr/adr-304.md) D6): the
             // generic body holds a loop over a shape, which has no form in the
             // language below. It is **unrolled**, which is
-            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one
+            // [ADR-304](../../docs/specification/adr/adr-304.md) D5's *one
             // loop* arrived at rather than added — `T::fields` is known while
             // the program is built, so there is no run-time reading to rule
             // out.
@@ -2949,7 +2949,7 @@ impl<'p> Emitter<'p> {
         self.entry_point(&mut out);
         if self.user_main().is_some() {
             // **An empty table, and the reason it is empty.** `fn main` installs
-            // the hook that reads it (ADR-044 D2), so the name has to be defined
+            // the hook that reads it (ADR-300 D10), so the name has to be defined
             // or the program does not compile - and a table needs the *file* each
             // line came from, which this path does not know: it is handed one
             // `Parsed` and no path. The path a user takes goes through
@@ -2961,7 +2961,7 @@ impl<'p> Emitter<'p> {
             // not know is handed to the hook installed before ours, which is
             // Rust's own, so such a program is exactly as well off as it was.
             out.push(&format!(
-                "\n// ADR-044 D1: no table - this program was emitted without its file name.\nconst {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[];\n"
+                "\n// ADR-300 D9: no table - this program was emitted without its file name.\nconst {ABORT_TABLE}: &[nikaia_std::abort::Site] = &[];\n"
             ));
         }
 
@@ -3005,19 +3005,19 @@ impl<'p> Emitter<'p> {
             })
     }
 
-    /// The `fn main` Rust runs: ADR-038 D4, as five lines of generated code.
+    /// The `fn main` Rust runs: ADR-303 D4, as five lines of generated code.
     ///
     /// The runtime is started *before* the program's first statement and
     /// drained after its last, so an operation inside the program costs no
     /// thread start and no thread wake-up - which is
-    /// [ADR-033](../../../docs/specification/adr/adr-033.md) §8.4's finding
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md)'s finding
     /// read the other way round.
     ///
     /// What starts is what
     /// [ADR-037](../../../docs/specification/adr/adr-037.md) D2 allows, and
     /// the *compiler* is what knows which: `user_parallelism` is a build
     /// switch, so it is written into this call rather than read from the
-    /// operator's runtime configuration file (ADR-038 D5 has four settings and
+    /// operator's runtime configuration file (ADR-303 D5 has four settings and
     /// this is not one of them).
     fn entry_point(&self, out: &mut Out) {
         let Some(throws) = self.user_main() else {
@@ -3028,7 +3028,7 @@ impl<'p> Emitter<'p> {
             UserParallelism::Yes => "Concurrent",
         };
         // **The runtime's `main` declares the program's own channel**
-        // ([ADR-157](../../docs/specification/adr/adr-157.md) D1): it hands
+        // ([ADR-280](../../docs/specification/adr/adr-280.md) D9): it hands
         // `__nikaia_main`'s outcome straight back, so the two have to agree.
         // `Result<(), E>` is a `Termination` for any `E: Debug`, which every
         // envelope is.
@@ -3045,7 +3045,7 @@ impl<'p> Emitter<'p> {
 
         for line in [
             "",
-            "// ADR-038 D4: the runtime is running before the program's first",
+            "// ADR-303 D4: the runtime is running before the program's first",
             "// statement, so an operation inside it costs no thread wake-up. What",
             "// starts is what `user_parallelism` allows (ADR-037 D2): the I/O",
             "// worker always, a pool for user code only at `yes`.",
@@ -3054,7 +3054,7 @@ impl<'p> Emitter<'p> {
             out.push("\n");
         }
         out.push(&format!("fn main(){ret} {{\n"));
-        // **Before anything else** (ADR-044 D2): the hook has to be in place
+        // **Before anything else** (ADR-300 D10): the hook has to be in place
         // before a line that can abort runs, and the first of those is inside
         // the runtime's own start. The table is defined at the end of this file
         // (`abort_table`), which Rust allows and which is what keeps the line
@@ -3098,7 +3098,7 @@ impl<'p> Emitter<'p> {
     /// which is what decides whether the piece driver's names are in the
     /// preamble.
     ///
-    /// The entry is a call now ([ADR-082](../../docs/specification/adr/adr-082.md)
+    /// The entry is a call now ([ADR-296](../../docs/specification/adr/adr-296.md)
     /// D1), so the rule is the one the program **named** rather than the one
     /// this file used to pick. Found by being wrong: the lowering was right and
     /// the preamble was not, and `rustc` answered *"use of undeclared type
@@ -3154,7 +3154,7 @@ impl<'p> Emitter<'p> {
         let name = self.text(name);
         let mut parts = vec!["Debug", "Clone"];
         // **`Copy` where every part is one**
-        // ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.1): the
+        // ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.1): the
         // Rust below may copy it, which a Rust reader of a type Nikaia declares
         // needs, and nothing this language says about the value changes.
         if self.copies.contains(name) {
@@ -3248,7 +3248,7 @@ impl<'p> Emitter<'p> {
                 out.push(&self.derives(*name));
                 let vis = if *is_public { "pub " } else { "" };
                 // The input lifetime first and the type parameters after it,
-                // which is the order Rust wants them in (ADR-074 D3).
+                // which is the order Rust wants them in (ADR-295 D3).
                 let mut parts: Vec<String> = Vec::new();
                 if self.borrowing.contains(name) {
                     parts.push(INPUT_LIFETIME.to_string());
@@ -3316,7 +3316,7 @@ impl<'p> Emitter<'p> {
 
                 // `impl Stack[T]` declares `T` and writes `Stack<T>`; the
                 // lifetime, where the type carries one, stands in front of it
-                // (ADR-074 D4). The target's arguments are written as the
+                // (ADR-295 D4). The target's arguments are written as the
                 // source wrote them, so `impl Stack[i64]` stays `Stack<i64>`
                 // and declares nothing.
                 let declared = crate::contracts::declared_types(self.parsed);
@@ -3339,7 +3339,7 @@ impl<'p> Emitter<'p> {
                 );
                 let applied = angled(&target_parts);
                 // **`impl Cleanup for T` is the type's own `cleanup` and a
-                // one-line bridge to std's trait** (ADR-239 D1): the method
+                // one-line bridge to std's trait** (ADR-297 D1): the method
                 // is written as the author wrote it, paused and failing as the
                 // ledger says, and `Cleaned<T>` reaches it through the bridge
                 // when the value dies.
@@ -3409,11 +3409,11 @@ impl<'p> Emitter<'p> {
             }
             // Kap 4.7: `trait Summarize { … }` becomes the same trait below, and
             // the method is a signature with a `;` where an `impl`'s has a body
-            // ([ADR-078](../../docs/specification/adr/adr-078.md) D1).
+            // ([ADR-295](../../docs/specification/adr/adr-295.md) D6).
             //
             // **No method here is `async`.** The ledger's `sync` column decides
             // that for a function (ADR-055 D1), and a declaration has no body
-            // for `sync::infer` to read - so ADR-078 D4 asserts `sync` for a
+            // for `sync::infer` to read - so ADR-295 D9 asserts `sync` for a
             // trait's methods, which is the only answer this position can
             // write: `async fn` in a trait is something the emitter has no way
             // to ask for. What that costs is a trait whose method genuinely
@@ -3440,7 +3440,7 @@ impl<'p> Emitter<'p> {
                 // generated file still says where they were asked for.
                 //
                 // An alias is **resolved away** rather than emitted as a Rust
-                // `use … as …` (ADR-046 D3): it is one file's name for a package
+                // `use … as …` (ADR-286 D12): it is one file's name for a package
                 // and every file's items are in one crate, so a Rust alias at the
                 // root would be the whole program's. `Parsed::unaliased` is where
                 // the resolving happens, on the way to every name.
@@ -3471,14 +3471,14 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
             // **The same `const` the body form writes, one level out**
-            // ([ADR-097](../../docs/specification/adr/adr-097.md)). The
+            // ([ADR-287](../../docs/specification/adr/adr-287.md)). The
             // spelling is the checker's, handed over keyed by the item's own
             // byte offset the way a statement's is - this emitter knows no
-            // types ([ADR-011](../../docs/specification/adr/adr-011.md) D2), so
+            // types ([ADR-296](../../docs/specification/adr/adr-296.md) D17), so
             // what `1000` is called below is not a question it can answer.
             //
             // `pub` is Part I 9.2's rule for Constants and reaches Rust as
-            // Rust's own ([ADR-047](../../docs/specification/adr/adr-047.md)
+            // Rust's own ([ADR-286](../../docs/specification/adr/adr-286.md)
             // D2): a package's crate is what another package reads.
             Item::Comptime { name, public, .. } => {
                 let bound = self.name(*name);
@@ -3497,7 +3497,7 @@ impl<'p> Emitter<'p> {
                 Ok(())
             }
             // **Rust's own `extern` block**
-            // ([ADR-124](../../docs/specification/adr/adr-124.md) D1), which is
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D1), which is
             // the whole of the lowering: the form means the same thing on both
             // sides, and a declaration is `trait_method`'s shape with `sync`
             // said by the caller (D2).
@@ -3518,7 +3518,7 @@ impl<'p> Emitter<'p> {
                     ));
                 }
                 // **A handle is a type of its own, outside the block**
-                // ([ADR-147](../../docs/specification/adr/adr-147.md) D3). It
+                // ([ADR-302](../../docs/specification/adr/adr-302.md) D7). It
                 // is written before the declarations, because they name it.
                 for handle in opaque {
                     out.from(&handle.span, |out| {
@@ -3544,7 +3544,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **An opaque handle, and the `cleanup` that ends its life**
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D7).
     ///
     /// ```ignore
     /// #[repr(transparent)]
@@ -3570,7 +3570,7 @@ impl<'p> Emitter<'p> {
     /// release fires once per scope and not twice.
     ///
     /// **The address inside is `NonNull`**, which is
-    /// [ADR-155](../../docs/specification/adr/adr-155.md) D2: a handle holds an
+    /// [ADR-302](../../docs/specification/adr/adr-302.md) D11: a handle holds an
     /// address and `T?` is the absence of one, and those are the two states C
     /// spells with a pointer and `NULL`. Rust lays `Option<T>` over the same
     /// word for a type shaped like this, so a nullable handle costs nothing and
@@ -3591,7 +3591,7 @@ impl<'p> Emitter<'p> {
              #[allow(dead_code)]\n\
              impl {name} {{\n\
              \x20   /// What a declaration that says `-> {name}` hands back\n\
-             \x20   /// (ADR-155 D3): the address, or an abort naming the\n\
+             \x20   /// (ADR-302 D12): the address, or an abort naming the\n\
              \x20   /// declaration that claimed it would be one.\n\
              \x20   #[track_caller]\n\
              \x20   fn from_c(declaration: &str, address: *mut core::ffi::c_void) -> {name} {{\n\
@@ -3607,7 +3607,7 @@ impl<'p> Emitter<'p> {
              \x20   }}\n\
              \n\
              \x20   /// The same address, without giving the handle away\n\
-             \x20   /// (ADR-147 D3): what a C function is handed is the\n\
+             \x20   /// (ADR-302 D7): what a C function is handed is the\n\
              \x20   /// pointer, and this handle stays the caller's to close.\n\
              \x20   fn lent(&self) -> {name} {{\n\
              \x20       {name}(self.0)\n\
@@ -3624,7 +3624,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **A type in an `extern "C"` declaration, as the pointer C wants**
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D5).
     ///
     /// The four forms the record writes, and each lives **for the call**, which
     /// is what a view is everywhere else in this language
@@ -3652,7 +3652,7 @@ impl<'p> Emitter<'p> {
         // ([ADR-184](../../docs/specification/adr/adr-184.md) D3, D4), here as
         // everywhere else. At this boundary it is still D1's address beside
         // D2's count and not Rust's fat pointer — two writers for one spelling,
-        // which is the arrangement [ADR-147](../../docs/specification/adr/adr-147.md)
+        // which is the arrangement [ADR-302](../../docs/specification/adr/adr-302.md)
         // chose and this only renames.
         if self.writes_a_run(ty) {
             let element = match ty.generics.first() {
@@ -3674,7 +3674,7 @@ impl<'p> Emitter<'p> {
 
     /// **The hull a call's result needs**, where the callee is a foreign
     /// declaration handing back a handle
-    /// ([ADR-155](../../docs/specification/adr/adr-155.md) D2, D3): the
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D11, D12): the
     /// handle's name, and whether the declaration said it **may be absent**.
     fn handle_from(&self, func: &Expr) -> Option<(String, bool)> {
         let Expr::Variable(name) = func else {
@@ -3694,8 +3694,8 @@ impl<'p> Emitter<'p> {
     }
 
     /// The handle a type names, where it names one
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D3,
-    /// [ADR-155](../../docs/specification/adr/adr-155.md) D1) — through a `?`,
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D7,
+    /// [ADR-302](../../docs/specification/adr/adr-302.md) D10) — through a `?`,
     /// because `CStr?` is a handle that may be absent and is still a handle.
     ///
     /// `None` for a view or a slice of one: what a `&T` at the boundary is is
@@ -3722,7 +3722,7 @@ impl<'p> Emitter<'p> {
 
     /// Which shape a declared parameter takes at the C boundary, or `None`
     /// where it is an ordinary value an `i32` is at both ends
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D5, D7).
     fn pointer_for(&self, callee: &str, ty: &Type) -> Option<Pointer> {
         if let Some(release) = self.opaque_handles.get(self.text(ty.name))
             && !ty.is_view
@@ -3733,7 +3733,7 @@ impl<'p> Emitter<'p> {
             });
         }
         // **A run is an address beside a count and a view is one address**
-        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2), and
+        // ([ADR-302](../../docs/specification/adr/adr-302.md) D5, D6), and
         // which of the two a declaration wrote is [`Emitter::writes_a_run`]'s
         // question since `ref Array[T]` became the spelling
         // ([ADR-184](../../docs/specification/adr/adr-184.md) D3).
@@ -3759,7 +3759,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether an `extern "C"` declaration takes this position in `size_t`
-    /// ([ADR-147](../../docs/specification/adr/adr-147.md) D2).
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D6).
     ///
     /// The declaration's own word, and not a list of names: `is_count` beside
     /// it is a fact about *Rust's* library that nothing in this compiler can
@@ -3781,9 +3781,9 @@ impl<'p> Emitter<'p> {
     ///
     /// `sync` is the caller's rather than the declaration's, because the same
     /// shape reads two ways: a **trait** method without the word may pause
-    /// ([ADR-109](../../docs/specification/adr/adr-109.md) D1), and an
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D24), and an
     /// **`extern "C"`** declaration never can
-    /// ([ADR-124](../../docs/specification/adr/adr-124.md) D2) — C has no
+    /// ([ADR-302](../../docs/specification/adr/adr-302.md) D2) — C has no
     /// suspension point, and a C function that sleeps blocks a thread, which is
     /// `println`'s question and not this one.
     fn trait_method(
@@ -3792,7 +3792,7 @@ impl<'p> Emitter<'p> {
         method: &crate::ast::TraitMethod,
         is_sync: bool,
         // **Whether this is a C declaration**
-        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1), which is
+        // ([ADR-302](../../docs/specification/adr/adr-302.md) D5), which is
         // what decides how a view is written: at the C boundary it is the
         // pointer C wants, and everywhere else it is the borrow Rust wants.
         // The same `&str` is a thin pointer to C and a fat one to Rust, so a
@@ -3834,7 +3834,7 @@ impl<'p> Emitter<'p> {
         }
         let returned = match &method.ret_type {
             // **A handle comes back as the address it is**
-            // ([ADR-155](../../docs/specification/adr/adr-155.md) D3), and the
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D12), and the
             // call is where it becomes a handle. Declaring the *type* here
             // would be a lie the moment C hands back nothing: the hull under a
             // handle is non-null, so a null arriving in one is undefined
@@ -3860,7 +3860,7 @@ impl<'p> Emitter<'p> {
             returned
         };
         // **A method that may pause is declared in the return-position form**
-        // ([ADR-109](../../docs/specification/adr/adr-109.md) D3): `-> impl
+        // ([ADR-288](../../docs/specification/adr/adr-288.md) D26): `-> impl
         // Future<Output = …>`, which an `async fn` in the `impl` satisfies.
         //
         // **The sugar `async fn` is not written here**, and that is the reason
@@ -3897,10 +3897,10 @@ impl<'p> Emitter<'p> {
     }
 
     /// A type parameter with its bounds: `T`, or `T: Summarize + Clone`
-    /// ([ADR-078](../../docs/specification/adr/adr-078.md) D2).
+    /// ([ADR-295](../../docs/specification/adr/adr-295.md) D7).
     ///
     /// **A shape bound does not travel** ([`crate::types::SHAPE_BOUNDS`],
-    /// [ADR-088](../../docs/specification/adr/adr-088.md) D2): `Struct` and
+    /// [ADR-304](../../docs/specification/adr/adr-304.md) D2): `Struct` and
     /// `Enum` are answered by a **declaration** rather than by an `impl`, and
     /// the language below has no trait by either name — so one written into the
     /// generated file would come back as *cannot find trait `Struct` in this
@@ -3908,7 +3908,7 @@ impl<'p> Emitter<'p> {
     /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
     ///
     /// **Two names and not types**, which is why this does not break
-    /// [ADR-011](../../docs/specification/adr/adr-011.md) D2: the emitter is
+    /// [ADR-296](../../docs/specification/adr/adr-296.md) D17: the emitter is
     /// reading a word of this language, as it already reads `sync` and
     /// `throws`, and not asking what a value's type is.
     /// Whether this bound is one of [`crate::types::SHAPE_BOUNDS`] **and** the
@@ -3949,7 +3949,7 @@ impl<'p> Emitter<'p> {
     /// The author writes `message`. Rust wants `Display` for the text, and
     /// `std::error::Error` for the value to be accepted as an error at all;
     /// `Box<dyn Error>` then takes it. None of that is a decision - it is the
-    /// same transcription ADR-011 D2 asks of every other lowering - so the
+    /// same transcription ADR-296 D17 asks of every other lowering - so the
     /// `.nika` file says the part that is one and the emitter supplies the rest.
     ///
     /// `Debug` comes along because `std::error::Error` requires it, and a
@@ -4062,18 +4062,18 @@ impl<'p> Emitter<'p> {
         // A parameter the subject's buffer covers is written as a view of that
         // buffer, so the signature says what the body does with it; everything
         // else keeps the position's own spelling.
-        // **A function that takes a keep** (ADR-209 D2) writes the positions
+        // **A function that takes a keep** (ADR-283 D10) writes the positions
         // its views leave through with the keep's lifetime, so `rustc` holds
         // the body to exactly what the plan says.
         let kept = self.kept_lifetimes(&key, lifetimes);
         // **A view handed back out of a parameter that holds views**
-        // ([ADR-226](../../docs/specification/adr/adr-226.md) D1):
+        // ([ADR-282](../../docs/specification/adr/adr-282.md) D20):
         // `fn first(xs: Vec[ref String]) -> ref String` lends `xs`, and the
         // result is one of the views inside it, not a borrow of the list. Two
         // lifetimes are in that parameter - the loan and the buffer - and the
         // result's is the buffer's, so it is named: `fn first<'a>(xs:
         // &Vec<&'a str>) -> &'a str`. Only where that one parameter is all
-        // there is to borrow from; with two, which buffer is ADR-209's
+        // there is to borrow from; with two, which buffer is ADR-283's
         // question and already its refusal.
         let inner_views = match (lifetimes, receiver, kept, ret_type) {
             (Lifetimes::ELIDED, None, None, Some(ty))
@@ -4140,7 +4140,7 @@ impl<'p> Emitter<'p> {
         // two of the same.
         //
         // The name carries the position rather than the parameter's own name,
-        // for the reason the escape exists (ADR-076 D2): a parameter may be
+        // for the reason the escape exists (ADR-298 D10): a parameter may be
         // called anything, including something the language below reserves.
         let lengths: Vec<Option<String>> = args
             .iter()
@@ -4159,7 +4159,7 @@ impl<'p> Emitter<'p> {
             // The **source** name is what a `Shared` position is counted by
             // (`count_at`), and the **escaped** one is what is written: two uses
             // of one name that must not be collapsed, or the lookup misses on
-            // exactly the programs the escape is for (ADR-076 D2).
+            // exactly the programs the escape is for (ADR-298 D10).
             let name = self.text(a.name);
             // The receiver is a parameter of the contract and not of `args`, so
             // the position in the signature is one further along where there is
@@ -4207,8 +4207,8 @@ impl<'p> Emitter<'p> {
                 _ => {
                     // **Run is the absence of `keeps`**, off the very contract
                     // `lends` above was read from
-                    // ([ADR-192](../../docs/specification/adr/adr-192.md) D1,
-                    // [ADR-102](../../docs/specification/adr/adr-102.md) D3).
+                    // ([ADR-277](../../docs/specification/adr/adr-277.md) D11,
+                    // [ADR-277](../../docs/specification/adr/adr-277.md) D8).
                     // A contract this build does not have reads as run, which
                     // is the same answer the *call* writer gives an unresolved
                     // callee - the two have to agree or one parameter gets two
@@ -4223,14 +4223,14 @@ impl<'p> Emitter<'p> {
                 }
             };
             // **A `String` the body only reads is a `&str`**
-            // ([ADR-207](../../docs/specification/adr/adr-207.md) D3), not a
+            // ([ADR-282](../../docs/specification/adr/adr-282.md) D5), not a
             // `&String`. Every caller's `String` reaches it through the `&` the
             // call already writes, and a literal reaches it as it is - which is
             // what makes `greet("Ada")` cost nothing, where a `&String` would
             // have needed a `String` built to be pointed at.
             //
             // A parameter both kinds of text flow into is one of these too
-            // ([ADR-223](../../docs/specification/adr/adr-223.md) D2): a body
+            // ([ADR-282](../../docs/specification/adr/adr-282.md) D14): a body
             // that only reads needs neither kind, only the text, so nothing is
             // wrapped for it and each caller lends what it has.
             let plain_text = self.text(a.ty.name) == "String"
@@ -4259,7 +4259,7 @@ impl<'p> Emitter<'p> {
                 _ => written,
             };
             // **A published parameter both kinds of text flow into takes
-            // whatever hands over as either** (ADR-232 D1): a caller elsewhere
+            // whatever hands over as either** (ADR-282 D23): a caller elsewhere
             // hands over text of its own, as the ledger says, and this
             // package's own calls hand over what they have. It is taken as it
             // goes in on the body's first line.
@@ -4281,7 +4281,7 @@ impl<'p> Emitter<'p> {
         // so an option becomes an ordinary parameter here - in declaration
         // order, which is the order every call site fills in. The names stay
         // the source's, so a `rustc` diagnostic about one still lands on the
-        // parameter the programmer wrote (ADR-012).
+        // parameter the programmer wrote (ADR-300).
         params.extend(config.iter().map(|c| {
             let name = self.text(c.name);
             format!(
@@ -4291,7 +4291,7 @@ impl<'p> Emitter<'p> {
             )
         }));
 
-        // ADR-007 D5: `...args: Self::dsl` is the one parameter whose type the
+        // ADR-296 D5: `...args: Self::dsl` is the one parameter whose type the
         // *call site* decides, because the DSL string it comes from decides it.
         // A generic parameter is what that is in the language below, and Rust
         // monomorphises it per DSL string exactly as D5 asks - so the driver is
@@ -4310,14 +4310,14 @@ impl<'p> Emitter<'p> {
         }
 
         // **`fn hand[T](x: T)` is `fn hand<T>(x: T)`**
-        // ([ADR-074](../../docs/specification/adr/adr-074.md) D3). The `[T]` was
+        // ([ADR-295](../../docs/specification/adr/adr-295.md) D3). The `[T]` was
         // read by the parser and then fell out here, because this position had
         // no slot for one - so a program that passed every stage of this
         // compiler asked `rustc` about a type nobody had declared, which is
         // Part III C.1's class exactly.
         //
         // **A copy has no type parameter left**
-        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the whole of
+        // ([ADR-304](../../docs/specification/adr/adr-304.md) D6): the whole of
         // what the parameter was for is the shape, and the shape is written out
         // here. What stands in the signature is the type itself.
         // **And a length a parameter left open is a `const` parameter**
@@ -4349,7 +4349,7 @@ impl<'p> Emitter<'p> {
             true => std::iter::once("'a".to_string()).chain(declared).collect(),
             false => declared,
         };
-        // The lifetime a published parameter's `EitherText` is of (ADR-232 D1).
+        // The lifetime a published parameter's `EitherText` is of (ADR-282 D23).
         let declared: Vec<String> = match either_first.is_empty() {
             true => declared,
             false => std::iter::once("'e".to_string()).chain(declared).collect(),
@@ -4429,7 +4429,7 @@ impl<'p> Emitter<'p> {
                     (true, _) => Lifetimes::STATIC,
                     (false, _) if inner_views.is_some() => Lifetimes::NAMED,
                     // **A published parameter's `'e` is the one lifetime there
-                    // is** (ADR-232 D1): the elision does not read one out of
+                    // is** (ADR-282 D23): the elision does not read one out of
                     // an `impl` bound, so it is named.
                     (false, _)
                         if lifetimes == Lifetimes::ELIDED
@@ -4451,7 +4451,7 @@ impl<'p> Emitter<'p> {
             }
             None => "()".to_string(),
         };
-        // **The failure channel** ([ADR-157](../../docs/specification/adr/adr-157.md)
+        // **The failure channel** ([ADR-280](../../docs/specification/adr/adr-280.md)
         // D1): the error type where the ledger names exactly one, the box
         // otherwise. A method that implements a **trait** keeps the box, and
         // has to: the trait's own declaration writes the channel, and an `impl`
@@ -4474,13 +4474,13 @@ impl<'p> Emitter<'p> {
 
         let vis = if *is_public { "pub " } else { "" };
         let name = own_name;
-        // ADR-038 D4: `fn main` is the runtime's, and the program's own entry
+        // ADR-303 D4: `fn main` is the runtime's, and the program's own entry
         // point is called from inside it. Only at the crate root, and only for
         // the shape `entry_point` writes a wrapper for - `user_main` and this
         // ask the same question, so a renamed function always has a caller.
         //
         // The **source** name is kept for the body, because it is what an
-        // error raised in here reports as its site (ADR-023 D6, ADR-036): a
+        // error raised in here reports as its site (ADR-023 D6, ADR-280): a
         // `throw` in `main` says `main`, and the name this emitter chose for
         // the lowering is not something the author ever wrote.
         let emitted = if depth == 0 && name == MAIN && self.user_main().is_some() {
@@ -4489,7 +4489,7 @@ impl<'p> Emitter<'p> {
             escaped(&name).into_owned()
         };
         // **One copy per type this was used with**
-        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2), named so the
+        // ([ADR-304](../../docs/specification/adr/adr-304.md) D6), named so the
         // call and the definition cannot drift: `check::specialised` writes
         // both.
         let emitted = match self.standing_for() {
@@ -4499,10 +4499,10 @@ impl<'p> Emitter<'p> {
 
         // ADR-055 D1: a function that can pause is an `async fn`, and one the
         // ledger's `sync` column says cannot is a plain `fn`. The property is
-        // ADR-027 D1's, already inferred; this reads it.
+        // ADR-288 D1's, already inferred; this reads it.
         //
         // **And a trait's declaration is the wider claim**
-        // ([ADR-109](../../docs/specification/adr/adr-109.md) D2): a method
+        // ([ADR-288](../../docs/specification/adr/adr-288.md) D25): a method
         // declared without `sync` is lowered `-> impl Future<…>`, so every
         // implementation of it hands back a future — whether or not its own
         // body pauses. A body that never pauses under such a declaration is
@@ -4518,7 +4518,7 @@ impl<'p> Emitter<'p> {
                     .is_some_and(|c| !c.sync_claim.is_sync())
             });
         // **A function written `sync(f)` is the `async fn` its body is**
-        // ([ADR-244](../../docs/specification/adr/adr-244.md) D3, D4): `f` may
+        // ([ADR-288](../../docs/specification/adr/adr-288.md) D30, D31): `f` may
         // pause, so the call of it inside is awaited. What the promise changes
         // is the caller's check, and how a caller that cannot pause drives it.
         let pausing = if self.pauses(&key) || declared_pausing || self.lambda_decides(&key) {
@@ -4528,7 +4528,7 @@ impl<'p> Emitter<'p> {
         };
         // **A name this compiler chose is not one the program wrote**
         // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)):
-        // `describe__User` is a copy's name ([ADR-181](../../docs/specification/adr/adr-181.md)
+        // `describe__User` is a copy's name ([ADR-304](../../docs/specification/adr/adr-304.md)
         // D2) and Rust's own lint would ask the author to rename a function
         // they wrote as `describe`.
         if self.specialising.borrow().is_some() {
@@ -4594,7 +4594,7 @@ impl<'p> Emitter<'p> {
             }
         };
         // **The parameters a call has to await**
-        // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): those whose
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D11): those whose
         // type is code and does not say `sync`, which is the default.
         let awaited: Vec<Symbol> = args
             .iter()
@@ -4610,7 +4610,7 @@ impl<'p> Emitter<'p> {
         };
         match self.settle_fns.get(&key) {
             // **A body where a value with a cleanup may die ends at a settle
-            // point** ([ADR-239](../../docs/specification/adr/adr-239.md) D2):
+            // point** ([ADR-297](../../docs/specification/adr/adr-297.md) D2):
             // the body runs to its end as a block of its own - a `return` and
             // a failing call end the block and not the function - and what
             // died in it is settled before the function hands its value back.
@@ -4628,7 +4628,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{{ {settle}::<{kind}, {rest}>(async "));
                 out.append(body);
                 // A cleanup's failure is raised where the settle point is
-                // ([ADR-240](../../docs/specification/adr/adr-240.md) D2).
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D29).
                 match failing {
                     true => {
                         let origin = key.rsplit("::").next().unwrap_or(&key);
@@ -4711,11 +4711,11 @@ impl<'p> Emitter<'p> {
             Tail::Statement
         };
 
-        // A published parameter taken as it goes in (ADR-232 D1), first.
+        // A published parameter taken as it goes in (ADR-282 D23), first.
         let first = std::mem::take(&mut *self.either_prelude.borrow_mut());
         if !throws {
             // The function's own settle point stands around the body, so the
-            // body is not settled a second time as a block (ADR-239 D2).
+            // body is not settled a second time as a block (ADR-297 D2).
             let settled = self.settle_fns.contains_key(key);
             let body_block = |out: &mut Out| match settled {
                 true => self.block_plain(out, body, depth, flow, tail, None),
@@ -4748,7 +4748,7 @@ impl<'p> Emitter<'p> {
             // is a statement like any other.
             let here = tail.at(i, last);
             // **A tail that is a `throw` is not wrapped**
-            // ([ADR-164](../../docs/specification/adr/adr-164.md) D3): it writes
+            // ([ADR-292](../../docs/specification/adr/adr-292.md) D20): it writes
             // its own `Err(…)` and leaves, so an `Ok(` around it is
             // `Ok(return Err(…))` — *unreachable call*, about a file nobody
             // wrote. `fn f() -> String throws { throw E() }` is the whole
@@ -4772,17 +4772,17 @@ impl<'p> Emitter<'p> {
             //
             // A `let` makes the block a **statement**, so its temporaries drop
             // at the `;` and ahead of the local — which is `ARM_VALUE`'s trick
-            // one construct over ([ADR-164](../../docs/specification/adr/adr-164.md)
+            // one construct over ([ADR-292](../../docs/specification/adr/adr-292.md)
             // D1), for the same kind of reason.
             //
             // **Only where the lowering writes the borrow**, which is the one
             // shape this emitter can be sure of: it is the emitter's own
             // `_source`, not something a program's expression left behind. Every
             // other tail keeps `Ok(x)`, because a line the generated file does
-            // not need is a line a reader has to skip (ADR-011 D2).
+            // not need is a line a reader has to skip (ADR-296 D17).
             let binds = wrap && self.a_tail_that_enters_a_grammar(&stmt.node);
             // **The keeps a statement needs are declared before it**
-            // (ADR-209), and before the `Ok(` a tail is wrapped in: a `let`
+            // (ADR-283), and before the `Ok(` a tail is wrapped in: a `let`
             // inside it would not be Rust.
             self.write_keep_prelude(out, key, stmt.span.at(), depth + 1);
             out.from(&stmt.span, |out| {
@@ -4826,7 +4826,7 @@ impl<'p> Emitter<'p> {
     /// entry's block binds `_source` to a view of its input and builds a stream
     /// over it. Read off the **statement** rather than off the type, because
     /// what has to know is the writer of the `Ok(` around it and this emitter
-    /// has no types ([ADR-028](../../docs/specification/adr/adr-028.md)).
+    /// has no types ([ADR-288](../../docs/specification/adr/adr-288.md)).
     fn a_tail_that_enters_a_grammar(&self, stmt: &Stmt) -> bool {
         let mut found = false;
         let mut look = |expr: &Expr| {
@@ -4927,13 +4927,13 @@ impl<'p> Emitter<'p> {
                     out.push("\n            -> ");
                     // A grammar action is the rule's own body: what it ends
                     // in is what the rule hands back, so a `return` there is
-                    // that value (ADR-009).
+                    // that value (ADR-296).
                     self.block(out, action, 3, Flow::PLAIN, Tail::Return)?;
                     out.push("\n");
                 }
                 None => {
                     // The one body that needs no action: a `par_fold` is the
-                    // whole rule (ADR-009 D2), so the value of the rule is the
+                    // whole rule (ADR-296 D10), so the value of the rule is the
                     // value of the fold. The binding the backend wants is
                     // supplied here rather than demanded from the user.
                     if rule.ret_type.is_some() {
@@ -5078,7 +5078,7 @@ impl<'p> Emitter<'p> {
     /// A fold's step, adapted where the program's own declarations say it has
     /// to be.
     ///
-    /// ADR-011 D2 refused to infer this from the shape of the body, and was
+    /// ADR-296 D17 refused to infer this from the shape of the body, and was
     /// right to: `acc.record(m)` and `acc.merged(m)` look identical. What
     /// changed is that `impl` blocks are lowered now, so this is a lookup in
     /// what the program declares - `record` takes `&mut self` and returns
@@ -5154,12 +5154,12 @@ impl<'p> Emitter<'p> {
     // --- Types ---
 
     /// The shadow type of every deferred-parameter DSL in this unit
-    /// (ADR-007 D5).
+    /// (ADR-296 D5).
     ///
     /// One struct per parameter list, a field per `:name`, and **generic in
     /// every field**: nothing in `… WHERE id = :id …` says what `:id` is, so
     /// the type comes from the argument at the call site and is monomorphised
-    /// there. Inventing `i32` here is exactly the guess ADR-011 D2 forbids an
+    /// there. Inventing `i32` here is exactly the guess ADR-296 D17 forbids an
     /// emitter to make.
     ///
     /// A plain struct, passed by value: D5 asks for the parameters on the
@@ -5173,7 +5173,7 @@ impl<'p> Emitter<'p> {
                 .map(|(field, ty)| format!("    pub {field}: {ty},"))
                 .collect();
             out.push(&format!(
-                "// ADR-007 D5: the parameters of a `dsl … {{ … }} eod` statement, \
+                "// ADR-296 D5: the parameters of a `dsl … {{ … }} eod` statement, \
                  as a type.\n\
                  #[derive(Debug, Clone, Copy, PartialEq)]\n\
                  #[allow(non_camel_case_types, dead_code)]\n\
@@ -5185,11 +5185,11 @@ impl<'p> Emitter<'p> {
     }
 
     /// A `dsl … { … } eod` body: the `html` template compiled here (ADR-017),
-    /// or a statement whose holes the call site fills (ADR-007 D5).
+    /// or a statement whose holes the call site fills (ADR-296 D5).
     ///
     /// Which it is follows from the target and the holes, and not from anything
     /// inferred about the body. `html` is the one grammar this compiler *is*,
-    /// so `:name` there is an immediate capture (ADR-007 D4); anywhere else a
+    /// so `:name` there is an immediate capture (ADR-296 D4); anywhere else a
     /// `:name` is a deferred parameter and the body reaches its driver intact.
     /// A body with neither is refused, because nothing here knows what it
     /// means.
@@ -5204,13 +5204,13 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let name = self.text(target);
 
-        // ADR-007 D5: a body with `:name` holes and a target this compiler is
+        // ADR-296 D5: a body with `:name` holes and a target this compiler is
         // not itself the grammar for is a *statement*, and its value is its own
         // text. Nothing is substituted into it: a deferred parameter is not
         // string interpolation, so the value may not be spliced into the source
         // and change what it means (Part III, 15.3). The holes stay as written
         // and the driver binds them - which is also the only lowering that
-        // needs to know nothing about the foreign syntax (ADR-011 D2).
+        // needs to know nothing about the foreign syntax (ADR-296 D17).
         if crate::dsl::is_deferred(name, content) {
             if let Some(context) = context {
                 return Err(refused_at!(
@@ -5351,7 +5351,7 @@ impl<'p> Emitter<'p> {
         }
         // `unaliased` on the joined path, because an alias is this file's name
         // for a *package* and the head segment is where one can stand
-        // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3). Resolved
+        // ([ADR-286](../../../docs/specification/adr/adr-286.md) D12). Resolved
         // here rather than emitted as a Rust `use … as …`: every file's items are
         // in one crate root, so a Rust alias there would be the whole program's.
         self.parsed.unaliased(
@@ -5399,7 +5399,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The same, for a name that may carry its module
-    /// ([ADR-154](../../docs/specification/adr/adr-154.md) D3).
+    /// ([ADR-313](../../docs/specification/adr/adr-313.md) D3).
     ///
     /// `collections::HashMap` is the spelling a program writes once `HashMap`
     /// is outside the prelude, and the question this answers is about the
@@ -5429,7 +5429,7 @@ impl<'p> Emitter<'p> {
         match name {
             SHARED => crate::contracts::sharing::rust_name(count),
             // **The same question, the same answer**
-            // ([ADR-057](../../../docs/specification/adr/adr-057.md) D3): a lock
+            // ([ADR-281](../../../docs/specification/adr/adr-281.md) D7): a lock
             // is only reachable from two places through a shared handle, so the
             // count that handle was given decides the lock inside it. The count
             // rides down through the arguments already (`ty_counted`), which is
@@ -5446,7 +5446,7 @@ impl<'p> Emitter<'p> {
             }),
             // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
             // written with this file's own name for the package that declares it
-            // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+            // ([ADR-286](../../../docs/specification/adr/adr-286.md) D12).
             _ => self.parsed.unaliased(&self.mapped_path(name)),
         }
     }
@@ -5468,7 +5468,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// What `Shared(x)`, `SharedMut(x)` and `Locked(x)` allocate, outermost first
-    /// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D2).
     ///
     /// Two for the shared mutable type, because it is one name and two hulls; one
     /// for the other two; `None` for a call that is not a hull's.
@@ -5488,7 +5488,7 @@ impl<'p> Emitter<'p> {
     /// atomic floor where it has no answer (ADR-037 D6).
     fn count_at(&self, function: &str, value: &str) -> crate::contracts::sharing::Count {
         // **At one user thread every count is plain**
-        // ([ADR-061](../../../docs/specification/adr/adr-061.md) D2), including at
+        // ([ADR-312](../../../docs/specification/adr/adr-312.md) D10), including at
         // a position the analysis has no entry for. Without this the *floor* would
         // answer for such a position, and the floor is the atomic count - which at
         // `no` is exactly what that switch exists not to pay.
@@ -5551,7 +5551,7 @@ impl<'p> Emitter<'p> {
         }
 
         // **The parameter stands for the type, while a copy is written**
-        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2). A specialised
+        // ([ADR-304](../../docs/specification/adr/adr-304.md) D6). A specialised
         // copy has no `T` left in its signature, so every position that wrote
         // one writes the type instead — which is what makes the copy an
         // ordinary function the language below compiles.
@@ -5576,7 +5576,7 @@ impl<'p> Emitter<'p> {
         }
 
         // **A parameter that is code**
-        // ([ADR-102](../../docs/specification/adr/adr-102.md) D1), lowered as
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D6), lowered as
         // D5's **run** case: a closure argument, which is what `std`'s own
         // higher-order entries take and what costs nothing. The kept case — a
         // boxed closure over a boxed future — is the step of that record that
@@ -5602,7 +5602,7 @@ impl<'p> Emitter<'p> {
                 (None, false) => "()".to_string(),
             };
             // **The type decides the shape**
-            // ([ADR-122](../../docs/specification/adr/adr-122.md) D1), and
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D11), and
             // nothing inferred stands behind it: a parameter whose type may
             // pause — which is the **default**, since `sync` is what says
             // otherwise — is a closure returning a **boxed future**, whether the
@@ -5617,7 +5617,7 @@ impl<'p> Emitter<'p> {
             //
             // D1's own reason for it was that Rust has no stable `async`
             // closure, and that is **false**
-            // ([ADR-187](../../docs/specification/adr/adr-187.md) D1):
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D13):
             // `impl AsyncFn(A) -> R` compiles on this toolchain and costs 1.37
             // ns/call against this shape's 11.99, on a 0.31 floor. What holds
             // the shape up now is D1's second half alone - one spelling for a
@@ -5626,7 +5626,7 @@ impl<'p> Emitter<'p> {
             // a question on `docs/open-decisions.md`.
             // **A parameter that may pause takes the shape its body needs,
             // and the body's answer is `keeps`**
-            // ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
             //
             // A **run** parameter is `impl AsyncFn(A) -> R`: no box, no dynamic
             // call, and 1.37 ns/call against the boxed future's 11.99 on a 0.31
@@ -5637,7 +5637,7 @@ impl<'p> Emitter<'p> {
             // **One written type, two representations, chosen by an analysis of
             // the body** — which is what `Shared[T]` already does per value
             // ([ADR-037](../../docs/specification/adr/adr-037.md) D7), what
-            // [ADR-008](../../docs/specification/adr/adr-008.md) D2 does per
+            // [ADR-283](../../docs/specification/adr/adr-283.md) D2 does per
             // construction site, and what
             // [Part I 5.4](../../docs/specification/10-nikaia-light.md) C
             // already says about this very construct: *the context of such a
@@ -5645,7 +5645,7 @@ impl<'p> Emitter<'p> {
             //
             // **`sync` is untouched** and still writes the plain closure: the
             // word is an assertion about what the code may do
-            // ([ADR-027](../../docs/specification/adr/adr-027.md)), and a
+            // ([ADR-288](../../docs/specification/adr/adr-288.md)), and a
             // parameter that cannot pause has no future to hand back either
             // way.
             // **A kept function value is one shared closure**: a field, a
@@ -5684,7 +5684,7 @@ impl<'p> Emitter<'p> {
         }
 
         // **`Seen[T]` is erased**
-        // ([ADR-111](../../docs/specification/adr/adr-111.md) D1): it is a type
+        // ([ADR-281](../../docs/specification/adr/adr-281.md) D22): it is a type
         // here and in the ledger and **not** one in the language below, so a
         // `Seen[i64]` is an `i64`, a field declared `Seen[i64]` is an `i64`
         // field, and a signature with `Seen` in it is one without. No counter,
@@ -5731,7 +5731,7 @@ impl<'p> Emitter<'p> {
         //
         // **The boundary has its own writer** (`foreign_ty`), which turns the
         // same type into an address beside a count
-        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2). Two
+        // ([ADR-302](../../docs/specification/adr/adr-302.md) D5, D6). Two
         // writers for one spelling is the arrangement that record already
         // chose, and this is the second half of it arriving.
         // **`ref Array[T]` is the run's other spelling**
@@ -5750,13 +5750,13 @@ impl<'p> Emitter<'p> {
         }
 
         // **Text both kinds of which flow into a position**
-        // ([ADR-222](../../docs/specification/adr/adr-222.md) D3): a view
+        // ([ADR-282](../../docs/specification/adr/adr-282.md) D14): a view
         // borrowed, text of its own owned, each where it is put in.
         if ty.either {
             return format!("nikaia_std::either_text::EitherText<{}>", lifetimes.params);
         }
         // A view is a borrow of the parser's input, and that is where the
-        // lifetime comes from - the source never writes one (ADR-008).
+        // lifetime comes from - the source never writes one (ADR-283).
         if ty.is_view {
             out.push_str(lifetimes.reference);
         }
@@ -5769,7 +5769,7 @@ impl<'p> Emitter<'p> {
         // and a `&String` at a call is a borrow of a borrow at the first one
         // that does not coerce.
         if ty.is_view && self.text(ty.name) == "String" && ty.generics.is_empty() {
-            // **Held, where the keeper drops entries** (ADR-209 D4): a view
+            // **Held, where the keeper drops entries** (ADR-283 D12): a view
             // that carries its own handle on the buffer it points into.
             if self.holding.borrow().is_some() {
                 return "nikaia_std::tether::Held".to_string();
@@ -5778,7 +5778,7 @@ impl<'p> Emitter<'p> {
             return out;
         }
         // **`SharedMut[T]` is one name and two hulls**
-        // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1). It is
+        // ([ADR-281](../../../docs/specification/adr/adr-281.md) D1). It is
         // expanded here and nowhere earlier, so the checker, the ledger and every
         // message keep the name the source wrote. The two hulls are the ones the
         // count already decides - `written_name` answers for each.
@@ -5813,7 +5813,7 @@ impl<'p> Emitter<'p> {
             return out;
         }
         // **A struct of views in a keeper that drops entries is held**
-        // ([ADR-221](../../docs/specification/adr/adr-221.md) D1): beside a
+        // ([ADR-283](../../docs/specification/adr/adr-283.md) D14): beside a
         // handle on each buffer it points into, and read through them.
         if let Some(width) = *self.holding.borrow()
             && self.borrowing.contains(&ty.name)
@@ -5840,7 +5840,7 @@ impl<'p> Emitter<'p> {
             out.push_str(&format!("<{}>", params.join(", ")));
         }
         // **A type with a cleanup that can pause is its value in a `Cleaned`**
-        // (ADR-239 D1), whose `Drop` parks the cleanup where the value dies.
+        // (ADR-297 D1), whose `Drop` parks the cleanup where the value dies.
         if self.cleaned_types.contains(self.text(ty.name)) {
             return format!("{}<{out}>", self.cleaned());
         }
@@ -5850,7 +5850,7 @@ impl<'p> Emitter<'p> {
 
     /// The queues a settle point drains: at `user_parallelism = yes` only the
     /// one whose work may cross threads, so the settle point may too
-    /// (ADR-239 D2).
+    /// (ADR-297 D2).
     fn settle_kind(&self) -> &'static str {
         match self.build.overlaps_user_code() {
             true => "nikaia_std::cleanup::Sent",
@@ -5859,7 +5859,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The wrapper a value with a cleanup is held in: the one whose parked work
-    /// may move with its task where tasks run on threads (ADR-239 D1).
+    /// may move with its task where tasks run on threads (ADR-297 D1).
     fn cleaned(&self) -> &'static str {
         match self.build.overlaps_user_code() {
             true => "nikaia_std::cleanup::CleanedSend",
@@ -5938,7 +5938,7 @@ impl<'p> Emitter<'p> {
     ///
     /// **Inside the checked conversion and not around it**, because a
     /// narrowing cast over a lent binding is still a narrowing cast: `i8::from`
-    /// of a `&i64` does not exist either, and the abort ADR-043 D4 puts there
+    /// of a `&i64` does not exist either, and the abort ADR-285 D12 puts there
     /// is not a thing a view may skip.
     fn operand(
         &self,
@@ -5984,7 +5984,7 @@ impl<'p> Emitter<'p> {
         opening: Option<&str>,
     ) -> Result<()> {
         // **A block where a value with a cleanup dies is settled where it
-        // ends** ([ADR-239](../../docs/specification/adr/adr-239.md) D2): the
+        // ends** ([ADR-297](../../docs/specification/adr/adr-297.md) D2): the
         // value dies at its closing brace and parks its cleanup, and the
         // settle point right after runs it. Not inside a closure that cannot
         // pause - there the function's own settle point runs it.
@@ -5996,7 +5996,7 @@ impl<'p> Emitter<'p> {
         // **A failure is never settled away**: where a cleanup that can fail
         // has no channel to fail into here - a lambda's body, a branch that is
         // not wrapped, a guarded half - the value stays parked for the next
-        // settle point out, which has one (ADR-239 D3).
+        // settle point out, which has one (ADR-297 D4).
         let propagates = flow.throws && !flow.caught;
         if let Some(fails) = settles
             && !flow.in_lambda
@@ -6075,7 +6075,7 @@ impl<'p> Emitter<'p> {
         let mut i = 0;
         while i < block.stmts.len() {
             // **Statements run in the order they are written**
-            // ([ADR-050](../../../docs/specification/adr/adr-050.md) D1), and no
+            // ([ADR-292](../../../docs/specification/adr/adr-292.md) D1), and no
             // analysis stands between the source and the schedule. A program
             // that wants overlap writes `overlap { … }` and has the claim
             // checked (D3).
@@ -6276,7 +6276,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether a **branch of an `overlap`** can pause
-    /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D6).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D6).
     ///
     /// A walk and not a lookup, because the question is about *this statement*
     /// and the answers the ledger and the checker give are keyed one by callee
@@ -6285,7 +6285,7 @@ impl<'p> Emitter<'p> {
     /// it stands in - which is the same pair of sources `call` and the method
     /// arm use, asked ahead of time.
     ///
-    /// It was ADR-033's, for the pair the compiler chose to overlap; D1
+    /// It was ADR-292's, for the pair the compiler chose to overlap; D1
     /// withdrew that and D6 asks the same question about a branch the
     /// programmer chose.
     fn branch_pauses(&self, stmt: &Spanned<Stmt>, flow: Flow<'_>) -> bool {
@@ -6309,7 +6309,7 @@ impl<'p> Emitter<'p> {
     /// statement is its value and keeps no semicolon - and where that value is
     /// the *function's*, a `return x` is written as `x`.
     /// **A `?.` view out of a temporary is held for the rest of the block**
-    /// ([ADR-228](../../docs/specification/adr/adr-228.md) D1).
+    /// ([ADR-278](../../docs/specification/adr/adr-278.md) D21).
     ///
     /// `let a = find(1)?.label() ?? "none"` hands back a view of the `User`
     /// `find(1)` made, and that value dies at the `;` - `rustc`'s *temporary
@@ -6476,7 +6476,7 @@ impl<'p> Emitter<'p> {
             } => {
                 let mutable = if *mutable { "mut " } else { "" };
                 // **A tuple of names is Rust's own tuple pattern**
-                // ([ADR-098](../../docs/specification/adr/adr-098.md)): the
+                // ([ADR-291](../../docs/specification/adr/adr-291.md)): the
                 // language below takes a tuple apart by position exactly as
                 // this one does, so there is nothing to translate. No count is
                 // looked up and no annotation is written, because a hull's
@@ -6500,12 +6500,12 @@ impl<'p> Emitter<'p> {
                 let bound = self.text(names[0]);
                 let count = self.count_at(flow.function, bound);
                 // A hull written by a call inside this value looks its count up
-                // by the name being bound (ADR-064 D2), and an expression has
+                // by the name being bound (ADR-281 D2), and an expression has
                 // none of its own.
                 let flow = flow.binding(bound);
                 let plan = self.keep_plan(flow.function);
                 // **A buffer whose views outlive this scope goes into a keep**
-                // (ADR-209 D1), and the binding is where it now lives.
+                // (ADR-283 D9), and the binding is where it now lives.
                 let put = plan.and_then(|p| p.puts.get(&span.at())).copied();
                 // **A binding a task takes with it is packed with the task's
                 // keep** (D3), and every use of it reads through the handle.
@@ -6523,7 +6523,7 @@ impl<'p> Emitter<'p> {
                     Some(_) if put.is_some() || packed => String::new(),
                     Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
                     // **A number its uses typed is written with the type**
-                    // ([ADR-249](../../docs/specification/adr/adr-249.md) D4):
+                    // ([ADR-285](../../docs/specification/adr/adr-285.md) D27):
                     // this compiler decided it, and the language below's own
                     // inference is not asked a second time - which is what left
                     // `v[i].push(x)` over a bare `let i = 0` without an answer.
@@ -6559,7 +6559,7 @@ impl<'p> Emitter<'p> {
                 }
                 if let Some(keep) = put {
                     // A buffer whose views are held one by one is one they
-                    // are found in again (ADR-221 D1) - and so is one a task's
+                    // are found in again (ADR-283 D14) - and so is one a task's
                     // `Holding` finds them in, whether the task's keep is this
                     // function's or a caller's handed in (ADR-218 D4).
                     let put = match keep {
@@ -6578,14 +6578,14 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 // **The annotation is no longer the constructor**
-                // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2). What
+                // ([ADR-281](../../../docs/specification/adr/adr-281.md) D2). What
                 // used to be allocated here, out of an answer the checker had to
                 // compute and hand over, is now written where it happens - and the
                 // two positions that could carry one stopped being a list.
                 //
                 // Part I 2.3: a plain value standing in a nullable slot. That hull
                 // stays the compiler's, because it is one a program cannot observe
-                // - the same value, possibly absent (ADR-064 D2's own line).
+                // - the same value, possibly absent (ADR-281 D2's own line).
                 let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 out.push(&format!("let {mutable}{}{annotation} = ", escaped(bound)));
                 out.push(before);
@@ -6623,13 +6623,13 @@ impl<'p> Emitter<'p> {
                 out.push(";");
             }
             // **The folded value is what is written**, not the expression that
-            // folded ([ADR-073](../../docs/specification/adr/adr-073.md) D3).
+            // folded ([ADR-287](../../docs/specification/adr/adr-287.md) D4).
             // That is the visible half of the demand: `const LIMIT = 4 * 1024`
             // reaches the language below as `4096`, so a reader of the generated
             // file can see that the arithmetic did not survive into the program.
             //
             // The type comes from the checker, because Rust's `const` takes one
-            // and this has no types (ADR-028). A `comptime` with no entry there was
+            // and this has no types (ADR-288). A `comptime` with no entry there was
             // refused as `NK1127` and never arrives.
             Stmt::Comptime { name, .. } => {
                 let bound = self.text(*name);
@@ -6651,7 +6651,7 @@ impl<'p> Emitter<'p> {
             // a type parameter `K` - three spellings the program never wrote.
             // `index::set` is `insert` for a map and an indexed assignment for a
             // sequence, chosen by the language below on the container's type,
-            // because this emitter does not know it (ADR-011 D2).
+            // because this emitter does not know it (ADR-296 D17).
             //
             // Only the plain `=`: a compound `m[k] += 1` reads the slot as well
             // as writing it, so it is an `Index` either way and a second rule
@@ -6667,7 +6667,7 @@ impl<'p> Emitter<'p> {
                 };
                 let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
                 // **The value first, and then the write**
-                // ([ADR-114](../../../docs/specification/adr/adr-114.md) D2).
+                // ([ADR-293](../../../docs/specification/adr/adr-293.md) D2).
                 // Since D1 a read is `index::get(&m, …)`, so the written-out
                 // counter D2 hands a reader — `m[k] = (m[k] ?? 0) + 1` — has a
                 // `&m` inside the arguments of a `set(&mut m, …)`, which is
@@ -6688,7 +6688,7 @@ impl<'p> Emitter<'p> {
                 let lent_on = matches!(&**base, Expr::Variable(name)
                     if self.changes_in_place(flow, self.text(*name)));
                 // **A position proved inside is written without its check**
-                // (ADR-271 D5), as it is read.
+                // (ADR-306 D5), as it is read.
                 if self
                     .proven_indices
                     .contains(&crate::check::value_node(base))
@@ -6718,7 +6718,7 @@ impl<'p> Emitter<'p> {
                 // about a file nobody wrote. As a place it is `d[at(i)]`, which
                 // the language below lends mutably.
                 self.expr(out, base, depth, flow.place())?;
-                // **A key the map keeps goes in as it is** (ADR-213 D1): it is
+                // **A key the map keeps goes in as it is** (ADR-293 D27): it is
                 // not a position, and `at` is for positions.
                 match self.map_key(span.at(), index, true) {
                     Some(form) => {
@@ -6739,7 +6739,7 @@ impl<'p> Emitter<'p> {
                 }
             }
             // **A field of a held struct is written through its handle**
-            // ([ADR-221](../../docs/specification/adr/adr-221.md) D4): the
+            // ([ADR-283](../../docs/specification/adr/adr-283.md) D17): the
             // value first, as everywhere, and then a closure that is handed the
             // struct and its keeps - where a view made outside is found again
             // in them, or copied into them, before it is stored.
@@ -6821,16 +6821,16 @@ impl<'p> Emitter<'p> {
                 }
                 out.push(";");
             }
-            // Kap 3.3. Name for name (ADR-011 D2): the language below spells
+            // Kap 3.3. Name for name (ADR-296 D17): the language below spells
             // this the same way, so there is nothing to decide here.
             Stmt::While { cond, body } => {
                 // **`while true` is emitted as `loop`**, and this is the one
                 // place the lowering translates what a loop *means* rather than
                 // how it is spelled.
                 //
-                // It is not a departure from name for name (ADR-011 D2) but the
+                // It is not a departure from name for name (ADR-296 D17) but the
                 // decided case of it:
-                // [ADR-070](../../../docs/specification/adr/adr-070.md) D1 says
+                // [ADR-276](../../../docs/specification/adr/adr-276.md) D1 says
                 // `while true { … }` **is** this language's unconditional loop
                 // and that the absence of a second spelling is a decision. Rust's
                 // name for the unconditional loop is `loop`. So `loop` is the
@@ -6850,14 +6850,14 @@ impl<'p> Emitter<'p> {
                 // two forms do not have the same *type* below. `while true { }`
                 // is `()`; `loop { }` diverges and is `!`, so
                 // `fn f() -> i32 { loop { } }` compiles and the `while` form is
-                // an `E0308`. [ADR-093](../../docs/specification/adr/adr-093.md)
+                // an `E0308`. [ADR-276](../../docs/specification/adr/adr-276.md)
                 // wants a function that never
                 // returns to stop needing an unreachable `return`, and no
                 // checker change can deliver that while the lowering emits the
                 // form the language below refuses. This is that prerequisite.
                 //
                 // **The literal only**, never a name that happens to be true:
-                // the equivalence is ADR-070 D1's and it is about the written
+                // the equivalence is ADR-276 D1's and it is about the written
                 // form, and the polarity is the usual one - claim it where it is
                 // certain and nowhere else.
                 match cond {
@@ -6877,8 +6877,8 @@ impl<'p> Emitter<'p> {
                 body,
             } => {
                 // **A loop over a type's fields is not a loop below**
-                // ([ADR-088](../../docs/specification/adr/adr-088.md) D4,
-                // [ADR-181](../../docs/specification/adr/adr-181.md) D2): it is
+                // ([ADR-304](../../docs/specification/adr/adr-304.md) D5,
+                // [ADR-304](../../docs/specification/adr/adr-304.md) D6): it is
                 // known while the program is built, so what is emitted is the
                 // block once per field — the code somebody would have written
                 // by hand, with no loop and no dispatch (D5's *at run time:
@@ -6916,7 +6916,7 @@ impl<'p> Emitter<'p> {
                 // **Off the checker's set and not off the shape**, exactly as
                 // the `?` below is: which sequences pause is a claim in the
                 // ledger about a *type*, and this emitter has none
-                // ([ADR-028](../../docs/specification/adr/adr-028.md)).
+                // ([ADR-288](../../docs/specification/adr/adr-288.md)).
                 if self.pausing_loops.contains(&span.at()) {
                     // ADR-025 D1's `?`, unchanged: a step that can fail fails
                     // the enclosing function, and the checker has already made
@@ -6974,15 +6974,15 @@ impl<'p> Emitter<'p> {
                 // parameter declared `&Vec[Entry]` — and `&entries` is then a
                 // `&&Vec<Entry>`, which Rust does not iterate. `.iter()` reads
                 // the same through any number of references, and this emitter
-                // has no types to tell the two apart with (ADR-028).
+                // has no types to tell the two apart with (ADR-288).
                 //
                 // **A name holding a sequence is not a place that lends**
-                // (ADR-212 D4): it is walked by value, and a range walks a copy
+                // (ADR-293 D19): it is walked by value, and a range walks a copy
                 // of itself. The checker says which loops those are.
                 let lends = is_a_place(iter) && !self.owned_loops.contains(&span.at());
                 match iter {
                     // **A range written into the `for` stays the language
-                    // below's own** (ADR-212 D3): it is walked once, where it
+                    // below's own** (ADR-293 D18): it is walked once, where it
                     // stands, and needs to be nothing more.
                     Expr::Range { .. } => self.bare_range(out, iter, depth, flow)?,
                     // **So does a list written into it**: walked once and
@@ -7076,9 +7076,9 @@ impl<'p> Emitter<'p> {
             // value of the expression around it, and a `return` there leaves
             // the function past that expression. It falls through to the arm
             // below and stays a `return`.
-            // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
+            // Kap 3.3 and [ADR-276](../../../docs/specification/adr/adr-276.md).
             // Name for name, like `while` above and for the same reason
-            // (ADR-011 D2): the language below spells both of these the same way
+            // (ADR-296 D17): the language below spells both of these the same way
             // and gives them the same meaning, so the lowering is a
             // transcription - which is also what makes the construct cost
             // nothing at run time (`docs/history/break-continue-cost.md` §2).
@@ -7190,7 +7190,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **What goes before a wrapped value, and what goes after**
-    /// ([ADR-068](../../../docs/specification/adr/adr-068.md)).
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)).
     ///
     /// One function for all four of Part I 2.3's positions, so the two forms are
     /// written in one place: `Some(` … `)` where the checker knows the value is
@@ -7227,7 +7227,7 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
         out.push(before);
-        // `null` is no text of either kind (ADR-224 D2), and goes as `None`.
+        // `null` is no text of either kind (ADR-282 D5), and goes as `None`.
         let either = self.returns_either(flow.function) && !matches!(value, Expr::LitNull);
         if either {
             out.push("nikaia_std::either_text::either(");
@@ -7244,7 +7244,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether parameter `at` of what `callee` names is text both kinds of
-    /// which flow into (ADR-223 D2): a function of this unit by name, or a
+    /// which flow into (ADR-282 D14): a function of this unit by name, or a
     /// method by its name - where every method of that name here agrees, so a
     /// name two types use differently is never wrapped for the wrong one.
     fn either_param(&self, callee: &str, at: usize) -> bool {
@@ -7271,7 +7271,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether a struct's field is text both kinds of which flow into
-    /// ([ADR-222](../../docs/specification/adr/adr-222.md) D3).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D14).
     fn either_field(&self, owner: &str, field: Symbol) -> bool {
         let wanted = self.text(field);
         let owner = owner.rsplit("::").next().unwrap_or(owner);
@@ -7288,7 +7288,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether the function being written hands back text both kinds of
-    /// which flow into its result (ADR-222 D3).
+    /// which flow into its result (ADR-282 D14).
     fn returns_either(&self, function: &str) -> bool {
         let (target, own) = match function.rsplit_once("::") {
             Some((target, own)) => (Some(target), own),
@@ -7315,7 +7315,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether what stands in the brackets is a **run**: a range written there,
-    /// or one the checker says is kept in a name (ADR-215 D3).
+    /// or one the checker says is kept in a name (ADR-293 D23).
     fn slices(&self, statement: usize, index: &Expr) -> bool {
         matches!(index, Expr::Range { .. })
             || self
@@ -7324,7 +7324,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// How the checker said this key goes into a map's brackets, where the
-    /// map's keys are owned ([ADR-213](../../docs/specification/adr/adr-213.md)
+    /// map's keys are owned ([ADR-293](../../docs/specification/adr/adr-293.md)
     /// D1).
     fn map_key(
         &self,
@@ -7373,7 +7373,7 @@ impl<'p> Emitter<'p> {
 
     /// A range as the language below writes one, `a..b`, for the two places
     /// that walk or slice it where it stands
-    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D3).
+    /// ([ADR-293](../../docs/specification/adr/adr-293.md) D18).
     fn bare_range(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         let Expr::Range {
             start,
@@ -7389,7 +7389,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// What stands inside brackets: a range there is a **slice**, and stays
-    /// the language below's own (ADR-212 D3).
+    /// the language below's own (ADR-293 D18).
     /// Whether `name` is a parameter of the function being emitted that it
     /// changes in place - a `mut` parameter, lowered as `&mut T` (ADR-094 D3).
     fn changes_in_place(&self, flow: Flow<'_>, name: &str) -> bool {
@@ -7421,7 +7421,7 @@ impl<'p> Emitter<'p> {
             return Ok(());
         }
         // **A map's read copied out where a `T?` of its own is kept**
-        // ([ADR-273](../../docs/specification/adr/adr-273.md) D4). A read
+        // ([ADR-293](../../docs/specification/adr/adr-293.md) D15). A read
         // through the brackets is `*get(…)`, whose `*` would take the whole
         // chain, so it is held in parentheses.
         let shape = (flow.statement, crate::check::argument_shape(expr));
@@ -7449,7 +7449,7 @@ impl<'p> Emitter<'p> {
         flow: Flow<'_>,
     ) -> Result<()> {
         // **`get` on a map of `T?`** is one `T?`, as the brackets are
-        // ([ADR-273](../../docs/specification/adr/adr-273.md) D3).
+        // ([ADR-293](../../docs/specification/adr/adr-293.md) D14).
         if matches!(expr, Expr::MethodCall { .. })
             && self
                 .flat_reads
@@ -7473,7 +7473,7 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         match expr {
             // **A literal in an unsigned place carries that type's suffix**
-            // (ADR-248 D1), ahead of the widening a bare one gets.
+            // (ADR-285 D3), ahead of the widening a bare one gets.
             Expr::LitInt { value, negative } => {
                 let v = crate::ast::int_value(*value, *negative);
                 match self
@@ -7490,7 +7490,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
             // **A range is a value**
-            // ([ADR-212](../../docs/specification/adr/adr-212.md) D3): two
+            // ([ADR-293](../../docs/specification/adr/adr-293.md) D18): two
             // numbers, `Copy`, and walked as often as a program likes - which
             // the language below's `Range` is not, being its own iterator. So
             // one that is kept, handed on or called on is `nikaia_std`'s, and
@@ -7517,7 +7517,7 @@ impl<'p> Emitter<'p> {
             // program `rustc` asks an annotation for, which is the honest
             // answer rather than one this compiler invented.
             Expr::LitNull => out.push("None"),
-            // **A `mut` lambda parameter is an address** (ADR-110 D1), so
+            // **A `mut` lambda parameter is an address** (ADR-281 D12), so
             // every mention of it is dereferenced.
             Expr::Variable(name) if flow.changed.contains(name) => {
                 out.push(&format!("(*{})", self.name(*name)))
@@ -7532,7 +7532,7 @@ impl<'p> Emitter<'p> {
             // **Only a name this file declares as a type**, or one the library
             // publishes with a constructor: anything else is an ordinary name,
             // and a local that shadows a type is refused a declaration by
-            // [ADR-144](../../docs/specification/adr/adr-144.md) rather than
+            // [ADR-286](../../docs/specification/adr/adr-286.md) rather than
             // guessed at here.
             Expr::Variable(name) if self.constructs_by_name(self.text(*name)) => {
                 out.push(&self.path(&[self.text(*name), "new"]))
@@ -7584,9 +7584,9 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) => {
                 out.push(&self.name(*name));
                 // **A binding packed for a task is read through its handle**
-                // (ADR-209 D3), for as long as the read borrows it - and so is
+                // (ADR-283 D11), for as long as the read borrows it - and so is
                 // an element taken out of a keeper that holds structs of views
-                // ([ADR-221](../../docs/specification/adr/adr-221.md) D3): it
+                // ([ADR-283](../../docs/specification/adr/adr-283.md) D16): it
                 // carries its handles with it.
                 let packed = self.keep_plan(flow.function).is_some_and(|p| {
                     p.tethered.contains_key(self.text(*name))
@@ -7614,7 +7614,7 @@ impl<'p> Emitter<'p> {
             // it - so it is not written as the block's value (`Tail`).
             Expr::Block(block) => self.block(out, block, depth, flow, Tail::Value)?,
             // **Rust's own `unsafe`**
-            // ([ADR-124](../../docs/specification/adr/adr-124.md) D3), which is
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D3), which is
             // the whole of the lowering: the word means the same thing on both
             // sides and the block inside it is an ordinary one.
             Expr::Unsafe(block) => {
@@ -7623,10 +7623,10 @@ impl<'p> Emitter<'p> {
             }
 
             // **Part I 8.1.2: every branch in flight, and the value is their
-            // results in written order** (ADR-050 D2).
+            // results in written order** (ADR-292 D2).
             Expr::Overlap(block) => self.overlap(out, block, depth, flow)?,
             // **Part II 12.4: every arm in flight, and the first to finish is
-            // the one that is kept** (ADR-148 D1).
+            // the one that is kept** (ADR-292 D12).
             Expr::Select(arms) => self.select(out, arms, depth, flow)?,
             // An `if` in *expression* position - `let x = if c { a } else { b }`
             // - hands its branch's value to whoever asked for it, so a `return`
@@ -7652,7 +7652,7 @@ impl<'p> Emitter<'p> {
                 config,
             } => {
                 // **`field.of(value)` is the field read a program would have
-                // written by hand** ([ADR-088](../../docs/specification/adr/adr-088.md)
+                // written by hand** ([ADR-304](../../docs/specification/adr/adr-304.md)
                 // D2, D5's *at run time: nothing*): `value.name`, with no
                 // descriptor and no dispatch left.
                 // **A field that holds a function is called through the
@@ -7718,7 +7718,7 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 // **`error.full()` in a handler a named channel reached**
-                // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). Part
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D10). Part
                 // I 7.1 writes it as an ordinary call, and it is one — but the
                 // envelope was opened at the binding, so the two halves of the
                 // long form are `error` and the site beside it rather than one
@@ -7743,7 +7743,7 @@ impl<'p> Emitter<'p> {
                 }
             }
             // Part I 3.5 onto a **method**
-            // ([ADR-066](../../../docs/specification/adr/adr-066.md)): the call
+            // ([ADR-278](../../../docs/specification/adr/adr-278.md)): the call
             // happens only where there is something to call it on.
             //
             // **A `match` and not the field's `map`**, and the difference is the
@@ -7767,7 +7767,7 @@ impl<'p> Emitter<'p> {
                     .flattened_reaches
                     .contains(&(flow.statement, name.clone()));
                 // **The scrutinee is lent where the call changes nothing**
-                // ([ADR-189](../../docs/specification/adr/adr-189.md) D2):
+                // ([ADR-278](../../docs/specification/adr/adr-278.md) D18):
                 // `find(1)?.greet("Hallo")` used to take `find(1)`'s value into
                 // the `match`, so a receiver bound to a name was gone
                 // afterwards and `rustc` said so about a file nobody wrote
@@ -7803,7 +7803,7 @@ impl<'p> Emitter<'p> {
                     out.push("Some(");
                 }
                 // **A copy of the view reached** is `to_owned`, as the plain
-                // call's is (ADR-215 D4): the receiver the rewrite reads is the
+                // call's is (ADR-293 D24): the receiver the rewrite reads is the
                 // one this `match` bound.
                 let copy = self
                     .owned_copies
@@ -7825,7 +7825,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::Match { value, arms } => {
                 // **A `match error` over a sum is taken apart by member**
-                // ([ADR-160](../../docs/specification/adr/adr-160.md) D3). The
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D17). The
                 // patterns the source writes name variants of the **members**
                 // — `ConfigError::Empty(p)` and `io::IoError::NotFound(p)` in
                 // one block — because the sum is a name no program writes
@@ -7954,7 +7954,7 @@ impl<'p> Emitter<'p> {
                         out.push(")");
                     }
                     // **The guard is Rust's own**
-                    // ([ADR-137](../../../docs/specification/adr/adr-137.md)
+                    // ([ADR-291](../../../docs/specification/adr/adr-291.md)
                     // D2), written with the same word, so this is a
                     // transcription like everything else about a pattern.
                     if let Some(guard) = &arm.guard {
@@ -8015,7 +8015,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::Field { base, name } => {
                 // **`field.name` is the field's own name as text**
-                // ([ADR-088](../../docs/specification/adr/adr-088.md) D2): a
+                // ([ADR-304](../../docs/specification/adr/adr-304.md) D2): a
                 // literal, because the turn this copy stands at is known.
                 if let Some(field) = self.reflected(base, *name, "name") {
                     out.push(&format!("\"{}\"", field));
@@ -8035,7 +8035,7 @@ impl<'p> Emitter<'p> {
                 // read answers**, as a read of a read is (0.0.238): `xs[0].a`
                 // was `(*get(&xs, 0)).a`, a deref the language below does on
                 // its own and `clippy` refuses in a `std` written in Nikaia
-                // (`tools/ty.nika`, ADR-257).
+                // (`tools/ty.nika`, ADR-294).
                 match &**base {
                     Expr::Index {
                         base: inner,
@@ -8061,7 +8061,7 @@ impl<'p> Emitter<'p> {
             // field `map` is right; over a field that is *itself* a `T?` it
             // would make an `Option<Option<T>>`, and `and_then` is what
             // flattens - which is a question about the declared type, so it is
-            // answered where the types are (ADR-028). `map` is the fallback,
+            // answered where the types are (ADR-288). `map` is the fallback,
             // because it is the one that cannot nest a plain field.
             Expr::SafeField { base, name } => {
                 let field = self.text(*name).to_string();
@@ -8070,10 +8070,10 @@ impl<'p> Emitter<'p> {
                     .contains(&(flow.statement, field.clone()));
                 let how = if flattens { "and_then" } else { "map" };
                 // **The receiver is lent where the member copies**
-                // ([ADR-189](../../docs/specification/adr/adr-189.md) D1):
+                // ([ADR-278](../../docs/specification/adr/adr-278.md) D18):
                 // `user?.id` reads `user` where it lies and `user` is usable on
                 // the next line, which is
-                // [ADR-113](../../docs/specification/adr/adr-113.md) D1. Before
+                // [ADR-278](../../docs/specification/adr/adr-278.md) D16. Before
                 // it, `Option::map` took its receiver and `rustc` said *use of
                 // moved value* about a file nobody wrote (Part III C.1).
                 //
@@ -8098,13 +8098,13 @@ impl<'p> Emitter<'p> {
                     false => "",
                 };
                 // **And how the member is taken out of that view**
-                // ([ADR-191](../../docs/specification/adr/adr-191.md) D1). A
+                // ([ADR-278](../../docs/specification/adr/adr-278.md) D19). A
                 // member that copies is read; one that does not comes out as a
                 // view, and the two views are spelled differently below: a view
                 // of `String` is `&str`
                 // ([ADR-184](../../docs/specification/adr/adr-184.md) D2) and a
                 // view of anything else is `&T`. The checker says which,
-                // because this emitter has no types (ADR-011 D2).
+                // because this emitter has no types (ADR-296 D17).
                 // **A boxed field is reached through its box**
                 // ([ADR-246](../../docs/specification/adr/adr-246.md) D2).
                 let place = match self
@@ -8129,13 +8129,13 @@ impl<'p> Emitter<'p> {
             }
             Expr::Index { base, index } => {
                 // **A length is an `i64`, so an index is one too**
-                // ([ADR-048](../../../docs/specification/adr/adr-048.md) D1), and
+                // ([ADR-285](../../../docs/specification/adr/adr-285.md) D1), and
                 // Rust indexes a sequence by `usize`. The conversion is emitted
                 // and never written, in both directions - which is the whole of
                 // what D1 buys.
                 //
                 // Around **every** index but one, because this emitter does not
-                // know types (ADR-011 D2) and a map is indexed too:
+                // know types (ADR-296 D17) and a map is indexed too:
                 // `counts[path]` takes a `&str`. `nikaia_std::index::at` chooses
                 // on the type of what is in the brackets and is the identity for
                 // anything that is not a number, so a rule applied everywhere
@@ -8150,7 +8150,7 @@ impl<'p> Emitter<'p> {
                 // Part III C.1 forbids.
                 //
                 // **A read is a call and a place is brackets**
-                // ([ADR-114](../../../docs/specification/adr/adr-114.md) D4). A
+                // ([ADR-293](../../../docs/specification/adr/adr-293.md) D4). A
                 // read through the brackets answers what the container can
                 // promise — a `T` for a sequence, a `T?` for a map, because a
                 // key that is not there is data about the world rather than a
@@ -8176,7 +8176,7 @@ impl<'p> Emitter<'p> {
                     // key is not, in this language and in the one below alike.
                     //
                     // **And no parentheses here at all**
-                    // ([ADR-214](../../docs/specification/adr/adr-214.md) D3).
+                    // ([ADR-293](../../docs/specification/adr/adr-293.md) D33).
                     // A pair around `*get(…)` is what makes `(*get(…)).len()`
                     // the length of the deref rather than the deref of the
                     // length - but only where a postfix follows, and a postfix
@@ -8188,7 +8188,7 @@ impl<'p> Emitter<'p> {
                     // **A read that is lent is the reference it already was**
                     // (0.0.250): the `&` in front and the `*` cancel.
                     // **A read of a map of `T?` is one `T?`**
-                    // ([ADR-273](../../docs/specification/adr/adr-273.md) D3):
+                    // ([ADR-293](../../docs/specification/adr/adr-293.md) D14):
                     // `index::flat` over the read, which is the `Option<&T>`
                     // a `ref T?` is below - so a lend in front of it is
                     // already there, and is taken.
@@ -8233,7 +8233,7 @@ impl<'p> Emitter<'p> {
                 // **A `for` lends, and `as` does not see through a view**
                 // ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
                 // The checker says which operands those are, because which name is
-                // a view is a question about the scope (ADR-028).
+                // a view is a question about the scope (ADR-288).
                 //
                 // **`num::value` and not a `*`**, which is
                 // `nikaia_std::index::at`'s own reasoning one construct over:
@@ -8249,7 +8249,7 @@ impl<'p> Emitter<'p> {
                 };
                 match self.narrows(flow.statement, &into) {
                     // **A narrowing conversion is checked, and an unchecked one
-                    // aborts** (ADR-043 D4). Rust's `as` truncates by definition
+                    // aborts** (ADR-285 D12). Rust's `as` truncates by definition
                     // and no setting changes that, so this is the one place in
                     // the arithmetic decision where the emitted code differs from
                     // what was written - and it differs into what a Rust
@@ -8284,9 +8284,9 @@ impl<'p> Emitter<'p> {
             }
             Expr::StructLit { name, fields } => {
                 // `unaliased`, the same as a type: `h::Request(path: …)` builds
-                // `http::Request` (ADR-046 D3).
+                // `http::Request` (ADR-286 D12).
                 let owner = self.parsed.unaliased(self.text(*name));
-                // A value with a cleanup is made in its `Cleaned` (ADR-239 D1).
+                // A value with a cleanup is made in its `Cleaned` (ADR-297 D1).
                 let cleaned = self.cleaned_types.contains(&owner);
                 if cleaned {
                     out.push(&format!("{}::new(", self.cleaned()));
@@ -8331,12 +8331,12 @@ impl<'p> Emitter<'p> {
                     };
                     let (before, after) = (before.as_str(), after.as_str());
                     // **Into a field both kinds of text flow into, each value
-                    // goes as it is** (ADR-222 D3): a view borrowed, text of its
+                    // goes as it is** (ADR-282 D14): a view borrowed, text of its
                     // own moved in.
                     let either = self.either_field(&owner, field.name)
                         && !matches!(field.value, Some(Expr::LitNull));
                     // The nullable wrap goes around it: `Some(either(v))`
-                    // (ADR-224 D2).
+                    // (ADR-282 D5).
                     if either {
                         out.push(": ");
                         out.push(before);
@@ -8388,7 +8388,7 @@ impl<'p> Emitter<'p> {
             // ([ADR-118](../../docs/specification/adr/adr-118.md) D1, D3): the
             // named fields, then `..base`, from which every field the program
             // did not name comes **by move**. No copy is inserted that the
-            // program did not write ([ADR-107](../../docs/specification/adr/adr-107.md)
+            // program did not write ([ADR-282](../../docs/specification/adr/adr-282.md)
             // D3), which is why this is `..base` and not `..base.clone()`.
             //
             // The type is the checker's answer, read back under the byte the
@@ -8439,7 +8439,7 @@ impl<'p> Emitter<'p> {
                 self.expr(out, base, depth, flow)?;
                 out.push(" }");
             }
-            // A lambda's arguments are the ones it names (ADR-049): nothing is
+            // A lambda's arguments are the ones it names (ADR-277): nothing is
             // read off the body, so `fn { … }` is `||`.
             Expr::Closure {
                 params,
@@ -8524,7 +8524,7 @@ impl<'p> Emitter<'p> {
                     (true, [one]) => out.push(&format!("|&{one}| ")),
                     _ => out.push(&format!("|{}| ", names.join(", "))),
                 }
-                // **The `mut` ones reach inward** (ADR-110 D1), and the list is
+                // **The `mut` ones reach inward** (ADR-281 D12), and the list is
                 // the enclosing one plus this lambda's rather than this
                 // lambda's alone: a lambda written inside an `update` block
                 // still means the address when it names the outer `v`.
@@ -8553,7 +8553,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::Unary { op, expr } => {
                 // **`-2147483648` is an `i32`**, and its digits are not
-                // ([ADR-060](../../../docs/specification/adr/adr-060.md) D3): the
+                // ([ADR-285](../../../docs/specification/adr/adr-285.md) D23): the
                 // question is about the value, so a negation is folded here
                 // rather than left for `integer_literal` to answer about a number
                 // that is one too large.
@@ -8597,7 +8597,7 @@ impl<'p> Emitter<'p> {
             } => {
                 // **A constant sum takes the first type that holds it**, the
                 // way a constant does
-                // ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
+                // ([ADR-285](../../../docs/specification/adr/adr-285.md) D22).
                 // Asked only on the outermost expression that folds - `widen`
                 // reaching inward is what makes the operands agree - and never
                 // where the position decides the type.
@@ -8620,7 +8620,7 @@ impl<'p> Emitter<'p> {
                 // **Only where the checker said so**, by the operator's own
                 // span: a number's `+` may not move into `std`, where
                 // `overflow-checks` is off and inlining would not carry the
-                // abort across (ADR-043 D1).
+                // abort across (ADR-285 D5).
                 if self.concatenations.contains(&at.at()) {
                     out.push("nikaia_std::concat::plus(");
                     self.concatenated(out, lhs, depth, flow)?;
@@ -8662,7 +8662,7 @@ impl<'p> Emitter<'p> {
                 }
                 // **An operation proved to stay inside its type** is written
                 // without its check, naming the type the proof was about
-                // ([ADR-272](../../docs/specification/adr/adr-272.md) D5).
+                // ([ADR-306](../../docs/specification/adr/adr-306.md) D10).
                 if let Some(ty) = self.proven_arithmetic.get(&at.at())
                     && !flow.widen
                     && !flow.inferred
@@ -8697,8 +8697,8 @@ impl<'p> Emitter<'p> {
                 self.nested(out, rhs, here + 1, depth, flow)?;
             }
             // **A fallback that jumps is a `match` and not a closure**
-            // ([ADR-138](../../../docs/specification/adr/adr-138.md) D1, and
-            // [ADR-084](../../../docs/specification/adr/adr-084.md) D4's rule
+            // ([ADR-276](../../../docs/specification/adr/adr-276.md) D20, and
+            // [ADR-276](../../../docs/specification/adr/adr-276.md) D16's rule
             // about what a jump may not cross).
             //
             // `unwrap_or_else` takes a **closure**, so a `return` written in
@@ -8720,7 +8720,7 @@ impl<'p> Emitter<'p> {
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
                 // **A loan on the left is opened, and the answer is a view**
-                // ([ADR-275](../../docs/specification/adr/adr-275.md) D1).
+                // ([ADR-279](../../docs/specification/adr/adr-279.md) D10).
                 if let Some(opened) = self
                     .lent_coalesces
                     .get(&(flow.statement, crate::check::argument_shape(expr)))
@@ -8732,7 +8732,7 @@ impl<'p> Emitter<'p> {
                 out.push(" }");
             }
             // **A `??` whose answer is only read lends its left side**
-            // ([ADR-259](../../docs/specification/adr/adr-259.md) D1): the
+            // ([ADR-279](../../docs/specification/adr/adr-279.md) D5): the
             // option is opened (`.as_deref()` for text, `.as_ref()` for the
             // rest) and the fallback is a view of what it names, so the answer
             // is a view and the name stays usable after the line.
@@ -8779,22 +8779,22 @@ impl<'p> Emitter<'p> {
                 // one more use of the type, which is what decides it.
                 //
                 // **`index::or` and not `unwrap_or_else`**
-                // ([ADR-114](../../docs/specification/adr/adr-114.md) D4): the
+                // ([ADR-293](../../docs/specification/adr/adr-293.md) D4): the
                 // left of a `??` may now be a **view into a container**, because
                 // a map read answers `Option<&V>` — the value reached is the
                 // map's, and copying it is never the compiler's to do
-                // ([ADR-008](../../docs/specification/adr/adr-008.md) D5). The
+                // ([ADR-283](../../docs/specification/adr/adr-283.md) D3). The
                 // fallback is still written as the value it stands for, so the
                 // two sides do not have the same type and the language below is
                 // what joins them.
                 // **And except for text where the left side is a view of text**
-                // (ADR-209 §6): the literal already is one.
+                // (ADR-283): the literal already is one.
                 //
                 // **And except for a variant of an enum this file declares**:
                 // `Ty::Unknown` is already a `Ty`, and `.into()` on it is a
                 // conversion to the same type, which the language below's
                 // lint calls useless (found moving `Ty::parse` into Nikaia,
-                // ADR-257).
+                // ADR-294).
                 let a_declared_variant = match &**fallback {
                     Expr::Path(segments) => {
                         segments.len() == 2
@@ -8809,7 +8809,7 @@ impl<'p> Emitter<'p> {
                 // **And except for a constructor of a type this file
                 // declares**, `FnContract::empty()`: its entry says it hands
                 // back the type itself, so `.into()` is the same useless
-                // conversion (found moving the ledger's reader, ADR-257).
+                // conversion (found moving the ledger's reader, ADR-294).
                 let a_declared_constructor = match &**fallback {
                     Expr::Call { func, .. } => match &**func {
                         Expr::Path(segments) if segments.len() == 2 => {
@@ -8873,11 +8873,11 @@ impl<'p> Emitter<'p> {
                 // A written call inside the guarded half must not take the
                 // `?`: the `match` below is what handles the failure. A grammar
                 // entry is one of those calls now
-                // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), so it
+                // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), so it
                 // needs no arm of its own — which is what that record meant by
                 // *an ordinary call*.
                 // **A joining block is told the handler is right here**
-                // ([ADR-163](../../docs/specification/adr/adr-163.md) D3), and
+                // ([ADR-292](../../docs/specification/adr/adr-292.md) D18), and
                 // only when it *is* the guarded half: one nested in an argument
                 // hands back a tuple like any other value.
                 let guarded = match &**expr {
@@ -8888,7 +8888,7 @@ impl<'p> Emitter<'p> {
                 let pad = "    ".repeat(depth + 1);
                 let close = "    ".repeat(depth);
                 // **A handler that does not read the error binds `_error`**
-                // ([ADR-090](../../docs/specification/adr/adr-090.md)). Kap 7.1
+                // ([ADR-308](../../docs/specification/adr/adr-308.md)). Kap 7.1
                 // gives the failure that name whether or not the handler wants
                 // it, so `catch { 1000 }` - the shape Part I 7.1 teaches first -
                 // used to get `warning: unused variable: error` about a binding
@@ -8906,7 +8906,7 @@ impl<'p> Emitter<'p> {
                         false => "_error",
                     };
                 // **What the handler was handed**
-                // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). A
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D10). A
                 // named channel hands it an **envelope** — the author's error
                 // plus the site it was raised at — and what Part I 7.1 gives
                 // the handler is the error: `match error { ConfigError::… }`
@@ -8921,7 +8921,7 @@ impl<'p> Emitter<'p> {
                 };
                 let flow = flow.handling(named).catching(sum);
                 // **The envelope is opened as the handler's first statement**
-                // ([ADR-164](../../docs/specification/adr/adr-164.md) D3), and
+                // ([ADR-292](../../docs/specification/adr/adr-292.md) D20), and
                 // not as a block wrapped around it. A block holding one
                 // expression, inside another block, is `unused_braces` — a
                 // warning about a file nobody wrote, which is
@@ -8932,7 +8932,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!(
                     " {{\n{pad}Ok(value) => value,\n{pad}Err({bound}) => "
                 ));
-                // Kap 7.1 and ADR-034: the handler's last statement is the
+                // Kap 7.1 and ADR-292: the handler's last statement is the
                 // value of the `catch`, so a `return` in it is the *function's*
                 // return and has to stay one. `contracts::order`'s `diverts`
                 // counts exactly that `return` when it refuses to overlap the
@@ -8962,7 +8962,7 @@ impl<'p> Emitter<'p> {
             // trace it may attach is off unless the program asked - measured at
             // 28 300 instructions an error, which is not a default.
             // **The four jumps, written as the language below writes them**
-            // ([ADR-138](../../../docs/specification/adr/adr-138.md) D1): each
+            // ([ADR-276](../../../docs/specification/adr/adr-276.md) D20): each
             // is `!` there too, so an arm that returns beside an arm that hands
             // back a value is a `match` of that value's type by the backend's
             // own rule and not by a coercion this had to write.
@@ -8989,7 +8989,7 @@ impl<'p> Emitter<'p> {
                     _ => "continue",
                 };
                 // **The same refusal the statement form has**
-                // ([ADR-084](../../../docs/specification/adr/adr-084.md) D6):
+                // ([ADR-276](../../../docs/specification/adr/adr-276.md) D18):
                 // the lowering states it too, so a path that reached here
                 // without the checker's answer still writes no file `rustc`
                 // would refuse.
@@ -9003,7 +9003,7 @@ impl<'p> Emitter<'p> {
             }
             Expr::Throw(inner) => {
                 // **`throw error` inside a handler passes the error on**
-                // ([ADR-157](../../docs/specification/adr/adr-157.md) D3), with
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D11), with
                 // the site it was **raised** at and not the one it was caught
                 // at, which is what
                 // [ADR-023](../../docs/specification/adr/adr-023.md) D6 asks
@@ -9015,7 +9015,7 @@ impl<'p> Emitter<'p> {
                 if passing_on || (flow.caught_member.is_some() && is_the_binding) {
                     // **Back into the variant it came out of**, where the
                     // handler is inside a sum's member arm
-                    // ([ADR-160](../../docs/specification/adr/adr-160.md) D3).
+                    // ([ADR-280](../../docs/specification/adr/adr-280.md) D17).
                     let put_back = |inner: String| match (flow.caught_sum, flow.caught_member) {
                         (Some(sum), Some(member)) => format!(
                             "{}::{}({inner})",
@@ -9036,9 +9036,9 @@ impl<'p> Emitter<'p> {
                 // `raise` does and what needs `'static`; and a **library's
                 // type** takes the value alone, because a channel that carries
                 // no envelope has nowhere to put a site
-                // ([ADR-159](../../docs/specification/adr/adr-159.md) D2).
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D13).
                 // **A sum takes the member it is**
-                // ([ADR-160](../../docs/specification/adr/adr-160.md) D2), and
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D16), and
                 // `into()` is what picks the variant: the `From` beside the
                 // generated `enum` is written per member, so the thrown value
                 // says which one it is by its own type.
@@ -9063,7 +9063,7 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 // **A `throw` has a site whoever declared the error**
-                // ([ADR-241](../../docs/specification/adr/adr-241.md) D2): a
+                // ([ADR-280](../../docs/specification/adr/adr-280.md) D14): a
                 // library's error thrown by this program was raised here.
                 match self.named_error(flow.function) {
                     Some(Named::Own(_) | Named::Library(_)) => {
@@ -9086,7 +9086,7 @@ impl<'p> Emitter<'p> {
             //     `task` takes futures (§6 step 3). Not because the language
             //     below has no `async` closure, which is what this line used to
             //     say and is false
-            //     ([ADR-187](../../docs/specification/adr/adr-187.md) D1, D2);
+            //     ([ADR-277](../../docs/specification/adr/adr-277.md) D13, D16);
             //   * `move`, which is Part I 8.3's implicit move: the captures go
             //     with the task because it may outlive the function that
             //     started it, and `NK2101` is what stands in front of that for
@@ -9111,11 +9111,11 @@ impl<'p> Emitter<'p> {
                 // task may be polled on a thread that did not start it, so its
                 // future has to be `Send` (§2 D6); at `no` it may not, so it
                 // does not - and asking for `Send` there would refuse a task
-                // holding the plain count ADR-061 D1 gives a `Shared` at one
+                // holding the plain count ADR-312 D9 gives a `Shared` at one
                 // user thread. One Nikaia line, two lowerings, and the switch
                 // is what chooses.
                 // **A handle the body names is duplicated, not moved**
-                // ([ADR-040](../../../docs/specification/adr/adr-040.md) D1).
+                // ([ADR-312](../../../docs/specification/adr/adr-312.md) D1).
                 // The step is written *outside* the future, in a block of its
                 // own, so the name the body moves is the new handle and the
                 // caller's own survives the `spawn` - which is the whole of D1
@@ -9163,7 +9163,7 @@ impl<'p> Emitter<'p> {
 
     /// Whether `receiver.method(…)` **enters a grammar**: a receiver naming one
     /// of this file's grammars and a method naming one of its `pub` rules
-    /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     fn enters_a_grammar(&self, receiver: &Expr, method: Symbol) -> bool {
         let Expr::Variable(name) = receiver else {
             return false;
@@ -9333,9 +9333,9 @@ impl<'p> Emitter<'p> {
         // through pausing functions puts the future behind a pointer.
         // `pausing_reach` is computed once per unit (see that function for why
         // it over-approximates), and the emitter only looks names up in it: it
-        // still resolves nothing (ADR-011 D2).
+        // still resolves nothing (ADR-296 D17).
         // **A grammar is entered by an ordinary call**
-        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1), through a
+        // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), through a
         // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3:
         // `Json::value(input)`, where `Json` names a grammar in this file and
         // `value` one of its `pub` rules. First, because it is not a call to
@@ -9388,13 +9388,13 @@ impl<'p> Emitter<'p> {
             return Err(pausing_in_a_lambda(flow.statement, key));
         }
         // **A call to a code parameter whose type may pause**
-        // ([ADR-122](../../docs/specification/adr/adr-122.md) D1). It hands back
+        // ([ADR-277](../../docs/specification/adr/adr-277.md) D11). It hands back
         // a boxed future, so it is awaited — and it is never *boxed* here: a
         // parameter is not a name the recursion graph knows, and what it holds
         // is already behind a pointer.
         let awaits_a_parameter =
             matches!(func, Expr::Variable(name) if flow.awaited.contains(name));
-        // **A call of a `sync(f)` function** (ADR-244 D4): awaited where the
+        // **A call of a `sync(f)` function** (ADR-288 D31): awaited where the
         // caller can pause, and driven once where it cannot - the checker has
         // then proved the lambda handed to it does not pause, so neither does
         // the call.
@@ -9411,7 +9411,7 @@ impl<'p> Emitter<'p> {
         }
 
         // **A handle is made at the call and nowhere else**
-        // ([ADR-155](../../docs/specification/adr/adr-155.md) D2, D3). The
+        // ([ADR-302](../../docs/specification/adr/adr-302.md) D11, D12). The
         // declaration hands back the address C returned; the hull goes on here,
         // where the claim the declaration made can be checked — or, where it
         // said `?`, where `None` is C's own `NULL`.
@@ -9479,9 +9479,9 @@ impl<'p> Emitter<'p> {
         unchecked: bool,
     ) -> Result<()> {
         // **A call to a function that walks a type's fields goes to the copy**
-        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2), and which
+        // ([ADR-304](../../docs/specification/adr/adr-304.md) D6), and which
         // copy is the checker's answer: this emitter has no types
-        // ([ADR-028](../../docs/specification/adr/adr-028.md)), so the name is
+        // ([ADR-288](../../docs/specification/adr/adr-288.md)), so the name is
         // handed over keyed by the byte the call stands at.
         if let Some(copy) = self.unrolled_calls.get(&flow.statement) {
             // **Only the call to the walking function**: the key is the
@@ -9504,7 +9504,7 @@ impl<'p> Emitter<'p> {
             let text = self.text(*name);
 
             // **A door over several locks**
-            // ([ADR-065](../../../docs/specification/adr/adr-065.md)): the locks
+            // ([ADR-281](../../../docs/specification/adr/adr-281.md)): the locks
             // go in by reference and the block becomes the last argument, which
             // is what the trailing-lambda rule already made of it. The ordered
             // acquisition is `std`'s, because it is about addresses at run time
@@ -9524,7 +9524,7 @@ impl<'p> Emitter<'p> {
             }
 
             // **A hull you can observe, you write**
-            // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2).
+            // ([ADR-281](../../../docs/specification/adr/adr-281.md) D2).
             // `Shared(x)`, `SharedMut(x)` and `Locked(x)` are the three, and each
             // expands to the shape `written_name` would give the *type* - so the
             // constructor and the annotation cannot disagree about a value.
@@ -9561,7 +9561,7 @@ impl<'p> Emitter<'p> {
                 // A plain string is text, and Rust's macro would read a brace
                 // in it as a hole of its own - so the braces are escaped on the
                 // way down rather than the argument being passed separately
-                // (ADR-035 D2). `print("{")` prints a brace.
+                // (ADR-309 D4). `print("{")` prints a brace.
                 if let [Expr::LitStr { text: literal, .. }] = args {
                     out.push(&format!("{text}!(\"{}\")", rust_format_escape(literal)));
                     return Ok(());
@@ -9606,7 +9606,7 @@ impl<'p> Emitter<'p> {
         }
 
         // **The same constructor, written with its module in front**
-        // ([ADR-154](../../docs/specification/adr/adr-154.md) D3):
+        // ([ADR-313](../../docs/specification/adr/adr-313.md) D3):
         // `collections::HashMap()` is `HashMap()` reached the way the prelude's
         // list says a name outside it is reached. The arm above answers the bare
         // spelling and this one the qualified, off the same fact — the entry
@@ -9687,7 +9687,7 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) => self.text(*name).to_string(),
             // **Unaliased, because that is what the checker keyed by**:
             // `h::id_of()` is `http::id_of()` where the file wrote
-            // `use http as h` ([ADR-046](../../docs/specification/adr/adr-046.md)
+            // `use http as h` ([ADR-286](../../docs/specification/adr/adr-286.md)
             // D3), and a key built from the source's own word never matched.
             Expr::Path(segments) => self.parsed.unaliased(
                 &segments
@@ -9703,7 +9703,7 @@ impl<'p> Emitter<'p> {
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
         }
-        // **The keep, last** (ADR-209 D2): where the callee's views leave it,
+        // **The keep, last** (ADR-283 D10): where the callee's views leave it,
         // the caller says where they live.
         let keep = self
             .keeping_callee(func)
@@ -9730,7 +9730,7 @@ impl<'p> Emitter<'p> {
                     Some(passed) => self.expr(out, &passed.value, depth, flow)?,
                     // Not passed, so the declaration's default is the value.
                     // It is a literal, and Nikaia spells a literal the way the
-                    // language below does (ADR-011 D2).
+                    // language below does (ADR-296 D17).
                     None => out.push(&option.default),
                 }
             }
@@ -9746,7 +9746,7 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
-    /// ADR-007 D5: the shadow struct a call to a DSL driver builds.
+    /// ADR-296 D5: the shadow struct a call to a DSL driver builds.
     ///
     /// A `;` at a call site means options everywhere else, and the callee's
     /// declaration is what tells the two apart: a driver said
@@ -9790,9 +9790,9 @@ impl<'p> Emitter<'p> {
     /// the declaration gives, and one that was left out becomes its default.
     ///
     /// The same thing `call` does from `options_of`, off the checker's answer
-    /// instead ([ADR-028](../../../docs/specification/adr/adr-028.md)) — and a
+    /// instead ([ADR-288](../../../docs/specification/adr/adr-288.md)) — and a
     /// DSL driver is not this: what stands after *its* `;` is the typed spread
-    /// of [ADR-007](../../../docs/specification/adr/adr-007.md) D5, which
+    /// of [ADR-296](../../../docs/specification/adr/adr-296.md) D5, which
     /// `dsl_parameters` has already written as one value.
     fn method_options(
         &self,
@@ -9826,7 +9826,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether a branch of an `overlap` can fail out of itself
-    /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D5).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D5).
     ///
     /// **The guarded half of a `catch` does not count**, which is the whole
     /// reason this is its own walk rather than [`visit_expr`]: D5 says
@@ -9856,7 +9856,7 @@ impl<'p> Emitter<'p> {
                 config,
             } => {
                 // **A grammar entry propagates on its own** (Kap 7.1, and
-                // [ADR-082](../../docs/specification/adr/adr-082.md) D2's
+                // [ADR-296](../../docs/specification/adr/adr-296.md) D25's
                 // `throws`): it is an ordinary call now, and this is the arm
                 // ordinary calls are in — which is what that record meant.
                 self.enters_a_grammar(receiver, *method)
@@ -9872,7 +9872,7 @@ impl<'p> Emitter<'p> {
             Expr::Throw(_) => true,
             // **A branch written as a block** fails where a statement in it
             // can, and where a value it binds has a cleanup that can
-            // ([ADR-239](../../docs/specification/adr/adr-239.md) D3): the
+            // ([ADR-297](../../docs/specification/adr/adr-297.md) D4): the
             // branch is where that failure belongs.
             Expr::Block(block) => block.stmts.iter().any(|stmt| {
                 self.settle_lets.get(&stmt.span.at()) == Some(&true)
@@ -9901,13 +9901,13 @@ impl<'p> Emitter<'p> {
     }
 
     /// **`overlap { … }`** — Part I 8.1.2,
-    /// [ADR-050](../../../docs/specification/adr/adr-050.md) D2 and D6.
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md) D2 and D6.
     ///
     /// Each statement is a branch, each branch becomes an `async` block, and
     /// `task::overlap<n>` polls all of them in one pass. An `async` **block**
     /// and not a closure, for the reason a task's body is one: a branch is a
     /// block, and a closure around it would only be called once
-    /// ([ADR-187](../../../docs/specification/adr/adr-187.md) D2 - the reason
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D16 - the reason
     /// this line used to give, that Rust has no `async` closure, is false).
     /// No `move`, because D4 says
     /// nothing outlives the block — a branch borrows what is around it exactly
@@ -9918,7 +9918,7 @@ impl<'p> Emitter<'p> {
     /// suspension point before any branch that cannot suspend is run"* — so the
     /// branches that can pause are handed over first, and the join polls in the
     /// order it is given. Which those are is the ledger's `sync` column, read
-    /// the same way [`Emitter::branch_pauses`] reads it for ADR-033's pairs.
+    /// the same way [`Emitter::branch_pauses`] reads it for ADR-292's pairs.
     ///
     /// **And the value goes back into written order**, because D2 says it is the
     /// tuple in written order and the reordering above is a schedule. Where the
@@ -9961,7 +9961,7 @@ impl<'p> Emitter<'p> {
         // nobody wrote (Part III, C.1).
         //
         // **Or handled at the block itself**
-        // ([ADR-163](../../docs/specification/adr/adr-163.md) D3): a `catch`
+        // ([ADR-292](../../docs/specification/adr/adr-292.md) D18): a `catch`
         // written on the block is where the failure stops, so the branches are
         // wrapped for it exactly as they are for a `throws` function - and the
         // outcome stays a `Result` for the handler to take apart.
@@ -9972,9 +9972,9 @@ impl<'p> Emitter<'p> {
             });
 
         // **Whose channel the branches travel in**
-        // ([ADR-164](../../docs/specification/adr/adr-164.md) D2). Where the
+        // ([ADR-292](../../docs/specification/adr/adr-292.md) D19). Where the
         // failure leaves the function, it is the function's, as
-        // [ADR-163](../../docs/specification/adr/adr-163.md) D2 made it. Where a
+        // [ADR-292](../../docs/specification/adr/adr-292.md) D17 made it. Where a
         // `catch` on the block handles it, the function may not be `throws` at
         // all — so it is the set the **branches** throw, which is also what the
         // handler binds.
@@ -9985,14 +9985,14 @@ impl<'p> Emitter<'p> {
             None => flow.channel.to_string(),
             // `main` has no parameters to borrow from and a block's outcome is
             // bound where it is written, so an error carrying a view can only be
-            // `'static` here — [ADR-008](../../docs/specification/adr/adr-008.md)
+            // `'static` here — [ADR-283](../../docs/specification/adr/adr-283.md)
             // D9's derivation, one position over.
             Some(set) => self.channel_of(set, Lifetimes::ELIDED, false),
         };
 
         // **Each branch settles what it parks, where a value with a cleanup
-        // may die in this function** ([ADR-239](../../docs/specification/adr/adr-239.md)
-        // D3, [ADR-115](../../docs/specification/adr/adr-115.md) D3): the
+        // may die in this function** ([ADR-297](../../docs/specification/adr/adr-297.md)
+        // D3, [ADR-292](../../docs/specification/adr/adr-292.md) D10): the
         // branches run at once in one task, so each gets a queue of its own. A
         // cleanup that fails joins **its branch's** error where the branch's
         // channel is the box, which is where such a failure travels; elsewhere
@@ -10014,7 +10014,7 @@ impl<'p> Emitter<'p> {
             out.push("{\n");
             out.push(&inner);
             out.push(&format!(
-                "// ADR-050 D6: started in this order, answered in the written one.\n{inner}"
+                "// ADR-292 D6: started in this order, answered in the written one.\n{inner}"
             ));
             out.push("let (");
             for (at, _) in order.iter().enumerate() {
@@ -10045,7 +10045,7 @@ impl<'p> Emitter<'p> {
                 origin: flow.origin,
                 // A branch is still inside this function, so a nested vehicle
                 // in one names the same channel
-                // ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+                // ([ADR-292](../../docs/specification/adr/adr-292.md) D17).
                 channel: flow.channel,
                 ..Flow::PLAIN
             };
@@ -10056,7 +10056,7 @@ impl<'p> Emitter<'p> {
                     }
                     if fallible {
                         // **The enclosing function's channel**
-                        // ([ADR-163](../../docs/specification/adr/adr-163.md)
+                        // ([ADR-292](../../docs/specification/adr/adr-292.md)
                         // D2), because the `?` below converts into it.
                         out.push(&format!("Ok::<_, {channel}>("));
                     }
@@ -10087,13 +10087,13 @@ impl<'p> Emitter<'p> {
         if bound {
             out.push(&format!(".await;\n{inner}"));
             // **The branches become one outcome in `std`**
-            // ([ADR-163](../../docs/specification/adr/adr-163.md) D3) — `combine<n>` takes them in
+            // ([ADR-292](../../docs/specification/adr/adr-292.md) D18) — `combine<n>` takes them in
             // written order and answers the first `Err` among them
-            // ([ADR-050](../../docs/specification/adr/adr-050.md) D5). A `?`
+            // ([ADR-292](../../docs/specification/adr/adr-292.md) D5). A `?`
             // per branch written here would leave the *function* instead, which
             // is what a `catch` on the block cannot allow; and one function that
             // sees every outcome is where
-            // [ADR-115](../../docs/specification/adr/adr-115.md)'s `secondary`
+            // [ADR-292](../../docs/specification/adr/adr-292.md)'s `secondary`
             // list goes the day the later failures stop being dropped.
             if fallible {
                 out.push(&format!("nikaia_std::task::combine{}(", block.stmts.len()));
@@ -10130,7 +10130,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **`select { … }`** — Part II 12.4,
-    /// [ADR-148](../../../docs/specification/adr/adr-148.md) D1 and D2.
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md) D12 and D13.
     ///
     /// Each arm's expression becomes an `async` block, `task::race<n>` polls all
     /// of them in one pass, and what comes back says **which** arm won. So the
@@ -10141,7 +10141,7 @@ impl<'p> Emitter<'p> {
     /// losing futures are dropped when `race<n>` returns; a future dropped at
     /// its suspension point tears its values down, and a `cleanup` that pauses
     /// is adopted by the runtime and bounded by the `cleanup-deadline`
-    /// ([ADR-006](../../../docs/specification/adr/adr-006.md) D3). That is the
+    /// ([ADR-297](../../../docs/specification/adr/adr-297.md) D5). That is the
     /// mechanism this runtime already had, which is the whole argument of D3.
     ///
     /// **A failing arm**, where the enclosing function is `throws`: every arm is
@@ -10175,7 +10175,7 @@ impl<'p> Emitter<'p> {
         // to infer from is *"type annotations needed"* about a file nobody
         // wrote (Part III, C.1).
         //
-        // **Or handled at the block** ([ADR-164](../../docs/specification/adr/adr-164.md)
+        // **Or handled at the block** ([ADR-292](../../docs/specification/adr/adr-292.md)
         // D1), exactly as an `overlap`'s is.
         let fallible = (flow.throws || flow.handled_here)
             && arms
@@ -10213,7 +10213,7 @@ impl<'p> Emitter<'p> {
             };
             if fallible {
                 // The same as an `overlap`'s, one construct over
-                // ([ADR-163](../../docs/specification/adr/adr-163.md) D2).
+                // ([ADR-292](../../docs/specification/adr/adr-292.md) D17).
                 out.push(&format!("Ok::<_, {channel}>("));
             }
             self.expr(out, &arm.value, depth + 1, inside)?;
@@ -10240,7 +10240,7 @@ impl<'p> Emitter<'p> {
             // ignore a failure.
             //
             // **Unless the handler is right here**
-            // ([ADR-164](../../docs/specification/adr/adr-164.md) D1): a `?`
+            // ([ADR-292](../../docs/specification/adr/adr-292.md) D18): a `?`
             // would leave the *function*, and what the `catch` around this
             // `match` takes apart is the block's own outcome. So the failure is
             // taken apart here instead, and the arm's value becomes the `Ok`
@@ -10315,7 +10315,7 @@ impl<'p> Emitter<'p> {
     /// half).
     ///
     /// `stats.add(5)` names `add` and says nothing about what `stats` is
-    /// ([ADR-028](../../docs/specification/adr/adr-028.md)), so the candidates
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md)), so the candidates
     /// are **every** pausing key ending in that name — the same widening
     /// `pausing_reach` draws its edges with, asked here at the call. Where the
     /// two readings differ this takes the wider, for that function's own
@@ -10341,7 +10341,7 @@ impl<'p> Emitter<'p> {
 
     /// Whether a written type **carries** a view: it is one, it names a struct
     /// that holds one, or one of its arguments does
-    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D1, D9).
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D1, D7).
     ///
     /// [`holds_view`] asks the first of the three, off the written type alone,
     /// and that is all a walk without the declarations can do. This one has them:
@@ -10354,7 +10354,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The **one error type** a function's failures can be, where the ledger
-    /// names exactly one ([ADR-157](../../docs/specification/adr/adr-157.md)
+    /// names exactly one ([ADR-280](../../docs/specification/adr/adr-280.md)
     /// D1).
     ///
     /// `throws` in the source says *that* a function fails; the ledger's set
@@ -10377,7 +10377,7 @@ impl<'p> Emitter<'p> {
     ///
     /// A joining block has a set of its own — the union of what its branches
     /// throw — and no ledger key to look it up under
-    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D19).
     fn named_error_of<'t>(&'t self, throws: &'t [String]) -> Option<Named<'t>> {
         let [one] = throws else {
             return None;
@@ -10389,7 +10389,7 @@ impl<'p> Emitter<'p> {
             return Some(Named::Own(one.as_str()));
         }
         // **A type a ledger describes is a name too**
-        // ([ADR-159](../../docs/specification/adr/adr-159.md) D1). `io::IoError`
+        // ([ADR-280](../../docs/specification/adr/adr-280.md) D9). `io::IoError`
         // is not this unit's to declare and is every bit as nameable: `std`
         // publishes it, the generated file reaches it through the prelude, and
         // a program that reads a file has it as its whole set.
@@ -10402,7 +10402,7 @@ impl<'p> Emitter<'p> {
     /// The type a function's failures travel in.
     ///
     /// `borrows` is the same question the result position asks
-    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D9): an error that
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D7): an error that
     /// carries a view — `ConfigError::NotFound(path)`, Part I 7.1's own — is a
     /// type with a lifetime, and a function with nothing to borrow from can
     /// only write `'static` for it.
@@ -10414,10 +10414,10 @@ impl<'p> Emitter<'p> {
     }
 
     /// [`Emitter::error_channel`] asked of the **set** rather than of a
-    /// function ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    /// function ([ADR-292](../../docs/specification/adr/adr-292.md) D19).
     fn channel_of(&self, throws: &[String], lifetimes: Lifetimes, borrows: bool) -> String {
         // **A set of two or more is the generated sum**
-        // ([ADR-160](../../docs/specification/adr/adr-160.md) D1), where every
+        // ([ADR-280](../../docs/specification/adr/adr-280.md) D15), where every
         // member of it is a name.
         if let Some(sum) = self.sums.get(throws) {
             let params = match throws.iter().any(|m| self.borrows_named(m)) {
@@ -10432,8 +10432,8 @@ impl<'p> Emitter<'p> {
         match self.named_error_of(throws) {
             None => "Box<dyn std::error::Error>".to_string(),
             // **A library's error travels in an envelope too**
-            // ([ADR-241](../../docs/specification/adr/adr-241.md) D1). It was
-            // bare ([ADR-159](../../docs/specification/adr/adr-159.md) D2)
+            // ([ADR-280](../../docs/specification/adr/adr-280.md) D13). It was
+            // bare ([ADR-280](../../docs/specification/adr/adr-280.md) D13)
             // because no `throw` of this program raised it, and the envelope
             // says *no site recorded* for exactly that. What it carries is the
             // **list**: a caller that propagates a failure that joined others
@@ -10462,7 +10462,7 @@ impl<'p> Emitter<'p> {
         self.tethered.contains(name)
             || self.borrowing.iter().any(|sym| self.text(*sym) == name)
             // **A library's type answers from the library's ledger**
-            // ([ADR-160](../../docs/specification/adr/adr-160.md)): the two sets
+            // ([ADR-280](../../docs/specification/adr/adr-280.md)): the two sets
             // above are this package's, and a type another one declares is
             // described where it is declared.
             || self
@@ -10474,7 +10474,7 @@ impl<'p> Emitter<'p> {
 
     /// Every distinct error **set of two or more named members** in this unit,
     /// and the name of the type that stands for it
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D15).
     ///
     /// **Per set and not per function**, which is what makes propagation free:
     /// two functions that fail the same way get the same type, so a `?` between
@@ -10507,7 +10507,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The generated sums, written into the file
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D15).
     ///
     /// One `enum` per distinct set, the `From` each member needs so that a `?`
     /// converts on its own, and `Display`/`Error` so that the sum can still go
@@ -10526,7 +10526,7 @@ impl<'p> Emitter<'p> {
             // **One lifetime for the whole sum**, and it is the members' own: a
             // member that carries a view carries the buffer's lifetime, and a
             // sum of such a member has it too
-            // ([ADR-008](../../docs/specification/adr/adr-008.md) D1).
+            // ([ADR-283](../../docs/specification/adr/adr-283.md) D1).
             let (decl, params) = match borrows {
                 true => (format!("<{INPUT_LIFETIME}>"), format!("<{INPUT_LIFETIME}>")),
                 false => (String::new(), String::new()),
@@ -10539,7 +10539,7 @@ impl<'p> Emitter<'p> {
             out.push(&format!(
                 "// The failure channel of every function in this file that \
                  fails in exactly\n// these ways \
-                 ([ADR-160](docs/specification/adr/adr-160.md) D1). A program \
+                 ([ADR-280](docs/specification/adr/adr-280.md) D15). A program \
                  never\n// writes this name: a `catch` matches on the \
                  **members'** variants.\n\
                  //\n\
@@ -10570,7 +10570,7 @@ impl<'p> Emitter<'p> {
                     Self::sum_variant(member)
                 ));
                 // **A `?` straight from `std` hands a library's error bare**,
-                // and the member is its envelope (ADR-241 D1): put on here,
+                // and the member is its envelope (ADR-280 D13): put on here,
                 // with no site, as `From<E> for Thrown<E>` puts it on.
                 if matches!(self.name_of_error(member), Some(Named::Library(_))) {
                     out.push(&format!(
@@ -10640,7 +10640,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// `match error { … }` in a handler whose error travels in a **sum**
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D3).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D17).
     ///
     /// One match per member, carrying the arms whose patterns name that
     /// member's variants, and the source's catch-all written into each of them
@@ -10705,7 +10705,7 @@ impl<'p> Emitter<'p> {
         for (member, member_arms) in &by_member {
             let member: &str = member;
             // **A member the program declares travels in its envelope**
-            // ([ADR-159](../../docs/specification/adr/adr-159.md) D2), so the
+            // ([ADR-280](../../docs/specification/adr/adr-280.md) D13), so the
             // value the patterns are about is what the envelope holds — and the
             // site is kept in a local beside it, for the arm that passes the
             // error on. The split is the same one a single-typed handler makes;
@@ -10750,7 +10750,7 @@ impl<'p> Emitter<'p> {
     ///
     /// `ConfigError::Empty(p)` is `ConfigError` and `io::IoError::NotFound(p)`
     /// is `io::IoError` — everything but the last segment, which is
-    /// [ADR-159](../../docs/specification/adr/adr-159.md) D4's rule read off a
+    /// [ADR-280](../../docs/specification/adr/adr-280.md) D12's rule read off a
     /// pattern instead of off an expression. A one-segment path **binds**
     /// (Part I 3.4), so it names no member and is a catch-all.
     fn member_of(&self, pattern: &crate::ast::MatchPattern) -> Option<String> {
@@ -10773,7 +10773,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The generated sum a function's failures travel in, where its set has
-    /// one ([ADR-160](../../docs/specification/adr/adr-160.md) D1).
+    /// one ([ADR-280](../../docs/specification/adr/adr-280.md) D15).
     /// The members of a generated sum, by the name it is written with.
     fn sum_members(&self, sum: &str) -> Option<&[String]> {
         self.sums
@@ -10802,11 +10802,11 @@ impl<'p> Emitter<'p> {
     }
 
     /// What one member of a sum carries: its own single-member channel
-    /// ([ADR-160](../../docs/specification/adr/adr-160.md) D2).
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D16).
     ///
     /// A type this unit declares is one the program `throw`s, so it keeps the
     /// envelope and its site; a library's arrives from a call and travels bare
-    /// ([ADR-159](../../docs/specification/adr/adr-159.md) D2). The sum changes
+    /// ([ADR-280](../../docs/specification/adr/adr-280.md) D13). The sum changes
     /// neither — it only says which of them this failure was.
     fn sum_member_type(&self, name: &str, params: &str) -> String {
         match self.name_of_error(name) {
@@ -10825,7 +10825,7 @@ impl<'p> Emitter<'p> {
     /// it ([Part III A.2](../../docs/specification/30-nikaia-tooling.md)).
     ///
     /// `panic(…)` is the one call of that shape, and it is
-    /// [ADR-114](../../docs/specification/adr/adr-114.md) D1's own written way
+    /// [ADR-293](../../docs/specification/adr/adr-293.md) D1's own written way
     /// out for a key the program knows is present: `m[k] ?? panic(f"…")`. It
     /// belongs beside [`jumps`] rather than inside it, because telling it apart
     /// needs the name and a free function has no parse to read one from.
@@ -10854,7 +10854,7 @@ impl<'p> Emitter<'p> {
     ///
     /// The same walk `caught_channel_is_named` and `caught_sum` each did for
     /// themselves, written once because a third asker arrived
-    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D19).
     fn callee_name(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Call { func, .. } => match func.as_ref() {
@@ -10875,7 +10875,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// **The set of error types a joining block can fail with**
-    /// ([ADR-164](../../docs/specification/adr/adr-164.md) D2): the union of
+    /// ([ADR-292](../../docs/specification/adr/adr-292.md) D19): the union of
     /// its branches', in the ledger's own order, which is sorted.
     ///
     /// A `catch` written on an `overlap` handles what the **branches** threw,
@@ -10884,7 +10884,7 @@ impl<'p> Emitter<'p> {
     /// and not the function's.
     ///
     /// **It resolves no more than the two askers above already did**
-    /// ([ADR-011](../../docs/specification/adr/adr-011.md) D2): a branch's
+    /// ([ADR-296](../../docs/specification/adr/adr-296.md) D17): a branch's
     /// callee by the name the source wrote, and that callee's `throws` column
     /// off a ledger. A branch whose callee no ledger knows contributes the
     /// absence of a claim, which makes the set the box — the safe direction.
@@ -10924,7 +10924,7 @@ impl<'p> Emitter<'p> {
 
     fn caught_channel_is_named(&self, expr: &Expr) -> bool {
         // **A joining block answers from its own set**
-        // ([ADR-164](../../docs/specification/adr/adr-164.md) D2).
+        // ([ADR-292](../../docs/specification/adr/adr-292.md) D19).
         let joined = match expr {
             Expr::Overlap(block) => Some(self.joined_throws(Self::branch_values(block))),
             Expr::Select(arms) => Some(self.joined_throws(arms.iter().map(|arm| &arm.value))),
@@ -10937,9 +10937,9 @@ impl<'p> Emitter<'p> {
             return false;
         };
         // A call of this program's hands its failure in an envelope whoever
-        // declared the error (ADR-241 D1); a call of `std`'s hands it bare,
+        // declared the error (ADR-280 D13); a call of `std`'s hands it bare,
         // which `named_error` says by knowing no contract for it - and so does
-        // a grammar's entry rule, whose contract is in the ledger (ADR-082 D1)
+        // a grammar's entry rule, whose contract is in the ledger (ADR-296 D24)
         // and whose body is the grammar's, which returns the parse's error.
         let a_grammar = name
             .split("::")
@@ -10952,7 +10952,7 @@ impl<'p> Emitter<'p> {
     /// `async fn` ([ADR-055](../../../docs/specification/adr/adr-055.md) D1).
     ///
     /// **The answer is the ledger's `sync` column and nothing computed here.**
-    /// [ADR-027](../../../docs/specification/adr/adr-027.md) D1 infers it per
+    /// [ADR-288](../../../docs/specification/adr/adr-288.md) D1 infers it per
     /// function over the call graph, and its conservatism is already the safe
     /// direction (D2): an unresolved call costs a function its claim, which here
     /// makes it `async` - and an `async fn` that never awaits finishes on its
@@ -10997,7 +10997,7 @@ impl<'p> Emitter<'p> {
     /// The same resolution [`Emitter::can_fail`] does, one ledger column over:
     /// `throws` becomes a `?` and *can pause* becomes an `.await`, both read off
     /// the callee's contract and neither resolving a name
-    /// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2).
+    /// ([ADR-296](../../../docs/specification/adr/adr-296.md) D17).
     ///
     /// The ledger key a call resolves to, when that key pauses - `None` when the
     /// call takes no `.await` at all.
@@ -11011,7 +11011,7 @@ impl<'p> Emitter<'p> {
     /// rather than a future - which is what let step 2 land on its own.
     /// Whether the own function under `key` was written `sync(f)`: the only
     /// way an own entry says `Sync::From`, since the inference never writes it
-    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D4).
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D31).
     fn lambda_decides(&self, key: &str) -> bool {
         self.own_contracts
             .functions
@@ -11107,7 +11107,7 @@ impl<'p> Emitter<'p> {
     ///
     /// A **method** call is not asked here, because the answer is not the
     /// emitter's to work out: `stats.add(5)` names `add` and only the type
-    /// checker knows what it goes to (ADR-028). `method_can_fail` reads the
+    /// checker knows what it goes to (ADR-288). `method_can_fail` reads the
     /// answer the checker handed over instead.
     fn can_fail(&self, func: &Expr) -> bool {
         let name = match func {
@@ -11124,7 +11124,7 @@ impl<'p> Emitter<'p> {
             .get(&name)
             .or_else(|| self.own_contracts.functions.get(&format!("{name}::new")))
             .or_else(|| self.library.lookup(&name).map(|(_, c)| c))
-            // **And a described crate's** (ADR-237 D1): the checker made the
+            // **And a described crate's** (ADR-290 D20): the checker made the
             // call a place that can fail off the same entry, so the `?` is
             // owed here - without it the crate's `Result` reached the rest of
             // the line, and `rustc` said so about a file nobody wrote.
@@ -11135,7 +11135,7 @@ impl<'p> Emitter<'p> {
     /// Whether the checker said this conversion narrows, and which kind it is.
     ///
     /// A lookup, not an analysis: `as i32` narrows or widens by what it is given,
-    /// and nothing here knows that (ADR-028). `None` where the checker had no
+    /// and nothing here knows that (ADR-288). `None` where the checker had no
     /// answer - a type it does not recognise, or two conversions to the same type
     /// in one statement where one of them widens - which leaves the conversion
     /// exactly as it was rather than guessing at it.
@@ -11199,14 +11199,14 @@ impl<'p> Emitter<'p> {
     }
 
     /// A string literal. Which of the two it is decides what comes out, and
-    /// that is read off the syntax rather than the text (ADR-035 D3).
+    /// that is read off the syntax rather than the text (ADR-309 D2).
     fn string(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             // Inert text, transcribed. A brace is a brace, so nothing has to be
             // escaped on the way into a Rust string literal - only a *format*
             // string treats one specially, and this is not one.
             //
-            // **Unless its use wants text of its own** (ADR-207 D2), and then
+            // **Unless its use wants text of its own** (ADR-282 D4), and then
             // it is constructed there, as `[1, 2]` is `vec![1, 2]` where a
             // `Vec` is wanted: a literal is a constant being built, not text
             // the program had being copied.
@@ -11223,7 +11223,7 @@ impl<'p> Emitter<'p> {
             // roundabout way of writing what `.to_string()` says plainly.
             Expr::LitInterpolated { parts } => {
                 // A malformed literal never gets here: the grammar refuses it
-                // at its place (ADR-262 D4).
+                // at its place (ADR-309 D8).
                 if interpolated_holes(parts).is_empty() {
                     out.push(&format!("\"{}\".to_string()", format_of(parts)));
                     return Ok(());
@@ -11258,11 +11258,11 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        // **Built from the parts** (ADR-262 D5): the grammar has read the
+        // **Built from the parts** (ADR-309 D9): the grammar has read the
         // literal, so there is nothing left to scan.
         out.push(&format!("\"{}\"", format_of(parts)));
 
-        // **The holes the grammar parsed** (ADR-262 D2), each by its place.
+        // **The holes the grammar parsed** (ADR-309 D6), each by its place.
         for (hole, expr) in interpolated_holes(parts) {
             let mut expr = expr.clone();
             // What the tier pass hands over inside it (ADR-229 D1), as every
@@ -11542,7 +11542,7 @@ impl<'p> Emitter<'p> {
 
     /// A pattern, with the names the arm only reads bound as views: `ref n`
     /// leaves the scrutinee whole, where a plain `n` would take the part out of
-    /// it (ADR-242).
+    /// it (ADR-291).
     fn pattern_lending(
         &self,
         out: &mut Out,
@@ -11614,7 +11614,7 @@ impl<'p> Emitter<'p> {
         let names = |b: &[Symbol]| b.iter().map(bound).collect::<Vec<_>>().join(", ");
         match pattern {
             // Rust's own catch-all, which is what the arm was before
-            // ([ADR-145](../../docs/specification/adr/adr-145.md) D3).
+            // ([ADR-291](../../docs/specification/adr/adr-291.md) D18).
             MatchPattern::Otherwise => out.push("_"),
             MatchPattern::Literal(value) => self.expr(out, value, depth, flow)?,
             MatchPattern::Path(p) => match p.as_slice() {
@@ -11623,7 +11623,7 @@ impl<'p> Emitter<'p> {
             },
             // **The parts are patterns**, so this recurses — which is the whole
             // of what *nested* means
-            // ([ADR-137](../../docs/specification/adr/adr-137.md) D1). An empty
+            // ([ADR-291](../../docs/specification/adr/adr-291.md) D10). An empty
             // path is the bare tuple `(0, 0)`, which names no type.
             MatchPattern::Tuple { path: p, parts } => {
                 out.push(&path(p));
@@ -11679,7 +11679,7 @@ impl<'p> Emitter<'p> {
     /// **A method call, for both of the ways a program may write one.**
     ///
     /// `x.m(…)` and `x?.m(…)` differ in *whether* the call happens and in
-    /// nothing else ([ADR-066](../../../../docs/specification/adr/adr-066.md)),
+    /// nothing else ([ADR-278](../../../../docs/specification/adr/adr-278.md)),
     /// so what a call lowers to is written once: the truncating conversion, the
     /// `len` that becomes an `i64`, `collect`'s turbofish, the arguments, Kap
     /// 5.1's deferred parameters, ADR-055 D2's `.await` and ADR-023 D8's `?`.
@@ -11728,7 +11728,7 @@ impl<'p> Emitter<'p> {
             out.push(".chars())");
             return Ok(());
         }
-        // **`x.truncating_i32()` is Rust's `as`** (ADR-043 D7): the
+        // **`x.truncating_i32()` is Rust's `as`** (ADR-285 D13): the
         // operation the name says. It is a name and not the operator
         // because keeping the low digits is said rather than assumed,
         // exactly as wrapping is (D2) - and since D4 made `as i32`
@@ -11745,7 +11745,7 @@ impl<'p> Emitter<'p> {
         // "unnecessary parentheses around assigned value"), and Part III
         // C.1 says a reader must not meet one.
         // **A grammar is entered by an ordinary call**
-        // ([ADR-082](../../docs/specification/adr/adr-082.md) D1):
+        // ([ADR-296](../../docs/specification/adr/adr-296.md) D24):
         // `Json.value(input)`, where `Json` names a grammar in this file and
         // `value` one of its `pub` rules. It is a method call in the grammar
         // of this language and nothing else could have been — a grammar name is
@@ -11771,7 +11771,7 @@ impl<'p> Emitter<'p> {
             out.push(&format!(" as {into}"));
             return Ok(());
         }
-        // **`len` hands back an `i64`** (ADR-048 D1), and Rust's hands
+        // **`len` hands back an `i64`** (ADR-285 D1), and Rust's hands
         // back a `usize`. Parenthesised where it has to be and nowhere
         // else, exactly as the conversion above is.
         //
@@ -11792,14 +11792,14 @@ impl<'p> Emitter<'p> {
         // encodes a fact about *Rust's* library rather than about this
         // language.
         // **D5's one door for a stamped value**
-        // ([ADR-111](../../docs/specification/adr/adr-111.md)).
+        // ([ADR-281](../../docs/specification/adr/adr-281.md)).
         // `kasse.set(neu; after: stand)` is written `set_after(neu, stand)`:
         // the compare and the store happen while the lock is open **once**,
         // which is the whole of what the door is for and what a `get` followed
         // by a `set` cannot do.
         //
         // Two questions and not one. The type checker's, that this receiver is
-        // a lock (`witnessed_sets`, ADR-028); and this file's, that the `after:`
+        // a lock (`witnessed_sets`, ADR-288); and this file's, that the `after:`
         // is written *here* — because the set is keyed by the statement, and a
         // statement may hold a second `set` that carries none.
         let witness =
@@ -11810,7 +11810,7 @@ impl<'p> Emitter<'p> {
                     .map(|a| &a.value),
                 false => None,
             };
-        // **The text form of text is the text** (ADR-216 D4): nothing is
+        // **The text form of text is the text** (ADR-282 D8): nothing is
         // called, and whether it is lent, built or handed over is decided
         // around it as for any other text.
         if let Some(text) = receiver.filter(|receiver| {
@@ -11847,9 +11847,9 @@ impl<'p> Emitter<'p> {
         };
         let written = match self.text(method) {
             "drain" if args.is_empty() => "into_iter",
-            // **A copy is `to_owned` below** (ADR-215 D4): `.clone()` of a
+            // **A copy is `to_owned` below** (ADR-293 D24): `.clone()` of a
             // `&str` or a `&[T]` is the reference, and a read-only `String`
-            // parameter *is* a `&str` (ADR-207 D3).
+            // parameter *is* a `&str` (ADR-282 D5).
             "clone" if args.is_empty() && copies => "to_owned",
             "set" if witness.is_some() => "set_after",
             other => other,
@@ -11861,7 +11861,7 @@ impl<'p> Emitter<'p> {
         // functions puts it behind a pointer. `call` has asked this since D6's
         // first sharp edge; a *method* could not be asked, because the emitter
         // cannot name its callee — `stats.add(5)` names `add` and only the type
-        // checker knows what it goes to (ADR-028). It does not have to name it:
+        // checker knows what it goes to (ADR-288). It does not have to name it:
         // `pausing_reach` already draws an edge to **every** pausing method of
         // that name, which is the over-approximation its own note describes, so
         // the same widening answers the question here. Boxing a call that did
@@ -11940,7 +11940,7 @@ impl<'p> Emitter<'p> {
         // been a turbofish on a method that takes no type at all.
         //
         // **And except where the place it goes declares what it builds**
-        // ([ADR-227](../../docs/specification/adr/adr-227.md) D1): a map, a
+        // ([ADR-293](../../docs/specification/adr/adr-293.md) D25): a map, a
         // set or text, which the language below's own `collect`
         // builds when nothing overrides the type it reads off that place.
         let declared = receiver.is_some_and(|receiver| {
@@ -11958,10 +11958,10 @@ impl<'p> Emitter<'p> {
             out.push("(");
         }
         let takes = self.takes_a_handle(self.text(method));
-        // **Views put into a keeper that drops entries are held** (ADR-209 D4),
+        // **Views put into a keeper that drops entries are held** (ADR-283 D12),
         // each value with a handle on every buffer it points into - as many as
         // the keeper's widest value needs, so that every element is one type
-        // (ADR-221 D2).
+        // (ADR-283 D15).
         let held = receiver
             .and_then(|receiver| crate::contracts::keep::root_of(self.parsed, receiver))
             .and_then(|root| {
@@ -12007,7 +12007,7 @@ impl<'p> Emitter<'p> {
             // the one place this file decides a reference for itself. `lends`
             // withholds its claim on every *method* argument, because the
             // emitter cannot resolve a receiver
-            // ([ADR-028](../../docs/specification/adr/adr-028.md)) — and this
+            // ([ADR-288](../../docs/specification/adr/adr-288.md)) — and this
             // position needs no resolving: the checker has already said this
             // call is the door, and the door's witness is `seen: &$T` in the
             // ledger, always. A written `&` is `NK1137` before it gets here.
@@ -12027,7 +12027,7 @@ impl<'p> Emitter<'p> {
         }
         out.push(")");
         // **What hands back an element of a held list reads it through its
-        // handle** (ADR-221 D4), as the brackets and a `for` do.
+        // handle** (ADR-283 D17), as the brackets and a `for` do.
         if matches!(self.text(method), "iter" | "first" | "last" | "get")
             && receiver.is_some_and(|r| self.reads_through_handle(flow, r))
         {
@@ -12121,7 +12121,7 @@ impl<'p> Emitter<'p> {
         }
     }
 
-    /// **A read through the brackets** (ADR-114 D4): `*get(&base, at(i))`,
+    /// **A read through the brackets** (ADR-293 D4): `*get(&base, at(i))`,
     /// or without the `*` where `deref` is off - which is how a read that is
     /// itself the base of a read is written (0.0.238).
     fn index_read(
@@ -12138,7 +12138,7 @@ impl<'p> Emitter<'p> {
             out.push("*");
         }
         // **An index proved inside is read without its check**
-        // ([ADR-271](../../docs/specification/adr/adr-271.md) D5): the proof
+        // ([ADR-306](../../docs/specification/adr/adr-306.md) D5): the proof
         // is the argument the `unsafe` stands on, and `proven::read` is the
         // one operation it licenses.
         if !slicing
@@ -12225,7 +12225,7 @@ impl<'p> Emitter<'p> {
         //
         // **Except where it counts from the end.** `xs[-2..-1]` is
         // an index out of bounds and says so at run time
-        // ([ADR-048](../../../docs/specification/adr/adr-048.md)
+        // ([ADR-285](../../../docs/specification/adr/adr-285.md)
         // D1) — but only if it reaches run time, and handed over as
         // written it does not: `-2` against a `usize` is *the trait
         // `Neg` is not implemented for `usize`*, about a type the
@@ -12234,7 +12234,7 @@ impl<'p> Emitter<'p> {
         // `i64` is the one width this language indexes with and
         // `at` has nothing else to read it off.
         let counts_down = slicing && a_negation_inside(index);
-        // **A key the map keeps nothing of is lent** (ADR-213 D1),
+        // **A key the map keeps nothing of is lent** (ADR-293 D27),
         // and a key is not a position, so `at` does not see it.
         let key = self.map_key(flow.statement, index, false);
         match (key, only_literals(index) && !counts_down) {
@@ -12256,7 +12256,7 @@ impl<'p> Emitter<'p> {
             }
         }
         out.push(")");
-        // **A held struct is read through its handle** (ADR-221
+        // **A held struct is read through its handle** (ADR-283
         // D4): what the brackets answer is then the struct, over
         // no longer than the read, exactly as for a list of plain
         // structs.
@@ -12277,7 +12277,7 @@ impl<'p> Emitter<'p> {
     fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         // **A read through the brackets is a `*`**, which binds looser than a
         // postfix: `*get(…).len()` is the deref of the length. The one place
-        // its parentheses belong (ADR-214 D3).
+        // its parentheses belong (ADR-293 D33).
         let a_read = !flow.in_a_place
             && matches!(expr, Expr::Index { index, .. } if !self.slices(flow.statement, index));
         let parenthesise = a_read
@@ -12312,9 +12312,9 @@ impl<'p> Emitter<'p> {
     /// **Whether this comes out as a Rust `as` conversion**, whatever it was
     /// written as.
     ///
-    /// Three things do: a written `as` (ADR-043 D4), `x.truncating_i32()`, which
+    /// Three things do: a written `as` (ADR-285 D12), `x.truncating_i32()`, which
     /// *is* Rust's `as` (D7), and `xs.len()`, whose `usize` becomes the `i64` the
-    /// ledger promises ([ADR-048](../../../../docs/specification/adr/adr-048.md)
+    /// ledger promises ([ADR-285](../../../../docs/specification/adr/adr-285.md)
     /// D1). What they have in common is where they sit in Rust's precedence -
     /// below the unary operators, above the binary ones - which is not where a
     /// method call sits, so the two places that decide parentheses have to ask
@@ -12470,7 +12470,7 @@ impl<'p> Emitter<'p> {
                 out.push(")");
                 continue;
             }
-            // ADR-040 D1: a handle on a shared value is **duplicated, never
+            // ADR-312 D1: a handle on a shared value is **duplicated, never
             // moved**, where it is handed on by value. There is no method for a
             // programmer to call, so this is where the step is written - and
             // unconditionally, not only where the name is used again (D2): a line
@@ -12497,8 +12497,8 @@ impl<'p> Emitter<'p> {
                     .copied(),
             );
             // **A count the language below wants in `usize`**
-            // ([ADR-054](../../../docs/specification/adr/adr-054.md) D2), which
-            // is the parameter direction of ADR-048 D1. The ledger writes such a
+            // ([ADR-285](../../../docs/specification/adr/adr-285.md) D15), which
+            // is the parameter direction of ADR-285 D1. The ledger writes such a
             // parameter as the `i64` a program can hold and the conversion is
             // emitted, so a user writes `"  ".repeat(indent)` and never
             // `indent as usize` - a conversion into a type Part I 2.2 does not
@@ -12510,7 +12510,7 @@ impl<'p> Emitter<'p> {
             // `cannot infer type` about a generated file is what Part III C.1
             // forbids. Rust's own inference already gives a literal the `usize`.
             // **And a `usize` a C declaration names is one too**
-            // ([ADR-147](../../docs/specification/adr/adr-147.md) D2): the
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D6): the
             // declaration says `size_t` and a caller hands over the `i64` this
             // language has, so the conversion is written here. Read off the
             // declaration rather than off a list of names, which is what
@@ -12534,7 +12534,7 @@ impl<'p> Emitter<'p> {
                 .lent_args
                 .get(&key)
                 .is_some_and(|shapes| shapes.contains(&shape))
-                // **A literal is a view already** (ADR-207 D3): lent to a
+                // **A literal is a view already** (ADR-282 D5): lent to a
                 // `&str` it is written as it is, and a `&` in front of it would
                 // be a `&&str` the language below has to see through.
                 && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(&self.text_at(*at as usize)));
@@ -12547,13 +12547,13 @@ impl<'p> Emitter<'p> {
                 .get(&key)
                 .is_some_and(|shapes| shapes.contains(&shape));
             // **A lambda handed to a parameter whose type may pause**
-            // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): a
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D11): a
             // closure that returns a **boxed future**, which is what a callee
             // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes, so the
             // shape is written out. It is written out because the **callee's**
             // declaration names it and not because the language below lacks an
             // `async` closure - it has one
-            // ([ADR-187](../../docs/specification/adr/adr-187.md) D1), and
+            // ([ADR-277](../../docs/specification/adr/adr-277.md) D13), and
             // whether the callee should name it instead is the question that
             // record leaves open.
             //
@@ -12567,7 +12567,7 @@ impl<'p> Emitter<'p> {
                     .kept_lambdas
                     .contains_key(&(flow.statement, crate::check::argument_shape(arg)));
             // **The pointer a C declaration takes**
-            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1). The
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D5). The
             // declaration says `&[u8]` and C wants an address, so the address
             // is made here: `bytes.as_ptr()` for a run and a plain `&` for one
             // value, which Rust coerces to `*const T` on its own.
@@ -12582,7 +12582,7 @@ impl<'p> Emitter<'p> {
                 .and_then(|params| params.get(i))
                 .and_then(|ty| self.pointer_for(callee, ty));
             // **Into a parameter both kinds of text flow into, each argument
-            // goes as it is** ([ADR-223](../../docs/specification/adr/adr-223.md)
+            // goes as it is** ([ADR-282](../../docs/specification/adr/adr-282.md)
             // D2): a view borrowed, text of its own moved in. Written here and
             // not in the program, so a call inside an `f"…"` hole gets it too.
             // A parameter the callee only reads is a `&str` (above), and the
@@ -12595,7 +12595,7 @@ impl<'p> Emitter<'p> {
             }
             // **Neither `&` at the boundary**, and that is not an ordering
             // choice: what a C declaration takes is decided by the declaration
-            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3), and
+            // ([ADR-302](../../docs/specification/adr/adr-302.md) D5, D7), and
             // a Rust reference in front of it would be the wrong address —
             // `&FILE` is `FILE**` where C wants `FILE*`.
             // **A nullable view is lent inside its option** (issue #171
@@ -12629,10 +12629,10 @@ impl<'p> Emitter<'p> {
                 .flatten();
             // **A map's read is that option already**: `index::get` answers
             // an `Option<&T>`, and so does a read `index::flat` writes for a
-            // map of `T?` ([ADR-273](../../docs/specification/adr/adr-273.md)
+            // map of `T?` ([ADR-293](../../docs/specification/adr/adr-293.md)
             // D3) - so nothing is opened, and text is read as `str`. It was
             // `(*get(&m, &k)).as_ref()`, an `Option<&&T>` (found writing
-            // ADR-273's tests).
+            // ADR-293's tests).
             let a_map_read = matches!(arg, Expr::Index { index, .. }
                     if self.map_key(flow.statement, index, false).is_some())
                 || self
@@ -12677,7 +12677,7 @@ impl<'p> Emitter<'p> {
             match (future, arg) {
                 // `|a| Box::pin(async move { … })`, which is what a parameter
                 // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes
-                // ([ADR-122](../../docs/specification/adr/adr-122.md) D1).
+                // ([ADR-277](../../docs/specification/adr/adr-277.md) D11).
                 //
                 // **`in_lambda` is deliberately not set**, and that is D2: the
                 // refusal of a pausing body inside a lambda existed because the
@@ -12695,7 +12695,7 @@ impl<'p> Emitter<'p> {
                     let names: Vec<String> =
                         params.iter().map(|p| self.name(*p).into_owned()).collect();
                     // **An `async` closure where the callee runs the
-                    // parameter** ([ADR-192](../../docs/specification/adr/adr-192.md)
+                    // parameter** ([ADR-277](../../docs/specification/adr/adr-277.md)
                     // D1), and the boxed future where it keeps one. The two are
                     // what the *declaration* writes at the same position, off
                     // the same `keeps` column.
@@ -12733,7 +12733,7 @@ impl<'p> Emitter<'p> {
                         .and_then(|h| h.get(&i).cloned());
                     match held {
                         // **Held by the keeps of the buffers it points into**
-                        // (ADR-209 D4, ADR-221 D1): a view of text becomes a
+                        // (ADR-283 D12, ADR-283 D14): a view of text becomes a
                         // `Held`, a struct of views a `Holding`, and which one
                         // is the language below's to pick by the value's type.
                         // No `unsafe`: each view is found again in its keep by
@@ -12820,10 +12820,10 @@ impl<'p> Emitter<'p> {
     ///
     /// Resolved the way `contracts::sharing::Analysis::parameters` resolves it -
     /// this program's own ledger first, then `std`'s, by name and then by suffix
-    /// (ADR-011 D2) - so that the duplication written here and the duplication
+    /// (ADR-296 D17) - so that the duplication written here and the duplication
     /// `--sharing` names are the same call's.
     ///
-    /// A `&Shared[T]` parameter answers **no**, which is ADR-040 D1's correction:
+    /// A `&Shared[T]` parameter answers **no**, which is ADR-312 D1's correction:
     /// lending the inner value out hands no handle on.
     fn takes_a_handle(&self, callee: &str) -> Vec<bool> {
         let suffix = format!("::{callee}");
@@ -12846,7 +12846,7 @@ impl<'p> Emitter<'p> {
                     .iter()
                     .map(|(_, ty)| {
                         // `SharedMut[T]` is a count around a lock
-                        // ([ADR-064](../../../docs/specification/adr/adr-064.md)
+                        // ([ADR-281](../../../docs/specification/adr/adr-281.md)
                         // D1), so a handle on one is handed on the same way.
                         matches!(
                             ty,
@@ -12881,7 +12881,7 @@ impl<'p> Emitter<'p> {
 
     /// `Measurements.file(data)` - the whole of what a user writes to run a
     /// grammar. Everything the parallel form needs is already in the grammar
-    /// (ADR-009): the frame says where the input may be cut, the `par_fold`
+    /// (ADR-296): the frame says where the input may be cut, the `par_fold`
     /// says how the pieces combine. What is left is choosing the executor, and
     /// that is the build's decision, not the program's.
     fn grammar_entry(
@@ -12910,7 +12910,7 @@ impl<'p> Emitter<'p> {
             )
         })?;
 
-        // **The rule is named at the call** ([ADR-082](../../docs/specification/adr/adr-082.md)
+        // **The rule is named at the call** ([ADR-296](../../docs/specification/adr/adr-296.md)
         // D1, D2). It used to be picked here — the first `pub` rule, a
         // `par_fold` one beating an earlier one — so a grammar with two of them
         // got one by source order, in silence. Every `pub` rule is an entry
@@ -12971,7 +12971,7 @@ impl<'p> Emitter<'p> {
 
 // --- Free helpers ---
 
-/// ADR-009 D1: the attribute is keyed in both languages, and the lowering is
+/// ADR-296 D9: the attribute is keyed in both languages, and the lowering is
 /// one-to-one. A bare `@frame` stays bare - the boundary is then the rule's
 /// trailing literal, which the backend infers and checks.
 fn frame_attribute(frame: &FrameAttr) -> String {
@@ -13041,7 +13041,7 @@ fn repeat_suffix(rep: Repeat) -> String {
 }
 
 /// **An integer literal, and the one case it has to carry its own type**
-/// ([ADR-060](../../../docs/specification/adr/adr-060.md) D2).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D21).
 ///
 /// Part I 2.4 says a number takes the type its use asks for, and `i32` where
 /// nothing asks. The first half is the language below's inference and works;
@@ -13051,7 +13051,7 @@ fn repeat_suffix(rep: Repeat) -> String {
 ///
 /// So a literal an `i32` does not hold is written as an `i64`, and D3 is why
 /// that needs no analysis at all: the integer types a program may write are
-/// `i32` and `i64` ([ADR-048](../../../docs/specification/adr/adr-048.md)), an
+/// `i32` and `i64` ([ADR-285](../../../docs/specification/adr/adr-285.md)), an
 /// integer literal is never a float, and `u8` is narrower — so a value an `i32`
 /// cannot hold has no second answer a use could ask for. There is nothing to
 /// find out.
@@ -13067,7 +13067,7 @@ fn integer_literal(value: i128, widen: bool) -> String {
     match (i32::try_from(value), i64::try_from(value)) {
         (Ok(_), _) if !widen => value.to_string(),
         (_, Ok(_)) => format!("{value}i64"),
-        // **Above an `i64` only a `u64` holds it** (ADR-248 D2), and the
+        // **Above an `i64` only a `u64` holds it** (ADR-285 D19), and the
         // checker has already refused it anywhere else.
         _ => format!("{value}u64"),
     }
@@ -13109,10 +13109,10 @@ fn unary_op(op: UnaryOp) -> &'static str {
 /// call is ambiguous and `cannot infer type` about a generated file is what
 /// Part III C.1 forbids.
 /// Whether this expression **leaves** rather than coming to a value
-/// ([ADR-138](../../docs/specification/adr/adr-138.md) D1).
+/// ([ADR-276](../../docs/specification/adr/adr-276.md) D20).
 ///
 /// What it decides is where the jump is *written*: a closure is a function
-/// boundary ([ADR-084](../../docs/specification/adr/adr-084.md) D4), so a
+/// boundary ([ADR-276](../../docs/specification/adr/adr-276.md) D16), so a
 /// lowering that puts an expression inside one has to know whether that
 /// expression is a jump before it does.
 fn jumps(expr: &Expr) -> bool {
@@ -13133,7 +13133,7 @@ fn jumps_at_the_end(expr: &Expr) -> bool {
 }
 
 /// **How a call makes the address an `extern "C"` declaration takes**
-/// ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+/// ([ADR-302](../../docs/specification/adr/adr-302.md) D5).
 ///
 /// Two shapes, because C's two are a run of elements and one value: a run is a
 /// pointer to the first element and the length is a parameter of its own (D2),
@@ -13174,7 +13174,7 @@ fn pointing(mutable: bool) -> &'static str {
 }
 
 /// Whether a written index **counts from the end**
-/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 ///
 /// One reader: a range. A negative one is an access out of bounds and reports
 /// as one at run time — and it has to *reach* run time, which handed over as
@@ -13202,19 +13202,19 @@ fn only_literals(index: &Expr) -> bool {
 }
 
 /// `xs.len()` - the four `std` entries that hand back a length, by the name all
-/// four of them have ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// four of them have ([ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 fn is_length(method: &str, args: &[Expr]) -> bool {
     method == "len" && args.is_empty()
 }
 
 /// Whether a callee's argument at `at` is a **count** the language below takes in
-/// `usize` ([ADR-054](../../../docs/specification/adr/adr-054.md) D2).
+/// `usize` ([ADR-285](../../../docs/specification/adr/adr-285.md) D15).
 ///
 /// A name and a position, not a rule, for the reason `is_length` is one: what it
 /// encodes is a fact about *Rust's* library rather than about this language. The
 /// list is the entries of `std.contracts` whose Rust counterpart counts in
 /// `usize`, and today it is one of them - `str::repeat`, which is the site
-/// ADR-048 §3 named when it wrote this direction down as open.
+/// ADR-285 named when it wrote this direction down as open.
 /// `a_count_parameter_is_an_i64` in `tests/contracts.rs` keeps the two from
 /// drifting apart.
 ///
@@ -13230,7 +13230,7 @@ fn precedence(op: BinaryOp) -> u8 {
     match op {
         BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 14,
         BinaryOp::Add | BinaryOp::Sub => 13,
-        // Rust's order below the sums (ADR-248 D4), so a bit operation is
+        // Rust's order below the sums (ADR-285 D10), so a bit operation is
         // parenthesised where the tree needs it and written bare where not.
         BinaryOp::Shl | BinaryOp::Shr => 12,
         BinaryOp::BitAnd => 11,
@@ -13284,7 +13284,7 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 ///
 /// **What is left of it is a callee nothing describes.** A lambda that pauses
 /// is written as an `async` closure where the parameter is declared in this
-/// language ([ADR-192](../../../docs/specification/adr/adr-192.md) D1), and
+/// language ([ADR-277](../../../docs/specification/adr/adr-277.md) D11), and
 /// handed to the counterpart in `nikaia_std::seq` where it is one of `std`'s
 /// entries ([ADR-233](../../../docs/specification/adr/adr-233.md)) - every one
 /// of them: `map`, `filter`, a list's `map`, `sort_by_key`, `or_insert_with`,
@@ -13439,7 +13439,7 @@ fn rust_string(text: &str) -> String {
 }
 
 /// The type a `truncating_` method converts to, if the name is one
-/// ([ADR-043](../../../docs/specification/adr/adr-043.md) D7).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D13).
 ///
 /// The target is **in the name** rather than inferred, for the reason the
 /// `wrapping_` names have their own entry per type: there is one method per
@@ -13453,7 +13453,7 @@ fn truncating(method: &str) -> Option<&'static str> {
     match method.strip_prefix("truncating_")? {
         "i32" => Some("i32"),
         "i64" => Some("i64"),
-        // ADR-248 D1.
+        // ADR-285 D3.
         "u32" => Some("u32"),
         "u64" => Some("u64"),
         _ => None,
@@ -13590,12 +13590,12 @@ fn pausing_reach(
 }
 
 /// **Which branches an `overlap` starts first**, for `--overlaps`
-/// ([ADR-050](../../../docs/specification/adr/adr-050.md) D6).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D6).
 ///
 /// The report is `contracts::order`'s and the answer is the emitter's: whether a
 /// branch can pause is the ledger's `sync` column and the checker's answers
 /// about method calls, and no analysis in that file may reach for either
-/// (ADR-033 §8.2b, which is why nothing in that file takes a build setting). So
+/// (ADR-292b, which is why nothing in that file takes a build setting). So
 /// it is handed over as a function, closed over an emitter built exactly as the
 /// one that will lower the program.
 pub fn branch_starts_first<'p>(
@@ -13648,7 +13648,7 @@ pub(crate) fn visit_block<'a>(block: &'a Block, f: &mut impl FnMut(&'a Expr)) {
 /// Every expression inside this one, this one included.
 ///
 /// `pub(crate)` because the checker reads it too
-/// ([ADR-099](../../docs/specification/adr/adr-099.md)): `NK2205` asks whether
+/// ([ADR-281](../../docs/specification/adr/adr-281.md)): `NK2205` asks whether
 /// a `get` is written anywhere inside a `set`'s argument, and a second walk
 /// over the same shape is a second thing to keep in step with the AST.
 pub(crate) fn visit_expr<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
@@ -13734,9 +13734,9 @@ pub(crate) fn visit_expr<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
 /// a string.
 ///
 /// That was not only a missed diagnostic. `sync` is *inferred* from what a body
-/// calls (ADR-027), so a function whose only pausing call sat inside a hole was
+/// calls (ADR-288), so a function whose only pausing call sat inside a hole was
 /// recorded `sync = "inferred"` - a claim, in a file a library ships, that it
-/// cannot pause. ADR-027 D2 and ADR-010 D1 both say the same thing about that
+/// cannot pause. ADR-288 D2 and ADR-010 D1 both say the same thing about that
 /// direction: an analysis that fails open is a vulnerability generator.
 ///
 /// A hole that does not parse yields nothing here. The emitter reports it, in
@@ -13763,7 +13763,7 @@ pub(crate) fn literal_expressions_bound(parsed: &Parsed, expr: &Expr) -> Vec<(Ex
 }
 
 /// **An `f"…"`'s holes as the grammar parsed them**
-/// ([ADR-262](../../docs/specification/adr/adr-262.md) D2), each beside the
+/// ([ADR-309](../../docs/specification/adr/adr-309.md) D6), each beside the
 /// byte its `{` stands at - the key the tier pass's wraps are recorded by
 /// ([ADR-229](../../docs/specification/adr/adr-229.md) D1).
 pub(crate) fn interpolated_holes(parts: &[crate::ast::FPart]) -> Vec<(u32, &Expr)> {
@@ -13777,7 +13777,7 @@ pub(crate) fn interpolated_holes(parts: &[crate::ast::FPart]) -> Vec<(u32, &Expr
 }
 
 /// **An `f"…"` as the format string the language below reads**
-/// ([ADR-262](../../docs/specification/adr/adr-262.md) D5): each run of text
+/// ([ADR-309](../../docs/specification/adr/adr-309.md) D9): each run of text
 /// as written - an escape and a doubled brace mean there what they mean here
 /// - and each hole as `{}`, or `{:spec}` where a format follows its `:`.
 pub(crate) fn format_of(parts: &[crate::ast::FPart]) -> String {
@@ -13800,7 +13800,7 @@ pub(crate) fn format_of(parts: &[crate::ast::FPart]) -> String {
 
 pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
     match expr {
-        // **The grammar parsed them** ([ADR-262](../../docs/specification/adr/adr-262.md)
+        // **The grammar parsed them** ([ADR-309](../../docs/specification/adr/adr-309.md)
         // D2): the holes are the literal's parts, read and not parsed again.
         // Each with what the tier pass hands over inside it (ADR-229 D1),
         // which is keyed by the hole's text - the hole at the same place among
@@ -13819,7 +13819,7 @@ pub(crate) fn literal_expressions(parsed: &Parsed, expr: &Expr) -> Vec<Expr> {
         // the same route: text, split on the way out. A deferred-parameter
         // statement has none: its braces are the foreign syntax's, and reading
         // them as holes would be this compiler speaking for a grammar it does
-        // not have (ADR-007 D5).
+        // not have (ADR-296 D5).
         Expr::Dsl {
             target, content, ..
         } if crate::dsl::is_deferred(parsed.text(*target), content) => Vec::new(),
@@ -13875,7 +13875,7 @@ fn walk_template_holes(
                 body,
             } => {
                 // The collection is captured from the enclosing scope with `:`
-                // (ADR-007 D4), and it is a name this program wrote - so it is
+                // (ADR-296 D4), and it is a name this program wrote - so it is
                 // read *outside* the binding, which is where it lives.
                 out.push((collection.clone(), bound.clone()));
                 bound.push(binding.clone());
@@ -13888,7 +13888,7 @@ fn walk_template_holes(
 
 /// A plain string on its way into a Rust *format* string.
 ///
-/// Nikaia's plain string is inert - `print("{")` prints a brace (ADR-035 D1) -
+/// Nikaia's plain string is inert - `print("{")` prints a brace (ADR-309 D1) -
 /// and Rust's `println!` would read that brace as a hole of its own. Doubling
 /// is what says "this one is text" to the macro, and it is the only place the
 /// two languages disagree about a string literal.
@@ -13939,12 +13939,12 @@ fn at_the_statement<T>(flow: Flow<'_>, result: Result<T>) -> Result<T> {
 }
 // ---------------------------------------------------------------------------
 // The tether: where a buffer lives, written out
-// ([ADR-209](../../docs/specification/adr/adr-209.md))
+// ([ADR-283](../../docs/specification/adr/adr-283.md))
 // ---------------------------------------------------------------------------
 
 /// The name of the keep a function was given.
 const KEEP_PARAM: &str = "__keep";
-/// A held struct's element, read through its handle (ADR-221 D4): appended to
+/// A held struct's element, read through its handle (ADR-283 D17): appended to
 /// what walks such a keeper.
 const HELD_READ: &str = ".map(|held| held.get())";
 /// The keep declared first in a function's body (D2).
@@ -14127,7 +14127,7 @@ impl Emitter<'_> {
                 let n = wrappers.len();
                 wrappers.push(format!(
                     "/// A value that carries the keep its views point into \
-                     (ADR-209 D3), as a `Holding` over it.\n\
+                     (ADR-283 D11), as a `Holding` over it.\n\
                      #[allow(non_camel_case_types)]\n\
                      enum __Tethered{n} {{}}\n\n\
                      impl nikaia_std::tether::Views for __Tethered{n} {{\n    \
@@ -14150,7 +14150,7 @@ impl Emitter<'_> {
     }
 
     /// `kept[i]`, where `kept` holds structs of views one handle per buffer:
-    /// the keeper and the index, for a write through the handle (ADR-221 D4).
+    /// the keeper and the index, for a write through the handle (ADR-283 D17).
     fn held_element<'e>(&self, flow: Flow<'_>, element: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
         let Expr::Index { base, index } = element else {
             return None;
@@ -14190,7 +14190,7 @@ impl Emitter<'_> {
 
     /// Whether `expr` names a keeper whose elements are structs of views held
     /// one handle per buffer, so that an element is read through the handle
-    /// ([ADR-221](../../docs/specification/adr/adr-221.md) D4).
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D17).
     fn reads_through_handle(&self, flow: Flow<'_>, expr: &Expr) -> bool {
         let Expr::Variable(name) = expr else {
             return false;
@@ -14201,7 +14201,7 @@ impl Emitter<'_> {
 
     /// **What `tether` needs to hold a struct of views**, once per struct, at
     /// the end of a unit that holds any
-    /// ([ADR-221](../../docs/specification/adr/adr-221.md) D1, D3): the struct
+    /// ([ADR-283](../../docs/specification/adr/adr-283.md) D14, D16): the struct
     /// over any lifetime (`Views`, whose `shorten` compiles only where the
     /// struct is covariant), each of its views found again in the keeps
     /// (`Rebase`, one call per field that holds a view), and the value put
@@ -14244,7 +14244,7 @@ impl Emitter<'_> {
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push(&format!(
-                "\n/// `{ty}` held one handle per buffer (ADR-221).\n\
+                "\n/// `{ty}` held one handle per buffer (ADR-283).\n\
                  #[allow(non_camel_case_types)]\n\
                  enum __Views_{ty} {{}}\n\n\
                  impl nikaia_std::tether::Views for __Views_{ty} {{\n    \

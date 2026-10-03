@@ -1,8 +1,8 @@
 //! **`sync(f)`: a function pauses only where the lambda handed to `f` does**
-//! ([ADR-244](../../../docs/specification/adr/adr-244.md) D4).
+//! ([ADR-288](../../../docs/specification/adr/adr-288.md) D31).
 //!
 //! The source form of the ledger's `sync = "sync(f)"`, which `std` has written by
-//! hand for `map`, `filter` and the lock doors since ADR-029 D3. The body may
+//! hand for `map`, `filter` and the lock doors since ADR-288 D15. The body may
 //! call `f` and nothing else that pauses; a caller is `sync` where the lambda it
 //! hands over is; and the function is lowered as the `async fn` its body is, so
 //! a caller that cannot pause drives it once and one that can awaits it.
@@ -199,7 +199,7 @@ fn the_promise_names_a_function_parameter() {
 /// **A copy of a type this program declares does not pause**: its `clone` is
 /// the derived one. `r.clone()` on a declared `struct` was answered as a
 /// method nothing describes, and the function around it - `main` too - was
-/// lowered `async` (found moving the ledger's records into Nikaia, ADR-257).
+/// lowered `async` (found moving the ledger's records into Nikaia, ADR-294).
 #[test]
 fn a_clone_of_a_declared_type_is_sync() {
     let source = r#"pub struct Row {

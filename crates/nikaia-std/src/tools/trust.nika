@@ -4,14 +4,14 @@
 // sources it reads and who chose their bytes, and every file access whose
 // root is a word rather than a directory.
 //
-// The second module of the ring after the tree (ADR-250 §1) moved from Rust
-// to Nikaia, by ADR-196's route: lowered by `nikaia lower-std` to `trust.rs`
+// The second module of the ring after the tree (ADR-294) moved from Rust
+// to Nikaia, by ADR-290's route: lowered by `nikaia lower-std` to `trust.rs`
 // beside it, `include!`d as `nikaia_std::tools::trust`, and called from the
 // compiler's `contracts::trust`.
 //
 // **What moved is the module's decisions**: which written root is a way
 // around the root check, and what the report says. What stays Rust is what
-// it reads, the ledger and the call walk (ADR-250 D2): the compiler's
+// it reads, the ledger and the call walk (ADR-294 D2): the compiler's
 // `contracts::trust` finds the calls, asks the ledger who chose a source's
 // bytes and which parameter is a root, and hands this module plain data - a
 // name, a `bool`, a line and a column.

@@ -7,7 +7,7 @@
 #
 # The *version floor* is a different fact and does not live here: Rust 1.88 is
 # the oldest this works with, measured by running the test suite on it
-# (ADR-219). The emitter's `RUST_FLOOR` holds it, writes it as `rust-version`
+# (ADR-305). The emitter's `RUST_FLOOR` holds it, writes it as `rust-version`
 # into every generated Cargo.toml, and `scripts/check-floor.sh` tests on it.
 [toolchain]
 channel = "stable"

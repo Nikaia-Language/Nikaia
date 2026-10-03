@@ -125,7 +125,7 @@ fn coalescing_still_parses() {
 fn main() { let p = cli::args().nth(1) ?? "x" }"#,
     );
     // **`index::or` and not `unwrap_or_else`** since
-    // [ADR-161](../../../docs/specification/adr/adr-161.md) D2: the left of a
+    // [ADR-293](../../../docs/specification/adr/adr-293.md) D5: the left of a
     // `??` may be a view into a container, so the two sides do not have the
     // same type and the language below is what joins them.
     assert!(rust.contains("nikaia_std::index::or("), "{rust}");
@@ -160,7 +160,7 @@ fn an_error_is_declared_raised_caught_and_printed() {
     "#;
     let rust = emit(source);
     // **`throwing` and not `raise`** since
-    // [ADR-157](../../../docs/specification/adr/adr-157.md) D1: this program's
+    // [ADR-280](../../../docs/specification/adr/adr-280.md) D9: this program's
     // error set is one type it declares, so the channel is that type and the
     // value goes in unboxed. `raise` is what the **box** takes, and the two
     // have the same job — a `throw` puts the value in the failure channel with
@@ -286,7 +286,7 @@ fn a_written_call_propagates_its_failure() {
 /// had to write more code for than the code you wanted.
 ///
 /// What changed is not that the emitter learned to resolve receivers. There is
-/// one type checker (ADR-028), and it is the one that knows `s` is a `Stats` and
+/// one type checker (ADR-288), and it is the one that knows `s` is a `Stats` and
 /// that `Stats::add` carries `throws`. It writes that answer down as
 /// `check::Checked::fallible_methods` and the emitter looks it up, exactly as
 /// `fallible_loops` has been handed over since ADR-025 D7.
@@ -410,7 +410,7 @@ fn a_method_that_cannot_fail_takes_no_question_mark() {
         }
         "#,
     );
-    // `as i64` and no `?`: a length is an `i64` (ADR-048 D1) and the conversion
+    // `as i64` and no `?`: a length is an `i64` (ADR-285 D1) and the conversion
     // is the emitter's, which is a different thing from a failure being added.
     assert!(rust.contains("Ok(text.len() as i64)"), "{rust}");
 }
@@ -420,7 +420,7 @@ fn a_method_that_cannot_fail_takes_no_question_mark() {
 /// The specification wrote `throws IoError` in four places, so this is a form
 /// a reader will try. It used to be a parse error at the type name offering
 /// `->` and `sync` as alternatives - which says nothing about why - and the
-/// precedent for a sentence instead is `ADR-022`'s removed `fn: …`.
+/// precedent for a sentence instead is `ADR-277`'s removed `fn: …`.
 #[test]
 fn throws_with_a_type_is_refused_with_the_reason() {
     let refused = parse_to_ast("fn f() throws IoError { return 1 }")
@@ -539,7 +539,7 @@ fn mutual_recursion_settles() {
 fn what_cannot_be_named_is_a_question_mark() {
     // **`std` is no longer the example.** It was: every entry wrote `["?"]`,
     // and this test read `io::read_to_string` to see one. Since
-    // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 `std` names what
+    // [ADR-280](../../../docs/specification/adr/adr-280.md) D5 `std` names what
     // it throws, so the rule needs a call that genuinely cannot be named — one
     // **no ledger describes**, which is what `"?"` has always meant.
     let named = ledger_for(
@@ -631,9 +631,9 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         &Ledger::infer(&parsed),
         &std::collections::BTreeSet::new(),
         // Nothing declared and nothing described, which is a loose file's own
-        // state: ADR-104 D1 asks a question about the *build*'s boundary and
+        // state: ADR-290 D1 asks a question about the *build*'s boundary and
         // this one has none. And nothing has gained an error since a committed
-        // ledger, which is every build but the one after a change (ADR-101 D1).
+        // ledger, which is every build but the one after a change (ADR-308 D11).
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
             newly: &nikaia::check::Newly::new(),
@@ -641,7 +641,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
             // nowhere else to call into.
             beside: &[],
             // …and this build was given no allowlist, so it reads nothing
-            // while it builds (ADR-072 D1).
+            // while it builds (ADR-310 D4).
             reads: &nikaia::assets::Reads::none(),
         },
         &path,
@@ -652,7 +652,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
     assert!(error.contains("can fail without saying so"), "{error}");
 
     // Declared, the entry says what is true - and since
-    // [ADR-158](../../../docs/specification/adr/adr-158.md) D1 it says it with
+    // [ADR-280](../../../docs/specification/adr/adr-280.md) D5 it says it with
     // a **name**: the set that reaches `ruft` is `fs::read_to_string`'s, and
     // `std` writes that down now. It used to be `["?"]`, which is
     // [ADR-024](../../../docs/specification/adr/adr-024.md) D1's absence of a
@@ -689,7 +689,7 @@ fn a_throw_carries_the_site_it_came_from() {
 
 /// …and `main` is not an exception, though its name in the lowering is.
 ///
-/// [ADR-038](../../../docs/specification/adr/adr-038.md) D4 gives `fn main` to
+/// [ADR-303](../../../docs/specification/adr/adr-303.md) D4 gives `fn main` to
 /// the runtime and emits the program's own entry point under a name the author
 /// never wrote. The *site* is the author's word, so it stays `main`: a site
 /// naming the emitter's wrapper would be ADR-023 D6's whole point undone by an
@@ -769,7 +769,7 @@ fn short_is_safe_and_full_is_asked_for() {
     let out = String::from_utf8_lossy(&run.stdout);
 
     // The short form is the message the author wrote, and nothing else. It is
-    // what a generic 500 may carry (ADR-018).
+    // what a generic 500 may carry (ADR-289).
     assert!(
         out.contains("short: no config at app.conf"),
         "stdout was:\n{out}"

@@ -1,6 +1,6 @@
 //! `nikaia.toml`'s build switches, and the CLI overriding them for one build.
 //!
-//! ADR-037 D5 and [ADR-033](../../../docs/specification/adr/adr-033.md) D8 give
+//! ADR-037 D5 and [ADR-292](../../../docs/specification/adr/adr-292.md) D7 give
 //! the same shape to all three settings: the manifest carries them, because
 //! they are properties of a *project* rather than of an invocation and a
 //! committed value is one a reviewer sees; a flag overrides for a single build,
@@ -25,9 +25,9 @@ use anyhow::{Context, Result};
 use crate::refused;
 
 // **Every decision the manifest makes is Nikaia** (`tools/manifest.nika`,
-// ADR-250): which `[build]` keys exist, have moved or are withdrawn, which
+// ADR-294): which `[build]` keys exist, have moved or are withdrawn, which
 // machines and keys `[build.<target>]` may carry, and which shape a dependency
-// is. The `toml` crate stays here, behind the adapter (ADR-250 §3): this module
+// is. The `toml` crate stays here, behind the adapter (ADR-294): this module
 // reads the file and hands those questions plain text.
 use nikaia_std::tools::manifest as decide;
 
@@ -46,7 +46,7 @@ pub struct Manifest {
     /// What this manifest carries that the compiler no longer reads, and where
     /// it went. Printed once per build rather than returned as an error:
     /// failing a manifest somebody already wrote to the specification would
-    /// punish them for the move ([ADR-038](../../../docs/specification/adr/adr-038.md) D5).
+    /// punish them for the move ([ADR-303](../../../docs/specification/adr/adr-303.md) D5).
     notes: Vec<String>,
     /// The directory the manifest was found in, and therefore the project root.
     /// `None` when there was no manifest at all.
@@ -58,7 +58,7 @@ pub struct Manifest {
 /// The distinction is the whole of the translation: a native Rust crate is
 /// passed to Cargo exactly as written (ADR-002 D1), a Nikaia package **by path**
 /// is read as part of this program
-/// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2), and a Nikaia
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15), and a Nikaia
 /// package named any other way is something nothing has decided yet.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dependency {
@@ -68,15 +68,15 @@ pub enum Dependency {
     /// `http = { path = "../http" }` - a Nikaia package, where it is.
     ///
     /// **The key is the name** a `use` writes, and the path says only where it
-    /// comes from (ADR-047 D2 rule 1): two libraries that both want to be `http`
+    /// comes from (ADR-286 D15 rule 1): two libraries that both want to be `http`
     /// are the consumer's to name apart, which is the authority
-    /// [ADR-046](../../../docs/specification/adr/adr-046.md) D3 gives them anyway.
+    /// [ADR-286](../../../docs/specification/adr/adr-286.md) D12 gives them anyway.
     /// Relative to the manifest's own directory, because that is the only
     /// interpretation that survives the project being checked out somewhere else.
     Path(PathBuf),
     /// `http-server = "1.2"`. Carried rather than resolved: a registry, a version
     /// grammar and a distribution format are the three things ADR-002 D1 §5
-    /// refuses to guess at, and ADR-047 D2 keeps refusing.
+    /// refuses to guess at, and ADR-286 D15 keeps refusing.
     Nikaia(toml::Value),
 }
 
@@ -117,7 +117,7 @@ impl Manifest {
     ///
     /// What it is for is a **dependency's** `[build]`, which is ignored:
     /// a package is built with the settings of the program that uses it
-    /// ([ADR-047](../../../docs/specification/adr/adr-047.md) D2 rule 4), and
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D15 rule 4), and
     /// anything else would put two answers to the parallelism question in one
     /// build. Ignored **and said**, which is why there is a question to ask.
     pub fn has_build_section(&self) -> bool {
@@ -199,7 +199,7 @@ impl Manifest {
     }
 
     /// **The Rust crates this build declares**, under the name a program writes
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D1).
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D1).
     ///
     /// `hyper-shim = { type = "rust", … }` is written `hyper_shim::serve_once`
     /// in a program, because that is the crate name Cargo makes of the key and
@@ -422,7 +422,7 @@ mod tests {
     }
 
     /// A `type` that is not a word names no ecosystem either. Before the
-    /// decision moved to `tools/manifest.nika` (ADR-250), `type = 1` was read
+    /// decision moved to `tools/manifest.nika` (ADR-294), `type = 1` was read
     /// as no `type` at all, and the entry passed as a Nikaia package with its
     /// marker silently ignored.
     #[test]
@@ -448,7 +448,7 @@ mod tests {
         assert!(manifest.foreign_crates().contains("hyper_shim"));
     }
 
-    /// ADR-038 D5 moved it to the runtime configuration file. It is still
+    /// ADR-303 D5 moved it to the runtime configuration file. It is still
     /// accepted here - refusing it would fail a manifest written to the
     /// specification that documented it - and the note says where it went.
     #[test]
@@ -481,7 +481,7 @@ mod tests {
     /// A **withdrawn** key fails the build, and in its own words.
     ///
     /// The difference from the moved key above is the whole of why there are
-    /// two lists ([ADR-050](../../../docs/specification/adr/adr-050.md) D7):
+    /// two lists ([ADR-292](../../../docs/specification/adr/adr-292.md) D7):
     /// `cleanup-deadline` still decides something somewhere else, so the
     /// manifest keeps working and says where to look, while `ordering` decides
     /// nothing anywhere — and a build that ignored it quietly would run a

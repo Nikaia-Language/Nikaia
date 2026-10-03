@@ -213,7 +213,7 @@ function body's tail is the one place where the value *is* the function's, so th
 was right stays. Fixing the cause is one three-state `Tail` in place of the `bool` —
 `Statement`, `Value`, `Return` — and the rewrite is allowed only at `Return`.
 
-**The `catch` row is the one to read twice.** [ADR-034](../specification/adr/adr-034.md) D1 is
+**The `catch` row is the one to read twice.** [ADR-034](adr/adr-034.md) D1 is
 about exactly that handler: one that can `return` makes the next statement conditional on the
 guarded operation having succeeded, so the two may not be overlapped, and
 `contracts::order`'s `diverts` counts any `return` anywhere in the handler when it refuses. It
@@ -263,8 +263,8 @@ compiles and prints what it printed.
 
 The `E0621` above is one line to make go away and the wrong line to write. Stage 0 spells a
 view's lifetime by **position** and by nothing else
-([ADR-011](../specification/adr/adr-011.md) D6, which is
-[ADR-008](../specification/adr/adr-008.md) in the only form a bootstrap compiler can express it):
+([ADR-011](adr/adr-011.md) D6, which is
+[ADR-008](adr/adr-008.md) in the only form a bootstrap compiler can express it):
 named inside the grammar module and on the structs it builds, elided in a free function's
 signature, and — in a method of an `impl` whose receiver holds views — elided on the `&` while
 every named type takes `'a`. That third spelling is what makes `examples/1brc.nika` work:

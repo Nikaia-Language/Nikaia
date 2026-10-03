@@ -24,7 +24,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 /// Through the command line, as a user runs it: the file has a name, so an
-/// abort names the `.nika` line (ADR-044) - which is half of what D2 says a
+/// abort names the `.nika` line (ADR-300) - which is half of what D2 says a
 /// false claim reports.
 fn run(purpose: &str, source: &str, parallel: &str) -> Output {
     let dir = common::scratch_dir(&format!("assert-{purpose}"));

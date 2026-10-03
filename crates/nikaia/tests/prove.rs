@@ -79,7 +79,7 @@ fn ran(purpose: &str, source: &str) -> (String, String) {
 }
 
 /// **D4, D9: a guard proves what follows it, and the proof costs nothing.**
-/// `return 250 if speed > 250` leaves `speed <= 250` (ADR-255).
+/// `return 250 if speed > 250` leaves `speed <= 250` (ADR-276).
 #[test]
 fn a_guard_proves_the_claim_after_it_and_no_check_is_emitted() {
     let (out, rust) = ran(

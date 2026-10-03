@@ -1,6 +1,6 @@
 //! A map whose keys the build knew
-//! ([ADR-176](../../../docs/specification/adr/adr-176.md) D2,
-//! [ADR-079](../../../docs/specification/adr/adr-079.md) D3).
+//! ([ADR-311](../../../docs/specification/adr/adr-311.md) D9,
+//! [ADR-311](../../../docs/specification/adr/adr-311.md) D6).
 //!
 //! **Four tables and no generated code.** The obvious lowering for a small map
 //! was a `match` written out by the emitter, because that is what the numbers
@@ -13,14 +13,14 @@
 //!
 //! Which buys three things. A `Fixed` is a **value** a program may pass and
 //! store. The emitter stays one that knows no types
-//! ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), because there is
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), because there is
 //! nothing to write but a `const`. And the threshold lives in the data — a
 //! table with no displacements is a small one — rather than as a branch in the
 //! compiler.
 
 /// A map built while the program was built.
 ///
-/// Everything in it is `&'static`, which is [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// Everything in it is `&'static`, which is [ADR-311](../../../docs/specification/adr/adr-311.md)
 /// D1's *growable going in, fixed coming out*: what the build owned, the program
 /// gets a view of.
 #[derive(Debug, Clone, Copy)]

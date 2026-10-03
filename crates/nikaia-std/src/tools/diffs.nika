@@ -3,7 +3,7 @@
 // **What changed, said line by line**, for the compiler's `project`: the
 // lines of a ledger a `--locked` build or a stale check found different from
 // the committed one, and the difference between the output a test expected
-// and the output it produced. Moved from Rust (ADR-250, #125).
+// and the output it produced. Moved from Rust (ADR-294, #125).
 
 /// The lines of `ledger` the committed text does not have, each under the
 /// entry it belongs to - named once, however many of its lines changed. A

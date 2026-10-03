@@ -1,7 +1,7 @@
 //! **`from` is an ordinary name** —
-//! [ADR-116](../../../docs/specification/adr/adr-116.md) D1 and D3.
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) D12 and D13.
 //!
-//! It was reserved for `dsl X from e`, a form [ADR-082](../../../docs/specification/adr/adr-082.md)
+//! It was reserved for `dsl X from e`, a form [ADR-296](../../../docs/specification/adr/adr-296.md)
 //! removed. What a reservation buys is one sentence — the one a reader who
 //! writes the word gets — and the sentence for a removed form is a `fail` in
 //! the grammar, which needs the **token** and not the reservation. The two are
@@ -118,7 +118,7 @@ fn the_removed_dsl_form_still_says_what_happened() {
 ///
 /// Part I 2.1 prints the list a reader learns and `parser::RESERVED_WORDS` is
 /// the one the compiler enforces, and they had drifted: `select` arrived with
-/// its construct ([ADR-148](../../../docs/specification/adr/adr-148.md)) and
+/// its construct ([ADR-292](../../../docs/specification/adr/adr-292.md)) and
 /// reached the table and not the page. A reader counting the words on that
 /// page would have got a different answer from the compiler.
 #[test]

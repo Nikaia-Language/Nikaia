@@ -5,7 +5,7 @@
 // **The splitting is Nikaia** since 0.0.252: `nikaia-std/src/tools/template.nika`
 // holds the HTML scan that decides where a hole sits and whether escaping can
 // make it safe, lowered by `nikaia lower-std` and reached here as
-// `nikaia_std::tools::template` (ADR-196's route, ADR-250's road). What stays
+// `nikaia_std::tools::template` (ADR-290's route, ADR-294's road). What stays
 // in Rust is the one conversion a Nikaia module cannot write for this crate:
 // its thrown `Refused` into this compiler's own refusal, and a length into the
 // `usize` the emitter reserves with.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-257 D5: callgrind over the corpus, one unmodified lowering per program.
+# ADR-294 D16: callgrind over the corpus, one unmodified lowering per program.
 #
 #   CARGO_TARGET_DIR=target/ty-census RUSTFLAGS="-C symbol-mangling-version=v0" \
 #     CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release -p nikaia

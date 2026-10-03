@@ -1,5 +1,5 @@
 //! What leaves a lock is stamped `Seen[T]`
-//! ([ADR-111](../../../docs/specification/adr/adr-111.md)).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 //!
 //! `kasse.get()` is a `Seen[i64]`. The stamp sticks through arithmetic, through
 //! a comparison, and through a call the callee's `touches` says reaches no
@@ -226,7 +226,7 @@ fn an_unstamped_set_is_a_program() {
 
 /// **`access` hands back a stamp too** (D1): what the block computed came out
 /// of the lock, and `Seen[?]` is the honest pair — the type is unknown
-/// ([ADR-029](../../../docs/specification/adr/adr-029.md) D1) and where it came
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D13) and where it came
 /// from is not.
 #[test]
 fn what_access_hands_back_is_stamped() {

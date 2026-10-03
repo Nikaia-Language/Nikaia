@@ -709,7 +709,7 @@ fn is_a_sink(call: &str) -> bool {
 pub fn promise_lines(promises: &[String]) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     if promises.is_empty() { return out; }
-    out.push(String::from("**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool"));
+    out.push(String::from("**This crate makes promises the toolchain cannot check** (ADR-290 D10). A tool"));
     out.push(String::from("can see that the promise was made; it cannot see whether it is true - which is"));
     out.push(String::from("the line between a rule the toolchain enforces and one it inherits:"));
     for promise in promises.iter() { out.push(format!("  {}", promise)); }
@@ -721,7 +721,7 @@ pub fn thread_lines(name: &str, bound: &[String], way: Option<Vec<String>>) -> V
     if !bound.is_empty() {
         let listed = a_list(bound, "the parameter", "the parameters");
         out.push(format!("`{}`: {} is bound `Send`.", name, listed));
-        out.push(String::from("  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**"));
+        out.push(String::from("  Seen and not claimed (ADR-290 D8): a `Send` bound says the callee **may**"));
         out.push(String::from("  send it, which is usually `spawn` and is sometimes an API keeping a door open."));
     }
     if way.is_some() {
@@ -738,7 +738,7 @@ pub fn thread_lines(name: &str, bound: &[String], way: Option<Vec<String>>) -> V
             out.push(format!("`{}`: reaches `{}` through {}.", name, sink, through));
         }
         out.push(String::from("  A sink reached through a call says *this function threads something*,"));
-        out.push(String::from("  never *this function threads your argument* (ADR-193 D4) - connecting"));
+        out.push(String::from("  never *this function threads your argument* (ADR-290 D9) - connecting"));
         out.push(String::from("  those is dataflow through a closure capture and is not built."));
     }
     if out.is_empty() { return out; }
@@ -6463,7 +6463,7 @@ fn a_plain_result(contract: Option<&FnContract>) -> bool {
 
 pub fn origin_reason(expr: &Expr, names: &winnow_grammar::InternerContext) -> String {
     let from = where_it_came_from(expr, names);
-    format!("{}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-033)", from)
+    format!("{}, so this analysis did not watch the allocation being made - and the count belongs to the allocation. A call handed to another thread hands its result back across one (ADR-292)", from)
 }
 
 fn where_it_came_from(expr: &Expr, names: &winnow_grammar::InternerContext) -> String {
@@ -7393,7 +7393,7 @@ impl Splitter {
         if words.len() != 3 || *nikaia_std::index::get(&words, 1) != "in" { return Err(nikaia_std::error::throwing(Refused::Because(format!("a template loop is written `<for name in :collection>`, not `<for{}>`", header)), &"loop_header")); }
         let binding = (*nikaia_std::index::get(&words, 0)).to_owned();
         let written = (*nikaia_std::index::get(&words, 2)).to_owned();
-        if !written.starts_with(":") { return Err(nikaia_std::error::throwing(Refused::Because(format!("`{}` is captured from the enclosing scope, so it is written `:{}` - the colon is where the template's names end and the program's begin (ADR-007 D4)", written, written)), &"loop_header")); }
+        if !written.starts_with(":") { return Err(nikaia_std::error::throwing(Refused::Because(format!("`{}` is captured from the enclosing scope, so it is written `:{}` - the colon is where the template's names end and the program's begin (ADR-296 D4)", written, written)), &"loop_header")); }
         let mut collection: String = String::from("");
         let mut first = true;
         for ch in written.chars() {
@@ -10015,7 +10015,7 @@ fn written_at(names: &winnow_grammar::InternerContext, ty: &Type, known: &collec
 
 fn written_at_the_boundary(names: &winnow_grammar::InternerContext, ty: &Type, known: &collections::BTreeSet<String>, a_parameter: bool, at_c: bool, span: &Span, out: &mut Vec<Finding>) {
     if ty.is_mut && !at_c {
-        out.push(refusal("NK1158", span.clone(), String::from("`&mut` can only be used when talking to C."), vec![String::from("`&mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it.")], String::from("Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.")));
+        out.push(refusal("NK1158", span.clone(), String::from("`ref mut` can only be used when talking to C."), vec![String::from("`ref mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it.")], String::from("Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.")));
         return;
     }
     let name = names.resolve(ty.name).to_owned();

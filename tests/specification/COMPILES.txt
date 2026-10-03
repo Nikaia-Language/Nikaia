@@ -45,6 +45,7 @@
 20-nikaia-advance.md #3 refused
 20-nikaia-advance.md #4 compiles
 20-nikaia-advance.md #5 compiles
+20-nikaia-advance.md #7 refused
 20-nikaia-advance.md #18 compiles
 20-nikaia-advance.md #19 compiles
 20-nikaia-advance.md #20 compiles

@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/escapes.nika
 //
 // What the `\` in a written string literal means (ADR-188) - the table the
-// compiler's `build_time` reads a literal through, moved from Rust (ADR-250,
+// compiler's `build_time` reads a literal through, moved from Rust (ADR-294,
 // #125). Evaluating at build time stays Rust.
 //
 // **The one table, with two readers** (ADR-188 D2): `decoded` turns a literal

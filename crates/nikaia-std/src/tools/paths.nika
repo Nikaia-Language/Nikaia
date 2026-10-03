@@ -1,10 +1,10 @@
 // crates/nikaia-std/src/tools/paths.nika
 //
-// **How `nikaia describe` spells a Rust crate's names** (ADR-195 D4, ADR-196
+// **How `nikaia describe` spells a Rust crate's names** (ADR-290 D14, ADR-290
 // D4): the module a file is, a path joined from its parts, and what one
 // `pub use` offers and where its path could resolve.
 //
-// Moved from the compiler's `describe.rs` by ADR-196's route: lowered by
+// Moved from the compiler's `describe.rs` by ADR-290's route: lowered by
 // `nikaia lower-std` to `paths.rs` beside it, `include!`d as
 // `nikaia_std::tools::paths`, and called from `describe`. What stays Rust is
 // the table these answers fill - which modules are `pub`, which items are

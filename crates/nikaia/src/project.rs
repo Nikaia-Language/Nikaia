@@ -54,10 +54,10 @@ pub const WRAPPER_MARKER: &str = "NIKAIA_RUSTC_WRAPPER";
 const TARGET_VAR: &str = "NIKAIA_BUILD_TARGET";
 const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 /// The third switch's word, down the same channel
-/// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
+/// ([ADR-281](../../docs/specification/adr/adr-281.md) D36).
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 /// `--optimization`'s words, resolved
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1).
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D1).
 const OPTIMIZATION_VAR: &str = "NIKAIA_OPTIMIZATION";
 /// Set where the build is `nikaia test`'s
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
@@ -66,7 +66,7 @@ const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
 /// How `--allow-read-from-list` reaches the `rustc` wrapper
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2, D6).
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D5, D9).
 ///
 /// The wrapper is a **second process**, started by Cargo, and it lowers the
 /// same file a second time — so it has to be told the same list or the two
@@ -103,7 +103,7 @@ pub struct Settings {
     pub reentrancy_check: String,
     /// `--optimization`, or `[build] optimization`: `name:level` words,
     /// comma-separated, the last one for a name deciding
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Empty where
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Empty where
     /// neither says anything.
     pub optimization: String,
     /// **Whether this is `nikaia test`'s build**
@@ -114,9 +114,9 @@ pub struct Settings {
 }
 
 /// **`name:level` words, comma-separated**, to what they decide
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). The names are
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). The names are
 /// `remove-bounds-checks` and `remove-overflow-checks`
-/// ([ADR-272](../../docs/specification/adr/adr-272.md) D1); a later word for
+/// ([ADR-306](../../docs/specification/adr/adr-306.md) D6); a later word for
 /// a name wins over an earlier one.
 pub fn optimizations(
     words: &str,
@@ -169,7 +169,7 @@ impl Settings {
         let user_parallelism = manifest
             .setting("user-parallelism", user_parallelism, "no")
             .to_string();
-        // **No flag of its own** ([ADR-039](../../docs/specification/adr/adr-039.md)
+        // **No flag of its own** ([ADR-281](../../docs/specification/adr/adr-281.md)
         // D8): it *lives in the manifest*, because otherwise a shipped build is
         // not reproducible, and Part I 1.2 names the two that a single build may
         // override. The environment is not a second front door — it is how the
@@ -191,7 +191,7 @@ impl Settings {
     }
 
     /// **The command line's `--optimization` over the manifest's**
-    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Nothing a
+    /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Nothing a
     /// program means depends on it, so a single build may say it, as it may
     /// say `--target`.
     pub fn optimize(&mut self, flags: &[String]) -> Result<()> {
@@ -311,7 +311,7 @@ pub struct Lowered {
     /// Whether the build cache answered instead of the emitter.
     pub reused: bool,
     /// **What the author could promise and has not**
-    /// ([ADR-244](../../docs/specification/adr/adr-244.md) D2): the note
+    /// ([ADR-288](../../docs/specification/adr/adr-288.md) D29): the note
     /// [`modules::Program::could_promise`] writes, empty where there is none.
     /// Handed back rather than printed, because the `rustc` wrapper lowers too
     /// and only the command a person ran should say it - once.
@@ -324,7 +324,7 @@ pub struct Lowered {
 /// checked, lowered or inferred, because only a build that passed every check
 /// was recorded and the key holds everything those checks depend on (D13).
 /// **The packages a project depends on by path**
-/// ([ADR-047](../../docs/specification/adr/adr-047.md) D2), resolved against
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D15), resolved against
 /// the manifest's own directory.
 ///
 /// A free function because two callers need the same answer: the project build,
@@ -348,7 +348,7 @@ pub struct Lowered {
 ///
 /// **rule 2** — transitive dependencies are not visible — is no longer checked
 /// anywhere, because it is structural
-/// ([ADR-053](../../docs/specification/adr/adr-053.md) D3): a package is
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D21): a package is
 /// generated as its own crate naming only its own dependencies, so a name from
 /// two levels down does not resolve and no rule of ours has to say so.
 /// **rule 5** is the generated workspace's profile (D4): every Nikaia crate is
@@ -365,7 +365,7 @@ pub fn packages_of(
     // **What this build calls each package**, before any of them is read, so
     // that a package reached twice is renamed to one name rather than to
     // whichever of the two was resolved first
-    // ([ADR-053](../../docs/specification/adr/adr-053.md) D2).
+    // ([ADR-286](../../docs/specification/adr/adr-286.md) D20).
     let mut here: BTreeMap<PathBuf, String> = BTreeMap::new();
     for (name, value) in manifest.dependencies() {
         if let Dependency::Path(path) = value {
@@ -392,7 +392,7 @@ pub fn packages_of(
         seen.insert(root.clone(), name.clone());
 
         // **A package's own packages are resolved, not refused**
-        // (ADR-053 D1): it is generated as its own crate, so they are its
+        // (ADR-286 D19): it is generated as its own crate, so they are its
         // dependencies and not ours. Read here only to fail early where one is
         // not there.
         let dependency = Manifest::read(&root.join("nikaia.toml"))?;
@@ -414,7 +414,7 @@ pub fn packages_of(
             renames: renames_in(&dependency, &root, &here)?,
             root,
             // **Its own keys**, so its `use` lines are read the way its own
-            // build would read them (ADR-053 D3).
+            // build would read them (ADR-286 D21).
             reachable: dependency.dependencies().keys().cloned().collect(),
         });
     }
@@ -422,7 +422,7 @@ pub fn packages_of(
 }
 
 /// How a dependency's **own** package names are read in this build
-/// ([ADR-053](../../docs/specification/adr/adr-053.md) D2: a package reached
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D20: a package reached
 /// through two parents is one package).
 ///
 /// A library writes its own manifest keys in its own signatures, and those keys
@@ -469,7 +469,7 @@ fn renames_in(
 }
 
 /// One package of a build, and everything needed to generate a crate for it
-/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D19).
 #[derive(Debug, Clone)]
 pub struct Member {
     /// The Cargo package name - the `[package] name` of its own `nikaia.toml`.
@@ -477,7 +477,7 @@ pub struct Member {
     /// renaming form below name it by.
     pub name: String,
     /// The canonical package directory. Two manifest keys resolving here are
-    /// one crate, which is [ADR-047](../../docs/specification/adr/adr-047.md)
+    /// one crate, which is [ADR-286](../../docs/specification/adr/adr-286.md)
     /// D2 rule 3 holding because Cargo already works that way (D2).
     pub root: PathBuf,
     pub manifest: Manifest,
@@ -550,7 +550,7 @@ fn dependencies_first(members: &[Member]) -> Vec<usize> {
 }
 
 /// Every package of this build, the entry first
-/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D19).
 ///
 /// Breadth-first from the entry, so a diamond is visited once and the order is
 /// the same on every machine. A package already seen is the same crate: the key
@@ -616,12 +616,12 @@ pub fn members_of(entry_manifest: &Manifest, entry_root: &Path) -> Result<Vec<Me
 /// `path`, resolved where the filesystem lets us. The same fallback
 /// `packages_of` uses, so the two agree about when two keys are one package.
 /// A Rust dependency's table with a relative `path` resolved against the
-/// project root ([ADR-197](../../docs/specification/adr/adr-197.md) D2).
+/// project root ([ADR-286](../../docs/specification/adr/adr-286.md) D17).
 ///
 /// **Absolute, because the file this is written into is not where the author
 /// is.** The generated member manifest lives at
 /// `target/nikaia/build/<package>/Cargo.toml`
-/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1), and a path relative
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D19), and a path relative
 /// to *that* is a number a person derives from a build layout. The same
 /// manifest already writes `nikaia-std` absolute for the same reason.
 ///
@@ -691,7 +691,7 @@ pub fn lower(
 }
 
 /// **What a build may read, and where it compiles a parser**
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D1 and D2,
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D4 and D5,
 /// [ADR-177](../../docs/specification/adr/adr-177.md) D2).
 ///
 /// **One function rather than two constructions**, because both of this
@@ -719,7 +719,7 @@ fn reads_for(layout: &Layout, allowlist: Option<&Path>) -> Result<assets::Reads>
 }
 
 /// The same, told which allowlist is in effect
-/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2).
+/// ([ADR-310](../../docs/specification/adr/adr-310.md) D5).
 ///
 /// `None` is D1, and D1 is what every caller that does not pass the flag gets:
 /// a build given no list reads nothing while it builds.
@@ -844,14 +844,14 @@ pub fn lower_reading(
     let layout = Layout::resolve(input);
     let unit = layout.unit_name(input);
     // **What this build may read, resolved before anything is read**
-    // ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D2).
+    // ([ADR-310](../../docs/specification/adr/adr-310.md) D4, D5).
     let reads = reads_for(&layout, allowlist)?;
     let choices = match reads.list_digest() {
         Some(digest) => settings.choices().reading(digest),
         None => settings.choices(),
     };
     // **And what this build's boundaries say**
-    // ([ADR-104](../../docs/specification/adr/adr-104.md) D5). A description is
+    // ([ADR-290](../../docs/specification/adr/adr-290.md) D5). A description is
     // a file a person edits, so an edit has to reach the next build - which it
     // did not, and failed open while it did not.
     let choices = choices.describing(crate::describe::descriptions_digest(&layout.root));
@@ -882,7 +882,7 @@ pub fn lower_reading(
     // **Outside a project it is the one file.** A package is a directory *of a
     // project*, which is what a `nikaia.toml` declares; a directory of loose
     // examples is a directory of programs, and compiling one of them must not
-    // pull in the other ten (ADR-047 D1, `modules::collect_one`).
+    // pull in the other ten (ADR-286 D1, `modules::collect_one`).
     let program = match (settings.tests, layout.in_project) {
         (true, in_project) => modules::Program::read_for_tests(input, packages, in_project)?,
         (false, true) => modules::Program::read_with(input, packages)?,
@@ -890,7 +890,7 @@ pub fn lower_reading(
     };
     let key_source = program.sources().join("\n// --- unit ---\n");
     // **What the output names is part of the key** (0.0.239): the abort table
-    // names each file as it was handed to the compiler (ADR-044 D1), so a
+    // names each file as it was handed to the compiler (ADR-300 D9), so a
     // lowering cached for `/abs/one.nika` and reused for `one.nika` named the
     // first path in the second program's aborts. A choice, and not part of
     // the source, because the source's hash is the lockfile's.
@@ -909,7 +909,7 @@ pub fn lower_reading(
     // The packages this program depends on: their entries in the ledger are
     // theirs, and a contract they changed is said in their own build.
     let dependencies: BTreeSet<String> = program.as_its_own.keys().cloned().collect();
-    // **What a `pub` function lost since the ledger was committed** (ADR-244
+    // **What a `pub` function lost since the ledger was committed** (ADR-288
     // D5), against the project's committed file, which this lowering has not
     // written yet. Outside a project there is no committed ledger to have lost
     // anything against.
@@ -940,7 +940,7 @@ pub fn lower_reading(
             // own: `utils::double` is a name `main.nika` may write, and the
             // type checker resolves it in the one place any name is resolved.
             let modules = program.package_names();
-            // **Read once per lowering and not per unit** (ADR-104 D1): the
+            // **Read once per lowering and not per unit** (ADR-290 D1): the
             // boundary is the build's, and every unit of it stands at the same
             // one. `layout.root` is the project this input belongs to, and
             // outside a project there is no manifest and therefore nothing
@@ -950,13 +950,13 @@ pub fn lower_reading(
                 false => Foreign::default(),
             };
             // **The committed ledger against the one this build inferred**
-            // ([ADR-101](../../docs/specification/adr/adr-101.md) D1), read
+            // ([ADR-308](../../docs/specification/adr/adr-308.md) D11), read
             // once for the package rather than once per unit: the question is
             // whether a *contract* moved, and a contract belongs to the
             // package.
             let newly = newly(&layout.root, &program.contracts);
             // Collected once for the whole package, because every unit is
-            // checked against the same program (`ADR-030`) and a `comptime` in
+            // checked against the same program (`ADR-286`) and a `comptime` in
             // any of them may call into any other.
             let beside: Vec<&crate::parser::Parsed> =
                 program.units.iter().map(|unit| &unit.parsed).collect();
@@ -975,7 +975,7 @@ pub fn lower_reading(
             // with, kept rather than reconstructed.
             //
             // **And the program's own files against what each dependency
-            // promised** (ADR-244 D1), not what its body happens to be: an
+            // promised** (ADR-288 D28), not what its body happens to be: an
             // `"inferred"` `sync` reads as *may pause* across the boundary.
             let promised = program.contracts_as_promised();
             for unit in &program.units {
@@ -999,7 +999,7 @@ pub fn lower_reading(
 
             let lowered = {
                 // **The described crates' boundary reaches the emitter**
-                // (ADR-237 D1), which the checker above already read it for.
+                // (ADR-290 D20), which the checker above already read it for.
                 let mut program = program;
                 program.described = foreign.descriptions.clone();
                 let lowered = program.emit_reading(settings.build, &reads)?;
@@ -1019,7 +1019,7 @@ pub fn lower_reading(
             let ledger = program.contracts.render();
             let derived = program.contracts.render_derived();
 
-            // **An entry nothing read** ([ADR-072](../../docs/specification/adr/adr-072.md)
+            // **An entry nothing read** ([ADR-310](../../docs/specification/adr/adr-310.md)
             // D8): a list that may hold names nothing uses decays into
             // *everything we ever needed*, which is how an allowlist stops
             // being read. Said at the end of the build, where the whole set is
@@ -1030,7 +1030,7 @@ pub fn lower_reading(
             }
 
             if let Some(cache) = &mut cache {
-                // **What the build actually read** (ADR-021 D13, ADR-072 D7).
+                // **What the build actually read** (ADR-021 D13, ADR-310 D10).
                 // An empty map is correct and usual: with no list in effect
                 // nothing can be read at all.
                 let artifacts = Artifacts::new()
@@ -1096,7 +1096,7 @@ pub const DERIVED: &str = "derived";
 /// thing is usually why the rest of the file reads strangely.
 ///
 /// **What this build links against, and what has been described**
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D1).
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D1).
 ///
 /// Two sets rather than one map, because the question is a difference: a crate
 /// the manifest declares and no ledger describes is the one D1 refuses. Both
@@ -1123,14 +1123,14 @@ pub struct Foreign {
     pub described: BTreeSet<String>,
     /// The described crates whose **sources have moved** since the description
     /// was reviewed, with the files that hash differently
-    /// ([ADR-104](../../docs/specification/adr/adr-104.md) D5, on
+    /// ([ADR-290](../../docs/specification/adr/adr-290.md) D5, on
     /// [ADR-100](../../docs/specification/adr/adr-100.md) D3's rule).
     ///
     /// **Empty where nothing can be compared**, which is the polarity and not
     /// an omission: a version dependency's sources are in Cargo's registry
     /// cache and a description with no `[sources]` recorded nothing, so in both
     /// cases there is no hash to disagree with. A refusal resting on an absence
-    /// is what [ADR-169](../../docs/specification/adr/adr-169.md) D1 keeps
+    /// is what [ADR-281](../../docs/specification/adr/adr-281.md) D34 keeps
     /// `NK2201` from doing, and it would here refuse every crate that comes
     /// from a registry — [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s
     /// correct program refused.
@@ -1139,7 +1139,7 @@ pub struct Foreign {
     /// a program writes (`hyper_shim::serve_once`).
     ///
     /// **One ledger and not one per crate**, because a name is resolved in one
-    /// place (ADR-011 D2) and the crate a name belongs to is the prefix on it.
+    /// place (ADR-296 D17) and the crate a name belongs to is the prefix on it.
     /// Two descriptions cannot disagree about a name without disagreeing about
     /// whose it is.
     pub descriptions: Ledger,
@@ -1192,7 +1192,7 @@ impl Foreign {
     }
 
     /// **`std`'s ledger and every described crate's, in one**
-    /// ([ADR-104](../../docs/specification/adr/adr-104.md) D1). A described
+    /// ([ADR-290](../../docs/specification/adr/adr-290.md) D1). A described
     /// boundary is a library boundary: the analyses ask a ledger what a callee
     /// takes, hands back, pauses on and keeps, and where the callee is foreign
     /// the answer comes from the file the reader was told to write.
@@ -1237,7 +1237,7 @@ impl Foreign {
 }
 
 /// Which of the files a description was derived from hash differently now
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5).
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D5).
 ///
 /// **Only what can be compared is compared.** A description that recorded no
 /// `[sources]` and a crate whose sources this build cannot find both answer
@@ -1285,9 +1285,9 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 ///
 /// Two facts, and both are about the *build* rather than about the file being
 /// checked — what the manifest links against and what was described beside it
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D1), and what a callee
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D1), and what a callee
 /// has newly gained since the ledger committed beside it
-/// ([ADR-101](../../docs/specification/adr/adr-101.md) D1). Neither can be read
+/// ([ADR-308](../../docs/specification/adr/adr-308.md) D11). Neither can be read
 /// from a `Parsed`, and neither belongs to it.
 ///
 /// **One argument and not two**, because they arrive together and for the same
@@ -1298,7 +1298,7 @@ pub struct Around<'a> {
     pub foreign: &'a Foreign,
     pub newly: &'a check::Newly,
     /// **What this build may read while it builds**
-    /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    /// ([ADR-310](../../docs/specification/adr/adr-310.md)).
     ///
     /// The fourth fact, and it belongs beside the other three for the reason
     /// the doc above gives: it is about the *build* rather than about a file,
@@ -1356,7 +1356,7 @@ pub fn check(
     }
 
     // A warning is printed and does not stop anything. There is one, and it is
-    // a migration (ADR-035 D5): a string written before `f"…"` existed looks
+    // a migration (ADR-309 D15): a string written before `f"…"` existed looks
     // exactly like one that meant its braces, and neither refusing it nor
     // saying nothing would be right.
     let path = path.display().to_string();
@@ -1397,7 +1397,7 @@ pub fn check(
         refused.push(format!("{types} type error{}", plural(types)));
     }
     // **`NK2503` is counted apart from the other `NK25xx` codes**
-    // ([ADR-039](../../docs/specification/adr/adr-039.md) D6), for the reason
+    // ([ADR-281](../../docs/specification/adr/adr-281.md) D32), for the reason
     // every split in this tally has: it must say what it counted. The others
     // are a *value* on the wrong thread; this one is a *call* that can reach a
     // lock, and the way out is keeping the lock out of its reach rather than
@@ -1423,7 +1423,7 @@ pub fn check(
     }
     // **And `NK2505` is a third thing again**: a crate that *is* described, by
     // a file about a version of it that is no longer there
-    // ([ADR-104](../../docs/specification/adr/adr-104.md) D5). What a reader
+    // ([ADR-290](../../docs/specification/adr/adr-290.md) D5). What a reader
     // does about it is neither of the two above.
     let stale = count("NK2505");
     if stale > 0 {
@@ -1449,7 +1449,7 @@ pub fn check(
             plural(aliases)
         ));
     }
-    // **The tether's own line** ([ADR-156](../../docs/specification/adr/adr-156.md)
+    // **The tether's own line** ([ADR-283](../../docs/specification/adr/adr-283.md)
     // D4). Counted apart from `NK2302` although both are `NK23xx`, because the
     // tally has to say what it counted and these are two different shapes: one
     // is a view given to a call and kept, the other a view of a buffer the body
@@ -1461,7 +1461,7 @@ pub fn check(
             plural(tethered)
         ));
     }
-    // **What a tether cannot be lowered to** (ADR-209), a line of its own for
+    // **What a tether cannot be lowered to** (ADR-283), a line of its own for
     // the same reason: the way out is a shape to change, not a word to add.
     let untethered = count("NK2304");
     if untethered > 0 {
@@ -1533,7 +1533,7 @@ pub fn check(
     }
     let pausing = pausing - paused_in_a_door;
     // **A pause where nothing may pause** - a grammar's action, a fold, a
-    // parallel lambda (ADR-142 D1, ADR-235 D2) - is not a place that can fail.
+    // parallel lambda (ADR-296 D35, ADR-235 D2) - is not a place that can fail.
     let pauses_forbidden = count("NK2209");
     if pauses_forbidden > 0 {
         refused.push(format!(
@@ -1542,7 +1542,7 @@ pub fn check(
         ));
     }
     // **A file read with a lock held is not a place that can fail either**
-    // ([ADR-169](../../docs/specification/adr/adr-169.md) D2), and lands on the
+    // ([ADR-281](../../docs/specification/adr/adr-281.md) D35), and lands on the
     // same reasoning as the two above: the tally has to say what it counted,
     // and the way out here is moving the read rather than declaring anything.
     let under_a_lock = count("NK2201");
@@ -1620,7 +1620,7 @@ pub fn check(
 /// it is the one that record asked for.
 ///
 /// **`NK2502` is not downgraded, and that is the decision.** A Rust dependency
-/// may bring its own runtime (ADR-038 D7), and its threads are not the
+/// may bring its own runtime (ADR-303 D7), and its threads are not the
 /// program's: `user_parallelism` bounds what *you* wrote, which is ADR-037 D2's
 /// load-bearing "user". So that crossing is real at both settings and so is the
 /// refusal.
@@ -1644,7 +1644,7 @@ fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism:
 }
 
 /// **What each function has newly gained in its `throws` set** since the
-/// ledger committed beside it ([ADR-101](../../docs/specification/adr/adr-101.md)
+/// ledger committed beside it ([ADR-308](../../docs/specification/adr/adr-308.md)
 /// D1).
 ///
 /// The ledger records `throws` as a **set** ([ADR-023](../../docs/specification/adr/adr-023.md)
@@ -1685,7 +1685,7 @@ fn newly(root: &Path, inferred: &Ledger) -> check::Newly {
 }
 
 /// **The parameters whose `keeps` changed**
-/// ([ADR-236](../../docs/specification/adr/adr-236.md) D1): kept now and not
+/// ([ADR-297](../../docs/specification/adr/adr-297.md) D12): kept now and not
 /// before, or kept before and only read now. A parameter the old signature
 /// does not have is **new** rather than moved, as a new function's set is not
 /// a set that grew. Whether the type's teardown does anything is the checker's
@@ -1751,7 +1751,7 @@ pub fn write_ledger(path: &Path, ledger: &str, locked: bool) -> Result<()> {
 /// under the entry it belongs to.
 ///
 /// Naming the entry is the whole point. A contract line is short and repeats -
-/// `sync = true` says nothing on its own, and since ADR-027 it is the commonest
+/// `sync = true` says nothing on its own, and since ADR-288 it is the commonest
 /// line in the file - so a bare list of them tells you that *something* changed
 /// and leaves you to find out what. 13.5 asks this diff to narrate a cause; it
 /// cannot do that without saying whose contract moved.
@@ -1760,7 +1760,7 @@ pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
 }
 
 /// Which of the three explanations a run was asked for
-/// ([ADR-033](../../docs/specification/adr/adr-033.md) D9,
+/// ([ADR-292](../../docs/specification/adr/adr-292.md) D2,
 /// [ADR-037](../../docs/specification/adr/adr-037.md) D8,
 /// [ADR-010](../../docs/specification/adr/adr-010.md) D7).
 ///
@@ -1776,11 +1776,11 @@ pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
 pub struct Explain {
     pub overlaps: bool,
     pub sharing: bool,
-    /// [ADR-008](../../docs/specification/adr/adr-008.md) D6's inverse tool:
+    /// [ADR-283](../../docs/specification/adr/adr-283.md) D4's inverse tool:
     /// inspection rather than assertion.
     pub tethers: bool,
     pub trust: bool,
-    /// [ADR-088](../../docs/specification/adr/adr-088.md) D6's report: what a
+    /// [ADR-304](../../docs/specification/adr/adr-304.md) D9's report: what a
     /// `T::fields` loop was unrolled to, for the types actually used.
     pub comptime: bool,
     /// [ADR-269](../../docs/specification/adr/adr-269.md) D7's report: every
@@ -1798,7 +1798,7 @@ impl Explain {
 ///
 /// **Against the package's own ledger and not each file's**, which is the
 /// difference from the single-file path doing this three times: `sync`, the touch
-/// sets and the sharing classes are whole-program facts (ADR-027, ADR-033), and a
+/// sets and the sharing classes are whole-program facts (ADR-288, ADR-292), and a
 /// report built from one file's inferences would answer a different question from
 /// the one the build answers.
 ///
@@ -1812,7 +1812,7 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     let several = program.units.len() > 1;
 
     // **Once for the program and not once per file**
-    // ([ADR-181](../../docs/specification/adr/adr-181.md) D5), which is the
+    // ([ADR-304](../../docs/specification/adr/adr-304.md) D10), which is the
     // difference from the four reports below: an unrolling is a fact about a
     // **call**, and the call may stand in a different file from the function it
     // names. Printing it per unit would print each one as many times as the
@@ -1930,7 +1930,7 @@ impl Project {
         }
 
         let manifest = Manifest::read(&layout.root.join("nikaia.toml"))?;
-        // ADR-038 D5 moved `cleanup-deadline` out of the manifest. The key is
+        // ADR-303 D5 moved `cleanup-deadline` out of the manifest. The key is
         // still accepted, and the note is what keeps the move from being
         // silent - a manifest whose setting stopped being read without saying
         // so is the mistake `[build]`'s unknown-key check already exists for.
@@ -2023,7 +2023,7 @@ impl Project {
     ///
     /// `kind` is what puts the entry package's `fn main` in a binary and every
     /// package under it in a library beside it
-    /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D19).
     fn cargo_member(&self, member: &Member, rust: &str, kind: CrateKind) -> Result<CargoProject> {
         let mut dependencies = runtime_dependencies(rust, self.settings.build.reentrancy_check)?;
         for (dependency, value) in member.manifest.dependencies() {
@@ -2031,18 +2031,18 @@ impl Project {
                 // The whole point of D1: whatever the author wrote reaches
                 // Cargo, and Cargo resolves and links it as it would for any
                 // Rust project - **narrowed by one key**
-                // ([ADR-197](../../docs/specification/adr/adr-197.md) D2). A
+                // ([ADR-286](../../docs/specification/adr/adr-286.md) D17). A
                 // relative `path` is resolved against `nikaia.toml` and written
                 // absolute; `version`, `git`, `tag`, `features` and the rest
                 // still travel untouched.
                 Dependency::Rust(value) => {
                     dependencies.insert(dependency.clone(), rooted(value, &member.root));
                 }
-                // **Cargo's renaming form** (ADR-053 D2): the package is named
+                // **Cargo's renaming form** (ADR-286 D20): the package is named
                 // by its identity, the key is the name *this* crate uses for
                 // it. So two packages that both want the key `c` are in two
                 // different crates and never meet, and one package reached
-                // through two parents is one crate - which is ADR-047 D2 rule 3
+                // through two parents is one crate - which is ADR-286 D15 rule 3
                 // holding because Cargo already works that way.
                 Dependency::Path(path) => {
                     let root = canonical(&member.root.join(path));
@@ -2078,7 +2078,7 @@ impl Project {
                 version: member.manifest.package_version().to_string(),
                 // What the emitter writes, and what the tests compile it as.
                 edition: "2024".to_string(),
-                // ADR-109 D4: the floor the lowering needs, from one constant
+                // ADR-288 D27: the floor the lowering needs, from one constant
                 // in the emitter.
                 rust_version: Some(crate::emit::RUST_FLOOR.to_string()),
             },
@@ -2096,7 +2096,7 @@ impl Project {
     }
 
     /// The generated workspace: one crate per Nikaia package
-    /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
+    /// ([ADR-286](../../docs/specification/adr/adr-286.md) D19).
     ///
     /// `rust` is each member as this build lowered it, in `members`' order.
     pub fn cargo_workspace(&self, members: &[Member], rust: &[String]) -> Result<Workspace> {
@@ -2174,7 +2174,7 @@ impl Project {
         no_cache: bool,
         locked: bool,
         want: Explain,
-        // **The list this build reads under** (ADR-072 D2), or `None` for D1.
+        // **The list this build reads under** (ADR-310 D5), or `None` for D1.
         allowlist: Option<&Path>,
     ) -> Result<i32> {
         self.drive_to(subcommand, program_args, no_cache, locked, want, allowlist)
@@ -2226,7 +2226,7 @@ impl Project {
         // **Dependencies first** ([ADR-100](../../docs/specification/adr/adr-100.md)
         // D5). A package's ledger is a build input of everything that depends
         // on it: `http`'s own build has `deeper` in view and a consumer's does
-        // not (ADR-053 D3), so the consumer has to read the answer `http`
+        // not (ADR-286 D21), so the consumer has to read the answer `http`
         // computed rather than derive a worse one. `members_of` is
         // breadth-first from the entry, which is the wrong end and is not a
         // topological order once a package is reached two ways — so the order
@@ -2259,7 +2259,7 @@ impl Project {
                 &lowered.derived,
                 locked,
             )?;
-            // **The note is the entry's** (ADR-244 D2): what a dependency's
+            // **The note is the entry's** (ADR-288 D29): what a dependency's
             // author could promise is theirs to hear, in their own build.
             if at == 0 {
                 eprint!("{}", lowered.notes);
@@ -2306,7 +2306,7 @@ impl Project {
             &format!("{}\n{}\n", choices.build, choices.backend),
         )?;
 
-        // **Before Cargo is handed anything** (ADR-109 D4): its own answer
+        // **Before Cargo is handed anything** (ADR-288 D27): its own answer
         // about the floor names a package the author never wrote, which is
         // Part III C.1's class.
         toolchain_is_new_enough(crate::emit::RUST_FLOOR)?;
@@ -2429,9 +2429,9 @@ impl Project {
     /// class ADR-005 D7 enumerates, `E0277` among them since the structural
     /// `Send` check landed, arrived as Rust about `target/nikaia/gen/….rs`.
     ///
-    /// **The position is translated and the text is not**, which is ADR-012's
+    /// **The position is translated and the text is not**, which is ADR-300's
     /// own choice and is honest for most of what arrives: the lowering is name
-    /// for name (ADR-011 D2), so "`xs` does not live long enough" is already a
+    /// for name (ADR-296 D17), so "`xs` does not live long enough" is already a
     /// sentence about the Nikaia source and only its place was wrong. It is
     /// *not* honest for a trait-bound error, whose every noun is a Rust type the
     /// author did not write - and rewriting one into Nikaia vocabulary is a
@@ -2440,7 +2440,7 @@ impl Project {
     /// `NK2501`/`NK2502` and Nikaia words.
     ///
     /// The map is rebuilt rather than carried: the lowering is deterministic, so
-    /// a second one gives the same map (ADR-012), and this way the cost is paid
+    /// a second one gives the same map (ADR-300), and this way the cost is paid
     /// only by a build the backend had something to say about.
     fn report(&self, messages: &str, allowlist: Option<&Path>) -> Result<()> {
         if messages
@@ -2460,12 +2460,12 @@ impl Project {
             true => modules::Program::read_for_tests(&self.entry(), &self.packages()?, true)?,
             false => modules::Program::read_with(&self.entry(), &self.packages()?)?,
         };
-        // **The same reads the build lowered under** (ADR-072, ADR-177). This
+        // **The same reads the build lowered under** (ADR-310, ADR-177). This
         // lowering has to be the lowering, or an item the build wrote a `const`
         // for is refused here and the backend's message never arrives.
         let layout = Layout::resolve(&self.entry());
         let reads = reads_for(&layout, allowlist)?;
-        // …and the same descriptions (ADR-237 D1), for the same reason.
+        // …and the same descriptions (ADR-290 D20), for the same reason.
         let foreign = match layout.in_project {
             true => Foreign::of(&layout.root),
             false => Foreign::default(),
@@ -2485,7 +2485,7 @@ impl Project {
             .filter(diagnostics::is_about_the_program)
             .collect();
         // **A boundary mismatch is said as a stale ledger** (ADR-100 D6,
-        // ADR-237 D2): the packages this program depends on and the crates it
+        // ADR-290 D21): the packages this program depends on and the crates it
         // describes are where a ledger the lowering believed can disagree with
         // the code below it.
         let boundaries: Vec<diagnostics::Boundary> = self
@@ -3151,7 +3151,7 @@ fn runtime_dependencies(
             toml::Value::String(Sysroot::resolve().std_dir().to_string_lossy().into_owned()),
         );
         // **A declined guarantee reaches the crate that carries it**
-        // ([ADR-039](../../docs/specification/adr/adr-039.md) D8). The check
+        // ([ADR-281](../../docs/specification/adr/adr-281.md) D36). The check
         // lives in `std`, so the switch is a Cargo feature: on by default, and
         // a program that declined it builds `std` without it. The compiled-`std`
         // cache keys on the word too (`Sysroot::rlib_cache`), or the second
@@ -3312,7 +3312,7 @@ mod tests {
 
     /// `--locked` names the entry a changed line belongs to.
     ///
-    /// A contract line is short and repeats; since ADR-027 `sync` is the
+    /// A contract line is short and repeats; since ADR-288 `sync` is the
     /// commonest line in the file. Reporting three bare `sync = true` lines
     /// tells a reader that something moved and leaves them to find out what,
     /// which is not the narrated diff 13.5 asks for.

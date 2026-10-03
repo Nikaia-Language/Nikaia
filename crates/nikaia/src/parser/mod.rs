@@ -16,7 +16,7 @@ use winnow_grammar::{InternerContext, ParseContext, ParseInput, StateOf, Symbol,
 /// line is a list literal and not an index
 /// ([ADR-135](../../../docs/specification/adr/adr-135.md) D3); a run of `///`
 /// before an item is that item's documentation
-/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1). Neither
+/// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4). Neither
 /// question can be asked of the input that is left.
 ///
 /// **Idempotent, which is what backtracking asks of state**: what whitespace
@@ -75,7 +75,7 @@ impl Trivia {
     }
 
     /// One `//…` comment, which is a doc comment when a third slash follows
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4).
     ///
     /// `body` is what stands after the two slashes, so a doc comment's body
     /// begins with the third. `////` is an ordinary comment, as it is in every
@@ -137,7 +137,7 @@ impl Trivia {
 }
 
 /// The documentation standing in front of the item about to be parsed
-/// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1).
+/// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4).
 ///
 /// Written by hand and called **first in the rule** rather than read in its
 /// action, because the two are different moments: by the time an item's action
@@ -170,7 +170,7 @@ where
 }
 
 /// `jump if cond` as the tree has always written it: `if cond { jump }`
-/// ([ADR-255](../../../docs/specification/adr/adr-255.md) D1).
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D23).
 fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
     ast::Stmt::Expr(ast::Expr::If {
         cond: Box::new(cond),
@@ -182,7 +182,7 @@ fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
 }
 
 /// Part I 2.2's number, in the four spellings
-/// ([ADR-136](../../../docs/specification/adr/adr-136.md) D1): `255`,
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D16): `255`,
 /// `1_000_000`, `0xFF`, `0b1010` and `0o17`.
 ///
 /// **Written by hand for two reasons.** The grammar's character classes are
@@ -195,7 +195,7 @@ fn guarded(jump: ast::Stmt, cond: ast::Expr, span: ast::Span) -> ast::Stmt {
 /// and `1_000` is `1000` to everything downstream including a diagnostic's
 /// text. **The radix is a spelling** (D2): `0xFF` is `255` and takes the first
 /// type that holds it, exactly as `255` does
-/// ([ADR-060](../../../docs/specification/adr/adr-060.md)).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md)).
 fn number_lit<'a, S>(i: &mut ParseInput<'a, S>) -> Result<i128, ParseError>
 where
     S: Clone + std::fmt::Debug,
@@ -314,7 +314,7 @@ where
     }
     let number = match wrong {
         Some(_) => 0,
-        // **As wide as a `u64` holds** ([ADR-248](../../../docs/specification/adr/adr-248.md)
+        // **As wide as a `u64` holds** ([ADR-285](../../../docs/specification/adr/adr-285.md)
         // D2), and as low as an `i64` does: which of the two a number is, is
         // asked where a type stands beside it (`NK1116`).
         None => match i128::from_str_radix(&value, radix) {
@@ -355,23 +355,23 @@ pub struct Parsed {
     pub program: ast::Program,
     pub interner: InternerContext,
     /// What this file calls a package, to what the package is called
-    /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D12).
     ///
     /// **Here because every consumer holds a `Parsed` and none of them should
     /// have to know about aliasing.** An alias is a name local to one file, so
-    /// resolving it is not name resolution in ADR-011 D2's sense - it is reading
+    /// resolving it is not name resolution in ADR-296 D17's sense - it is reading
     /// the file's own dictionary, and the dictionary is part of what was parsed.
     /// The alternative was the same lookup at fourteen call sites in three
     /// modules, where the fifteenth would have been the one that forgot.
     aliases: std::collections::BTreeMap<String, String>,
     /// What [`crate::text_tiers`] decided about a `String` field or result
     /// that is not text of its own below, one line each, for `--tethers`
-    /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D5).
+    /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D26).
     pub text_tiers: Vec<String>,
     /// **What goes into a mixed position from inside an `f"…"` hole**, by the
     /// hole's place - the byte its `{` stands at: the shape of each value and the method it is handed over
     /// with ([ADR-229](../../../docs/specification/adr/adr-229.md) D1). An
-    /// `f"…"`'s holes are the grammar's ([ADR-262](../../../docs/specification/adr/adr-262.md)),
+    /// `f"…"`'s holes are the grammar's ([ADR-309](../../../docs/specification/adr/adr-309.md)),
     /// and each reader takes a copy of one, so the wrap is applied where the
     /// copy is taken - [`crate::emit::literal_expressions`] - and every reader
     /// sees it.
@@ -440,7 +440,7 @@ impl Parsed {
     ///
     /// So the two programs declare the same struct differently, and that is the
     /// crossing rather than a disagreement: the sub-program is the **growable**
-    /// side of [ADR-079](../../../docs/specification/adr/adr-079.md) D1 and the
+    /// side of [ADR-311](../../../docs/specification/adr/adr-311.md) D1 and the
     /// program is the fixed one. What holds them together is that the **dump** is
     /// generated from the program's declaration and reads a run either way — so a
     /// field the sub-program owns arrives as the list the program views.
@@ -599,7 +599,7 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 }
 
 /// **A source every `Span` can point into**, or refused before it is read
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D2).
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) D7).
 ///
 /// A span holds its byte offsets as `u32`, so a file longer than 4 GiB would
 /// have nodes whose place cannot be said. None has been written by hand; one
@@ -615,7 +615,7 @@ pub fn fits(length: usize) -> Result<()> {
 }
 
 /// **The words this language keeps for itself**
-/// ([ADR-051](../../../docs/specification/adr/adr-051.md)).
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md)).
 ///
 /// This is the same list the grammar's `RESERVED` rule alternates over, and it
 /// is here in Rust because two readers need it outside the grammar: the note
@@ -647,7 +647,7 @@ pub const RESERVED_WORDS: [&str; 38] = [
 /// disappears is the safe way for this to be wrong - it adds a sentence and
 /// corrects nothing.
 /// A lambda's parameter list, split into the names and the ones written `mut`
-/// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
 ///
 /// The grammar reads them together because that is how they are written; the
 /// AST holds them apart because almost no parameter is one, and a bare `Ident`
@@ -697,7 +697,7 @@ fn reserved_word_note(found: Option<&str>, source: &str, at: usize) -> Option<St
 }
 
 /// `fn(info) sync { … }`: an effect written on a lambda, which Part I 7.2 and
-/// ADR-006 D6 write for the panic hook and nothing in the grammar gives a
+/// ADR-297 D10 write for the panic hook and nothing in the grammar gives a
 /// lambda yet. Said where the word stands right after a parameter list.
 fn an_effect_on_a_lambda_note(found: Option<&str>, before: &str) -> Option<String> {
     nikaia_std::tools::parse_notes::an_effect_on_a_lambda_note(found.unwrap_or_default(), before)
@@ -950,7 +950,7 @@ fn stops_at(input: &str) -> Option<usize> {
 }
 
 /// **The message an unclosed `/* … */` gets, said at the `/*` that opened it**
-/// ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+/// ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2).
 ///
 /// `BLOCK_COMMENT`'s cut fires where the input ran out, which is the end of the
 /// file and not the place the reader has to fix - a comment that swallowed the
@@ -1012,7 +1012,7 @@ fn opening_of_an_unclosed_comment(source: &str) -> Option<usize> {
 /// [`reserved_word_note`] is — what a reader needs is attached to what a reader
 /// sees, and a note that disappears is the safe way for this to be wrong, since
 /// it adds a sentence and corrects nothing
-/// ([ADR-089](../../../docs/specification/adr/adr-089.md) D2).
+/// ([ADR-279](../../../docs/specification/adr/adr-279.md) D2).
 fn coalesce_fallback_note(found: Option<&str>, before: &str) -> Option<(String, String)> {
     a_pair(nikaia_std::tools::parse_notes::coalesce_fallback_note(
         found?, before,
@@ -1026,7 +1026,7 @@ fn a_pair(said: Vec<String>) -> Option<(String, String)> {
 }
 
 /// **A `let` taking apart something a flat tuple of names cannot**
-/// ([ADR-098](../../../docs/specification/adr/adr-098.md)).
+/// ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 ///
 /// `let (a, b) = …` binds names by position and nothing else: a **nested**
 /// tuple is written nowhere in the specification and is refused rather than
@@ -1074,7 +1074,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
             // **An unclosed `/* … */` is reported at its opening** and not at
             // the end of the file, which is the one place a parse error's
             // position is the reader's to be told rather than the parser's
-            // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D2).
+            // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D2).
             let finding =
                 unclosed_block_comment(&e, input).unwrap_or_else(|| a_parse_error(&e, input));
             refuse_parsing(finding, input)
@@ -1104,7 +1104,7 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
         holes: Default::default(),
     };
     // **What a `String` field or result is below is decided here, once**
-    // ([ADR-222](../../../../docs/specification/adr/adr-222.md)): by what flows
+    // ([ADR-282](../../../../docs/specification/adr/adr-282.md)): by what flows
     // into it, and written into its type so every later reader agrees.
     crate::text_tiers::refine(&mut parsed);
     Ok(parsed)
@@ -1250,7 +1250,7 @@ pub enum Postfix {
     /// something.
     SafeField(Symbol),
     /// Part I 3.5 again, onto a **method**: the call happens only if the
-    /// receiver holds something ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+    /// receiver holds something ([ADR-278](../../../docs/specification/adr/adr-278.md)).
     SafeMethod(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
@@ -1304,7 +1304,7 @@ pub fn fold_binary(head: ast::Expr, tail: Vec<(ast::BinaryOp, ast::Expr, ast::Sp
 }
 
 /// A parenthesised expression, which is the expression - with a bit operation
-/// marked as written inside them ([ADR-248](../../../docs/specification/adr/adr-248.md)
+/// marked as written inside them ([ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D4): that is the one place the tree has to remember a parenthesis.
 pub fn grouped(e: ast::Expr) -> ast::Expr {
     match e {
@@ -1366,7 +1366,7 @@ grammar! {
 
         // Declared so the validator knows the name; the parsers themselves are
         // above ([ADR-135](../../../../docs/specification/adr/adr-135.md) D3,
-        // [ADR-136](../../../../docs/specification/adr/adr-136.md) D1).
+        // [ADR-285](../../../../docs/specification/adr/adr-285.md) D16).
         extern rule same_line -> ();
         extern rule number_lit -> i128;
         extern rule negative_number_lit -> i128;
@@ -1396,7 +1396,7 @@ grammar! {
         rule COMMENT @= "//" body:until(line_ending) -> { _state.user().comment(_span, body) }
 
         // **`/* … */`, and it nests**
-        // ([ADR-134](../../../../docs/specification/adr/adr-134.md) D1, D2).
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D1, D2).
         // Whitespace to the parser exactly as a line comment is, which is why
         // it is listed in `WS` and nowhere else: the generator puts `WS`
         // between the tokens of every syntactic rule, so a block comment stands
@@ -1469,7 +1469,7 @@ grammar! {
         // expected. A rule that got *further* keeps its own message - the
         // label only replaces the list (winnow-grammar `# "…"`).
         // **And every arm takes the prose standing in front of it**
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1). The
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4). The
         // `///` lines are gone by the time this runs — the implicit whitespace
         // skip ate them — so what is read back is what the skip recorded
         // (`Trivia::comment`), and `take_doc` is a *take*: an item consumes its
@@ -1494,7 +1494,7 @@ grammar! {
             KW_TEST title:STRING body:block -> { Item::Test { name: title, body } }
 
         // Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-        // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1).
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1).
         //
         // **The declarations are `trait_method`s**, because a signature without
         // a body is the same shape wherever it stands. What differs is how one
@@ -1507,7 +1507,7 @@ grammar! {
         // so the grammar takes any string and the ledger pass says which.
         //
         // **A block holds two shapes since**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): a
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7): a
         // signature, and an `opaque type … released by …`. They may interleave
         // freely in the source and are taken apart here, so nothing downstream
         // has to walk a list of two kinds.
@@ -1530,7 +1530,7 @@ grammar! {
           | d:trait_method -> { ExternMember::Declared(d) }
 
         // **`opaque type T released by f`**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3): an
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7): an
         // address the language never dereferences, whose release is a `cleanup`
         // the compiler runs at the end of its scope (Part I 6.4).
         //
@@ -1539,7 +1539,7 @@ grammar! {
         // asks for it — and `opaque`, `type`, `released` and `by` are all names
         // a program may want. Reserving a word buys exactly one thing, the
         // sentence a reader who writes it gets
-        // ([ADR-117](../../../../docs/specification/adr/adr-117.md) D2), and
+        // ([ADR-298](../../../../docs/specification/adr/adr-298.md) D7), and
         // this position can say that sentence without taking the word away.
         rule opaque_item -> Spanned<OpaqueType> @=
             KW_OPAQUE KW_TYPE name:NAME KW_RELEASED KW_BY released_by:NAME
@@ -1568,7 +1568,7 @@ grammar! {
         // The methods are **signatures**, so the body's `{ … }` is absent and
         // the rule stops at the return type. That is what tells this apart from
         // an `impl` at the grammar level rather than at a later check
-        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D1).
+        // ([ADR-295](../../../../docs/specification/adr/adr-295.md) D6).
         rule trait_item -> Item =
             vis:kw_pub?
             KW_TRAIT
@@ -1580,7 +1580,7 @@ grammar! {
 
         // A trait's methods are entries too — `Summarize::summary` is how a
         // bound is looked up — so they take their prose the same way
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1).
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4).
         rule trait_method -> Spanned<TraitMethod> @=
             d:doc_here
             KW_FN
@@ -1609,7 +1609,7 @@ grammar! {
             }
 
         // **A method takes its prose too**
-        // ([ADR-139](../../../../docs/specification/adr/adr-139.md) D1, D2), and
+        // ([ADR-307](../../../../docs/specification/adr/adr-307.md) D4, D5), and
         // it is the shape a package's surface is mostly made of: a `pub`
         // method's entry is in the ledger under `Type::name`, so a consumer
         // reads it there or nowhere.
@@ -1621,7 +1621,7 @@ grammar! {
 
         // **`sync` and `throws` stand after the result type**
         // ([ADR-140](../../../../docs/specification/adr/adr-140.md) D4), which
-        // is the order [ADR-102](../../../../docs/specification/adr/adr-102.md)
+        // is the order [ADR-277](../../../../docs/specification/adr/adr-277.md)
         // D1 already fixed for a function *type* - one order in a declaration
         // and in a type. Both sides used to parse and the specification wrote
         // both: Part II `fn add(…) sync`, Part III
@@ -1687,7 +1687,7 @@ grammar! {
         // backtracks, and the trailing slot takes the same word one position
         // later. Only a promise *followed by* an arrow is the old form.
         // **`sync` stands before `throws`**, which is the order
-        // [ADR-102](../../../../docs/specification/adr/adr-102.md) D1 fixes for
+        // [ADR-277](../../../../docs/specification/adr/adr-277.md) D6 fixes for
         // a function type and the order
         // [ADR-140](../../../../docs/specification/adr/adr-140.md) D4's own
         // example writes. `fn f() throws sync { … }` used to parse, and only by
@@ -1706,7 +1706,7 @@ grammar! {
                 }
             }
 
-        // **`sync` or `sync(f, g)`** ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+        // **`sync` or `sync(f, g)`** ([ADR-288](../../../../docs/specification/adr/adr-288.md)
         // D4): the second promises that the function pauses only where the
         // lambdas handed to those parameters do.
         rule sync_promise -> Vec<Symbol> =
@@ -1795,7 +1795,7 @@ grammar! {
         // never positional - which is what the separator buys, and why it is a
         // separator rather than a convention about where the flags go.
         //
-        // ADR-007 D5 puts one more thing there: `...args: Self::dsl`, the typed
+        // ADR-296 D5 puts one more thing there: `...args: Self::dsl`, the typed
         // spread a DSL driver accepts deferred parameters with. It is tried
         // first because `...` cannot begin an option's name, so a `;` followed
         // by one is unambiguous.
@@ -1875,12 +1875,12 @@ grammar! {
           // Before the bare arm: `self: i64` is a parameter somebody named
           // `self`, and the bare arm would take the word and leave the `: i64`
           // to fail as the *next* parameter - at the colon, with nothing to say.
-          // `self` is a reserved word (ADR-051 D1) and the only one the grammar
+          // `self` is a reserved word (ADR-298 D1) and the only one the grammar
           // cannot exclude from `NAME`, so this is where declaring one is
           // refused in a position `NAME` never sees.
           //
           // **The colon is consumed and not peeked**, which is the opposite of
-          // what ADR-046 D2's import refusals do, and measured both ways: with
+          // what ADR-286 D11's import refusals do, and measured both ways: with
           // `peek(":")` - or `peek((KW_SELF ":"))` - the bare arm below reaches
           // just as far and its *"expected `)`"* wins, because a `fail` is high
           // priority and not fatal ("progress before priority"). So the arm has
@@ -1895,7 +1895,7 @@ grammar! {
 
         // Kap 9.2: use std::fs
         rule use_item -> Item =
-            // **Names are not brought in** (ADR-046 D2), and the two forms that
+            // **Names are not brought in** (ADR-286 D11), and the two forms that
             // try to are worth a sentence rather than a parse error at the brace
             // or the star: both are in every language that has them, so a reader
             // will write one. First, because the arm below matches `use http` and
@@ -1916,7 +1916,7 @@ grammar! {
                 Item::Import { path, alias }
             }
 
-        // `use http as h` (ADR-046 D3): the one thing that record adds rather
+        // `use http as h` (ADR-286 D12): the one thing that record adds rather
         // than refuses, and what makes the qualified-only rule affordable. It
         // shortens the prefix once, in one place, and settles a collision - two
         // libraries that both want to be `http` are the consumer's to name apart.
@@ -1927,7 +1927,7 @@ grammar! {
         // follows a `::` and no construct begins in that position, so the word
         // is a name whatever else it is elsewhere. `Self::dsl` is the case that
         // requires it - the shadow type of a deferred-parameter DSL is spelled
-        // with the keyword (ADR-007 D5, Part II 10.5) - and the general rule is
+        // with the keyword (ADR-296 D5, Part II 10.5) - and the general rule is
         // the reason to allow it rather than that one type.
         rule path_segment -> Symbol = "::" n:SEGMENT -> { n }
 
@@ -1936,7 +1936,7 @@ grammar! {
         // already decided that what follows is a member: after `::` and after
         // `.`. No construct begins in either position, so a reserved word there
         // is a name whatever it is elsewhere - which is what lets `Self::dsl`
-        // (ADR-007 D5) and `scope.spawn fn { … }` (Part II 12.5) keep their
+        // (ADR-296 D5) and `scope.spawn fn { … }` (Part II 12.5) keep their
         // spellings.
         //
         // Everywhere a name is *declared* or stands on its own, `NAME` is what
@@ -1945,7 +1945,7 @@ grammar! {
 
         // --- Structs ---
         //
-        // **No attribute stands here** ([ADR-201](../../docs/specification/adr/adr-201.md)
+        // **No attribute stands here** ([ADR-283](../../docs/specification/adr/adr-283.md)
         // D1). `@borrowed` used to, asserting that no value of this type ever
         // tethers, and it forbade nothing: the transition it refused does not
         // exist. D2 names `@tethers` as the word that will stand here — a
@@ -2013,7 +2013,7 @@ grammar! {
         // says that is the point.
         // `@=` for the span: a diagnostic about a field puts its caret on the
         // field, and the nearest span the walk around it has is a statement's
-        // (ADR-051 D4).
+        // (ADR-298 D4).
         rule field_def -> FieldDef @=
             vis:kw_pub? name:NAME ":" ty:type_ref -> {
                 FieldDef { name, ty, is_public: vis.is_some(), span: Span::from(_span) }
@@ -2038,7 +2038,7 @@ grammar! {
         // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3) - which
         // is `&mut self`'s rule held for every parameter. The call shows
         // nothing, exactly as `xs.push(1)` shows nothing.
-        // **`_` is a parameter a shape dictates** (ADR-126 D1). It still carries
+        // **`_` is a parameter a shape dictates** (ADR-291 D6). It still carries
         // its type, because the caller needs it - what `_` says is that this body
         // does not read the value, never that the signature is shorter.
         rule fn_arg_def -> FnArg @=
@@ -2066,13 +2066,13 @@ grammar! {
         rule generic_param_tail -> GenericParam = "," p:generic_param -> { p }
 
         // Kap 4.7: `[T: Summarize]`, and `[T: A + B]` for several
-        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D2).
+        // ([ADR-295](../../../../docs/specification/adr/adr-295.md) D7).
         rule generic_param -> GenericParam =
             name:NAME bounds:generic_bound?
             -> { GenericParam { name, bounds: bounds.unwrap_or_default() } }
 
         // **A bound takes a path, as every other position that names a type
-        // does** ([ADR-106](../../../../docs/specification/adr/adr-106.md) D1):
+        // does** ([ADR-295](../../../../docs/specification/adr/adr-295.md) D10):
         // `[H: http::Handler]`, and `[T: A + http::B]` mixes a local and a
         // foreign one. `type_name` is that rule, and reusing it is the record's
         // own sentence — *the grammar's rule for a type name is the rule for a
@@ -2088,7 +2088,7 @@ grammar! {
         rule generic_bound_tail -> Symbol = "+" n:type_name -> { n }
 
         // **`&[u8]` and `&mut [u8]`, what the C boundary lends**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): a run of
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D5): a run of
         // elements whose length the caller knows and the type does not.
         //
         // **Always behind a `&`**, which is the record's own shape: a bare `[T]`
@@ -2171,7 +2171,7 @@ grammar! {
                 }
             }
           // **A parameter may be code**
-          // ([ADR-102](../../../../docs/specification/adr/adr-102.md) D1):
+          // ([ADR-277](../../../../docs/specification/adr/adr-277.md) D6):
           // `fn(Request) -> Response`, with `sync` and `throws` after the
           // result, in the positions a declaration puts them. The parameters go
           // where a tuple's parts go.
@@ -2202,7 +2202,7 @@ grammar! {
             }
 
         // **The `&`, and whether a `mut` followed it**
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1). `&mut T`
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D5). `&mut T`
         // is a view the callee may write through, and the C boundary is the one
         // place this language writes one: a parameter's mutability is otherwise
         // the word in front of its *name*
@@ -2225,7 +2225,7 @@ grammar! {
         // A type may be named by a path: `postgres::Connection`, `html::Raw`.
         //
         // The whole path is interned as one name, because that is what the name
-        // *is* to a compiler that lowers name for name (ADR-011 D2) - nothing
+        // *is* to a compiler that lowers name for name (ADR-296 D17) - nothing
         // here resolves a module, and a path can therefore never collide with a
         // struct this file declares, which is correct.
         rule type_name -> Symbol =
@@ -2282,11 +2282,11 @@ grammar! {
 
         // `rule expr -> Expr # "expression" = …`: what the rule is called when
         // it fails where it began. Spelled as the backend spells it, because
-        // the lowering is name for name (ADR-011 D2) and a second spelling for
+        // the lowering is name for name (ADR-296 D17) and a second spelling for
         // the same thing would be one more thing to know.
         rule rule_label -> String = "#" text:STRING -> { text }
 
-        // ADR-009 D1: the attribute is keyed. `@frame`, `@frame(boundary: "\n")`,
+        // ADR-296 D9: the attribute is keyed. `@frame`, `@frame(boundary: "\n")`,
         // `@frame(boundary: "\n", unchecked)`; the positional form is withdrawn,
         // so that every future cut-point key (quote, start, escape, scan) has
         // room without changing what the existing ones mean.
@@ -2325,14 +2325,14 @@ grammar! {
         rule g_alt_tail -> GrammarAlt = "|" a:g_alt -> { a }
 
         // **The action is the block after the pattern, with no second arrow**
-        // ([ADR-120](../../../../docs/specification/adr/adr-120.md) D2, Part II
+        // ([ADR-296](../../../../docs/specification/adr/adr-296.md) D33, Part II
         // 10.8). The one `->` a rule writes is its result type, as a function's
         // is; the arrow in front of the action was a wart from the days when the
         // two sat on one line.
         //
         // An action block is required today (Part II, 10.1, note) - with one
         // exception that is not an omission: a `par_fold` must be the whole
-        // body of its rule (ADR-009 D2), so there is nothing for an action to
+        // body of its rule (ADR-296 D10), so there is nothing for an action to
         // add. The emitter supplies the binding such a rule needs.
         //
         // **The old form is refused by name and not by *expected `{`***, which
@@ -2404,7 +2404,7 @@ grammar! {
                 }
             }
 
-        // ADR-009 D5: a bounded repetition is how a format states a fixed
+        // ADR-296 D13: a bounded repetition is how a format states a fixed
         // width. `*` and `+` say "unbounded" and mean it.
         rule g_repeat -> Repeat =
             "*" -> { Repeat::Star }
@@ -2417,7 +2417,7 @@ grammar! {
         // (SYNTAX.md, "Braces").
         //
         // **And *immediately* starts with one**, which is what makes
-        // [ADR-120](../../../../docs/specification/adr/adr-120.md) D2's sentence
+        // [ADR-296](../../../../docs/specification/adr/adr-296.md) D33's sentence
         // true rather than nearly true. Since the action is the block after the
         // pattern, `digit { 1 }` is a rule that matches a digit and yields `1`,
         // and it is indistinguishable from a bound of one by *a digit follows the
@@ -2487,7 +2487,7 @@ grammar! {
 
         rule g_choice_tail -> Spanned<Pattern> = "|" p:g_seq -> { p }
 
-        // ADR-009 D2: parallel parsing is a frame plus a monoid. `fold` is the
+        // ADR-296 D10: parallel parsing is a frame plus a monoid. `fold` is the
         // accumulator; the merge is what makes it parallelisable, and asking
         // for it is how the user says a different chunk count is the same
         // answer to them.
@@ -2567,7 +2567,7 @@ grammar! {
           | c:continue_stmt -> { Spanned::new(c, Span::from(_span)) }
 
         // **A jump may carry its condition after it**, on its own line
-        // ([ADR-255](../../../docs/specification/adr/adr-255.md)):
+        // ([ADR-276](../../../docs/specification/adr/adr-276.md)):
         // `return 250 if speed > 250`, `throw TooFast(speed) if speed > 250`,
         // `break if done`. It is `if cond { jump }` and nothing else - the
         // tree is that `if`, so every rule of `if` holds.
@@ -2591,7 +2591,7 @@ grammar! {
         rule exit_guard -> Expr =
             same_line KW_IF cond:head_expr not("{") -> { cond }
 
-        // Kap 3.3 and [ADR-084](../../../docs/specification/adr/adr-084.md).
+        // Kap 3.3 and [ADR-276](../../../docs/specification/adr/adr-276.md).
         // **No value and no label**, which is why each of these is one keyword
         // and a rule of two lines: `break` in a language whose loops are
         // statements has nothing to carry out (D3), and the label is a second
@@ -2605,9 +2605,9 @@ grammar! {
         // best, the two are tried and fail for *every* assignment and every bare
         // expression: **740 instructions a statement** and +1.28% on a
         // statement-dense file, against **665 per block** here, and a program has
-        // far fewer blocks than statements (ADR-084 D8).
+        // far fewer blocks than statements (ADR-276 D19).
         //
-        // It is free to choose because both words are reserved (ADR-071 D1), so
+        // It is free to choose because both words are reserved (ADR-276 D9), so
         // `NAME` cannot take one and no earlier arm can swallow a jump. The
         // ordering costs reading order and is paid back at 740 instructions a
         // statement, which is the whole reason this comment is here: an ordering
@@ -2634,7 +2634,7 @@ grammar! {
 
         // Part II 10.2: `comptime LIMIT = 4 * 1024`, and the same form at item
         // level. **No `mut`**, which is not an omission
-        // ([ADR-073](../../../../docs/specification/adr/adr-073.md) D6): a
+        // ([ADR-287](../../../../docs/specification/adr/adr-287.md) D7): a
         // constant is a value rather than a place, so there is nothing for a
         // second assignment to reach.
         rule comptime_stmt -> Stmt =
@@ -2648,7 +2648,7 @@ grammar! {
                 Stmt::Comptime { name, ty, value: val }
             }
 
-        // Part I 9.2 and [ADR-073](../../../../docs/specification/adr/adr-073.md)
+        // Part I 9.2 and [ADR-287](../../../../docs/specification/adr/adr-287.md)
         // D2's other half: the same form where an item stands.
         //
         // **`pub` is Part I 9.2's existing rule for Constants** rather than a
@@ -2694,7 +2694,7 @@ grammar! {
             }
 
         // **One name, or a flat tuple of them**
-        // ([ADR-098](../../../../docs/specification/adr/adr-098.md)).
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md)).
         //
         // Part I 8.1.2 writes `let (user, rights, prefs) = overlap { … }` and
         // Part II 12.5 writes `let (tx, rx) = channel::bounded(100)`; Part I
@@ -2705,7 +2705,7 @@ grammar! {
         // Nesting and `_` do not parse, and the note beside a `let`'s parse
         // error is what says so in a sentence rather than in a list of tokens.
         // **`_` is a position of a destructured tuple**
-        // ([ADR-126](../../../../docs/specification/adr/adr-126.md) D1), and the
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D6), and the
         // single-name form takes it too - so that `let _ = f()` reaches the
         // checker and gets `NK1144`'s sentence rather than a parse error at a
         // character. D2 is a refusal *with a message*, and only the checker can
@@ -2786,12 +2786,12 @@ grammar! {
           | "=" -> { None }
 
         // **A statement whose expression is a jump *is* that statement**
-        // ([ADR-138](../../../../docs/specification/adr/adr-138.md) D2), and
+        // ([ADR-276](../../../../docs/specification/adr/adr-276.md) D21), and
         // this line is what makes that true rather than nearly true.
         //
         // `break_stmt` and `continue_stmt` are **last** in `stmt`, measured and
         // argued there (740 instructions a statement,
-        // [ADR-084](../../../../docs/specification/adr/adr-084.md) D8) — so
+        // [ADR-276](../../../../docs/specification/adr/adr-276.md) D19) — so
         // once D1 put the two words in the expression grammar, `expr_stmt`
         // reached them first and a bare `break` became `Stmt::Expr(Expr::Break)`.
         // Every analysis that asks about a jump asks about the *statement*, so
@@ -2805,7 +2805,7 @@ grammar! {
         // `break if done` and `continue if skip` are tried here and not in
         // `break_stmt`: `break` is also an expression, so `e:expr` below takes
         // the word and leaves the `if` for a statement of its own
-        // ([ADR-255](../../../docs/specification/adr/adr-255.md) D1). Each arm
+        // ([ADR-276](../../../docs/specification/adr/adr-276.md) D23). Each arm
         // costs a keyword compare, and only on a statement no earlier arm took.
         rule expr_stmt -> Stmt @=
             KW_BREAK cond:exit_guard ";"? -> {
@@ -2854,7 +2854,7 @@ grammar! {
             }
 
         // **Right-associative**, so `a ?? b ?? c` is `a ?? (b ?? c)`
-        // ([ADR-066](../../../docs/specification/adr/adr-066.md)). It used to
+        // ([ADR-278](../../../docs/specification/adr/adr-278.md)). It used to
         // be `or_expr`, which is *below* this rule in the precedence chain and
         // therefore cannot hold a second `??` - so a chain was a parse error
         // naming the second one, in a language whose page says `??` provides a
@@ -2868,8 +2868,8 @@ grammar! {
         rule coalesce_tail -> Expr =
             "??" e:coalesce_fallback -> { e }
           // **There is no postfix `??`**
-          // ([ADR-165](../../../docs/specification/adr/adr-165.md) D1). Without
-          // this the reader of [ADR-018](../../../docs/specification/adr/adr-018.md)
+          // ([ADR-279](../../../docs/specification/adr/adr-279.md) D3). Without
+          // this the reader of [ADR-289](../../../docs/specification/adr/adr-289.md)
           // D3's own line got *expected one value* and a list of tokens - true,
           // and no help at all to someone who wrote the two characters on
           // purpose. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
@@ -2881,7 +2881,7 @@ grammar! {
             ) e:coalesce_fallback -> { e }
 
         // **A fallback is one value, or it is bracketed**
-        // ([ADR-089](../../../docs/specification/adr/adr-089.md) D1).
+        // ([ADR-279](../../../docs/specification/adr/adr-279.md) D1).
         //
         // `??` sits above the whole binary chain, so its fallback used to reach
         // rightwards across every operator there is - and `a ?? 0 > 3` was
@@ -2893,7 +2893,7 @@ grammar! {
         // literal, a name, a call, a field, a `-1` and a bracketed expression
         // are all reachable from there, and no binary operator is. The
         // recursive `coalesce_tail?` keeps `a ?? b ?? c` a chain
-        // ([ADR-066](../../../docs/specification/adr/adr-066.md) D4).
+        // ([ADR-278](../../../docs/specification/adr/adr-278.md) D15).
         //
         // The `#` label is what keeps the refusal in this language's words:
         // without it the message lists every token that could have followed.
@@ -2916,7 +2916,7 @@ grammar! {
                 Expr::Closure { params, mutable, body }
             }
           // `fn { … }` takes **no arguments**, and used to take however many of
-          // `a`, `b`, `c` its body mentioned (ADR-049 withdrew that). A body that
+          // `a`, `b`, `c` its body mentioned (ADR-277 withdrew that). A body that
           // reaches for one of the three is now a body naming something nothing
           // declares, which `NK1117` refuses - so the form needs no rule of its
           // own to be refused by.
@@ -2925,7 +2925,7 @@ grammar! {
             }
 
         // **A lambda's parameter takes `mut`**
-        // ([ADR-110](../../../../docs/specification/adr/adr-110.md) D1):
+        // ([ADR-281](../../../../docs/specification/adr/adr-281.md) D12):
         // `kasse.update fn(mut v) { v += 100 }` changes `v` in place, and the
         // caller whose value changes is the lock. It is
         // [ADR-094](../../../../docs/specification/adr/adr-094.md) D3's word
@@ -2937,8 +2937,8 @@ grammar! {
                 params
             }
 
-        // **`_` is a lambda's argument** (ADR-126 D1), which is the position
-        // [ADR-102](../../../../docs/specification/adr/adr-102.md)'s function
+        // **`_` is a lambda's argument** (ADR-291 D6), which is the position
+        // [ADR-277](../../../../docs/specification/adr/adr-277.md)'s function
         // types make common: a lambda handed to a callback type of two arguments
         // can ignore one without inventing a name.
         //
@@ -2955,7 +2955,7 @@ grammar! {
         // useful.
         //
         // **`..` includes its end and `..<` does not**
-        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D3, D4),
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D12, D13),
         // which is one spelling per meaning across the whole language: a `for`,
         // a slice and a pattern read the same two operators the same way.
         // Kotlin and Swift are the precedent and both read `..<` as *up to, not
@@ -3007,7 +3007,7 @@ grammar! {
         rule cmp_tail -> (BinaryOp, Expr, Span) @= op:cmp_op e:bit_or_expr -> { (op, e, Span::from(_span)) }
 
         // **The bit operators, below the comparisons and above the sums**
-        // ([ADR-248](../../../../docs/specification/adr/adr-248.md) D4): Rust's
+        // ([ADR-285](../../../../docs/specification/adr/adr-285.md) D10): Rust's
         // and Go's order, `|` then `^` then `&` then the shifts. Each one-
         // character operator is kept off its two-character neighbour - `|` off
         // `||` and `|=`, `&` off `&&` and `&=`, `^` off `^=` - so a line that
@@ -3116,7 +3116,7 @@ grammar! {
             // `.route("/x") fn { … }`: arguments *and* a trailing lambda. It
             // has to be tried before the plain call, or the call matches and
             // the lambda is left over - which is the parse error this form did
-            // not have a grammar for until ADR-022.
+            // not have a grammar for until ADR-277.
             "." name:SEGMENT args:call_arg_list lambda:trailing_lambda -> {
                 let (mut positional, config) = args;
                 positional.push(lambda);
@@ -3128,7 +3128,7 @@ grammar! {
           | "." name:SEGMENT args:call_arg_list? -> {
                 match args {
                     // Kap 5.1's `;` reaches a method call too, and what stands
-                    // after it is kept: ADR-007 D5's deferred parameters arrive
+                    // after it is kept: ADR-296 D5's deferred parameters arrive
                     // exactly here, and dropping them was why a `dsl` statement
                     // could not be given any.
                     Some((args, config)) => Postfix::Method(name, args, config),
@@ -3142,7 +3142,7 @@ grammar! {
           //
           // **And onto a method**, in the same three shapes the plain `.` has
           // and for the same reason: Part I 3.5 says `?.` reaches a *member*,
-          // and a method is one ([ADR-066](../../../docs/specification/adr/adr-066.md)).
+          // and a method is one ([ADR-278](../../../docs/specification/adr/adr-278.md)).
           // Each of these must be tried before the bare-field arm below, or
           // that one matches the name and leaves the `(` to fail as an empty
           // parenthesised expression - which is what a reader used to get.
@@ -3223,7 +3223,7 @@ grammar! {
           | KW_FN body:block -> {
                 Expr::Closure { params: Vec::new(), mutable: Vec::new(), body }
             }
-            // ADR-022: `fn: expr` was removed, and a form that was in the
+            // ADR-277: `fn: expr` was removed, and a form that was in the
             // specification deserves a sentence rather than a parse error at
             // the colon. `fail` beats the alternatives at this position, so
             // this is what a reader gets.
@@ -3317,12 +3317,12 @@ grammar! {
           // taken for shorthand fields - or as a variable followed by a block
           // of its own, which is the trap the `while` rule records.
           | o:overlap_expr -> { o }
-          // Its pair ([ADR-148](../../../../docs/specification/adr/adr-148.md)
+          // Its pair ([ADR-292](../../../../docs/specification/adr/adr-292.md)
           // D4), and here for the same reason: a keyword and a braced body,
           // which a PEG would read as a struct literal called `select`.
           | s:select_expr -> { s }
           // Part III 15.1's other half, and it sits here for `overlap`'s reason
-          // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D3): a
+          // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D3): a
           // keyword and a block, which a PEG would otherwise read as a struct
           // literal called `unsafe`. `unsafe` is a reserved word now, so it
           // could not be one - but the ordering is the rule and not the
@@ -3343,7 +3343,7 @@ grammar! {
           // **Both parenthesised forms in one alternative**, and it is the
           // alternation's **width** that asks for it: the backend's `alt` takes
           // twenty-two arms, and this rule was at the last one when
-          // [ADR-148](../../../../docs/specification/adr/adr-148.md) added
+          // [ADR-292](../../../../docs/specification/adr/adr-292.md) added
           // `select`. These two are the pair it costs nothing to merge - both
           // begin with a `(`, so the *"also possible here"* list a parse error
           // carries is the same either way. That is not true of two
@@ -3353,7 +3353,7 @@ grammar! {
           | g:parenthesised_expr -> { g }
           | l:list_lit -> { l }
           // **The four jumps, where an expression stands**
-          // ([ADR-138](../../../../docs/specification/adr/adr-138.md) D1):
+          // ([ADR-276](../../../../docs/specification/adr/adr-276.md) D20):
           // `=> throw NotFound`, `?? throw Missing`, `else => return 0`. Their
           // type is never, so they fit every expected type.
           //
@@ -3409,7 +3409,7 @@ grammar! {
         // `if` or a `for`, where a `{` is the body.
         //
         // **The chain mirrors the ordinary one level for level**
-        // ([ADR-087](../../../../docs/specification/adr/adr-087.md) D1): `??`,
+        // ([ADR-301](../../../../docs/specification/adr/adr-301.md) D4): `??`,
         // range, `||`, `&&`, comparison, `+`, `*`, `as`, unary, postfix,
         // primary. **Every level, with no exception** - the only difference
         // between a head and any other position is in `head_primary`, which
@@ -3432,12 +3432,12 @@ grammar! {
             }
 
         // Right-associative, like `coalesce_tail`
-        // ([ADR-066](../../../../docs/specification/adr/adr-066.md) D4).
-        // The head's half of [ADR-089](../../../docs/specification/adr/adr-089.md)
+        // ([ADR-278](../../../../docs/specification/adr/adr-278.md) D15).
+        // The head's half of [ADR-279](../../../docs/specification/adr/adr-279.md)
         // D1, and it is here because `a_head_parses_what_a_body_parses` caught
         // it: narrowing the body's fallback and not this one would have made a
         // `while a ?? x == y` parse where the same line in a body does not,
-        // which is exactly the drift [ADR-076](../../../docs/specification/adr/adr-076.md)
+        // which is exactly the drift [ADR-298](../../../docs/specification/adr/adr-298.md)
         // put that test there to stop.
         rule head_coalesce_tail -> Expr =
             "??" e:head_coalesce_fallback -> { e }
@@ -3474,7 +3474,7 @@ grammar! {
 
         // The head chain's copy of `range_tail`, and the same three
         // alternatives in the same order
-        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D4, D5).
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D13, D14).
         rule head_range_tail -> (bool, Expr) =
             "..<" e:head_or -> { (false, e) }
           | "..=" fail(
@@ -3515,7 +3515,7 @@ grammar! {
 
         rule head_mul_tail -> (BinaryOp, Expr, Span) @= op:mul_op e:head_cast -> { (op, e, Span::from(_span)) }
 
-        // `as` names a type ([ADR-054](../../../../docs/specification/adr/adr-054.md)),
+        // `as` names a type ([ADR-285](../../../../docs/specification/adr/adr-285.md)),
         // and a type is not brace-led either - `i64`, `&str`, `Vec[T]`, `T?`.
         rule head_cast -> Expr =
             head:head_unary casts:cast_tail* -> {
@@ -3535,7 +3535,7 @@ grammar! {
             base:head_primary tail:postfix_tail* -> { fold_postfix(base, tail) }
 
         // **`primary_expr` minus the forms a `{` begins, and nothing else**
-        // ([ADR-087](../../../../docs/specification/adr/adr-087.md) D1). What is
+        // ([ADR-301](../../../../docs/specification/adr/adr-301.md) D4). What is
         // absent is absent for that one reason and the list is short enough to
         // give in full: `struct_lit`, `block_expr`, `if_expr`, `match_expr`,
         // `overlap_expr`, a `dsl … { … } eod` and a `spawn`, whose lambda is a
@@ -3656,14 +3656,14 @@ grammar! {
                 Expr::Dsl { target: name, context: None, content: body.to_string() }
             }
 
-        // **The form that is gone** ([ADR-082](../../../docs/specification/adr/adr-082.md)
+        // **The form that is gone** ([ADR-296](../../../docs/specification/adr/adr-296.md)
         // D1). A grammar is entered by an ordinary call — `Json::value(input)`,
         // through a path since ADR-140 D3, the dot being `NK1147` — and every
         // `pub` rule is an entry (D2), which is what took the silent choice
         // away: the emitter used to pick the *first* `pub` rule, a `par_fold`
         // one beating an earlier one.
         //
-        // `fail` beats the alternatives at this position, the shape ADR-022
+        // `fail` beats the alternatives at this position, the shape ADR-277
         // gave `fn:`: a form the specification taught deserves a sentence
         // rather than a parse error at whatever token happens to be next.
         rule dsl_from_expr -> Expr =
@@ -3682,7 +3682,7 @@ grammar! {
             }
 
         // **The guard is `if` and it stands on the arm**
-        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D2): the
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D11): the
         // pattern says which values reach the arm and the guard says which of
         // those it takes, so an or-pattern has one guard rather than one per
         // alternative.
@@ -3703,11 +3703,11 @@ grammar! {
           | e:expr -> { e }
 
         // **The catch-all arm is `else`**
-        // ([ADR-145](../../../../docs/specification/adr/adr-145.md) D1), and a
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D16), and a
         // bare `_` there is refused with the replacement in the message. The
         // last arm is *everything else*, which is what `else` means one
         // construct over and what `_` does not:
-        // [ADR-126](../../../../docs/specification/adr/adr-126.md) is careful
+        // [ADR-291](../../../../docs/specification/adr/adr-291.md) is careful
         // that `_` means **ignore a value that arrived**, and nothing arrives
         // here.
         //
@@ -3715,7 +3715,7 @@ grammar! {
         // and `only where no name follows it` is still the `UNDERSCORE` rule's
         // own condition - `_name` is a name and reaches the alternative below.
         // **An or-pattern is the outermost shape**
-        // ([ADR-137](../../../../docs/specification/adr/adr-137.md) D1), so it
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D10), so it
         // is this rule and the one below is *one* alternative. `(0, y) | (y, 0)`
         // is one arm; a `|` inside a tuple's parts is the same rule one level
         // down, because a part is a whole pattern.
@@ -3769,7 +3769,7 @@ grammar! {
 
         // **A part is a whole pattern**, which is what makes a pattern nest:
         // `Event::Click(Point { x, .. })` is a tuple whose one part is a named
-        // pattern ([ADR-137](../../../../docs/specification/adr/adr-137.md) D1).
+        // pattern ([ADR-291](../../../../docs/specification/adr/adr-291.md) D10).
         rule match_part_list -> Vec<MatchPattern> =
             head:match_part tail:match_part_tail* ","? -> {
                 let mut parts = vec![head];
@@ -3780,7 +3780,7 @@ grammar! {
         rule match_part_tail -> MatchPattern = "," p:match_part -> { p }
 
         // **`_` is the ignore pattern inside a pattern**
-        // ([ADR-145](../../../../docs/specification/adr/adr-145.md) D2): a
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D17): a
         // part is a value that arrived, which is what `_` ignores - `(0, _)`,
         // `Shape::Circle(_)`. It was refused with the catch-all arm's message,
         // which itself says `_` is for a tuple position.
@@ -3832,7 +3832,7 @@ grammar! {
         rule KW_FN = "fn" not(ident)
         rule KW_FOLD = "fold" not(ident)
         rule KW_FOR = "for" not(ident)
-        // **Not in `RESERVED`** ([ADR-116](../../../../docs/specification/adr/adr-116.md)
+        // **Not in `RESERVED`** ([ADR-310](../../../../docs/specification/adr/adr-310.md)
         // D1): `from` is an ordinary name, and this rule exists only so the
         // removed `dsl X from e` still gets its sentence rather than a parse
         // error at whatever token happens to be next. A token matcher and a
@@ -3880,7 +3880,7 @@ grammar! {
         rule KW_REF = "ref" not(ident)
 
         // The four words of `opaque type T released by f`
-        // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3). They
+        // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D7). They
         // are **not** in `RESERVED`: each is a name everywhere else, and this
         // position is the only one that asks for it.
         rule KW_OPAQUE = "opaque" not(ident)
@@ -3891,7 +3891,7 @@ grammar! {
         rule KW_WHILE = "while" not(ident)
         rule KW_WITH = "with" not(ident)
 
-        // **Every reserved word, in one rule** (ADR-051).
+        // **Every reserved word, in one rule** (ADR-298).
         //
         // UPPERCASE for the same reason the `KW_` rules are: this is lexical,
         // and a lowercase rule would let the generator insert the implicit
@@ -3902,7 +3902,7 @@ grammar! {
         // sublanguage's vocabulary - they are keywords inside a `grammar`
         // block and words a program may want everywhere else, so they are not
         // here. `overlap` is here and the grammar has no construct for it yet
-        // ([ADR-050](../../../../docs/specification/adr/adr-050.md) D2):
+        // ([ADR-292](../../../../docs/specification/adr/adr-292.md) D2):
         // reserving a word costs nothing before programs exist and breaks them
         // afterwards, so the free moment is now.
         //
@@ -3960,10 +3960,10 @@ grammar! {
           | KW_WHILE -> { 0 }
 
         // **Four words left this half**
-        // ([ADR-117](../../../../docs/specification/adr/adr-117.md) D1): `loop`,
+        // ([ADR-298](../../../../docs/specification/adr/adr-298.md) D6): `loop`,
         // `const`, `macro` and `quote` are names now. They were reserved
         // *against* the possibility of a construct rather than for one, which is
-        // the ground [ADR-051](../../../../docs/specification/adr/adr-051.md) D1
+        // the ground [ADR-298](../../../../docs/specification/adr/adr-298.md) D1
         // asks for — and reserving a word buys exactly one thing, which is the
         // sentence a reader who writes it gets. `NK1117` can say that sentence
         // about a name, so the words were paying for nothing (D2).
@@ -3973,12 +3973,12 @@ grammar! {
         // reserved *for* a construct is the one ground that holds.
         //
         // **`trait` is the one here that has a construct**
-        // ([ADR-078](../../../../docs/specification/adr/adr-078.md) D1): it is in
+        // ([ADR-295](../../../../docs/specification/adr/adr-295.md) D6): it is in
         // this half because `RESERVED_B` is where the alternation's width broke
         // last time, not because nothing uses it. It is also the one word here
         // that was found as a *name* rather than reserved on purpose — `let trait
         // = 3` was a legal program that `rustc` refused about the generated file
-        // ([ADR-076](../../../../docs/specification/adr/adr-076.md) §1).
+        // ([ADR-298](../../../../docs/specification/adr/adr-298.md)).
         rule RESERVED_C -> u8 =
             KW_BREAK -> { 0 }
           | KW_COMPTIME -> { 0 }
@@ -3986,19 +3986,19 @@ grammar! {
           | KW_TRAIT -> { 0 }
           | KW_WITH -> { 0 }
           // **Reserved with their constructs**
-          // ([ADR-124](../../../../docs/specification/adr/adr-124.md) D1), which
+          // ([ADR-302](../../../../docs/specification/adr/adr-302.md) D1), which
           // is what tells them from the four above: a word reserved so that a
           // reader can be told something is one `NK1117`'s help can tell them
-          // about instead ([ADR-117](../../../../docs/specification/adr/adr-117.md)).
+          // about instead ([ADR-298](../../../../docs/specification/adr/adr-298.md)).
           // The number that allowed it is **zero** - nothing in `examples/`, in
           // `tests/` or in the three pages writes either as a name.
           | KW_EXTERN -> { 0 }
           | KW_UNSAFE -> { 0 }
           // **And the word this record spends**
-          // ([ADR-148](../../../../docs/specification/adr/adr-148.md) D1).
+          // ([ADR-292](../../../../docs/specification/adr/adr-292.md) D12).
           // `overlap` was reserved before it had a construct; `select` gets
           // both at once, which is the case D3 of
-          // [ADR-051](../../../../docs/specification/adr/adr-051.md) asks for.
+          // [ADR-298](../../../../docs/specification/adr/adr-298.md) asks for.
           // The number that allowed it is **zero**: nothing in `examples/`, in
           // `tests/` or in the three pages writes it as a name.
           | KW_SELECT -> { 0 }
@@ -4027,7 +4027,7 @@ grammar! {
         // lower to `let fn = 3;` and be refused by `rustc` about the generated
         // file (Part III, C.1) - does not parse as a `let` of a name at all.
         // **A bare `_` is not a name**
-        // ([ADR-126](../../../../docs/specification/adr/adr-126.md) D1, D2): it
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md) D6, D7): it
         // is the ignore pattern, it stands in the three positions that rule names
         // and nowhere else, and `x + _` therefore does not parse. It used to be an
         // ordinary name, which is how `let _ = f()` compiled and lowered to Rust's
@@ -4081,7 +4081,7 @@ grammar! {
         //
         // `else if` is two words with whitespace between them and not a keyword,
         // which is what makes this one alternative rather than a word on the
-        // reserved list ([ADR-084](../../../../docs/specification/adr/adr-084.md)
+        // reserved list ([ADR-276](../../../../docs/specification/adr/adr-276.md)
         // is what a keyword costs). The braced form comes first, because an
         // `else { … }` whose block *begins* with an `if` is a block and must stay
         // one - `{` cannot begin an `if`, so the order is a statement about
@@ -4097,20 +4097,20 @@ grammar! {
             b:block -> { Expr::Block(b) }
 
         // Part I 8.1.1: `seq { … }` states an order the compiler cannot see
-        // (ADR-033 D7). The statements inside keep the order they were written
+        // (ADR-292 D7). The statements inside keep the order they were written
         // in, whatever their touch sets say - which is why it is a block and
         // not an attribute on a statement: what it constrains is a *sequence*.
         //
 
         // Part I 8.1.2: `overlap { … }`, where each statement is a branch
-        // (ADR-050 D2). The same shape `seq` has, and deliberately so - both are
+        // (ADR-292 D2). The same shape `seq` has, and deliberately so - both are
         // a keyword and a block, and the difference is entirely in what they
         // mean.
         rule overlap_expr -> Expr =
             KW_OVERLAP b:block -> { Expr::Overlap(b) }
 
         // Part II 12.4: `select { … }`, where each **arm** is a branch and the
-        // first to finish wins ([ADR-148](../../../../docs/specification/adr/adr-148.md)
+        // first to finish wins ([ADR-292](../../../../docs/specification/adr/adr-292.md)
         // D1).
         //
         // Not a block, which is the difference from `overlap` one rule up and
@@ -4134,7 +4134,7 @@ grammar! {
                     }
                 }
 
-        // `_` is [ADR-126](../../../../docs/specification/adr/adr-126.md) D1's
+        // `_` is [ADR-291](../../../../docs/specification/adr/adr-291.md) D6's
         // ignore pattern: a value **arrives** and is not wanted. It is tried
         // first, because `NAME` would otherwise have to decline it.
         rule select_binding -> Option<Symbol> =
@@ -4142,7 +4142,7 @@ grammar! {
           | n:NAME -> { Some(n) }
 
         // Part III 15.1: `unsafe { … }`, the one place a call to an `extern`
-        // name may stand ([ADR-124](../../../../docs/specification/adr/adr-124.md)
+        // name may stand ([ADR-302](../../../../docs/specification/adr/adr-302.md)
         // D3). A block with a value and no other rule - what is inside is
         // checked exactly as anything else is, and what the word buys is that
         // the boundary is visible *at the call*.
@@ -4219,18 +4219,18 @@ grammar! {
 
         // Part I 2.3. Beside `bool_lit` because it is the same kind of thing: a
         // word the grammar knows, which is why it is a reserved word
-        // ([ADR-051](../../../../docs/specification/adr/adr-051.md) D1) - read
+        // ([ADR-298](../../../../docs/specification/adr/adr-298.md) D1) - read
         // as a name it would be `NK1117`, and read as a name that *is* declared
         // it would be a different program.
         rule null_lit -> Expr = KW_NULL -> { Expr::LitNull }
 
         // Kap 2.5. `f` before the quote is what makes a string *code* - without
-        // it the braces are braces (ADR-035). UPPERCASE, so the `f` and the
+        // it the braces are braces (ADR-309). UPPERCASE, so the `f` and the
         // quote are one token: `f "x"` with a space is the variable `f`
         // followed by a string, and reading it as an interpolation would make
         // whitespace change what a program means.
         //
-        // **And the holes are parsed here** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+        // **And the holes are parsed here** ([ADR-309](../../../docs/specification/adr/adr-309.md)
         // D1): the body is text and holes, and a hole's expression is the
         // ordinary `expr`, so every walk sees it as a child of the literal, and
         // the emitter builds the format string from the parts (D5).
@@ -4296,7 +4296,7 @@ grammar! {
             ":" s:text((not("}") any)*) -> { s }
 
         // `@=` for the position, as `list_lit` has it and for its reason: what
-        // the literal lowers to is its use's answer (ADR-207 D2).
+        // the literal lowers to is its use's answer (ADR-282 D4).
         rule str_lit -> Expr @=
             s:STRING -> { Expr::LitStr { text: s, at: crate::ast::offset(_span.start) } }
 
@@ -4330,14 +4330,14 @@ grammar! {
             c:CHAR -> { Expr::LitChar(c) }
 
         // **The four spellings are one rule and it is written in Rust**
-        // ([ADR-136](../../../../docs/specification/adr/adr-136.md)): see
+        // ([ADR-285](../../../../docs/specification/adr/adr-285.md)): see
         // `number_lit` above for why.
         rule int_lit -> Expr =
             n:number_lit -> { crate::ast::int_literal(n) }
 
         // **A tuple's part is a plain run of digits** and takes neither form:
         // `t.0` is a *field name* that happens to be a number
-        // ([ADR-098](../../../../docs/specification/adr/adr-098.md)), so a
+        // ([ADR-291](../../../../docs/specification/adr/adr-291.md)), so a
         // separator in it would be a separator in a name.
         rule digits -> String =
             d:digit1 -> { d.to_string() }

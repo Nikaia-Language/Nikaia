@@ -14,7 +14,7 @@
 // under it. `docs/README.md` §1 already makes a stale **Status** note a defect
 // in its own right; this is the same rule applied to the code beside it. Run by
 // hand once, it turned up four things — Part I 4.7's `"User: " + self.username`
-// (refused twice over), three plain strings holding holes that ADR-035 made
+// (refused twice over), three plain strings holding holes that ADR-309 made
 // text, Part I 4.5's map example not compiling, and a trait whose method pauses.
 // Run in CI, it keeps them from coming back.
 //

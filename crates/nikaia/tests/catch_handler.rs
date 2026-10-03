@@ -1,5 +1,5 @@
 //! A `catch` that ignores the error binds `_error`
-//! ([ADR-090](../../../docs/specification/adr/adr-090.md)).
+//! ([ADR-308](../../../docs/specification/adr/adr-308.md)).
 //!
 //! Kap 7.1 gives the failure the name `error` whether or not the handler reads
 //! one, so `catch { 1000 }` — the shape Part I 7.1 teaches first — used to reach

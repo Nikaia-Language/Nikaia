@@ -1,5 +1,5 @@
 //! `std` names what it throws
-//! ([ADR-158](../../../docs/specification/adr/adr-158.md)).
+//! ([ADR-280](../../../docs/specification/adr/adr-280.md)).
 //!
 //! [ADR-023](../../../docs/specification/adr/adr-023.md) D1 records `throws` as
 //! a **set of error types**, and for every entry in `std`'s ledger that set was
@@ -65,7 +65,7 @@ fn the_reading_and_writing_entries_name_one_type() {
     }
 }
 
-/// **The lock's two keep their own** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+/// **The lock's two keep their own** ([ADR-281](../../../docs/specification/adr/adr-281.md)
 /// D5), which is the half that was already right: a failure with a name had one
 /// long before this record.
 #[test]
@@ -87,7 +87,7 @@ fn the_type_is_in_the_ledger() {
     );
 }
 
-/// **It is reached through its module** ([ADR-154](../../../docs/specification/adr/adr-154.md)
+/// **It is reached through its module** ([ADR-313](../../../docs/specification/adr/adr-313.md)
 /// D3): the key carries the prefix, so what needs no `use` stays Part I 1.3's
 /// list and this is not on it. A program that only passes the failure on names
 /// nothing; one that takes it apart writes `use std::io`.

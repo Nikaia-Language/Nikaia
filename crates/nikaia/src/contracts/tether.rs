@@ -1,7 +1,7 @@
 // crates/nikaia/src/contracts/tether.rs
 //
 // Which of Part I 6.6's three states each view in a signature is in
-// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D2, D7).
+// ([ADR-283](../../../../docs/specification/adr/adr-283.md) D2, D5).
 //
 // ## What this is, and what it deliberately is not
 //
@@ -75,7 +75,7 @@ use super::{INPUT, Ledger};
 /// same position read by two analyses.
 pub const RESULT: &str = "<result>";
 
-/// What stays Rust of a [`Held`] (ADR-257 step (b)): reading one back.
+/// What stays Rust of a [`Held`] (ADR-294 step (b)): reading one back.
 pub trait HeldOps: Sized {
     fn parse(text: &str) -> Option<Self>;
 }
@@ -89,9 +89,9 @@ impl HeldOps for Held {
 /// Give every entry of this package the states its views solved to (D7):
 /// each function's (`function_views`), and a `pub` rule's whose result may
 /// point into the text it parsed - the entry holds the input and the result
-/// borrows it ([ADR-082](../../../../docs/specification/adr/adr-082.md) D1).
+/// borrows it ([ADR-296](../../../../docs/specification/adr/adr-296.md) D24).
 /// Then which positions really leave, over the whole package, to a fixpoint
-/// (`keep::infer`, [ADR-209](../../../../docs/specification/adr/adr-209.md)
+/// (`keep::infer`, [ADR-283](../../../../docs/specification/adr/adr-283.md)
 /// D6).
 pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
     let mut solved: BTreeMap<String, Vec<Held>> = BTreeMap::new();
@@ -187,7 +187,7 @@ fn function_key(
 }
 
 /// **A name declared `String` holds text of this frame's own**
-/// ([ADR-207](../../../docs/specification/adr/adr-207.md) D2).
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D4).
 pub(crate) fn declares_text(parsed: &Parsed, ty: Option<&crate::ast::Type>) -> bool {
     nikaia_std::tools::tether::declares_text(&parsed.interner, ty)
 }
@@ -232,11 +232,11 @@ pub(super) fn a_parse_that_views(parsed: &Parsed, ret: Option<&Type>, package: &
 }
 
 /// `--tethers`: what the analysis solved, per function
-/// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D6).
+/// ([ADR-283](../../../../docs/specification/adr/adr-283.md) D4).
 ///
 /// *The inverse tool is inspection, not assertion*, and it is the half of D6
 /// that survived: the assertion beside it is gone
-/// ([ADR-201](../../../../docs/specification/adr/adr-201.md) D1) and this shows
+/// ([ADR-283](../../../../docs/specification/adr/adr-283.md) D4) and this shows
 /// what was chosen without being asked. Read off the ledger the build produced
 /// rather than computed again here, so that what a person reads is what the file
 /// records.
@@ -246,7 +246,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     // this unit's own inference produced it.
     let here = Ledger::infer(parsed);
     let mut lines: Vec<String> = Vec::new();
-    // **What a `String` field or result is below** (ADR-222 D5), where it is
+    // **What a `String` field or result is below** (ADR-282 D26), where it is
     // not text of its own.
     if !parsed.text_tiers.is_empty() {
         lines.push("text (declared `String`):\n".to_string());
@@ -267,7 +267,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
     }
-    // **And where each buffer lives** (ADR-209 D6): the keep plan, per
+    // **And where each buffer lives** (ADR-283 D13): the keep plan, per
     // function, in the words a reader asks the question in.
     let library = crate::contracts::std_ledger();
     for plan in super::keep::plans(parsed, ledger, library) {
@@ -297,7 +297,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
         for keeper in &plan.element_keepers {
-            // ADR-221: a struct of views carries a handle on each buffer it
+            // ADR-283: a struct of views carries a handle on each buffer it
             // points into, and the report says how many that is.
             let line = match plan.struct_keepers.contains(keeper) {
                 true => {
@@ -333,7 +333,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
 /// A view handed back that points into a buffer the body **owns** (`NK2303`).
 ///
 /// This is the one shape Part I 6.6's `Tethered` exists for, and
-/// [ADR-156](../../../../docs/specification/adr/adr-156.md) D4 is what to do
+/// [ADR-283](../../../../docs/specification/adr/adr-283.md) D9 is what to do
 /// about it while the state is not built: refuse on the Nikaia line, naming the
 /// buffer and the mechanism, rather than lower a function whose result outlives
 /// the buffer it points into and let `rustc` speak about the generated file
@@ -349,7 +349,7 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
 /// it was before this check existed.
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<crate::check::Finding> {
     // **Where a view outlives its buffer is the keep plan's answer**
-    // ([ADR-209](../../../../docs/specification/adr/adr-209.md)): it follows
+    // ([ADR-283](../../../../docs/specification/adr/adr-283.md)): it follows
     // views through `push`, `for`, fields and calls, which the walk that stood
     // here did not, and it refuses only what it cannot lower or what no
     // declaration permits.

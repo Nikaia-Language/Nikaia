@@ -1,13 +1,13 @@
 //! **A Nikaia program binds a socket and talks over it**
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D1), which is the
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D6), which is the
 //! step issue #90 calls the blocker:
-//! [ADR-018](../../../docs/specification/adr/adr-018.md) entire,
-//! [ADR-058](../../../docs/specification/adr/adr-058.md), and the roadmap's
+//! [ADR-289](../../../docs/specification/adr/adr-289.md) entire,
+//! [ADR-289](../../../docs/specification/adr/adr-289.md), and the roadmap's
 //! route hashing all wait on something for a handler to run *for*.
 //!
 //! The whole of it is a `.nika` file: `net::listen`, `accept`, `read`, `write`.
 //! Nothing here says how the waiting is done, which is
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D3's rule — the
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D3's rule — the
 //! runtime is invisible from a Nikaia program.
 
 mod common;
@@ -120,7 +120,7 @@ fn a_program_binds_a_socket_and_both_ends_talk() {
 }
 
 /// **The runtime is invisible from the program**
-/// ([ADR-038](../../../docs/specification/adr/adr-038.md) D3), which a socket is
+/// ([ADR-303](../../../docs/specification/adr/adr-303.md) D3), which a socket is
 /// the easiest thing to break: every other language makes a reader choose a
 /// runtime before it can bind one.
 #[test]

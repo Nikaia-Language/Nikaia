@@ -35,7 +35,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 /// **The two words parse, render and round-trip** (D1, D3).
 ///
 /// `sync` and `throws` after the type say what one **step** may do, read as they
-/// are after a function type (ADR-102 D2): without `sync` a step may pause,
+/// are after a function type (ADR-277 D7): without `sync` a step may pause,
 /// without `throws` it cannot fail.
 #[test]
 fn the_words_round_trip() {
@@ -146,7 +146,7 @@ fn the_chain_off_keys_resolves() {
         .as_ref()
         .and_then(|s| s.result.clone())
         .expect("a result");
-    // `sized` since ADR-212 D1: a map knows how many keys it holds. And views
+    // `sized` since ADR-293 D16: a map knows how many keys it holds. And views
     // since ADR-231 D3: a key points into the map.
     assert_eq!(result.text(), "Seq[ref $K] sync sized");
 
@@ -195,7 +195,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 }
 
 /// **The measurement, kept** ([ADR-105](../../../docs/specification/adr/adr-105.md)
-/// §1 and [ADR-009](../../../docs/specification/adr/adr-009.md) D4).
+/// §1 and [ADR-296](../../../docs/specification/adr/adr-296.md) D12).
 ///
 /// §1 counts *35 unanswered method calls in the corpus*. The number this
 /// harness reads on the same tree was **38** before these entries and is **33**
@@ -213,7 +213,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// used to land in no entry at all, because the checker filed its answers under
 /// the enclosing *function* and an action has none — so six calls that were
 /// always unanswered were also uncounted. A `pub` rule is a ledger entry
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1), and it has its
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D24), and it has its
 /// own key now ([ADR-186](../../../docs/specification/adr/adr-186.md)), which
 /// is what made them visible.
 /// What a pattern binds has no type in this compiler — that is the parser
@@ -222,7 +222,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 ///
 /// **It rose to 50, and `examples/rust-signatures.nika` is all of it** — the
 /// first Nikaia program in this tree that parses another language
-/// ([ADR-196](../../../docs/specification/adr/adr-196.md)), and a grammar with
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md)), and a grammar with
 /// twelve actions that call a method on what a pattern bound. Ten of the twelve
 /// are the sentence above, unchanged: `s.trim()` on a `text(…)` binding,
 /// `tail.drain()` on a repetition's.
@@ -241,7 +241,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 ///
 /// **51 at 0.0.162**, and the one that arrived is the sentence above again: the
 /// grammar's `where_clause` rule keeps its text now
-/// ([ADR-193](../../../docs/specification/adr/adr-193.md) D4 needs the bounds),
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D9 needs the bounds),
 /// and `w.trim()` on what a pattern bound is a method call on an untyped
 /// receiver like the ten before it.
 ///
@@ -265,7 +265,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 ///
 /// **63 at 0.0.175**, and the twelfth is the eleventh again, one accessor over:
 /// `request.head.query("name")` in the same handler, reaching
-/// [ADR-018](../../../docs/specification/adr/adr-018.md) D4's query string
+/// [ADR-289](../../../docs/specification/adr/adr-289.md) D20's query string
 /// through the head the request holds. Same lambda parameter, same package next
 /// door, same one-file sweep.
 ///
@@ -280,7 +280,7 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// exists to tell apart, and the reason it is raised with a sentence.
 ///
 /// **50 at 0.0.315**, a fall, and two things answered it. Every tool is read
-/// with what `lower-std` reads beside it (its package, ADR-261), not only
+/// with what `lower-std` reads beside it (its package, ADR-294), not only
 /// `ledger.nika`: `crossing.nika` and `signature.nika` call methods on the
 /// ledger's records, and `surface.nika` on the Rust grammar's items. And a
 /// `for` over a set binds its element (#302), which answers two more -
@@ -316,7 +316,7 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
                 continue;
             };
             // **A tool is read as `lower-std` reads it: in its package**
-            // (ADR-261), every other file of `src/tools` beside it. Read
+            // (ADR-294), every other file of `src/tools` beside it. Read
             // alone, `ledger.nika` names a `FnContract` nothing here declares,
             // and every call on one is unanswered (0.0.292).
             let in_tools = path
@@ -349,7 +349,7 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
             let units: Vec<&nikaia::parser::Parsed> = std::iter::once(&parsed)
                 .chain(beside.iter().copied())
                 .collect();
-            // And with the Rust the tools read described (ADR-252 D4.3), as
+            // And with the Rust the tools read described (ADR-294 D9.3), as
             // `lower-std` reads them: without it every `names.resolve(..)` in
             // `traits.nika` is unanswered, and so is what it hands back (0.0.320).
             let library = match in_tools {
@@ -419,7 +419,7 @@ fn no_loose_program_in_the_repository_is_refused() {
         let name = path.display().to_string();
         // `fortunes.nika` is the one program that is meant not to build: it
         // reaches for an `http` package the project does not declare, which is
-        // ADR-122's step 4 and nothing to do with this.
+        // ADR-277's step 4 and nothing to do with this.
         if name.contains("fortunes.nika") {
             continue;
         }

@@ -33,7 +33,7 @@ nikaia="$root/target/release/nikaia"
 # both `user-parallelism` settings, because the hand-written halves are
 # single-threaded and a four-core number against a one-core number is not a
 # comparison. `no` is the row that answers "is the grammar worth writing"; `yes`
-# is what ADR-009's frame-plus-monoid adds on top of the answer.
+# is what ADR-296's frame-plus-monoid adds on top of the answer.
 proj="$work/project"
 mkdir -p "$proj/src"
 cp "$root/examples/1brc.nika" "$proj/src/main.nika"
@@ -81,7 +81,7 @@ nikaia_toml yes
 ( cd "$proj" && "$nikaia" build >/dev/null 2>&1 )
 run_nikaia > "$work/out.nikaia.par"
 cmp -s "$work/out.naive" "$work/out.nikaia.par" \
-    || { echo "FAIL: the parallel parse disagrees - ADR-009 D2's whole claim"; exit 1; }
+    || { echo "FAIL: the parallel parse disagrees - ADR-296 D10's whole claim"; exit 1; }
 nikaia_toml no
 ( cd "$proj" && "$nikaia" build >/dev/null 2>&1 )
 

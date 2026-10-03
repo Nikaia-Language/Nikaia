@@ -5,7 +5,7 @@ fifteenth is written at specification level — it shows what Nikaia 0.0.7 is me
 and what it needs is listed under *Gaps* below.
 
 Two of them are a **pair**: `http/` is a package and `hello-http/` is a program that reaches it
-by a path ([ADR-069](../docs/specification/adr/adr-069.md) D1). Everything else here is a program
+by a path ([ADR-289](../docs/specification/adr/adr-289.md) D1). Everything else here is a program
 on its own, so the pair is the only place in this directory where the dependency arm is written
 down rather than described.
 
@@ -70,7 +70,7 @@ They are deliberately different shapes.
   escapes every hole, the type `html::Raw` is the only way to say a value is already markup, and
   a hole in a position escaping cannot make safe is a compile error naming the position. It is
   the smallest program that shows all three.
-* **`inventory/`** is the one made of **more than one file** ([ADR-030](../docs/specification/adr/adr-030.md)) - the same program `report.nika` is, split into the parse, the page and the program that joins them. Both are here on purpose: what a module boundary buys and what it costs, on something small enough to hold in the head. What it buys is that `stock.nika` keeps `weight` to itself and that neither file has to be read to use the other; what it costs is visible too, because a grammar is not visible across a boundary and `stock.nika` had to wrap its own in a `pub fn read`.
+* **`inventory/`** is the one made of **more than one file** ([ADR-286](../docs/specification/adr/adr-286.md)) - the same program `report.nika` is, split into the parse, the page and the program that joins them. Both are here on purpose: what a module boundary buys and what it costs, on something small enough to hold in the head. What it buys is that `stock.nika` keeps `weight` to itself and that neither file has to be read to use the other; what it costs is visible too, because a grammar is not visible across a boundary and `stock.nika` had to wrap its own in a `pub fn read`.
 * **`report.nika`** is the one whose result is a **file**. Every other example here ends at
   `println`, and a program that cannot produce a file is not a tool: this one reads a stock
   list, orders it, renders a page with the `html` template and writes it with `fs::write`
@@ -86,7 +86,7 @@ They are deliberately different shapes.
   which is why `throws` is on the signature and why the compiler puts it there
   (`NK2701`).
 * **`trend.nika`** is the one that walks a pipeline **from its back end**
-  ([ADR-212](../docs/specification/adr/adr-212.md)). Every answer is the newest few of
+  ([ADR-293](../docs/specification/adr/adr-293.md)). Every answer is the newest few of
   something - averages over a window, day-over-day changes, every third day - and none of them
   reverses a copy: `windows` hands out views, `map` computes one value at a time, and `rev`
   walks the result backwards, which the compiler allows because it knows the list has a back
@@ -112,8 +112,8 @@ They are deliberately different shapes.
 **One grammar that was here is not any more, and where it went is the point.**
 `rust-signatures.nika` read a Rust file's public surface, and in 0.0.157 it moved to
 `crates/nikaia-std/src/tools/rust.nika` - the reading half of `nikaia describe`
-([ADR-195](../docs/specification/adr/adr-195.md) D3), lowered ahead of time and reached by the
-compiler as an ordinary Rust module ([ADR-196](../docs/specification/adr/adr-196.md) D1). It is
+([ADR-290](../docs/specification/adr/adr-290.md) D13), lowered ahead of time and reached by the
+compiler as an ordinary Rust module ([ADR-290](../docs/specification/adr/adr-290.md) D16). It is
 not an example any more because it is a tool, and a copy of it here would be a second grammar to
 keep in step with the first. `crates/nikaia-std/tests/rust_signatures.rs` is what runs it.
 
@@ -124,10 +124,10 @@ that is neither.
 What the bootstrap compiler handles: functions and methods, `impl` blocks, `struct` and `use`
 items, `let`, assignment, `for`, `if`, `return`, calls, field access, indexing, casts, struct
 literals and constructors, lambdas, operators, `throws`/`catch`/`??`, string interpolation — and,
-since [ADR-011](../docs/specification/adr/adr-011.md), the whole `grammar` construct: rules,
+since [ADR-296](../docs/specification/adr/adr-296.md), the whole `grammar` construct: rules,
 patterns, `@frame`, `fold`/`par_fold`, and `dsl … from …` with the driver `user_parallelism` asks for.
 Errors are reported on the `.nika` line that caused them
-([ADR-012](../docs/specification/adr/adr-012.md)), and since
+([ADR-300](../docs/specification/adr/adr-300.md)), and since
 [ADR-024](../docs/specification/adr/adr-024.md) types are checked before any Rust is emitted -
 everything the ledger writes down, and nothing it does not. Every file here is part of that
 checker's guard: the build fails if any of them produces a finding.
@@ -156,7 +156,7 @@ print them sorted. One input file, no dependencies, a one-paragraph spec.
 
 It is the best fit because it stresses exactly the three things 0.0.7 asserts:
 
-* **Scannerless parsing** (ADR-007 D1) — a billion lines of a tiny custom format.
+* **Scannerless parsing** (ADR-296 D1) — a billion lines of a tiny custom format.
 * **Zero-copy / tethered slices** (Part II, 10.6) — station names must point into the input
   buffer; allocating a billion strings loses by an order of magnitude.
 * **`par_iter` and the `sync` rule** (12.1, 12.6) — the aggregation is pure computation, so
@@ -173,7 +173,7 @@ so results are directly comparable against Rust, C and Go.
 | Program | What it exercises in Nikaia |
 | :--- | :--- |
 | `n-body`, `spectral-norm`, `mandelbrot` | `sync` functions, `par_iter`, parallelism |
-| `binary-trees` | allocation and deterministic teardown (`Drop` / `Cleanup`, ADR-006) |
+| `binary-trees` | allocation and deterministic teardown (`Drop` / `Cleanup`, ADR-297) |
 | `fannkuch-redux` | scoped tasks (12.7) |
 | `reverse-complement`, `k-nucleotide` | **stdin/stdout IO** plus hashing |
 | `regex-redux` | the `grammar` construct against a real regex workload |
@@ -225,7 +225,7 @@ Writing the two programs surfaced spec questions that a real implementation must
 a type was a name with optional arguments, and `postgres::Connection` is a name with a path in
 front of it. Found by `fortunes.nika` the moment its template stopped being the first thing that
 failed. The whole path is interned as one name, because that is what the name *is* to a compiler
-that lowers name for name (ADR-011 D2) — nothing here resolves a module, and a path can therefore
+that lowers name for name (ADR-296 D17) — nothing here resolves a module, and a path can therefore
 never collide with a struct the file declares, which is correct.
 
 **A hole in an interpolated string could not hold a string literal.** `"{f(\"a\")}"` handed the
@@ -316,12 +316,12 @@ on `Reading`, which this program builds a billion times; with parallelism that i
 billion atomic increment/decrement pairs on one refcount word shared by every worker. Nothing
 in the program actually escapes, so the right answer costs nothing at all.
 
-[ADR-008](../docs/specification/adr/adr-008.md) settles it: view types stay (`ref String` is a view
+[ADR-283](../docs/specification/adr/adr-283.md) settles it: view types stay (`ref String` is a view
 marker, not a lifetime), the rule is restated over **escape** rather than storage, a view has
 three inferred states (Borrowed ⊑ Tethered ⊑ Owned), the shared handle sits on the *container*
 rather than on each slice, and `.clone()` is never inserted for you. **A struct writes nothing
 to stay a plain reference**, and the word that would let one keep its buffer alive is `@tethers`
-([ADR-201](../docs/specification/adr/adr-201.md) D2) — not built, because the state it permits is
+([ADR-283](../docs/specification/adr/adr-283.md) D4) — not built, because the state it permits is
 not. Under those rules the program allocates nothing per row and does no refcount work in the
 parallel section.
 
@@ -329,7 +329,7 @@ parallel section.
 Splitting a buffer at line boundaries into one chunk per core, with each chunk a slice of the
 original, had no spelled-out form.
 
-[ADR-009](../docs/specification/adr/adr-009.md) closes it by **dissolving** it rather than
+[ADR-296](../docs/specification/adr/adr-296.md) closes it by **dissolving** it rather than
 specifying `split_aligned`. A chunking helper asks the user to restate as an argument what the
 grammar already says — that a measurement ends at `"\n"` — and then to hand-write the
 split/parallel/merge pipeline that follows from it. Instead the grammar carries both halves:
@@ -358,7 +358,7 @@ unmap of a large read-only mapping at process exit. Parallelism stays opt-in: a 
 never parallelised behind your back, because a merge over floats would make the answer depend on
 the core count.
 
-**G8 — the default hasher.** Raised by ADR-009, which framed it as a question about the build mode and was
+**G8 — the default hasher.** Raised by ADR-296, which framed it as a question about the build mode and was
 wrong to. A switch answers "which runtime", never "who supplied these bytes": a single-threaded
 single-threaded server hashing attacker-supplied header names is exactly as vulnerable as a parallel one,
 and a compute job over operator-chosen data has no adversary in either.
@@ -366,7 +366,7 @@ and a compute job over operator-chosen data has no adversary in either.
 [ADR-010](../docs/specification/adr/adr-010.md) decides it on the axis that matters, **provenance**,
 and at the level where the user actually knows the answer — the place the input enters. Sources are
 classified by `std` (network, IPC and database rows untrusted; files, argv, env and compile-time data
-trusted), the state travels the edges ADR-008 already tracks and lands in the same Ledger, joins
+trusted), the state travels the edges ADR-283 already tracks and lands in the same Ledger, joins
 conservatively, and fails safe at `dyn`/FFI barriers. The user overrides it at the source
 (`fs::map(path, root; trusted: false)`) and a DSL for a wire format can pin an `@untrusted` floor its
 callers cannot lower. Only then does the compiler pick an implementation: keyed hash with a random
@@ -374,7 +374,7 @@ seed for untrusted keys, fast hash for trusted ones — the switch enters as *ho
 *whether*. 1BRC keeps the fast path without a word about hashing; `fortunes` gets hardened without
 anyone remembering to ask.
 
-**G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-009 D5: fixed-width
+**G9 — bounded repetition (`digit{1,2}`) in the grammar protocol.** ADR-296 D13: fixed-width
 numeric parsing is only sound where the grammar states the width bound. Delivered upstream —
 `p{n}`, `p{n,}`, `p{n,m}`, together with a single-digit `digit` terminal that turned out to be
 missing too (only the greedy `digit1` existed, which would have swallowed the run before a bound
@@ -397,7 +397,7 @@ a type was a name with optional generic arguments, so the example declared a two
 `struct Step` to say what one line of a tail rule should have said — a struct pretending to be
 a type. Tuples now exist: `(A, B)` as a type, `(a, b)` as a value, `t.0` to read a part
 (Part I, 4.5). The parts live where a named type's arguments live, so everything that already
-walked a type's arguments — the view analysis of ADR-008 among them — walks a tuple's parts
+walked a type's arguments — the view analysis of ADR-283 among them — walks a tuple's parts
 without knowing about tuples. `mul_tail` yields `(ref String, i64)` and `struct Step` is gone.
 
 **G12 — no sum type.** `calc.nika` has exactly two operators to carry, and an `enum` is what
@@ -480,7 +480,7 @@ in `crates/nikaia/tests/grammar_lowering.rs`.
 ### Open
 
 **G6 — the HTTP handler cannot see the request.** *Decided*
-([ADR-018](../docs/specification/adr/adr-018.md)), *not yet implemented* — it waits on the runtime
+([ADR-289](../docs/specification/adr/adr-289.md)), *not yet implemented* — it waits on the runtime
 binding. The request is the handler's **first argument**, under the rule Part I 5.3
 already has: a lambda's arguments are the ones it names, so `fn { "Hello World" }` is a handler
 that does not need the request and `fn (request) { request.query("name") }` is one that does.
@@ -488,7 +488,7 @@ Nothing is added to the language. A handler *returns* what answers the request �
 `html::Raw` is 200 text/html (ADR-017 D2 read from the other end: the type that says "this is
 markup" is the type that may be sent as markup), a `Response` is itself, and a `throws` that fails
 is 500 with a **generic** body and the error in the log, because an error message is written for
-the operator. The request's strings are views into the connection buffer (ADR-008), so a parameter
+the operator. The request's strings are views into the connection buffer (ADR-283), so a parameter
 used inside the request's scope costs nothing and one kept past it has to be owned.
 
 **G7 — HTML escaping belongs in the template grammar's contract.** *Decided and now
@@ -510,9 +510,9 @@ hole and does not have to know which case it is. `examples/escaping/src/main.nik
 
 **Control flow is there too**: `<for row in :rows> … </for>`, written as an *element* because
 the file is markup and an editor that highlights it keeps working, with `:rows` captured from the
-enclosing scope (ADR-007 D4). The position check runs through a loop's body, so nothing becomes
+enclosing scope (ADR-296 D4). The position check runs through a loop's body, so nothing becomes
 safe by being repeated. `fortunes.nika`'s `render` lowers and runs today; what that file still
 waits on is the `postgres` block and **G6**'s runtime binding — since
-[ADR-022](../docs/specification/adr/adr-022.md) removed the `fn:` form, the whole file parses.
+[ADR-277](../docs/specification/adr/adr-277.md) removed the `fn:` form, the whole file parses.
 
 

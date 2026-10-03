@@ -1,5 +1,5 @@
 //! What a sequence is **as a whole**
-//! ([ADR-212](../../../docs/specification/adr/adr-212.md)).
+//! ([ADR-293](../../../docs/specification/adr/adr-293.md)).
 //!
 //! Three walls a program met in `rustc` rather than here, each a Part III C.1
 //! defect, and the pipeline that was not there:
@@ -441,7 +441,7 @@ fn the_arms_of_one_choice_do_not_take_from_each_other() {
     );
 }
 
-/// **Two walks in one statement** are one after the other (ADR-214 D1).
+/// **Two walks in one statement** are one after the other (ADR-293 D31).
 #[test]
 fn two_walks_in_one_statement_are_refused() {
     assert_eq!(
@@ -456,7 +456,7 @@ fn two_walks_in_one_statement_are_refused() {
     );
 }
 
-/// **A slice has a type** (ADR-215 D3): a run of the list, `ref Array[T]`,
+/// **A slice has a type** (ADR-293 D23): a run of the list, `ref Array[T]`,
 /// which is what a function writes to take one - and what `windows` hands
 /// out. Sliced through a range written in the brackets or kept in a name,
 /// literal ends included.
@@ -501,7 +501,7 @@ fn the_characters_of_a_view_are_a_sequence() {
 }
 
 /// **A slice handed to a list is refused here, naming the type that takes
-/// both** (ADR-215 D3): before, it was `rustc`'s *expected `&Vec<i64>`, found
+/// both** (ADR-293 D23): before, it was `rustc`'s *expected `&Vec<i64>`, found
 /// `&&[_]`*.
 #[test]
 fn a_slice_handed_to_a_list_says_what_to_declare() {

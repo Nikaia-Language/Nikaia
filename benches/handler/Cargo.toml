@@ -1,5 +1,5 @@
 # What the boxed future costs a handler that does not pause
-# ([ADR-122](../../docs/specification/adr/adr-122.md) D3).
+# ([ADR-277](../../docs/specification/adr/adr-277.md) D12).
 #
 # It depends on `nikaia-std` for the same reason `benches/lockfree` does: the
 # future is driven by the executor a generated program is driven by, so

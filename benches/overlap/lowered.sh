@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-033 D10's number, end to end: what the *lowering* costs, not what the
+# ADR-292 D6's number, end to end: what the *lowering* costs, not what the
 # `std` function costs.
 #
 # `runtime.sh` measures `nikaia_std` from Rust. This measures a `.nika` program
@@ -8,7 +8,7 @@
 # `--ordering strict`. Two binaries, one source, and the only difference between
 # them is the pair.
 #
-# Both of ADR-038 D3's mechanisms are measured, because D10's decision is about
+# Both of ADR-303 D3's mechanisms are measured, because D10's decision is about
 # the second one: on the completion path a pair is free, and on the fallback the
 # pair is performed in written order rather than for ~38 µs a pair. The
 # fallback's column is therefore the check that the decision is in the code.

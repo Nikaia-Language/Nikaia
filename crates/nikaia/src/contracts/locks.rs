@@ -1,6 +1,6 @@
 // crates/nikaia/src/contracts/locks.rs
 //
-// Whether a function **touches a lock** ([ADR-039](../../../../docs/specification/adr/adr-039.md)
+// Whether a function **touches a lock** ([ADR-281](../../../../docs/specification/adr/adr-281.md)
 // D3), propagated over the same call graph `sync` uses and with the opposite
 // lattice.
 //
@@ -12,7 +12,7 @@
 // | this | nobody touches one | **least** fixpoint — give the property to whoever reaches a holder |
 //
 // So mutual recursion between pure functions keeps `sync`
-// ([ADR-027](../../../../docs/specification/adr/adr-027.md) D1) and correctly
+// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D1) and correctly
 // gets nothing here, for the mirrored reason — the same shape `keeps` has
 // beside it, and for the same reason: a restriction is added on doubt where a
 // promise is taken away on doubt.
@@ -21,12 +21,12 @@
 //
 // A **door** is `get`, `set`, `access` or `update` on a `Locked` or a
 // `SharedMut`, and `access_all` or `update_all` over several
-// ([ADR-039](../../../../docs/specification/adr/adr-039.md) D10,
-// [ADR-065](../../../../docs/specification/adr/adr-065.md)). Which of those a
+// ([ADR-281](../../../../docs/specification/adr/adr-281.md) D10,
+// [ADR-281](../../../../docs/specification/adr/adr-281.md)). Which of those a
 // call goes to is a question about the **receiver's type**, and this file has
 // none: `kasse.set(42)` names `set`, and so does a `Config::set` somebody
 // wrote. So the base case is read from `check::MethodCalls::resolved`, which is
-// the type checker's answer ([ADR-028](../../../../docs/specification/adr/adr-028.md))
+// the type checker's answer ([ADR-288](../../../../docs/specification/adr/adr-288.md))
 // — the same arrangement `keeps` uses for its receivers, and for the same
 // reason.
 //
@@ -52,7 +52,7 @@
 //
 // A scope waits for its tasks, so they run **during** the call and their bodies
 // belong to the surrounding function — the same reason a trailing lambda's body
-// does ([ADR-029](../../../../docs/specification/adr/adr-029.md) D4). A task
+// does ([ADR-288](../../../../docs/specification/adr/adr-288.md) D16). A task
 // started with `spawn` runs later and elsewhere, so taking a lock in one is the
 // ordinary case and its body is not walked.
 
@@ -71,7 +71,7 @@ use super::{Ledger, Lock};
 const DOORS: &[&str] = &[
     "Locked::get",
     "Locked::set",
-    // The witness door ([ADR-111](../../../../docs/specification/adr/adr-111.md)
+    // The witness door ([ADR-281](../../../../docs/specification/adr/adr-281.md)
     // D5), under the key it is written with. It opens a lock exactly as `set`
     // does — a program that reaches it inside another lock is `NK2203` for the
     // same reason.
@@ -86,7 +86,7 @@ const DOORS: &[&str] = &[
 ];
 
 /// The doors over **several** locks, which are free calls rather than methods
-/// ([ADR-065](../../../../docs/specification/adr/adr-065.md)) and so are named
+/// ([ADR-281](../../../../docs/specification/adr/adr-281.md)) and so are named
 /// here rather than found among the resolved receivers.
 const MULTI: &[&str] = &["access_all", "update_all"];
 
@@ -113,7 +113,7 @@ struct Reaches {
 }
 
 /// Written out because [`Lock`] is Nikaia's, which names its value rather
-/// than deriving a `Default` (ADR-252 D4.4).
+/// than deriving a `Default` (ADR-294 D9.4).
 impl Default for Reaches {
     fn default() -> Self {
         Reaches {
@@ -176,7 +176,7 @@ pub fn infer(
                     }
                 }
                 // **A `pub` rule is an entry, so it gets the walk too**
-                // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+                // ([ADR-296](../../../docs/specification/adr/adr-296.md) D24,
                 // [ADR-186](../../../docs/specification/adr/adr-186.md)). Its
                 // body is every **action block**
                 // in the grammar, for the reason `touch::infer` gives one file
@@ -287,7 +287,7 @@ fn reaches_of(
     };
 
     let mut reaches = Reaches::default();
-    // **The base case is the checker's answer** (ADR-028): which entry
+    // **The base case is the checker's answer** (ADR-288): which entry
     // `kasse.set(42)` goes to is a question about the receiver's type.
     if let Some(calls) = resolved.get(&key) {
         // **What a `spawn` body did is not what this body did** (D3): it runs
@@ -331,7 +331,7 @@ fn walk(parsed: &Parsed, block: &Block, reaches: &mut Reaches) {
             continue;
         };
         let name = parsed.unaliased(&name);
-        // **A door over several locks is a free call** (ADR-065), so it is
+        // **A door over several locks is a free call** (ADR-281), so it is
         // named here where every other free call is.
         if MULTI.contains(&name.as_str()) {
             reaches.itself = reaches.itself.or(Lock::Holds);

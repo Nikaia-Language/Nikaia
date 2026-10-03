@@ -1,6 +1,6 @@
 // crates/nikaia-std/src/tools/findings.nika
 //
-// **What a check written in Nikaia hands back** (ADR-250, ADR-261): one
+// **What a check written in Nikaia hands back** (ADR-294, ADR-294): one
 // finding, in the shape Part III C.2 gives every diagnostic - a code, the
 // statement it is about, a headline, the notes that say why, and one way out.
 // The compiler's `check::Finding` is built from it at one place

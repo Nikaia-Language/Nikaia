@@ -1,4 +1,4 @@
-//! **`--optimization=remove-bounds-checks`** ([ADR-271](../../../docs/specification/adr/adr-271.md)):
+//! **`--optimization=remove-bounds-checks`** ([ADR-306](../../../docs/specification/adr/adr-306.md)):
 //! an index's check is dropped where it is proved inside, and only there.
 //!
 //! Every program here is lowered at each level, compiled and run, and prints

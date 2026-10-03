@@ -3,7 +3,7 @@
 // Part II 12.1: a `sync` function may only call `sync` functions.
 //
 // Two analyses of one rule, running in **opposite directions**, and keeping
-// them apart is the whole design (ADR-027).
+// them apart is the whole design (ADR-288).
 //
 // `check` verifies an assertion. Someone wrote `sync`, and this reports the
 // calls that contradict it (`NK2202`). It is conservative in the **permissive**
@@ -52,18 +52,18 @@ pub struct Violation {
     /// The `sync` function making the call.
     pub caller: String,
     /// What it promised, as the source wrote it: `sync`, or `sync(f)`
-    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D4).
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D31).
     pub promise: String,
     /// What it called, as the ledger names it.
     pub callee: String,
     /// Which ledger answered - this program's, or a library's.
     pub from_library: bool,
     /// Whether `callee` is another package's that never pauses and does not
-    /// promise it ([ADR-244](../../../docs/specification/adr/adr-244.md) D1):
+    /// promise it ([ADR-288](../../../docs/specification/adr/adr-288.md) D28):
     /// refused for the missing word, not for a pause, and said so.
     pub unpromised: bool,
     /// Whether `callee` is a **construct** rather than a function
-    /// ([ADR-163](../../../docs/specification/adr/adr-163.md) D1).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D16).
     ///
     /// An `overlap` and a `select` join on the executor, so a body holding one
     /// pauses - and no ledger says so, because neither is a call. The
@@ -113,13 +113,13 @@ struct Reach {
     /// only while all of theirs do.
     calls: BTreeSet<String>,
     /// **The code parameter it runs**
-    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D3), where there
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D8), where there
     /// is one: the answer is *the lambda decides*, which is `sync = "from(f)"`.
     ///
     /// A lambda the callee **runs during the call** adds nothing to the
     /// caller's own answers, because the lambda's body is walked as part of the
     /// function that writes it and its calls are already counted there
-    /// ([ADR-029](../../../docs/specification/adr/adr-029.md) D3). So the claim
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D15). So the claim
     /// holds here and the question travels to the caller with the name.
     ///
     /// **Only the first**, where a body runs two. The ledger's spelling names
@@ -127,13 +127,13 @@ struct Reach {
     /// a second would want a spelling before it wants an inference.
     runs: Option<String>,
     /// **The parameters that are code and may pause, which it calls**
-    /// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2). Each takes
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D29). Each takes
     /// the claim away as `blocked` does; kept apart so that a function whose
     /// *only* pausing is its lambdas' can be named as one that could promise
     /// `sync(f)`.
     through_code: BTreeSet<String>,
     /// **Where it first pauses itself**, if a call or a construct in its own
-    /// body is why ([ADR-244](../../../docs/specification/adr/adr-244.md) D5):
+    /// body is why ([ADR-288](../../../docs/specification/adr/adr-288.md) D32):
     /// the statement and what in it pauses. `None` where the pause is a method
     /// call the type checker resolved, or a function of the package it calls.
     site: Option<(Span, String)>,
@@ -157,12 +157,12 @@ struct Reach {
 /// toolchain) and `--locked` compares it byte for byte.
 ///
 /// `resolved` is the type checker's answer to the one question this walk cannot
-/// ask: what a method call goes to (ADR-028). Handing it in rather than
+/// ask: what a method call goes to (ADR-288). Handing it in rather than
 /// computing it here keeps one type checker in the compiler; the alternative
 /// was a second, worse one living in this file.
 ///
 /// **Hands back the functions that pause only where their lambdas do**
-/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2): by key, the code
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D29): by key, the code
 /// parameters that may pause and that each one calls. Nothing else it reaches
 /// can pause, so `sync(those)` is a promise its body would keep. The ledger is
 /// not told - the inference never writes `sync(f)`, because a promise is the
@@ -205,7 +205,7 @@ pub fn infer(
                         ) {
                             // **A declaration is the wider claim, and its
                             // implementations carry it**
-                            // ([ADR-109](../../../docs/specification/adr/adr-109.md)
+                            // ([ADR-288](../../../docs/specification/adr/adr-288.md)
                             // D2): a trait method without `sync` is lowered
                             // `-> impl Future<…>`, so every `impl` of it hands
                             // back a future whether or not its own body pauses
@@ -251,15 +251,15 @@ pub fn infer(
                 // that reaches one through a bound names a callee the graph has to
                 // know about. **A leaf** — a declaration has no body, so it reaches
                 // nothing — and its `blocked` is the **word it was written with**
-                // ([ADR-109](../../../docs/specification/adr/adr-109.md) D1): a
+                // ([ADR-288](../../../docs/specification/adr/adr-288.md) D24): a
                 // trait method reads like a function type, so without `sync` it may
                 // pause, and a body that calls it through a bound pauses with it.
                 //
                 // **It used to be `blocked: false` whatever the declaration said**
-                // ([ADR-078](../../../docs/specification/adr/adr-078.md) D4),
+                // ([ADR-295](../../../docs/specification/adr/adr-295.md) D9),
                 // because a plain `fn` was the only thing the emitter could write
                 // in a trait and `No` would have made every call through a bound an
-                // `.await`. ADR-109 D3 takes that cause away with the
+                // `.await`. ADR-288 D26 takes that cause away with the
                 // return-position form, so the word is read rather than overridden.
                 //
                 // Without the entry at all the callee is absent from `holds` and
@@ -282,7 +282,7 @@ pub fn infer(
                     }
                 }
                 // **A grammar's `pub` rules are leaves too, and they hold**
-                // ([ADR-142](../../../docs/specification/adr/adr-142.md) D1, D2).
+                // ([ADR-296](../../../docs/specification/adr/adr-296.md) D35, D36).
                 // An entry has no body in this graph's sense — its action blocks
                 // are checked rather than walked here — and an action may not
                 // pause, so the entry is `sync` and a caller keeps its own claim.
@@ -316,7 +316,7 @@ pub fn infer(
 
     // **The fixpoint is Nikaia** (`tools/sync.nika`, #125): start optimistic,
     // take the claim away until nothing changes, and name the functions whose
-    // only pausing is their lambdas' (ADR-244 D2).
+    // only pausing is their lambdas' (ADR-288 D29).
     let reached: BTreeMap<String, nikaia_std::tools::sync::SyncReach> = graph
         .iter()
         .map(|(name, reach)| {
@@ -342,8 +342,8 @@ pub fn infer(
             && contract.sync_claim == Sync::No
         {
             // **`from(f)` where a code parameter is what decides**
-            // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
-            // [ADR-029](../../../docs/specification/adr/adr-029.md) D3), and
+            // ([ADR-277](../../../docs/specification/adr/adr-277.md) D8,
+            // [ADR-288](../../../docs/specification/adr/adr-288.md) D15), and
             // `inferred` otherwise. A caller reads both the same way — *this
             // call adds no pausing of its own* — and the difference is that
             // `from` says **whose** answer it is, which is what a reader of
@@ -355,7 +355,7 @@ pub fn infer(
         }
     }
 
-    // **Why each function that does not hold pauses** (ADR-244 D5): the
+    // **Why each function that does not hold pauses** (ADR-288 D32): the
     // shortest way through the package's calls to a statement that pauses
     // itself. Breadth-first and over the map's order, so the answer is the same
     // on every build.
@@ -377,7 +377,7 @@ pub fn infer(
 }
 
 /// What [`infer`] learns besides the ledger's own column, for the build to say
-/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D2, D5).
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D29, D32).
 #[derive(Debug, Default)]
 pub struct Noted {
     /// The functions that pause only where their lambdas do, with the code
@@ -430,8 +430,8 @@ fn reach_of(
     };
 
     // **The parameters that are code, and whether each may pause**
-    // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1,
-    // [ADR-122](../../../docs/specification/adr/adr-122.md) D1). Built before
+    // ([ADR-277](../../../docs/specification/adr/adr-277.md) D6,
+    // [ADR-277](../../../docs/specification/adr/adr-277.md) D11). Built before
     // the walk because the walk is what reads it: a call to one of these names
     // is not a name nothing describes.
     let code: BTreeMap<String, bool> = args
@@ -446,7 +446,7 @@ fn reach_of(
     collect_reach(parsed, body, own, library, &code, &mut reach);
 
     // What the walk above left to somebody else: every method call this
-    // function makes, as the type checker resolved it (ADR-028). The two are
+    // function makes, as the type checker resolved it (ADR-288). The two are
     // merged rather than reconciled - the walk skips method calls entirely and
     // this covers exactly those - so nothing is counted twice and nothing is
     // dropped.
@@ -559,7 +559,7 @@ fn walk_fn(
     // to something no ledger knows, `apply(f: fn(i64) -> i64 sync, …) sync`
     // was refused for calling `f`.
     //
-    // **And a parameter `sync(f)` names** (ADR-244 D4): its lambda is the
+    // **And a parameter `sync(f)` names** (ADR-288 D31): its lambda is the
     // caller's to answer for, so a call of it is the one pause the promise
     // allows.
     let mut sync_code: BTreeSet<String> = args
@@ -653,7 +653,7 @@ fn walk_block(
 }
 
 /// What a call by `name` goes to: `calls::callee_named`, the one resolution
-/// every analysis shares (ADR-028), for a name the walk in Nikaia read.
+/// every analysis shares (ADR-288), for a name the walk in Nikaia read.
 fn named(
     parsed: &Parsed,
     name: String,
@@ -684,7 +684,7 @@ pub(crate) enum Reached {
     /// A method call. Neither analysis here can resolve one: `stats.add(5)`
     /// names `add` and says nothing about what `stats` is.
     ///
-    /// The **type checker** can, and does (ADR-028). So this is not "unknown"
+    /// The **type checker** can, and does (ADR-288). So this is not "unknown"
     /// but "asked elsewhere", and the two callers of `reached` take it
     /// differently: the inference merges in the checker's answer per function,
     /// and the check looks the resolved name up the same way it looks up any
@@ -772,7 +772,7 @@ pub(crate) fn visit_stmt_blocks<'a>(stmt: &'a Stmt, f: &mut impl FnMut(&'a Block
 pub(crate) fn visit_expr_blocks<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Block)) {
     match expr {
         // An `unsafe` block is part of the function that writes it
-        // ([ADR-124](../../../docs/specification/adr/adr-124.md) D3): it makes
+        // ([ADR-302](../../../docs/specification/adr/adr-302.md) D3): it makes
         // no boundary of its own, so what it calls, the function calls.
         Expr::Block(block)
         | Expr::Unsafe(block)
@@ -831,8 +831,8 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
     // **A hole is a call like any other.** Its expression is parsed out of the
     // literal on the way to the emitter, so until this walk existed a call
     // inside `"{io::read_to_string()}"` was invisible here - and `sync` is
-    // *inferred* from what a body calls (ADR-027), so the function came out of
-    // the ledger claiming it cannot pause. ADR-027 D2 and ADR-010 D1 name that
+    // *inferred* from what a body calls (ADR-288), so the function came out of
+    // the ledger claiming it cannot pause. ADR-288 D2 and ADR-010 D1 name that
     // direction the dangerous one.
     for hole in crate::emit::literal_expressions(parsed, expr) {
         visit_expr(parsed, &hole, f);
@@ -840,10 +840,10 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
 
     match expr {
         // What stands after a `;` is an expression too, and one that can
-        // pause. `sync` is *inferred* from what a body calls (ADR-027), so a
+        // pause. `sync` is *inferred* from what a body calls (ADR-288), so a
         // call this walk does not reach is a function claiming it cannot pause
-        // - the fail-open direction ADR-027 D2 names as the dangerous one. A
-        // DSL's deferred parameters stand there (ADR-007 D5).
+        // - the fail-open direction ADR-288 D2 names as the dangerous one. A
+        // DSL's deferred parameters stand there (ADR-296 D5).
         Expr::Call { func, args, config } => {
             visit_expr(parsed, func, f);
             args.iter().for_each(|a| visit_expr(parsed, a, f));
@@ -900,7 +900,7 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         // issue #171): `R::A => slow()` is a call, and only an arm that is a block
         // reached `visit_expr_blocks`. `pick` came out of the ledger `sync`
         // while its lowering awaited `slow()`, which `rustc` refused - the
-        // fail-open direction ADR-027 D2 names, for `throws`, `touches` and
+        // fail-open direction ADR-288 D2 names, for `throws`, `touches` and
         // `keeps` as much as for `sync`. A guard runs too.
         Expr::Match { value, arms } => {
             visit_expr(parsed, value, f);
@@ -918,7 +918,7 @@ pub(crate) fn visit_expr(parsed: &Parsed, expr: &Expr, f: &mut impl FnMut(&Expr)
         // **And the four other places a value is computed** that the walk
         // passed by, for the same reason: a list's items, the copy a `with`
         // is made of and its fields, what a `return` hands back where it is an
-        // expression (ADR-138), and what each arm of a `select` starts.
+        // expression (ADR-276), and what each arm of a `select` starts.
         Expr::ListLit { items, .. } => items.iter().for_each(|item| visit_expr(parsed, item, f)),
         Expr::With { base, fields, .. } => {
             visit_expr(parsed, base, f);

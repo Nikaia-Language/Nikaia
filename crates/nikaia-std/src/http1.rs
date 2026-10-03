@@ -1,17 +1,17 @@
 //! **HTTP/1.1's text half**, as far as the MVP's protocol goes
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D5).
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D13).
 //!
 //! `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no
 //! chunked transfer and no TLS. That record's own scope, and its own staging:
 //! **the parser was Rust here and is a Nikaia grammar now** (0.0.248,
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D6), by
-//! [ADR-196](../../../docs/specification/adr/adr-196.md)'s route:
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D6), by
+//! [ADR-290](../../../docs/specification/adr/adr-290.md)'s route:
 //! `src/tools/http1.nika`. What stays here is the bytes - the buffer a socket
 //! fills, where a head ends, whether it is text - and the `Head` a program is
 //! handed.
 //!
 //! **Not named `http`**, and that is not a taste: a program reaches a *package*
-//! by that word ([ADR-069](../../../docs/specification/adr/adr-069.md) D1), and
+//! by that word ([ADR-289](../../../docs/specification/adr/adr-289.md) D1), and
 //! a `std` module of the same name would make `http::Response` mean two things.
 //! `std`'s own ledger says what happens the day a crate's word collides with a
 //! module's — *that is a refusal to write* — and this is the day not to create
@@ -44,7 +44,7 @@ use crate::io::IoError;
 ///
 /// A `Vec[u8]` and not a `Bytes`: this one grows, and what makes a `Bytes` cheap
 /// to hand on is that it does not
-/// ([ADR-156](../../../docs/specification/adr/adr-156.md) D2). A caller reads a
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D20). A caller reads a
 /// chunk, `take`s it, and asks again.
 #[derive(Debug, Default)]
 pub struct Buffer {
@@ -145,7 +145,7 @@ impl Buffer {
 /// What the head of one request says.
 ///
 /// **`Clone`, because a Nikaia `struct` that holds one derives it.** Every
-/// emitted struct does ([ADR-011](../../../docs/specification/adr/adr-011.md)
+/// emitted struct does ([ADR-296](../../../docs/specification/adr/adr-296.md)
 /// D2's lowering), so a `std` type a program puts in a field has to, or `rustc`
 /// says *the trait bound `Head: Clone` is not satisfied* about a file nobody
 /// wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). It
@@ -159,19 +159,19 @@ pub struct Head {
     size: i64,
     /// Whether the client asked to keep the connection open. **Read and not
     /// honoured** in the MVP: `Connection: close` is the scope
-    /// ([ADR-194](../../../docs/specification/adr/adr-194.md) D5), and a server
+    /// ([ADR-289](../../../docs/specification/adr/adr-289.md) D13), and a server
     /// that read the header and ignored it silently would be lying to a client
     /// that asked.
     keep_alive: bool,
     /// Every header, name lowercased, in the order they arrived.
     ///
-    /// **Kept rather than thrown away** ([ADR-018](../../../docs/specification/adr/adr-018.md)
+    /// **Kept rather than thrown away** ([ADR-289](../../../docs/specification/adr/adr-289.md)
     /// D4: *`request.header("host")` yields …, case-insensitive, as the protocol
     /// is*). The parse already walked them for `content-length` and
     /// `transfer-encoding` and dropped the rest, so a handler could not ask.
     ///
     /// A `Vec` and not a map: a request head has a handful of headers, and a
-    /// scan over a handful beats hashing one ([ADR-009](../../../docs/specification/adr/adr-009.md)
+    /// scan over a handful beats hashing one ([ADR-296](../../../docs/specification/adr/adr-296.md)
     /// D4 — and there is nothing here to measure yet, which is itself the
     /// reason to take the shape with no allocation behind it).
     headers: Vec<(String, String)>,
@@ -184,7 +184,7 @@ impl Head {
     }
 
     /// The path, **without** the query string
-    /// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4, which writes
+    /// ([ADR-289](../../../docs/specification/adr/adr-289.md) D20, which writes
     /// `path()` and `query()` as two things).
     ///
     /// Not decoded: what a `%20` means is the program's question, and a `std`
@@ -206,7 +206,7 @@ impl Head {
     }
 
     /// What the query string says under this name, or nothing where it says
-    /// nothing ([ADR-018](../../../docs/specification/adr/adr-018.md) D4:
+    /// nothing ([ADR-289](../../../docs/specification/adr/adr-289.md) D20:
     /// *Kap 3.5's nullable, not an empty string*).
     ///
     /// **Nothing is decoded**, and that is the same sentence `path` carries: a
@@ -247,7 +247,7 @@ impl Head {
     /// What the client sent under this name, or nothing where it sent none.
     ///
     /// **Case-insensitive, as the protocol is**
-    /// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4). The names
+    /// ([ADR-289](../../../docs/specification/adr/adr-289.md) D20). The names
     /// were lowercased on the way in, so this lowercases what it is asked for
     /// and nothing else happens per call.
     ///
@@ -312,7 +312,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
 /// Where `needle` starts in `haystack`.
 ///
 /// A `memchr` here would be a dependency for a loop over a request head that
-/// nobody has measured ([ADR-009](../../../docs/specification/adr/adr-009.md)
+/// nobody has measured ([ADR-296](../../../docs/specification/adr/adr-296.md)
 /// D4).
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.len() > haystack.len() {

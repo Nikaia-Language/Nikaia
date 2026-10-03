@@ -99,7 +99,7 @@ fn print_is_a_macro_like_println() {
     assert!(emitted.contains(r#"eprint!("b")"#), "{emitted}");
 }
 
-/// **A hole is code as written** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// **A hole is code as written** ([ADR-309](../../../docs/specification/adr/adr-309.md)
 /// D3): the grammar parses it, so a string inside one is written with plain
 /// quotes, as in any other expression.
 #[test]
@@ -114,7 +114,7 @@ fn a_hole_may_hold_a_string_literal() {
     assert!(escaped.contains(r#"f("a\nb")"#), "{escaped}");
 }
 
-/// **A brace is a brace** (ADR-035 D1).
+/// **A brace is a brace** (ADR-309 D1).
 ///
 /// The case this was written for is `examples/json/src/main.nika`, where a program
 /// whose job is to print `{` had to write `print("{{}}")` - and every string
@@ -144,7 +144,7 @@ fn an_escape_is_not_a_brace_to_double() {
     assert!(emitted.contains(r#"println!("\u{0041}")"#), "{emitted}");
 }
 
-/// `f"…"` is what says there is code in here (ADR-035 D1).
+/// `f"…"` is what says there is code in here (ADR-309 D1).
 #[test]
 fn an_f_string_interpolates_and_a_plain_one_does_not() {
     let woven = emit(r#"fn main() { let n = 1 let s = f"n is {n}" }"#);
@@ -154,7 +154,7 @@ fn an_f_string_interpolates_and_a_plain_one_does_not() {
     assert!(plain.contains(r#"let s = "n is {n}";"#), "{plain}");
 }
 
-/// **The type comes from the syntax, not from the text** (ADR-035 D3).
+/// **The type comes from the syntax, not from the text** (ADR-309 D2).
 ///
 /// Before the `f`, adding a brace to a string changed its type: `"a"` was a
 /// view of static text and `"a {b}"` a `String`, and which one you had written
@@ -188,7 +188,7 @@ fn a_space_after_the_f_is_not_an_interpolation() {
 }
 
 /// **A number no use constrains takes the first type that holds it**
-/// ([ADR-060](../../../docs/specification/adr/adr-060.md) D2, Part I 2.4).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D21, Part I 2.4).
 ///
 /// `let big = 3000000000` is a correct program and was refused in the backend's
 /// words about a type it never wrote — *"literal out of range for `i32`"* —
@@ -229,12 +229,12 @@ fn a_negation_is_folded_before_the_width_is_decided() {
     assert!(wider.contains("-2147483649i64"), "{wider}");
 }
 
-// --- a constant sum widens the way a constant does (ADR-063) -----------------
+// --- a constant sum widens the way a constant does (ADR-285) -----------------
 
 /// **A constant written only in literals takes the first type that holds it**
-/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D1).
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D22).
 ///
-/// [ADR-060](../../../docs/specification/adr/adr-060.md) gave that to a literal
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) gave that to a literal
 /// and the rule did not reach a sum, so `3000000000 + 1` compiled and
 /// `2000000000 + 2000000000` did not — refused in the backend's words, *"this
 /// arithmetic operation will overflow"*, on the Nikaia line that wrote it. Which
@@ -533,7 +533,7 @@ fn the_way_out_runs_and_what_prints_is_untouched() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **The grammar parses a hole** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// **The grammar parses a hole** ([ADR-309](../../../docs/specification/adr/adr-309.md)
 /// D1, D2): the literal's parts are text runs and holes, and a hole is an
 /// expression of the tree - with its format, where one follows the `:` - and
 /// the emitter builds the format string from them (D5).
@@ -588,7 +588,7 @@ fn the_tree_holds_the_parts_of_an_interpolation() {
     assert!(emitted.contains(r#"a {:>4} b {} {{c}}"#), "{emitted}");
 }
 
-/// **A broken hole is the parser's**, said where it is (ADR-262 D3, D4): a
+/// **A broken hole is the parser's**, said where it is (ADR-309 D7, D8): a
 /// quote the hole escaped, a `{` the string ends inside of, and a `}` with
 /// no `{`.
 #[test]

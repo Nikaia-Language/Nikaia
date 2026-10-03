@@ -6,7 +6,7 @@
 //! crossover.** This is where a crossover is measured.
 //!
 //! Instructions retired, under callgrind, on the same tree - which is how
-//! ADR-010's hasher was measured (ADR-011 §4) and is the only kind of number
+//! ADR-010's hasher was measured (ADR-296) and is the only kind of number
 //! this repository has ever accepted. Wall-clock on a shared machine is not a
 //! measurement; an instruction count is deterministic and diffable.
 //!
@@ -324,7 +324,7 @@ fn what_a_jump_saves_against_the_shape_that_replaces_it() {
     // because a number that does not move is worth showing not moving.
     //
     // **The first group has three members and the reason is
-    // [ADR-086](../../../docs/specification/adr/adr-086.md).** When these
+    // [ADR-301](../../../docs/specification/adr/adr-301.md).** When these
     // numbers were first taken, the obvious `break`-less shape -
     // `while i < n && running` - did not parse, so the baseline had to nest an
     // `if` inside the loop. It parses now, and the honest thing is to measure
@@ -458,7 +458,7 @@ const LTO: &[&str] = &["-C", "lto=fat"];
 fn the_solver_kernels_lowered_against_rust_by_hand() {
     let nikaia = lower("solver-kernels.nika");
     // And with every index check the solver proves unnecessary dropped
-    // ([ADR-271](../../../docs/specification/adr/adr-271.md) D4).
+    // ([ADR-306](../../../docs/specification/adr/adr-306.md) D4).
     let proved = lower_with(
         "solver-kernels.nika",
         Build {

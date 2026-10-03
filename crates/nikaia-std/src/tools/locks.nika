@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/locks.nika
 //
 // Kap 9.4: **which functions can open a lock** - the lattice of the compiler's
-// `contracts::locks`, moved from Rust (ADR-250, #125), as `throws.nika` holds
+// `contracts::locks`, moved from Rust (ADR-294, #125), as `throws.nika` holds
 // `contracts::throws`'.
 //
 // **What moved is the fixpoint and what it writes back.** What stays Rust is

@@ -16,7 +16,7 @@ The caller is the code the Nikaia compiler generates, at an index its
 `--optimization=remove-bounds-checks` pass proved inside: by a loop over the
 list's own length whose body cannot change that length (`basic`), or by a
 certificate of the solver that its checker accepted (`aggressive`) -
-[ADR-271](../../../docs/specification/adr/adr-271.md). The argument for each
+[ADR-306](../../../docs/specification/adr/adr-306.md). The argument for each
 call is the proof; this crate holds the one operation the proof licenses.
 
 ## Every `unsafe`, and why it is sound

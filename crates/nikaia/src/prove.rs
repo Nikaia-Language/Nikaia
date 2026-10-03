@@ -12,7 +12,7 @@
 //
 // **What it knows** (D9): the branch an `if` is in, what a branch that always
 // leaves has ruled out — `return … if c` is exactly that
-// ([ADR-255](../../docs/specification/adr/adr-255.md)) — a `for` over a
+// ([ADR-276](../../docs/specification/adr/adr-276.md)) — a `for` over a
 // range, a `let`'s value, the function's preconditions (D5) and every claim
 // proved before.
 //

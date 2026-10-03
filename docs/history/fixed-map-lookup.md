@@ -1,6 +1,6 @@
 # A fixed map's lookup: `match` or a perfect hash, and where they cross
 
-**Why this file exists.** [ADR-079](../specification/adr/adr-079.md) D3 decided that
+**Why this file exists.** [ADR-079](adr/adr-079.md) D3 decided that
 a map built at build time crosses as a **fixed** map and that *how it is looked
 up is the compiler's*. It named no threshold, and
 [`staging-candidates.md`](staging-candidates.md) ends on the rule that says one
@@ -10,14 +10,14 @@ that measurement.
 
 ## 1. The three contenders, and which two were already measured
 
-[ADR-073](../specification/adr/adr-073.md) §3 measured **two**, on 200 keys:
+[ADR-073](adr/adr-073.md) §3 measured **two**, on 200 keys:
 
 ```
 HashMap nachschlagen                  18.65  17.94  18.60  17.85  17.84   ns
 match nachschlagen                     9.05   8.95   9.05   9.01   9.06   ns
 ```
 
-and [ADR-079](../specification/adr/adr-079.md) §3 reads that as *"200 keys favour a
+and [ADR-079](adr/adr-079.md) §3 reads that as *"200 keys favour a
 `match` 9.0 against 18.0 and a million do not"*. Both are true and neither
 settles this page's question, because the third contender was never in the room:
 a **perfect hash**, which is what a compiler that owns the key set can build and
@@ -119,7 +119,7 @@ apart at thirty-two, which is a dozen keys *past* the point where the perfect
 hash has already taken the lead. So the range where a `match` would be worth
 generating and a scan would not do is **empty**.
 
-That is what [ADR-176](../specification/adr/adr-176.md) D2 rests on: the fixed map
+That is what [ADR-176](adr/adr-176.md) D2 rests on: the fixed map
 is a value of four static tables, the small case is a scan inside `std`, the
 large one is CHD, and the emitter writes no lookup code at all. **The crossing is
 at twelve** — where the scan and the hash change places — and the band is wide:

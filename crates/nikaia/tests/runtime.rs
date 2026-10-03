@@ -1,6 +1,6 @@
 //! The runtime, from the outside: one program, both mechanisms, same answer.
 //!
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D3 says a file may be
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D3 says a file may be
 //! served by the kernel's completion queue or by the blocking path, and that
 //! **which one is chosen is a run-time decision**. The claim that carries is
 //! not that either mechanism works - the unit tests in `nikaia-std` say that -
@@ -176,7 +176,7 @@ fn one_binary_runs_on_both_mechanisms_and_prints_the_same_thing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **[ADR-050](../../../docs/specification/adr/adr-050.md) D2, end to end: an
+/// **[ADR-292](../../../docs/specification/adr/adr-292.md) D2, end to end: an
 /// `overlap` prints what the sequential program printed.**
 ///
 /// The claim the whole construct rests on is that putting two reads in flight
@@ -216,7 +216,7 @@ fn an_overlap_prints_what_the_sequential_program_printed() {
     let sequential = lower(&in_order, READS_AND_WRITES, &[]);
     assert!(
         !sequential.contains("task::overlap"),
-        "a program that did not ask must not overlap (ADR-050 D1):\n{sequential}"
+        "a program that did not ask must not overlap (ADR-292 D1):\n{sequential}"
     );
 
     let overlapped = build(&together, READS_OVERLAPPED, &[]);
@@ -273,7 +273,7 @@ fn the_emitted_main_starts_the_runtime_before_the_program() {
     );
     assert!(
         entry.find("__nikaia_main()").unwrap() < entry.find("finish()").unwrap(),
-        "the drain has to be after the program's last statement (ADR-006 D5)"
+        "the drain has to be after the program's last statement (ADR-297 D6)"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -445,7 +445,7 @@ fn a_manifest_cleanup_deadline_compiles_and_says_where_it_went() {
 /// mechanism than a comment is. What is **not** stripped is the inside of an
 /// `f"…"` interpolation, which is ordinary code: a plain `"…"` has no
 /// interpolation at all, because a brace is a brace
-/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md)).
 #[test]
 fn no_nika_file_says_async_or_names_a_mechanism() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -477,7 +477,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
                 assert!(
                     !code.contains(forbidden),
                     "{} says `{forbidden}` in code, and the runtime is invisible \
-                     from a Nikaia program (ADR-038 D3)",
+                     from a Nikaia program (ADR-303 D3)",
                     path.display()
                 );
             }
@@ -493,7 +493,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
 /// says why. A backslash escapes the character after it, so a literal does not
 /// end at the quote in `"a \" b"`; a brace opens an interpolation only in an
 /// `f` string, because elsewhere a brace is a brace
-/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md)).
 fn outside_string_literals(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars().peekable();
@@ -544,7 +544,7 @@ fn a_literals_body_is_dropped_and_an_interpolations_inside_is_not() {
     assert!(!dropped.contains("async"), "{dropped}");
     assert!(dropped.contains("ASYNC"), "{dropped}");
 
-    // A plain string has no interpolation at all (ADR-035), so its braces are
+    // A plain string has no interpolation at all (ADR-309), so its braces are
     // part of the body and go with it.
     let braces = outside_string_literals("print(\"{async}\")");
     assert!(!braces.contains("async"), "{braces}");

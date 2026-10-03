@@ -1,10 +1,10 @@
 // crates/nikaia/tests/fixtures/sql_statement.nika
 //
-// A DSL with deferred parameters, end to end (ADR-007 D5).
+// A DSL with deferred parameters, end to end (ADR-296 D5).
 //
 // The statement is written once and carries two holes it does not fill:
 // `:id` and `:active` are *deferred* parameters, resolved where the statement
-// is used rather than where it is written (ADR-007 D4). That is what makes a
+// is used rather than where it is written (ADR-296 D4). That is what makes a
 // prepared statement worth preparing - baking the values in destroys the reuse.
 //
 // The compiler reads the holes out of the body and generates a type carrying
@@ -19,7 +19,7 @@ pub struct Db {
 }
 
 impl Db {
-    // The driver. `...args: Self::dsl` is the typed spread of ADR-007 D5: the
+    // The driver. `...args: Self::dsl` is the typed spread of ADR-296 D5: the
     // parameters of whatever statement this call was given, as one value on
     // the stack.
     pub fn prepare(ref self, statement: ref String; ...args: Self::dsl) -> Self::dsl {

@@ -1,7 +1,7 @@
 //! The two refusals that come with the lock's doors
-//! ([ADR-099](../../../docs/specification/adr/adr-099.md)).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 //!
-//! [ADR-039](../../../docs/specification/adr/adr-039.md) D10 gave shared
+//! [ADR-281](../../../docs/specification/adr/adr-281.md) D10 gave shared
 //! mutable state four doors and stated the two mistakes that come with them.
 //! Both were catalogued in Part III Appendix C and raised by nothing, which is
 //! the state that rots fastest: a rule with no
@@ -126,7 +126,7 @@ fn the_read_is_found_however_deep_it_is_written() {
 ///
 /// A value computed outside the lock is what `set` is **for**: a starting
 /// value, a configuration that arrived from outside, a reset an operator asked
-/// for ([ADR-111](../../../docs/specification/adr/adr-111.md) D4).
+/// for ([ADR-281](../../../docs/specification/adr/adr-281.md) D25).
 #[test]
 fn what_is_not_the_shape_is_left_alone() {
     for body in ["    kasse.set(42)", "    let n = 7\n    kasse.set(n * 6)"] {
@@ -141,7 +141,7 @@ fn what_is_not_the_shape_is_left_alone() {
 /// **And the two shapes that used to be quiet and are not.**
 ///
 /// `NK2205` used to ask whether the argument contained a `get` **on the same
-/// container**, which caught the one line and nothing else. ADR-111 widened it
+/// container**, which caught the one line and nothing else. ADR-281 widened it
 /// to *the value carries where it came from*, and two things follow that the
 /// old rule let through:
 ///
@@ -169,7 +169,7 @@ fn a_stamp_from_anywhere_is_refused() {
 }
 
 /// **A decision read from a lock is stale too**
-/// ([ADR-111](../../../docs/specification/adr/adr-111.md) D4's second shape):
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D25's second shape):
 /// the value stored is plain, and what may have changed is the condition.
 #[test]
 fn a_set_under_a_stamped_condition_is_refused() {

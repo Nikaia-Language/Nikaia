@@ -6,7 +6,7 @@ here, one of the two is a bug.
 | | covers |
 | :--- | :--- |
 | [Part I — The Language Core](10-nikaia-light.md) | the language a person learns first: values, ownership, errors, the two build switches |
-| [Part II — Concurrency and Metaprogramming](20-nikaia-advance.md) | concurrency, parallelism, macros, the grammar protocol |
+| [Part II — Concurrency and Metaprogramming](20-nikaia-advance.md) | concurrency, parallelism, build-time reflection (`comptime`), the grammar protocol |
 | [Part III — Tooling](30-nikaia-tooling.md) | the CLI, the manifest, the contract ledger, `std`, the diagnostics contract |
 
 The three parts are written to one **language standard**,

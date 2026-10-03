@@ -1,5 +1,5 @@
 //! The re-entrancy check is a build option
-//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D8, Part I 1.2).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D36, Part I 1.2).
 //!
 //! Taking a lock while a lock is held is refused when the program is compiled
 //! (`NK2203`, Part II 12.3), so under D2 the runtime check cannot fire in a
@@ -8,7 +8,7 @@
 //! and without it such a hole is a silent hang instead.
 //!
 //! So it is a guarantee that may be **declined**, which is
-//! [ADR-033](../../../docs/specification/adr/adr-033.md) D8's precedent: *a
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) D7's precedent: *a
 //! semantic default that cannot be switched off is a decision imposed rather
 //! than offered.* It lives in the manifest and not on the command line only,
 //! because otherwise a shipped build is not reproducible.

@@ -7,13 +7,13 @@
 // file the user never wrote. That is not a small annoyance: it is the whole
 // difference between a compiler and a code generator with a compiler bolted on.
 //
-// The fix is not a second checker (ADR-011 D3). It is a map: the emitter
+// The fix is not a second checker (ADR-296 D18). It is a map: the emitter
 // records which `.nika` span produced which byte range of the emitted Rust
 // (`emit::SourceMap`), rustc reports byte offsets into that same text with
 // `--error-format=json`, and this module trades one for the other.
 //
 // What it deliberately does not do is rewrite the message. Because the lowering
-// is name-for-name (ADR-011 D2), "`until(…)` in rule `NAME` can run through the
+// is name-for-name (ADR-296 D17), "`until(…)` in rule `NAME` can run through the
 // boundary" is already a sentence about the Nikaia source - only its position
 // was wrong. Correcting a position is a lookup; translating a text would be a
 // second compiler.
@@ -242,7 +242,7 @@ pub struct Diagnostic {
     pub internal: Option<String>,
     /// What the backend wrote under the caret, where it wrote anything: the
     /// half of *mismatched types* that says which types
-    /// ([ADR-237](../../../../docs/specification/adr/adr-237.md) D2 reads it).
+    /// ([ADR-290](../../../../docs/specification/adr/adr-290.md) D21 reads it).
     pub label: Option<String>,
 }
 
@@ -256,7 +256,7 @@ pub struct Location {
     /// from. A single-file program has one, and it is 0.
     ///
     /// The map has carried this since a program could be several files
-    /// (ADR-012); until the project build started reading these messages,
+    /// (ADR-300); until the project build started reading these messages,
     /// nothing asked for it, and a message about the third module would have
     /// been printed against the first module's text.
     pub unit: usize,
@@ -376,14 +376,14 @@ pub fn translate_units(json: &str, map: &SourceMap, sources: &[&str]) -> Vec<Dia
 }
 
 /// **A boundary whose ledger may be stale**
-/// ([ADR-237](../../../../docs/specification/adr/adr-237.md) D2): a package
+/// ([ADR-290](../../../../docs/specification/adr/adr-290.md) D21): a package
 /// this program depends on, or a Rust crate it describes, by the word a call
 /// writes in front of `::`.
 pub use nikaia_std::tools::boundaries::Boundary;
 
 /// **A boundary mismatch the backend reports is said as a stale ledger**
 /// ([ADR-100](../../../../docs/specification/adr/adr-100.md) D6,
-/// [ADR-237](../../../../docs/specification/adr/adr-237.md) D2). Which
+/// [ADR-290](../../../../docs/specification/adr/adr-290.md) D21). Which
 /// boundary, and what the message becomes, is **`tools/boundaries.nika`**'s
 /// answer (#125); where it has none, the message is left as the backend said
 /// it - this compiler's defect, reported as such (Part III C.1).
@@ -419,7 +419,7 @@ pub fn a_stale_boundary(
 /// Whether a note from the backend tells the reader about **Rust** rather than
 /// about their program.
 ///
-/// [ADR-012](../../../../docs/specification/adr/adr-012.md): a diagnostic is
+/// [ADR-300](../../../../docs/specification/adr/adr-300.md): a diagnostic is
 /// about the `.nika` file the user wrote. Most of what the backend says survives
 /// translation because it is about the program either way - *"the literal
 /// `3000000000` does not fit into the type `i32` whose range is
@@ -441,7 +441,7 @@ pub fn a_stale_boundary(
 /// *"consider using the type `u32` instead"* is what `rustc` says about a literal
 /// too large for an `i32`. It was kept here once, checked, on the ground that
 /// `let x: u32 = 3000000000` compiles - and it does. What changed is
-/// [ADR-048](../../../../docs/specification/adr/adr-048.md) D2: the numeric
+/// [ADR-285](../../../../docs/specification/adr/adr-285.md) D2: the numeric
 /// surface is the one Part I 2.2 names, and `u32` is deliberately not on it. So
 /// the sentence points at a type a reader should not reach for, when the answer
 /// is `i64` or a use that widens the literal. A remedy that works is kept; one
@@ -503,11 +503,11 @@ fn is_rust_internal(note: &str) -> bool {
 /// hide behind it.
 ///
 /// **Narrowed to that one case at 0.0.140**
-/// ([ADR-189](../../../../docs/specification/adr/adr-189.md)). A reached
+/// ([ADR-278](../../../../docs/specification/adr/adr-278.md)). A reached
 /// **method**, and a field whose member **copies**, take the receiver by
 /// `as_ref()` now and there is no move left to explain; what still moves is the
 /// member that would come out as a *view*, and that waits on one question about
-/// `??` ([ADR-190](../../../../docs/specification/adr/adr-190.md) D2,
+/// `??` ([ADR-278](../../../../docs/specification/adr/adr-278.md) D20,
 /// `docs/open-decisions.md`) rather than on a state - three of the four shapes
 /// a `?.` has are Borrowed, and the fourth is `NK2303`'s.
 /// The two types an `expected … found …` names, where both are the same.
@@ -696,7 +696,7 @@ pub fn render_sync_violation(
 ///
 /// The same shape `NK2202` and every relayed `rustc` message use, because a
 /// rule the compiler checks itself should not look different from one it
-/// relays (ADR-012). Part III C.2 asks for a headline, the reason, and one
+/// relays (ADR-300). Part III C.2 asks for a headline, the reason, and one
 /// concrete way out; a `Finding` carries all three and **`tools/render.nika`**
 /// writes them down (#125): the headline, the place, each label underlined
 /// whole (`^` where the error is, `-` where something explains it), the notes

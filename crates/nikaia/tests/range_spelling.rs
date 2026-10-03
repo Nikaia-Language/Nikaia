@@ -1,5 +1,5 @@
 //! `a..b` includes its end and `a..<b` does not
-//! ([ADR-137](../../../docs/specification/adr/adr-137.md) D3, D4, D5).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md) D12-D14).
 //!
 //! **One meaning per spelling** is the whole of the argument. The alternative
 //! the record turned down was `..` exclusive in an expression and inclusive in
@@ -49,7 +49,7 @@ fn the_old_inclusive_spelling_is_refused_by_name() {
 /// that works in half the language.
 #[test]
 fn the_head_chain_reads_the_same_two() {
-    // A range kept in a name is a value of its own (ADR-212 D3), `span` for
+    // A range kept in a name is a value of its own (ADR-293 D18), `span` for
     // `..<` and `through` for `..`; one written into the `for` is Rust's.
     assert!(emit("fn main() { let r = 0..<5\n for i in r { } }").contains("range::span(0, 5)"));
     assert!(emit("fn main() { if 3 > 2 { for i in 0..<5 { } } }").contains("0..5"));

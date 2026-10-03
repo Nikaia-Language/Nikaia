@@ -16,7 +16,7 @@
 //! test that asked the checker would pass for one that never ran at all.
 //!
 //! **They are slow on purpose**: each one compiles a small Cargo project. That
-//! is the cost [ADR-026](../../../docs/specification/adr/adr-026.md) Q4 named,
+//! is the cost [ADR-310](../../../docs/specification/adr/adr-310.md) Q4 named,
 //! and it is paid once per grammar rather than once per build.
 
 mod common;
@@ -202,7 +202,7 @@ const SHADES: &str = "enum Shade { Odd, Even, Named(ref String), Weight(f64) }\n
 /// with was true of this compiler rather than of the language below: Rust
 /// holds a `const S: Shade = Shade::Odd` perfectly well. What was missing was
 /// a build-time value with a variant in it
-/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1's set), and with
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1's set), and with
 /// one the dump is a `match` the generator writes an arm per variant of.
 ///
 /// The test **runs** the program, because that is the only thing that says

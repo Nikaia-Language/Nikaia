@@ -2,8 +2,8 @@
 //! through.
 //!
 //! This module is
-//! [ADR-038](../../../../docs/specification/adr/adr-038.md) D3, D4 and D5, and
-//! it is deliberately *here* rather than in the compiler. ADR-033 §8.4 gave
+//! [ADR-303](../../../../docs/specification/adr/adr-303.md) D3-D5, and
+//! it is deliberately *here* rather than in the compiler. ADR-292 gave
 //! the reason when it put the statement overlap behind
 //! [`crate::task::both`]: the next change of mechanism must be a `std` change
 //! and not a compiler change. Nothing about `io_uring`, `epoll`, a thread
@@ -15,7 +15,7 @@
 //!
 //! An I/O thread that is already running costs nothing per operation; one
 //! started per pair of operations costs a wake-up per pair, which is the whole
-//! of ADR-033 §8.4's finding. So the emitted `fn main` starts this and then
+//! of ADR-292's finding. So the emitted `fn main` starts this and then
 //! calls the program:
 //!
 //! ```rust,ignore
@@ -222,7 +222,7 @@ static ON_DEMAND: OnceLock<UserCode> = OnceLock::new();
 /// **The runtime of a `main` that cannot pause, started when it is first
 /// needed** ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1).
 ///
-/// ADR-038 D4 starts the runtime before the first statement so that an
+/// ADR-303 D4 starts the runtime before the first statement so that an
 /// operation inside the program costs no thread start - which is worth it for a
 /// program that pauses. One whose `main` cannot pause has no operation that
 /// needs the I/O workers, and starting them anyway put a second thread in the
@@ -247,7 +247,7 @@ fn report(why: String) -> Config {
 
 /// What [`start`] hands back: the drain, as a value a generated `main` holds.
 ///
-/// Not a `Drop` guard, deliberately. ADR-006 D5's drain has an outcome - it
+/// Not a `Drop` guard, deliberately. ADR-297 D6's drain has an outcome - it
 /// names every resource that did not finish - and a destructor is the wrong
 /// place for something that reports.
 #[must_use = "the runtime is drained by calling `finish`"]
@@ -257,7 +257,7 @@ pub struct Started {
 
 impl Started {
     /// Drain, bounded by the configured deadline, and warn about what did not
-    /// finish (ADR-006 D5).
+    /// finish (ADR-297 D6).
     pub fn finish(self) {
         // A runtime that was never started has nothing to drain (`on_demand`).
         let Some(runtime) = RUNTIME.get() else {
@@ -265,14 +265,14 @@ impl Started {
         };
         let deadline = runtime.config.cleanup_deadline;
         if deadline.is_zero() {
-            // "0" disables draining, which is ADR-006 D5's own word for it.
+            // "0" disables draining, which is ADR-297 D6's own word for it.
             return;
         }
         let left = runtime.workers.drain(deadline);
         // **And the readiness registrations**, which the worker drain used to
         // cover because a readiness wait *was* a worker operation. What is
         // waited for here is a wait that may never answer — a socket nobody
-        // writes to — and the deadline is exactly what bounds it (ADR-006 D5).
+        // writes to — and the deadline is exactly what bounds it (ADR-297 D6).
         // Counted, not waited for a second deadline's worth: what is left of
         // the first one is what is left.
         let left = left + readiness::registry().drain(deadline);
@@ -283,7 +283,7 @@ impl Started {
 }
 
 /// **A cleanup that did not finish is a failure of the program**
-/// ([ADR-112](../../../docs/specification/adr/adr-112.md) D1, D2).
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D7, D8).
 ///
 /// **Exit 70**, which is `EX_SOFTWARE` from `sysexits.h` — the Unix convention
 /// for *the program could not complete its work correctly*, which is what
@@ -305,7 +305,7 @@ impl Started {
 /// to be discovered.
 ///
 /// **A cleanup is named** where one was cut off
-/// ([ADR-239](../../../docs/specification/adr/adr-239.md) D5,
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D5,
 /// [`cleanups_expired`]); what is left after every cleanup finished is I/O
 /// nobody waits for by name, and that is counted.
 fn expired(left: usize, deadline: std::time::Duration) {
@@ -316,8 +316,8 @@ fn expired(left: usize, deadline: std::time::Duration) {
     ));
 }
 
-/// **The cleanups an expired deadline cut off, each by name** (ADR-239 D5,
-/// ADR-112 D2): the same status and the same path as [`expired`].
+/// **The cleanups an expired deadline cut off, each by name** (ADR-297 D5,
+/// ADR-297 D8): the same status and the same path as [`expired`].
 pub(crate) fn cleanups_expired(cut: &[String], deadline: std::time::Duration) {
     let named: Vec<String> = cut
         .iter()
@@ -341,7 +341,7 @@ fn ended_by_the_deadline(said: String) {
 }
 
 /// `EX_SOFTWARE` from `sysexits.h`
-/// ([ADR-112](../../../docs/specification/adr/adr-112.md) D1).
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D7).
 pub const EXIT_CLEANUP_EXPIRED: i32 = 70;
 
 impl Runtime {
@@ -429,7 +429,7 @@ impl Runtime {
         // **And the readiness registrations**, which used to be worker
         // operations and are counted here for the reason they were counted
         // there: the park asks *is anything outstanding* before it sleeps, and
-        // ADR-006 D5's drain asks it before it lets a program go. What changed
+        // ADR-297 D6's drain asks it before it lets a program go. What changed
         // in 0.0.165 is the mechanism and not the answer ([`readiness`]).
         self.workers.pending() + readiness::registry().outstanding()
     }
@@ -526,7 +526,7 @@ pub mod io {
     /// Two files, **both in flight at once**, answered in the order they were
     /// asked for.
     ///
-    /// This is the shape ADR-033 §8.5 predicted and could not measure: two
+    /// This is the shape ADR-292 predicted and could not measure: two
     /// operations that meet on nothing, neither waiting for the other, and no
     /// thread started or woken for the pair. `benches/overlap/src/bin/runtime.rs`
     /// is what puts the number on it.
@@ -569,7 +569,7 @@ pub mod io {
     /// its own work to another thread and waiting for it: it pays a wake-up
     /// and buys no overlap. Where a *pair* is asked for, the second operation
     /// has something to overlap with and the wake-up buys something - and that
-    /// wake-up is exactly the cost ADR-033 §8.4 measured and could not remove,
+    /// wake-up is exactly the cost ADR-292 measured and could not remove,
     /// which is why D3 does not put files here when the kernel can complete
     /// them instead.
     fn blocking_read_all(paths: &[&Path]) -> Vec<Result<Vec<u8>>> {
@@ -903,7 +903,7 @@ pub mod io {
     /// The same, giving up after `limit` if one is given.
     ///
     /// **The drain at the end of a program is what wants a bound**
-    /// ([ADR-006](../../../../docs/specification/adr/adr-006.md) D5): the
+    /// ([ADR-297](../../../../docs/specification/adr/adr-297.md) D6): the
     /// executor waits for the tasks nobody joined, and a task that never
     /// finishes must not become a program that never exits.
     ///
@@ -1007,22 +1007,25 @@ pub mod io {
     /// **The same wait, as something that can be awaited**
     /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
     ///
-    /// This is what the record is for. The reply arrives on an I/O worker, and a
-    /// worker rings a bell that - since D1 - *both* parks hear, so a `Pending`
-    /// from here is one the executor can sleep on whichever mechanism the
-    /// process got. Before D1 it could not: on the completion path the park
-    /// answered off a count of ring jobs, a worker's reply was not one, and a
-    /// future fed from one either spun or met `exec::block_on`'s panic about a
-    /// waker nobody arranged.
+    /// This is what the record is for. The wait is a **registration** on the
+    /// process's one poller, armed here on the calling thread
+    /// ([ADR-303](../../../docs/specification/adr/adr-303.md) D8); no worker
+    /// holds it. The poller's thread answers, and rings the bell that - since
+    /// ADR-121 D1 - *both* parks hear (ADR-303 D11), so a `Pending` from here is
+    /// one the executor can sleep on whichever mechanism the process got. The
+    /// registration counts as outstanding until it is answered or dropped
+    /// (ADR-303 D10).
     ///
-    /// **No waker is stored**, for the reason [`Reading`] gives at length: the
-    /// executor is the only thing on this thread that parks, and it parks in the
-    /// I/O.
+    /// The slot keeps the poll's waker, for an executor that honours one; the
+    /// bell is what reaches this one, for the reason [`Reading`] gives at
+    /// length: the executor is the only thing on this thread that parks, and it
+    /// parks in the I/O.
     ///
-    /// The descriptor the worker polls is a **duplicate** of this one
-    /// ([`worker::Op::Readiness`] says why), so a `Waiting` dropped before its
-    /// answer arrives leaves the worker with a descriptor of its own rather than
-    /// with a number the caller may since have closed.
+    /// The descriptor the poller holds is a **duplicate** of this one
+    /// ([`super::readiness`] says why), so it stays open for exactly as long as
+    /// it is registered, whatever the caller does with its own; and a `Waiting`
+    /// dropped before its answer deletes the registration and closes the
+    /// duplicate (ADR-303 D12).
     pub fn waiting(
         socket: &impl std::os::fd::AsFd,
         interest: Interest,
@@ -1378,7 +1381,7 @@ mod tests {
     }
 
     /// **An expired `cleanup-deadline` is exit 70, said on the panic path**
-    /// (ADR-112 D1 and D2).
+    /// (ADR-297 D7 and D8).
     ///
     /// It has to be a *process*. The decision is about what the thing that
     /// started the program reads — systemd, cron, a script under `set -e` —
@@ -1571,7 +1574,7 @@ mod tests {
     }
 
     /// The pair the **compiler** lowers onto answers the same bytes in the same
-    /// order on either mechanism (ADR-033 D10).
+    /// order on either mechanism (ADR-292 D6).
     ///
     /// What it costs differs - the completion path overlaps and the fallback
     /// reads in written order - and what it *means* may not, because the

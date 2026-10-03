@@ -1,14 +1,14 @@
 //! Running Nikaia while the program is built
-//! ([ADR-073](../../../docs/specification/adr/adr-073.md) D5's second stage).
+//! ([ADR-287](../../../docs/specification/adr/adr-287.md) D6's second stage).
 //!
 //! `comptime` has had an evaluator since the word existed, and what it knew was
 //! an integer literal, a name whose value already folded, a negation and
 //! `+ - * / %` — [`fold`](crate::fold), 124 lines with no call in it. That is
 //! D5's **first** stage, and the second one was written down as *when Q4 is
 //! answered*: a call, and with it the file reading
-//! [ADR-072](../../../docs/specification/adr/adr-072.md) waits behind.
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) waits behind.
 //!
-//! Q4 **is** answered — [ADR-075](../../../docs/specification/adr/adr-075.md)
+//! Q4 **is** answered — [ADR-287](../../../docs/specification/adr/adr-287.md)
 //! D1 and D2 say what a build-time body may do — so this is the call, and with
 //! it the **loop**: a `for` over a range, a `while`, `break`, `continue` and an
 //! assignment, because a loop that cannot change anything is not one.
@@ -41,7 +41,7 @@ use crate::contracts::{Ledger, touch};
 use crate::parser::Parsed;
 
 /// How deep a build-time call may go before this stops
-/// ([ADR-075](../../../docs/specification/adr/adr-075.md) D4's neighbour).
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D16's neighbour).
 ///
 /// **Not a step budget.** A body that loops forever still hangs the build, which
 /// is what that record accepted; what this prevents is a *recursion* that takes
@@ -74,7 +74,7 @@ enum Flow {
 ///
 /// Four kinds, which is what the declaration can carry: Rust's `const` needs a
 /// type this compiler can spell
-/// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5) — an integer, a
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D6) — an integer, a
 /// `bool`, a **list** of them, and **text**.
 ///
 /// **The array is the aggregate issue #174 was about**, and it is an
@@ -139,7 +139,7 @@ pub enum Value {
     ///
     /// **The name is carried and not resolved here.** Which `enum` a variant
     /// belongs to is the checker's answer and the emitter writes what it is
-    /// told ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), so this
+    /// told ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), so this
     /// holds the pair rather than a reference to a declaration.
     Variant {
         ty: String,
@@ -147,7 +147,7 @@ pub enum Value {
         payload: Vec<Value>,
     },
     /// A tuple, which is what a **pair** is
-    /// ([ADR-176](../../../docs/specification/adr/adr-176.md) D1): a map the
+    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D8): a map the
     /// build can see is written `[("get", 1), ("post", 2)]`, and that needed no
     /// new literal — only a value for the one this language already has.
     Tuple(Vec<Value>),
@@ -156,13 +156,13 @@ pub enum Value {
     /// **What it is for is the method.** A `sync` method of the program's own
     /// looked exactly like something a `comptime` should be able to call — the
     /// body is right there and `sync` says it may run
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) — and it
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) — and it
     /// could not, because a method needs a **value** to be called on and this
     /// evaluator had none to make.
     ///
     /// It lands as a `const` like anything else: `const P: Point = Point { x: 1, y: 2 };`
     /// is Rust, and a struct whose fields own nothing is already its own view —
-    /// [ADR-079](../../../docs/specification/adr/adr-079.md) D1's *a number is
+    /// [ADR-311](../../../docs/specification/adr/adr-311.md) D1's *a number is
     /// already its own view*, read one shape out.
     Struct {
         name: String,
@@ -178,7 +178,7 @@ pub enum Refusal {
     /// reporting until every stage lands.
     Unevaluable,
     /// The callee may not be run while the program is built
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1, D2). A
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14). A
     /// different claim from the one above and it gets a different code: the
     /// shape is understood and the rule says no.
     NotAllowed {
@@ -214,7 +214,7 @@ pub enum Refusal {
     /// ring rather than the limit it hit.
     Circular { ring: Vec<String> },
     /// **A file this build may not read**
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D1 to D5).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D4 to D5).
     ///
     /// Understood and refused, which is why it is not `Unevaluable`: the shape
     /// is read, the path is in hand, and the answer is no — with a reason that
@@ -243,7 +243,7 @@ pub enum Refusal {
     /// elements, and a build that answered *cannot evaluate* would send the
     /// reader looking for a missing feature instead of at the line
     /// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
-    /// Running it would abort at run time ([ADR-048](../../../docs/specification/adr/adr-048.md)
+    /// Running it would abort at run time ([ADR-285](../../../docs/specification/adr/adr-285.md)
     /// D1); at build time there is no run to abort.
     OutOfBounds { at: i128, len: usize },
 }
@@ -259,7 +259,7 @@ pub struct BuildTime<'a> {
     /// belongs to the file that was parsed into it.
     ///
     /// The *permission* to run a callee has been program-wide from the start —
-    /// it is two ledger columns ([ADR-075](../../../docs/specification/adr/adr-075.md)
+    /// it is two ledger columns ([ADR-287](../../../docs/specification/adr/adr-287.md)
     /// D1, D2) and a program's ledger is absorbed from its units'. What was not
     /// was the **body**, and no column could carry one: a ledger records what a
     /// caller has to know about a function it *cannot see the body of*, which
@@ -267,7 +267,7 @@ pub struct BuildTime<'a> {
     beside: &'a [&'a Parsed],
     own: &'a Ledger,
     /// **What this build may read while it builds**
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md)). A caller that
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md)). A caller that
     /// passes [`Reads::none`] gets D1: the whole class is off, which is what
     /// every test and every build that did not ask for it gets.
     reads: &'a Reads,
@@ -349,7 +349,7 @@ impl<'a> BuildTime<'a> {
                 }
                 Ok(Value::Tuple(held))
             }
-            // **`f"…"` is text with code in it** (ADR-035), and the code is
+            // **`f"…"` is text with code in it** (ADR-309), and the code is
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a
             // value somebody could have written down.
@@ -471,7 +471,7 @@ impl<'a> BuildTime<'a> {
             // forms it knows itself rather than entries it resolved. Said out
             // loud, because a `sync` method of this program's own looks exactly
             // like something that should work: `sync` is the **permission**
-            // ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) and a
+            // ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) and a
             // body this walk can read is the **ability**, and they are two
             // different things.
             // Kap 4.2's literal, and the shorthand with it: `Point { x, y }`
@@ -569,8 +569,8 @@ impl<'a> BuildTime<'a> {
                 };
                 let name = self.parsed.text(*name).to_string();
                 // **`asset("…")` is answered before the arguments are**
-                // ([ADR-116](../../../docs/specification/adr/adr-116.md) D2,
-                // [ADR-072](../../../docs/specification/adr/adr-072.md) D4).
+                // ([ADR-310](../../../docs/specification/adr/adr-310.md) D3,
+                // [ADR-310](../../../docs/specification/adr/adr-310.md) D7).
                 // A name that folds to `"config.json"` is a path that was
                 // *computed*, and reading it would make *named in the code*
                 // something a reader cannot decide by looking at the line.
@@ -638,7 +638,7 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::Ge => Some(Value::Bool(a >= b)),
                 BinaryOp::And | BinaryOp::Or => None,
                 // **The bit operators, on the value as it is held**
-                // ([ADR-248](../../docs/specification/adr/adr-248.md) D3): an
+                // ([ADR-285](../../docs/specification/adr/adr-285.md) D9): an
                 // `i128` holds every `u64` and `i64` with the bits they have,
                 // and whether the result fits the type it goes into is
                 // `NK1116`'s, as for a sum. A count outside the width is not
@@ -701,7 +701,7 @@ impl<'a> BuildTime<'a> {
         }
     }
 
-    /// **`f"…"` while the program is built** (ADR-035, [ADR-032](../../../docs/specification/adr/adr-032.md)
+    /// **`f"…"` while the program is built** (ADR-309, [ADR-309](../../../docs/specification/adr/adr-309.md)
     /// D3 — a hole is code and every analysis sees it, this one included).
     ///
     /// The holes are split out by the same function the lowering uses, so the
@@ -718,7 +718,7 @@ impl<'a> BuildTime<'a> {
         parts: &[crate::ast::FPart],
         frame: &BTreeMap<String, Value>,
     ) -> Result<Value, Refusal> {
-        // Built from the parts the grammar parsed (ADR-262 D2, D5).
+        // Built from the parts the grammar parsed (ADR-309 D6, D9).
         let format = crate::emit::format_of(parts);
         let holes = crate::emit::interpolated_holes(parts);
         let mut values = Vec::with_capacity(holes.len());
@@ -727,7 +727,7 @@ impl<'a> BuildTime<'a> {
         }
 
         // **The literal parts are still *written*.** The grammar keeps a run
-        // of text as written (ADR-262 D1) — a `\` and the character after it,
+        // of text as written (ADR-309 D5) — a `\` and the character after it,
         // `\u{…}` braces included — so a chunk is read by
         // [`decoded`] exactly as a plain literal is, and a hole's value is
         // already decoded.
@@ -935,15 +935,15 @@ impl<'a> BuildTime<'a> {
     }
 
     /// **The file a build reads**
-    /// ([ADR-116](../../../docs/specification/adr/adr-116.md) D2).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D3).
     ///
     /// It is the compiler's and not `std`'s, so it is read here rather than
     /// resolved through a ledger: there is no body to describe. What comes back
     /// is the file's **text**, which is what crosses to the program as a `&str`
-    /// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1) and what a
+    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1) and what a
     /// grammar's entry takes.
     ///
-    /// Every rule [ADR-072](../../../docs/specification/adr/adr-072.md) states
+    /// Every rule [ADR-310](../../../docs/specification/adr/adr-310.md) states
     /// holds unchanged under the call rather than under the keyword it was
     /// written for, and the first of them is the one that costs nothing to
     /// keep: a build given no list reads nothing.
@@ -966,7 +966,7 @@ impl<'a> BuildTime<'a> {
     /// A call to a function this unit declares.
     ///
     /// **The permission is read off the ledger**
-    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1, D2) and not
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13, D14) and not
     /// off a list kept here: `sync` says the body never pauses, and a touch set
     /// that is empty or exactly the build's own parameters says it reaches
     /// nothing else. Both are derived for every function already.
@@ -1195,7 +1195,7 @@ impl<'a> BuildTime<'a> {
                     frame.insert(self.parsed.text(*name).to_string(), value);
                 }
                 // A `comptime` inside a body is a `let` that must fold
-                // ([ADR-073](../../../docs/specification/adr/adr-073.md) D2),
+                // ([ADR-287](../../../docs/specification/adr/adr-287.md) D3),
                 // and inside a build-time body everything must, so the two are
                 // the same statement here.
                 Stmt::Comptime { name, value, .. } => {
@@ -1271,7 +1271,7 @@ impl<'a> BuildTime<'a> {
                 }
                 Stmt::While { cond, body } => {
                     // **No step budget**
-                    // ([ADR-075](../../../docs/specification/adr/adr-075.md)
+                    // ([ADR-287](../../../docs/specification/adr/adr-287.md)
                     // D4), deliberately and with the cost written down: a
                     // `while` that does not end hangs the build. The call-depth
                     // limit above is not this and does not become it.
@@ -1311,7 +1311,7 @@ impl<'a> BuildTime<'a> {
                     }
                 }
                 // **`xs.push(v)`, which is how a table is *grown* rather than
-                // filled** — [ADR-079](../../../docs/specification/adr/adr-079.md)'s
+                // filled** — [ADR-311](../../../docs/specification/adr/adr-311.md)'s
                 // own title, *growable going in, fixed coming out*. The body
                 // works with a list that does not know its length yet; what
                 // crosses into the program is fixed, and the declaration is
@@ -1417,7 +1417,7 @@ fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
 /// literal into a value at build time, and `Checker::an_escape_nothing_names`
 /// refuses a literal the set does not cover. Both read
 /// `crates/nikaia-std/src/tools/escapes.nika`, where the table is Nikaia
-/// ([ADR-250](../../docs/specification/adr/adr-250.md), #125).
+/// ([ADR-294](../../docs/specification/adr/adr-294.md), #125).
 pub use nikaia_std::tools::escapes::NotAnEscape as Refused;
 
 /// The escapes this language has, as a reader of a diagnostic wants them
@@ -1465,7 +1465,7 @@ pub fn written(text: &str) -> String {
 }
 
 /// Whether a touch is the build's own parameters
-/// ([ADR-075](../../../docs/specification/adr/adr-075.md) D2).
+/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D14).
 ///
 /// **`cli::args` passes, deliberately**: same parameters, same code. A build's
 /// own arguments are an input like its source is, and a body that shapes a

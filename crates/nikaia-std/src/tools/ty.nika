@@ -1,17 +1,17 @@
 // crates/nikaia-std/src/tools/ty.nika
 //
 // **The type language the checker reasons in, and the one the ledger records**
-// (ADR-257 D1): declared in Nikaia, lowered by `nikaia lower-std` to `ty.rs`
+// (ADR-294 D12): declared in Nikaia, lowered by `nikaia lower-std` to `ty.rs`
 // beside it, `include!`d as `nikaia_std::tools::ty`, and re-exported by the
 // compiler's `contracts::ty`, which keeps the algorithms over it until
-// ADR-257's step (d) moves them.
+// ADR-294's step (d) moves them.
 //
-// **A plain tree, compared by what it says** (ADR-257 §4.7): a name here is
+// **A plain tree, compared by what it says** (ADR-294): a name here is
 // text, and two types are the same when they are written the same. A ledger is
 // a file, so nothing is interned. The measurement that decided it is in the
 // record.
 //
-// **What moved with the declaration is its text** (ADR-257 step (c)): `text`
+// **What moved with the declaration is its text** (ADR-294 step (c)): `text`
 // below is what a diagnostic prints and what a ledger stores, and `parse`
 // reads it back. Text is read here as a list of characters, which is how
 // `ledger.nika` reads a line: this language has no slice of a `String`.
@@ -42,7 +42,7 @@ pub enum Ty {
     /// `(A, B)`: a fixed number of parts and no name.
     Tuple(Vec[Ty]),
     /// **What the C boundary lends**
-    /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): `ref mut T`,
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D5): `ref mut T`,
     /// `ref Array[u8]` and `ref mut Array[u8]`, each a view that lives for the
     /// call. A plain `ref T` is **not** this: it is `Named` with `view`.
     Pointed {
@@ -58,7 +58,7 @@ pub enum Ty {
     /// `Array[f64, 3]`. Compatible with nothing but itself.
     Count(i64),
     /// `$V`: a name in a library's signature that stands for a type the
-    /// receiver supplies ([ADR-030](../../../docs/specification/adr/adr-030.md)).
+    /// receiver supplies ([ADR-286](../../../docs/specification/adr/adr-286.md)).
     /// It is bound and substituted away at a call, or it becomes `Unknown`.
     Var {
         name: String,
@@ -66,7 +66,7 @@ pub enum Ty {
         view: bool,
     },
     /// `fn(ref Stats) -> R sync throws`
-    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1). The
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D6). The
     /// defaults are the language's: without `sync` the code may pause, without
     /// `throws` it cannot fail.
     Fn {
@@ -98,7 +98,7 @@ pub enum Ty {
 }
 
 /// **What a sequence is as a whole**
-/// ([ADR-212](../../../docs/specification/adr/adr-212.md) D1): the language
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D16): the language
 /// below's `DoubleEndedIterator`, `ExactSizeIterator` and `Copy`, in this
 /// language's words.
 pub struct Shape {
@@ -112,7 +112,7 @@ pub struct Shape {
 
 impl Shape {
     /// None of the three: what a sequence is when nobody said. Named rather
-    /// than a `Default`, for ADR-252 D4.4's reason.
+    /// than a `Default`, for ADR-294 D9.4's reason.
     pub fn none() -> Shape {
         return Shape { ends: false, sized: false, replays: false }
     }
@@ -203,7 +203,7 @@ fn listed(parts: ref Array[Ty]) -> String {
 
 /// `ref mut Array[T]`, and not the pointer it lowers to. The `?` a nullable
 /// pointee carries comes out after the brackets, which is the spelling
-/// `Ty::parse` reads back (ADR-155 D5).
+/// `Ty::parse` reads back (ADR-302 D14).
 fn pointed(item: ref Ty, slice: bool, mutable: bool) -> String {
     let mut out: String = "ref "
     if mutable {
@@ -293,7 +293,7 @@ pub fn parse(written: ref String) -> Ty {
     let viewed = a_view_of(trimmed)
     let is_a_view = viewed != null
     let marked: String = viewed ?? ""
-    // **The two boundary shapes are read before the `?`** (ADR-155 D5): on a
+    // **The two boundary shapes are read before the `?`** (ADR-302 D14): on a
     // `ref mut T` or a `ref Array[T]` the trailing `?` is the pointee's.
     if is_a_view {
         let pointer = pointed_at(marked)
@@ -455,10 +455,10 @@ fn word_off(tail: ref String, word: ref String) -> String? {
     return null
 }
 
-/// **What the C boundary lends, read out of its text** (ADR-147 D1):
+/// **What the C boundary lends, read out of its text** (ADR-302 D5):
 /// `ref mut T`, `ref Array[T]` and the two together. A plain `ref T` is not
 /// one: it is the view every other declaration writes. The `?` at the end is
-/// the pointee's (ADR-155 D5).
+/// the pointee's (ADR-302 D14).
 fn pointed_at(viewed: ref String) -> Ty? {
     let mut rest: String = viewed.clone()
     let mut mutable = false
@@ -503,7 +503,7 @@ fn pointed_at(viewed: ref String) -> Ty? {
 
 /// `fn(A, B) -> R sync throws`: the parenthesis matched rather than found at
 /// the end, and the words read off the back, because the result is whatever
-/// stands in front of them (ADR-102 D1).
+/// stands in front of them (ADR-277 D6).
 fn a_function(written: ref String) -> Ty? {
     let c: Vec[char] = written.chars().collect()
     let close = closing(c, 3, ')')
@@ -646,7 +646,7 @@ fn a_name(rest: ref String, view: bool) -> Ty {
 }
 
 // ---------------------------------------------------------------------------
-// The ledger's small records (ADR-257 step (b)): what a function's entry says
+// The ledger's small records (ADR-294 step (b)): what a function's entry says
 // besides its signature. Their text is read by the compiler's `contracts`,
 // which writes them back through the methods here.
 // ---------------------------------------------------------------------------
@@ -681,7 +681,7 @@ impl Provenance {
 ///
 /// **`Unpromised` is never written.** It is what another package's
 /// `"inferred"` reads as where it is checked from outside
-/// ([ADR-244](../../../../docs/specification/adr/adr-244.md) D1): the body
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D28): the body
 /// cannot pause, and nobody promised it, so a caller has to count it as one
 /// that may. It is kept apart from `No` so that a refusal can say which of the
 /// two it is, and how the other package's author makes the promise.
@@ -703,7 +703,7 @@ impl Sync {
     }
 }
 
-/// **Whether a function takes a lock** (ADR-039 D2): not, yes, or nobody can
+/// **Whether a function takes a lock** (ADR-281 D28): not, yes, or nobody can
 /// say yet.
 pub enum Lock {
     No,
@@ -762,7 +762,7 @@ impl Threads {
     }
 }
 
-/// **What a function reaches** (ADR-033): a kind of resource, the parameter
+/// **What a function reaches** (ADR-292): a kind of resource, the parameter
 /// that names which one where one does, and whether it writes.
 pub struct Touch {
     pub kind: String,
@@ -791,7 +791,7 @@ fn touched(kind: ref String, parameter: ref String?, write: bool) -> String {
     return f"{kind}({named_text}) {access}"
 }
 
-/// **How a view is held** (ADR-008 D2): borrowed for the call, or tethered to
+/// **How a view is held** (ADR-283 D2): borrowed for the call, or tethered to
 /// a buffer that has to outlive it.
 pub enum State {
     Borrowed,
@@ -839,7 +839,7 @@ impl Held {
     }
 }
 
-/// **What a shared allocation is counted with** (ADR-044): nothing, a plain
+/// **What a shared allocation is counted with** (ADR-300): nothing, a plain
 /// word, or an atomic one, in that order of cost.
 pub enum Count {
     Plain,
@@ -891,7 +891,7 @@ impl Count {
     }
 }
 
-/// **Positions that are one allocation** (ADR-044), and what counts it.
+/// **Positions that are one allocation** (ADR-300), and what counts it.
 pub struct Class {
     pub members: Vec[String],
     pub count: Count,
@@ -961,7 +961,7 @@ pub struct ConfigContract {
 /// **What a function's parameters and result are**, as the ledger writes them:
 /// `[H: Handler](mut out: Vec[i64], text: ref String; limit: i64 = 10) -> T`.
 pub struct Signature {
-    /// The type parameters and what each must implement (ADR-205 D1).
+    /// The type parameters and what each must implement (ADR-295 D18).
     pub bounds: Vec[(String, Vec[String])],
     pub params: Vec[(String, Ty)],
     /// The parameters written `mut` (ADR-094 D3).
@@ -1014,7 +1014,7 @@ impl Signature {
                 inside.push_str(ref f"{option.name}: {option.ty.text()} = {option.default}")
             }
         }
-        // **In front, where the declaration writes them** (ADR-205 D1).
+        // **In front, where the declaration writes them** (ADR-295 D18).
         let mut before: String = ""
         if self.bounds.len() > 0 {
             before.push('[')
@@ -1141,7 +1141,7 @@ impl TypeContract {
     }
 }
 
-/// **One compilation unit's contracts** (ADR-257 D1).
+/// **One compilation unit's contracts** (ADR-294 D12).
 ///
 /// Ordered maps throughout, because the file is a **pure function of (source,
 /// toolchain)** (13.5) and a hash map's iteration order is not. The
@@ -1185,20 +1185,20 @@ pub struct Ledger {
     /// The **signatures** are in `functions`, keyed `Summarize::summary`, which
     /// is where a bound looks one up. This map answers the other question a
     /// bound asks first: *is `Summarize` a trait at all*
-    /// (ADR-078 D3). A name that
+    /// (ADR-295 D8). A name that
     /// is not in here names no trait, and a bound on it is refused rather than
     /// quietly believed.
     ///
     /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
-    /// it (ADR-106 D3): they are
+    /// it (ADR-295 D12): they are
     /// the `fn` entries beside it, under `Handler::handle`, and the set is
     /// filled from those once the whole file is parsed.
-    /// ADR-078 §4 left *a trait a
+    /// ADR-295 left *a trait a
     /// package publishes* as a question about modules; D1 and D3 of that later
     /// record answered it, and a bound has taken a path since 0.0.171.
     pub traits: collections::BTreeMap[String, collections::BTreeSet[String]],
     /// **Who answers for what**: a trait's name to the types that `impl` it
-    /// (ADR-174 D1).
+    /// (ADR-295 D15).
     ///
     /// The other half of a bound, and the reason it is here rather than in the
     /// checker: `impl Speaks for Dog` may stand in a **different file** from
@@ -1207,7 +1207,7 @@ pub struct Ledger {
     /// over the files is a thing this map already knows how to be.
     ///
     /// **Written to the ledger file** as `[impl."Handler for Static"]`
-    /// (ADR-106 D4), one line per
+    /// (ADR-295 D13), one line per
     /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
     /// the trait's package, in the type's, or in a consumer for its own type —
     /// so the answer at a call is the union over every ledger the program reads
@@ -1233,7 +1233,7 @@ impl Ledger {
     }
 }
 
-/// **What a describer saw and did not claim** (ADR-193 D3, D5).
+/// **What a describer saw and did not claim** (ADR-290 D8, D10).
 ///
 /// Rendered as comments into `contracts/<crate>.contracts` and never parsed
 /// back. The distinction the record rests on: ADR-123 D2 lets the describer
@@ -1255,10 +1255,10 @@ impl Notes {
 }
 
 // ---------------------------------------------------------------------------
-// What the checker asks of a type (ADR-257 step (d))
+// What the checker asks of a type (ADR-294 step (d))
 // ---------------------------------------------------------------------------
 
-/// The stamp a lock puts on what it hands out (ADR-111 D1).
+/// The stamp a lock puts on what it hands out (ADR-281 D22).
 pub comptime SEEN: ref String = "Seen"
 
 impl Ty {
@@ -1270,7 +1270,7 @@ impl Ty {
         }
     }
 
-    /// The same type, read as a **view** of it (ADR-191 D1): a view of
+    /// The same type, read as a **view** of it (ADR-278 D19): a view of
     /// `String` is `str` (ADR-184 D2), a view of anything else is that name
     /// with the word on it. A type this compiler cannot name has no view, and
     /// neither does one that is already one.
@@ -1281,7 +1281,7 @@ impl Ty {
         }
     }
 
-    /// Whether a lock handed this out (ADR-111 D1), at any depth a stamp can
+    /// Whether a lock handed this out (ADR-281 D22), at any depth a stamp can
     /// be at: a nullable of a stamped value is stamped. A bare `Seen` is a
     /// type the program declared.
     pub fn is_seen(ref self) -> bool {
@@ -1293,7 +1293,7 @@ impl Ty {
     }
 
     /// The type under the stamp, or this type where there is none. There is
-    /// no word for this in the language (ADR-111 D4): it is the emitter's,
+    /// no word for this in the language (ADR-281 D25): it is the emitter's,
     /// which erases the stamp, and a fit's, which compares what is under it.
     pub fn unseen(ref self) -> Ty {
         match self {
@@ -1331,14 +1331,14 @@ impl Ty {
     /// (ADR-013 D7) beyond the one Part I 2.3 writes, a plain value into a
     /// nullable slot. The cases, in the order they are asked:
     ///
-    /// * a stamp passes through (ADR-111 D2);
+    /// * a stamp passes through (ADR-281 D23);
     /// * tuples part by part, a count only the same count (ADR-152 D4);
-    /// * what the C boundary lends fits the same shape (ADR-147 D1);
+    /// * what the C boundary lends fits the same shape (ADR-302 D5);
     /// * an `Array[T, N]` fits an `Array[T]` and not back (ADR-184 D3);
-    /// * what a caller may hand to a boundary type (ADR-147 D1);
-    /// * a lambda that does less fits a type that allows more (ADR-102 D2);
+    /// * what a caller may hand to a boundary type (ADR-302 D5);
+    /// * a lambda that does less fits a type that allows more (ADR-277 D7);
     /// * two sequences when their items do, read as a lambda's words are
-    ///   (ADR-105 D1, ADR-172 D1, ADR-212 D1);
+    ///   (ADR-105 D1, ADR-172 D1, ADR-293 D16);
     /// * a variable that reaches a comparison was never bound, and fits;
     /// * nullables, and a plain value into a nullable slot;
     /// * two names written the same, with arguments that fit.
@@ -1430,7 +1430,7 @@ impl Ty {
     }
 
     /// The same type with every name in `parameters` turned into a variable a
-    /// call site binds (ADR-074): `erase`'s sibling, for a name that stands
+    /// call site binds (ADR-295): `erase`'s sibling, for a name that stands
     /// for a type a caller passes. A variable is bound and replaced, or
     /// becomes `?`, so it never reaches a comparison.
     pub fn parameterise(ref self, parameters: ref collections::BTreeSet[String]) -> Ty {
@@ -1544,7 +1544,7 @@ fn count_fits(n: i64, expected: ref Ty) -> bool {
 }
 
 // A `ref mut Array[u8]` is not a `ref Array[u8]`, which promises not to
-// write, and a run is not one element (ADR-147 D1).
+// write, and a run is not one element (ADR-302 D5).
 fn pointed_fits(found: ref Ty, run: bool, writes: bool, expected: ref Ty) -> bool {
     return match expected {
         Ty::Pointed { item, slice, mutable } => found.fits(item) && run == slice && writes == mutable,
@@ -1568,8 +1568,8 @@ fn array_fits(given: ref Array[Ty], expected: ref Ty) -> bool {
 }
 
 // Whether a value of this type lends a **run** of `item` laid out in memory
-// (ADR-147 D1): a list, an array and - where the item is `u8` - text, which
-// is a run of bytes. A slice is a run already (ADR-215 D3).
+// (ADR-302 D5): a list, an array and - where the item is `u8` - text, which
+// is a run of bytes. A slice is a run already (ADR-293 D23).
 fn lends_a_run_of(found: ref Ty, item: ref Ty) -> bool {
     return match found {
         Ty::Unknown => true,
@@ -1594,7 +1594,7 @@ fn a_run_named(name: ref String, args: ref Array[Ty], item: ref Ty) -> bool {
     return false
 }
 
-// A lambda that does less fits a type that allows more (ADR-102 D2): one that
+// A lambda that does less fits a type that allows more (ADR-277 D7): one that
 // never pauses goes where pausing is allowed, one that cannot fail where
 // failing is. A result nobody wrote is the absence of a claim.
 fn function_fits(found: ref Array[Ty], found_result: ref Ty?, never_pauses: bool, fails: bool, expected: ref Ty) -> bool {
@@ -1613,7 +1613,7 @@ fn results_fit(found: ref Ty?, wanted: ref Ty?) -> bool {
 
 // Two sequences fit when their items do (ADR-105 D1). `pauses` fits as
 // `throws` does and the other way round from `sync` (ADR-172 D1); `Par` fits
-// `Seq` and not back (D3); a demanded shape is met by the word (ADR-212 D1).
+// `Seq` and not back (D3); a demanded shape is met by the word (ADR-293 D16).
 fn sequence_fits(found: ref Ty, never_pauses: bool, may_pause: bool, fails: bool, at_once: bool, has: ref Shape, expected: ref Ty) -> bool {
     return match expected {
         Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => found.fits(item) && (never_pauses || !is_sync) && (!may_pause || pauses) && (!fails || can_throw) && (at_once || !parallel) && has.meets(shape),
@@ -1670,11 +1670,11 @@ fn parameterised_name(name: ref String, args: ref Array[Ty], view: bool, paramet
 }
 
 /// **Bind a library signature's variables from the receiver's type**
-/// (ADR-031): one level and by position, and a mismatch binds nothing. The
+/// (ADR-288): one level and by position, and a mismatch binds nothing. The
 /// view flag is not compared, because a signature writes the receiver the way
 /// the method takes it and a caller holds it however it holds it. A sequence
 /// binds through its item (ADR-105 D1) and a lambda through its parameters and
-/// result (ADR-212 D5).
+/// result (ADR-293 D20).
 pub fn bind(pattern: ref Ty, actual: ref Ty, mut out: collections::BTreeMap[String, Ty]) {
     match pattern {
         Ty::Var { name, .. } => {
@@ -1786,7 +1786,7 @@ fn substituted_result(result: ref Ty?, bound: ref collections::BTreeMap[String, 
 }
 
 /// **Every named type `declared` lists, written with `module::` in front**
-/// (ADR-011 D2): a module's own signature says `-> Conn`, and a caller writes
+/// (ADR-296 D17): a module's own signature says `-> Conn`, and a caller writes
 /// `pool::Conn`. Made one where a unit is absorbed, the only place that knows
 /// both the module and what it declares.
 pub fn qualify(ty: ref Ty, module: ref String, declared: ref collections::BTreeSet[String]) -> Ty {
@@ -1818,7 +1818,7 @@ fn qualified_result(result: ref Ty?, module: ref String, declared: ref collectio
 }
 
 /// **A type named through one package's word for another, renamed to the
-/// word this build uses** (ADR-053 D2): only the prefix, and only where the
+/// word this build uses** (ADR-286 D20): only the prefix, and only where the
 /// map has it. A `&` in front is a view's spelling and stays where it was.
 pub fn renamed(ty: ref Ty, renames: ref collections::BTreeMap[String, String]) -> Ty {
     return match ty {

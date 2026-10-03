@@ -1,5 +1,5 @@
 //! The failure channel is **the error type**, where the ledger names one
-//! ([ADR-157](../../../docs/specification/adr/adr-157.md)).
+//! ([ADR-280](../../../docs/specification/adr/adr-280.md)).
 //!
 //! [ADR-023](../../../docs/specification/adr/adr-023.md) D1 records `throws` as
 //! a **set of error types** and the ledger has derived it for a long time; D3
@@ -109,8 +109,8 @@ fn a_function_with_one_error_type_declares_it() {
 /// compiler cannot name what this fails with, so nothing can be named after it.
 ///
 /// **`std` used to be this test's example** and stopped being one twice over:
-/// [ADR-158](../../../docs/specification/adr/adr-158.md) gave `std` names, and
-/// [ADR-159](../../../docs/specification/adr/adr-159.md) D1 let a channel be
+/// [ADR-280](../../../docs/specification/adr/adr-280.md) gave `std` names, and
+/// [ADR-280](../../../docs/specification/adr/adr-280.md) D9 let a channel be
 /// named after a type a **ledger** describes. So the example is now a call no
 /// ledger describes at all, which is what `"?"` has always meant.
 #[test]
@@ -126,7 +126,7 @@ fn a_set_with_a_question_mark_keeps_the_box() {
 }
 
 /// **A set with two members is the generated sum**
-/// ([ADR-160](../../../docs/specification/adr/adr-160.md) D1), which is what
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D15), which is what
 /// this record left open and what issue #179 carried: until it
 /// was built, a channel named after one of two error types would have been a
 /// lie, so the opaque one was the honest answer.
@@ -267,7 +267,7 @@ fn the_long_form_names_the_site() {
     assert!(printed.contains("no config at etc"), "{printed}");
     assert!(printed.contains("raised at load"), "{printed}");
     // **And it says a trace was not captured**
-    // ([ADR-036](../../../docs/specification/adr/adr-036.md)), rather than
+    // ([ADR-280](../../../docs/specification/adr/adr-280.md)), rather than
     // leaving a reader to wonder whether one was lost. This is the line that
     // caught the first shape of D2: opening the envelope kept the site and
     // dropped the trace, so the long form was two lines and silently shorter.
@@ -332,7 +332,7 @@ fn a_failure_propagates_through_a_typed_channel() {
 }
 
 /// **A handler that never reads the error is untouched**
-/// ([ADR-090](../../../docs/specification/adr/adr-090.md)): the binding is
+/// ([ADR-308](../../../docs/specification/adr/adr-308.md)): the binding is
 /// `_error` and there is no envelope to open.
 #[test]
 fn a_handler_that_ignores_the_error_is_untouched() {
@@ -350,7 +350,7 @@ fn a_handler_that_ignores_the_error_is_untouched() {
 }
 
 // ---------------------------------------------------------------------------
-// [ADR-159](../../../docs/specification/adr/adr-159.md): a library's type too
+// [ADR-280](../../../docs/specification/adr/adr-280.md): a library's type too
 // ---------------------------------------------------------------------------
 
 /// **A channel may be named after a type a *ledger* describes** (D1). Before
@@ -374,8 +374,8 @@ fn a_librarys_error_type_is_a_channel() {
 }
 
 /// **It travels in an envelope with no site**
-/// ([ADR-241](../../../docs/specification/adr/adr-241.md) D1, which replaced
-/// ADR-159 D2's *bare*): the envelope is what carries the list a caller hands
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D13, which replaced
+/// ADR-280 D13's *bare*): the envelope is what carries the list a caller hands
 /// on, and a `?` from `std`'s bare error puts it on - so the call is still the
 /// plain `?` the language below writes.
 #[test]
@@ -479,7 +479,7 @@ fn a_variant_of_a_librarys_type_names_the_type() {
 }
 
 /// **The list survives a hop to a caller that only propagates**
-/// ([ADR-241](../../../docs/specification/adr/adr-241.md), issue #199
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md), issue #199
 /// issue #199): `pair` joins two failing reads, and `relay` hands its failure on.
 /// `relay`'s channel was a bare `io::IoError`, which nothing converts an
 /// envelope into, and `rustc` refused the file; now it is the envelope, and
@@ -531,7 +531,7 @@ fn a_joined_failure_survives_a_caller_that_propagates_it() {
 /// and nowhere else, so `load` throws what its handler throws - not that and
 /// the guarded call's error as a sum of two. A handler that writes `throw
 /// error` passes the caught error on, and then it is in the set
-/// ([ADR-157](../../../docs/specification/adr/adr-157.md) D2).
+/// ([ADR-280](../../../docs/specification/adr/adr-280.md) D10).
 #[test]
 fn a_handler_that_does_not_pass_on_keeps_what_it_caught() {
     let net = "enum NetError { Down }\n\

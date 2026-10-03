@@ -7,7 +7,7 @@
 //
 //     It may only ever take an atomic away.
 //
-// ADR-037 D6 made the atomic count the **floor**, and ADR-061 D2 lowered that
+// ADR-037 D6 made the atomic count the **floor**, and ADR-312 D10 lowered that
 // floor at `user_parallelism = no`, where nothing a user writes can cross and D1
 // closed the last way out of the program. So the floor is the atomic count at
 // `yes` and the plain one at `no`, and this file is an **optimisation** on top of
@@ -34,7 +34,7 @@
 // program is the one thing this compiler may never do (Part III C.4) - so it has
 // a third answer, `Undecided`. This has two, because the cost of being wrong in
 // the safe direction is speed: the program still compiles and still means the
-// same thing. ADR-033 D4's polarity, applied where it is cheap.
+// same thing. ADR-292 D3's polarity, applied where it is cheap.
 //
 // ## What this file promises `send.rs`
 //
@@ -46,13 +46,11 @@
 //
 // Every crossing is therefore a **seed**, and a missed seed is unsoundness
 // rather than a missed optimisation. The seeds are ADR-005 §5.2's own
-// enumeration of the crossings, asked per value rather than per type - including
-// the one D6 made live. `task::both`, the crossing the *compiler* chooses for
-// statement overlapping, used to be safe to leave out because a `Shared` was
-// `MayNot` and was never overlapped; since D6 the result of an overlapped
-// operation is a `Shared` that crosses back to the thread that started it, so it
-// is a seed now, reached through [`Fallback::UnseenOrigin`] - a handle whose
-// allocation this analysis did not watch being made.
+// enumeration of the crossings, asked per value rather than per type. An
+// `overlap` branch is not one: it is polled on the block's own thread
+// (ADR-292 D4). A handle whose allocation this analysis did not watch being
+// made - one a call handed back - stays at the floor through
+// [`Fallback::UnseenOrigin`], because what is not seen is not proved.
 //
 // ## Why the fixpoint degenerates, which is itself a finding
 //
@@ -60,7 +58,7 @@
 // `Shared` share one count, so they cannot disagree about whether it is atomic.
 // The relation between handles is therefore an *equivalence* and not an ordering,
 // and the analysis is union-find over handles plus one colouring pass - a least
-// fixpoint reached in a single step, where `sync` (ADR-027 D1) genuinely needs a
+// fixpoint reached in a single step, where `sync` (ADR-288 D1) genuinely needs a
 // greatest one because its constraint is conjunctive over a call graph that can
 // cycle. The least fixpoint of "is atomic" is the complement of the greatest
 // fixpoint of "stays plain", because every clause is a Horn clause and the only
@@ -76,7 +74,7 @@
 //     public. The handle joins the callee's parameter slot, one allocation gets
 //     one answer, and whichever side of the call the crossing is on decides both;
 //   * **a field of a type this unit declares**, through the ledger's `fields`
-//     (ADR-024, the walk ADR-029 established) - run in the opposite direction
+//     (ADR-024, the walk ADR-288 established) - run in the opposite direction
 //     from `send.rs`: there a field that may not cross makes the struct refuse,
 //     here a struct that crosses makes the field's count atomic;
 //   * **a call the ledger describes**. This is the one that rests on something,
@@ -87,13 +85,13 @@
 //     a foreign crate is honest". No `std` entry takes or hands back a **handle**
 //     on a `Shared`: the one entry that mentions the type at all is
 //     `Shared::deref`, which takes `&Shared[$T]` and hands back `&$T` - a borrow
-//     duplicates nothing (ADR-040 D1) and what comes out is a view of the value
+//     duplicates nothing (ADR-312 D1) and what comes out is a view of the value
 //     inside, so there is no handle for it to keep.
 //     `a_std_entry_that_takes_a_shared_needs_a_second_look` in `tests/sharing.rs`
 //     is what makes somebody look on the day one does take one.
 //
 // Everywhere else is [`Fallback`], and the remedy for every row of it is to
-// write the contract down - ADR-033 D4's own closing argument, which is why
+// write the contract down - ADR-292 D3's own closing argument, which is why
 // ADR-037 D8 has no keyword in it.
 
 pub use nikaia_std::tools::ty::{Class, Count};
@@ -111,7 +109,7 @@ const RESULT: &str = "<result>";
 
 /// Every reason this analysis answers `atomic` **because nothing decided it**
 /// ([`Fallback`]), what it chose for one value ([`Decision`]) and for all of
-/// them ([`Sharing`]) are records of `tools/sharing.nika` (ADR-250, #125).
+/// them ([`Sharing`]) are records of `tools/sharing.nika` (ADR-294, #125).
 pub use nikaia_std::tools::sharing::{
     Decision, Fallback, Sharing, every_fallback, lock_name, rust_name,
 };
@@ -122,7 +120,7 @@ use nikaia_std::tools::sharing::{
 };
 use nikaia_std::tools::views::Asked;
 
-/// What stays Rust of a [`Class`] (ADR-257 step (b)): reading one back.
+/// What stays Rust of a [`Class`] (ADR-294 step (b)): reading one back.
 pub trait ClassOps: Sized {
     fn parse(text: &str) -> Option<Self>;
 }
@@ -143,7 +141,7 @@ pub fn analyse_program(
     crossings_are_possible: bool,
 ) -> Sharing {
     // **Where nothing can cross, there is nothing to decide**
-    // ([ADR-061](../../../../docs/specification/adr/adr-061.md) D2). At
+    // ([ADR-312](../../../../docs/specification/adr/adr-312.md) D10). At
     // `user_parallelism = no` one thread runs the user's code; the runtime's I/O
     // thread carries none of it, a task interleaves on the same thread, and since
     // D1 a `Shared` may not be handed to code this compiler cannot see - which
@@ -152,7 +150,7 @@ pub fn analyse_program(
     // longer has to be found.
     //
     // The **verdict** is untouched and stays switch-independent
-    // ([ADR-045](../../../../docs/specification/adr/adr-045.md) D1): a
+    // ([ADR-312](../../../../docs/specification/adr/adr-312.md) D6): a
     // `Shared[Locked[i32]]` may go into a task of ours at either setting. This is
     // about what is emitted, not about what is permitted.
     let mut analysis = Analysis::new(parsed, own, library);
@@ -199,7 +197,7 @@ pub fn analyse_program(
         }
     }
     let mut sharing = analysis.decide();
-    // Every count plain, because nothing can cross (ADR-061 D2): applied to
+    // Every count plain, because nothing can cross (ADR-312 D10): applied to
     // the finished answer, so the duplication sites are kept as they were
     // found and one run of this analysis is one code path at both settings.
     if !crossings_are_possible {
@@ -220,10 +218,10 @@ pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Decision>
 /// parameters against, and every type to have its `fields`. It reads nothing any
 /// of them wrote.
 /// **At the floor, whatever the switch says**, and that is the one place D2 does
-/// not reach ([ADR-061](../../../../docs/specification/adr/adr-061.md)). What
+/// not reach ([ADR-312](../../../../docs/specification/adr/adr-312.md)). What
 /// this writes is a **contract** — a statement about a function's positions that
 /// a reader and a later build consult — and a contract that moved with a build
-/// switch would be the thing ADR-045 D1 refuses. What is emitted is the
+/// switch would be the thing ADR-312 D6 refuses. What is emitted is the
 /// emitter's question and it asks it with the setting in hand.
 pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
     let summaries = analyse_program(parsed, ledger, library, true).summaries;
@@ -239,7 +237,7 @@ pub fn infer(ledger: &mut Ledger, parsed: &Parsed, library: &Ledger) {
 ///
 /// The shape is `--overlaps`' and `--trust`'s: a heading per function, then one
 /// indented line per thing decided, then what it adds up to. It **explains a
-/// decision rather than changing one** (ADR-033 D9), which is what a person
+/// decision rather than changing one** (ADR-292 D2), which is what a person
 /// reads when they want the 9 ns back.
 pub fn report(
     parsed: &Parsed,
@@ -310,7 +308,7 @@ impl<'a> Analysis<'a> {
     }
 
     /// A second handle on this slot's allocation is made here
-    /// ([ADR-040](../../../../docs/specification/adr/adr-040.md) D1), only
+    /// ([ADR-312](../../../../docs/specification/adr/adr-312.md) D1), only
     /// where the handle is handed on by value.
     fn duplicates(&mut self, function: &str, value: &str, site: String) {
         self.slots.duplicates(function, value, site);
@@ -406,7 +404,7 @@ impl<'a> Analysis<'a> {
             Stmt::Let {
                 names, ty, value, ..
             } => {
-                // **One name only** ([ADR-098](../../../../docs/specification/adr/adr-098.md)).
+                // **One name only** ([ADR-291](../../../../docs/specification/adr/adr-291.md)).
                 // A hull's count is decided per **value**, and what a tuple's
                 // parts are is the call's business rather than this walk's - so
                 // a destructure records no handle, which leaves each part at the
@@ -434,7 +432,7 @@ impl<'a> Analysis<'a> {
                     .or_else(|| match value {
                         Expr::StructLit { name, .. } => Some(Ty::named(self.parsed.text(*name))),
                         // **A hull written by a call**
-                        // ([ADR-064](../../../../docs/specification/adr/adr-064.md)
+                        // ([ADR-281](../../../../docs/specification/adr/adr-281.md)
                         // D2): `let counter = SharedMut(0)` makes one here and
                         // says so without an annotation. Without this case the
                         // slot is not watched at all, and a position nothing
@@ -445,7 +443,7 @@ impl<'a> Analysis<'a> {
                             Expr::Variable(name) => {
                                 let text = self.parsed.text(*name);
                                 // **And what it holds, where a literal says**
-                                // (ADR-238 D1): `SharedMut(0)` holds an `i64`,
+                                // (ADR-281 D8): `SharedMut(0)` holds an `i64`,
                                 // which is what decides whether its lock is a
                                 // word. Anything else is left unsaid, and an
                                 // unsaid type is never a word.
@@ -480,7 +478,7 @@ impl<'a> Analysis<'a> {
                             // may lower.
                             //
                             // **Unless this line is where it is made**
-                            // ([ADR-064](../../../../docs/specification/adr/adr-064.md)
+                            // ([ADR-281](../../../../docs/specification/adr/adr-281.md)
                             // D2): `let counter = SharedMut(0)` is the allocation,
                             // and this analysis is watching it. Asked of the
                             // slot's type rather than of a written annotation -
@@ -500,7 +498,7 @@ impl<'a> Analysis<'a> {
                 self.expr(function, value, scope);
             }
             // **A `const` never holds a handle**
-            // ([ADR-073](../../../docs/specification/adr/adr-073.md) D3): its
+            // ([ADR-287](../../../docs/specification/adr/adr-287.md) D4): its
             // value is what the fold came to, and the fold evaluates literals
             // and arithmetic over them - a hull is made by a call, which D5
             // does not admit into an initialiser yet. So there is no count to
@@ -559,7 +557,7 @@ impl<'a> Analysis<'a> {
     /// Whether this `let` is itself the place the first handle is made.
     ///
     /// **The hull is written by a call**
-    /// ([ADR-064](../../../../docs/specification/adr/adr-064.md) D2), so
+    /// ([ADR-281](../../../../docs/specification/adr/adr-281.md) D2), so
     /// `let db = Shared(connect(…))` allocates the count on this line - and a
     /// count this analysis watched being made is not [`Fallback::UnseenOrigin`],
     /// whatever else it may turn out to be. An annotated `let` beside a plain
@@ -578,11 +576,10 @@ impl<'a> Analysis<'a> {
 
     /// A handle whose allocation this analysis did not watch being made.
     ///
-    /// The floor holds and says so. It is [`Fallback::UnseenOrigin`], and it is
-    /// also the seed that step 1 made necessary: since ADR-037 D6 the
-    /// overlapping analysis may run a call on a thread of its own and hand the
-    /// result back (ADR-005 §5.2's `task::both` row), so a `Shared` that came
-    /// out of a call is a `Shared` that crosses.
+    /// The floor holds and says so ([`Fallback::UnseenOrigin`]). A `Shared`
+    /// that came out of a call was allocated where this analysis did not look,
+    /// so nothing proves it never crosses, and only a proof may take an atomic
+    /// away (ADR-037 D7).
     fn origin_unseen(&mut self, function: &str, name: &str, value: &Expr) {
         self.force(
             function,
@@ -598,7 +595,7 @@ impl<'a> Analysis<'a> {
     /// Two ways a crossing lands. The name may *be* a `Shared`, and then its own
     /// class is forced. Or it may be a value of a type that **holds** one, and
     /// then the field's class is - which is `send::crossing`'s transitivity
-    /// (ADR-029's walk through the ledger's `fields`) asked the other way round:
+    /// (ADR-288's walk through the ledger's `fields`) asked the other way round:
     /// there a field that may not cross makes the struct refuse, here a struct
     /// that crosses makes the field's count atomic.
     fn reached(
@@ -672,7 +669,7 @@ impl<'a> Analysis<'a> {
             // Part II 11.2: a task runs on a thread of its own.
             Expr::Spawn { body, .. } => {
                 for name in send::names_used(self.parsed, body) {
-                    // ADR-040 D1's second half: a task that uses a handle takes one
+                    // ADR-312 D1's second half: a task that uses a handle takes one
                     // of its own, so the name outside the task stays usable.
                     if scope.get(&name).is_some_and(by_value_shared) {
                         self.duplicates(
@@ -712,7 +709,7 @@ impl<'a> Analysis<'a> {
             }
             // **A handle handed to a `?.m()` is handed over.** Whether the call
             // happens does not change where the value would go if it did, and
-            // this analysis may not miss a place it could (ADR-040 D1).
+            // this analysis may not miss a place it could (ADR-312 D1).
             | Expr::SafeMethod {
                 receiver,
                 method,
@@ -720,7 +717,7 @@ impl<'a> Analysis<'a> {
                 config,
             } => {
                 let method = self.parsed.text(*method).to_string();
-                // **A `get` of a value that does not copy cheaply** (ADR-238
+                // **A `get` of a value that does not copy cheaply** (ADR-281
                 // D3): it copies the whole of it out each time, where `access`
                 // would read it in place. Named where the type says so, and
                 // silent where it does not.
@@ -749,7 +746,7 @@ impl<'a> Analysis<'a> {
                         }
                     }
                 }
-                // A method is resolved by name only (ADR-011 D2), so a method
+                // A method is resolved by name only (ADR-296 D17), so a method
                 // nothing describes is a body this compiler cannot see the end
                 // of - the same case as an unseen call, and answered the same
                 // way.
@@ -791,7 +788,7 @@ impl<'a> Analysis<'a> {
                 }
             }
             // **A hole is Nikaia source and is walked like any other**
-            // (ADR-032 D3, which the type checker already follows). Measured:
+            // (ADR-309 D13, which the type checker already follows). Measured:
             // `println(f"{hold(c)}")` handed a handle to a function this analysis
             // never saw, so the value kept the plain count while the callee's
             // parameter was decided atomic in the file declaring it - and the two
@@ -862,7 +859,7 @@ impl<'a> Analysis<'a> {
     /// Two answers and they are the two halves of the finding. A callee the
     /// ledger describes has a parameter slot, and the handle joins it: one
     /// allocation, one count, whichever side of the call decides it. A callee
-    /// nothing describes is ADR-038 D7's case: it may start a thread of its own,
+    /// nothing describes is ADR-303 D7's case: it may start a thread of its own,
     /// so the count is atomic.
     ///
     /// **Every name inside the argument counts, not only a bare variable.** An
@@ -925,7 +922,7 @@ impl<'a> Analysis<'a> {
                 (Some((key, params)), _) => match params.get(at) {
                     Some((param, param_ty)) => {
                         let (key, param) = (key.clone(), param.clone());
-                        // ADR-040 D1: a handle handed on **by value** is
+                        // ADR-312 D1: a handle handed on **by value** is
                         // duplicated; one the callee only borrows is not.
                         if by_value_shared(param_ty) {
                             self.duplicates(function, &handle, handed_on_to(&key, &param));
@@ -972,11 +969,11 @@ impl<'a> Analysis<'a> {
     /// where a ledger has them.
     ///
     /// The program's own ledger first, then `std`'s, with the suffix rule every
-    /// other resolution in this compiler uses (ADR-011 D2).
+    /// other resolution in this compiler uses (ADR-296 D17).
     ///
     /// **The type is here for one question only**: whether the position takes
     /// the handle by value or lends the inner value out. A by-value `Shared`
-    /// parameter is a second handle (ADR-040 D1); a `&Shared` one is a borrow
+    /// parameter is a second handle (ADR-312 D1); a `&Shared` one is a borrow
     /// and duplicates nothing. Neither changes which count the class gets.
     fn parameters(&self, callee: &str) -> Option<(String, Vec<(String, Ty)>)> {
         let suffix = format!("::{callee}");

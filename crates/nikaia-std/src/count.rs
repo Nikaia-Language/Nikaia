@@ -1,9 +1,9 @@
 //! A count a `std` entry takes, converted where it has to be.
 //!
-//! **The other direction of [ADR-048](../../../docs/specification/adr/adr-048.md)
+//! **The other direction of [ADR-285](../../../docs/specification/adr/adr-285.md)
 //! D1.** That record made what a length *returns* an `i64` and left what a
 //! parameter *takes* open, saying so; this is the answer
-//! ([ADR-054](../../../docs/specification/adr/adr-054.md) D2). The ledger writes
+//! ([ADR-285](../../../docs/specification/adr/adr-285.md) D15). The ledger writes
 //! such a parameter as the `i64` a program can hold, and the conversion is
 //! emitted rather than written - exactly as `index::at` is at an index.
 //!
@@ -13,7 +13,7 @@
 //! no such thing: `"ab".repeat(-1)` is not an access at all, so it needs a
 //! message of its own and gets one.
 //!
-//! **Why a trait.** The emitter does not know types (ADR-011 D2): it sees a
+//! **Why a trait.** The emitter does not know types (ADR-296 D17): it sees a
 //! method name and an argument. So this is chosen by the type of what is passed,
 //! and is the **identity** for anything that is not a signed integer - which is
 //! what makes it safe to write around every call of that name, including a
@@ -30,7 +30,7 @@ pub trait Of {
 /// `#[track_caller]` all the way out to [`of`], so the panic hook is handed the
 /// **caller's** location - the line of the generated file that wrote the call -
 /// and not a line of this file. Without it,
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table has nothing
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D9's table has nothing
 /// to look up and the reader is told about `nikaia_std/src/count.rs`, which is
 /// the Part III C.1 defect one crate over.
 #[cold]

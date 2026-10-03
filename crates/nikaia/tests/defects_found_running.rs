@@ -367,7 +367,7 @@ fn a_list_of_functions_is_run() {
     );
 }
 
-/// **`_` is the ignore pattern inside a pattern** (ADR-145 D2, 0.0.246): a
+/// **`_` is the ignore pattern inside a pattern** (ADR-291 D17, 0.0.246): a
 /// part is a value that arrived, and `(0, _)` and `Shape::Circle(_)` were
 /// refused with the catch-all arm's message - which itself says `_` stands in
 /// a tuple position.
@@ -858,7 +858,7 @@ fn a_bracket_read_with_a_jump_compares_with_a_value() {
 }
 
 /// **A branch that ends in `continue` takes its takings with it** (#125), as
-/// one that ends in `return` does (ADR-213 D4): `kept.push(name)` then
+/// one that ends in `return` does (ADR-293 D30): `kept.push(name)` then
 /// `continue` was refused with `NK2105` for the `println(name)` after the
 /// `if`, which no path that pushed reaches. A name from outside the loop is
 /// still refused, by the loop's own rule.
@@ -992,7 +992,7 @@ fn a_position_a_tuple_part_a_lent_name_and_a_join() {
 /// here** rather than by `rustc` (found moving the compiler's `views` into
 /// Nikaia, #125): `for p in found { out.push(p) }` lends each element, and
 /// a `Vec[P]` keeps a `P` of its own. Text had this sentence already
-/// (ADR-225 D2); every other type reached the language below.
+/// (ADR-282 D19); every other type reached the language below.
 #[test]
 fn a_lent_element_kept_whole_is_refused() {
     let found = findings(
@@ -1024,7 +1024,7 @@ fn a_lent_element_kept_whole_is_refused() {
 /// **`str::splitn` is described** (found moving `NK2202`'s message into
 /// Nikaia, #125): nothing was, so a function that split a name once was taken
 /// to pause, and its count is an `i64` the lowering converts, as `chunks`'
-/// is (ADR-212 D5).
+/// is (ADR-293 D20).
 #[test]
 fn splitting_at_most_n_times_is_sync() {
     runs(
@@ -1068,7 +1068,7 @@ fn taking_a_value_out_of_a_set_is_sync() {
     );
 }
 
-/// **A fallback that jumps takes its takings with it** (ADR-213 D4, found
+/// **A fallback that jumps takes its takings with it** (ADR-293 D30, found
 /// moving `contracts::order`'s walk into Nikaia, #125): `?? return
 /// Refused(key)` hands `key` over only on the path that leaves, so reading
 /// `key` on the next line is no use after it. It was `NK2105`, as a branch
@@ -1184,7 +1184,7 @@ fn a_number_no_use_types_reaches_an_index_through_a_loop() {
 
 /// **A list of `u32` written with a literal no `i32` holds** (0.0.373): the
 /// literal took the widening of a number nothing asked - `4294967295i64` -
-/// inside a `Vec<u32>`, and `rustc` refused the file. Found writing ADR-271's
+/// inside a `Vec<u32>`, and `rustc` refused the file. Found writing ADR-306's
 /// tests.
 #[test]
 fn a_large_literal_in_a_list_of_u32_is_a_u32() {

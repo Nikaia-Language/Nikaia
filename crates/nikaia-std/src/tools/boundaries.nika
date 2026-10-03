@@ -1,7 +1,7 @@
 // crates/nikaia-std/src/tools/boundaries.nika
 //
 // **A boundary mismatch the backend reports is said as a stale ledger**
-// (ADR-100 D6, ADR-237 D2). Moved from the compiler's `diagnostics` (ADR-250,
+// (ADR-100 D6, ADR-290 D21). Moved from the compiler's `diagnostics` (ADR-294,
 // #125).
 //
 // A program never meets a `Result` or a future: both are this compiler's

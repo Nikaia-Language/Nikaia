@@ -17,13 +17,13 @@
 use std::sync::Arc;
 
 /// A run of bytes that several holders may share
-/// ([ADR-156](../../../docs/specification/adr/adr-156.md) D2).
+/// ([ADR-283](../../../docs/specification/adr/adr-283.md) D20).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Bytes {
     buffer: Arc<[u8]>,
 }
 
-/// Bytes are a buffer a view of text may be cut from (ADR-221 D2).
+/// Bytes are a buffer a view of text may be cut from (ADR-283 D15).
 impl crate::tether::Viewed for Bytes {
     fn bytes(&self) -> &[u8] {
         &self.buffer

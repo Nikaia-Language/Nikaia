@@ -1,10 +1,10 @@
 //! `loop`, `const`, `macro` and `quote` are names
-//! ([ADR-117](../../../docs/specification/adr/adr-117.md)).
+//! ([ADR-298](../../../docs/specification/adr/adr-298.md)).
 //!
 //! **Reserving a word buys exactly one thing**, and it is the sentence a reader
 //! who writes it gets. The four were reserved *against* the possibility of a
 //! construct rather than for one, which is the ground
-//! [ADR-051](../../../docs/specification/adr/adr-051.md) D1 does not accept —
+//! [ADR-298](../../../docs/specification/adr/adr-298.md) D1 does not accept —
 //! and `NK1117` can say that sentence about an ordinary name, so they were
 //! paying for nothing.
 
@@ -190,7 +190,7 @@ fn every_other_name_is_answered_as_before() {
         "{help}"
     );
     // **And it stopped explaining `1_000`**
-    // ([ADR-136](../../../docs/specification/adr/adr-136.md)): that form is a
+    // ([ADR-285](../../../docs/specification/adr/adr-285.md)): that form is a
     // number now, so the clause that named it as a misparse was wrong.
     assert!(!help.contains("`1_000`"), "{help}");
 }

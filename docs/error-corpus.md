@@ -85,7 +85,7 @@ C1 is the best row in the corpus and the model for the rest. It carried a
 note calling `ref` a reserved word until the note was asked whether a name was
 wanted there; it was not, and the note is gone. So is C5's.
 
-C2's arrow is refused by name, the reading ADR-120 D2 made necessary: the
+C2's arrow is refused by name, the reading ADR-296 D33 made necessary: the
 block after a pattern *is* the action, and a program written the old way is
 told the new one.
 
@@ -146,7 +146,7 @@ the grammar *required* it (winnow-grammar#4), a rule that names itself
 (#6), a losing alternative's error kept (#8), a failing lookahead not an
 expectation (#10), and the source line with a caret (#11).
 
-**The reserved-word list** ([ADR-051](specification/adr/adr-051.md)) closed
+**The reserved-word list** ([ADR-298](specification/adr/adr-298.md)) closed
 three rows that did not fail at all: `if { }`, `let 5 = x` and `if a = b { }`
 were read with a keyword as a variable — programs that meant something other
 than what was written, with no diagnostic of any kind.

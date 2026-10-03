@@ -9,7 +9,7 @@
 //! never where.
 //!
 //! The byte was there the whole time. `Flow::statement` carries it for the type
-//! checker's sake ([ADR-028](../../../docs/specification/adr/adr-028.md)), and
+//! checker's sake ([ADR-288](../../../docs/specification/adr/adr-288.md)), and
 //! it is the same number.
 
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ fn a_block_too_small_is_refused_on_its_line() {
 /// **And it reads like the checker's**, which is the point of doing it this way
 /// rather than appending a line number to the sentence: a rule enforced in the
 /// lowering should not look different from one enforced in the checker
-/// ([ADR-012](../../../docs/specification/adr/adr-012.md)).
+/// ([ADR-300](../../../docs/specification/adr/adr-300.md)).
 #[test]
 fn it_reads_like_a_checkers_refusal() {
     let lowering = nikaia(
@@ -190,7 +190,7 @@ fn an_items_refusal_names_the_item() {
 }
 
 /// **A grammar entry that names no rule.** `Tiny::two(…)` is the shape
-/// [ADR-082](../../../docs/specification/adr/adr-082.md) D2 introduced, and its
+/// [ADR-296](../../../docs/specification/adr/adr-296.md) D25 introduced, and its
 /// two refusals — no such rule, and a rule that is not `pub` — were text.
 #[test]
 fn a_grammar_entry_that_is_not_there_names_its_line() {

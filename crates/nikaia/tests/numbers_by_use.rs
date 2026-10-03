@@ -1,5 +1,5 @@
 //! **A number takes the type its uses ask for, and this compiler decides it**
-//! ([ADR-249](../../../docs/specification/adr/adr-249.md)): an unannotated
+//! ([ADR-285](../../../docs/specification/adr/adr-285.md)): an unannotated
 //! `let` of a number is typed by what is done with it - the parameter it is
 //! handed to, the value it is put beside, the index it is, the numbers it is
 //! given later - and the type is written into the generated `let`, so nothing
@@ -84,7 +84,7 @@ fn an_index_makes_a_bare_number_an_i64() {
 
 /// **A parameter, an annotation and a comparison are uses** (D2), and each
 /// types the number it is given - `u32` and `u64` included, which a number
-/// above an `i32` could not be before (ADR-060 D3 is answered).
+/// above an `i32` could not be before (ADR-285 D23 is answered).
 #[test]
 fn the_use_decides_among_all_the_integer_types() {
     runs(
@@ -113,7 +113,7 @@ fn the_use_decides_among_all_the_integer_types() {
 /// **What is given later is held to the type too** (D3), and a sum through
 /// names is wide where a use asks for it to be: `a + a` over a bare
 /// `2000000000` is an `i64` handed to an `i64`, and still refused where
-/// nothing asks - a name is where the widening stops (ADR-063 D2).
+/// nothing asks - a name is where the widening stops (ADR-285 D26).
 #[test]
 fn what_a_number_is_given_decides_where_no_use_does() {
     runs(

@@ -1,5 +1,5 @@
 //! A grammar's action may not pause
-//! ([ADR-142](../../../docs/specification/adr/adr-142.md)).
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md)).
 //!
 //! A rule's action is arbitrary Nikaia, so it may call something that pauses —
 //! and nothing refused it. The emitter wrote `.await` inside the synchronous
@@ -56,7 +56,7 @@ fn a_pausing_call_in_an_action_is_refused() {
 }
 
 /// **A fold's `step` is action code too**
-/// ([ADR-092](../../../docs/specification/adr/adr-092.md)), so the flag is set
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md)), so the flag is set
 /// around the pattern's lambdas and not around the block alone.
 #[test]
 fn a_pausing_call_in_a_folds_step_is_refused() {
@@ -163,7 +163,7 @@ fn an_entry_is_sync_in_the_ledger() {
 /// the column: the fixpoint reads this unit's call graph, a grammar entry has no
 /// node in it, and an absent node is read as *pauses*. The entry is inserted as
 /// a leaf that holds, exactly as a trait method's declaration is
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D1).
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D24).
 ///
 /// Without it every function that parses is `async`, which is what
 /// [ADR-140](../../../docs/specification/adr/adr-140.md) D3 had cost the corpus.

@@ -1,7 +1,7 @@
 //! **`user_parallelism = yes`, in a process of its own.**
 //!
 //! Its own test binary and not a `mod tests`, because the runtime is **one per
-//! process** ([ADR-038](../../../docs/specification/adr/adr-038.md) D4): the
+//! process** ([ADR-303](../../../docs/specification/adr/adr-303.md) D4): the
 //! first thing to ask for it decides what it is, and a unit test that ran after
 //! one asking for `Sequential` would find no pool and quietly measure the
 //! single-threaded executor instead. What is asserted here is a wall-clock

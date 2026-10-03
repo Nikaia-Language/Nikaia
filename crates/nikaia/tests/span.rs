@@ -1,5 +1,5 @@
 //! Where a node stands: two `u32` byte offsets
-//! ([ADR-252](../../../docs/specification/adr/adr-252.md) D2).
+//! ([ADR-294](../../../docs/specification/adr/adr-294.md) D7).
 
 use nikaia::ast::{Item, LONGEST_SOURCE, Span};
 use nikaia::parser::{fits, parse_to_ast};
@@ -48,8 +48,8 @@ fn a_source_over_four_gib_is_refused_with_the_reason() {
     );
 }
 
-/// An integer literal is its magnitude and its sign (ADR-252 D4.2), and the
-/// two ends of ADR-248 D2's range survive the trip.
+/// An integer literal is its magnitude and its sign (ADR-294 D9.2), and the
+/// two ends of ADR-285 D19's range survive the trip.
 #[test]
 fn an_integer_literal_is_a_magnitude_and_a_sign() {
     use nikaia::ast::{Expr, Stmt, int_literal, int_value};

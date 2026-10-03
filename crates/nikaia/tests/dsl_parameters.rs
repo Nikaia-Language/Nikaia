@@ -1,11 +1,11 @@
-//! A DSL with deferred parameters generates a shadow type (ADR-007 D5).
+//! A DSL with deferred parameters generates a shadow type (ADR-296 D5).
 //!
 //! Three claims, and each has a test that would fail if it were quietly
 //! relaxed: the type is generated from the body's `:name` holes and from
 //! nothing else; the call site supplies them after the `;` and the emitted Rust
 //! builds one stack value out of them; and both ways of getting it wrong - a
 //! parameter missing, a parameter that is not there - are errors against the
-//! `.nika` file the user wrote (ADR-012).
+//! `.nika` file the user wrote (ADR-300).
 //!
 //! The first of those is checked by compiling the emitted Rust and running it,
 //! because a lowering that produces plausible-looking Rust which does not build
@@ -96,7 +96,7 @@ fn a_deferred_parameter_dsl_lowers_compiles_and_runs() {
 
 /// The type carries the body's names, and takes its field types from the call
 /// site - because nothing in `… id = :id …` says what `:id` is, and an emitter
-/// that decided would be guessing (ADR-011 D2).
+/// that decided would be guessing (ADR-296 D17).
 #[test]
 fn the_shadow_type_carries_the_names_and_the_call_site_the_types() {
     let rust = emit(&fixture("sql_statement.nika"));
@@ -196,7 +196,7 @@ fn a_missing_parameter_is_an_error_against_the_nika_source() {
 
     // …and it reads like every other diagnostic this compiler prints: the
     // place, the line it is about, a caret under it, the reason and one way
-    // out (ADR-012, Part III C.2).
+    // out (ADR-300, Part III C.2).
     let rendered = nikaia::diagnostics::render_finding(missing, "statement.nika", &source);
     assert!(rendered.starts_with("error[NK1112]: "), "{rendered}");
     assert!(

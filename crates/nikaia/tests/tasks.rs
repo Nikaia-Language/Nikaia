@@ -270,7 +270,7 @@ fn a_task_that_names_an_argument_is_refused() {
 }
 
 /// A handle on a `Shared[T]` is **duplicated** into a task, not moved
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1, D5).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D1, D5).
 ///
 /// Part I 8.3 says `NK2101` belongs to the data case only, and this is the other
 /// case: using the value again after the task is built is the very thing the
@@ -312,7 +312,7 @@ fn the_parenthesised_form_says_what_happened_to_it() {
 /// called — so it is an `async move` *block*, which is a future, and a closure
 /// around it would only be called once. Not because the language below has no
 /// `async` closure, which is what this comment used to say and is false
-/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D2). `move` is
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D13, D16). `move` is
 /// Part I 8.3's implicit move and Rust's `move` meeting at the same place.
 #[test]
 fn a_task_is_an_async_block_and_never_a_closure() {
@@ -333,7 +333,7 @@ fn a_task_is_an_async_block_and_never_a_closure() {
 }
 
 /// **A task that never finishes is abandoned at the deadline**
-/// ([ADR-006](../../../docs/specification/adr/adr-006.md) D5), rather than
+/// ([ADR-297](../../../docs/specification/adr/adr-297.md) D6), rather than
 /// becoming a program that never exits.
 ///
 /// Holding `main`'s value until the queue empties is what makes
@@ -440,7 +440,7 @@ fn nothing_a_task_needs_is_written_in_nikaia() {
 /// polled on a thread that did not start it, so its future has to be `Send` (§2
 /// D6) and the pool's starter is what asks for that; at `no` it may not, so it
 /// does not — and asking there would refuse a task holding the plain count
-/// [ADR-061](../../../docs/specification/adr/adr-061.md) D1 gives a `Shared` at
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D9 gives a `Shared` at
 /// one user thread.
 #[test]
 fn the_switch_decides_which_executor_a_task_is_started_on() {

@@ -53,9 +53,9 @@ const NIKA: &str = "nika";
 /// ([`Sysroot::tool_modules`]).
 const TOOLS: &str = "tools";
 
-/// **The toolchain's Nikaia is one package** (ADR-261): every `.nika` in
+/// **The toolchain's Nikaia is one package** (ADR-294): every `.nika` in
 /// `src/tools` shares one namespace, as the files of a package do (Part I 9.1,
-/// ADR-047 D1), and is lowered into this one file beside them. A name declared
+/// ADR-286 D1), and is lowered into this one file beside them. A name declared
 /// in any of them is written as it is in any other, and a helper exists once.
 const TOOLS_PACKAGE: &str = "package.rs";
 
@@ -70,7 +70,7 @@ const HAND_WRITTEN: &[(&str, &[&str])] = &[
     ("rust.nika", &["file"]),
 ];
 
-/// What the Rust a tool module reads says it does (ADR-252 D4.3).
+/// What the Rust a tool module reads says it does (ADR-294 D9.3).
 const TOOLS_DESCRIBED: &str = include_str!("../../nikaia-std/src/tools/described.contracts");
 
 /// A sysroot: a directory with `nikaia-std/` in it.
@@ -127,9 +127,9 @@ impl Sysroot {
     /// **Nikaia the toolchain uses and `std` does not publish**, in `src/tools`.
     ///
     /// `tools/rust.nika` is the reading half of `nikaia describe`
-    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D3), lowered the
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D13), lowered the
     /// same way `std`'s own Nikaia half is and reached by the compiler as an
-    /// ordinary Rust module ([ADR-196](../../../docs/specification/adr/adr-196.md)
+    /// ordinary Rust module ([ADR-290](../../../docs/specification/adr/adr-290.md)
     /// D1). It lives in this crate because this is where the release step
     /// already looks, and in a directory of its own because **a `.nika` beside
     /// `lib.rs` means something**: that `std` offers it, and that
@@ -246,7 +246,7 @@ impl Codegen {
 /// sentence. [ADR-037](../../../docs/specification/adr/adr-037.md) D3 made it
 /// `Rc` at `user_parallelism = no` and `Arc` at `yes`; D6 took the
 /// representation off the switch and it was safe here for as long as that held;
-/// [ADR-061](../../../docs/specification/adr/adr-061.md) D2 put the **emission**
+/// [ADR-312](../../../docs/specification/adr/adr-312.md) D10 put the **emission**
 /// back on it - at one user thread every count is the cheap one, because nothing
 /// can cross there and D1 closed the last way out of the program. So a `Shared`
 /// in a `.nika` file here would be lowered once with the cheap count and handed
@@ -255,7 +255,7 @@ impl Codegen {
 ///
 /// What is *not* switch-sensitive is the **verdict** - whether a value may cross
 /// at all - which `contracts::send` answers from a type and a destination and
-/// never from the switch ([ADR-045](../../../docs/specification/adr/adr-045.md)
+/// never from the switch ([ADR-312](../../../docs/specification/adr/adr-312.md)
 /// D1). That is what keeps `std`'s *ledger* sound across builds; it is the
 /// lowered bytes this constraint is about. The constraint is checked rather than
 /// only written down:
@@ -315,10 +315,10 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
     Ok(lowered.rust)
 }
 
-/// **The toolchain's Nikaia, lowered as the one package it is** (ADR-261).
+/// **The toolchain's Nikaia, lowered as the one package it is** (ADR-294).
 ///
 /// Every `.nika` in `dir` is checked with the others beside it and against
-/// `std`'s ledger and the tools' described one (ADR-252 D4.3), as the files of
+/// `std`'s ledger and the tools' described one (ADR-294 D9.3), as the files of
 /// a program's package are, and lowered into one Rust file: one preamble, then
 /// each file's items, then one module per file that names what that file
 /// offers - `tools::ty::Ty`, `tools::ledger::read` - so a Rust caller still
@@ -339,7 +339,7 @@ pub fn lower_tools(dir: &Path) -> Result<String> {
                 .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
         );
     }
-    // **One package, one namespace** (ADR-047 D1), as a project's files are.
+    // **One package, one namespace** (ADR-286 D1), as a project's files are.
     let files: Vec<(&Path, &crate::parser::Parsed)> = paths
         .iter()
         .map(PathBuf::as_path)

@@ -1,5 +1,5 @@
 //! What a C library hands back that this language has to copy
-//! ([ADR-147](../../../docs/specification/adr/adr-147.md) D4).
+//! ([ADR-302](../../../docs/specification/adr/adr-302.md) D8).
 //!
 //! `getenv` hands back a C string: memory the caller does not own, whose
 //! lifetime is the library's, and which ends at a zero byte rather than
@@ -9,15 +9,15 @@
 //! own `unsafe` block.
 //!
 //! **The handle is opaque and has no `cleanup`**, which is what tells it from
-//! [ADR-147](../../../docs/specification/adr/adr-147.md) D3's: a `FILE` is ours
+//! [ADR-302](../../../docs/specification/adr/adr-302.md) D7's: a `FILE` is ours
 //! to close and a C string is not ours at all. Nothing here frees anything.
 
 /// **A C function said it hands back a handle, and handed back nothing**
-/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D3).
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D12).
 ///
 /// A declaration that does not say `?` is the author's **claim** that this
 /// never happens — the arrangement `sync` on a declaration already has
-/// ([ADR-124](../../../docs/specification/adr/adr-124.md) D2). A declaration is
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D2). A declaration is
 /// written from a header by somebody reading it, and reading is where it can go
 /// wrong, so the claim is checked: what a program gets is an abort in this
 /// language's words rather than a handle that is secretly null.
@@ -25,7 +25,7 @@
 /// `#[track_caller]` so that the location the panic hook is handed is the
 /// **caller's** — the line of the generated file that made the call — and not a
 /// line of this file, which
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table would have
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D9's table would have
 /// nothing to look up for.
 #[cold]
 #[inline(never)]
@@ -55,7 +55,7 @@ pub struct CStr(CText);
 
 impl CStr {
     /// What a declaration that says `-> CStr` hands back
-    /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D3): the text,
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D12): the text,
     /// or an abort naming the declaration that claimed there would be one.
     #[track_caller]
     pub fn from_c(declaration: &str, text: Option<CText>) -> CStr {
@@ -76,7 +76,7 @@ impl CStr {
     /// **It fails in one way**, and only one: the bytes may not be UTF-8, which
     /// text in this language is — the same failure `fs::read_to_string` has, for
     /// the same reason. *There is no text* is a **value**
-    /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D4): a declaration
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D13): a declaration
     /// says `-> CStr?` where the library may find nothing, and the program
     /// writes `?? ""`.
     pub fn to_string(self) -> Result<String, crate::io::IoError> {

@@ -1,5 +1,5 @@
 //! A description's **entries** reach the analyses
-//! ([ADR-104](../../../docs/specification/adr/adr-104.md) D1).
+//! ([ADR-290](../../../docs/specification/adr/adr-290.md) D1).
 //!
 //! D1's first sentence is the whole point of the file it asks for: *every
 //! analysis reaches to the boundary and reads an entry there*, and `NK2504`'s
@@ -214,7 +214,7 @@ fn a_described_crate_is_not_something_to_import_from_std() {
 }
 
 /// **A description is believed while its hashes hold** — `NK2505`
-/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5, on
+/// ([ADR-290](../../../docs/specification/adr/adr-290.md) D5, on
 /// [ADR-100](../../../docs/specification/adr/adr-100.md) D3's rule).
 ///
 /// The description records what the crate's sources hashed to, and until this
@@ -231,7 +231,7 @@ fn a_described_crate_is_not_something_to_import_from_std() {
 fn a_description_is_believed_while_its_hashes_hold() {
     let root = project("hashes", None);
     // The crate, where the manifest's `fremd` means beside `nikaia.toml`
-    // ([ADR-197](../../../docs/specification/adr/adr-197.md) D1). It used to
+    // ([ADR-286](../../../docs/specification/adr/adr-286.md) D16). It used to
     // mean *from the generated manifest's directory*, which is a place the
     // author never sees and which Cargo stopped agreeing with.
     let crate_root = root.join("fremd");
@@ -320,7 +320,7 @@ fn the_library_a_build_reads_is_std_and_the_descriptions() {
 }
 
 /// **At a described boundary, text crosses as the entry says**
-/// ([ADR-107](../../../docs/specification/adr/adr-107.md) D5): to a
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D27): to a
 /// `ref String` for free, and to a `String` the crate may keep only as text of
 /// its own - a view handed there is refused with the copy named, never copied
 /// by the compiler.

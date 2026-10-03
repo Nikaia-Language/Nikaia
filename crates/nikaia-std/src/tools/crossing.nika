@@ -1,17 +1,17 @@
 // crates/nikaia-std/src/tools/crossing.nika
 //
-// **What `nikaia describe` says about threads** (ADR-193 D3-D5, ADR-123 D2):
+// **What `nikaia describe` says about threads** (ADR-290 D8-D10, ADR-123 D2):
 // whether a type's fields let it cross, whether a bound names `Send`, and the
 // shortest way a function reaches a thread through the crate's own calls.
 //
-// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// Moved from the compiler's `describe.rs` by ADR-290's route (#124): lowered
 // by `nikaia lower-std` to `crossing.rs` beside it, `include!`d as
 // `nikaia_std::tools::crossing`, and called from `describe`. It reads the
 // ledger's records beside it, as `ledger.nika` does, for `Crosses`.
 //
 // **Every answer here errs towards silence.** A draft that said `crosses =
 // true` where nothing showed it, or named a thread a function does not reach,
-// would put a claim in a file nobody wrote (ADR-104 D4).
+// would put a claim in a file nobody wrote (ADR-290 D4).
 
 use std::collections
 
@@ -229,14 +229,14 @@ fn is_a_sink(call: ref String) -> bool {
 }
 
 /// **What the describer saw of the crate's promises and did not claim**
-/// (ADR-193 D5): an `unsafe impl` is a promise the toolchain can see was made
+/// (ADR-290 D10): an `unsafe impl` is a promise the toolchain can see was made
 /// and cannot see is true. The lines of the note, or none where it made none.
 pub fn promise_lines(promises: ref Vec[String]) -> Vec[String] {
     let mut out: Vec[String] = []
     if promises.is_empty() {
         return out
     }
-    out.push("**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool")
+    out.push("**This crate makes promises the toolchain cannot check** (ADR-290 D10). A tool")
     out.push("can see that the promise was made; it cannot see whether it is true - which is")
     out.push("the line between a rule the toolchain enforces and one it inherits:")
     for promise in promises {
@@ -246,7 +246,7 @@ pub fn promise_lines(promises: ref Vec[String]) -> Vec[String] {
 }
 
 /// **What the describer saw of one function and threads, and did not claim**
-/// (ADR-193 D3, D4): the parameters a `Send` bound reaches, and the shortest
+/// (ADR-290 D8, D9): the parameters a `Send` bound reaches, and the shortest
 /// way to a thread sink through the crate's own calls. The lines of the note,
 /// ending with the question a reviewer answers, or none where it saw neither.
 pub fn thread_lines(name: ref String, bound: ref Vec[String], way: Vec[String]?) -> Vec[String] {
@@ -256,7 +256,7 @@ pub fn thread_lines(name: ref String, bound: ref Vec[String], way: Vec[String]?)
     if !bound.is_empty() {
         let listed = a_list(bound, "the parameter", "the parameters")
         out.push(f"`{name}`: {listed} is bound `Send`.")
-        out.push("  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**")
+        out.push("  Seen and not claimed (ADR-290 D8): a `Send` bound says the callee **may**")
         out.push("  send it, which is usually `spawn` and is sometimes an API keeping a door open.")
     }
     // **And the other row**: a sink reached through the crate's own calls,
@@ -279,7 +279,7 @@ pub fn thread_lines(name: ref String, bound: ref Vec[String], way: Vec[String]?)
             out.push(f"`{name}`: reaches `{sink}` through {through}.")
         }
         out.push("  A sink reached through a call says *this function threads something*,")
-        out.push("  never *this function threads your argument* (ADR-193 D4) - connecting")
+        out.push("  never *this function threads your argument* (ADR-290 D9) - connecting")
         out.push("  those is dataflow through a closure capture and is not built.")
     }
     if out.is_empty() {
@@ -291,7 +291,7 @@ pub fn thread_lines(name: ref String, bound: ref Vec[String], way: Vec[String]?)
 
 /// **A crate type's entry**, from what its source shows: `crosses` from its
 /// fields - the one claim a Rust *signature* could never make (ADR-123 D2) -
-/// and `compares` and `copies` from what it derives (ADR-252 D4.3), each read
+/// and `compares` and `copies` from what it derives (ADR-294 D9.3), each read
 /// from the source and written for review. `fields` is empty for a type whose
 /// fields were not read, which is *nobody looked*.
 pub fn type_entry(fields: ref Vec[String], derives: ref collections::BTreeSet[String]) -> TypeContract {

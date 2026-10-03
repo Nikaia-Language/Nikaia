@@ -22,6 +22,9 @@ import re
 import sys
 
 ADR_DIR = "docs/specification/adr"
+# Records a later record replaced. They are read for history only, and only
+# `docs/history/` and `CHANGELOG.md` may cite them (`banished()`).
+ARCHIVE = "docs/history/adr"
 
 SEARCH = [
     "crates/**/*.rs",
@@ -33,6 +36,11 @@ SEARCH = [
     "scripts/**/*",
     "README.md",
     "manifesto.md",
+    "guide/**/*.md",
+    "editors/**/*",
+    "**/Cargo.toml",
+    "rust-toolchain.toml",
+    "index.html",
 ]
 
 
@@ -47,7 +55,7 @@ def collisions():
     # in the same file open the same way and are **not** ownership: the reserved
     # table's rows hold a bare number and no link, and the amendments table's
     # second cell is another ADR rather than prose - which is what tells them
-    # apart here, and was found by this check firing on ADR-030's `narrows` row.
+    # apart here.
     rows = [
         num
         for num, second in re.findall(
@@ -59,23 +67,31 @@ def collisions():
         if rows.count(num) > 1:
             wrong.append(f"ADR-{num}: {rows.count(num)} index rows")
 
-    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md")):
+    archive = open(f"{ARCHIVE}/README.md", encoding="utf-8").read()
+    archived = re.findall(r"^\|\s*\[(\d{3})\]\(adr-\1\.md\)\s*\|", archive, re.M)
+    for num in sorted(set(rows) & set(archived)):
+        wrong.append(f"ADR-{num}: indexed both as live and as archived")
+    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md") + glob.glob(f"{ARCHIVE}/adr-*.md")):
         num = re.search(r"adr-(\d{3})\.md$", path).group(1)
+        listed = archived if path.startswith(ARCHIVE) else rows
         first = open(path, encoding="utf-8").readline()
         said = re.match(r"#\s*ADR-(\d{3})\b", first.strip())
         if not said:
             wrong.append(f"{path}: the first line does not open `# ADR-{num}: …`")
         elif said.group(1) != num:
             wrong.append(f"{path}: titled ADR-{said.group(1)}")
-        if num not in rows:
+        if num not in listed:
             wrong.append(f"ADR-{num}: a record with no index row")
+    live = {re.search(r"(\d{3})\.md$", p).group(1) for p in glob.glob(f"{ADR_DIR}/adr-*.md")}
+    for num in sorted(live & {re.search(r"(\d{3})\.md$", p).group(1) for p in glob.glob(f"{ARCHIVE}/adr-*.md")}):
+        wrong.append(f"ADR-{num}: a file both live and archived")
     return wrong
 
 
 def headings():
     """What each ADR actually offers: its `Dn` and its top-level section numbers."""
     have = {}
-    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md")):
+    for path in sorted(glob.glob(f"{ADR_DIR}/adr-*.md") + glob.glob(f"{ARCHIVE}/adr-*.md")):
         num = re.search(r"adr-(\d{3})\.md$", path).group(1)
         text = open(path, encoding="utf-8").read()
         ds = set(re.findall(r"^#{2,4}\s+(D\d+)\b", text, re.M))
@@ -93,6 +109,10 @@ def citations():
         files |= {f for f in glob.glob(pattern, recursive=True) if os.path.isfile(f)}
     for f in sorted(files):
         if os.path.abspath(f) == os.path.abspath(__file__):
+            continue
+        # The history is read as it was written; a section it cites may since
+        # have left a record. Build output is not ours to check.
+        if f.startswith("docs/history/") or "/target/" in f:
             continue
         try:
             text = open(f, encoding="utf-8", errors="ignore").read()
@@ -131,6 +151,38 @@ def inversions():
     return found
 
 
+def banished():
+    """A live file citing an archived record.
+
+    An archived record was replaced by one that states the same decisions in
+    their current form. Pointing a reader - or a model - at it sends them to
+    the route rather than the answer and costs a second read, so only the
+    history may name it: `docs/history/` and `CHANGELOG.md`.
+    """
+    archived = {
+        re.search(r"(\d{3})\.md$", p).group(1) for p in glob.glob(f"{ARCHIVE}/adr-*.md")
+    }
+    if not archived:
+        return []
+    pattern = re.compile(
+        r"ADR[- ]?(" + "|".join(sorted(archived)) + r")\b|adr-(" + "|".join(sorted(archived)) + r")\.md"
+    )
+    found = []
+    files = set()
+    for p in SEARCH:
+        files |= {f for f in glob.glob(p, recursive=True) if os.path.isfile(f)}
+    for f in sorted(files):
+        if f.startswith("docs/history/") or f == "CHANGELOG.md" or "__pycache__" in f or "/target/" in f:
+            continue
+        if os.path.abspath(f) == os.path.abspath(__file__):
+            continue
+        for line_no, line in enumerate(open(f, encoding="utf-8", errors="ignore"), 1):
+            m = pattern.search(line)
+            if m:
+                found.append((f, line_no, m.group(0)))
+    return found
+
+
 def main():
     have = headings()
     bad = []
@@ -149,6 +201,7 @@ def main():
 
     inverted = inversions()
     collided = collisions()
+    stale = banished()
 
     if bad:
         print(f"{len(bad)} dangling ADR citation(s):")
@@ -167,12 +220,19 @@ def main():
         print("  A number is taken when it is claimed in the index's reserved table,")
         print("  and a record is written once. Two rows or a mismatched title means")
         print("  two records are wearing one number - move the later one.")
-    if bad or inverted or collided:
+    if stale:
+        print(f"{len(stale)} citation(s) of an archived ADR outside the history:")
+        for f, line_no, what in stale:
+            print(f"  {f}:{line_no}: {what}")
+        print("  Cite the record that replaced it (docs/history/adr/README.md maps")
+        print("  every archived decision to its live one).")
+    if bad or inverted or collided or stale:
         return 1
 
     print(f"all ADR citations resolve ({len(citations())} checked)")
     print("no ADR borrows authority from a note")
     print(f"every ADR number belongs to one record ({len(headings())} checked)")
+    print("no live file cites an archived record")
     return 0
 
 

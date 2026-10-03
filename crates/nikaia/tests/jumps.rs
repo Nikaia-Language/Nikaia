@@ -144,7 +144,7 @@ fn a_break_leaves_the_innermost_loop() {
 }
 
 /// `while true { … break … }` — the unconditional loop
-/// ([ADR-070](../../../docs/specification/adr/adr-070.md) D1) with the exit
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D1) with the exit
 /// D2 said it did not have.
 #[test]
 fn a_break_is_how_an_unconditional_loop_ends() {
@@ -204,7 +204,7 @@ fn a_break_may_stand_where_a_value_is_expected() {
     assert_eq!(output_of("break-as-a-value", source), "6\n");
 }
 
-/// The lowering is name for name (ADR-011 D2), and this is what says so — the
+/// The lowering is name for name (ADR-296 D17), and this is what says so — the
 /// one assertion in this file about emitted text rather than about behaviour,
 /// because *"it compiles to a jump and not to a flag"* is the claim
 /// `docs/history/break-continue-cost.md` rests its numbers on.
@@ -281,7 +281,7 @@ fn a_continue_in_a_task_cannot_reach_the_loop_outside_it() {
     assert!(message.contains("outside this task"), "{message}");
 }
 
-/// Each branch of an `overlap` is an `async` block of its own (ADR-050 D2).
+/// Each branch of an `overlap` is an `async` block of its own (ADR-292 D2).
 #[test]
 fn a_break_in_an_overlap_branch_cannot_reach_the_loop_outside_it() {
     let (code, message) = one("use std::fs\n\
@@ -331,7 +331,7 @@ fn a_loop_inside_a_lambda_is_a_loop_a_break_may_leave() {
 /// here it does not, so the value would be dropped in silence.
 ///
 /// **And the help names the two shapes that do carry a value out of a loop**
-/// ([ADR-151](../../../docs/specification/adr/adr-151.md) D2). It said *bind it
+/// ([ADR-276](../../../docs/specification/adr/adr-276.md) D14). It said *bind it
 /// before the `break`* alone, which is one of the two and not the one a reader
 /// usually wants: a search loop is written with a `return`.
 #[test]
@@ -350,7 +350,7 @@ fn a_value_written_after_a_break_is_refused() {
 }
 
 /// The help, on its own, because the message above is the *claim* and this is
-/// the way out ([ADR-151](../../../docs/specification/adr/adr-151.md) D2, and
+/// the way out ([ADR-276](../../../docs/specification/adr/adr-276.md) D14, and
 /// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md): a rule a
 /// reader cannot act on is an obstacle).
 #[test]
@@ -462,7 +462,7 @@ fn the_backstop_lets_a_loop_written_inside_the_task_through() {
 }
 
 /// **`while true` is lowered to `loop`**, which is the form the language below
-/// has for what [ADR-070](../../../docs/specification/adr/adr-070.md) D1
+/// has for what [ADR-276](../../../docs/specification/adr/adr-276.md) D1
 /// decided `while true` *is*.
 ///
 /// Two things rest on it and only one of them is cosmetic. `rustc` answers
@@ -528,7 +528,7 @@ fn an_unconditional_loop_still_means_what_it_meant() {
     assert_eq!(output_of("loop-lowering", source), "5\nafter\n");
 }
 
-// --- the head grammar (ADR-086) ----------------------------------------------
+// --- the head grammar (ADR-301) ----------------------------------------------
 //
 // These sit here rather than in a file of their own because of how they were
 // found: the loop a language *without* `break` has to write is
@@ -558,7 +558,7 @@ fn a_while_head_takes_both_connectives() {
     assert_eq!(output_of("head-and-or", source), "21\n");
 }
 
-/// **The precedence is the ordinary one** ([ADR-086](../../../docs/specification/adr/adr-086.md)
+/// **The precedence is the ordinary one** ([ADR-301](../../../docs/specification/adr/adr-301.md)
 /// D1): `a || b && c` is `a || (b && c)`, not `(a || b) && c`. The two disagree
 /// exactly where the first operand is false and the last one is, which is what
 /// the second call checks.
@@ -616,7 +616,7 @@ fn a_head_still_refuses_a_brace_led_form() {
 }
 
 /// **`??`, `as`, `null` and a tuple in a head** — the four forms
-/// [ADR-087](../../../docs/specification/adr/adr-087.md) added, in one program,
+/// [ADR-301](../../../docs/specification/adr/adr-301.md) added, in one program,
 /// run rather than read.
 #[test]
 fn a_head_holds_every_expression_that_is_not_brace_led() {
@@ -654,7 +654,7 @@ fn a_head_holds_every_expression_that_is_not_brace_led() {
 /// `a ?? 0 > 3` used to be the first entry here, and it is the case that found
 /// this test's own first draft wrong: it was `a ?? (0 > 3)` in **both**
 /// positions, which reads oddly and was not the head's business to differ
-/// about. [ADR-089](../../../docs/specification/adr/adr-089.md) then refused the
+/// about. [ADR-279](../../../docs/specification/adr/adr-279.md) then refused the
 /// shape outright — in both positions, which is this test's claim holding by a
 /// different route — so it moved to
 /// [`a_bare_binary_fallback_is_refused_in_a_head_too`] below rather than out.
@@ -695,7 +695,7 @@ fn a_head_parses_what_a_body_parses() {
 /// And the claim holds for what is **refused**, which is the half a test about
 /// parsing would otherwise miss.
 ///
-/// [ADR-089](../../../docs/specification/adr/adr-089.md) D1 narrows a `??`'s
+/// [ADR-279](../../../docs/specification/adr/adr-279.md) D1 narrows a `??`'s
 /// fallback, and the grammar has two chains: narrowing one and not the other
 /// would let `while a ?? x == y` parse where the same line in a body does not.
 /// That is exactly the drift this file exists to catch, and it caught it — the
@@ -735,7 +735,7 @@ fn a_head_holds_a_tuple() {
 }
 
 /// **And the one restriction that remains is reachable through parentheses**
-/// ([ADR-087](../../../docs/specification/adr/adr-087.md) D2), which is what
+/// ([ADR-301](../../../docs/specification/adr/adr-301.md) D5), which is what
 /// makes it a restriction on *spelling* rather than on meaning.
 #[test]
 fn a_brace_led_form_reaches_a_head_through_parentheses() {

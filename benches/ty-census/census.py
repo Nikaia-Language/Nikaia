@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-257 D5's census build: counts, never costs.
+"""ADR-294 D16's census build: counts, never costs.
 
 Rewrites `contracts/ty.rs` in a copy of the repository so that `Clone` and
 `PartialEq` for `Ty` are written out, `#[inline(never)]`, with a counter, and

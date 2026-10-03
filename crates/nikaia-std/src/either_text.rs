@@ -1,5 +1,5 @@
 //! **Text that is a view or text of its own, per value**
-//! ([ADR-222](../../../docs/specification/adr/adr-222.md) D3).
+//! ([ADR-282](../../../docs/specification/adr/adr-282.md) D14).
 //!
 //! What a `String` field or result is below when both kinds of text flow into
 //! it: a view is borrowed where it is put in, and text of its own is owned
@@ -85,7 +85,7 @@ impl<'a> From<&'a EitherText<'_>> for EitherText<'a> {
 }
 
 /// **What goes into a position both kinds of text flow into**
-/// ([ADR-224](../../../docs/specification/adr/adr-224.md) D2): a view is
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D5): a view is
 /// borrowed and text of its own moved in, and a value that may be absent stays
 /// one - `Option<&str>` becomes `Option<EitherText>` - so one call is right for
 /// a `String` position and for a `String?` one alike. The nullable wrap the
@@ -191,7 +191,7 @@ impl<T: IntoEither> IntoEitherMaybe for Option<T> {
 
 /// **Each item of an iterator handed over as it is**, for a `collect` into a
 /// list whose element is text of both kinds
-/// ([ADR-224](../../../docs/specification/adr/adr-224.md) D3): the list is
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D16): the list is
 /// built once, with each item borrowed or moved in where it is.
 pub trait EitherItems: Iterator + Sized
 where
@@ -203,7 +203,7 @@ where
     }
 }
 
-/// **The same for pairs going into a map** ([ADR-227](../../../docs/specification/adr/adr-227.md)
+/// **The same for pairs going into a map** ([ADR-293](../../../docs/specification/adr/adr-293.md)
 /// D2): the key, the value or both handed over as either kind, whichever of the
 /// map's two is text both kinds flow into.
 #[allow(clippy::type_complexity)]

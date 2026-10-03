@@ -20,7 +20,7 @@ pub use std::time::Duration;
 /// rule a reader has to remember rather than one they can apply.
 ///
 /// **Two implementations and not one**, because Part I 2.2 offers two integer
-/// types ([ADR-048](../../../docs/specification/adr/adr-048.md)) and `5` is an
+/// types ([ADR-285](../../../docs/specification/adr/adr-285.md)) and `5` is an
 /// `i32` where nothing asks otherwise: a program that writes `count.minutes()`
 /// on an `i64` and `5.seconds()` on a literal would otherwise have one of the
 /// two refused in the language below's words about a file nobody wrote

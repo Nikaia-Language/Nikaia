@@ -1,11 +1,11 @@
 // crates/nikaia-std/src/tools/throws.nika
 //
 // Kap 7.1: **which errors can leave a function** - the lattice of the
-// compiler's `contracts::throws`, moved from Rust (ADR-250, #125).
+// compiler's `contracts::throws`, moved from Rust (ADR-294, #125).
 //
 // **What moved is the fixpoint and what a `throw` names.** What stays Rust is
 // the walk that finds, per function, what it throws itself and whom it calls:
-// it is `sync`'s walk (ADR-028's single resolution), and it moves with it. The
+// it is `sync`'s walk (ADR-288's single resolution), and it moves with it. The
 // compiler hands this module the two maps the walk builds and the ledger, and
 // writes back what it answers.
 //
@@ -61,8 +61,8 @@ pub fn error_sets(direct: ref collections::BTreeMap[String, collections::BTreeSe
 }
 
 /// What a callee fails with. **One the walk did not see still has a set**
-/// (ADR-173 D3): a grammar's entry rule is not an `Item::Fn`, and its contract
-/// is written straight into the ledger (ADR-082 D1). Read as nothing, what a
+/// (ADR-296 D40): a grammar's entry rule is not an `Item::Fn`, and its contract
+/// is written straight into the ledger (ADR-296 D24). Read as nothing, what a
 /// parse throws reached no caller, and the caller's channel was inferred
 /// without it - a file `rustc` refused.
 fn theirs(sets: ref collections::BTreeMap[String, collections::BTreeSet[String]], own: ref Ledger, callee: ref String) -> Vec[String] {
@@ -85,9 +85,9 @@ fn theirs(sets: ref collections::BTreeMap[String, collections::BTreeSet[String]]
 /// `ConfigError::NotFound` are both `ConfigError`: a variant is written under
 /// the type that declares it (Part I, 3.4), so **everything but the last
 /// segment** is the type - `io::IoError::NotFound` is `io::IoError`, a type
-/// keyed with its module (ADR-154 D3). A variant with named fields is a
+/// keyed with its module (ADR-313 D3). A variant with named fields is a
 /// struct literal, `ConfigError::BadSyntax { line }`, and records the type and
-/// not the variant too (ADR-023 D1, ADR-157 D1).
+/// not the variant too (ADR-023 D1, ADR-280 D9).
 pub fn error_type(names: ref winnow_grammar::InternerContext, thrown: ref Expr) -> String? {
     return match thrown {
         Expr::Path(segments) => if segments.len() > 1 { all_but_the_last(names, segments) } else { null },
@@ -132,7 +132,7 @@ fn struct_type(written: ref String) -> String {
 // ---------------------------------------------------------------------------
 // **What a function throws itself, and whom it calls** - the walk, moved from
 // the compiler's `contracts::throws` (#125). What a call resolves to is the
-// compiler's to say (`contribution_of`): `sync`'s single resolution (ADR-028),
+// compiler's to say (`contribution_of`): `sync`'s single resolution (ADR-288),
 // handed in as an answer per expression, as the holes of a literal are.
 
 /// What one function contributes to its own error set before its callees are
@@ -142,7 +142,7 @@ pub struct Thrown {
     pub direct: collections::BTreeSet[String],
     pub calls: collections::BTreeSet[String],
     /// Whether a `throw error` stood anywhere in what was walked: a handler
-    /// that has one passes what it caught on (ADR-157 D2).
+    /// that has one passes what it caught on (ADR-280 D10).
     passes_on: bool,
 }
 
@@ -360,7 +360,7 @@ fn thrown_in_blocks(expr: ref Expr, names: ref winnow_grammar::InternerContext, 
 }
 
 // What one expression contributes. **`throw error` in a handler passes the
-// caught error on** (ADR-157 D2): its types are the guarded expression's,
+// caught error on** (ADR-280 D10): its types are the guarded expression's,
 // which the call there already contributed - read as a value nobody can name
 // it added `?`, and the function's sum fell back to the unnamed error. Noted
 // wherever it stands, caught or not, for `passes_on`.
@@ -404,7 +404,7 @@ fn the_caught_error(expr: ref Expr, names: ref winnow_grammar::InternerContext) 
 }
 
 // Whether a handler passes what it caught on: `throw error` anywhere in it
-// (ADR-157 D2).
+// (ADR-280 D10).
 fn passes_on(handler: ref Block, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync) -> bool {
     let mut seen = Thrown { direct: collections::BTreeSet(), calls: collections::BTreeSet(), passes_on: false }
     thrown_in_block(handler, names, holes_of, contribution_of, false, seen)

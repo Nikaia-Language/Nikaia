@@ -1,7 +1,7 @@
 //! What a **compare-and-swap loop** costs against the two lock shapes, for a
 //! value that fits in a machine word.
 //!
-//! [ADR-039](../../../../docs/specification/adr/adr-039.md) §3 leaves a door
+//! [ADR-281](../../../../docs/specification/adr/adr-281.md) leaves a door
 //! open: `update` takes a pure function and is therefore repeatable, which is
 //! the route to an implementation that retries instead of locking — the route
 //! Clojure's `atom` and Haskell's `TVar` took. This measures whether walking
@@ -15,7 +15,7 @@
 //! | row | what it is |
 //! |---|---|
 //! | `Local::update` | today's answer where nothing crosses a thread: a borrow flag, one non-atomic write |
-//! | `Crossing::update` | today's answer where something may: an OS mutex with ADR-057 D4's owner check |
+//! | `Crossing::update` | today's answer where something may: an OS mutex with ADR-281 D9's owner check |
 //! | compare-and-swap loop | the proposal: read, compute, swap, retry — **any** pure function on a word |
 //! | `fetch_add` | the floor of what is possible, and what *recognising the operation* would buy over the loop |
 //! | `Local::update` twice | the control. It must tie, and it bounds every difference above from below |

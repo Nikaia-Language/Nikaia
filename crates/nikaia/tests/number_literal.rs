@@ -1,5 +1,5 @@
 //! `1_000_000`, `0xFF`, `0b1010` and `0o17`
-//! ([ADR-136](../../../docs/specification/adr/adr-136.md)).
+//! ([ADR-285](../../../docs/specification/adr/adr-285.md)).
 //!
 //! The grammar is scannerless, so none of these was a syntax error before this:
 //! `1_000` was the number `1` beside a name `_000` that nothing declares, and
@@ -184,7 +184,7 @@ fn the_most_negative_i64_parses() {
 
 /// **And the digits alone are still refused as an `i64`**, which is the other
 /// half: what the sign buys is one number, not a wider type. Since 0.0.250 they
-/// are a `u64`'s (ADR-248 D2), so it is the checker that says so, pointing at
+/// are a `u64`'s (ADR-285 D19), so it is the checker that says so, pointing at
 /// the type - and past a `u64` the parser still refuses the number.
 #[test]
 fn the_same_digits_without_the_sign_are_still_refused() {

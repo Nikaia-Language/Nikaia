@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # What a compare-and-swap loop costs against the two lock shapes this compiler
-# writes — the number ADR-039 §3's open door turns on.
+# writes — the number ADR-281's open door turns on.
 #
 # The machine and the load are printed with the table, because absolutes on a
 # box of this class move 1.4-1.9x from one day to the next and only the ratios

@@ -3,7 +3,7 @@
 // Kap 4.7: what an `impl` owes the `trait` it names.
 //
 // **A walk of its own, and the reason is the ledger's `sync` column.** The type
-// checker runs *before* `sync::infer` — that order is what keeps ADR-027 sound,
+// checker runs *before* `sync::infer` — that order is what keeps ADR-288 sound,
 // because the checker resolves method calls and the inference reads the result —
 // so a rule that needs the finished `sync` cannot live inside it. This runs
 // afterwards, from `check_program`, beside `dsl::check` and `views::check` and
@@ -12,7 +12,7 @@
 //
 // **Both rules here are refusals that cost nothing today.** Nothing in
 // `examples/`, `tests/samples/` or `crates/nikaia-std/src/` declares a trait at
-// all — [ADR-078](../../../docs/specification/adr/adr-078.md) made the
+// all — [ADR-295](../../../docs/specification/adr/adr-295.md) made the
 // declaration possible one commit ago — so this is the cheapest moment for a
 // refusal: *a refusal is free before programs exist and breaking afterwards*.
 
@@ -21,7 +21,7 @@ use crate::contracts::Ledger;
 use crate::parser::Parsed;
 
 /// Every way an `impl` can fail the `trait` it names - asked by
-/// `tools/traits.nika` ([ADR-250](../../../docs/specification/adr/adr-250.md),
+/// `tools/traits.nika` ([ADR-294](../../../docs/specification/adr/adr-294.md),
 /// #125), the first check written in Nikaia. What stays here is the adapter:
 /// the tree and the ledger go in, and the findings come back as the
 /// compiler's own (`check::from_nikaia`), in the order of the source.
@@ -36,7 +36,7 @@ pub fn check(parsed: &Parsed, own: &Ledger) -> Vec<Finding> {
 }
 
 /// **A finding a check written in Nikaia handed back**, as the compiler's own
-/// (`tools/findings.nika`, ADR-250). The one conversion there is: what the
+/// (`tools/findings.nika`, ADR-294). The one conversion there is: what the
 /// check said is what is reported. A code is a `&'static str` here and text
 /// there, so each code is kept once for the life of the compiler.
 pub fn from_nikaia(found: nikaia_std::tools::findings::Finding) -> Finding {

@@ -1,6 +1,6 @@
 //! **The touch sets, and the verdict they reach** — what
-//! [ADR-033](../../../docs/specification/adr/adr-033.md) built and
-//! [ADR-050](../../../docs/specification/adr/adr-050.md) kept.
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) built and
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) kept.
 //!
 //! D1 withdrew the automatic reordering: statements run in the order they are
 //! written, and no analysis stands between the source and the schedule. **The
@@ -147,7 +147,7 @@ fn a_write_to_the_same_file_keeps_the_order() {
     ));
 }
 
-/// A file this compiler cannot name is every file of its kind (ADR-033 D4).
+/// A file this compiler cannot name is every file of its kind (ADR-292 D3).
 ///
 /// `fs::read_to_string(pfad, fs::Root::Anywhere)` where `pfad` is computed could be the file the
 /// other one writes. The alternative to keeping the order is a program that is
@@ -183,8 +183,8 @@ fn a_function_with_no_contract_keeps_the_order() {
 
 /// A handler that can leave the function makes the next statement conditional.
 ///
-/// This is what building the increment found, and it was not in ADR-033 D5 when
-/// it was written (ADR-034). If the first read fails and its handler `return`s,
+/// This is what building the increment found, and it was not in ADR-292 D1 when
+/// it was written (ADR-292). If the first read fails and its handler `return`s,
 /// the sequential program never performs the second read at all - so performing
 /// it early is speculation, which D5 forbids.
 #[test]
@@ -248,7 +248,7 @@ fn a_non_literal_argument_keeps_the_order() {
 
 /// Two `println`s keep their order, which is D6's own test of the model.
 ///
-/// ADR-033 D6 asks for the obvious without an exception for it, and this is
+/// ADR-292 D5 asks for the obvious without an exception for it, and this is
 /// where a wider analysis could have lost it: a bare `println(x)` is now a
 /// shape the analysis reads, so the answer has to come from somewhere. It comes
 /// from the place D6 says it should - `println` is entered as reaching `stdout`
@@ -264,7 +264,7 @@ fn two_printlns_keep_their_order() {
     ));
 }
 
-/// A failure nobody catches keeps the order (ADR-034 D2).
+/// A failure nobody catches keeps the order (ADR-292 D1).
 ///
 /// The same rule as a diverting handler, reached from the other side: if the
 /// first write fails, the failure leaves the function and the sequential
@@ -314,7 +314,7 @@ fn an_assignment_is_not_an_operation() {
 }
 
 /// A method call keeps the order: which ledger entry it is depends on the type
-/// of its receiver, and that is the type checker's answer (ADR-028).
+/// of its receiver, and that is the type checker's answer (ADR-288).
 #[test]
 fn a_method_call_keeps_the_order() {
     assert!(!overlaps(

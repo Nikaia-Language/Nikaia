@@ -1,5 +1,5 @@
 //! **A value's `cleanup` runs where Rust's ownership says the value died**
-//! ([ADR-239](../../../docs/specification/adr/adr-239.md), refining ADR-006 D1
+//! ([ADR-297](../../../docs/specification/adr/adr-297.md), refining ADR-297 D1
 //! and D2): the value's `Drop` parks its `cleanup` in the running task, and the
 //! compiler settles what was parked at the end of each block a cleanup value
 //! dies in and around the function's body. A failing `cleanup` is the
@@ -508,7 +508,7 @@ fn a_cancelled_tasks_cleanup_is_finished_before_the_program_ends() {
 }
 
 /// **D5: a cleanup the deadline cut off is named**, with exit status 70 and
-/// on the panic path, which is what ADR-112 D2 asked for and could only count.
+/// on the panic path, which is what ADR-297 D8 asked for and could only count.
 #[test]
 fn a_cleanup_the_deadline_cut_off_is_named_with_exit_70() {
     let source = CANCELLED.replace("WAIT", "5000");
@@ -606,7 +606,7 @@ const BRANCHES: &str = "use std::time\n\
     \x20   println(f\"both {n}\")\n\
     }\n";
 
-/// **Each `overlap` branch settles what it parks** (D3, ADR-115 D3): the
+/// **Each `overlap` branch settles what it parks** (D3, ADR-292 D10): the
 /// branches run at once in one task, and each has a queue of its own, so a
 /// branch's values are cleaned up at its own end. A cleanup that fails while
 /// its branch is failing joins **that branch's** error, and a later branch's
@@ -630,7 +630,7 @@ fn an_overlap_branch_settles_its_own_and_joins_its_own_error() {
             .find("cleaning up a `Flaky` failed: second would not flush")
             .expect(&out);
         assert!(first < own && own < later, "at {how:?}: {out}");
-        // **Each with its site** (ADR-240): the first error was raised in
+        // **Each with its site** (ADR-280): the first error was raised in
         // `refuse`'s typed channel and keeps the site across the `?` into the
         // box; the cleanups say where they ran, and the note about a trace is
         // said once, at the top.

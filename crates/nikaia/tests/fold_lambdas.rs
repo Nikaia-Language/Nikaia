@@ -1,5 +1,5 @@
 //! A grammar fold's `init`, `step` and `merge` are walked by the whole checker
-//! ([ADR-092](../../../docs/specification/adr/adr-092.md)).
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md)).
 //!
 //! They are expressions inside a **pattern**, and the grammar walk took a
 //! rule's *action block* and nothing else — so `fn(acc, m) { undeclared }`
@@ -7,7 +7,7 @@
 //! answered about a file nobody wrote
 //! ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
 //!
-//! [ADR-084](../../../docs/specification/adr/adr-084.md) D4 had closed the half
+//! [ADR-276](../../../docs/specification/adr/adr-276.md) D16 had closed the half
 //! a **jump** can reach, with a walk of its own over these same three
 //! expressions and deliberately no more. That walk is gone: the ordinary
 //! `Expr::Closure` arm already crosses a boundary and counts loops from zero,
@@ -31,7 +31,7 @@ fn findings(source: &str) -> Vec<check::Finding> {
 /// that the real examples write as `Summary::new`.
 fn program(rule: &str) -> String {
     // **The entry is named at the call** now
-    // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1), so this
+    // ([ADR-296](../../../docs/specification/adr/adr-296.md) D24), so this
     // fixture has to name it too — and which rule it is varies per test, so it
     // is read off the rule being planted rather than written twice.
     let entry = rule
@@ -130,7 +130,7 @@ fn a_sibling_binding_reaches_into_the_lambda() {
 }
 
 /// **A jump in a step still meets `NK1132`**, which is
-/// [ADR-084](../../../docs/specification/adr/adr-084.md) D4's promise — now
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) D16's promise — now
 /// kept by the ordinary lambda path rather than by a walk of its own.
 ///
 /// The message is the better of the two: the old walk ran with no barrier set

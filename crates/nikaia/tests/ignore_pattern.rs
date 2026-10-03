@@ -1,5 +1,5 @@
 //! `_` is the ignore pattern
-//! ([ADR-126](../../../docs/specification/adr/adr-126.md)).
+//! ([ADR-291](../../../docs/specification/adr/adr-291.md)).
 //!
 //! `_` existed in one place, a `match` arm. Everywhere else a value arrived it
 //! had to be given a name whether or not the body wanted it — a tuple's second
@@ -155,7 +155,7 @@ fn the_ignore_pattern_is_not_an_expression() {
 ///
 /// `_count` and `_0` are ordinary names. The second half of this test used to
 /// be `1_000`, whose `_000` was a name `NK1117` reported about; since
-/// [ADR-136](../../../docs/specification/adr/adr-136.md) that is the number
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) that is the number
 /// `1000`, so what stands here now is the case the lookaheads are actually
 /// for — a **leading** underscore, which no number form has and every language
 /// with both reads as a name.

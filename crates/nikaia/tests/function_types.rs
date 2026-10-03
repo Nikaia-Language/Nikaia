@@ -1,5 +1,5 @@
 //! A function type says what a handler may do
-//! ([ADR-102](../../../docs/specification/adr/adr-102.md) D1 and D2).
+//! ([ADR-277](../../../docs/specification/adr/adr-277.md) D6 and D7).
 //!
 //! A parameter could not be a function. The type grammar had a name, a view,
 //! type arguments and `?`, so `fn route(path: &str, handler: fn(Request) ->
@@ -133,7 +133,7 @@ fn the_ledger_carries_the_type_and_its_two_promises() {
 
 /// **A lambda that does less fits a type that allows more** (D2), and the other
 /// direction does not: a type that says `sync` is the same assertion
-/// [ADR-027](../../../docs/specification/adr/adr-027.md) makes about a
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) makes about a
 /// declaration, made about somebody else's code.
 #[test]
 fn a_lambda_that_does_less_fits_a_type_that_allows_more() {
@@ -220,7 +220,7 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
         "{plain}"
     );
     // Without it, the same `Result` is what the **async closure** hands back
-    // ([ADR-192](../../../docs/specification/adr/adr-192.md) D1). `load` does
+    // ([ADR-277](../../../docs/specification/adr/adr-277.md) D11). `load` does
     // not keep `reader`, so it is a run parameter and takes the bound rather
     // than the box.
     let run = lowered("fn load(reader: fn(Path) -> Bytes throws) { }\nfn main() { }\n");
@@ -236,11 +236,11 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
 }
 
 /// **A lambda that pauses is an ordinary program now**
-/// ([ADR-122](../../../docs/specification/adr/adr-122.md) D2), where it used to
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D10), where it used to
 /// be refused at the build, because the lowering had no shape for one.
 ///
 /// **And the shape is the one the body asks for**
-/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D1): `run` calls `f`
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D11): `run` calls `f`
 /// and does not keep it, so the parameter is `impl AsyncFn() -> String` and the
 /// lambda an `async` closure — 1.37 ns/call against the box's 11.99, on a
 /// 0.31 floor. What this test asserted before that record — that the program
@@ -270,7 +270,7 @@ fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
 }
 
 /// **The declaration and the call read one column**
-/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D3), and this is the
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D14), and this is the
 /// test that would catch them drifting apart: the two disagreeing is one
 /// parameter with two shapes, which is `rustc`'s words about a file nobody
 /// wrote.
@@ -295,12 +295,12 @@ fn a_run_parameter_that_pauses_compiles_and_runs() {
 }
 
 /// **A parameter the body *keeps* keeps the box**
-/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D1), because
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D11), because
 /// `AsyncFn` is a **bound** and a value that outlives the call needs a type.
 ///
 /// `spawn` is the one position that can keep a code parameter today — a field,
 /// a result and a `let` are all `NK1142` until
-/// [ADR-102](../../../docs/specification/adr/adr-102.md) D5 lands — so this is
+/// [ADR-277](../../../docs/specification/adr/adr-277.md) D11 lands — so this is
 /// what holds the kept branch honest until then.
 #[test]
 fn a_kept_parameter_keeps_the_boxed_closure() {
@@ -358,7 +358,7 @@ fn a_function_type_outside_a_parameter_is_a_kept_value() {
 /// **`NK2206`: a lambda that pauses, handed to a `fn() sync`** (D2).
 ///
 /// A type that says `sync` is the assertion
-/// [ADR-027](../../../docs/specification/adr/adr-027.md) makes about a
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) makes about a
 /// declaration, made about somebody else's code: a caller who wrote it has
 /// promised their own callers something, and a handler that pauses takes the
 /// promise away without saying so.
@@ -388,7 +388,7 @@ fn a_pausing_lambda_handed_to_a_sync_type_is_refused() {
 /// one that has to answer for a failure the type refuses, so `NK2605` — *this
 /// function can fail because …* — does not stand beside it. Where the type
 /// **does** say `throws`, the failure travels to the caller by
-/// [ADR-029](../../../docs/specification/adr/adr-029.md) D3 and `NK2605` is
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) D15 and `NK2605` is
 /// right again.
 #[test]
 fn a_failing_lambda_handed_to_a_type_without_throws_is_refused() {
@@ -494,7 +494,7 @@ fn a_failure_caught_inside_the_lambda_is_not_the_lambdas() {
 }
 
 /// **A free call resolves its callee before it walks its arguments**, which is
-/// [ADR-029](../../../docs/specification/adr/adr-029.md)'s ordering — the
+/// [ADR-288](../../../docs/specification/adr/adr-288.md)'s ordering — the
 /// *method* path was given it when that record landed and this one was not.
 ///
 /// It is what makes the two refusals above possible at all: a lambda's
@@ -511,12 +511,12 @@ fn a_free_calls_lambda_is_typed_from_the_signature() {
 }
 
 /// **The type decides, and nothing inferred stands behind it**
-/// ([ADR-122](../../../docs/specification/adr/adr-122.md) D1).
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D11).
 ///
 /// This test used to assert the opposite, and the record it asserted is the one
-/// ADR-122 answers: [ADR-102](../../../docs/specification/adr/adr-102.md) D3
+/// ADR-277 answers: [ADR-277](../../../docs/specification/adr/adr-277.md) D8
 /// gave a **run** parameter `sync = "from(f)"` — *the lambda decides* — on
-/// [ADR-029](../../../docs/specification/adr/adr-029.md) D3's reasoning that
+/// [ADR-288](../../../docs/specification/adr/adr-288.md) D15's reasoning that
 /// the lambda's body is counted in the caller. That reasoning holds while the
 /// lambda is a plain closure. It stops holding the moment the parameter's type
 /// may pause, because then the lambda is a **future the callee awaits**, and a
@@ -563,7 +563,7 @@ fn the_parameters_type_decides_whether_the_callee_pauses() {
 }
 
 /// **A kept one is answered from the type** (D3), and a body that stores *and*
-/// runs gets the kept answer, which is the safe one and what ADR-102 §4 says it
+/// runs gets the kept answer, which is the safe one and what ADR-277 says it
 /// gets.
 #[test]
 fn a_kept_parameter_is_answered_from_the_type() {
@@ -709,7 +709,7 @@ fn a_handler_passed_on_inside_a_loop_is_lent() {
     );
     // **And the call hands it on as it has it**: `f` is a `&impl AsyncFn`
     // already, and a reference is a copy. A second `&` compiled here and was a
-    // new type at every level of a recursion (ADR-252 D6, found moving `fold`).
+    // new type at every level of a recursion (ADR-294 D11, found moving `fold`).
     assert!(
         rust.contains("twice(n, f)"),
         "and the call hands on the view it was lent: {rust}"

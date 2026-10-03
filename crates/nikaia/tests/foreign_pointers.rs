@@ -1,8 +1,8 @@
 //! What the C boundary lends: a view, and no raw pointer
-//! ([ADR-147](../../../docs/specification/adr/adr-147.md) D1).
+//! ([ADR-302](../../../docs/specification/adr/adr-302.md) D5).
 //!
 //! `extern "C" { fn malloc(size: usize) -> Pointer[u8] }` was refused with
-//! `NK1135`, and [ADR-124](../../../docs/specification/adr/adr-124.md) §4 left
+//! `NK1135`, and [ADR-302](../../../docs/specification/adr/adr-302.md) left
 //! it that way on purpose — *a pointer that outlives what it points at wants a
 //! record with a lifetime story, not a name.* What that cost was most of C:
 //! every function whose signature has a pointer in it was unwritable, so
@@ -158,10 +158,10 @@ fn the_shapes_do_not_fit_each_other() {
     assert!(Ty::parse("ref mut Array[u8]").fits(&Ty::parse("ref mut Array[u8]")));
 }
 
-/// **`&mut` is the C boundary's and nowhere else's** (`NK1158`), and since
+/// **`ref mut` is the C boundary's and nowhere else's** (`NK1158`), and since
 /// 0.0.127 that is the whole of the rule
 /// ([ADR-179](../../../docs/specification/adr/adr-179.md) D1, which supersedes
-/// [ADR-147](../../../docs/specification/adr/adr-147.md) D1 in part).
+/// [ADR-302](../../../docs/specification/adr/adr-302.md) D5 in part).
 ///
 /// A parameter this language may change is written `mut name: T`
 /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3) — the word goes
@@ -187,7 +187,13 @@ fn the_mut_is_the_boundarys_and_the_run_is_not() {
     );
     let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1158").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
-    assert!(refused[0].message.contains("`&mut`"), "{refused:#?}");
+    // In this language's words (Part III C.1): `ref mut`, never Rust's `&mut`.
+    assert!(refused[0].message.contains("`ref mut`"), "{refused:#?}");
+    assert!(
+        !refused[0].message.contains("&mut")
+            && refused[0].notes.iter().all(|n| !n.contains("&mut")),
+        "{refused:#?}"
+    );
     assert!(
         refused[0]
             .help
@@ -373,7 +379,7 @@ fn a_length_that_cannot_be_shown_to_fit_is_refused() {
 }
 
 /// **A `usize` at the boundary takes this language's own integer** (D2,
-/// [ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D1).
 ///
 /// A length here is an `i64` and the machine-width type left the surface a
 /// program can write, so a declaration that says `size_t` is handed an `i64`
@@ -443,7 +449,7 @@ fn an_opaque_handle_is_an_address_and_a_cleanup() {
     // a handle **is** the address, so what C is handed is the pointer.
     assert!(rust.contains("#[repr(transparent)]"), "{rust}");
     // The hull is **non-null**, which is
-    // [ADR-155](../../../docs/specification/adr/adr-155.md) D2: a handle holds
+    // [ADR-302](../../../docs/specification/adr/adr-302.md) D11: a handle holds
     // an address and `T?` is the absence of one, so `Option<T>` is the same
     // machine word and `ref mut T?` is `T **`.
     assert!(
@@ -529,7 +535,7 @@ fn nothing_reaches_inside_a_handle() {
 /// word means something only where a rule asks for it — and `opaque`, `type`,
 /// `released` and `by` are all names a program may want. Reserving a word buys
 /// exactly one thing, the sentence a reader who writes it gets
-/// ([ADR-117](../../../docs/specification/adr/adr-117.md) D2), and this
+/// ([ADR-298](../../../docs/specification/adr/adr-298.md) D7), and this
 /// position says that sentence without taking the word away.
 #[test]
 fn the_four_words_are_still_names() {
@@ -619,7 +625,7 @@ fn returned_text_is_copied_by_std() {
     let rust = lowered(source);
     // The declaration hands back the **address**, and the hull goes on at the
     // call, where the claim it made can be checked
-    // ([ADR-155](../../../docs/specification/adr/adr-155.md) D3). The copy is a
+    // ([ADR-302](../../../docs/specification/adr/adr-302.md) D12). The copy is a
     // `std` call with no `unsafe` of the program's own around it.
     assert!(
         rust.contains("fn getenv(name: *const u8) -> Option<nikaia_std::foreign::CText>;"),
@@ -702,7 +708,7 @@ fn main() throws {
 }
 
 /// **A handle that may be absent is a `T?`**
-/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D1), meaning what it
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D10), meaning what it
 /// means everywhere else: `??` and `?.` are how a program gets past it.
 #[test]
 fn a_handle_may_be_absent() {
@@ -820,7 +826,7 @@ fn the_copy_fails_in_one_way() {
         .functions
         .get("foreign::CStr::to_string")
         .expect("std describes the copy");
-    // **One way, and since [ADR-158](../../../docs/specification/adr/adr-158.md)
+    // **One way, and since [ADR-280](../../../docs/specification/adr/adr-280.md)
     // D1 it has a name for it.** The doc below has always said *the same
     // failure `fs::read_to_string` has*, and a set of one that says which is
     // stronger evidence for *one way* than a `"?"` ever was.
@@ -880,14 +886,14 @@ fn main() throws {
 }
 
 /// **`sqlite3` from end to end**
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) §5 step 5), which is
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) step 5), which is
 /// that record's own check that its four decisions are enough — for a **real
 /// library's** surface rather than for four libc calls.
 ///
 /// Everything the boundary offers is in `examples/sqlite/main.nika` and nothing
 /// else is: a buffer lent for the call, an opaque handle with its `cleanup`, a
 /// handle that may be absent filled through an out-parameter
-/// ([ADR-155](../../../docs/specification/adr/adr-155.md) D1), and text the
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D10), and text the
 /// library owns copied once by `std`. What closes the database and the
 /// statement is written **nowhere**.
 ///
@@ -911,7 +917,7 @@ fn sqlite3_from_end_to_end() {
         // D3: a handle, its cleanup, and the lending.
         "impl Drop for sqlite3",
         "sqlite3_step(stmt.lent())",
-        // ADR-155 D1 and D2: the out-parameter, one pointer to one pointer.
+        // ADR-302 D10 and D11: the out-parameter, one pointer to one pointer.
         "out: *mut Option<sqlite3>",
         "let mut slot: Option<sqlite3> = None;",
         // D4: text the library owns, copied by `std`.

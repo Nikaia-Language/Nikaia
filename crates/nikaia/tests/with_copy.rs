@@ -10,7 +10,7 @@
 //! the type, and this node does not carry one — so the checker records what it
 //! worked out and the emitter reads it back, which is the handover a
 //! `comptime`'s value already makes
-//! ([ADR-011](../../../docs/specification/adr/adr-011.md) D2). A `with` this
+//! ([ADR-296](../../../docs/specification/adr/adr-296.md) D17). A `with` this
 //! compiler could not name a type for is refused rather than guessed at, and
 //! that is why the emitter's lookup cannot fail.
 
@@ -125,7 +125,7 @@ fn a_field_of_a_field_is_a_nested_with() {
 
 /// **What it lowers to is one struct expression with a base** (§3), and `..p`
 /// rather than `..p.clone()`: no copy is inserted that the program did not
-/// write ([ADR-107](../../../docs/specification/adr/adr-107.md) D3).
+/// write ([ADR-282](../../../docs/specification/adr/adr-282.md) D7).
 #[test]
 fn it_lowers_to_a_functional_update_with_no_copy_inserted() {
     let rust = lower(&format!(
@@ -241,7 +241,7 @@ fn an_enum_operand_is_refused_and_the_way_out_names_match() {
 ///
 /// What `with` does not name it takes from the operand by move, and a copy
 /// this compiler inserted would be one the program did not write
-/// ([ADR-107](../../../docs/specification/adr/adr-107.md) D3). Without this the
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D7). Without this the
 /// emitted `Point { x: 1, ..p }` over a `&Point` is `rustc`'s *cannot move out
 /// of `*p`* — about a file nobody wrote.
 #[test]

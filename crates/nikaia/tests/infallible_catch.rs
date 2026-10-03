@@ -1,5 +1,5 @@
 //! A `catch` over an expression that cannot fail is `NK1134`
-//! ([ADR-091](../../../docs/specification/adr/adr-091.md)).
+//! ([ADR-308](../../../docs/specification/adr/adr-308.md)).
 //!
 //! The lowering makes a `catch` a `match` over a `Result`, so a guarded
 //! expression that is not one produced `E0308` about the generated file, naming
@@ -118,7 +118,7 @@ fn what_might_fail_is_left_alone() {
 ///
 /// `(text.parse() catch { 1 }) catch { 2 }` really does have nothing left for
 /// the second handler — but saying so needs what a handler's own failure does,
-/// which is [ADR-034](../../../docs/specification/adr/adr-034.md)'s question
+/// which is [ADR-292](../../../docs/specification/adr/adr-292.md)'s question
 /// and not this refusal's. So it stays quiet, in the direction that cannot
 /// refuse a program that is right.
 #[test]

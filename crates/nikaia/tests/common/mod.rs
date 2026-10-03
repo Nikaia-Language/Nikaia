@@ -329,7 +329,7 @@ pub fn compile(source: &Path, args: &[&str]) -> Output {
 /// than one the ledger merely has not filled —
 /// [ADR-024](../../../../docs/specification/adr/adr-024.md) D4's erased generic.
 /// That road is closed rather than waiting:
-/// [ADR-074](../../../../docs/specification/adr/adr-074.md) D5 made a member on
+/// [ADR-295](../../../../docs/specification/adr/adr-295.md) D5 made a member on
 /// a parameter with no bound `NK1126`, so the erasure is now a **refusal** and
 /// not an unknown. This constant stays, and the day somebody writes
 /// `insert_str` down it moves rather than goes.
@@ -356,7 +356,7 @@ pub fn undescribed_call(receiver: &str) -> String {
 /// in the ledger because `NK1131`'s advice needed it. That is the ledger getting
 /// better and a test measuring the wrong thing, which is exactly the pair this
 /// file exists to keep apart. The sixth was `repeat`: it was `str`'s only, until
-/// [ADR-225](../../../../docs/specification/adr/adr-225.md) D1 let a `String`
+/// [ADR-282](../../../../docs/specification/adr/adr-282.md) D18 let a `String`
 /// receiver find `str`'s entries.
 pub const UNDESCRIBED_VALUE_METHOD: &str = "to_ascii_uppercase";
 

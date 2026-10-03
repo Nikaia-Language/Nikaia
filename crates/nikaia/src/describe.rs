@@ -1,7 +1,7 @@
 // crates/nikaia/src/describe.rs
 //
 // `nikaia describe <crate>` — a draft ledger for a Rust crate's boundary
-// ([ADR-104](../../docs/specification/adr/adr-104.md) D2, D3, D4).
+// ([ADR-290](../../docs/specification/adr/adr-290.md) D2-D4).
 //
 // ## What it is for
 //
@@ -17,10 +17,10 @@
 // does not give up a stable-only toolchain for it.
 //
 // **They are read by a grammar written in Nikaia**
-// ([ADR-195](../../docs/specification/adr/adr-195.md) D3):
+// ([ADR-290](../../docs/specification/adr/adr-290.md) D13):
 // `crates/nikaia-std/src/tools/rust.nika`, lowered ahead of time and reached
 // from here as an ordinary Rust module — `nikaia_std::tools::rust`, a call and
-// nothing else ([ADR-196](../../docs/specification/adr/adr-196.md) D1). What
+// nothing else ([ADR-290](../../docs/specification/adr/adr-290.md) D16). What
 // stood here before was a hand-written character scanner that matched `pub fn`
 // at the start of a line and counted braces without knowing what a brace is;
 // on one crate it wrote entries for **four functions that do not exist**
@@ -91,7 +91,7 @@ pub struct Described {
     /// `?`, named so a reviewer knows what to fill rather than what to find.
     pub unanswered: Vec<String>,
     /// What the describer **saw and did not claim**
-    /// ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5), written
+    /// ([ADR-290](../../docs/specification/adr/adr-290.md) D8, D10), written
     /// into the file as comments.
     pub notes: Notes,
 }
@@ -137,7 +137,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
             relative.clone(),
             orchestrator::cache::sha256_hex(text.as_bytes()),
         );
-        // **Read by the grammar, offered by `tools/surface.nika`** (ADR-195
+        // **Read by the grammar, offered by `tools/surface.nika`** (ADR-290
         // D3-D4): this drives the two and hands the items between them.
         let items = nikaia_std::tools::rust::file(text)
             .map_err(|error| anyhow::anyhow!("{relative}: {error}"))?;
@@ -155,7 +155,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     let mut named_types: BTreeSet<String> = BTreeSet::new();
     for name in &wanted {
         // **The path a caller writes, resolved through the `pub use` items**
-        // ([ADR-196](../../docs/specification/adr/adr-196.md) D2's own reason
+        // ([ADR-290](../../docs/specification/adr/adr-290.md) D17's own reason
         // for reading them): a `pub fn` inside a private `mod` is reachable
         // after all when one says so, and refusing such a call would be
         // [Part III C.4](../../docs/specification/30-nikaia-tooling.md).
@@ -183,7 +183,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     let nothing = (Vec::new(), BTreeSet::new());
     for name in named_types {
         // **The one claim that comes from a field** (ADR-123 D2), and what
-        // the type derives (ADR-252 D4.3): `tools/crossing.nika`'s entry.
+        // the type derives (ADR-294 D9.3): `tools/crossing.nika`'s entry.
         let entry = crossing::type_entry(
             fields.get(&name).unwrap_or(&nothing.0),
             derives.get(&name).unwrap_or(&nothing.1),
@@ -192,7 +192,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     }
 
     // **What the describer saw and did not claim**
-    // ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5), gathered
+    // ([ADR-290](../../docs/specification/adr/adr-290.md) D8, D10), gathered
     // after the entries because a proposal is written above the one it is
     // about.
     let mut notes = Notes::empty();
@@ -212,7 +212,7 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         else {
             continue;
         };
-        // **What it saw and did not claim** (ADR-193 D3, D4): the bound, and
+        // **What it saw and did not claim** (ADR-290 D8, D9): the bound, and
         // a sink reached through the crate's own calls - which is the row an
         // `unsafe impl Send` that took the bound away leaves.
         let bound: Vec<String> = sent_across(function);
@@ -278,7 +278,7 @@ struct Sources {
 /// that guessed at that cache's shape would be resolving one.
 ///
 /// The path is **relative to `nikaia.toml`**
-/// ([ADR-197](../../docs/specification/adr/adr-197.md) D1), as a Nikaia
+/// ([ADR-286](../../docs/specification/adr/adr-286.md) D16), as a Nikaia
 /// package's is and as anybody would guess. It used to be relative to the
 /// generated manifest, which put this reader and Cargo in two different
 /// directories for one crate's sources — and only this one had a test.
@@ -313,7 +313,7 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
         given => given.to_string(),
     };
 
-    // **The walk is Nikaia's** (ADR-195 D4, ADR-196 D4): `tools/sources.nika`
+    // **The walk is Nikaia's** (ADR-290 D14, ADR-290 D19): `tools/sources.nika`
     // reads every `.rs` under `src` by `fs::walk`, and this drives it to its
     // end. A crate with no `src` has no `.rs` file, which the next lines say.
     let src = crate_root.join("src");
@@ -336,7 +336,7 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
 }
 
 /// **Every description this build reads, as one digest**, for the cache key
-/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5,
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D5,
 /// [ADR-021](../../docs/specification/adr/adr-021.md) D7).
 ///
 /// Empty where the project describes nothing, which is most of them. The files
@@ -387,7 +387,7 @@ pub fn descriptions_digest(root: &Path) -> String {
 /// `None` for anything this cannot answer — a crate the manifest does not
 /// declare, one declared by version, one whose directory is not there. Each of
 /// those is an absence rather than a difference, and a refusal may not rest on
-/// one ([ADR-169](../../docs/specification/adr/adr-169.md) D1).
+/// one ([ADR-281](../../docs/specification/adr/adr-281.md) D34).
 pub fn crate_root(root: &Path, crate_word: &str) -> Option<PathBuf> {
     let manifest = crate::manifest::Manifest::read(&root.join("nikaia.toml")).ok()?;
     let (_, value) = rust_dependency(&manifest, crate_word).ok()?;
@@ -472,7 +472,7 @@ fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<St
 }
 
 /// **The parameters a `Send` bound reaches**, in declaration order
-/// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+/// ([ADR-290](../../docs/specification/adr/adr-290.md) D9).
 ///
 /// Two shapes, and both are the same evidence: a parameter whose type is a
 /// type variable the bounds send, and one written `impl … Send …` at the

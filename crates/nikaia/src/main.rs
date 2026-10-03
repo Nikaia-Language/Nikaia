@@ -51,13 +51,13 @@ pub struct Cli {
     pub user_parallelism: Option<String>,
 
     /// An optimization that changes nothing a program means, as
-    /// `NAME:LEVEL` (ADR-271 D1). There are two:
+    /// `NAME:LEVEL` (ADR-306 D1). There are two:
     /// `remove-bounds-checks:basic` drops an index's check inside a loop over
     /// the list's own length that cannot change it, and
     /// `remove-bounds-checks:aggressive` also every one the solver proves
     /// inside, with a certificate its checker accepts;
     /// `remove-overflow-checks:aggressive` drops the check of a `+`, `-` or
-    /// `*` the solver proves stays inside its type (ADR-272). A check nothing
+    /// `*` the solver proves stays inside its type (ADR-306). A check nothing
     /// proves stays at every level.
     ///
     /// May be given more than once; overrides `nikaia.toml`'s
@@ -85,7 +85,7 @@ pub struct Cli {
     pub no_cache: bool,
 
     /// Print which adjacent statements run together and why the rest do not
-    /// (ADR-033 D9).
+    /// (ADR-292 D2).
     ///
     /// Nikaia has no `allow_parallel`: the overlap is the default and the
     /// refusals are the compiler's own. That is only fair if the refusals can
@@ -109,12 +109,12 @@ pub struct Cli {
     pub sharing: bool,
 
     /// Print which of Part I 6.6's states each view in a signature is in
-    /// ([ADR-008](../../../docs/specification/adr/adr-008.md) D6).
+    /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4).
     ///
     /// **The half of D6 that survived, and the reason the state lands in the
     /// ledger** (D7). The assertion beside it — a word a struct wrote to forbid
     /// a transition — is gone
-    /// ([ADR-201](../../../docs/specification/adr/adr-201.md) D1); this shows
+    /// ([ADR-283](../../../docs/specification/adr/adr-283.md) D4); this shows
     /// what the compiler solved without being asked, so a change in a
     /// representation is a ledger diff in review rather than a surprise in a
     /// profile.
@@ -136,15 +136,15 @@ pub struct Cli {
     pub asserts: bool,
 
     /// Print what a `T::fields` loop was unrolled to, for the types actually
-    /// used ([ADR-088](../../../docs/specification/adr/adr-088.md) D6,
-    /// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+    /// used ([ADR-304](../../../docs/specification/adr/adr-304.md) D9,
+    /// [ADR-304](../../../docs/specification/adr/adr-304.md)).
     ///
     /// **The one readability problem every build-time system shares** is that
     /// you cannot see what a function becomes for a given type without
     /// unrolling it in your head. The usual answer is to invent syntax; this
     /// project already has the other one, and `--overlaps`, `--sharing`,
     /// `--tethers` and `--trust` are it. So this is the same information
-    /// [ADR-181](../../../docs/specification/adr/adr-181.md) D3's diagnostic
+    /// [ADR-304](../../../docs/specification/adr/adr-304.md) D8's diagnostic
     /// carries, offered **on demand instead of on failure** (D5).
     ///
     /// Like the other four, it explains a decision rather than changing one.
@@ -152,7 +152,7 @@ pub struct Cli {
     pub comptime: bool,
 
     /// The file that names the files this build may read while it builds
-    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D2).
+    /// ([ADR-310](../../../docs/specification/adr/adr-310.md) D5).
     ///
     /// **Without it a build reads nothing** (D1), and that is the whole of why
     /// the default is worth having: *this build reads nothing while building*
@@ -208,7 +208,7 @@ pub enum Command {
         file: PathBuf,
     },
     /// Read `rustc --error-format=json` on stdin and report it against the
-    /// `.nika` file instead of the emitted Rust (ADR-012); nothing is written.
+    /// `.nika` file instead of the emitted Rust (ADR-300); nothing is written.
     ///
     /// The map is not an artifact: the lowering is deterministic, so it is
     /// rebuilt from the file here rather than written out and kept in step.
@@ -282,7 +282,7 @@ pub enum Command {
         sysroot: Option<PathBuf>,
     },
     /// Write a draft ledger for a Rust crate's boundary
-    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D2).
+    /// ([ADR-290](../../../docs/specification/adr/adr-290.md) D2).
     ///
     /// The command `NK2504` names. It reads the crate's `pub` signatures,
     /// translates them by Part III 15.2's table, and writes
@@ -306,7 +306,7 @@ pub enum Command {
 ///
 /// Every message rustc reports about the emitted file is placed back in the
 /// `.nika` it came from. The text is left alone: because the lowering is name
-/// for name (ADR-011 D2), only the position was ever wrong.
+/// for name (ADR-296 D17), only the position was ever wrong.
 fn explain(input: &std::path::Path, settings: &Settings, source: &str) -> Result<()> {
     use std::io::Read;
 
@@ -442,7 +442,7 @@ fn lower_std(sysroot: Option<PathBuf>) -> Result<i32> {
     Ok(0)
 }
 
-/// `nikaia describe <crate>` ([ADR-104](../../../docs/specification/adr/adr-104.md) D2).
+/// `nikaia describe <crate>` ([ADR-290](../../../docs/specification/adr/adr-290.md) D2).
 ///
 /// **What it prints is what a reviewer does next**, which is the whole reason
 /// the command exists rather than the file appearing during a build: the draft
@@ -455,7 +455,7 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
     };
     // The same walk `nikaia lower` makes, from a directory rather than from a file:
     // a crate is described for a **project**, because the project is what
-    // declares it (ADR-104 D1).
+    // declares it (ADR-290 D1).
     let start = start.canonicalize().unwrap_or(start);
     let root = start
         .ancestors()
@@ -499,7 +499,7 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
         }
     }
     // **The two things the describer saw and did not claim**
-    // ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5). They are in
+    // ([ADR-290](../../docs/specification/adr/adr-290.md) D8, D10). They are in
     // the file as comments, where the reviewer meets them; they are said here
     // too, because a person who runs a command reads what it printed and may
     // not open the file at all.
@@ -697,7 +697,7 @@ fn test_command(
 
 /// What the manifest still accepts and the compiler no longer reads.
 ///
-/// A note rather than a failure: [ADR-038](../../docs/specification/adr/adr-038.md)
+/// A note rather than a failure: [ADR-303](../../docs/specification/adr/adr-303.md)
 /// D5 moved `cleanup-deadline` to the runtime configuration file, and a
 /// manifest written to the specification that documented it must not stop
 /// compiling because of the move. The note is what makes the move discoverable

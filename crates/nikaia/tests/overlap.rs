@@ -1,12 +1,12 @@
 //! **`overlap { … }`** — Part I 8.1.2,
-//! [ADR-050](../../../docs/specification/adr/adr-050.md) D2–D6.
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) D2, D6.
 //!
 //! The one way a program asks for overlap, now that
-//! [ADR-050](../../../docs/specification/adr/adr-050.md) D1 has withdrawn the
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) D1 has withdrawn the
 //! automatic half. What makes it worth a form of its own is D3: **every
 //! mainstream construct for "run these together" takes the programmer's word
 //! for the independence, and this one checks it** — against the touch sets
-//! [ADR-033](../../../docs/specification/adr/adr-033.md) built for the
+//! [ADR-292](../../../docs/specification/adr/adr-292.md) built for the
 //! inference that D1 removes. That machinery is kept and asked the other way
 //! round: not *"may I reorder these?"* but *"you said these overlap; is that
 //! true?"*
@@ -90,7 +90,7 @@ fn every_branch_runs_and_the_value_is_in_written_order() {
 /// computation to completion before either read was submitted, and the block
 /// would cost their sum rather than their maximum. So the branches that can
 /// pause are handed over first, which is the ledger's `sync` column read the
-/// same way ADR-033's pairs read it.
+/// same way ADR-292's pairs read it.
 ///
 /// **And the value goes back into written order**, because D2 says it is the
 /// tuple in written order and the reordering is a schedule. This is the test
@@ -122,7 +122,7 @@ fn a_branch_that_cannot_pause_is_started_last_and_answered_in_place() {
         reads < computation,
         "the computation was started before the reads:\n{rust}"
     );
-    assert!(rust.contains("ADR-050 D6"), "{rust}");
+    assert!(rust.contains("ADR-292 D6"), "{rust}");
 
     // Written order out of start order, and the program says so.
     assert_eq!(run("overlap-d6", source).trim(), "45 4 8");
@@ -135,14 +135,14 @@ fn a_branch_that_cannot_pause_is_started_last_and_answered_in_place() {
 #[test]
 fn a_block_that_needs_no_reordering_gets_none() {
     let rust = lower(THREE_READS);
-    assert!(!rust.contains("ADR-050 D6"), "{rust}");
+    assert!(!rust.contains("ADR-292 D6"), "{rust}");
     assert!(!rust.contains("__nikaia_branch_"), "{rust}");
     assert!(rust.contains("task::overlap3("), "{rust}");
 }
 
 /// **D3: the branches must meet on nothing, and the compiler checks it.**
 ///
-/// ADR-050 D3's own example, and the message names the resource. This is the
+/// ADR-292 D3's own example, and the message names the resource. This is the
 /// part no other language has: every mainstream form for *run these together*
 /// takes the programmer's word for it.
 #[test]
@@ -258,10 +258,10 @@ fn an_uncaught_failure_in_a_branch_fails_the_block() {
         "{rust}"
     );
     // **One outcome out of the branches'**, in `std`
-    // ([ADR-164](../../../docs/specification/adr/adr-164.md) D1): a `?` per
+    // ([ADR-292](../../../docs/specification/adr/adr-292.md) D18): a `?` per
     // branch written here would leave the *function*, which is what a `catch` on
     // the block cannot allow — and one place that sees every outcome is where
-    // ADR-115's `secondary` list goes.
+    // ADR-292's `secondary` list goes.
     assert!(
         rust.contains("nikaia_std::task::combine2(__nikaia_branch_0, __nikaia_branch_1)?"),
         "{rust}"

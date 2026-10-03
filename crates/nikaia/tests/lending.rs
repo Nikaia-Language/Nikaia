@@ -119,7 +119,7 @@ fn a_for_over_something_that_is_not_a_place_owns_it() {
 /// `&Vec[Entry]` — and `&entries` is then a `&&Vec<Entry>`, which Rust does not
 /// iterate. `.iter()` reads the same through any number of references, and this
 /// emitter has no types to tell the two apart with
-/// ([ADR-028](../../../docs/specification/adr/adr-028.md)). Found by
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md)). Found by
 /// `examples/inventory/src/stock.nika`, whose `total` takes exactly that parameter.
 #[test]
 fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
@@ -215,7 +215,7 @@ fn a_let_over_a_place_is_a_view() {
     );
     // The read is `index::get`, which hands back a **view** of the element —
     // which is what this test is about, one spelling on
-    // ([ADR-161](../../../docs/specification/adr/adr-161.md) D6). Since 0.0.250
+    // ([ADR-293](../../../docs/specification/adr/adr-293.md) D9). Since 0.0.250
     // without the `&*` around it, which cancelled out.
     assert!(
         rust.contains("let row = nikaia_std::index::get(&store.rows,"),
@@ -315,7 +315,7 @@ fn a_name_that_shadows_a_for_binding_is_cast_as_itself() {
 
 /// **A narrowing cast over a binding is still narrowing**, which is the half a
 /// fix written around the conversion rather than inside it would have lost:
-/// `as` truncates by definition, and [ADR-043](../../../docs/specification/adr/adr-043.md)
+/// `as` truncates by definition, and [ADR-285](../../../docs/specification/adr/adr-285.md)
 /// D4 puts an abort there rather than a silent wrong number.
 #[test]
 fn a_narrowing_cast_over_a_for_binding_still_aborts() {
@@ -341,7 +341,7 @@ fn a_narrowing_cast_over_a_for_binding_still_aborts() {
 /// A `for` lends (D4), so the binding is a **view** and an annotation naming
 /// the element is a type the value does not have. `rustc` said *mismatched
 /// types* with *consider using clone here* — an instruction to insert exactly
-/// the copy [ADR-008](../../../docs/specification/adr/adr-008.md) D5 says is
+/// the copy [ADR-283](../../../docs/specification/adr/adr-283.md) D3 says is
 /// written and never inserted, about a file nobody wrote.
 ///
 /// **A diagnostic and not a lowering**, which is the whole of why it is this

@@ -1,6 +1,6 @@
 // crates/nikaia/src/dsl.rs
 //
-// The shadow type a DSL with deferred parameters generates (ADR-007 D5).
+// The shadow type a DSL with deferred parameters generates (ADR-296 D5).
 //
 // `dsl mysql { … :id … :active } eod` is a statement with two holes that are
 // not filled where it is written. The values arrive at the call site, as named
@@ -15,7 +15,7 @@
 //
 // Two rules govern what is here, and both are restrictions:
 //
-//   * the lowering is **syntactic** (ADR-011 D2). The names come from the body
+//   * the lowering is **syntactic** (ADR-296 D17). The names come from the body
 //     as written; the *types* come from the arguments at the call site, because
 //     nothing in the source says what `:id` is. The struct is therefore generic
 //     in each field and monomorphised where it is built - the compiler never
@@ -45,7 +45,7 @@ pub fn parameters(body: &str) -> Vec<String> {
 
 /// Whether a `dsl <target> { … } eod` body's holes are deferred parameters:
 /// for every target but `html`, whose `:name` is an immediate capture
-/// (ADR-017, ADR-007 D4).
+/// (ADR-017, ADR-296 D4).
 pub fn is_deferred(target: &str, body: &str) -> bool {
     nikaia_std::tools::dsl::is_deferred(target, body)
 }

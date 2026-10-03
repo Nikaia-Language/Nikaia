@@ -2,7 +2,7 @@
 //
 // Where a program's bytes came from (ADR-010).
 //
-// **The adapter of `nikaia-std/src/tools/trust.nika`** (ADR-250 D1, D2): the
+// **The adapter of `nikaia-std/src/tools/trust.nika`** (ADR-294 D1, D2): the
 // module's decisions - which written root is a way around the root check, and
 // what `--trust` says - are Nikaia. What stays here is what it reads, which is
 // the compiler's: the call walk and the ledger, handed over as names, `bool`s
@@ -13,7 +13,7 @@
 // (ADR-020) - a file the operator named, a pipe they connected, the arguments
 // they typed - and a program's own trust is the join over the ones it calls.
 //
-// **One buffer, because Stage 0 has one input lifetime.** ADR-008's model gives
+// **One buffer, because Stage 0 has one input lifetime.** ADR-283's model gives
 // a compilation unit a single lifetime, so it has a single input buffer: every
 // view a parser cuts, every struct tied to it, and every key of a map keyed by
 // a view point into the same thing. The join over a program's sources is

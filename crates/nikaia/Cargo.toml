@@ -2,7 +2,7 @@
 name = "nikaia"
 version = "0.1.0"
 edition = "2024"
-# The oldest Rust this builds and is tested on (ADR-219); the emitter's
+# The oldest Rust this builds and is tested on (ADR-305); the emitter's
 # `RUST_FLOOR` says the same.
 rust-version = "1.88"
 
@@ -24,9 +24,9 @@ toml = "0.9"
 
 [dependencies]
 orchestrator = { workspace = true }
-# **`nikaia describe`'s parser is written in Nikaia** (ADR-195 D3), lowered
+# **`nikaia describe`'s parser is written in Nikaia** (ADR-290 D13), lowered
 # ahead of time and reached from here as an ordinary Rust module
-# (ADR-196 D1, D3): `nikaia_std::tools::rust`. There is no cycle — `nikaia-std`
+# (ADR-290 D16, D18): `nikaia_std::tools::rust`. There is no cycle — `nikaia-std`
 # may not depend on the compiler (ADR-002 D4), and its own manifest says so.
 # Measured before the edge was drawn: four packages the compiler did not
 # already resolve (`nikaia-std`, `memmap2`, `polling`, `io-uring`; `rayon` and

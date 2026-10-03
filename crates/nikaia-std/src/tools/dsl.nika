@@ -1,10 +1,10 @@
 // crates/nikaia-std/src/tools/dsl.nika
 //
 // **The holes of a `dsl` block's body**, for the compiler's deferred
-// parameters (ADR-007 D4).
+// parameters (ADR-296 D4).
 //
 // The second piece of the compiler moved from Rust to Nikaia (0.0.248), by
-// ADR-196's route, the one `spelling.nika` took: written here, lowered ahead
+// ADR-290's route, the one `spelling.nika` took: written here, lowered ahead
 // of time by `nikaia lower-std` to `dsl.rs` beside it, `include!`d as
 // `nikaia_std::tools::dsl`, and called from the compiler's `dsl` module as an
 // ordinary Rust function. `tests/self_hosting.rs` holds it to the behaviour of
@@ -20,7 +20,7 @@ use std::collections
 /// therefore an approximation**: a colon and a name inside the foreign
 /// syntax's own string literal (`SELECT ':id'`) is read as one, because telling
 /// them apart means knowing where that language's strings begin, which is a
-/// grammar's job (ADR-007 D4). A false hole is a refused call rather than a
+/// grammar's job (ADR-296 D4). A false hole is a refused call rather than a
 /// wrong program: the parameter it invents has to be passed, and the message
 /// names it.
 pub fn parameters(body: ref String) -> Vec[String] sync {
@@ -63,7 +63,7 @@ pub fn parameters(body: ref String) -> Vec[String] sync {
 
 // A character a name goes on with: a letter, a digit or `_`, in ASCII - which
 // is what the compiler's own names are. A pattern's range includes both ends
-// (ADR-137 D3).
+// (ADR-291 D12).
 fn a_name_goes_on(c: char) -> bool sync {
     return match c {
         'a'..'z' | 'A'..'Z' | '0'..'9' | '_' => true,
@@ -79,7 +79,7 @@ fn a_name_begins(c: char) -> bool sync {
 }
 
 // ---------------------------------------------------------------------------
-// **The rest of the compiler's `dsl`** (#125, ADR-250): what a deferred
+// **The rest of the compiler's `dsl`** (#125, ADR-294): what a deferred
 // statement lowers to, which functions take one, and the check of every call
 // that hands one its parameters. The compiler's `dsl` is the calls now.
 
@@ -90,7 +90,7 @@ comptime TEMPLATE: ref String = "html"
 /// Whether a `dsl <target> { … } eod` body's holes are deferred parameters.
 /// For every target but `html` the holes are the grammar author's business,
 /// and the only binding this compiler can give them without inventing a
-/// meaning is the deferred one (ADR-007 D4).
+/// meaning is the deferred one (ADR-296 D4).
 pub fn is_deferred(target: ref String, body: ref String) -> bool sync {
     return target != TEMPLATE && parameters(body).len() > 0
 }
@@ -175,7 +175,7 @@ fn a_driver(item: ref Item, words: ref winnow_grammar::InternerContext, mut name
 /// `:name` the body has and the call does not pass (`NK1112`), a name the
 /// call passes and the body does not have (`NK1113`), and parameters handed
 /// to something that is not a driver (`NK1109`). Reported against the
-/// `.nika` statement they are in (ADR-012).
+/// `.nika` statement they are in (ADR-300).
 pub fn check(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]]) -> Vec[Finding] {
     let takers = drivers(words, items)
     let mut found: Vec[Finding] = []
@@ -201,7 +201,7 @@ pub fn check(words: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[
 // One function's body: what each name is bound to, where it is a deferred
 // statement, and every call in it checked against that. A name is bound by a
 // `let` of one name - a deferred block is one value, so a tuple cannot be
-// bound to one (ADR-098) - and any other value unbinds it.
+// bound to one (ADR-291) - and any other value unbinds it.
 fn checked_body(body: ref Block, words: ref winnow_grammar::InternerContext, takers: ref Vec[String], mut found: Vec[Finding]) {
     let mut bound: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
     for stmt in body.stmts {
@@ -388,7 +388,7 @@ fn a_statement(target: ref String, content: ref String) -> (String, String) {
 // (`stm.execute(; …)`) or an argument (`db.execute(stm; …)`) - both spell
 // the same protocol, subject before the `;` and configuration after it. Kap
 // 5.1's zone reaches a `?.m()` for the reason it reaches a `.m()`: a `?.`
-// decides whether the call happens, never what a call is (ADR-066).
+// decides whether the call happens, never what a call is (ADR-278).
 fn a_call(expr: ref Expr, span: ref Span, words: ref winnow_grammar::InternerContext, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
     match expr {
         Expr::MethodCall { receiver, method, args, config } => {
@@ -435,8 +435,8 @@ fn bound_argument(args: ref Vec[Expr], words: ref winnow_grammar::InternerContex
 // A call that passes options with a bound statement among its subjects.
 // **The parameters arrive at a driver, or nowhere**: what stands after the
 // `;` becomes the shadow value only where the callee declared `...args:
-// Self::dsl`, and anywhere else it was dropped on the way down (ADR-007 D5,
-// ADR-082 §1).
+// Self::dsl`, and anywhere else it was dropped on the way down (ADR-296 D5,
+// ADR-296).
 fn a_parameter_call(callee: ref String, passed: Vec[String], subject: String?, span: ref Span, bound: ref collections::BTreeMap[String, Vec[String]], takers: ref Vec[String], mut found: Vec[Finding]) {
     if passed.len() == 0 {
         return

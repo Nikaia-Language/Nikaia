@@ -41,7 +41,7 @@ const COVERED_ELSEWHERE: &[&str] = &["1brc.nika"];
 /// that test, so a directory cannot sit here unchecked and so a deleted test
 /// leaves a name pointing at nothing.
 const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
-    // The Rust-passthrough arm and the experiment ADR-038 D7 put there. Its
+    // The Rust-passthrough arm and the experiment ADR-303 D7 put there. Its
     // own test builds each program in it and checks more than the output.
     ("foreign-runtime", "tests/foreign_runtime.rs"),
     // A package has no output of its own; it is built by the program that
@@ -57,7 +57,7 @@ const DIRECTORIES_CHECKED_ELSEWHERE: &[(&str, &str)] = &[
         "tests/project.rs: the_http_package_serves_its_example",
     ),
     // **The C boundary against a real library**
-    // ([ADR-147](../../../docs/specification/adr/adr-147.md) §5 step 5). It
+    // ([ADR-302](../../../docs/specification/adr/adr-302.md) step 5). It
     // needs `-l sqlite3`, which no build here passes and not every machine has,
     // so its test skips rather than fails where the package is missing — and a
     // run that may skip cannot be one this file asserts output for.
@@ -316,7 +316,7 @@ fn a_missing_operand_is_reported_as_an_expression() {
 fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
     let source_path = repo_root().join("examples").join(file);
 
-    // **A package is a directory** (ADR-047 D1), so an example in a directory of
+    // **A package is a directory** (ADR-286 D1), so an example in a directory of
     // its own is a package and a loose one is not. `examples/` itself is a
     // directory of *programs*: twelve files each declaring `main`, filed
     // together, which is exactly what `nikaia lower` outside a project makes

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-058's number: what it costs to answer a request with a file, five ways -
+# ADR-289's number: what it costs to answer a request with a file, five ways -
 # including the two that never read it. See README.md for the method and
 # docs/history/zero-copy-send.md for what the numbers settled.
 set -euo pipefail

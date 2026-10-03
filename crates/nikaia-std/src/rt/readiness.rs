@@ -1,6 +1,6 @@
 //! **One poller, a registration each, and no worker in between**
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D3's readiness
-//! half, as [ADR-194](../../../../docs/specification/adr/adr-194.md) D1's socket
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D3's readiness
+//! half, as [ADR-289](../../../../docs/specification/adr/adr-289.md) D6's socket
 //! needs it).
 //!
 //! ## What this replaces, and why it is not about speed
@@ -8,14 +8,14 @@
 //! A readiness wait used to be an [`super::worker::Op`]: the descriptor was
 //! duplicated, handed to an I/O worker over a channel, and the worker **blocked
 //! in `poll_one` for the whole of the wait**. `io-workers` is `1` by default
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D4 — *one I/O
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D4 — *one I/O
 //! thread always runs*), so a wait that had not answered blocked every other
 //! wait in the process. A server waiting on `accept` while a connection waited
 //! on `read` was a server that stalled, and that is the shape an HTTP server
 //! has.
 //!
 //! Measured on the way in, and the numbers chose this shape
-//! ([ADR-009](../../../../docs/specification/adr/adr-009.md) D4):
+//! ([ADR-296](../../../../docs/specification/adr/adr-296.md) D12):
 //!
 //! | | per wait |
 //! | :--- | ---: |
@@ -196,7 +196,7 @@ impl Registry {
     /// **Counted into [`super::Runtime::pending`]**, and that is what keeps
     /// every promise the worker path made: the park asks *is anything
     /// outstanding* before it sleeps, and the drain
-    /// ([ADR-006](../../../../docs/specification/adr/adr-006.md) D5) asks it
+    /// ([ADR-297](../../../../docs/specification/adr/adr-297.md) D6) asks it
     /// before it lets a program go. A readiness wait was a worker operation and
     /// answered both; what changed is the mechanism and not the answer.
     pub(crate) fn outstanding(&self) -> usize {
@@ -209,7 +209,7 @@ impl Registry {
 
     /// Wait out the registrations, bounded, and hand back how many are left.
     ///
-    /// [ADR-006](../../../../docs/specification/adr/adr-006.md) D5's drain, for
+    /// [ADR-297](../../../../docs/specification/adr/adr-297.md) D6's drain, for
     /// the half that used to be the worker's: a wait on a socket nobody writes
     /// to may never answer, and the deadline is what bounds it.
     pub(crate) fn drain(&self, deadline: Duration) -> usize {

@@ -1,4 +1,4 @@
-// The program ADR-033 D10 is measured on, end to end.
+// The program ADR-292 D6 is measured on, end to end.
 //
 // Two reads that meet on nothing, in a loop, and nothing else in the body that
 // could account for a difference: the assignment after them performs no

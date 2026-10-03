@@ -1,7 +1,7 @@
 //! Every abort points at the Nikaia line.
 //!
-//! [ADR-044](../../../docs/specification/adr/adr-044.md).
-//! [ADR-012](../../../docs/specification/adr/adr-012.md) decides that a
+//! [ADR-300](../../../docs/specification/adr/adr-300.md).
+//! [ADR-300](../../../docs/specification/adr/adr-300.md) decides that a
 //! diagnostic names the `.nika` file the user wrote, and the compiler keeps that
 //! promise everywhere it *reports* something. An abort at run time was the one
 //! path where it could not: there is no compiler left to translate anything, so
@@ -14,7 +14,7 @@
 //! at once. A per-case fix would be four fixes and a fifth the day a fifth abort
 //! path arrives.
 //!
-//! **The hook stays pure** ([ADR-006](../../../docs/specification/adr/adr-006.md)
+//! **The hook stays pure** ([ADR-297](../../../docs/specification/adr/adr-297.md)
 //! D6 requires it to be `sync`): a binary search in a slice reads no file and
 //! takes no lock.
 
@@ -36,12 +36,12 @@ pub type Site = (u32, &'static str, u32);
 /// not a testing helper either, whatever `assert` turns out to be.
 ///
 /// It hands back **never**, so it stands where a value is wanted: the right of
-/// a `??` is the shape [ADR-114](../../../docs/specification/adr/adr-114.md) D1
+/// a `??` is the shape [ADR-293](../../../docs/specification/adr/adr-293.md) D1
 /// writes it in, where a program that knows a key is present says so.
 ///
 /// The message reaches the hook `report_in_nikaia_terms` installed, so what a
 /// reader sees is the Nikaia line rather than this file
-/// ([ADR-044](../../../docs/specification/adr/adr-044.md) D2).
+/// ([ADR-300](../../../docs/specification/adr/adr-300.md) D10).
 #[track_caller]
 pub fn panic(message: impl std::fmt::Display) -> ! {
     std::panic!("{message}")

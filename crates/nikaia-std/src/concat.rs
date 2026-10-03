@@ -16,7 +16,7 @@
 // `+` says nothing about which side is owned and should not have to.
 //
 // **A trait, and the reason is the one `index::At` gives.** This emitter does
-// not know types (ADR-011 D2), so it writes one call and the language below
+// not know types (ADR-296 D17), so it writes one call and the language below
 // picks. What that buys here is not merely *working*: it is that each shape
 // keeps the lowering that suits it. Measured over three million
 // concatenations, best of three — `String + &str` as it lowers today, 42 ms;
@@ -27,7 +27,7 @@
 //
 // **Only text comes through here**, and that is a hard line rather than a
 // scope choice. A number's `+` may not leave this language's own crates:
-// [ADR-043] D1 turns `overflow-checks` on **per Nikaia crate** while the
+// [ADR-285 D5 turns `overflow-checks` on **per Nikaia crate** while the
 // profile turns them off, because a foreign crate's hash function wraps on
 // purpose — and this crate is on the foreign side of that split. Measured with
 // the same profile shape: `a + b` in a checked crate aborts, and the same
@@ -37,7 +37,7 @@
 // concatenation and every other one stays exactly where it is
 // ([ADR-081](../../../docs/specification/adr/adr-081.md) D2).
 //
-// [ADR-043]: ../../../docs/specification/adr/adr-043.md
+// [ADR-285]: ../../../docs/specification/adr/adr-285.md
 
 /// One shape of `a + b` over text, and what it comes to.
 ///

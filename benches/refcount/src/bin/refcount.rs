@@ -289,7 +289,7 @@ fn main() {
 /// The experiment was set to check this **first**, because the reason
 /// [ADR-037](../../../../docs/specification/adr/adr-037.md) D3 gives for
 /// `Shared` being written by hand is that "sharing changes **when a value is
-/// cleaned up**, and that is observable" ([ADR-006](../../../../docs/specification/adr/adr-006.md)).
+/// cleaned up**, and that is observable" ([ADR-297](../../../../docs/specification/adr/adr-297.md)).
 /// If `Rc` and `Arc` differed in anything of that kind, the language's own rule
 /// against inferring cleanup timing would forbid inferring between them and the
 /// question would be closed. They do not, and these are the assertions that say

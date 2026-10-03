@@ -204,7 +204,7 @@
     },
 
     "self-dsl-type": {
-      "comment": "ADR-007 D5: `Self::dsl` is the parameter type a DSL string generates, and it is the only type a typed spread can have. The `dsl` in it is a type's name, not the keyword.",
+      "comment": "ADR-296 D5: `Self::dsl` is the parameter type a DSL string generates, and it is the only type a typed spread can have. The `dsl` in it is a type's name, not the keyword.",
       "match": "\\b(Self)(::)(dsl)\\b",
       "captures": {
         "1": { "name": "support.class.nika" },
@@ -301,7 +301,7 @@
           "match": "\\b(while|for|in)\\b"
         },
         {
-          "comment": "ADR-084: `break` and `continue` leave the innermost loop and start its next turn. They are here with `return` rather than with `while` and `for` because what they are is a jump - `keyword.control.loop` is the word that opens a loop, and these two are words that leave one. Neither takes a value and neither takes a label, so there is nothing after either to scope.",
+          "comment": "ADR-276: `break` and `continue` leave the innermost loop and start its next turn. They are here with `return` rather than with `while` and `for` because what they are is a jump - `keyword.control.loop` is the word that opens a loop, and these two are words that leave one. Neither takes a value and neither takes a label, so there is nothing after either to scope.",
           "name": "keyword.control.flow.nika",
           "match": "\\b(return|break|continue)\\b"
         },
@@ -311,7 +311,7 @@
           "match": "\\b(throw|catch)\\b"
         },
         {
-          "comment": "ADR-033 D7. `seq { … }` states an order the compiler cannot see.",
+          "comment": "ADR-292 D7. `seq { … }` states an order the compiler cannot see.",
           "name": "keyword.control.seq.nika",
           "match": "\\bseq\\b(?=\\s*\\{)"
         },
@@ -503,7 +503,7 @@
     },
 
     "spread-parameter": {
-      "comment": "ADR-007 D5: `...args: Self::dsl` is how a DSL driver accepts the deferred parameters a statement declared.",
+      "comment": "ADR-296 D5: `...args: Self::dsl` is how a DSL driver accepts the deferred parameters a statement declared.",
       "match": "(\\.\\.\\.)([A-Za-z_][A-Za-z0-9_]*)\\s*(:)\\s*(Self::dsl)",
       "captures": {
         "1": { "name": "keyword.operator.spread.nika" },
@@ -621,7 +621,7 @@
     },
 
     "grammar-block": {
-      "comment": "Part II 10.1. A grammar body is its own little language: rule names decide lexical (uppercase) from syntactic (lowercase), `=>` is a commit point, `->` names a rule's result type, the block after a pattern is its action (ADR-120 D2), and the action block itself is ordinary Nikaia.",
+      "comment": "Part II 10.1. A grammar body is its own little language: rule names decide lexical (uppercase) from syntactic (lowercase), `=>` is a commit point, `->` names a rule's result type, the block after a pattern is its action (ADR-296 D33), and the action block itself is ordinary Nikaia.",
       "name": "meta.grammar.nika",
       "begin": "\\b(grammar)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\{)",
       "beginCaptures": {
@@ -684,7 +684,7 @@
     },
 
     "frame-attribute": {
-      "comment": "ADR-009 D1. `@frame`, `@frame(boundary: \"\\n\")`, `@frame(boundary: \"\\n\", unchecked)` — a keyed list, so a later cut-point key can be added without changing what the existing ones mean.",
+      "comment": "ADR-296 D9. `@frame`, `@frame(boundary: \"\\n\")`, `@frame(boundary: \"\\n\", unchecked)` — a keyed list, so a later cut-point key can be added without changing what the existing ones mean.",
       "match": "(@frame)\\b",
       "captures": {
         "1": { "name": "storage.modifier.attribute.frame.nika" }
@@ -729,7 +729,7 @@
     },
 
     "grammar-unchecked": {
-      "comment": "ADR-009 D1: `@frame(boundary: \"\\n\", unchecked)` skips the cut-point check. You assert the invariant, as with `unsafe`, and the word is there to grep for — so it gets a scope of its own.",
+      "comment": "ADR-296 D9: `@frame(boundary: \"\\n\", unchecked)` skips the cut-point check. You assert the invariant, as with `unsafe`, and the word is there to grep for — so it gets a scope of its own.",
       "name": "keyword.other.unchecked.nika",
       "match": "\\bunchecked\\b"
     },
@@ -755,7 +755,7 @@
     },
 
     "grammar-repetition": {
-      "comment": "ADR-009 D5: `*` and `+` say unbounded and mean it; a brace group states a fixed width.",
+      "comment": "ADR-296 D13: `*` and `+` say unbounded and mean it; a brace group states a fixed width.",
       "name": "keyword.operator.repetition.nika",
       "match": "[*+?]"
     },
@@ -788,7 +788,7 @@
     },
 
     "dsl-sql": {
-      "comment": "A SQL body carries no `{…}` holes: its parameters are `:name`, resolved at run time as named arguments after the `;` (ADR-007 D5).",
+      "comment": "A SQL body carries no `{…}` holes: its parameters are `:name`, resolved at run time as named arguments after the `;` (ADR-296 D5).",
       "name": "meta.embedded.block.sql.nika",
       "begin": "\\b(dsl)\\s+(mysql|postgres|postgresql|sqlite|sql)\\s*(\\{)",
       "beginCaptures": {
@@ -827,7 +827,7 @@
     },
 
     "dsl-parameter": {
-      "comment": "ADR-007 D5. A `:name` is a hole because the body wrote a colon and a name; a path (`a::b`) and a time (`12:30`) are not.",
+      "comment": "ADR-296 D5. A `:name` is a hole because the body wrote a colon and a name; a path (`a::b`) and a time (`12:30`) are not.",
       "match": "(?<![:A-Za-z0-9_])(:)([A-Za-z_][A-Za-z0-9_]*)\\b(?!:)",
       "captures": {
         "1": { "name": "punctuation.definition.parameter.dsl.nika" },
@@ -836,7 +836,7 @@
     },
 
     "dsl-hole": {
-      "comment": "ADR-035: `{{` is a literal brace here too — a template shares the syntax rather than inventing a second one.",
+      "comment": "ADR-309: `{{` is a literal brace here too — a template shares the syntax rather than inventing a second one.",
       "patterns": [
         {
           "name": "constant.character.escape.brace.nika",
@@ -891,7 +891,7 @@
               "patterns": [{ "include": "#dsl-hole" }]
             },
             {
-              "comment": "`<for r in :rows>` is written as an element so that an editor that highlights markup keeps working (ADR-007 D4).",
+              "comment": "`<for r in :rows>` is written as an element so that an editor that highlights markup keeps working (ADR-296 D4).",
               "name": "keyword.control.template.nika",
               "match": "\\b(in)\\b"
             }

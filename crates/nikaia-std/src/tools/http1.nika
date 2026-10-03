@@ -1,12 +1,12 @@
 // crates/nikaia-std/src/tools/http1.nika
 //
 // **What an HTTP/1.1 request head says**, read by a Nikaia grammar
-// ([ADR-038](../../../../docs/specification/adr/adr-038.md) D6,
-// [ADR-194](../../../../docs/specification/adr/adr-194.md) D5: *the parser is
+// ([ADR-303](../../../../docs/specification/adr/adr-303.md) D6,
+// [ADR-289](../../../../docs/specification/adr/adr-289.md) D13: *the parser is
 // Rust until it is not*).
 //
 // This is the text half of `std::http1` (0.0.248). It reaches `std` the way
-// ADR-196 D1 says Nikaia reaches Rust: lowered ahead of time by
+// ADR-290 D16 says Nikaia reaches Rust: lowered ahead of time by
 // `nikaia lower-std` to the `http1.rs` beside this file, `include!`d as
 // `nikaia_std::tools::http1`, and called from `src/http1.rs`. What stayed Rust
 // is the **bytes**: the buffer a socket fills, where the head ends, and
@@ -112,7 +112,7 @@ fn fields(lines: Vec[Line]) -> Vec[Field] {
 /// What a head says, or the message a server sends back instead.
 ///
 /// `GET` and `POST`, `HTTP/1.x`, a `Content-Length` that is a count, and no
-/// `Transfer-Encoding` - [ADR-194](../../../../docs/specification/adr/adr-194.md)
+/// `Transfer-Encoding` - [ADR-289](../../../../docs/specification/adr/adr-289.md)
 /// D5's protocol. Asked in the order the Rust it replaced asked it, so a head
 /// that is wrong twice is refused for the same reason it was.
 pub fn read_head(written: Written) -> Read sync {

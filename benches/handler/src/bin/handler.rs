@@ -1,11 +1,11 @@
 //! What the **boxed future** costs a handler that does not pause
-//! ([ADR-122](../../../../docs/specification/adr/adr-122.md) D3).
+//! ([ADR-277](../../../../docs/specification/adr/adr-277.md) D12).
 //!
 //! D1 made a parameter whose type may pause lower to a closure returning a
 //! boxed future — `impl Fn(A) -> Pin<Box<dyn Future<Output = R>>>` — whether the
 //! callee runs it or keeps it, and D3 said that number is measured rather than
 //! assumed. **The *whether* is gone since
-//! [ADR-192](../../../../docs/specification/adr/adr-192.md) D1**: a **run**
+//! [ADR-277](../../../../docs/specification/adr/adr-277.md) D11**: a **run**
 //! parameter takes `impl AsyncFn(A) -> R` and only a **kept** one keeps the
 //! box, because `AsyncFn` is a bound and a field needs a type. What the rows
 //! below measure is therefore what each of the two shapes costs, rather than a
@@ -19,8 +19,8 @@
 //! | plain closure, twice | the control. It must tie, and it bounds the difference above from below |
 //!
 //! **The third row is why this bench outlived its record**
-//! ([ADR-187](../../../../docs/specification/adr/adr-187.md) D1,
-//! [ADR-192](../../../../docs/specification/adr/adr-192.md) D1). D1 chose the
+//! ([ADR-277](../../../../docs/specification/adr/adr-277.md) D13,
+//! [ADR-277](../../../../docs/specification/adr/adr-277.md) D11 chose the
 //! boxed future because *"Rust has no stable `async` closure"*, and that is
 //! false on this toolchain and was false when it was written. The row was added
 //! so the alternative would be a number rather than an argument; it is now what

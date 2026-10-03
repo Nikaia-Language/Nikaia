@@ -1,5 +1,5 @@
 //! **HTTP/1.1's text half**, asked every question a server asks it
-//! ([ADR-194](../../../docs/specification/adr/adr-194.md) D5).
+//! ([ADR-289](../../../docs/specification/adr/adr-289.md) D13).
 //!
 //! Nothing here reaches a socket, which is the module's own claim: a program
 //! reads bytes with `net` and hands them over, so every function below is `sync`
@@ -25,7 +25,7 @@ fn a_head_says_its_method_its_path_and_its_length() {
     assert_eq!(head.method(), "POST");
     // **Not decoded**: what a `%20` means is the program's question. The query
     // string is its own accessor since
-    // [ADR-018](../../../docs/specification/adr/adr-018.md) D4, and `target()`
+    // [ADR-289](../../../docs/specification/adr/adr-289.md) D20, and `target()`
     // is what the client wrote.
     assert_eq!(head.path(), "/a/b");
     assert_eq!(head.target(), "/a/b?c=1");
@@ -202,11 +202,11 @@ fn how_the_bytes_arrived_changes_nothing() {
     );
 }
 
-// --- What a handler asks a head (ADR-018 D4) ---
+// --- What a handler asks a head (ADR-289 D20) ---
 
 /// **A header is found whatever case it was written in**, which is the protocol's
 /// own rule and not a convenience
-/// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
+/// ([ADR-289](../../../docs/specification/adr/adr-289.md) D20).
 #[test]
 fn a_header_is_found_by_name_whatever_case_either_side_wrote() {
     let buffer = buffer(&[b"GET / HTTP/1.1\r\nHost: example.org\r\nX-Trace: 7\r\n\r\n"]);
@@ -229,7 +229,7 @@ fn a_repeated_header_answers_with_the_first() {
 }
 
 /// **`path()` and `query()` are two things**
-/// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4), and `target()` is
+/// ([ADR-289](../../../docs/specification/adr/adr-289.md) D20), and `target()` is
 /// the whole of what the client wrote, for a log.
 #[test]
 fn the_path_and_the_query_are_two_things() {

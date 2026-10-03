@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-257 E1: one program made k times larger, so that size changes and the
+"""ADR-294 E1: one program made k times larger, so that size changes and the
 kind of code does not.
 
 Everything from the first declaration to `fn main` is copied k times, and each

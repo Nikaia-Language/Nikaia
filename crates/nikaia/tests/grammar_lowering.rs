@@ -34,7 +34,7 @@ mod measurements {
     include!("fixtures/measurements_expected.rs");
 
     /// `std::text`, as the fixture reaches it: the source writes
-    /// `text::digit_value` since [ADR-154](../../../docs/specification/adr/adr-154.md)
+    /// `text::digit_value` since [ADR-313](../../../docs/specification/adr/adr-313.md)
     /// put a name that lives in a module behind its prefix, so the stub is a
     /// module of that name rather than a bare function.
     pub mod text {
@@ -109,7 +109,7 @@ fn the_emitted_rust_is_the_file_this_test_compiles() {
 #[test]
 fn a_frame_becomes_the_backend_attribute() {
     let emitted = emit(FIXTURE, Build::default());
-    // ADR-009 D1: keyed, and the boundary keeps its escape - the backend is
+    // ADR-296 D9: keyed, and the boundary keeps its escape - the backend is
     // handed the same "\n" the source wrote.
     assert!(
         emitted.contains(r#"#[frame(boundary = "\n")]"#),
@@ -120,7 +120,7 @@ fn a_frame_becomes_the_backend_attribute() {
 #[test]
 fn a_view_takes_the_input_lifetime_and_the_struct_with_it() {
     let emitted = emit(FIXTURE, Build::default());
-    // ADR-008: `&str` is a view marker. The lifetime is the emitter's, never
+    // ADR-283: `&str` is a view marker. The lifetime is the emitter's, never
     // the source's - and a struct that holds one is tied to the input too.
     assert!(emitted.contains("rule NAME -> &'a str ="), "{emitted}");
     assert!(
@@ -140,7 +140,7 @@ fn a_view_takes_the_input_lifetime_and_the_struct_with_it() {
 #[test]
 fn a_bare_par_fold_gets_the_binding_its_rule_needs() {
     let emitted = emit(FIXTURE, Build::default());
-    // A `par_fold` is the whole body of its rule (ADR-009 D2), so there is
+    // A `par_fold` is the whole body of its rule (ADR-296 D10), so there is
     // nothing for an action to add - and the emitter supplies the one the
     // backend wants rather than making the user write it.
     assert!(
@@ -190,7 +190,7 @@ fn summarize() {
 
 #[test]
 fn user_parallelism_chooses_the_parallelism_and_nothing_else() {
-    // ADR-009 D2 and ADR-037 D2: parallelism is not a dialect. The same source
+    // ADR-296 D10 and ADR-037 D2: parallelism is not a dialect. The same source
     // compiles at either setting; at `0` the driver is told not to cut, which
     // is what "degrades to a sequential fold" means in code.
     let parallel = emit(WITH_DSL, Build::parallel());
@@ -235,7 +235,7 @@ fn a_target_without_threads_pins_the_driver_sequential() {
 #[test]
 fn a_sequential_entry_rule_gets_no_piece_driver() {
     // Without a `par_fold` there is nothing to cut and nothing to merge, so the
-    // lowering drives the rule's own parser over the whole input (ADR-011 D4).
+    // lowering drives the rule's own parser over the whole input (ADR-296 D19).
     let source = format!("{DIGITS}\n\nfn read() {{\n    let p = Digits::pair(data)\n}}\n");
     let emitted = emit(&source, Build::default());
 
@@ -273,10 +273,10 @@ fn a_dsl_with_a_catch_is_handed_the_result_and_not_the_value() {
 /// The backend's error knows an offset and not the text it came from, so only
 /// the driver can turn one into a line and a column - and it is the only place
 /// that has both. Without this a program that rejects a file says *what* was
-/// expected and never *where* (ADR-009 D3, `docs/error-corpus.md`).
+/// expected and never *where* (ADR-296 D11, `docs/error-corpus.md`).
 ///
 /// **And what comes out of it has a name**
-/// ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): the rendered
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D38): the rendered
 /// text goes into a `ParseError`, which is the type the rule's ledger entry
 /// says it throws. The text is unchanged, so a program that prints the error
 /// prints what it printed before.
@@ -298,7 +298,7 @@ fn a_rejected_parse_is_rendered_against_the_input_it_parsed() {
 
 /// `# "…"` between a rule's return type and its `=`: what the rule is called
 /// when it fails where it began. The backend's own spelling, because the
-/// lowering is name for name (ADR-011 D2) and a second spelling for the same
+/// lowering is name for name (ADR-296 D17) and a second spelling for the same
 /// thing would be one more thing to know.
 #[test]
 fn a_rule_label_is_lowered_where_the_backend_expects_it() {
@@ -353,7 +353,7 @@ fn a_tuple_is_a_type_a_value_and_a_field_access() {
 
 /// A tuple in a struct field carries the input lifetime the same way a bare
 /// view does - the analysis walks the parts because they sit where arguments
-/// sit (ADR-008, and `a_view_takes_the_input_lifetime_and_the_struct_with_it`).
+/// sit (ADR-283, and `a_view_takes_the_input_lifetime_and_the_struct_with_it`).
 #[test]
 fn a_tuple_of_views_ties_its_struct_to_the_input() {
     let source = concat!(
@@ -379,7 +379,7 @@ fn parentheses_without_a_comma_are_still_grouping() {
 }
 
 /// **A lambda that names no arguments takes none, whatever its body says**
-/// ([ADR-049](../../../docs/specification/adr/adr-049.md) D1).
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D2).
 ///
 /// This used to be the opposite test. A lambda's arity was read off which of `a`,
 /// `b`, `c` its body mentioned, and a string's holes were the one place a body
@@ -428,7 +428,7 @@ fn an_enum_lowers_its_three_variant_shapes() {
 }
 
 /// An enum holds views the same way a struct does, so it takes the input
-/// lifetime the same way (ADR-008, and `borrowing_structs`).
+/// lifetime the same way (ADR-283, and `borrowing_structs`).
 #[test]
 fn an_enum_that_carries_a_view_takes_the_input_lifetime() {
     let source = "enum Token {\n    End,\n    Word(ref String),\n}\n";
@@ -461,7 +461,7 @@ fn a_match_lowers_every_pattern_shape() {
         "7 => 3,",
         "other => 4,",
         // **The one arm whose spelling differs below**: the source writes
-        // `else` ([ADR-145](../../../docs/specification/adr/adr-145.md) D1) and
+        // `else` ([ADR-291](../../../docs/specification/adr/adr-291.md) D16) and
         // the language below has `_`, which is what the arm was written with
         // here before.
         "_ => 5,",
@@ -567,7 +567,7 @@ fn one_brc_grammar_half() -> String {
 
 #[test]
 fn the_grammar_half_of_the_1brc_example_lowers() {
-    // ADR-011 §3: the file as a whole does not compile yet - its `impl` blocks,
+    // ADR-296: the file as a whole does not compile yet - its `impl` blocks,
     // `throws`/`catch` and string interpolation are not lowered. Its grammar
     // does, and that is the half this work was about.
     let emitted = emit(&one_brc_grammar_half(), Build::default());
@@ -631,7 +631,7 @@ grammar Ids {
 }
 
 /// **A grammar with two `pub` rules is entered by either**
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D2), which is the
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D25), which is the
 /// defect that record closes rather than a feature it adds.
 ///
 /// The emitter used to pick the entry itself — the first `pub` rule, and a
@@ -743,8 +743,8 @@ fn reach() { let s = Two::N(data) }
 }
 
 /// **The old spelling is refused, and the message names the new one**
-/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1) — the shape
-/// [ADR-022](../../../docs/specification/adr/adr-022.md) gave `fn:`: a form the
+/// ([ADR-296](../../../docs/specification/adr/adr-296.md) D24) — the shape
+/// [ADR-277](../../../docs/specification/adr/adr-277.md) gave `fn:`: a form the
 /// specification taught deserves a sentence rather than a parse error at
 /// whatever token happens to come next.
 #[test]

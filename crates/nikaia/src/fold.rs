@@ -4,18 +4,18 @@
 //! the type beside it?"* ([`check`](crate::check)'s `NK1116` and `NK1118`). The
 //! emitter now asks a second question of the same expression - *"is the first
 //! type that holds this an `i64`?"*
-//! ([ADR-063](../../../docs/specification/adr/adr-063.md)) - and two constant
+//! ([ADR-285](../../../docs/specification/adr/adr-285.md)) - and two constant
 //! folds in one compiler is one fold and one liability.
 //!
 //! **What separates the two callers is not the arithmetic, it is the lookup.**
 //! The checker knows what a name is worth; the emitter has no scope and no
-//! types ([ADR-028](../../../docs/specification/adr/adr-028.md)). So the lookup
+//! types ([ADR-288](../../../docs/specification/adr/adr-288.md)). So the lookup
 //! is the parameter, and the emitter passes [`nothing_is_known`] - which gives
 //! it exactly the subset of expressions that can be answered without looking
 //! anything up.
 //!
 //! **The fold is Nikaia** (`nikaia-std/src/tools/fold.nika`,
-//! [ADR-252](../../../docs/specification/adr/adr-252.md) D6): a magnitude and
+//! [ADR-294](../../../docs/specification/adr/adr-294.md) D11): a magnitude and
 //! a sign, 65 bits, held at every step to the type a declared operand pinned.
 //! This module is its adapter: the checker keeps a constant in an `i128`, so
 //! the answer is turned into one here, and a fold that left the 65 bits is a
@@ -46,7 +46,7 @@ pub struct Constant {
     /// literal pins nothing**: `3000000000` is an `i64` wherever a use asks for
     /// one (Part I 2.4), which is why a literal standing alone may not be
     /// refused - and why, with nothing pinned and nothing beside it, it is free
-    /// to take the wider type ([ADR-060](../../../docs/specification/adr/adr-060.md)).
+    /// to take the wider type ([ADR-285](../../../docs/specification/adr/adr-285.md)).
     pub pinned: Option<String>,
 }
 
@@ -89,7 +89,7 @@ pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
 }
 
 /// **Does this constant need the wider type, and may it have it?**
-/// ([ADR-063](../../../docs/specification/adr/adr-063.md) D1.)
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D22.)
 ///
 /// Nothing pinned it, an `i32` does not hold it, and an `i64` does - the fold's
 /// own answer, asked of the number the checker keeps.

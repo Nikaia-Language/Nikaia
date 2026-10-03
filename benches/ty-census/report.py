@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-257 §4: one row per program from run.sh's profiles.
+"""ADR-294: one row per program from run.sh's profiles.
 
 Usage: report.py <out-dir>  (the directory run.sh wrote)
 """

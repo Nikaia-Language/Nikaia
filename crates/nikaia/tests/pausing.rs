@@ -9,7 +9,7 @@
 //! `no_nika_file_says_async_or_names_a_mechanism` is that half).
 //!
 //! `sync` is inferred, per function, over the call graph, as a **greatest**
-//! fixpoint ([ADR-027](../../../docs/specification/adr/adr-027.md) D1) - so
+//! fixpoint ([ADR-288](../../../docs/specification/adr/adr-288.md) D1) - so
 //! `plain` below is `sync` because everything it calls is, and `pausing` is not
 //! because `io::read` can pause. Neither writes the word.
 
@@ -146,7 +146,7 @@ fn the_await_goes_before_the_question_mark() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// ADR-038 D4 and D1 together: the program's own `main` is driven by the
+/// ADR-303 D4 and D1 together: the program's own `main` is driven by the
 /// executor rather than called.
 ///
 /// `fn main` is Rust's and is the runtime's to write; the program's own entry

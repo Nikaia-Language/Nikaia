@@ -5,7 +5,7 @@
 //! take part, what they may see of each other, and what one ledger over all of
 //! them says. None of that can be checked on a string.
 //!
-//! **A package is a directory** ([ADR-047](../../../docs/specification/adr/adr-047.md)
+//! **A package is a directory** ([ADR-286](../../../docs/specification/adr/adr-286.md)
 //! D1): the files in it share one namespace and need no `use` between them. What
 //! used to be here - `use utils`, `utils::double(21)`, a private item refused
 //! across a file boundary - was the file = module model that decision replaced.
@@ -102,7 +102,7 @@ fn two_files_of_a_package_are_one_program() {
 }
 
 /// **Every `.nika` beside the entry takes part, whether or not anything names
-/// it** (ADR-047 D1).
+/// it** (ADR-286 D1).
 ///
 /// The directory decides and the `use` lines do not, which is what makes moving
 /// a declaration from one file to another housekeeping rather than a change to
@@ -156,7 +156,7 @@ fn a_private_name_is_visible_across_the_files_of_its_package() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// **Two files of one package may not declare the same name** (ADR-047 D1).
+/// **Two files of one package may not declare the same name** (ADR-286 D1).
 ///
 /// One namespace, so this is an error rather than a rule about which of the two a
 /// line means - and it is refused here, because `rustc` would report a duplicate
@@ -185,7 +185,7 @@ fn two_files_may_not_declare_the_same_name() {
 /// One ledger for the package (Part III, 13.5), and **one namespace in it**.
 ///
 /// The keys used to be `utils::double`, because a file was a unit of naming. It
-/// is not one any more (ADR-047 D1), so a name belongs to the package and the
+/// is not one any more (ADR-286 D1), so a name belongs to the package and the
 /// ledger says so - which is also what a consumer of this package will read,
 /// under the package's own name rather than under the file it happens to sit in.
 #[test]
@@ -255,7 +255,7 @@ fn two_files_may_reach_into_each_other() {
 }
 
 /// **A `use` that names a file beside this one says the rule that replaced it**
-/// (ADR-047 D1).
+/// (ADR-286 D1).
 ///
 /// The shape that used to work is the one most likely to be written, so the
 /// message is about the package rather than about a name it could not find.
@@ -282,7 +282,7 @@ fn a_use_naming_a_sibling_file_says_to_remove_it() {
 }
 
 /// …and a `use` naming something no dependency declares says what to declare
-/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D4 from the other
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D13 from the other
 /// side: a prefix must be introduced, and this is an introduction that names
 /// nothing).
 #[test]
@@ -304,7 +304,7 @@ fn a_use_naming_no_dependency_says_what_to_declare() {
 }
 
 /// **A `use` with a path in it names one package and brings no name in**
-/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D1, D2).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D10, D11).
 #[test]
 fn a_use_with_a_path_is_refused_and_std_is_not() {
     let (dir, entry) = project(
@@ -333,7 +333,7 @@ fn a_use_with_a_path_is_refused_and_std_is_not() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// **One name per file** ([ADR-046](../../../docs/specification/adr/adr-046.md)
+/// **One name per file** ([ADR-286](../../../docs/specification/adr/adr-286.md)
 /// D5): two packages under one name is an error rather than a rule about which
 /// of them a line means.
 #[test]
@@ -361,7 +361,7 @@ fn one_name_per_file() {
 /// and told the reader to remove a `use` item this compiler had written itself.
 ///
 /// The import is gone entirely now - one namespace needs no `mod` and nothing to
-/// bring the siblings in (ADR-047 D1) - so this asserts the emitted shape as well
+/// bring the siblings in (ADR-286 D1) - so this asserts the emitted shape as well
 /// as the silence. The second half is the one that keeps holding when the next
 /// machine-written construct arrives: a **warning** that maps to no Nikaia line is
 /// not reported at all.
@@ -375,7 +375,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
                 "main.nika",
                 "fn main() {\n\x20   println(f\"{seven()}\")\n}\n",
             ),
-            // **A manifest, so `nikaia lower` reads the package** (ADR-047 D1).
+            // **A manifest, so `nikaia lower` reads the package** (ADR-286 D1).
             // Without one the entry is compiled on its own, `seven` is
             // declared by nothing in it, and since 0.0.244 that is `NK1117`
             // rather than a lowering `rustc` would have refused.
@@ -427,7 +427,7 @@ fn a_warning_about_the_generated_file_does_not_reach_the_user() {
 /// and a struct literal of a type from another file was a parse error. A file
 /// could hand out behaviour and not data.
 ///
-/// The package decision (ADR-047 D1) removed the prefix from this case rather
+/// The package decision (ADR-286 D1) removed the prefix from this case rather
 /// than the problem: one namespace, so the names below are bare. What the repair
 /// is still for is the cross-*package* boundary, where the prefix comes back.
 #[test]
@@ -462,7 +462,7 @@ fn a_type_another_file_declares_can_be_named_and_built() {
 }
 
 /// **A constant another file declares is read like a function it declares**
-/// (ADR-047 D1): one namespace holds the package's `comptime`s too. The
+/// (ADR-286 D1): one namespace holds the package's `comptime`s too. The
 /// program's half of what `tests/sysroot.rs` holds for the tools, where each
 /// file bound only its own (found moving the compiler's `views` into Nikaia,
 /// #125).
@@ -579,7 +579,7 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
     );
 
     // **What has to hold is that the two sides agree**, and since
-    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // [ADR-312](../../../docs/specification/adr/adr-312.md) D10 they agree the
     // other way round at one user thread: nothing can cross there, so every
     // count in the whole build is plain and no file can disagree with another.
     // At `yes` the floor is what makes them agree, which is what this was
@@ -613,7 +613,7 @@ fn a_shared_in_a_foreign_field_keeps_the_atomic_count() {
 /// The call is written inside a hole on purpose. `println(f"{hold(c)}")` is how
 /// somebody would actually write this, and the sharing analysis did not walk into
 /// a literal at all — so the handle was handed to a function it never saw, and
-/// nothing forced anything. A hole is Nikaia source (ADR-032 D3), and any
+/// nothing forced anything. A hole is Nikaia source (ADR-309 D13), and any
 /// analysis that stops at a literal is one a hole can be hidden in.
 #[test]
 fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
@@ -639,7 +639,7 @@ fn a_shared_handed_to_a_foreign_function_keeps_the_atomic_count() {
     );
 
     // **What has to hold is that the two sides agree**, and since
-    // [ADR-061](../../../docs/specification/adr/adr-061.md) D2 they agree the
+    // [ADR-312](../../../docs/specification/adr/adr-312.md) D10 they agree the
     // other way round at one user thread: nothing can cross there, so every
     // count in the whole build is plain and no file can disagree with another.
     // At `yes` the floor is what makes them agree, which is what this was
@@ -690,10 +690,10 @@ fn a_program_that_imports_nothing_may_still_use_a_map() {
 }
 
 /// **Names are not brought in, and the two forms that try to get a sentence**
-/// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D11).
 ///
 /// Both are in every language that has them, so a reader will write one — which
-/// is the same ground [ADR-022](../../../docs/specification/adr/adr-022.md)
+/// is the same ground [ADR-277](../../../docs/specification/adr/adr-277.md)
 /// stands on for `fn: …`: a form somebody will reach for deserves a sentence
 /// rather than a parse error at the brace.
 ///
@@ -742,7 +742,7 @@ fn a_use_that_brings_a_name_in_says_to_write_the_prefix() {
 /// **A `comptime` reaches across a file boundary** (0.0.115).
 ///
 /// The *permission* to run a callee had been program-wide from the start — it
-/// is two ledger columns ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// is two ledger columns ([ADR-287](../../../docs/specification/adr/adr-287.md)
 /// D1, D2) and a program's ledger is absorbed from its units'. What was not was
 /// the **body**, and no column could carry one: a ledger records what a caller
 /// has to know about a function it *cannot see the body of*, which is the
@@ -806,7 +806,7 @@ fn a_comptime_calls_across_a_file_boundary() {
 #[test]
 fn a_constant_a_foreign_body_reads_comes_from_its_own_file() {
     // **A real project**, because `nikaia lower` outside one is a single file
-    // (ADR-047 D1) and would meet a different wall: nothing declares `scaled`
+    // (ADR-286 D1) and would meet a different wall: nothing declares `scaled`
     // at all there.
     let (dir, _) = project(
         "comptime-foreign-global",

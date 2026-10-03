@@ -1,5 +1,5 @@
 //! Three shapes the ledger's reader met when it moved into Nikaia
-//! (0.0.292, ADR-257 step (c)), each a compiler defect a program could meet
+//! (0.0.292, ADR-294 step (c)), each a compiler defect a program could meet
 //! the same way.
 //!
 //! Run rather than read, as `indexing.rs` is: whether the lowering compiles is
@@ -115,7 +115,7 @@ fn the_characters_of_a_text_are_listed_at_their_size() {
 }
 
 /// **A part an arm binds `ref` is handed on as it is** (issue #270):
-/// ADR-242 binds `key` as a view where the arm only reads it, so a call that
+/// ADR-291 binds `key` as a view where the arm only reads it, so a call that
 /// lends it writes `key` and not `&key`, a view of a view.
 #[test]
 fn a_part_bound_as_a_view_is_lent_as_it_is() {

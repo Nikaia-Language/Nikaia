@@ -1,5 +1,5 @@
 //! **A map whose keys the build knew** —
-//! [ADR-176](../../../docs/specification/adr/adr-176.md).
+//! [ADR-311](../../../docs/specification/adr/adr-311.md).
 //!
 //! These tests **run** the program, and that is the point of them rather than
 //! a preference. The table is built twice by two programs that never meet:
@@ -261,7 +261,7 @@ fn the_compiler_and_the_library_hash_the_same_bytes() {
 }
 
 /// **The threshold is where the measurement put it**
-/// ([ADR-176](../../../docs/specification/adr/adr-176.md) D3).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D10).
 ///
 /// Twelve is not arbitrary and it is not free to move: the tests above are
 /// written around it, one on each side. A change here is a re-measurement, and
@@ -272,7 +272,7 @@ fn the_threshold_is_twelve() {
 }
 
 /// **A table may hold a `struct`, as a view of one**
-/// ([ADR-180](../../../docs/specification/adr/adr-180.md) D1).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D13).
 ///
 /// It was `NK1127` — *this compiler cannot evaluate it* — for a value that
 /// evaluated perfectly well: every part of it crosses on its own, and only the
@@ -324,7 +324,7 @@ fn a_table_holds_a_declared_type_and_the_program_reads_it() {
 }
 
 /// …and **a part of a row the language below cannot write is still `NK1167`**
-/// ([ADR-180](../../../docs/specification/adr/adr-180.md) D3).
+/// ([ADR-311](../../../docs/specification/adr/adr-311.md) D15).
 ///
 /// The table opened a second door to the same place: a row holding a `Vec`
 /// lowered and `rustc` answered *expected `Vec<i64>`, found `[{integer}; 2]`*

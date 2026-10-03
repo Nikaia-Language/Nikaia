@@ -21,20 +21,20 @@ Rust's with different words:
 
 | construct | where | what the grammar does |
 | :--- | :--- | :--- |
-| `f"…"` interpolation | Part I 2.5, ADR-035 | the holes are **Nikaia expressions** and are highlighted as such; `"…"` has no holes at all, so a brace in it is a brace; `{{` is one brace; `\u{0041}` is an escape and not a hole; the first colon outside a call or an index is a format spec, so `{utils::double(21)}` keeps its path and `{Point(x: 1)}` its named argument |
+| `f"…"` interpolation | Part I 2.5, ADR-309 | the holes are **Nikaia expressions** and are highlighted as such; `"…"` has no holes at all, so a brace in it is a brace; `{{` is one brace; `\u{0041}` is an escape and not a hole; the first colon outside a call or an index is a format spec, so `{utils::double(21)}` keeps its path and `{Point(x: 1)}` its named argument |
 | the `;` config zone | Part I 5.1 | the `;` inside a parameter list or a call gets `punctuation.separator.config`, and what follows it is named arguments; a statement's `;` is a terminator instead |
-| `...args: Self::dsl` | ADR-007 D5 | the typed spread, with `Self::dsl` as a type rather than the `dsl` keyword |
-| `break`, `continue` | Part I 3.3, ADR-084 | `keyword.control.flow`, with `return` rather than with `while` and `for`: `keyword.control.loop` is the word that **opens** a loop and these two are words that **leave** one. Neither takes a value and neither takes a label, so in each case the word is the whole token and there is nothing after it to scope |
+| `...args: Self::dsl` | ADR-296 D5 | the typed spread, with `Self::dsl` as a type rather than the `dsl` keyword |
+| `break`, `continue` | Part I 3.3, ADR-276 | `keyword.control.flow`, with `return` rather than with `while` and `for`: `keyword.control.loop` is the word that **opens** a loop and these two are words that **leave** one. Neither takes a value and neither takes a label, so in each case the word is the whole token and there is nothing after it to scope |
 | `throws`, `throw`, `catch`, `??` | Part I 7.1, ADR-023, ADR-025 | `catch` is an ordinary keyword in expression position; `throws` carries no type; `??` is the coalescing operator |
 | `sync` | Part II 12.1 | `storage.modifier.sync`, on either side of the return type |
-| `fn { … }` | Part I 5.2/5.3, ADR-022 | the one lambda form, including the trailing form outside the parentheses and a chain continuing after its `}` |
-| `seq { … }` | ADR-033 D7 | a keyword only where a block follows it — `seq` is also a perfectly good variable name, and `examples/k-nucleotide/src/main.nika` uses it as one |
+| `fn { … }` | Part I 5.2/5.3, ADR-277 | the one lambda form, including the trailing form outside the parentheses and a chain continuing after its `}` |
+| `seq { … }` | ADR-292 D7 | a keyword only where a block follows it — `seq` is also a perfectly good variable name, and `examples/k-nucleotide/src/main.nika` uses it as one |
 | `spawn`, `access`, `access_all`, `par_iter`, `await`, `join` | Part II 11–12 | `spawn` as a keyword; the rest as `support.function.concurrency`, because they are methods that demand a `sync` lambda |
 | `Shared`, `Locked`, `Cleanup`, `Drop`, `Error` | Part I 6.2/6.4 | `support.class` |
 | `Vec[i64]`, `HashMap[&str, Stats]` | Part I 4.6 | square brackets, never angle |
 | `grammar Name { … }` | Part II 10.1 | see below |
 | `dsl <target> { … } eod` | Part II 10.5 | see below |
-| `@frame(boundary: "\n", unchecked)`, `@detached`, `@immediate` | ADR-009 D1 | attributes, with `unchecked` given a scope of its own because it is an assertion you make rather than a question you ask. `@borrowed` was here and is gone ([ADR-201](../docs/specification/adr/adr-201.md) D1); `@tethers` replaces it and is not built (D3), so the grammar takes neither |
+| `@frame(boundary: "\n", unchecked)`, `@detached`, `@immediate` | ADR-296 D9 | attributes, with `unchecked` given a scope of its own because it is an assertion you make rather than a question you ask. `@borrowed` was here and is gone ([ADR-283](../docs/specification/adr/adr-283.md) D4); `@tethers` replaces it and is not built (D3), so the grammar takes neither |
 | numbers | Part I 2.2 | an integer, or a float with an optional exponent. **Nothing else**: this language has no digit separators, no radix prefixes and no literal suffixes, so `1_000`, `0xFF` and `1i64` are each something other than a number and the grammar colours them as what they are |
 | comments | parser `rule COMMENT = "//" until(line_ending)` | `//` to the end of the line, and that is the only comment there is — no block comment, no doc comment |
 
@@ -88,7 +88,7 @@ be actively wrong. It is an embedded block, and the target name dispatches:
   text whatever the grammar is (Part II 10.5).
 
 `{…}` holes are enabled for `html` only. A template's holes need no `f` because
-the `dsl html { … }` *is* the mark (ADR-035 D4), but that is the template
+the `dsl html { … }` *is* the mark (ADR-309 D3), but that is the template
 grammar's property and not every DSL's — in SQL a brace is a brace, and guessing
 otherwise would colour someone's `GROUP BY` as code.
 
@@ -234,7 +234,7 @@ These are the ones worth arguing about, because both sides wrote something.
 1. **`spawn`.** The specification writes `spawn fn { … }` in fourteen places
    across the three Parts, and that spelling is now the decided one: `spawn` is a
    call whose last argument is a lambda, like the lock's doors, so the
-   parenthesised form is out ([ADR-039](../docs/specification/adr/adr-039.md) is
+   parenthesised form is out ([ADR-281](../docs/specification/adr/adr-281.md) is
    where the lock's doors are; the `spawn` spelling is Part I 8.3 and Part II
    11.2). The parser still disagrees:
    `rule spawn_expr = "spawn" "(" body:expr ")"` — parentheses required.

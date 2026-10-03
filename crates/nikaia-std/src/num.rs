@@ -1,6 +1,6 @@
 //! Converting a floating-point number to an integer, checked.
 //!
-//! [ADR-043](../../../docs/specification/adr/adr-043.md) D4 and D7. A narrowing
+//! [ADR-285](../../../docs/specification/adr/adr-285.md) D12 and D13. A narrowing
 //! conversion aborts, and between two integers Rust gives the check:
 //! `i32::try_from` hands back a failure value. Out of a floating-point number it
 //! does not — `the trait bound i32: TryFrom<f64> is not satisfied` — so the test
@@ -11,7 +11,7 @@
 //! `f64::NAN as i32` is `0`. A program that meant any of those said nothing about
 //! it, which is what this removes.
 //!
-//! These are the one place ADR-043 puts a helper in the emitted code, and D4 says
+//! These are the one place ADR-285 puts a helper in the emitted code, and D4 says
 //! why the objection that refused one for arithmetic does not reach here: a
 //! conversion is rare and written down on purpose rather than standing in every
 //! loop, and a checked conversion is what a Rust programmer would write at this
@@ -49,7 +49,7 @@ fn to_int<T: TryFrom<i128>>(value: f64) -> T {
     }
     // `match` and not `unwrap_or_else`: a closure is not `#[track_caller]`, so
     // the abort inside one names this file - measured, `num.rs:48` - and
-    // [ADR-044](../../../docs/specification/adr/adr-044.md)'s table has no Nikaia
+    // [ADR-300](../../../docs/specification/adr/adr-300.md)'s table has no Nikaia
     // line to translate that to. A `panic!` in the body of a `#[track_caller]`
     // function carries the caller's location instead.
     match T::try_from(value.trunc() as i128) {
@@ -64,7 +64,7 @@ fn to_int<T: TryFrom<i128>>(value: f64) -> T {
 /// A `f64` as an `i32`, or an abort.
 ///
 /// `#[track_caller]`, so the abort names the line the conversion was written on
-/// rather than this file. Without it [ADR-044](../../../docs/specification/adr/adr-044.md)'s
+/// rather than this file. Without it [ADR-300](../../../docs/specification/adr/adr-300.md)'s
 /// table would have nothing to translate: the location would be in `std`, where no
 /// Nikaia line maps.
 #[inline]
@@ -112,7 +112,7 @@ pub fn to_isize(value: f64) -> isize {
 /// **Why a trait and not a `*`.** The same reason [`crate::index::At`] is one:
 /// a `*` is right for the binding and wrong for a name that shadows it one line
 /// down, and this emitter has no types to tell the two apart with
-/// ([ADR-028](../../../docs/specification/adr/adr-028.md)). Choosing on the
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md)). Choosing on the
 /// type is what a trait is, and for a number that is already a number this is
 /// the **identity** — so the rule can be applied wherever the name could be a
 /// lent binding without ever being applied to the wrong operand.

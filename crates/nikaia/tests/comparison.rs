@@ -82,7 +82,7 @@ fn a_float_anywhere_takes_the_second_word_away() {
         "struct Reading { temp: f64 }\n\
          fn main() { print(\"x\") }\n",
     );
-    // A struct of one float is also a copy (ADR-252 D4.1).
+    // A struct of one float is also a copy (ADR-294 D9.1).
     assert!(
         rust.contains("#[derive(Debug, Clone, Copy, PartialEq)]"),
         "{rust}"

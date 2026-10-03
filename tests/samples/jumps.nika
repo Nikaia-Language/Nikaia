@@ -1,5 +1,5 @@
 // Kap 3.3: `break` and `continue`, in the shapes Part I documents
-// ([ADR-084](../../docs/specification/adr/adr-084.md)).
+// ([ADR-276](../../docs/specification/adr/adr-276.md)).
 //
 // Both act on the **innermost** loop, neither takes a value, and neither takes
 // a label. A `break` leaves the *loop*; a `return` leaves the *function*, and
@@ -34,8 +34,8 @@ fn triangle(rows: i64) -> i64 {
     return cells
 }
 
-// The unconditional loop (3.3, ADR-070 D1) with the exit it did not have until
-// ADR-084: `while true` is the form, and a `break` is how it ends.
+// The unconditional loop (3.3, ADR-276 D1) with the exit it did not have until
+// ADR-276: `while true` is the form, and a `break` is how it ends.
 fn countdown(start: i64) -> i64 {
     let mut n = start
     let mut steps = 0

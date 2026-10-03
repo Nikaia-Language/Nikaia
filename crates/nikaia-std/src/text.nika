@@ -13,7 +13,7 @@
 /// A character that is not a digit is not a question this answers: it hands
 /// back whatever the subtraction comes to.
 //
-// The prose above is the **documentation** (ADR-139 D1) and travels in the
+// The prose above is the **documentation** (ADR-307 D4) and travels in the
 // ledger; what follows is about the source and stays here.
 //
 // A free function rather than a method on the character: Rust's own
@@ -49,7 +49,7 @@ pub fn digit_value(c: char) -> i32 sync {
 // **`null` where Rust's `parse` has an error**: the reasons it gives - empty,
 // not a digit, too large - are one answer to a program that only asks *is this
 // a number*, and the absence is data, as a key that is not in a map is
-// (ADR-114 D1).
+// (ADR-293 D1).
 pub fn parse_i64(text: ref String) -> i64? sync {
     let least: i64 = -9223372036854775807 - 1
     let mut value: i64 = 0

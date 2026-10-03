@@ -10,7 +10,7 @@ why. `../CHANGELOG.md` and [`withdrawn-one-way-down.md`](history/withdrawn-one-w
 carry the account.
 **Related:** [ADR-004](specification/adr/adr-004.md) D1 (the one lowering, which
 emits text, and whose price §4 is), [ADR-003](specification/adr/adr-003.md) D1
-(the text interface), [ADR-012](specification/adr/adr-012.md) (diagnostics read
+(the text interface), [ADR-300](specification/adr/adr-300.md) (diagnostics read
 the generated file)
 
 Nobody had ever put a number on what invoking `rustc` as a child process costs.
@@ -234,7 +234,7 @@ let new_id = $self.cx.resolver.next_node_id();
 
 So handing this crate to `run_compiler` trips that assertion on a debug compiler, and on a release
 one silently skips assignment and leaves every node holding the crate root's id. The spans are the
-same story from the other end: [ADR-012](specification/adr/adr-012.md)'s contract is that an error
+same story from the other end: [ADR-300](specification/adr/adr-300.md)'s contract is that an error
 points back at the `.nika` file, and it is kept today by translating `rustc --error-format=json`
 about the generated file — a file an in-memory compile does not produce and a stream it does not
 emit. Opening the in-memory exit therefore costs a node-id discipline and a `SourceMap` in the

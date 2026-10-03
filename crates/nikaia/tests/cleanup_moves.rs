@@ -1,5 +1,5 @@
 //! **A value's cleanup moved with a contract, and the call is told** — `NK2403`
-//! ([ADR-236](../../../docs/specification/adr/adr-236.md), ADR-094 D5).
+//! ([ADR-297](../../../docs/specification/adr/adr-297.md), ADR-094 D5).
 //!
 //! A callee that keeps what it is given runs its cleanup when it is done with
 //! it; one that only reads it lends it, and the cleanup runs at the end of the

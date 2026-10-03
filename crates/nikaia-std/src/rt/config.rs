@@ -1,5 +1,5 @@
 //! The runtime configuration file, read at startup
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D5).
+//! ([ADR-303](../../../../docs/specification/adr/adr-303.md) D5).
 //!
 //! Four settings and no fifth. They are read when the program starts, by the
 //! person running it on the machine it runs on - which is why they are *not*
@@ -24,7 +24,7 @@
 //!
 //! `cleanup-deadline` arrives here from `nikaia.toml`, where Part III 13.3 had
 //! put it. How long a program waits at exit for pending cleanup
-//! ([ADR-006](../../../../docs/specification/adr/adr-006.md) D5) is an
+//! ([ADR-297](../../../../docs/specification/adr/adr-297.md) D6) is an
 //! operating property.
 
 use std::path::{Path, PathBuf};
@@ -33,7 +33,7 @@ use std::time::Duration;
 /// Where the runtime looks for its configuration, unless the environment says
 /// otherwise.
 ///
-/// **Not decided by ADR-038.** D5 says "a runtime configuration file, read at
+/// **Not decided by ADR-303 D5 says "a runtime configuration file, read at
 /// startup" and names the four settings; it does not name the file or its
 /// search path. This is one constant and one function so that naming it is a
 /// one-line change when the decision is made.
@@ -95,7 +95,7 @@ pub struct Config {
     pub user_pool: usize,
     /// Which mechanism serves a file.
     pub io_method: Method,
-    /// How long shutdown drains (ADR-006 D5). `0` disables draining.
+    /// How long shutdown drains (ADR-297 D6). `0` disables draining.
     pub cleanup_deadline: Duration,
 }
 
@@ -105,7 +105,7 @@ impl Default for Config {
             io_workers: 1,
             user_pool: 0,
             io_method: Method::Auto,
-            // ADR-006 D5's "generous default", unchanged by the move.
+            // ADR-297 D6's "generous default", unchanged by the move.
             cleanup_deadline: Duration::from_secs(30),
         }
     }
@@ -183,7 +183,7 @@ impl Config {
                     let n = count(key, value).map_err(at)?;
                     if n == 0 {
                         return Err(at(
-                            "`io-workers` is 0, and one I/O thread always runs (ADR-038 D4)"
+                            "`io-workers` is 0, and one I/O thread always runs (ADR-303 D4)"
                                 .to_string(),
                         ));
                     }
@@ -206,7 +206,7 @@ fn count(key: &str, value: &str) -> Result<usize, String> {
 }
 
 /// `"30s"`, `"500ms"`, `"2m"` or a bare number of seconds. `"0"` disables
-/// draining, which is ADR-006 D5's own word for it.
+/// draining, which is ADR-297 D6's own word for it.
 fn deadline(value: &str) -> Result<Duration, String> {
     let unwell = || {
         format!(
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn zero_io_workers_is_refused_by_name() {
         let error = Config::parse("io-workers = 0\n").expect_err("refused");
-        assert!(error.contains("ADR-038 D4"), "{error}");
+        assert!(error.contains("ADR-303 D4"), "{error}");
     }
 
     #[test]

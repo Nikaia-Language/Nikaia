@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""How much of the compiler is written in Nikaia (ADR-250 D4).
+"""How much of the compiler is written in Nikaia (ADR-294 D4).
 
-Stage 1 of ADR-001 D4 is Nikaia compiling Nikaia, and ADR-250 reaches it a
+Stage 1 of ADR-001 D4 is Nikaia compiling Nikaia, and ADR-294 reaches it a
 module at a time. This counts where the road stands: the lines of the
 toolchain that are Rust (`crates/nikaia/src`), the lines that are Nikaia (the
 `.nika` files under `crates/nikaia-std/src/tools/` the toolchain calls), and the
@@ -33,15 +33,15 @@ TOOLS = ROOT / "crates" / "nikaia-std" / "src" / "tools"
 COMPILER_NIKA = {
     "spelling.nika": "check: *did you mean* (0.0.238)",
     "dsl.nika": "dsl: a body's parameters, the shadow types, the drivers and the check of a call (0.0.248, 0.0.335)",
-    "rust.nika": "describe: reading a crate's Rust (ADR-195)",
+    "rust.nika": "describe: reading a crate's Rust (ADR-290)",
     "fixed.nika": "fixed: FNV-1a and CHD (0.0.250)",
     "template.nika": "emit::template: the HTML scan (0.0.252)",
     "ledger.nika": "contracts: reading a ledger back, whole, and writing a signature in its spelling (0.0.258, 0.0.292, 0.0.333)",
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
-    "ast.nika": "ast: the syntax tree (ADR-252, 0.0.275)",
-    "fold.nika": "fold: a constant's value (ADR-252 D6, 0.0.278)",
+    "ast.nika": "ast: the syntax tree (ADR-294, 0.0.275)",
+    "fold.nika": "fold: a constant's value (ADR-294 D11, 0.0.278)",
     "trust.nika": "contracts::trust: what --trust says (0.0.281)",
-    "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-257, 0.0.285-295)",
+    "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-294, 0.0.285-295)",
     "sources.nika": "describe: the files a crate is read from (0.0.308)",
     "paths.nika": "describe: a crate's module paths and `pub use` (0.0.309)",
     "crossing.nika": "describe: what crosses a thread, and the notes (0.0.311, 0.0.316)",

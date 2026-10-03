@@ -1,5 +1,5 @@
 //! Which functions **touch a lock**
-//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D3) — the second
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D29) — the second
 //! derived property, propagated over the call graph `sync` uses and with the
 //! opposite lattice.
 //!
@@ -74,7 +74,7 @@ fn it_travels_up_the_call_graph() {
 /// recursion keeps it. This starts from *nobody touches one* and adds, so
 /// mutual recursion between two functions that open no door gets nothing. Both
 /// are right, and they are right for opposite reasons
-/// ([ADR-027](../../../docs/specification/adr/adr-027.md) D1).
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D1).
 #[test]
 fn mutual_recursion_that_opens_no_door_holds_nothing() {
     let source = "fn ping(n: i64) -> i64 sync {\n\
@@ -138,7 +138,7 @@ fn a_spawned_body_does_not_give_its_caller_the_property() {
 
 /// **A trailing lambda's body does count**, for the reason the `spawn` above
 /// does not: it runs *during* the call
-/// ([ADR-029](../../../docs/specification/adr/adr-029.md) D4), so what it does
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D16), so what it does
 /// is what this body does.
 #[test]
 fn a_lambda_that_runs_during_the_call_counts() {
@@ -150,7 +150,7 @@ fn a_lambda_that_runs_during_the_call_counts() {
 
 /// **A door over several locks is one too** — `access_all` and `update_all` are
 /// free calls rather than methods
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md)), so they are found
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)), so they are found
 /// where the free calls are and not among the resolved receivers.
 #[test]
 fn a_door_over_several_locks_counts() {
@@ -227,7 +227,7 @@ fn a_constructor_or_a_variant_is_not_a_doubt() {
 /// **What the corpus holds, and the number a refusal is read against.**
 ///
 /// **18 hold, 7 are undecided, 34 are clear**, of 59 — and every one of the 18
-/// is `println`. [ADR-067](../../../docs/specification/adr/adr-067.md) D1 is
+/// is `println`. [ADR-288](../../../docs/specification/adr/adr-288.md) D21 is
 /// where that was pinned down: a print never pauses, so `sync` says nothing
 /// about it, and it takes standard output's **own lock** while yours is open.
 /// Two conditions and not one, and this column answers the second.

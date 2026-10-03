@@ -1,6 +1,6 @@
 // crates/nikaia/src/contracts/touch.rs
 //
-// What an operation reaches, and whether it changes it (ADR-033).
+// What an operation reaches, and whether it changes it (ADR-292).
 //
 // Part I 8.1.1's rule is one sentence - *two operations whose touch sets are
 // disjoint have no order between them* - and everything hard about it is in
@@ -11,7 +11,7 @@
 //
 // **An absent `touches` means it touches everything.** That is not a default
 // chosen for convenience; it is the same fail-closed polarity ADR-010 D1 set
-// for provenance and ADR-027 D2 for `sync`, and it is what makes this
+// for provenance and ADR-288 D2 for `sync`, and it is what makes this
 // adoptable: a program built against libraries that describe nothing keeps
 // exactly the order it has today, and gets faster only where somebody wrote
 // enough down for the compiler to prove it may.
@@ -23,7 +23,7 @@
 // failing to buy one. A vocabulary whose *mistakes* are permissions is a
 // vocabulary in the wrong polarity. [`Touch::kind_is_known`] is what says
 // which names mean something, and `contracts::order` answers a `touches` entry
-// naming anything else the way ADR-033 D4 answers every other thing it cannot
+// naming anything else the way ADR-292 D3 answers every other thing it cannot
 // read: it reaches everything, and stays where it was written.
 
 use anyhow::{Result, anyhow};
@@ -40,9 +40,9 @@ fn order_of(touch: &Touch) -> TouchKey {
     (touch.kind.clone(), touch.parameter.clone(), touch.write)
 }
 
-/// Every resource a `touches` entry may name (ADR-033 D2).
+/// Every resource a `touches` entry may name (ADR-292 D3).
 ///
-/// It grows when a function needs it and never before - ADR-028 D5's rule,
+/// It grows when a function needs it and never before - ADR-288 D11's rule,
 /// which is the same rule the rest of the ledger lives under. What is here is
 /// what `std`'s own entries reach:
 ///
@@ -53,7 +53,7 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// | `stderr` | the program's standard error | `eprint`, `eprintln` |
 /// | `args` | the arguments the program was started with | `cli::args` |
 ///
-/// **What is deliberately not here**, and each for the same reason. ADR-033
+/// **What is deliberately not here**, and each for the same reason. ADR-292
 /// D2's table names `endpoint(url)` for `net::post` and a lock for
 /// `counter.access fn { … }`, and §3 rests Part II 12.2's
 /// no-pausing-while-locked rule on the second - neither function exists. And
@@ -62,7 +62,7 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// says what it reaches, so all three order against everything. Nothing in
 /// `examples/` asks - the two programs that read a pipe do it inside a `for`
 /// or behind a handler that `return`s, so no pair reaches the question - and
-/// ADR-028 D5 is the rule that keeps a word out until a program asks for it.
+/// ADR-288 D11 is the rule that keeps a word out until a program asks for it.
 ///
 /// When one does, the entry is `stdin` **write** and not `stdin read`, and the
 /// reason is worth leaving here rather than being rediscovered. `write` in a
@@ -79,7 +79,7 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// because two calls genuinely conflict over nothing and neither changes
 /// anything - the opposite of `stdin`, whose read is a write. The reason it is
 /// worth a paragraph anyway is the **second consumer**
-/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) §3): to
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md)): to
 /// `contracts::order` an empty touch set is a *speed*, and to a repetition it
 /// would be a *permission*. A clock left out of an entry would read as "repeat me
 /// freely" and the repetition would see a different time. Naming it at all is
@@ -88,13 +88,13 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// | `lock` | **a** lock, never which one | `get`, `set`, `access`, `update`, and the two doors over several |
 ///
 /// **`lock` joined the list the day the doors existed**
-/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) D3). It was named in
-/// [ADR-033](../../../../docs/specification/adr/adr-033.md) D2's own table and
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D23). It was named in
+/// [ADR-292](../../../../docs/specification/adr/adr-292.md) D3's own table and
 /// kept out of this one under the rule the paragraph above states - a word waits
-/// until a program asks for it - and until [ADR-064](../../../../docs/specification/adr/adr-064.md)
-/// and [ADR-065](../../../../docs/specification/adr/adr-065.md) no program could.
+/// until a program asks for it - and until [ADR-281](../../../../docs/specification/adr/adr-281.md)
+/// and [ADR-281](../../../../docs/specification/adr/adr-281.md) no program could.
 ///
-/// **It names no parameter, and that is [ADR-039](../../../../docs/specification/adr/adr-039.md)
+/// **It names no parameter, and that is [ADR-281](../../../../docs/specification/adr/adr-281.md)
 /// D4's decision rather than a limit here**: the property says *a lock* and never
 /// *which* lock, because telling two handles apart would make whether a program
 /// compiles depend on whether that proof happened to succeed. Two `access`
@@ -103,9 +103,9 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// | `socket` | **a** socket, never which one | `net::listen`, `accept`, `read`, `write`, `close` |
 ///
 /// **`socket` joined the list the day `std` had one**
-/// ([ADR-194](../../../../docs/specification/adr/adr-194.md) D1), under the same
+/// ([ADR-289](../../../../docs/specification/adr/adr-289.md) D6), under the same
 /// rule `lock` joined it under: a word waits until a program can ask for it.
-/// [ADR-033](../../../../docs/specification/adr/adr-033.md) D3 named it in the
+/// [ADR-292](../../../../docs/specification/adr/adr-292.md) D3 named it in the
 /// same breath as a file - *a file, a socket, `stdout` and a `Locked` value are
 /// not in the set of things that can be pointed at* - and it waited until one
 /// existed.
@@ -114,14 +114,14 @@ fn order_of(touch: &Touch) -> TouchKey {
 /// name: a *listener* could be named by the address it is bound to, and a
 /// **connection** is what a program actually touches, and telling two of those
 /// apart is the alias analysis
-/// [ADR-039](../../../../docs/specification/adr/adr-039.md) D4 refuses to make
+/// [ADR-281](../../../../docs/specification/adr/adr-281.md) D30 refuses to make
 /// a program's compilation depend on. So two reads of two different sockets do
 /// not conflict - reads never do - and a write orders against every socket
 /// touch, which is the safe direction and the one a server's two writes want
 /// anyway.
 pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args", "lock", "socket"];
 
-/// What stays Rust of a [`Touch`] (ADR-257 step (b)): reading one back, and
+/// What stays Rust of a [`Touch`] (ADR-294 step (b)): reading one back, and
 /// the list of kinds this compiler knows. The declaration and `text` are
 /// `tools/ty.nika`'s.
 pub trait TouchOps: Sized {
@@ -135,7 +135,7 @@ impl TouchOps for Touch {
         nikaia_std::tools::ledger::touch_of(text).map_err(|refusal| anyhow!("{refusal}"))
     }
 
-    /// Whether this compiler knows what the named resource *is* (ADR-033 D2).
+    /// Whether this compiler knows what the named resource *is* (ADR-292 D3).
     ///
     /// Kept separate from [`Touch::parse`] on purpose. A ledger that names a
     /// kind from a newer vocabulary is not malformed - it is a file this
@@ -305,7 +305,7 @@ mod tests {
     }
 }
 
-// --- what a body reaches (ADR-067 D2) ---------------------------------------
+// --- what a body reaches (ADR-288 D22) ---------------------------------------
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -332,12 +332,12 @@ struct Reach {
 }
 
 /// Give every function in the ledger the `touches` its body earns
-/// ([ADR-067](../../../../docs/specification/adr/adr-067.md) D2).
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D22).
 ///
 /// **The fourth derived column, and the one that was specified without one.**
 /// `sync`, `throws` and `sharing` are each read off a body over the call graph;
 /// `touches` was written with the same fail-closed polarity
-/// ([ADR-033](../../../../docs/specification/adr/adr-033.md) D4) and only ever
+/// ([ADR-292](../../../../docs/specification/adr/adr-292.md) D3) and only ever
 /// hand-written in `std`'s ledger — so every function a `.nika` file declared
 /// said *"nobody said"*, which means *"it touches everything"*. Safe, and
 /// useless: the walk stopped at the first call out of `std`.
@@ -388,13 +388,13 @@ pub fn infer(
                     }
                 }
                 // **A `pub` rule is an entry, so it gets the walk too**
-                // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+                // ([ADR-296](../../../docs/specification/adr/adr-296.md) D24,
                 // [ADR-186](../../../docs/specification/adr/adr-186.md)). Its
                 // body is every **action block**
                 // in the grammar: a rule's pattern names other rules of the same
                 // grammar and their actions run with it, and which ones is the
                 // parser backend's question rather than this walk's — so the
-                // grammar is the unit, which is the over-approximation ADR-033
+                // grammar is the unit, which is the over-approximation ADR-292
                 // D4 asks for in this column.
                 Item::Grammar(def) => {
                     let named = parsed.text(def.name).to_string();
@@ -487,7 +487,7 @@ fn reach_of(
     collect(parsed, body, own, library, &mut reach);
 
     // The method calls the type checker resolved, which this walk cannot
-    // (ADR-028) - the same hand-over `sync::infer` takes.
+    // (ADR-288) - the same hand-over `sync::infer` takes.
     if let Some(methods) = resolved.get(&key) {
         reach.unknown |= methods.unresolved;
         for callee in &methods.resolved {
@@ -504,7 +504,7 @@ fn reach_of(
 
 /// What a body reaches: the walk is Nikaia (`tools/foreign.nika`, #125), and
 /// what each call by name goes to is `calls::callee_named`, the one resolution
-/// every analysis shares (ADR-028). A method call is answered per function by
+/// every analysis shares (ADR-288). A method call is answered per function by
 /// the type checker and merged in by `reach_of`; a `spawn`, a `dsl` statement
 /// and a call of something that is not a name are calls nobody can name.
 fn collect(

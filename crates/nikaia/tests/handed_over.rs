@@ -1,5 +1,5 @@
 //! Owned keys, literals where text is kept, and data used after it was handed
-//! over ([ADR-213](../../../docs/specification/adr/adr-213.md)).
+//! over ([ADR-293](../../../docs/specification/adr/adr-293.md)).
 //!
 //! Each was `rustc`'s words about a file nobody wrote: a map keyed by an owned
 //! `String` could not be written at all, a map keyed by an `i64` had its key
@@ -124,9 +124,9 @@ fn a_map_keyed_by_numbers_holds_text() {
 }
 
 /// **A map whose keys are only ever views is a map keyed by views**
-/// ([ADR-223](../../../docs/specification/adr/adr-223.md) D1): the key
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D12): the key
 /// written `String` is a view below, so nothing is copied - where this used to
-/// be refused with ADR-208's sentence asking for a `.clone()`.
+/// be refused with ADR-282's sentence asking for a `.clone()`.
 #[test]
 fn a_map_keyed_only_by_views_is_keyed_by_views() {
     runs(
@@ -332,10 +332,10 @@ fn what_is_not_refused_runs() {
     );
 }
 
-// --- ADR-214: within one statement, parts of a value, and no stray warning ---
+// --- ADR-293: within one statement, parts of a value, and no stray warning ---
 
 /// **Two hand-overs in one statement** are one after the other: the second
-/// argument is read after the first was given away (ADR-214 D1).
+/// argument is read after the first was given away (ADR-293 D31).
 #[test]
 fn a_statement_that_hands_over_twice_is_refused() {
     one_refusal(
@@ -369,7 +369,7 @@ fn a_statement_that_takes_and_gives_back_is_a_program() {
 
 /// **A part of an owned value is handed over, and the rest stays**: `p.x` is
 /// still there after `p.name` went, `p.name` is not, and neither is `p` as a
-/// whole (ADR-214 D2).
+/// whole (ADR-293 D32).
 #[test]
 fn a_part_handed_over_leaves_the_rest() {
     let head = "struct P {\n    name: String,\n    x: i64,\n}\n\n";
@@ -506,7 +506,7 @@ fn a_part_handed_to_std_is_named_once() {
 
 /// **A read through the brackets carries no parentheses of its own**: they
 /// stood around every read, and `m[k] ?? 0` and `let x = xs[1]` were
-/// `rustc`'s *unnecessary parentheses* about a file nobody wrote (ADR-214 D3).
+/// `rustc`'s *unnecessary parentheses* about a file nobody wrote (ADR-293 D33).
 /// Where a postfix follows, they are still there, because there they are
 /// needed.
 #[test]
@@ -547,7 +547,7 @@ fn a_read_through_the_brackets_warns_about_nothing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// --- ADR-215: the rest of ADR-212 §5 --------------------------------------------
+// --- ADR-293: the rest of ADR-293 --------------------------------------------
 
 /// **`insert` is the write under the language below's name**, handing back
 /// what it replaced; a literal key is built into the map's own text.
@@ -596,7 +596,7 @@ fn a_copy_of_a_view_is_text_of_its_own() {
     );
 }
 
-// --- ADR-216: one word for a copy ------------------------------------------------
+// --- ADR-282: one word for a copy ------------------------------------------------
 
 /// **`.to_owned()` is refused, naming `.clone()`**: the language below needs
 /// the second word because its `.clone()` of a reference copies the
@@ -634,7 +634,7 @@ fn a_copy_has_one_word() {
 }
 
 /// **A copy of text is text of its own and a copy of a slice is a list**, each
-/// written below as what makes one (ADR-216 D2).
+/// written below as what makes one (ADR-282 D9).
 #[test]
 fn a_copy_is_owned_whatever_it_copied() {
     runs(
@@ -656,7 +656,7 @@ fn a_copy_is_owned_whatever_it_copied() {
     );
 }
 
-/// **The text form of text is the text itself** (ADR-216 D4): a view stays a
+/// **The text form of text is the text itself** (ADR-282 D8): a view stays a
 /// view and a literal a literal, so nothing is copied and nothing is written
 /// below - and a view put where text of its own is kept is refused naming
 /// `.clone()`, as it is without the `.to_string()`.
@@ -691,7 +691,7 @@ fn the_text_form_of_text_is_the_text() {
     );
 }
 
-/// **A literal is enough wherever text of its own is kept** (ADR-216 D4): in a
+/// **A literal is enough wherever text of its own is kept** (ADR-282 D3): in a
 /// tuple, in every link of an `else if` chain, after a `??` inside an f-string
 /// hole - the places a program used to write `.to_string()` to get a `String`.
 #[test]
@@ -771,7 +771,7 @@ fn a_name_bound_again_is_not_the_one_handed_over() {
 /// (0.0.232). `let mut s = "a"` then `s = s + "b"` was `NK1105` with a help to
 /// take a view of the sum; found writing a miniature compiler in Nikaia, where
 /// emitted code is built up this way. A literal is built into text of its own
-/// wherever it is kept (ADR-207 D2), and a binding the program appends to
+/// wherever it is kept (ADR-282 D4), and a binding the program appends to
 /// keeps it. The growing is read off `+`, `+=` and an f-string, which can only
 /// be owned text.
 #[test]

@@ -5,7 +5,7 @@
 //! `user_parallelism`, so a library written at [`no`] cannot turn out
 //! un-compilable at [`yes`]".
 //! [ADR-037](../../../docs/specification/adr/adr-037.md) §3 and
-//! [ADR-038](../../../docs/specification/adr/adr-038.md) D7 both rely on it, and
+//! [ADR-303](../../../docs/specification/adr/adr-303.md) D7 both rely on it, and
 //! the experiment in `docs/history/foreign-runtime.md` is what found it missing.
 //!
 //! **Two halves, and the first decides whether the tool is worth running.** A
@@ -19,16 +19,16 @@
 //!
 //! **Into a task of the program's own, no type *in the language* is refused a
 //! crossing** ([ADR-037](../../../docs/specification/adr/adr-037.md) D6,
-//! [ADR-045](../../../docs/specification/adr/adr-045.md) D2), and that is
+//! [ADR-312](../../../docs/specification/adr/adr-312.md) D7), and that is
 //! stated rather than worked around: a lock and a `Shared` both go there at
 //! both settings, so the `spawn` programs below assert **silence**.
 //!
 //! **Into code nothing describes, two of them are refused.** A lock, since
-//! ADR-045 D3 — and that one is `NK2503`'s now rather than this file's, because
+//! ADR-312 D8 — and that one is `NK2503`'s now rather than this file's, because
 //! what the refusal is about there is the call
-//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D6, and
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D32, and
 //! `reaching_a_lock.rs`). A `Shared`, since
-//! [ADR-061](../../../docs/specification/adr/adr-061.md) D1 — which was decided
+//! [ADR-312](../../../docs/specification/adr/adr-312.md) D9 — which was decided
 //! and not built, and which this file asserted the *absence* of until
 //! `NK2503`'s split went looking for the count.
 //!
@@ -118,9 +118,9 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         &parsed,
         &own,
         &BTreeSet::new(),
-        // A loose file declares no Rust crate, so ADR-104 D1 has nothing to
+        // A loose file declares no Rust crate, so ADR-290 D1 has nothing to
         // ask about here, and nothing has gained an error since a committed
-        // ledger, which is every build but the one after a change (ADR-101 D1).
+        // ledger, which is every build but the one after a change (ADR-308 D11).
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
             newly: &nikaia::check::Newly::new(),
@@ -128,7 +128,7 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
             // nowhere else to call into.
             beside: &[],
             // …and no allowlist, so it reads nothing while it builds
-            // (ADR-072 D1).
+            // (ADR-310 D4).
             reads: &nikaia::assets::Reads::none(),
         },
         Path::new("app.nika"),
@@ -146,7 +146,7 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
 /// Part III C.4's property, for this check: it never rejects a program that is
 /// correct. Every `.nika` there is, including the ones in subdirectories that
 /// the type checker's own guard does not walk - `examples/inventory`, and the
-/// three projects of the ADR-038 D7 experiment, which are the programs that
+/// three projects of the ADR-303 D7 experiment, which are the programs that
 /// actually hand values to a foreign runtime.
 #[test]
 fn no_program_in_the_repository_has_a_crossing_refused() {
@@ -269,7 +269,7 @@ fn a_struct_that_holds_a_shared_crosses_into_a_task() {
     assert!(clean.is_empty(), "{clean:#?}");
 }
 
-/// **Part II 12.2's counter goes into a task** - ADR-045 D2, and the program that
+/// **Part II 12.2's counter goes into a task** - ADR-312 D7, and the program that
 /// could not be written before it.
 ///
 /// This is what `user_parallelism = yes` exists to serve, and the verdict refused
@@ -308,7 +308,7 @@ fn a_lock_goes_into_a_task_of_our_own() {
     );
 }
 
-/// **…and the same value handed to code nothing describes is refused** - ADR-045
+/// **…and the same value handed to code nothing describes is refused** - ADR-312
 /// D3, which is `NK2502`'s first occupant.
 ///
 /// The conservative answer, and the record says so rather than implying a proof:
@@ -329,7 +329,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     );
     assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
     let finding = &found[0];
-    // **`NK2503` and not `NK2502`** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+    // **`NK2503` and not `NK2502`** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     // D6): a lock reachable through an argument is a refusal about the *call*,
     // and the shipped diagnostic used to be the one about the value crossing.
     assert_eq!(finding.code, "NK2503");
@@ -342,7 +342,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     );
     let notes = finding.notes.join(" ");
     // The note names the type the source wrote, not what it expands to
-    // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
+    // ([ADR-281](../../../docs/specification/adr/adr-281.md) D1).
     assert!(notes.contains("`SharedMut[i32]`"), "{notes}");
     assert!(
         notes.contains("code that might keep a lock could deadlock"),
@@ -365,7 +365,7 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
 }
 
 /// **A `Shared` does not go into a call this compiler cannot see the end of**
-/// ([ADR-061](../../../docs/specification/adr/adr-061.md) D1), which is the
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D9), which is the
 /// `examples/foreign-runtime/crossing` shape.
 ///
 /// D1 was decided and **not built**: `Shared` sat in `contracts::send`'s
@@ -468,7 +468,7 @@ fn the_verdict_is_the_same_at_both_settings() {
         assert_eq!(refused_at(source, "no"), None, "{source}");
     }
 
-    // And the same, from the refusing side: ADR-061 D1 and ADR-045 D3 are both
+    // And the same, from the refusing side: ADR-312 D9 and ADR-312 D8 are both
     // properties of a **type**, so a program either compiles at both settings
     // or at neither. This is the half the file could not assert while no
     // program was refused at all.
@@ -491,7 +491,7 @@ fn the_verdict_is_the_same_at_both_settings() {
 ///
 /// `Shared` no longer stands in front of it: into a task of ours the handle may
 /// cross at both settings - at `yes` under an atomic count, at `no` because
-/// nothing crosses there at all (ADR-061 D2). What is left is the **lock**, and this
+/// nothing crosses there at all (ADR-312 D10). What is left is the **lock**, and this
 /// test says exactly what the compiler says about it today - nothing, because
 /// nothing written down describes `Locked`. Which of `RefCell` and `Mutex` it
 /// expands to is ADR-037 D3's second half and is not decided here, so this
@@ -560,7 +560,7 @@ fn probe_library() -> Ledger {
 /// says about them.
 ///
 /// It used to be the `--overlaps` report's text, which asked the same question
-/// through a paragraph. [ADR-050](../../../docs/specification/adr/adr-050.md) D1
+/// through a paragraph. [ADR-292](../../../docs/specification/adr/adr-292.md) D1
 /// withdrew the reordering and the report became one about `overlap { … }`
 /// blocks — so the verdict is asked directly here, which is what these tests
 /// were ever about: **crossing a thread is a reason two operations may not run
@@ -661,7 +661,7 @@ fn a_pair_whose_result_is_a_shared_of_plain_data_overlaps() {
 /// This is the crossing the **compiler** chose: overlapping puts each statement
 /// in a closure that runs elsewhere and hands its value back, so the result
 /// crosses a thread. Not overlapping is a step the compiler was never obliged to
-/// take, so fail-closed here costs speed and never a refusal - which is ADR-033
+/// take, so fail-closed here costs speed and never a refusal - which is ADR-292
 /// D4's own polarity, applied to the crossing question.
 #[test]
 fn an_operation_whose_result_nothing_permits_keeps_its_place() {
@@ -674,14 +674,14 @@ fn an_operation_whose_result_nothing_permits_keeps_its_place() {
     assert!(!report.contains("together"), "{report}");
     assert!(
         report.contains("would have to move to another thread"),
-        "and the report says which refusal it was (ADR-033 D9): {report}"
+        "and the report says which refusal it was (ADR-292 D2): {report}"
     );
 
     // And it is not a refusal: the program compiles, it simply does not overlap.
     assert!(crossings(source).is_empty(), "{:#?}", crossings(source));
 }
 
-/// **A result that holds a lock overlaps, which is ADR-045 D1 reaching the third
+/// **A result that holds a lock overlaps, which is ADR-312 D6 reaching the third
 /// call site.**
 ///
 /// `probe::held` hands back a `SharedMut[i64]` and kept its place while the
@@ -712,7 +712,7 @@ fn a_result_that_holds_a_lock_overlaps() {
 ///
 /// `cli::args` is the measured case. Its result is a Rust type whose parts this
 /// compiler cannot walk, so the answer was "nobody said" - which is not
-/// permission (ADR-010 D1) - and the ten pairs ADR-033 §8.1 bought with a
+/// permission (ADR-010 D1) - and the ten pairs ADR-292 bought with a
 /// `touches` line would have gone again. The `crosses = true` on
 /// `[type."cli::Args"]` is what keeps them.
 #[test]
@@ -935,7 +935,7 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_task() {
 /// **`NK2502` fires for the first time**: the same value handed to a call this
 /// compiler cannot see the end of.
 ///
-/// ADR-038 D7's first rule, which is the one `examples/foreign-runtime/crossing`
+/// ADR-303 D7's first rule, which is the one `examples/foreign-runtime/crossing`
 /// is a program about: a foreign call may put what it is given on a thread it
 /// owns, so a value that may not cross may not go into one.
 #[test]
@@ -959,12 +959,12 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_foreign_call() {
 }
 
 /// **A described foreign call is asked where the description says the word, and
-/// nowhere else** ([ADR-193](../../../docs/specification/adr/adr-193.md) D1, D2).
+/// nowhere else** ([ADR-290](../../../docs/specification/adr/adr-290.md) D6, D7).
 ///
 /// `examples/foreign-runtime/crossing` is the program: its handle says
 /// `crosses = false`, and it is handed to a foreign function the description
 /// names. `NK2502` used to ask its question only of a call **nothing**
-/// describes (ADR-038 D7's own words), so a crate that answered every other
+/// describes (ADR-303 D7's own words), so a crate that answered every other
 /// question honestly turned the check off by being described — and that program
 /// was refused by `rustc`'s `Send` bound instead, against the `.nika` line.
 ///

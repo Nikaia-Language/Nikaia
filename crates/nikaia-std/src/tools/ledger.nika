@@ -3,7 +3,7 @@
 // **How a ledger is written down, read back** (Part III 13.5, ADR-251).
 //
 // The sixth piece of the compiler moved from Rust to Nikaia (0.0.258), by
-// ADR-196's route and on ADR-250's road: lowered ahead of time by
+// ADR-290's route and on ADR-294's road: lowered ahead of time by
 // `nikaia lower-std` to `ledger.rs` beside it, `include!`d as
 // `nikaia_std::tools::ledger`, and called from the compiler's
 // `Ledger::parse`, which is left holding what each key *means*.
@@ -13,7 +13,7 @@
 // is called, where a key ends and its value begins, what a quoted string holds
 // and where one entry of a list ends. `nikaia.contracts` is generated, so the
 // shapes are the ones `Ledger::render` writes - a small reader for a small
-// format, deliberately not a TOML parser (ADR-250 §3 keeps the `toml` crate
+// format, deliberately not a TOML parser (ADR-294 keeps the `toml` crate
 // behind the manifest's adapter; this file was never read by it).
 //
 // **A list's entries are split where a comma stands outside quotes.** The Rust
@@ -22,7 +22,7 @@
 // `collections::HashMap[String, i64]` - could not be read back: a package with
 // either wrote a ledger its consumer refused.
 //
-// **What each key means is read here too** (0.0.292, ADR-257 step (c)):
+// **What each key means is read here too** (0.0.292, ADR-294 step (c)):
 // `read` fills the ledger's records, which `ty.nika` declares and this module
 // reads beside itself, and the compiler's `Ledger::parse` is a call to it.
 
@@ -247,7 +247,7 @@ pub fn read(written: ref String) -> Ledger throws {
                     section = Section::Kind
                 } else if kind == "trait" {
                     // **A trait's methods are not read here**: they are the
-                    // `fn` entries of this same file (ADR-106 D3), filled in
+                    // `fn` entries of this same file (ADR-295 D12), filled in
                     // once the whole file is read.
                     if !ledger.traits.contains_key(current) {
                         ledger.traits.insert(current.clone(), collections::BTreeSet())
@@ -318,7 +318,7 @@ pub fn read(written: ref String) -> Ledger throws {
         }
         ledger.traits.insert(name.clone(), methods)
     }
-    // **Who answers for what** (ADR-174 D1), a set per trait, gathered after
+    // **Who answers for what** (ADR-295 D15), a set per trait, gathered after
     // the whole file because one trait's `impl` tables may stand apart.
     let mut done: Vec[String] = []
     for (trait_name, _) in answers {
@@ -356,7 +356,7 @@ fn header(mut ledger: Ledger, key: ref String, value: ref String, n: i64) throws
     }
 }
 
-// `[impl."A for T"]`: the trait `A`, and `T`, which answers for it (ADR-174
+// `[impl."A for T"]`: the trait `A`, and `T`, which answers for it (ADR-295
 // D1).
 fn implemented(name: ref String, n: i64) -> (String, String) throws {
     let c: Vec[char] = name.chars().collect()

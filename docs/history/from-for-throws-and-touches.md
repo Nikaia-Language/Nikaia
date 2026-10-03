@@ -3,14 +3,14 @@
 **Date:** September 12, 2026 — a laboratory record, and a snapshot of that day.
 
 > **Read as a snapshot.** The lambdas on this page are written in the form
-> [ADR-049](../specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> [ADR-049](adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
 > the argument read off the body — and **no sample here compiles as written**; the
 > current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
 > The analysis each section records is unaffected: what a lambda's arguments are
 > called changes nothing about when it runs or what it touches, which is what this
 > page is about. Transcribe the reasoning, not the code.
 
-[ADR-029](../specification/adr/adr-029.md) D3 added a fourth `sync` state to the
+[ADR-029](adr/adr-029.md) D3 added a fourth `sync` state to the
 ledger, `sync = "from(f)"`, and rested it on one sentence:
 
 > A caller reads it as "this call adds no pausing of its own." That is sound for
@@ -20,7 +20,7 @@ ledger, `sync = "from(f)"`, and rested it on one sentence:
 
 The question this page answers: does that argument also hold for `throws`
 ([ADR-023](../specification/adr/adr-023.md) D1) and for `touches`
-([ADR-033](../specification/adr/adr-033.md) D2), so that "immediate function types
+([ADR-033](adr/adr-033.md) D2), so that "immediate function types
 for user code" is **one** inference rule rather than three?
 
 Nothing here is normative. The answer is one sentence per effect in ADR-029 D3;
@@ -167,7 +167,7 @@ and has no key to add.
 
 ### The `and_modify` chain, and the precision it used to lose
 
-[ADR-031](../specification/adr/adr-031.md)'s live example, with a failing `add`:
+[ADR-031](adr/adr-031.md)'s live example, with a failing `add`:
 
 ```nika
 enum ZuVoll { Voll }
@@ -321,7 +321,7 @@ lauf:
 
 ### Why this is a soundness question and not a speed one
 
-`touches` is fail-closed by [ADR-033](../specification/adr/adr-033.md) D4 — an
+`touches` is fail-closed by [ADR-033](adr/adr-033.md) D4 — an
 unknown touch set is *everything* — and the reason is
 [ADR-010](../specification/adr/adr-010.md) D1's: an analysis that fails open is a
 vulnerability generator. `sync`'s `from` is a **permissive** reading, and that is
@@ -407,7 +407,7 @@ that is what this page is for.
 * **Two leftover mentions of the withdrawn path** outside the files
   `docs/README.md` allows them in: `docs/foreign-runtime.md` (line 42) called
   `rustc 1.94.0-nightly` "the toolchain this repository named", which it no
-  longer is, and [ADR-036](../specification/adr/adr-036.md) §2 names the same
+  longer is, and [ADR-036](adr/adr-036.md) §2 names the same
   nightly as its measurement machine.
 
   The wording is fixed in the two notes and the **version is kept**: a note that

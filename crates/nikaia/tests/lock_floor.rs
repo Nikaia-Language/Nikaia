@@ -1,19 +1,19 @@
 //! What an always-`Mutex` floor for `Locked[T]` would do to `sync`.
 //!
 //! **A probe, not a feature**, and it stays one now that the answer is decided
-//! ([ADR-057](../../../docs/specification/adr/adr-057.md)). Nothing here emits
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md)). Nothing here emits
 //! anything; what it does is hold on to the *other* answer's cost, so the
 //! decision keeps its evidence rather than only its conclusion. `with_access`
 //! therefore takes the shipped entry out before putting a variant in. What it does is put
 //! Part II 12.2's open question to the *real* inference
-//! ([`contracts::sync`](../src/contracts/sync.rs), ADR-027) instead of arguing
+//! ([`contracts::sync`](../src/contracts/sync.rs), ADR-288) instead of arguing
 //! it: the one thing an always-`Mutex` floor could break is whether
 //! `Locked::access` is still `sync`, and that turns entirely on one line in a
 //! ledger.
 //!
 //! The type checker cannot resolve `counter.access` today (there is no
 //! `Locked` type for it to resolve *through*), so its answer is handed in —
-//! which is what `sync::infer` takes it as anyway (ADR-028). The library
+//! which is what `sync::infer` takes it as anyway (ADR-288). The library
 //! ledger is `std`'s with one entry appended, and the two spellings of that
 //! entry are the two answers the floor could take:
 //!
@@ -41,7 +41,7 @@ const IDIOM: &str = "fn tally(counter: SharedMut[i32]) {\n\
 /// `std`'s ledger with its **own** `Locked::access` entry replaced by the one
 /// this probe wants to ask about.
 ///
-/// The entry is real now ([ADR-057](../../../docs/specification/adr/adr-057.md)
+/// The entry is real now ([ADR-281](../../../docs/specification/adr/adr-281.md)
 /// §5) and says `sync = "from(f)"`. Appending to the shipped text would leave
 /// the shipped answer standing and quietly turn the second row below into the
 /// first, so the shipped one is taken out first — which is what keeps this file
@@ -61,7 +61,7 @@ fn without_access(text: &str) -> String {
     for line in text.lines() {
         if line.starts_with('[') {
             // **Both doors**: the idiom writes `SharedMut` since
-            // [ADR-064](../../../docs/specification/adr/adr-064.md), and leaving
+            // [ADR-281](../../../docs/specification/adr/adr-281.md), and leaving
             // the shipped entry for either standing would answer the question
             // this probe is asking.
             skipping = line.starts_with("[fn.\"Locked::access\"]")
@@ -82,7 +82,7 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
     let mut ledger = Ledger::infer(&parsed);
     // **Back to what the declarations say**, before the hypothetical library is
     // asked. `Ledger::infer` runs `sync::infer` itself, against the **shipped**
-    // ledger - and since [ADR-064](../../../docs/specification/adr/adr-064.md)
+    // ledger - and since [ADR-281](../../../docs/specification/adr/adr-281.md)
     // that ledger describes `SharedMut::access`, so the shipped answer is already
     // in here. `sync::infer` only ever raises a claim, never lowers one, so
     // without this reset the second row of the table above could not be asked at
@@ -113,11 +113,11 @@ fn sync_of(source: &str, library: &Ledger, resolved: bool) -> BTreeMap<String, S
 }
 
 /// **The baseline moved, and that is the finding**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 ///
 /// This used to assert that Part II 12.2's own idiom is *not* `sync`, for a
 /// reason that had nothing to do with the representation: `counter.access` was a
-/// method call on a type **no ledger described**, so ADR-027 D2's polarity took
+/// method call on a type **no ledger described**, so ADR-288 D2's polarity took
 /// the claim away. `SharedMut` is described now - four doors of its own - so the
 /// idiom carries its claim, and the rows below measure a real difference rather
 /// than one that was hidden behind an absence.
@@ -131,7 +131,7 @@ fn the_idiom_is_sync_now_that_the_ledger_describes_its_door() {
 /// With an entry that says an acquisition adds no pausing of its own, the
 /// idiom is `sync` — and so is everything above it.
 ///
-/// This is the `sync = "from(f)"` shape ADR-029 D3 built for `and_modify`, and
+/// This is the `sync = "from(f)"` shape ADR-288 D15 built for `and_modify`, and
 /// it is the shape an acquisition fits: the lambda runs *during* the call, so
 /// its body is already counted in the function that writes it (D4's bound).
 /// **An always-`Mutex` floor changes nothing here** — a `Mutex` acquisition is
@@ -164,7 +164,7 @@ fn the_lambda_still_decides_under_from() {
 /// way `fs::write` carries none — then `access` is not `sync`, so a function
 /// that uses a lock cannot appear in a `par_iter` body, in `access` itself, in
 /// a scope's tasks or in the panic hook. Part II 12.2's own idiom stops
-/// compiling, and the greatest fixpoint (ADR-027 D1) carries the loss up every
+/// compiling, and the greatest fixpoint (ADR-288 D1) carries the loss up every
 /// caller.
 ///
 /// That is the load-bearing question the floor asks, and this test is what
@@ -176,14 +176,14 @@ fn a_pausing_acquisition_costs_the_idiom_and_everything_above_it() {
     assert_eq!(
         answers["outer"],
         Sync::No,
-        "the loss propagates: ADR-027 D1's fixpoint takes the claim from every caller"
+        "the loss propagates: ADR-288 D1's fixpoint takes the claim from every caller"
     );
 }
 
 // --- and what `Locked[T]` is in the machine ---------------------------------
 
 /// **At one user thread, every lock is the cheap shape**
-/// ([ADR-057](../../../docs/specification/adr/adr-057.md) D2).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D6).
 ///
 /// Nothing a user writes can cross a thread there, so the safe shape buys
 /// nothing and costs 11.3 ns an acquisition — which is what that setting exists
@@ -197,7 +197,7 @@ fn at_one_user_thread_a_lock_is_the_cheap_shape() {
         false,
     );
     // The constructor is what writes the shape now
-    // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2), so the shape is
+    // ([ADR-281](../../../docs/specification/adr/adr-281.md) D2), so the shape is
     // read off the `::new` rather than off an annotation the line no longer needs.
     assert!(
         rust.contains("nikaia_std::lock::Local::new"),
@@ -210,7 +210,7 @@ fn at_one_user_thread_a_lock_is_the_cheap_shape() {
 }
 
 /// **At several, it is decided per value by the analysis that decides the
-/// count** ([ADR-057](../../../docs/specification/adr/adr-057.md) D3).
+/// count** ([ADR-281](../../../docs/specification/adr/adr-281.md) D7).
 ///
 /// A lock is only reachable from two places through a shared handle, so the
 /// count that handle was given is the answer for the lock inside it. Here one
@@ -233,13 +233,13 @@ fn at_several_threads_a_lock_follows_the_value() {
 }
 
 /// And **one call writes both hulls**
-/// ([ADR-064](../../../docs/specification/adr/adr-064.md) D2): `SharedMut(n)` is
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D2): `SharedMut(n)` is
 /// one name above and a count around a lock below, so the two cannot be written
 /// out of step with each other.
 ///
 /// At this setting both are the cheap shape, and for one reason rather than two:
 /// nothing a user writes can cross a thread here
-/// ([ADR-061](../../../docs/specification/adr/adr-061.md) D2).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D10).
 #[test]
 fn one_call_allocates_the_lock_as_well_as_the_handle() {
     let rust = lowered(

@@ -1,8 +1,8 @@
 // crates/nikaia-std/src/tools/dump.nika
 //
 // The encoder a grammar run at build time prints its result with (issue #178,
-// ADR-079 D1) - the statements `grammar_run` writes into the sub-program,
-// moved from Rust (ADR-250, #125). Building and running the sub-project, and
+// ADR-311 D1) - the statements `grammar_run` writes into the sub-program,
+// moved from Rust (ADR-294, #125). Building and running the sub-project, and
 // the decoder that reads what it printed, stay Rust.
 //
 // **Written inline** rather than as a function per type: generating
@@ -105,7 +105,7 @@ fn dump_named(shapes: ref Shapes, ty: ref Ty, name: ref String, args: ref Vec[Ty
         return null
     }
     // A list, by either spelling, and an `Array[T, N]` with it: what crosses
-    // is the same either way (ADR-079 D1, ADR-152).
+    // is the same either way (ADR-311 D1, ADR-152).
     if (name == "Vec" || name == "List" || name == ARRAY) && args.len() > 0 {
         return dump_run(shapes, args[0], expr, depth, out)
     }

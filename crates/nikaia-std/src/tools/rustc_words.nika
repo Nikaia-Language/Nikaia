@@ -7,14 +7,14 @@
 // wrote `Shared[T]`, `HashMap`, `Locked[T]`, `?.`. Every substitution is put
 // back, with no list of the ones that are allowed to be (ADR-056 D1); a
 // message that only *became* "expected `A`, found `A`" on the way is this
-// compiler's defect and is reported as one (D2). Moved from Rust (ADR-250,
+// compiler's defect and is reported as one (D2). Moved from Rust (ADR-294,
 // #125).
 
 /// A message in this language: every name this compiler substituted on the
 /// way out, put back.
 pub fn in_this_language(message: ref String) -> String {
     let mut out = shared_names(message)
-    // **The lock's two shapes are one written name** (ADR-057), so they go
+    // **The lock's two shapes are one written name** (ADR-281), so they go
     // back like every other substitution.
     out = replaced(out, "nikaia_std::lock::Crossing", "Locked")
     out = replaced(out, "nikaia_std::lock::Local", "Locked")
@@ -27,7 +27,7 @@ pub fn in_this_language(message: ref String) -> String {
     out = replaced(out, "nikaia_std::hash::TrustedSet", "HashSet")
     out = replaced(out, "TrustedMap", "HashMap")
     out = replaced(out, "TrustedSet", "HashSet")
-    // **And one that is a translation rather than a name** (ADR-189): `x?.f`
+    // **And one that is a translation rather than a name** (ADR-278): `x?.f`
     // over a member that is not copied lowers to `Option::map`, which takes
     // its receiver by value. The explanation is the part a reader needs, and
     // the spelling is put back as the one the program wrote.

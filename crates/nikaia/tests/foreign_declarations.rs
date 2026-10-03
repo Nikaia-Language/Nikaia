@@ -1,5 +1,5 @@
 //! `extern "C"` and `unsafe`, the two words Part III 15.1 writes
-//! ([ADR-124](../../../docs/specification/adr/adr-124.md)).
+//! ([ADR-302](../../../docs/specification/adr/adr-302.md)).
 //!
 //! The page wrote C interoperability out in full and the language had **none**
 //! of the three things the example needs: `extern` was not reserved and the
@@ -10,9 +10,9 @@
 //!
 //! **The number that allowed two reserved words is zero.** Nothing in
 //! `examples/`, in `tests/` or in the three pages wrote either as a name, and
-//! nothing is released — which is [ADR-084](../../../docs/specification/adr/adr-084.md)'s
+//! nothing is released — which is [ADR-276](../../../docs/specification/adr/adr-276.md)'s
 //! own standard, and the reason they are reserved **with their constructs**
-//! rather than ahead of them ([ADR-117](../../../docs/specification/adr/adr-117.md)).
+//! rather than ahead of them ([ADR-298](../../../docs/specification/adr/adr-298.md)).
 
 mod common;
 
@@ -59,7 +59,7 @@ fn neither_word_is_a_name_any_more() {
     ] {
         assert!(
             parse_to_ast(source).is_err(),
-            "a reserved word is not a name (ADR-051 D1): {source}"
+            "a reserved word is not a name (ADR-298 D1): {source}"
         );
     }
 }
@@ -70,7 +70,7 @@ fn neither_word_is_a_name_any_more() {
 /// Two things are turned around against a trait method, and only one of them by
 /// this record. C has no suspension point at all, and a C function that sleeps
 /// **blocks a thread** — `println`'s question
-/// ([ADR-067](../../../docs/specification/adr/adr-067.md) D1) and not this one —
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D21) and not this one —
 /// so calling it *pausing* would make every C call an `.await` of a future
 /// nobody produced. And C has no failure channel this language reads.
 #[test]

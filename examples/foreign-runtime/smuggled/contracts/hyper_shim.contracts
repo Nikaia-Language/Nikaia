@@ -1,5 +1,5 @@
 # The boundary of `hyper-shim`, described before it is called
-# ([ADR-104](../../../../docs/specification/adr/adr-104.md) D5).
+# ([ADR-290](../../../../docs/specification/adr/adr-290.md) D5).
 #
 # **Written by hand, which is what D5 expects.** `nikaia describe` is the
 # record's step 2 and does not exist; this is the file that command will write,
@@ -9,7 +9,7 @@
 # crate: hyper-shim 0.1.0
 #
 # **What the signatures do not say is fail-closed** (D3). No `touches` on any
-# entry, which reads as *touches everything* (ADR-033); no `locks`, which is the
+# entry, which reads as *touches everything* (ADR-292); no `locks`, which is the
 # column's third answer, *may* - neither is something a Rust signature can tell
 # anybody, and reading silence as "nothing" is the polarity ADR-010 D1 forbids.
 #
@@ -23,7 +23,7 @@
 # the destination had nothing to fire on.
 #
 # D1 gives it a third value and D2 says who writes it: a describer that reads
-# fields, which `nikaia describe` will and which is ADR-104's step 2. Until it
+# fields, which `nikaia describe` will and which is ADR-290's step 2. Until it
 # exists this line is hand-written like the rest of the file, and the `inference`
 # in `hyper_shim.derived` beside it says which part of the crate was read for it.
 
@@ -33,7 +33,7 @@ version = 3
 pub = true
 sync = true
 # A multi-threaded runtime with two worker threads, a listener and two spawned
-# tasks, all inside one call ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+# tasks, all inside one call ([ADR-290](../../../../docs/specification/adr/adr-290.md) D6).
 threads = true
 signature = "(port: i64) -> String"
 
@@ -53,7 +53,7 @@ signature = "(name: String) -> hyper_shim::LocalHandle"
 pub = true
 sync = true
 # **It builds a `tokio` runtime and spawns**
-# ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1), which is what
+# ([ADR-290](../../../../docs/specification/adr/adr-290.md) D6), which is what
 # `on_one_worker` does and what no part of this signature shows. Hand-written,
 # because nothing a signature can say entails it either way - and it is the
 # word that makes `NK2502` ask a described call at all (D2).

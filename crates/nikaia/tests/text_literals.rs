@@ -1,5 +1,5 @@
 //! A text literal where a `String` is wanted is a `String`
-//! ([ADR-207](../../../docs/specification/adr/adr-207.md)).
+//! ([ADR-282](../../../docs/specification/adr/adr-282.md)).
 //!
 //! `"x"` is a view of static text, and until this record a view put where a
 //! `String` was declared was refused until the program wrote `.to_string()` -
@@ -12,7 +12,7 @@
 //! keeps) the literal is constructed there (D2). Where the callee only reads it,
 //! the parameter is a `&str` and the literal is handed over as it is, with no
 //! allocation at all (D3). And a **view** of text the program has is still
-//! refused - that is a copy, and a copy is written (ADR-107 D3).
+//! refused - that is a copy, and a copy is written (ADR-282 D7).
 
 mod common;
 
@@ -127,9 +127,9 @@ fn a_literal_nobody_keeps_stays_a_view() {
 }
 
 /// **A view of text the program has is still refused where the field is
-/// published and text of its own flows into it too** (ADR-222 D2), and the
+/// published and text of its own flows into it too** (ADR-282 D22), and the
 /// help says how: that is a copy, and a copy is written where it happens
-/// (ADR-107 D3). Anywhere else the field is a view, or both per value.
+/// (ADR-282 D7). Anywhere else the field is a view, or both per value.
 #[test]
 fn a_view_where_a_string_is_kept_is_refused_with_the_way_out() {
     let found = findings(
@@ -143,7 +143,7 @@ fn a_view_where_a_string_is_kept_is_refused_with_the_way_out() {
     assert!(help.contains(".clone()"), "{help}");
 }
 
-/// **A list a view goes into is a list of views** (ADR-223): the literal
+/// **A list a view goes into is a list of views** (ADR-282): the literal
 /// beside it is a view of static text, so nothing is constructed and nothing
 /// copied - the refusal this used to be is gone.
 #[test]
@@ -192,7 +192,7 @@ fn a_literal_beside_text_of_its_own_becomes_it() {
 }
 
 /// **A view handed to a `String` the callee only reads is lent as it is**
-/// ([ADR-208](../../../docs/specification/adr/adr-208.md) D1). The parameter is
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D11). The parameter is
 /// a `&str` below, so `.clone()` there asked for a copy nothing would keep.
 #[test]
 fn a_view_handed_to_a_reader_needs_no_copy() {
@@ -205,7 +205,7 @@ fn a_view_handed_to_a_reader_needs_no_copy() {
     assert_eq!(ran("relay", source).trim(), "Hamburg");
 }
 
-/// The refusal that stays says **why**, for the case it is (ADR-208 D2):
+/// The refusal that stays says **why**, for the case it is (ADR-282 D25):
 /// whose text it is, what keeps it, and what a copy the compiler made on its
 /// own would cost.
 #[test]
@@ -221,7 +221,7 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
 
     // A parameter: the caller's text, and the answer that copies nothing.
     // Published, with text of its own flowing in too, so the field stays text
-    // of its own (ADR-222 D2).
+    // of its own (ADR-282 D22).
     let (why, help) = notes(
         "pub struct Person { pub name: String }\n\
          pub fn make(n: ref String) -> Person { return Person { name: n } }\n\
@@ -239,7 +239,7 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
 
     // (A name bound to a literal is no longer a case of its own: wherever it
     // is kept as text of its own, the binding is declared `String` for it -
-    // ADR-222 D4, ADR-223.)
+    // ADR-282 D17, ADR-282.)
 
     // Any other view: it points into something that stays.
     let (why, help) = notes(

@@ -5,7 +5,7 @@
 //! **Why believing is the correct answer and not merely the quick one.** A
 //! package's own build has that package's own dependencies in view and a
 //! consumer's build deliberately does not
-//! ([ADR-053](../../../docs/specification/adr/adr-053.md) D3), so an answer
+//! ([ADR-286](../../../docs/specification/adr/adr-286.md) D21), so an answer
 //! derived on the consumer's side can only be the same or worse — and two
 //! builds deriving one function differently is a program that awaits an `i64`.
 //! The reverted settling pass in issue #228 is that failure, measured.
@@ -52,7 +52,7 @@ const APP: &str = "use lib\n\nfn caller() -> i64 {\n    return lib::hello()\n}\n
 /// **The consumer resolves a call into its dependency**, which is the whole of
 /// D1 from the consumer's side: `lib::hello` is an answer rather than an
 /// absence - and the answer is what `lib`'s source **promised**
-/// ([ADR-244](../../../docs/specification/adr/adr-244.md) D1), not what its
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D28), not what its
 /// body happens to be today. `hello` writes no `sync`, so `caller` may pause;
 /// written, `caller` earns its `sync`. Either way the entry stays `"inferred"`
 /// in the program's contracts, because that is what the lowering reads (D3).
@@ -319,7 +319,7 @@ fn a_unit_that_moved_a_unit_that_arrived_and_a_unit_that_left() {
 }
 
 /// **A believed ledger hands over the package's own entries and nothing
-/// further** ([ADR-053](../../../docs/specification/adr/adr-053.md) D3).
+/// further** ([ADR-286](../../../docs/specification/adr/adr-286.md) D21).
 ///
 /// A library's ledger file is its build's record, so it carries its own
 /// dependencies' entries under their names. A consumer absorbing those under

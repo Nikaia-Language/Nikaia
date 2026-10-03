@@ -113,7 +113,7 @@ fn main() {
 /// **A number's `+` does not move**, and that is the decision this rests on.
 ///
 /// Arithmetic inside `nikaia_std` would silently lose
-/// [ADR-043](../../../docs/specification/adr/adr-043.md) D1's overflow abort:
+/// [ADR-285](../../../docs/specification/adr/adr-285.md) D5's overflow abort:
 /// `overflow-checks` is on per Nikaia crate and off for the profile, and
 /// inlining does not carry the check across — measured, with `a + b` in a
 /// checked crate aborting and the same `a + b` through an `#[inline]` helper in

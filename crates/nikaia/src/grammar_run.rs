@@ -17,15 +17,15 @@
 //! So this compiles the **generated** parser and runs it. Then there is one
 //! implementation and the agreement is a tautology rather than a claim.
 //!
-//! **What it costs is a second compilation**, which [ADR-026](../../../docs/specification/adr/adr-026.md)
+//! **What it costs is a second compilation**, which [ADR-310](../../../docs/specification/adr/adr-310.md)
 //! Q4 named. The sub-project is keyed on what went into it, so the cost is paid
 //! when the grammar changes rather than on every build. The compiler already
 //! emits Rust and already drives Cargo, so the machinery is not new.
 //!
 //! **And it needs no new security model.** A grammar's action blocks are
-//! Nikaia, and [ADR-075](../../../docs/specification/adr/adr-075.md) already
+//! Nikaia, and [ADR-287](../../../docs/specification/adr/adr-287.md) already
 //! says what a build-time body may do; the bytes come from `asset("…")`, which
-//! [ADR-072](../../../docs/specification/adr/adr-072.md) already bounds. What
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) already bounds. What
 //! is new here is neither the permission nor the input.
 
 use std::path::{Path, PathBuf};
@@ -49,7 +49,7 @@ pub enum Wall {
     /// it is refused rather than allowed to nest compilers.
     InsideAnother { grammar: String },
     /// The rule's result has no form a `const` can hold
-    /// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1).
+    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D1).
     NoCrossedForm { ty: String, because: String },
     /// The sub-project did not compile, which is this compiler's fault rather
     /// than the program's — the parser it wrote is the parser the program

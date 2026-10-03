@@ -19,7 +19,7 @@
 // which is where every caller already is, so it costs nothing anybody has. Saying
 // *lent* of a value the body stores emits a `&T` parameter whose body moves it,
 // and that is `rustc`'s error about a file nobody wrote (Part III C.1). Same
-// polarity as `sync` ([ADR-027](../../../docs/specification/adr/adr-027.md)) and
+// polarity as `sync` ([ADR-288](../../../docs/specification/adr/adr-288.md)) and
 // as [ADR-010](../../../docs/specification/adr/adr-010.md) D1, pointing the
 // other way because the claim points the other way.
 //
@@ -66,14 +66,14 @@ pub fn lends(contract: &super::FnContract, at: usize) -> bool {
 }
 
 /// [`lends`], where a type a ledger says **copies** is copied rather than lent
-/// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.1, the reading):
+/// ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.1, the reading):
 /// `winnow_grammar::Symbol` is one `u32`, and a `&Symbol` handed on to a
 /// described call that takes a `Symbol` is `rustc`'s mismatch about a file
 /// nobody wrote. Only a ledger's `copies = true` answers here; a type this
 /// program declares is still lent, and reading its copy is the same step for
 /// the types a unit declares.
 ///
-/// The rule is `tools/lends.nika`'s (ADR-250, #125), with the three below.
+/// The rule is `tools/lends.nika`'s (ADR-294, #125), with the three below.
 pub fn lends_in(contract: &super::FnContract, at: usize, copying: &[&super::Ledger]) -> bool {
     nikaia_std::tools::lends::lends_in(contract, at as i64, copying)
 }
@@ -87,8 +87,8 @@ pub fn a_ledger_copies(ty: &super::ty::Ty, copying: &[&super::Ledger]) -> bool {
 /// copied — and whether this compiler can say so at all: `Unknown`, a type
 /// variable and a function type's absence of an answer are **no**, because what
 /// hangs on it is a reference this compiler would *write*
-/// ([ADR-040](../../../docs/specification/adr/adr-040.md) D1, ADR-147 D2,
-/// ADR-150 D1, ADR-152 D2, ADR-102 D1).
+/// ([ADR-312](../../../docs/specification/adr/adr-312.md) D1, ADR-302 D6,
+/// ADR-150 D1, ADR-152 D2, ADR-277 D6).
 pub fn moves(ty: &super::ty::Ty) -> bool {
     nikaia_std::tools::lends::moves(ty)
 }
@@ -158,11 +158,11 @@ pub fn infer(
                     }
                 }
                 // **A `pub` rule is an entry, and its one parameter is the
-                // text** ([ADR-082](../../../docs/specification/adr/adr-082.md)
+                // text** ([ADR-296](../../../docs/specification/adr/adr-296.md)
                 // D1). Whether it keeps that text is not a question about an
                 // action block at all: a parse keeps its input exactly when
                 // what it hands back holds a view **into** the input, which is
-                // [ADR-008](../../../docs/specification/adr/adr-008.md)'s
+                // [ADR-283](../../../docs/specification/adr/adr-283.md)'s
                 // tether read off the rule's declared result.
                 //
                 // **Before this the entry was in the ledger with the column
@@ -341,7 +341,7 @@ fn uses_of(
     // back a view of a parameter, which `borrows` already records; it is
     // `-> String` that moves the value out of the call.
     // **Text both kinds flow into is not a view to hand back**
-    // ([ADR-226](../../../docs/specification/adr/adr-226.md) D2): an
+    // ([ADR-282](../../../docs/specification/adr/adr-282.md) D21): an
     // `EitherText` may own its text, so returning a field of one takes it out
     // of the parameter, as returning a `String` field does.
     let returns_a_view = ret_type
@@ -370,7 +370,7 @@ fn uses_of(
     // method nothing describes may be a `self`-by-value method, and a parameter
     // handed to one is moved out of — so the fail-closed answer for a *whole
     // body* is the one the type checker already computed
-    // ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    // ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     let unresolved = resolved.get(&key).is_some_and(|m| m.unresolved);
     let mut walk = Walk {
         parsed,
@@ -486,7 +486,7 @@ impl Walk<'_> {
         });
 
         // And the blocks it holds. A lambda's body is one of them — it runs
-        // during the call it is given to ([ADR-029](../../../docs/specification/adr/adr-029.md)
+        // during the call it is given to ([ADR-288](../../../docs/specification/adr/adr-288.md)
         // D4), so what it does with a parameter is what this body does with it.
         // A `spawn` is deliberately not among them and is handled in
         // [`classify`], because its body runs later and elsewhere.
@@ -627,7 +627,7 @@ fn classify(
             }
         }
         // **So does a list or a tuple literal every element it is given**
-        // ([ADR-236](../../../docs/specification/adr/adr-236.md) D2), for the
+        // ([ADR-297](../../../docs/specification/adr/adr-297.md) D13), for the
         // same reason: `[h]` builds a list that holds `h`. Missing it lent the
         // parameter, and `rustc` met a `&Handle` where the list wanted a
         // `Handle` - about a file nobody wrote.
@@ -675,13 +675,13 @@ fn classify(
             }
         }
         // **A task keeps everything it names**
-        // ([ADR-040](../../../docs/specification/adr/adr-040.md) D1): a body
+        // ([ADR-312](../../../docs/specification/adr/adr-312.md) D1): a body
         // that may outlive the statement takes what it names by value.
         Expr::Spawn { body, .. } => {
             let mut found = Named::default();
             match body.as_ref() {
                 // `spawn fn { … }` is the form the language writes
-                // ([ADR-049](../../../docs/specification/adr/adr-049.md)), so
+                // ([ADR-277](../../../docs/specification/adr/adr-277.md)), so
                 // the body arrives as a lambda; `Expr::Block` is what a
                 // `spawn { … }` would be and is kept because both are shapes
                 // this walk can read to the bottom.
@@ -726,7 +726,7 @@ fn classify(
             }
         }
         // **Which entry a method call goes to is the type checker's answer and
-        // not this file's** ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+        // not this file's** ([ADR-288](../../../docs/specification/adr/adr-288.md)).
         // A weaker question can be asked without types, the way
         // [`Ledger::candidates`] already asks it for `touches`: if **no** entry
         // named `::push` keeps its argument, this call keeps none whatever the
@@ -750,7 +750,7 @@ fn classify(
             // nothing behind, so a parameter standing there is kept.
             //
             // Which entry the call goes to is the type checker's answer
-            // ([ADR-028](../../../docs/specification/adr/adr-028.md)), and the
+            // ([ADR-288](../../../docs/specification/adr/adr-288.md)), and the
             // weaker question this walk can ask is the one `touches` asks —
             // with one addition: where **any** method call in this body went to
             // an entry no ledger has, the candidates are not the whole list and
@@ -846,7 +846,7 @@ fn parameter_named(parsed: &Parsed, parameters: &BTreeSet<String>, expr: &Expr) 
 }
 
 /// **The parameter an expression is, or is a moving part of**
-/// ([ADR-214](../../../docs/specification/adr/adr-214.md) D2).
+/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D32).
 ///
 /// `xs.push(p.name)` hands over the field, and a field cannot be taken out of a
 /// loan: the parameter was written `&P` and `rustc` said *cannot move out of

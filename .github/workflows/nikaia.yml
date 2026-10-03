@@ -43,7 +43,7 @@ jobs:
           REF: ${{ github.ref }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
-  # The oldest Rust Nikaia claims (ADR-219), with the whole suite run on it:
+  # The oldest Rust Nikaia claims (ADR-305), with the whole suite run on it:
   # the compiler, `std`, and every program the tests emit. The channel for
   # building stays `rust-toolchain.toml`'s (ADR-001 D1); this checks the claim.
   #

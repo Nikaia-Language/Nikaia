@@ -1,12 +1,12 @@
 // crates/nikaia-std/src/tools/fixed.nika
 //
-// **The table a `comptime` map crosses as** (ADR-176 D2, D3), built while the
+// **The table a `comptime` map crosses as** (ADR-311 D9, D10), built while the
 // program is built.
 //
 // The fourth piece of the compiler moved from Rust to Nikaia (0.0.250), by
-// ADR-196's route: lowered ahead of time by `nikaia lower-std` to `fixed.rs`
+// ADR-290's route: lowered ahead of time by `nikaia lower-std` to `fixed.rs`
 // beside it, `include!`d as `nikaia_std::tools::fixed`, and called from the
-// compiler's `fixed` module. It is the program ADR-248 was decided for: FNV-1a
+// compiler's `fixed` module. It is the program ADR-285 was decided for: FNV-1a
 // is a `u64`, `^` and a wrapping multiply over a text's bytes, and CHD cuts the
 // hash apart with shifts - none of which the language had.
 //

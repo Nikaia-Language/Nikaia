@@ -111,7 +111,7 @@ fn the_declaration_and_the_call_gain_the_reference_together() {
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
          fn main() { let t: String = \"hi\" println(f\"{width(t)}\") }\n",
     );
-    // A `String` the body only reads is a `&str` below (ADR-207 D3), and
+    // A `String` the body only reads is a `&str` below (ADR-282 D5), and
     // the caller's `&t` reaches it the way it reached a `&String`.
     assert!(rust.contains("fn width(text: &str)"), "{rust}");
     assert!(rust.contains("width(&t)"), "{rust}");
@@ -216,7 +216,7 @@ fn an_argument_that_is_already_a_view_is_passed_through() {
 /// **A method's argument is not lent**, which is `touches`' reason for asking a
 /// weaker question said once more: which entry `acc.record(m)` goes to is the
 /// type checker's answer and the emitter has none
-/// ([ADR-028](../../../docs/specification/adr/adr-028.md)). The declaration is
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md)). The declaration is
 /// written off the column and the call would not be, so a call the checker does
 /// not walk — a grammar action's fold lambda — would hand a value into a `&T`.
 #[test]

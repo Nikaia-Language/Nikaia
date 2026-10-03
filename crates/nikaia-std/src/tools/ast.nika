@@ -1,12 +1,12 @@
 // crates/nikaia-std/src/tools/ast.nika
 //
-// **The compiler's syntax tree** (ADR-252 D1), declared in the language it
+// **The compiler's syntax tree** (ADR-294 D6), declared in the language it
 // describes: lowered ahead of time by `nikaia lower-std` to `ast.rs` beside it,
 // `include!`d as `nikaia_std::tools::ast`, and re-exported by the compiler's
 // `crate::ast`, which adds what Nikaia cannot say - the `usize` doors of a
 // `Span`, `int_value` over an `i128`, and the grammar backend's `WithSpan`.
 //
-// **The boxes are the compiler's** (ADR-252 D3, ADR-246 D1): a field on a ring
+// **The boxes are the compiler's** (ADR-294 D8, ADR-246 D1): a field on a ring
 // of types that hold each other inline is boxed below, and nothing here says
 // so. What that decided differently from the hand-written tree, the Rust
 // readers follow.
@@ -23,7 +23,7 @@
 /// the compiler emits Rust, and an error reported against the emitted file
 /// names a line nobody wrote.
 ///
-/// **Two `u32`** ([ADR-252](../../../docs/specification/adr/adr-252.md) D2):
+/// **Two `u32`** ([ADR-294](../../../docs/specification/adr/adr-294.md) D7):
 /// a byte offset is never negative, Nikaia has no `usize`, and every node
 /// carries one. A source is at most 4 GiB, which `parser::parse` checks before
 /// any span is made, so building one from a `usize` offset cannot wrap.
@@ -34,7 +34,7 @@ pub struct Span {
 
 impl Span {
     /// The empty span at the first byte: where a node that stands nowhere in
-    /// the source is filed. Named rather than a `Default`, for ADR-252 D4.4's
+    /// the source is filed. Named rather than a `Default`, for ADR-294 D9.4's
     /// reason.
     pub fn nowhere() -> Span {
         return Span { start: 0, end: 0 }
@@ -46,7 +46,7 @@ pub struct Spanned[T] {
     pub node: T,
     pub span: Span,
     /// The run of `///` lines standing immediately before it
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D1), with the
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md) D4), with the
     /// slashes and one leading space taken off and the line breaks kept.
     ///
     /// **Here rather than on each item**, because it is the same fact about
@@ -54,7 +54,7 @@ pub struct Spanned[T] {
     /// came from*: prose in front of an item is a second answer to that
     /// question. Only an **item** carries one today; a field's and a variant's
     /// wait on `nikaia doc`, which is what would read them
-    /// ([ADR-139](../../../docs/specification/adr/adr-139.md) §4).
+    /// ([ADR-307](../../../docs/specification/adr/adr-307.md)).
     ///
     /// The compiler does not read it (D3). What it does is travel.
     pub doc: String?,
@@ -90,7 +90,7 @@ pub enum Item {
         /// Kap 5.1: what stands after the `;` - options, named at the call and
         /// never positional. Empty for a function that has no `;`.
         config: Vec[ConfigParam],
-        /// ADR-007 D5: `...args: Self::dsl` - the typed spread a driver accepts
+        /// ADR-296 D5: `...args: Self::dsl` - the typed spread a driver accepts
         /// a DSL's deferred parameters with. It stands where the options stand,
         /// because a DSL parameter *is* configuration, and it is exclusive with
         /// them: a function takes options or a spread, never both.
@@ -98,13 +98,13 @@ pub enum Item {
         ret_type: Type?,
         body: Block,
         is_sync: bool, // Kap 12.1: sync keyword
-        /// `sync(f, g)` ([ADR-244](../../../../docs/specification/adr/adr-244.md)
+        /// `sync(f, g)` ([ADR-288](../../../../docs/specification/adr/adr-288.md)
         /// D4): the parameters whose lambdas alone may make it pause. Empty
         /// for a plain `sync` and for none.
         sync_by: Vec[winnow_grammar::Symbol],
         is_public: bool, // Kap 9.2
         /// Kap 7.1: `throws`. Named `can_throw` because `throws` is a word the
-        /// language keeps, and the tree is declared in it (ADR-252).
+        /// language keeps, and the tree is declared in it (ADR-294).
         can_throw: bool,
     },
 
@@ -142,7 +142,7 @@ pub enum Item {
     // makes it a declaration rather than an `impl` - and it is why this cannot
     // reuse `Item::Fn`, whose `body` is not an `Option`. A default body is a
     // separate decision and not this one
-    // ([ADR-078](../../../docs/specification/adr/adr-078.md) §4).
+    // ([ADR-295](../../../docs/specification/adr/adr-295.md)).
     Trait {
         name: winnow_grammar::Symbol,
         methods: Vec[Spanned[TraitMethod]],
@@ -150,7 +150,7 @@ pub enum Item {
     },
 
     /// Part III 15.1: `extern "C" { fn getpid() -> i32 }`
-    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D1).
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D1).
     ///
     /// **Signatures and nothing else**, which is `Trait`'s reason one item
     /// over: a declaration has no body, so `Item::Fn` cannot serve. The
@@ -166,7 +166,7 @@ pub enum Item {
         abi: String,
         declarations: Vec[Spanned[TraitMethod]],
         /// **The handles the block declares**
-        /// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3):
+        /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7):
         /// `opaque type sqlite3 released by sqlite3_close`.
         ///
         /// A list beside the declarations rather than a kind of declaration,
@@ -203,14 +203,14 @@ pub enum Item {
     /// Kap 9.2 / Part II 10.2: `comptime MAX = 1000`, at the top of a file.
     ///
     /// **The keyword is a demand rather than an ability**
-    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D3). The compiler
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D4). The compiler
     /// folds constants already, so what this adds is that the fold *has* to
     /// succeed: a `let` may fold, a `comptime` must, and says so where it
     /// cannot. What may stand in the initialiser is staged (D5), and the stage
     /// that is built is the shared fold plus a literal of another kind.
     ///
     /// **The word says *when*, not *whether it changes***
-    /// ([ADR-078](../../../docs/specification/adr/adr-078.md)): everything in
+    /// ([ADR-295](../../../docs/specification/adr/adr-295.md)): everything in
     /// this language is immutable unless it says `mut`, so `const` would have
     /// named a property every other binding already has.
     Comptime {
@@ -226,7 +226,7 @@ pub enum Item {
     Import {
         path: Vec[winnow_grammar::Symbol],
         /// `use http as h` - what this file calls the package
-        /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D3). `None`
+        /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D12). `None`
         /// where the package's own name is used.
         alias: winnow_grammar::Symbol?,
     },
@@ -242,7 +242,7 @@ pub enum Stmt {
     // Kap 2.1: let mut x = 10
     Let {
         /// **One name, or a flat tuple of them**
-        /// ([ADR-098](../../../docs/specification/adr/adr-098.md)):
+        /// ([ADR-291](../../../docs/specification/adr/adr-291.md)):
         /// `let x = 1` and `let (tx, rx) = channel::bounded(100)`.
         ///
         /// A `Vec` rather than a second variant, because the two are one
@@ -256,8 +256,8 @@ pub enum Stmt {
     },
 
     /// `comptime LIMIT = 4 * 1024`, inside a body
-    /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D2,
-    /// [ADR-078](../../../docs/specification/adr/adr-078.md) for the word).
+    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D3,
+    /// [ADR-295](../../../docs/specification/adr/adr-295.md) for the word).
     /// Scoped like a `let` and evaluated like the item form: the difference
     /// between the two is where the name is visible, never what may stand to the
     /// right of the `=`.
@@ -297,12 +297,12 @@ pub enum Stmt {
     Return(Expr?),
 
     /// Part I 3.3: `break`, and it leaves the **innermost** loop around it
-    /// ([ADR-084](../../../docs/specification/adr/adr-084.md) D1).
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D11).
     ///
     /// A statement and not an expression, which is the whole of what makes it
     /// cheap: Rust's `break` carries a value out of a `loop`, and that is what
     /// makes `loop { … }` an expression there and forces a keyword of its own
-    /// ([ADR-070](../../../docs/specification/adr/adr-070.md) D2). Nikaia's
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D2). Nikaia's
     /// loops are statements and hand back nothing, so there is nothing for a
     /// `break` to carry and no type for anyone to infer.
     ///
@@ -327,12 +327,12 @@ pub enum Stmt {
 pub enum Expr {
     // Primitive
     /// An integer literal, as large as a `u64` holds
-    /// ([ADR-248](../../../docs/specification/adr/adr-248.md) D2). Whether it
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D19). Whether it
     /// fits is asked where a type stands beside it (`NK1116`).
     ///
     /// **Its magnitude and its sign**
-    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.2), which is
-    /// what the source writes and exactly ADR-248 D2's range: `value` up to
+    /// ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.2), which is
+    /// what the source writes and exactly ADR-285 D19's range: `value` up to
     /// `u64::MAX`, and `negative` where a `-` stands directly against the
     /// digits. [`int_value`] is the number for arithmetic.
     LitInt {
@@ -365,7 +365,7 @@ pub enum Expr {
     /// brackets: Part I 2.2 offers one, and this writes that one down. What `T`
     /// is, is what the elements agree on; an **empty** literal says nothing and
     /// takes its element type from the first use that needs one (D2), which is
-    /// [ADR-060](../../../docs/specification/adr/adr-060.md)'s rule for a
+    /// [ADR-285](../../../docs/specification/adr/adr-285.md)'s rule for a
     /// number literal one level up.
     /// `at` is the byte the `[` stands at, and it is the one expression here
     /// that carries a position. **`Array[T, N]` is what needs it**
@@ -384,7 +384,7 @@ pub enum Expr {
     /// reason `LitChar` is.
     ///
     /// **`at` is the byte the opening quote stands at**, for `ListLit`'s
-    /// reason ([ADR-207](../../../docs/specification/adr/adr-207.md) D2):
+    /// reason ([ADR-282](../../../docs/specification/adr/adr-282.md) D4):
     /// whether the literal stays a view of static text or becomes text of its
     /// own is decided by its *use*, the use is the checker's and the lowering
     /// is the emitter's, and one statement may hold both kinds.
@@ -393,16 +393,16 @@ pub enum Expr {
         at: u32,
     },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
-    /// says so ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+    /// says so ([ADR-309](../../../docs/specification/adr/adr-309.md)).
     ///
     /// This is a separate variant rather than a flag for a reason the compiler
-    /// has already paid for once: before ADR-032 every analysis walked past a
+    /// has already paid for once: before ADR-309 every analysis walked past a
     /// string as if it held no code, because *whether* it did was a property of
     /// its text and nothing made anyone look. A variant makes the question
     /// unavoidable - every `match` on an expression has to say what it does
     /// with this one, and the compiler names the sites that forgot.
     ///
-    /// **The grammar parses its holes** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+    /// **The grammar parses its holes** ([ADR-309](../../../docs/specification/adr/adr-309.md)
     /// D1, D2): `parts` is the body as text runs and holes, and a hole is an
     /// expression of the tree like any other - a walk sees it without parsing
     /// anything, and the emitter builds the format string from the parts (D5).
@@ -430,7 +430,7 @@ pub enum Expr {
     /// Part I 8.1.2: `overlap { … }` - **each statement in the block is a
     /// branch**, the block starts every branch and waits for all of them, and
     /// its value is the tuple of their results in written order
-    /// ([ADR-050](../../../docs/specification/adr/adr-050.md) D2).
+    /// ([ADR-292](../../../docs/specification/adr/adr-292.md) D2).
     ///
     /// A `Block` and not a `Vec<Expr>`, because a branch is a *statement* in the
     /// source and the one thing that makes it a branch is standing here. What a
@@ -440,10 +440,10 @@ pub enum Expr {
     Overlap(Block),
 
     /// Part II 12.4: `select { … }` — **every arm is started and the first one
-    /// to finish wins** ([ADR-148](../../../docs/specification/adr/adr-148.md)
+    /// to finish wins** ([ADR-292](../../../docs/specification/adr/adr-292.md)
     /// D1).
     ///
-    /// [ADR-050](../../../docs/specification/adr/adr-050.md)'s `overlap` is the
+    /// [ADR-292](../../../docs/specification/adr/adr-292.md)'s `overlap` is the
     /// other half of the pair: it runs its branches at once and keeps **every**
     /// result; this one keeps the **first** and cancels the rest (D4).
     ///
@@ -493,7 +493,7 @@ pub enum Expr {
         method: winnow_grammar::Symbol,
         args: Vec[Expr],
         /// Kap 5.1 at a method call: what stands after the `;`. A DSL's
-        /// deferred parameters arrive here (ADR-007 D5), which is why a method
+        /// deferred parameters arrive here (ADR-296 D5), which is why a method
         /// call carries them at all - before that they were parsed and dropped.
         config: Vec[ConfigArg],
     },
@@ -522,7 +522,7 @@ pub enum Expr {
     /// type is written — and the operand's type is the checker's answer rather
     /// than the parser's. So the checker records it under this byte and the
     /// emitter reads it back, which is the handover a `comptime`'s value
-    /// already makes ([ADR-011](../../../docs/specification/adr/adr-011.md) D2:
+    /// already makes ([ADR-296](../../../docs/specification/adr/adr-296.md) D17:
     /// the emitter is told, it does not work it out).
     With {
         base: Expr,
@@ -531,12 +531,12 @@ pub enum Expr {
     },
 
     // Kap 5.2: `fn(acc, m) { … }`. One form, and its arguments are the ones it
-    // names - the automatic `a`, `b`, `c` are withdrawn (ADR-049), so `fn { … }`
+    // names - the automatic `a`, `b`, `c` are withdrawn (ADR-277), so `fn { … }`
     // is a lambda of no arguments and nothing is read off the body.
     Closure {
         params: Vec[winnow_grammar::Symbol],
         /// The parameters written **`mut`**, in declaration order
-        /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+        /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
         ///
         /// `kasse.update fn(mut v) { v += 100 }`: the block changes `v` in
         /// place and returns nothing, and the caller whose value changes is the
@@ -577,7 +577,7 @@ pub enum Expr {
         span: Span,
         /// **Written inside parentheses** - `(a & mask) == 0`. A bit operator
         /// beside a comparison has to be, and the tree keeps no parentheses
-        /// otherwise ([ADR-248](../../../docs/specification/adr/adr-248.md)
+        /// otherwise ([ADR-285](../../../docs/specification/adr/adr-285.md)
         /// D4, `NK1197`).
         grouped: bool,
     },
@@ -596,7 +596,7 @@ pub enum Expr {
     /// Kap 3.5: `x?.m(args)` - safe navigation onto a **method**.
     ///
     /// Part I 3.5 says `?.` accesses a *member*, and a method is one
-    /// ([ADR-066](../../../docs/specification/adr/adr-066.md)): the receiver is
+    /// ([ADR-278](../../../docs/specification/adr/adr-278.md)): the receiver is
     /// a `T?`, the call happens only where there is something to call it on,
     /// and the whole expression is a `U?` where `U` is what the method hands
     /// back.
@@ -625,7 +625,7 @@ pub enum Expr {
     Throw(Expr),
 
     /// `return`, `break` and `continue` **as expressions**
-    /// ([ADR-138](../../../docs/specification/adr/adr-138.md) D1).
+    /// ([ADR-276](../../../docs/specification/adr/adr-276.md) D20).
     ///
     /// Their type is **never**, so they fit every expected type without
     /// widening anything: an arm that returns sits beside an arm that hands
@@ -669,7 +669,7 @@ pub enum Expr {
     },
 
     /// Part III 15.1: `unsafe { … }`
-    /// ([ADR-124](../../../docs/specification/adr/adr-124.md) D3).
+    /// ([ADR-302](../../../docs/specification/adr/adr-302.md) D3).
     ///
     /// **A block with a value, and no other rule.** What is inside is checked
     /// exactly as anything else is; what the word buys is that the boundary is
@@ -684,7 +684,7 @@ pub enum Expr {
     },
 }
 
-/// **One piece of an `f"…"`** ([ADR-262](../../../docs/specification/adr/adr-262.md)
+/// **One piece of an `f"…"`** ([ADR-309](../../../docs/specification/adr/adr-309.md)
 /// D2): a run of text, as written - escapes and `{{` kept - or a hole, an
 /// expression and what follows its `:`, with the byte its `{` stands at, which
 /// is what a reader of one hole finds it again by.
@@ -702,7 +702,7 @@ pub enum FPart {
 pub struct Type {
     pub name: winnow_grammar::Symbol,
     pub generics: Vec[Type], // Recursive: Shared[Locked[T]]
-    // Part II, 10.6 / ADR-008: `&str` is a view marker, not a lifetime. The
+    // Part II, 10.6 / ADR-283: `&str` is a view marker, not a lifetime. The
     // flag records that the source said `&`; what it lowers to is the emitter's
     // business.
     pub is_view: bool,
@@ -717,7 +717,7 @@ pub struct Type {
     /// `is_view` rather than a wrapper, because the two are independent.
     pub is_nullable: bool,
     /// `fn(A, B) -> R sync throws`
-    /// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1): a parameter
+    /// ([ADR-277](../../../docs/specification/adr/adr-277.md) D6): a parameter
     /// may be **code**, and the type says what the code may do.
     ///
     /// The parameters go in `generics`, where a tuple's parts go and for the
@@ -735,7 +735,7 @@ pub struct Type {
     /// `name` holds the digits as they were written, so a message that prints
     /// a type prints the number the source wrote.
     pub count: i64?,
-    /// **`&mut T`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1):
+    /// **`&mut T`** ([ADR-302](../../../docs/specification/adr/adr-302.md) D5):
     /// a view the callee may write through.
     ///
     /// Beside `is_view` rather than inside it, because the two are independent
@@ -747,7 +747,7 @@ pub struct Type {
     /// mutability is otherwise written `mut name: T`
     /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3).
     pub is_mut: bool,
-    /// **`[T]`** ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): a
+    /// **`[T]`** ([ADR-302](../../../docs/specification/adr/adr-302.md) D5): a
     /// run of `T` whose length the caller knows and the type does not.
     ///
     /// The element goes in `generics`, where a tuple's parts and a function
@@ -759,7 +759,7 @@ pub struct Type {
     /// has nowhere to put.
     pub is_slice: bool,
     /// **Text that is a view or text of its own, decided per value**
-    /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D3). Never
+    /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D14). Never
     /// written: set by [`crate::text_tiers`] on a `String` field or result
     /// that both kinds of text flow into, which is then also `is_view`. Below
     /// it is `nikaia_std::either_text::EitherText`, which borrows a view and
@@ -768,7 +768,7 @@ pub struct Type {
 }
 
 /// One line of an `extern "C"` block, before the two shapes are taken apart
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7).
 ///
 /// The grammar's own type and nothing else's: a block may interleave the two
 /// freely and `Item::Extern` holds them in two lists, so this exists for the
@@ -779,7 +779,7 @@ pub enum ExternMember {
 }
 
 /// **An address this language never dereferences**
-/// ([ADR-147](../../../docs/specification/adr/adr-147.md) D3).
+/// ([ADR-302](../../../docs/specification/adr/adr-302.md) D7).
 ///
 /// `opaque type sqlite3 released by sqlite3_close`. It is moved and stored like
 /// any value, it has no fields and no indexing, and its release is a `cleanup`
@@ -793,7 +793,7 @@ pub struct OpaqueType {
 }
 
 /// What a function type says besides its parameters
-/// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1, D2).
+/// ([ADR-277](../../../docs/specification/adr/adr-277.md) D6, D7).
 ///
 /// **The defaults are the language's** (D2): without `sync` the code may pause,
 /// without `throws` it cannot fail. That is the reading a *declaration* already
@@ -823,7 +823,7 @@ pub enum VariantFields {
 }
 
 /// One arm of a `select { … }`: `pattern = expr => { … }`
-/// ([ADR-148](../../../docs/specification/adr/adr-148.md) D1).
+/// ([ADR-292](../../../docs/specification/adr/adr-292.md) D12).
 ///
 /// The expression is started with every other arm's; if it is the first to
 /// finish, its value is bound to the pattern and the body runs.
@@ -831,9 +831,9 @@ pub struct SelectArm {
     /// The name the winner's value is bound to, or `None` for `_`.
     ///
     /// **`_` is the ignore pattern and not a catch-all arm**
-    /// ([ADR-126](../../../docs/specification/adr/adr-126.md) D1): a value
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D6): a value
     /// *arrives* here and is ignored, which is that record's own position and
-    /// not what [ADR-145](../../../docs/specification/adr/adr-145.md) took away
+    /// not what [ADR-291](../../../docs/specification/adr/adr-291.md) took away
     /// from it one construct over.
     pub binding: winnow_grammar::Symbol?,
     /// What is started. It is an expression and not a statement, because an arm
@@ -842,7 +842,7 @@ pub struct SelectArm {
     /// What runs if this arm wins.
     pub body: Block,
     /// Where the arm starts, which is the key the checker's answers are filed
-    /// under ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    /// under ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     pub at: u32,
 }
 
@@ -850,7 +850,7 @@ pub struct SelectArm {
 pub struct MatchArm {
     pub pattern: MatchPattern,
     /// `if x == y` after the pattern
-    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D2).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D11).
     ///
     /// **The word is `if`**, which is the one every neighbouring language uses
     /// for this and the one this language already uses for a condition; a
@@ -866,17 +866,17 @@ pub struct MatchArm {
 
 /// What an arm matches. Deliberately small: every shape here is one the
 /// language it lowers to spells the same way, so the lowering stays name for
-/// name (ADR-011 D2) and no pattern means something different in the two.
+/// name (ADR-296 D17) and no pattern means something different in the two.
 pub enum MatchPattern {
     /// `else`: the arm taken when none of the others matched
-    /// ([ADR-145](../../../docs/specification/adr/adr-145.md) D1).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D16).
     ///
     /// **Not `Wildcard`**, which the node was called while the arm was written
-    /// `_`: [ADR-126](../../../docs/specification/adr/adr-126.md) argues
+    /// `_`: [ADR-291](../../../docs/specification/adr/adr-291.md) argues
     /// against that word for `_` itself, and it is wrong here twice over —
     /// nothing is being matched loosely, and nothing arrived to be ignored.
     ///
-    /// **And `_` as a part of a pattern** (ADR-145 D2), `(0, _)`: a value
+    /// **And `_` as a part of a pattern** (ADR-291 D17), `(0, _)`: a value
     /// that arrived and is ignored matches as `else` does and binds nothing,
     /// so the two are one node and lower to the same `_`.
     Otherwise,
@@ -886,7 +886,7 @@ pub enum MatchPattern {
     /// language below. One rule, drawn in one place.
     Path(Vec[winnow_grammar::Symbol]),
     /// `Message::Write(text)`, `(0, y)`, `Event::Click(Point { x, .. })`
-    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D10).
     ///
     /// **The parts are patterns**, which is what makes a pattern nest: a
     /// binding is a one-segment `Path`, so `Message::Write(text)` is what it
@@ -904,18 +904,18 @@ pub enum MatchPattern {
         path: Vec[winnow_grammar::Symbol],
         bindings: Vec[winnow_grammar::Symbol],
         /// `..` for the fields this pattern does not name
-        /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+        /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D10).
         rest: bool,
     },
     /// `(0, y) | (y, 0)` - one arm, several shapes
-    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D1).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D10).
     ///
     /// **Every alternative binds the same set of names**, which is the rule
     /// that keeps the arm's body answerable: a name the body reads has to be
     /// bound whichever alternative matched. `NK1155` is the refusal.
     Or(Vec[MatchPattern]),
     /// `200..299` - a range, **inclusive at both ends**
-    /// ([ADR-137](../../../docs/specification/adr/adr-137.md) D3).
+    /// ([ADR-291](../../../docs/specification/adr/adr-291.md) D12).
     ///
     /// A pattern is a set of values and a reader reads it as one; there is no
     /// counting-to-`n` in it, which is what makes the exclusive reading natural
@@ -931,7 +931,7 @@ pub struct GenericParam {
     /// Several are written `[T: A + B]`, which is why this is a list rather than
     /// an `Option`. Empty for a parameter with no bound, which says that a body
     /// may move and pass its value and nothing else
-    /// ([ADR-074](../../../docs/specification/adr/adr-074.md) D5's `NK1126`).
+    /// ([ADR-295](../../../docs/specification/adr/adr-295.md) D5's `NK1126`).
     pub bounds: Vec[winnow_grammar::Symbol],
 }
 
@@ -974,7 +974,7 @@ pub struct FnArg {
     /// stand in for: a diagnostic about a parameter has to put its caret on the
     /// parameter, and the nearest span a body's walk has is its first statement,
     /// which is a different line
-    /// ([ADR-051](../../../docs/specification/adr/adr-051.md) D4).
+    /// ([ADR-298](../../../docs/specification/adr/adr-298.md) D4).
     pub span: Span,
 }
 
@@ -1046,7 +1046,7 @@ pub enum BinaryOp {
     And,
     Or,
     /// `&`, `|`, `^`, `<<`, `>>` on integers
-    /// ([ADR-248](../../../docs/specification/adr/adr-248.md) D3).
+    /// ([ADR-285](../../../docs/specification/adr/adr-285.md) D9).
     BitAnd,
     BitOr,
     BitXor,
@@ -1094,7 +1094,7 @@ pub struct GrammarRule {
     pub span: Span,
 }
 
-/// The keyed attribute of ADR-009 D1: `@frame`, `@frame(boundary: "\n")`,
+/// The keyed attribute of ADR-296 D9: `@frame`, `@frame(boundary: "\n")`,
 /// `@frame(boundary: "\n", unchecked)`. A bare `@frame` leaves `boundary`
 /// empty and the boundary is inferred downstream from the trailing literal.
 pub struct FrameAttr {
@@ -1106,7 +1106,7 @@ impl FrameAttr {
     /// `@frame` with nothing after it: the boundary is inferred, and checked.
     ///
     /// Named rather than a `Default`, which Nikaia does not derive
-    /// ([ADR-252](../../../docs/specification/adr/adr-252.md) D4.4).
+    /// ([ADR-294](../../../docs/specification/adr/adr-294.md) D9.4).
     pub fn bare() -> FrameAttr {
         return FrameAttr { boundary: null, unchecked: false }
     }
@@ -1170,7 +1170,7 @@ pub enum Repeat {
 
 /// `fold(rule, init, step)` and `par_fold(rule, init, step, merge)`.
 ///
-/// The merge is what separates them: ADR-009 D2 - parallel parsing is a frame
+/// The merge is what separates them: ADR-296 D10 - parallel parsing is a frame
 /// plus a monoid, and the monoid is exactly this merge.
 pub struct FoldSpec {
     pub parallel: bool,
@@ -1191,20 +1191,20 @@ pub struct FnParams {
     pub receiver: Receiver?,
     pub args: Vec[FnArg],
     pub config: Vec[ConfigParam],
-    /// ADR-007 D5: `...args: Self::dsl`, where a config zone holds one instead
+    /// ADR-296 D5: `...args: Self::dsl`, where a config zone holds one instead
     /// of options.
     pub spread: winnow_grammar::Symbol?,
 }
 
 impl FnParams {
-    /// `()`: no subject and nothing else, named for ADR-252 D4.4's reason.
+    /// `()`: no subject and nothing else, named for ADR-294 D9.4's reason.
     pub fn none() -> FnParams {
         return FnParams { receiver: null, args: [], config: [], spread: null }
     }
 }
 
 /// What stands after the `;` in a declaration: options, or the typed spread of
-/// [ADR-007](../../../docs/specification/adr/adr-007.md) D5.
+/// [ADR-296](../../../docs/specification/adr/adr-296.md) D5.
 ///
 /// Exclusive on purpose. An option has a default and a DSL parameter does not -
 /// it is required, and what makes it configuration is that it is named rather

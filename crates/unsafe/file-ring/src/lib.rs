@@ -5,12 +5,12 @@
 //! `README.md`; the soundness rule for the buffers is below.
 //!
 //! ## Files, completed by the kernel
-//! (Nikaia ADR-038 D3).
+//! (Nikaia ADR-303 D3).
 //!
 //! `epoll` cannot read a file at all: a regular file is always "ready" and the
 //! read blocks in the kernel anyway, which is why every readiness-based
 //! runtime serves file I/O from a thread pool - and that pool *is*
-//! Nikaia ADR-033 §8.4's 46 µs.
+//! Nikaia ADR-292's 46 µs.
 //! `io_uring` removes it, not by being a faster pool but because no thread is
 //! involved: the kernel performs the read and reports when it is done.
 //!
@@ -45,7 +45,7 @@
 //! here that hands back memory it does not own, is a mapping and never
 //! reaches the ring. Ownership is what
 //! Nikaia ADR-005 and
-//! Nikaia ADR-008's tether lattice
+//! Nikaia ADR-283's tether lattice
 //! infer, and it is what the kernel is handed.
 //!
 //! ## What is *not* completed here
@@ -53,7 +53,7 @@
 //! `open` and `stat` are ordinary blocking syscalls. They are a path walk in
 //! the kernel with no data transfer, they are what the measurement's baseline
 //! pays too, and putting them on the ring would buy a syscall rather than a
-//! thread. The *read* is what ADR-033 §8.4 priced, and the read is what
+//! thread. The *read* is what ADR-292 priced, and the read is what
 //! completes.
 
 #![cfg(target_os = "linux")]
@@ -69,7 +69,7 @@ use std::sync::Arc;
 
 use io_uring::{IoUring, opcode, types};
 
-/// How many submissions the ring holds. Two is the pair ADR-033 is about; this
+/// How many submissions the ring holds. Two is the pair ADR-292 is about; this
 /// leaves room for a handful of jobs in flight without a resubmit.
 const ENTRIES: u32 = 64;
 
@@ -252,7 +252,7 @@ impl Ring {
 
     /// Read every one of `paths` whole, with all of them in flight at once.
     ///
-    /// This is the shape ADR-033 §8.5 predicted and could not measure: several
+    /// This is the shape ADR-292 predicted and could not measure: several
     /// operations in flight, their results collected in the order they were
     /// written, and **no thread started or woken for the pair** - the kernel
     /// does the reads and one `io_uring_enter` collects them.
@@ -883,7 +883,7 @@ mod tests {
     }
 
     /// Both reads in flight at once, and both answers in the order they were
-    /// asked for - which is ADR-033 §8.5's shape.
+    /// asked for - which is ADR-292's shape.
     #[test]
     fn two_reads_are_both_in_flight_and_answered_in_order() {
         let Some(mut ring) = ring() else { return };

@@ -1,7 +1,7 @@
 //! A `use` brings no name in, for `std` as for a package
 //! ([ADR-140](../../../docs/specification/adr/adr-140.md) D5).
 //!
-//! [ADR-046](../../../docs/specification/adr/adr-046.md) D2's rule is the
+//! [ADR-286](../../../docs/specification/adr/adr-286.md) D11's rule is the
 //! language's and `std` was the one place it was not followed:
 //! `use std::collections::HashMap` parsed, and what it did was **nothing** —
 //! `HashMap` works with no `use` at all, because it is a name this compiler
@@ -19,7 +19,7 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
 }
 
 /// **A `use` that names a type is refused** (D5), and since
-/// [ADR-154](../../../docs/specification/adr/adr-154.md) D3 the way out is the
+/// [ADR-313](../../../docs/specification/adr/adr-313.md) D3 the way out is the
 /// **module**: `HashMap` lives in one, so the line to write is
 /// `use std::collections` and the name is `collections::HashMap`.
 #[test]
@@ -90,7 +90,7 @@ fn a_module_no_ledger_describes_is_not_refused() {
 }
 
 /// **A package's `use` is not this rule's**, and its own refusal is the module
-/// layer's ([ADR-046](../../../docs/specification/adr/adr-046.md) D2).
+/// layer's ([ADR-286](../../../docs/specification/adr/adr-286.md) D11).
 #[test]
 fn a_packages_use_is_untouched() {
     let found: Vec<_> = findings("use http\nfn main() { }\n")
@@ -189,7 +189,7 @@ fn a_near_miss_is_named() {
 
 /// **A module the crate has and `std` does not offer gets its own sentence**, and
 /// that is the case that found this defect: `crates/nikaia-std/src/tools/` holds
-/// [ADR-196](../../../docs/specification/adr/adr-196.md)'s Rust-signature
+/// [ADR-290](../../../docs/specification/adr/adr-290.md)'s Rust-signature
 /// grammar, which the compiler calls and a program may not. *Nobody has written
 /// that down* would be false and would send the reader looking for a typo.
 #[test]
@@ -205,7 +205,7 @@ fn the_toolchains_own_module_says_why_it_is_not_reachable() {
 /// is [Part III C.4](../../../docs/specification/30-nikaia-tooling.md): the day
 /// it lands the line is unchanged, so refusing it today refuses a correct
 /// program. `use std::db` is how
-/// [ADR-143](../../../docs/specification/adr/adr-143.md)'s driver is reached.
+/// [ADR-299](../../../docs/specification/adr/adr-299.md)'s driver is reached.
 #[test]
 fn a_module_a_record_promises_is_accepted() {
     for module in [

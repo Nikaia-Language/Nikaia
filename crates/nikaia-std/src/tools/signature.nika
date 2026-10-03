@@ -1,10 +1,10 @@
 // crates/nikaia-std/src/tools/signature.nika
 //
-// **A Rust signature in the ledger's words** (ADR-104 D3, D4; ADR-193 D4): one
+// **A Rust signature in the ledger's words** (ADR-290 D3, D4; ADR-290 D9): one
 // type at a time, whether a value of it is kept, what a `Result` throws, and
 // which parameters a `Send` bound reaches.
 //
-// Moved from the compiler's `describe.rs` by ADR-196's route (#124): lowered
+// Moved from the compiler's `describe.rs` by ADR-290's route (#124): lowered
 // by `nikaia lower-std` to `signature.rs` beside it, `include!`d as
 // `nikaia_std::tools::signature`, and called from `describe`. It reads the
 // ledger's records beside it for `Ty`, as `ledger.nika` does.
@@ -109,7 +109,7 @@ pub fn view_of(ty: Ty) -> Ty {
     }
 }
 
-/// **The parameters a `Send` bound reaches**, in declaration order (ADR-193
+/// **The parameters a `Send` bound reaches**, in declaration order (ADR-290
 /// D4): one whose type is a type variable the bounds send, and one written
 /// `impl … Send …` at the parameter itself. `names` and `types` are the
 /// parameters' names and written types, in order; `bounds` is the `<…>` list
@@ -181,7 +181,7 @@ pub struct WrittenFn {
     pub parameters: Vec[String],
 }
 
-/// **One `pub fn`'s entry, from its signature** (ADR-104 D3): each parameter
+/// **One `pub fn`'s entry, from its signature** (ADR-290 D3): each parameter
 /// in the ledger's words, kept where it is taken by value, the result and what
 /// a `Result` throws, and `sync` as the source says it - a plain `fn` cannot
 /// pause and an `async fn` can, nothing between them. The crate types the

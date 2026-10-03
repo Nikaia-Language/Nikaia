@@ -37,7 +37,7 @@ pub struct Package {
     pub version: String,
     pub edition: String,
     /// The oldest Rust the **emitted** code compiles under
-    /// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4), written
+    /// ([ADR-288](../../../docs/specification/adr/adr-288.md) D27), written
     /// where Cargo reads it.
     ///
     /// It is a different fact from the channel: `rust-toolchain.toml` names
@@ -64,7 +64,7 @@ pub struct Profile {
 
 /// Which target a generated crate carries. The entry package is the binary; a
 /// package it depends on is a library beside it
-/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrateKind {
     Bin,
@@ -75,7 +75,7 @@ pub enum CrateKind {
 ///
 /// A member, always: a build emits a workspace even where the program depends
 /// on no Nikaia package at all
-/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1), because one
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D19), because one
 /// shape that is always taken is worth more than a second one taken rarely.
 /// So nothing here writes a profile - profiles are the root's, and a member
 /// that declared one would be ignored with a warning.
@@ -109,7 +109,7 @@ impl CargoProject {
             "# GENERATED from `nikaia.toml`. Do not edit - it is rewritten by every build.\n\
              # Native Rust dependencies pass through unchanged (ADR-002 D1); a Nikaia one\n\
              # is the crate generated beside this, under this crate's own name for it\n\
-             # (ADR-053 D2). The profile is the workspace root's.\n\n",
+             # (ADR-286 D20). The profile is the workspace root's.\n\n",
         );
         out.push_str("[package]\n");
         out.push_str(&format!("name = {}\n", string(&self.package.name)));
@@ -156,7 +156,7 @@ impl CargoProject {
 }
 
 /// A generated Cargo **workspace**: one member crate per Nikaia package
-/// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md) D19).
 ///
 /// The root is virtual - it carries no package of its own, only the members and
 /// the profile. That is what makes D4 expressible: the overflow checks are on
@@ -179,7 +179,7 @@ impl Workspace {
         let mut out = String::new();
         out.push_str(
             "# GENERATED from `nikaia.toml`. Do not edit - it is rewritten by every build.\n\
-             # One member per Nikaia package (ADR-053 D1); the profile is the root's,\n\
+             # One member per Nikaia package (ADR-286 D19); the profile is the root's,\n\
              # because a member's would be ignored.\n\n",
         );
         out.push_str("[workspace]\n");
@@ -200,7 +200,7 @@ impl Workspace {
 
         // **The overflow check is not in `Profile`, and that is the point.**
         // `Profile` holds what the build switches and the codegen table decide;
-        // an overflow aborting is what the language *means* (ADR-043 D1), so it
+        // an overflow aborting is what the language *means* (ADR-285 D5), so it
         // is written from the two rules below and there is no key that turns it
         // off. Which is also why the emitted code says `a + b` rather than
         // calling a checked helper per operation (D6): the arithmetic is the
@@ -224,7 +224,7 @@ impl Workspace {
             out.push_str(&format!("panic = {}\n", string(panic)));
         }
 
-        // **ADR-043 D1 reaches every crate of this language** (ADR-053 D4). A
+        // **ADR-285 D5 reaches every crate of this language** (ADR-286 D22). A
         // Nikaia dependency is part of the program, not a foreign package, so
         // an overflow in it aborts exactly as one in the program does.
         for (_, member) in &self.members {
@@ -309,7 +309,7 @@ pub struct Cargo {
 }
 
 /// **Refuse an old toolchain in this compiler's words**
-/// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4).
+/// ([ADR-288](../../../docs/specification/adr/adr-288.md) D27).
 ///
 /// Cargo's own answer is *package `x` requires rustc 1.88 or newer*, naming a
 /// package the author never wrote — [Part III
@@ -335,7 +335,7 @@ pub fn toolchain_is_new_enough(floor: &str) -> Result<()> {
     Err(anyhow!(
         "this toolchain is rustc {major}.{minor}, and the Rust this compiler emits needs \
          {floor} or newer.\n\
-         A trait method that may pause is written `-> impl Future<…>` (ADR-109 D3), which \
+         A trait method that may pause is written `-> impl Future<…>` (ADR-288 D26), which \
          is stable from {floor}. Install a newer toolchain - `rustup update stable` - or \
          pin one with `rust-toolchain.toml` (ADR-001 D1)."
     ))
@@ -880,7 +880,7 @@ mod tests {
         );
         assert_eq!(parsed["bin"][0]["path"].as_str(), Some("/p/src/main.nika"));
 
-        // **A member writes no profile** (ADR-053 D1): the root's is the one
+        // **A member writes no profile** (ADR-286 D19): the root's is the one
         // Cargo reads, and one written here would be ignored with a warning -
         // which is a build telling somebody their overflow setting did nothing.
         assert!(
@@ -894,7 +894,7 @@ mod tests {
     }
 
     /// A package a program depends on is a **library** crate beside it
-    /// ([ADR-053](../../../docs/specification/adr/adr-053.md) D1), so the two
+    /// ([ADR-286](../../../docs/specification/adr/adr-286.md) D19), so the two
     /// differ in exactly one place: the target table.
     #[test]
     fn a_dependency_is_a_library_and_the_entry_is_a_binary() {
@@ -906,8 +906,8 @@ mod tests {
     }
 
     /// The workspace root: the members, the profile, and
-    /// [ADR-043](../../../docs/specification/adr/adr-043.md) D6 written out per
-    /// crate ([ADR-053](../../../docs/specification/adr/adr-053.md) D4).
+    /// [ADR-285](../../../docs/specification/adr/adr-285.md) D8 written out per
+    /// crate ([ADR-286](../../../docs/specification/adr/adr-286.md) D22).
     #[test]
     fn the_workspace_root_carries_the_profile_and_the_overflow_checks() {
         let text = workspace().render();
@@ -930,7 +930,7 @@ mod tests {
         assert_eq!(parsed["profile"]["dev"]["lto"].as_bool(), Some(true));
         assert_eq!(parsed["profile"]["dev"]["panic"].as_str(), Some("unwind"));
 
-        // ADR-043 D6 in the shape D4 gives it: off by default, because `"*"`
+        // ADR-285 D8 in the shape D4 gives it: off by default, because `"*"`
         // would reach the members too, and on by name for every crate of this
         // language. Neither is a key anybody may set. Asserted here as well as
         // end to end in `crates/nikaia/tests/overflow.rs`, because this is where

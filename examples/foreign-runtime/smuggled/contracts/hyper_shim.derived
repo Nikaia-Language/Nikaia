@@ -13,4 +13,4 @@ inference = "described-from-signatures+fields"
 # again when it moves (D5, on ADR-100 D3's rule). **Nothing compares it yet**:
 # the hash rule is the record's step 3.
 [sources]
-"src/lib.rs" = "7f0544e448f4f31e822dacff6abd32b3075826998b995b5d524a62fc336d046a"
+"src/lib.rs" = "1dae18f692df17b39b25a378feb8368a54c42735db75bb811b261a994c14a392"

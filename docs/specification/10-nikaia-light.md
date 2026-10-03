@@ -104,7 +104,7 @@ reached: `use std::fs` at the top of the file, and
 `fs::read_to_string(path, fs::Root::Anywhere)` where it is used (9.1). A name
 that lives in a `std` module is refused without its prefix — `NK1117` for a
 function, `NK1135` for a type — and a prefix is refused without its `use`, each
-with the line to add.
+with the line to add. A name on this list written with a `std` module in front of it, such as `io::println`, is refused too (`NK1163`).
 
 ---
 
@@ -114,15 +114,15 @@ A **comment** begins with `//` and runs to the end of the line, or begins with
 `/*` and runs to the matching `*/`. A block comment may span lines and may
 stand anywhere whitespace may stand. Block comments **nest**: `/* a /* b */ c */`
 is one comment. An unclosed `/*` is reported where it opened. A block comment
-is a comment wherever it stands, including `/** … */`.
+is a comment wherever it stands, including `/** … */` and `/*! … */`.
 
 **A run of `///` lines immediately before an item is that item's
 documentation.** An item is a `fn`, a `struct`, an `enum`, a `trait`, a field or
 a variant. Anywhere else `///` is an ordinary comment. An ordinary comment
 standing between the run and the item does not end it; a statement does. A doc
 comment is prose: the compiler reads no directive, no `@param` and no link out
-of it. On a `pub` item the doc comment becomes the `doc` column of
-`nikaia.contracts` (Part III, 13.5).
+of it. The compiler does not copy it into
+`nikaia.contracts` (Part III, 13.5; [ADR-251](adr/adr-251.md) D2).
 
 ### 2.1. Variables and Assignment
 A **variable** is a named storage location that holds a value. A variable is
@@ -145,6 +145,8 @@ let mut y = 10
 y = 20     // This is allowed
 ```
 
+**Taking a tuple apart.** `let (a, b) = pair()` binds each name to the part at its position. A `let` takes one name or a flat tuple of names; a nested tuple is refused, and so is a written type (`NK1136`), because one type cannot say which name it is about.
+
 **Reserved words**
 
 A reserved word means one thing wherever it appears. A name may not be a
@@ -163,7 +165,7 @@ word and says it is reserved.
 
 **`ref` is reserved for the view it writes.** `ref(x)` is a borrow of `(x)`.
 
-**`comptime` is reserved for its construct**: a statement inside a function
+**`comptime` is reserved for its construct**: a binding where an item stands or a statement inside a function
 body (Part II, 10.2). It promises a time of evaluation, not constancy.
 
 **`_` is not a name; it is the ignore pattern.** It stands where a name would be
@@ -221,12 +223,13 @@ Nikaia provides basic types to represent simple values.
       struct that has to be small, a wire format, a C header. An `i32` that
       meets an `i64` is widened where the program says so, with `as i64`.
     * `u8`: one byte. It has the same conversion and arithmetic names as the
-      other integer types. A file read whole is a `Bytes` (`fs::read`): one
+      other integer types (*decided, not built yet*: today the `wrapping_`,
+      `saturating_` and `truncating_` names exist for the other four). A file read whole is a `Bytes` (`fs::read`): one
       shared buffer of them, handed on by a count and not copied.
       `text.bytes()` is a text's UTF-8, one `u8` at a time.
     * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the
       bits are the point: a hash, a mask, a wire format's field
-      ([ADR-248](adr/adr-248.md)). No two integer types mix on their own:
+      ([ADR-285](adr/adr-285.md)). No two integer types mix on their own:
       `a + b` over a `u64` and an `i64` is refused (`NK1199`), and the
       conversion is written with `as`.
 * **Floats:** numbers with decimal points.
@@ -326,7 +329,7 @@ names with `saturating_`, except that there is no `saturating_shl` and no
 type has no `_neg` and no `_abs`. There is no operator for either.
 
 **The bits of an integer are reached with operators**
-([ADR-248](adr/adr-248.md)): `&`, `|`, `^`, `<<` and `>>`, and `!`, which on
+([ADR-285](adr/adr-285.md)): `&`, `|`, `^`, `<<` and `>>`, and `!`, which on
 an integer flips every bit. Both sides are one integer type, except a shift's
 count, which may be any. A shift loses the bits it moves out, and a count as
 large as the type is wide aborts; `>>` fills with zeros on an unsigned type and
@@ -371,17 +374,13 @@ let floored = measurement.truncating_i32()        // a float, toward zero, clamp
 let n = text.len().truncating_i32()               // a count that may not fit
 ```
 
-The names are `truncating_i32` and `truncating_i64`. Each converts out of the
-larger integer, out of an `f64`, and out of the type a count has.
+The names are `truncating_i32`, `truncating_i64`, `truncating_u32` and
+`truncating_u64`. Each converts out of a wider integer and out of an `f64`.
 
-Three conversions are checked or unchecked in a way the code does not show:
+Two conversions are checked or unchecked in a way the code does not show:
 
 * **An `f64` to an integer** aborts where the value does not fit: `1e20 as i32`,
   `-1e20 as i32`, and a value that is not a number all abort.
-* **A count**, what `len` and a sequence's `count` hand back, is as wide as the
-  machine is. The
-  conversion is checked, so the program's behaviour does not depend on where it
-  was built.
 * **An integer to an `f64`** is **not** checked. Digits are lost at large values
   without anything overflowing: `9007199254740993` through an `f64` comes back
   `9007199254740992`. This is a limit of the language, not an abort.
@@ -404,7 +403,7 @@ The compile-time check reaches a **sum**. `let b = a + 1`, where `a` is a
 constant an annotation declared an `i32`, is folded and refused with no
 annotation on the `let` line: the operand's declaration gives the arithmetic
 its type. `+ - * / %` and a negation fold, through any number of immutable
-`let`s, in a wider number than either type, so that the message can name what
+`let`s, in a magnitude and a sign (65 bits), each step held to the type a declared operand gives it, so that the message can name what
 the expression comes to. A `mut` local, a parameter, a `for` binding and a cast
 stop the fold. An expression that does not fold is never refused.
 
@@ -434,7 +433,7 @@ annotated `let`, a `return`, an argument the callee keeps — it is constructed
 there, as `[1, 2]` is a `Vec` where one is wanted; where the use only **reads**
 it, nothing is allocated. A **view** of text the program *has* is not a literal,
 and where it is kept `.clone()` makes the copy, written where it happens. A view
-in a `String` slot without it is refused with `NK1106`. **`.clone()` is the one
+in a published `String` slot that text of its own also flows into is refused without it (`NK1106`); any other `String` slot takes the view (2.2). **`.clone()` is the one
 word for a copy**, of text and of everything else: a copy of text is text of its
 own. `.to_owned()` is refused naming it (`NK1189`); `.to_string()` is the text
 form of a value, and the text form of text is the text itself: a view stays a
@@ -481,7 +480,7 @@ println(f"{wide(small)}")  // an i64 here: the use decides, and 42 holds in one
 
 The use is asked first and the size second. So `small` may still become an
 `i64`, and `big` never has to be annotated to be one. A number too large for an
-`i64` is refused.
+`i64` is refused unless a use asks for a `u64`.
 
 **A use is anything the function does with the name**: the parameter it is
 handed to, a typed value it meets in an operation or a comparison, an annotated
@@ -556,7 +555,9 @@ has no holes, so `"{"` is a brace and `"{{"` is two.
 
 The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a
 variable named `f` beside a string. Whitespace never decides what a program
-means.
+means. An `f"…"` is not a constant: it cannot stand as a default, a `match`
+pattern or a grammar's literal. Inside a hole, `\"` is refused - a hole is
+code, and a string in it has plain quotes.
 
 **A newline is an ordinary character in a literal.** Nothing ends a literal but
 the closing `"`. A literal left unterminated runs on to the next `"` in the file
@@ -659,7 +660,7 @@ if (match n { 1 => 10, else => 20 }) > 15 {
 That is the whole of the difference between the head of an `if`, a `while` or a
 `for` and any other position. Every expression is reachable.
 
-**A jump may carry its condition after it** ([ADR-255](adr/adr-255.md)).
+**A jump may carry its condition after it** ([ADR-276](adr/adr-276.md)).
 `return`, `throw`, `break` and `continue` take an `if` on their own line, and
 the line means `if cond { jump }`:
 
@@ -730,7 +731,7 @@ still there when the loop is over. A binding is a view of its element, so an
 element kept past the turn, text in a field for instance, is kept as a copy,
 `.clone()`; a number, a `bool` and a `char` are the element itself. A map is
 walked as pairs, `for (key, value) in scores`. Taking the elements away is written,
-`for x in xs.drain()` (6.5). A `&` written in front of the list is refused with
+`for x in xs.drain()` (6.5). A `ref` written in front of the list is refused with
 `NK1137`, because the compiler writes that reference.
 
 **Leaving a loop early: `break` and `continue`**
@@ -829,7 +830,7 @@ while true {
 }
 ```
 
-There is no `loop` keyword. `break` hands back nothing.
+There is no `loop` keyword. `break` hands back nothing. A function whose last statement is a `while true` that no `break` leaves needs no `return` after it, whatever type it declares: it never reaches its end ([ADR-276](adr/adr-276.md) D6).
 
 ### 3.4. Pattern Matching (`match`)
 The `match` expression compares a value against a series of patterns. Every
@@ -880,8 +881,8 @@ value, changes it — takes it, and the name is gone afterwards, as it is after
 any hand-over. A number, a `bool` and a `char` are copied either way.
 
 **Every case is covered.** A `match` over an **enum** is complete when every
-variant is named, and needs no `else`. A `match` over anything else needs an
-`else`. `bool` is the exception: `true` and `false` are two arms and a complete
+variant is named (an or-pattern names each variant in it), and needs no `else`. A `match` over anything else needs an
+`else`, or a bare name, which catches everything. `bool` is the exception: `true` and `false` are two arms and a complete
 `match`. An incomplete `match` is refused with `NK1151`, which names what is
 missing: the variants, or `else`. A guarded arm covers nothing, so a `match`
 whose only catch-all carries an `if` is refused with `NK1151`.
@@ -909,7 +910,11 @@ A member of a nullable type is reached through an operator that handles the
 * **Null coalescing (`??`):** supplies a fallback value where an expression is
   `null`. A chain may be written: `a ?? b ?? c` takes the first that has a
   value. Where the last fallback may be `null` too, so may the answer: `a ?? b`
-  with a `b: T?` is a `T?`.
+  with a `b: T?` is a `T?`. The fallback is one value - a literal, a name, a
+  call, a field, a jump, or an expression in brackets - so `a ?? 0 > 3` is
+  refused and `(a ?? 0) > 3` is written. There is no postfix `??`: `a??` is
+  refused, naming `a ?? b`, a jump and `a ?? panic("…")`
+  ([ADR-279](adr/adr-279.md) D1, D3).
 
 ```nika
 // If find_user returns null, 'name' becomes null.
@@ -936,17 +941,26 @@ that is not `T?` always has a value, and the plain `.` reaches it.
 **`?.` takes nothing.** It reaches through a view of its receiver, so `user` is
 usable on the line after `user?.name`. What comes out is a copy where the
 member copies and a view of the receiver otherwise, as a field read is (6.6).
+A receiver that is a call's result is a temporary: a field reached through it
+is taken out of it, and a method that hands back a view of it keeps it, to the
+end of the block, in a binding the compiler writes on the line before. Where
+that would change what runs (on the lazy side of `??`, `&&` or `||`, in a
+`match` arm, after another call in the same statement) or where the view is
+the block's value or the result, the line is refused, naming the `let` to
+write ([ADR-278](adr/adr-278.md) D22).
 
 **`??` takes its left side where the answer is kept, and lends it where the
-answer is only read** ([ADR-259](adr/adr-259.md)), as an argument is lent or
+answer is only read** ([ADR-279](adr/adr-279.md) D5), as an argument is lent or
 handed over (6.6). `println(user ?? "Guest")` leaves `user` usable on the next
 line; `let shown = user ?? "Guest"` takes `user`, as `let b = a` takes `a`.
 The positions that only read are an argument the function only reads, an
 `f"…"` hole, a comparison of text, and the receiver of a method that only
-reads it.
+reads it. A value that is a word by its kind - a number, a `bool`, a `char`, an
+enum whose variants hold nothing - is copied at a read rather than lent; every
+other type is lent, at every size ([ADR-279](adr/adr-279.md) D8).
 
 **A left side that is itself only borrowed, beside a fallback that jumps, is
-a view wherever it stands** ([ADR-275](adr/adr-275.md)): over a `c: ref
+a view wherever it stands** ([ADR-279](adr/adr-279.md) D10): over a `c: ref
 Contract`, `let s = c.signature ?? return false` binds a view of the field.
 Nothing can take a part of a loan, and a `return`, `throw`, `continue` or
 `break` has no value of its own, so the answer can only be the left side,
@@ -1132,7 +1146,7 @@ The standard library provides types for groups of values.
     ```
     A list keeps the order it was given, and that order can be changed:
     `xs.sort()` puts the elements in their natural order, and
-    `xs.sort_by_key fn { … }` in the order of what the closure returns. **Both
+    `xs.sort_by_key fn(x) { … }` in the order of what the closure returns. **Both
     are stable**: elements the key does not separate keep the order they had.
     Two passes therefore express a compound order without a comparator:
     ```nika
@@ -1153,7 +1167,7 @@ The standard library provides types for groups of values.
     fields.
 * **Map (HashMap):** key-value pairs.
     ```nika
-use std::collections
+    use std::collections
 
     let mut scores = collections::HashMap()
     scores["Player1"] = 100
@@ -1173,7 +1187,7 @@ use std::collections
     is absent and a key that holds `null` both answer `null`, and
     `m.contains_key(k)` tells them apart. `m[k] = null` **stores** `null` - the
     key is there afterwards - and `m.remove(k)` removes it
-    ([ADR-273](adr/adr-273.md)). A map whose keys it
+    ([ADR-293](adr/adr-293.md)). A map whose keys it
     **owns** — a `HashMap[String, V]`, a `HashMap[i64, V]` — takes a key
     written into it as its own and is lent one it is read with; `m[k] ?? "-"`
     over a map of text is a view of text.
@@ -1297,7 +1311,7 @@ they have to be, what it hands back, and whether it can fail or pause all come
 from the declaration. Several bounds are written `[T: Named + Aged]`. A bound
 may take a path, `[H: http::Handler]`, and the ledger records a trait and each
 `impl` where they were written. Whether a type implements a trait is the union
-over every ledger the program reads plus its own.
+over every ledger the program reads plus its own. A call that passes a type with no `impl` of the bound's trait is refused at the call, with `NK1164`.
 
 **A trait method reads like any signature.** Without `sync` it may pause;
 without `throws` it cannot fail. An implementation is checked against the
@@ -1507,8 +1521,11 @@ The context of such a parameter is **inferred**, not written. A parameter the
 body only calls is immediate and borrows. A parameter the body keeps (stores,
 hands back, gives to a task) is detached and moves. It is the question 6.5 asks
 of every parameter, and there is no `@detached` to write. For an immediate
-parameter the callee's own promises follow the lambda, as `map`'s do. For a
-kept parameter they follow the type, so a `listen` that calls a stored
+parameter the lambda's `touches` and `throws` count for the callee, while
+whether the call may pause, and the shape it is lowered to, follow the
+parameter's type. `std`'s own lambda-taking entries, such as `map`, are written
+by hand and follow the lambda in everything. For a kept parameter the
+callee's promises follow the type, so a `listen` that calls a stored
 `fn(Request) -> Response` may pause. The capture at a `spawn` is reported with
 `NK2101` (8.3).
 
@@ -1583,10 +1600,10 @@ what would have changed it. It changes no decision.
 that keeps it or used by a task (Part II, 11.2), the handle is **duplicated**.
 Each handle is cleaned up at the end of its own block (6.1). No method is
 called. A duplicated handle copies no data: one value, one more owner. The rule
-is the same for both shared types; a `SharedMut[T]` may not cross a thread
+is the same for both shared types; a `SharedMut[T]` may go into a task of the program's own, and not into code nothing written down describes
 (Part II, 11.2).
 
-**Lending the inner value out duplicates nothing.** `&` on a shared value is a
+**Lending the inner value out duplicates nothing.** `ref` on a shared value is a
 view of the value *inside* it, so a function that only uses the value takes an
 ordinary view and never mentions sharing:
 
@@ -1602,7 +1619,7 @@ past the call: puts it in a structure, gives it to a task, hangs it on
 something that outlives the call.
 
 **A `SharedMut[T]` is opened, and the opened value is an ordinary view.** There
-is no `&` straight through a lock. The caller opens the lock with one of the
+is no `ref` straight through a lock. The caller opens the lock with one of the
 four doors of 6.3 and passes the borrowed value in. The called function sees a
 plain value and obeys the rule for an open lock: it may not pause, and it may
 not touch a lock of its own (Part II, 12.2).
@@ -1888,7 +1905,7 @@ use std::fs
 
 **A borrow may not outlive its owner** (6.6).
 
-**The declaration writes the `&`, never the call.** A parameter written with a
+**The declaration writes the `ref`, never the call.** A parameter written with a
 plain type is a **view** unless the function's body keeps the value: stores
 it, hands it back, gives it to a task, or passes it to something that keeps
 it. **Handing back a *part* of it is handing it back**: a field whose type
@@ -1898,7 +1915,7 @@ the body, is written to the ledger (6.7), and holds for every caller. The
 caller writes `serve(db)` and `fs::map(path, root)`, and the compiler writes
 the reference the callee asked for, as it writes the pause and the failure a
 call carries (7.1, 8.1). A `ref` written at a call, `serve(ref db)`, is refused
-with `NK1137`. A `&` in a parameter type is an assertion, *this is a view*, as
+with `NK1137`. A `ref` in a parameter type is an assertion, *this is a view*, as
 `sync` is (Part II, 12.1).
 
 A parameter the function changes in place says `mut` in the declaration,
@@ -1911,6 +1928,9 @@ caller's, so the way out is `.clone()` or taking it without `mut`.
 
 A `for` **lends** its list, so the list is still there after the loop;
 iteration that takes the elements away is written `for x in xs.drain()`. A
+`let` that annotates a `for` binding with the element's type, `let copy: Row = r`,
+is refused with `NK1183`: the binding is a view, so the annotation comes off,
+or `.clone()` makes the copy. A
 `let` over a place (`config.name`, `totals.stations[name]`) is a view of it
 where the value would otherwise have to move.
 
@@ -1946,20 +1966,20 @@ the source:
 | State | What it is | Cost |
 | :--- | :--- | :--- |
 | **Borrowed** | a plain reference into the buffer | nothing at all |
-| **Tethered** | a handle on the buffer plus a position | one shared handle per *container* — no copy, no allocation |
+| **Tethered** | a plain reference; the buffer has moved into a keep | nothing where a frame keeps it; one count per task, or per buffer where a container drops entries — no copy |
 | **Owned** | a `String` of its own | one allocation, **only** where the program wrote `.clone()` |
 
 **The buffer cannot die while anything still points into it.** It is kept alive
-deterministically, by reference counting, with no garbage collector.
+deterministically, by the frame that outlives it or, where none does, by a reference count, with no garbage collector.
 
 Two rules keep this cheap on large data:
 
 * **Storing a slice in a struct is not, by itself, an escape.** A struct that
   is built and consumed inside the scope that owns the buffer keeps plain
   references.
-* **The handle sits on the container, not on every slice.** When a map full of
-  slices outlives its buffer, the *map* holds one handle, and its keys stay
-  positions.
+* **No handle on every slice.** When a map full of
+  slices outlives its buffer, the buffer lives in the keep of the frame that keeps the map, and its keys stay
+  plain references.
 
 **Nothing is written for a tether.** Where the buffer lives is the compiler's
 decision, like which count a `Shared` gets:
@@ -2232,7 +2252,8 @@ let port = read_port() catch { 8080 }     // replacement value
 ```
 
 Inside the block the error is named **`error`**. A handler that passes the
-error on writes `throw error`.
+error on writes `throw error`. A `catch` over an expression that cannot fail
+is refused (`NK1134`): the expression is the value, and the handler goes.
 
 The `catch` has the type of the value it guards: `config` above is what
 `load()` hands back, and a member of it is reached as on that value.
@@ -2254,7 +2275,7 @@ let config = load() catch {
 }
 ```
 
-A `match` over `error` needs `else`, because the set of error **types** is open
+A `match` over `error` that more than one error type reaches needs `else`, because the set of error **types** is open
 (`NK1151`). A library's error type arrives as that type: a function that reads
 a file hands its failure on as an `io::IoError`. No `throw` in the program
 raised it, so it has no site, and `error.full()` says so; the failures that
@@ -2400,13 +2421,15 @@ let (user, rights, prefs) = overlap {
 
 **An `overlap` block is not a task.** The block ends before the function
 continues, so nothing outlives it: nothing is moved, borrowing works as it does
-anywhere else, and the crossing rules a `spawn` meets (Part II, 12.4) do not
+anywhere else, and the crossing rules a `spawn` meets (Part II, 11.2) do not
 apply.
 
 **The branches meet on nothing, and the compiler checks it.** A branch pair that
 meets on a resource is refused with `NK2104`, and the message names the
 resource. A branch that **binds** a name is refused the same way. `--overlaps`
 reports on the blocks a program writes.
+
+**A block that joins pauses.** An `overlap` or a `select` hands its branches to the executor and waits there, so a function holding one is not `sync`, whatever its branches do.
 
 **A branch that fails makes the block fail.** Where two branches fail, the
 first **in written order** wins. The other failures are attached to the winner
@@ -2643,7 +2666,7 @@ package.
 ```nika
 // file: network.nika
 
-// Private: Only usable inside network.nika
+// Private: only usable inside its package
 struct Config {
     port: i32
 }

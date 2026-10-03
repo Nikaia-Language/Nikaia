@@ -1,5 +1,5 @@
 //! What `Locked[T]` is in the machine — two shapes behind one surface
-//! ([ADR-057](../../../docs/specification/adr/adr-057.md)).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 //!
 //! **The shape is decided per value and not per build setting** (D1–D3): where
 //! `contracts::sharing` proves that nothing crosses a thread with a value, its
@@ -11,7 +11,7 @@
 //! is what the crossing shape pays its owner check for. A borrow flag says so by
 //! itself; a bare `Mutex` would hang for ever without saying anything, and at one
 //! user thread a hang is the whole program plus
-//! [ADR-006](../../../docs/specification/adr/adr-006.md) D5's shutdown deadline.
+//! [ADR-297](../../../docs/specification/adr/adr-297.md) D6's shutdown deadline.
 //! Two behaviours for one written type, picked by an analysis the reader cannot
 //! see, is the thing D4 refuses.
 //!
@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///
 /// **There used to be a second one beside this**, `emptied`, for a lock whose
 /// `update` had failed and left nothing behind. It is gone with the state it
-/// named: since [ADR-110](../../../docs/specification/adr/adr-110.md) D1 the
+/// named: since [ADR-281](../../../docs/specification/adr/adr-281.md) D12 the
 /// block is handed the **address** in the lock, so nothing is ever moved out
 /// and no slot is ever empty. A panic in the block leaves the value changed as
 /// far as the block got, which is D4 rather than a state to report.
@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `#[track_caller]` out to the `access` that called it, so the location the
 /// panic hook is handed is the generated line that wrote the access and not a
 /// line of this file — without it
-/// [ADR-044](../../../docs/specification/adr/adr-044.md) D1's table has nothing
+/// [ADR-300](../../../docs/specification/adr/adr-300.md) D9's table has nothing
 /// to look up.
 #[cold]
 #[inline(never)]
@@ -46,7 +46,7 @@ fn reentered() -> ! {
 }
 
 /// **What a `set(neu; after: seen)` failed with**
-/// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5): the lock no
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26): the lock no
 /// longer holds the value that was seen.
 ///
 /// An error like any other — caught, declared, retried, or handed to the
@@ -74,7 +74,7 @@ impl std::error::Error for Overtaken {}
 #[derive(Debug, Default)]
 pub struct Local<T> {
     /// **The value itself, and no `Option` around it**
-    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
     ///
     /// It used to be an `Option` so that `update` could move the value out and
     /// back without a `Default` bound and without unsafe code, and a lambda
@@ -113,7 +113,7 @@ impl<T> Local<T> {
         }
     }
 
-    /// **Reading in place** ([ADR-059](../../../docs/specification/adr/adr-059.md)
+    /// **Reading in place** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     /// D1): the lambda is handed the value where it lies and may not change it,
     /// so nothing is copied to answer a question about a large value.
     #[track_caller]
@@ -122,7 +122,7 @@ impl<T> Local<T> {
     }
 
     /// **Where locked data changes**
-    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1): the block is
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12): the block is
     /// handed the **address** in the lock, changes the value in place, and
     /// returns nothing.
     ///
@@ -140,7 +140,7 @@ impl<T> Local<T> {
     }
 
     /// **The one door for a stamped value**
-    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26).
     ///
     /// `kasse.set(neu; after: stand)` is, by definition,
     /// `update fn(mut v) { if v == stand { v = neu } else { throw Overtaken } }`
@@ -153,8 +153,8 @@ impl<T> Local<T> {
     /// buys and what makes this honest for a large one: a ten-thousand-entry
     /// list is compared entry by entry, and a program that minds writes the
     /// `update` block with a version field of its own
-    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1).
-    /// [ADR-110](../../../docs/specification/adr/adr-110.md) D2's
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
+    /// [ADR-281](../../../docs/specification/adr/adr-281.md) D13's
     /// compare-and-swap is the same operation for a word-sized value and is
     /// the speed row that is not built.
     ///
@@ -189,7 +189,7 @@ impl<T> Local<T> {
     /// Two reads of one lock do not conflict, so a shared borrow would let a
     /// nested `access` through. The crossing shape cannot: a mutex is exclusive
     /// and its owner check fires. One written type may not behave two ways
-    /// ([ADR-057](../../../docs/specification/adr/adr-057.md) D4), and of the two
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D9), and of the two
     /// ways to agree, refusing is the one that keeps Part II 12.2's rule whole -
     /// re-entering a lock is a defect in code that is not well-formed, whichever
     /// door it happens through.
@@ -212,7 +212,7 @@ impl<T> Local<T> {
 #[derive(Debug, Default)]
 pub struct Crossing<T> {
     /// The value itself, for the reason [`Local`]'s is
-    /// ([ADR-059](../../../docs/specification/adr/adr-059.md) D2).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12).
     inner: Mutex<T>,
     /// Which task holds it, or `0` for nobody.
     ///
@@ -252,7 +252,7 @@ impl<T> Crossing<T> {
         self.hold(|slot| *slot = value);
     }
 
-    /// **Reading in place** ([ADR-059](../../../docs/specification/adr/adr-059.md)
+    /// **Reading in place** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     /// D1).
     #[track_caller]
     pub fn access<R>(&self, f: impl FnOnce(&T) -> R) -> R {
@@ -260,7 +260,7 @@ impl<T> Crossing<T> {
     }
 
     /// **Where locked data changes**
-    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1): the block is
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12): the block is
     /// handed the address under the guard, changes the value in place, and
     /// returns nothing. The lock is held across the whole of it, so nothing
     /// sees a gap — and there is no gap to see, because nothing is moved out.
@@ -270,7 +270,7 @@ impl<T> Crossing<T> {
     }
 
     /// **The one door for a stamped value**
-    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), the
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26), the
     /// crossing shape. [`Local::set_after`] carries the reasoning; what is
     /// different here is only that the lock is a mutex, so the compare and the
     /// store happen under the guard the owner check already took.
@@ -298,7 +298,7 @@ impl<T> Crossing<T> {
         // nothing left to report to - which is the whole reason this shape
         // carries a mark at all.
         //
-        // **And it is a build option** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+        // **And it is a build option** ([ADR-281](../../../docs/specification/adr/adr-281.md)
         // D8, Part I 1.2): under D2 a re-entrant acquisition cannot happen in a
         // correct compiler, so this is self-control of that rule rather than
         // error handling, and it is a guarantee that may be declined. For every
@@ -308,7 +308,7 @@ impl<T> Crossing<T> {
         // **It reaches this shape and not [`Local`]'s**, which is the honest
         // scope rather than an omission: the mark below is this compiler's, and
         // declining it costs an atomic load and store per acquisition
-        // ([ADR-057](../../../docs/specification/adr/adr-057.md) D2 makes that
+        // ([ADR-281](../../../docs/specification/adr/adr-281.md) D6 makes that
         // free at one thread and D3 charges it only on values that cross).
         // `Local`'s check is a `RefCell`'s own borrow flag — the language
         // below's, which no switch of ours declines.
@@ -367,7 +367,7 @@ mod tests {
     use super::*;
 
     /// **Re-entering the crossing shape is noticed**, where the build carries
-    /// the check ([ADR-039](../../../docs/specification/adr/adr-039.md) D8).
+    /// the check ([ADR-281](../../../docs/specification/adr/adr-281.md) D36).
     ///
     /// Under D2 this cannot happen in a correct compiler — `NK2203` refuses the
     /// nesting when the program is compiled — so the only way to reach it is to
@@ -416,7 +416,7 @@ mod tests {
     }
 
     /// The four doors, on both shapes
-    /// ([ADR-059](../../../docs/specification/adr/adr-059.md)).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
     #[test]
     fn both_shapes_carry_all_four_doors() {
         let local = Local::new(1_i64);
@@ -510,14 +510,14 @@ mod tests {
 }
 
 /// **A value that fits a machine word, as the word itself**
-/// ([ADR-110](../../../docs/specification/adr/adr-110.md) D2, D3;
-/// [ADR-238](../../../docs/specification/adr/adr-238.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D13, D14;
+/// [ADR-281](../../../docs/specification/adr/adr-281.md)).
 ///
 /// The third shape, and the one [`Crossing`] gives way to where the value is a
 /// number, a truth value or a character and nothing takes it in a door over
 /// several locks. There is no lock: `update` runs the block on a **copy**,
 /// compare-and-swaps the result in, and on a collision runs it again on a
-/// fresh copy — which ADR-110 D3 permits, because a block is `sync`, touches
+/// fresh copy — which ADR-281 D14 permits, because a block is `sync`, touches
 /// no lock and changes nothing outside `v`, so the run that lost leaves no
 /// trace. A panic in the block leaves the word as it was (D4).
 ///
@@ -618,7 +618,7 @@ impl<T: Bits> Word<T> {
     }
 
     /// **The block on a copy, swapped in; again on a collision**
-    /// (ADR-110 D2, D3).
+    /// (ADR-281 D13, D14).
     pub fn update(&self, mut f: impl FnMut(&mut T)) {
         let mut seen = self.bits.load(Ordering::Acquire);
         loop {
@@ -637,7 +637,7 @@ impl<T: Bits> Word<T> {
     }
 
     /// **The one door for a stamped value**
-    /// ([ADR-111](../../../docs/specification/adr/adr-111.md) D5), as one
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D26), as one
     /// compare-and-swap: the value goes in where the word still holds what
     /// was seen. Compared as values, so a number equal to the one seen is the
     /// one seen, as the other shapes compare it.
@@ -676,7 +676,7 @@ impl<T: Bits + Default> Default for Word<T> {
 }
 
 /// One lock, whichever shape it got — what a door over **several** of them needs
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
 ///
 /// A door over two locks cannot be written against `Local` or `Crossing` by name:
 /// which shape a value gets is decided per value, so one program can hold both,
@@ -698,7 +698,7 @@ pub trait Door {
     fn reading<R>(&self, f: impl FnOnce(&Self::Held) -> R) -> R;
 
     /// Change the value in place, the way `update` does
-    /// ([ADR-110](../../../docs/specification/adr/adr-110.md) D1) — and hand a
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D12) — and hand a
     /// result outward, which is what lets two of these nest.
     ///
     /// It used to take the value **out** and put one back, which is what made
@@ -748,7 +748,7 @@ impl<T> Door for Crossing<T> {
 }
 
 /// **A handle on a lock is a lock**, so a door takes one without being told which
-/// it was given ([ADR-065](../../../docs/specification/adr/adr-065.md) D1).
+/// it was given ([ADR-281](../../../docs/specification/adr/adr-281.md) D17).
 ///
 /// `SharedMut[T]` is a count around a lock and `Locked[T]` is the lock in a
 /// field; the door is written once and both reach it. The **order** delegates to
@@ -791,7 +791,7 @@ impl<D: Door> Door for std::sync::Arc<D> {
 }
 
 /// **Both locks read, both held at once, and taken in one global order**
-/// (Part II 12.3, [ADR-065](../../../docs/specification/adr/adr-065.md) D2).
+/// (Part II 12.3, [ADR-281](../../../docs/specification/adr/adr-281.md) D18).
 ///
 /// The order is by address and not by the order they are written, which is the
 /// whole point: `access_all(a, b)` in one task and `access_all(b, a)` in another
@@ -810,16 +810,16 @@ where
 }
 
 /// **Both locks written, changed in place**
-/// ([ADR-065](../../../docs/specification/adr/adr-065.md) D2,
-/// [ADR-110](../../../docs/specification/adr/adr-110.md) D6).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D18).
 ///
-/// D1 widened: **one `mut` per lock and nothing returned**. Both are held for
-/// the whole of the block, so nothing sees either between the two changes, and
-/// the same address order as above is what makes a cycle impossible.
+/// D12's one form, widened: **one `mut` per lock and nothing returned**. Both
+/// are held for the whole of the block, so nothing sees either between the two
+/// changes, and the same address order as above is what makes a cycle
+/// impossible.
 ///
 /// It used to take the old values by value and hand back a pair. That is what
 /// made an empty slot a state — a block that panicked between the two left one
-/// lock without a value — and D1 takes the cause away rather than the symptom.
+/// lock without a value — and D18 takes the cause away rather than the symptom.
 #[track_caller]
 pub fn update_all<A, B>(a: &A, b: &B, f: impl FnOnce(&mut A::Held, &mut B::Held))
 where
@@ -837,7 +837,7 @@ mod doors {
     use super::*;
 
     /// Chapter 12's own transfer, which the language could not write before
-    /// ([ADR-065](../../../docs/specification/adr/adr-065.md)).
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md)).
     #[test]
     fn a_transfer_moves_between_two_locks() {
         let a = Local::new(100i64);
@@ -896,9 +896,9 @@ mod doors {
     }
 
     /// **The witness door stores when nothing moved and refuses when
-    /// something did** ([ADR-111](../../../docs/specification/adr/adr-111.md)
+    /// something did** ([ADR-281](../../../docs/specification/adr/adr-281.md)
     /// D5), in both shapes — the two are one surface
-    /// ([ADR-057](../../../docs/specification/adr/adr-057.md) D4), so a door
+    /// ([ADR-281](../../../docs/specification/adr/adr-281.md) D9), so a door
     /// that behaved differently in one of them would be the thing D4 refuses.
     #[test]
     fn the_witness_door_compares_before_it_stores() {
@@ -921,7 +921,7 @@ mod doors {
 
     /// **The comparison is of the whole value**, which is what makes the door
     /// honest for something larger than a word — and what the message in
-    /// [ADR-111](../../../docs/specification/adr/adr-111.md) D5 says a program
+    /// [ADR-281](../../../docs/specification/adr/adr-281.md) D26 says a program
     /// that minds should write an `update` block with a version field for.
     #[test]
     fn a_large_value_is_compared_entry_by_entry() {
@@ -986,7 +986,7 @@ mod word {
         assert_eq!(c.get(), 'z');
     }
 
-    /// **A collision runs the block again, and nothing is lost** (ADR-110 D3):
+    /// **A collision runs the block again, and nothing is lost** (ADR-281 D14):
     /// four threads adding to one word end at the sum.
     #[test]
     fn no_update_is_lost_under_contention() {
@@ -1016,7 +1016,7 @@ mod word {
         assert_eq!(n.get(), 6);
     }
 
-    /// **A panic in the block leaves the word as it was** (ADR-110 D4).
+    /// **A panic in the block leaves the word as it was** (ADR-281 D15).
     #[test]
     fn a_panic_in_the_block_leaves_the_word_untouched() {
         let n = Word::new(7_i64);

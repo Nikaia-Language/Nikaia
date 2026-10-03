@@ -1,7 +1,7 @@
 //! What a pair of operations costs on the runtime that is already running.
 //!
-//! This is the measurement [ADR-038](../../../../docs/specification/adr/adr-038.md)
-//! D4 predicts and [ADR-033](../../../../docs/specification/adr/adr-033.md) §8.5
+//! This is the measurement [ADR-303](../../../../docs/specification/adr/adr-303.md)
+//! D4 predicts and [ADR-292](../../../../docs/specification/adr/adr-292.md)
 //! wrote down as a prediction it could not time: an I/O thread that is already
 //! running costs nothing per operation, where the vehicle §8.4 measured costs
 //! a thread wake-up per pair - **46 µs, and no user-space vehicle removes it**.
@@ -50,12 +50,12 @@ fn sequential() -> usize {
     })
 }
 
-/// ADR-033 §8.4's vehicle: two closures on the pool, one wake-up per pair.
+/// ADR-292's vehicle: two closures on the pool, one wake-up per pair.
 ///
 /// **`std` no longer has this**, and the number is why: a pool takes closures,
 /// a closure cannot `.await`, and the wake-up it costs is what
-/// [ADR-050](../../../../docs/specification/adr/adr-050.md) D2's vehicle had to
-/// avoid. `rayon::join` is called here directly so the comparison ADR-038 D4
+/// [ADR-292](../../../../docs/specification/adr/adr-292.md) D2's vehicle had to
+/// avoid. `rayon::join` is called here directly so the comparison ADR-303 D4
 /// rests on stays reproducible after the vehicle went.
 ///
 /// The reads are the runtime's **synchronous** surface, because a closure on a
@@ -69,7 +69,7 @@ fn joined() -> usize {
     a.len() + b.len()
 }
 
-/// ADR-038 D4's: both operations in flight on the runtime that was already
+/// ADR-303 D4's: both operations in flight on the runtime that was already
 /// running, results collected in the order they were written.
 fn both() -> usize {
     let (a, b) = fs::read_both(A, B);

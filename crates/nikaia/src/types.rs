@@ -4,7 +4,7 @@
 // than lowered** ([ADR-096](../../../docs/specification/adr/adr-096.md)).
 //
 // A *value* nothing declares has had `NK1117` since
-// [ADR-051](../../../docs/specification/adr/adr-051.md) — *"nothing declares
+// [ADR-298](../../../docs/specification/adr/adr-298.md) — *"nothing declares
 // `q`"*. A type had nothing, so `let x: Widgit = 3` lowered verbatim and came
 // back as `rustc`'s *"cannot find type `Widgit` in this scope"*, about a file
 // nobody wrote. Part III C.1's rule held for one half of this language's names
@@ -52,7 +52,7 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
 }
 
 /// **The two bounds that ask what a type *is*** — Part II 10.3 and
-/// [ADR-088](../../../docs/specification/adr/adr-088.md) D2.
+/// [ADR-304](../../../docs/specification/adr/adr-304.md) D2.
 ///
 /// `[T: Struct]` and `[T: Enum]` are not traits anybody declares and no
 /// `impl` answers them: what answers is the **declaration**, which is the whole

@@ -113,7 +113,7 @@ fn a_keyword_does_not_swallow_the_start_of_a_longer_word() {
     // `forx` does not begin a loop, so nothing binds `x`.
     //
     // The probe used to be `forx in 0..3 { … }`, and the reserved-word list
-    // (ADR-051) makes that program refused rather than
+    // (ADR-298) makes that program refused rather than
     // misread - `in` is not a name any more, so the three statements it used
     // to be read as cannot be read. Which is the same defect this test is
     // about, one level up; the boundary is what is under test here, so the
@@ -155,7 +155,7 @@ fn the_keywords_themselves_are_untouched() {
     }
 }
 
-// --- the reserved words (ADR-051) --------------------------------------------
+// --- the reserved words (ADR-298) --------------------------------------------
 
 /// **Every word in `RESERVED_WORDS` is refused as a name**, and that is what
 /// holds the const and the grammar's `RESERVED` rule together.
@@ -239,7 +239,7 @@ fn the_grammar_sublanguages_words_are_still_names() {
 /// in that position.
 ///
 /// `Self::dsl` is the case that requires it: the shadow type of a
-/// deferred-parameter DSL is spelled with the keyword (ADR-007 D5).
+/// deferred-parameter DSL is spelled with the keyword (ADR-296 D5).
 #[test]
 fn a_path_segment_may_be_a_reserved_word() {
     let source = "\

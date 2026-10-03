@@ -8,7 +8,7 @@
 //! the one this compiler refuses on principle.
 //!
 //! **And a path whose head names nothing at all is `NK1181`**
-//! ([ADR-183](../../../docs/specification/adr/adr-183.md)), which used to be
+//! ([ADR-286](../../../docs/specification/adr/adr-286.md)), which used to be
 //! the half this file recorded as open. `nowhere::wobble` could have been a
 //! module, a foreign crate's item or a name no ledger had been told about, and
 //! from inside the checker those three looked alike — until the list of what a
@@ -79,7 +79,7 @@ fn a_variant_the_enum_does_not_have_is_refused_in_a_pattern() {
 }
 
 /// **A pattern nests, and so does this** —
-/// [ADR-137](../../../docs/specification/adr/adr-137.md) D1's *the parts are
+/// [ADR-291](../../../docs/specification/adr/adr-291.md) D10's *the parts are
 /// patterns*. Stopping at the outer path would find the shallow half of a rule,
 /// which is worse than not having it: the reader would learn that the check
 /// exists and then meet `rustc` anyway.
@@ -140,8 +140,8 @@ fn a_struct_has_no_members_under_the_separator() {
 }
 
 /// **A type's shape is reached through a **bound** and not by name**
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2, built by
-/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+/// ([ADR-304](../../../docs/specification/adr/adr-304.md) D2, built by
+/// [ADR-304](../../../docs/specification/adr/adr-304.md)).
 ///
 /// A reader who writes `Point::fields` read the specification, so *`Point` has
 /// nothing called `fields`* would send them looking for a spelling that does
@@ -225,7 +225,7 @@ fn a_variant_the_enum_has_is_not_refused() {
 /// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1 read the other
 /// way: a wrong refusal is worse than a missing one).
 /// **A head nothing declares is `NK1181` and not this refusal**
-/// ([ADR-183](../../../docs/specification/adr/adr-183.md)).
+/// ([ADR-286](../../../docs/specification/adr/adr-286.md)).
 ///
 /// The two are different questions and the messages say so: `NK1171` has read
 /// the declaration and is naming a misspelling; this one has read nothing
@@ -246,21 +246,26 @@ fn a_head_nothing_declares_is_its_own_refusal() {
             .contains("is written under `nowhere`, but `nowhere` isn't declared anywhere"),
         "{head:#?}"
     );
-    // **A way out that can be taken** (Part III C.2): each of the three names
-    // a file the reader writes.
+    // **A way out that can be taken** (Part III C.2): a `use`, with the
+    // manifest line and the describer where the head is not yet declared - and
+    // never a new file, which would join this package's namespace and make no
+    // head (ADR-286 D33).
     let help = head.help.as_deref().unwrap_or("");
     assert!(
-        help.contains(".nika") && help.contains("[dependencies]") && help.contains("describe"),
+        help.contains("use nowhere")
+            && help.contains("[dependencies]")
+            && help.contains("describe"),
         "{head:#?}"
     );
+    assert!(!help.contains(".nika"), "{head:#?}");
 }
 
 /// **Every head the corpus writes still passes**, which is the measurement
 /// issue #141's entry rested on: seven distinct paths used as values, each
 /// either a variant of an enum the program declares or a key a ledger records.
 ///
-/// And the three the entry named as the reason to fail open — a module of this
-/// package, a package the manifest declares, a `std` module — are each a head
+/// And the three the entry named as the reason to fail open — a package `use`
+/// brings in, a package the manifest declares, a `std` module — are each a head
 /// this compiler has read, which is why the refusal can be written at all.
 #[test]
 fn a_head_this_program_has_is_not_refused() {

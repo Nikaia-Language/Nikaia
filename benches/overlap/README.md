@@ -1,6 +1,6 @@
 # What an overlap costs
 
-ADR-033 lets two statements that touch nothing in common run at the same time.
+ADR-292 lets two statements that touch nothing in common run at the same time.
 This measures what that is worth, and it is the evidence §8.2 and §8.4 rest on.
 
 Four binaries over the same two reads — the `TWO_READS` program in
@@ -26,8 +26,8 @@ generated Rust, not to be generated from it.
 
 ## …and what it costs on the runtime instead
 
-[ADR-038](../../docs/specification/adr/adr-038.md) D4 starts the runtime before
-`main`, and [ADR-033](../../docs/specification/adr/adr-033.md) §8.5 predicted
+[ADR-303](../../docs/specification/adr/adr-303.md) D4 starts the runtime before
+`main`, and [ADR-292](../../docs/specification/adr/adr-292.md) predicted
 that a pair of operations on an I/O thread that is *already running* carries no
 per-pair wake-up at all. `runtime` is that measurement, and unlike the four
 above it goes through the **real** `nikaia_std` rather than a reduction of it:
@@ -49,7 +49,7 @@ difference is the finding. The numbers, the method and the confound are in
 ## …and what the *lowering* costs, which is not the same question
 
 Everything above measures `nikaia_std` from Rust.
-[ADR-033](../../docs/specification/adr/adr-033.md) D10 is a **lowering**: at
+[ADR-292](../../docs/specification/adr/adr-292.md) D6 is a **lowering**: at
 `user_parallelism = no` a pair of `std` file reads is emitted as
 `nikaia_std::task::read_pair`. `lowered.sh` measures that, through the whole
 pipeline and not a reduction of it:

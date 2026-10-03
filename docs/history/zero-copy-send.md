@@ -2,10 +2,10 @@
 
 **Date:** September 13, 2026
 **Status:** measured; the numbers are
-[ADR-058](../specification/adr/adr-058.md)'s evidence
-**Related:** [ADR-058](../specification/adr/adr-058.md) (the decision these
-settled), [ADR-018](../specification/adr/adr-018.md) D2 (what a handler may
-return), [ADR-038](../specification/adr/adr-038.md) D3 (the I/O split), Part III
+[ADR-058](adr/adr-058.md)'s evidence
+**Related:** [ADR-058](adr/adr-058.md) (the decision these
+settled), [ADR-018](adr/adr-018.md) D2 (what a handler may
+return), [ADR-038](adr/adr-038.md) D3 (the I/O split), Part III
 17.1 (`fs::map`)
 **Produced by:** [`benches/sendfile/`](../../benches/sendfile) —
 `./benches/sendfile/sendfile.sh 7`, twice; §2 is the first run and §2.1 carries
@@ -98,7 +98,7 @@ Machine CPU, µs per request. **Five runs**, all on the same box: the first two
 while it was busy with this repository's own builds, then one pinned to two
 cores with `taskset`, then two on a quiet box. The first run is kept in the
 table because it is the one the first draft of
-[ADR-058](../specification/adr/adr-058.md) argued from, and finding out that it was
+[ADR-058](adr/adr-058.md) argued from, and finding out that it was
 the outlier is the point of this section.
 
 ### Named at startup
@@ -170,7 +170,7 @@ Reproduced in **all five** runs:
   column is not — the instrument, not the mechanism.
 
 **Retired by the re-runs** — each of these was true in the busy run only, and
-each was in the first draft of [ADR-058](../specification/adr/adr-058.md):
+each was in the first draft of [ADR-058](adr/adr-058.md):
 
 * *"`sendfile` loses at 64 KiB."* One run of five. In the other four it is the
   best vehicle in its family there, by 20–30 %.
@@ -226,7 +226,7 @@ a thousand slow connections that is a memory-scaling argument for `sendfile`
 that this bench, with its one fast reader, cannot see. It is named here rather
 than folded into the recommendation.
 
-**Nothing here is encrypted.** [ADR-038](../specification/adr/adr-038.md) D2 binds
+**Nothing here is encrypted.** [ADR-038](adr/adr-038.md) D2 binds
 `rustls`, and a TLS response cannot use `sendfile` at all without kTLS — so on a
 server that terminates TLS, the `sendfile` column is not available and the
 `mapped` column is the answer at every size.
@@ -245,7 +245,7 @@ maps all 64 files up front, never evicts and never checks whether the file
 changed underneath it. A `std` that keeps mappings owes an eviction policy and
 an answer to "the file was replaced" — both are correctness work this number
 does not price, and
-[ADR-058](../specification/adr/adr-058.md) D8 is where they are decided rather than
+[ADR-058](adr/adr-058.md) D8 is where they are decided rather than
 assumed.
 
 **Nothing here is under memory pressure, and the cache is warm** — which is the
@@ -261,7 +261,7 @@ happens. A single connection with a fast reader cannot show either.
 machine class. What reproduced across runs here is the *ordering* and the
 *ratios* — `read_each` worst at small sizes, `mapped` and `cached` together,
 `sendfile` behind them until the megabyte and ahead after, `splice` last — and
-those are what [ADR-058](../specification/adr/adr-058.md) rests on.
+those are what [ADR-058](adr/adr-058.md) rests on.
 
 ---
 

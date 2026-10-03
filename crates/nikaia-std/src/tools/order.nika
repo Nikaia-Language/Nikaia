@@ -1,13 +1,13 @@
 // crates/nikaia-std/src/tools/order.nika
 //
 // **Whether two statements have to keep the order they were written in**
-// (ADR-033, Part I 8.1.1): the verdict half of the compiler's
-// `contracts::order`, moved from Rust (ADR-250, #125). What stays Rust is the
+// (ADR-292, Part I 8.1.1): the verdict half of the compiler's
+// `contracts::order`, moved from Rust (ADR-294, #125). What stays Rust is the
 // walk that reduces a statement to an `Operation`, or says why it could not.
 //
 // The rule is one sentence - *two operations whose touch sets are disjoint
 // have no order between them* - and it says "no" for every reason it can think
-// of, and for every reason it cannot (ADR-033 D4). Every refusal is either a
+// of, and for every reason it cannot (ADR-292 D3). Every refusal is either a
 // real dependency or an admission of ignorance, and the two are deliberately
 // worth the same; the reason is the whole point (D9).
 
@@ -36,9 +36,9 @@ pub enum Accounted {
     /// It performs something this analysis will not take apart, named so the
     /// report says *which* thing.
     Opaque(String),
-    /// Its `catch` handler can leave the function (ADR-034).
+    /// Its `catch` handler can leave the function (ADR-292).
     DivertingHandler,
-    /// It can fail and nothing catches the failure (ADR-034 D2).
+    /// It can fail and nothing catches the failure (ADR-292 D1).
     UncaughtFailure(String),
     /// Nothing describes what the call reaches, so it reaches everything (D4).
     NoTouches(String),
@@ -176,7 +176,7 @@ fn readable_name(reached: ref Reached) -> String? {
 }
 
 /// Whether a whole **run** of operations may run as one group, and why not
-/// (ADR-033 §6). **Every pair, not every adjacent pair**: disjointness is not
+/// (ADR-292). **Every pair, not every adjacent pair**: disjointness is not
 /// transitive, and believing it would overlap a read of a file with the write
 /// of it. The pair named is the earliest.
 pub fn group_verdict(run: ref Vec[Operation]) -> Verdict {
@@ -219,14 +219,14 @@ fn fits_with_the_front(run: ref Vec[Operation], at: i64) -> bool {
     return true
 }
 
-// The kinds of resource this compiler knows (ADR-033 D2). A ledger that names
+// The kinds of resource this compiler knows (ADR-292 D3). A ledger that names
 // another is not malformed - it is a file this compiler is too old to read,
 // and D4 says what to do with an effect that cannot be read.
 comptime KNOWN_KINDS: Array[ref String, 6] = ["file", "stdout", "stderr", "args", "lock", "socket"]
 
 /// A statement, reduced to an `Operation` - or the reason it could not be.
 /// `walking` carries the two ledgers and the destination the result of each
-/// call is asked about (`Going::Ours`, ADR-045 D1: the closure overlapping
+/// call is asked about (`Going::Ours`, ADR-312 D6: the closure overlapping
 /// builds is this compiler's own).
 ///
 /// Two shapes are read: a `let` of one name and a bare expression statement.
@@ -253,7 +253,7 @@ pub fn accounted(stmt: ref Stmt, words: ref winnow_grammar::InternerContext, wal
 
 // The value of a statement, looked through a `catch` whose handler cannot
 // divert: a handler that leaves makes the *next* statement conditional on
-// this one (ADR-034).
+// this one (ADR-292).
 fn accounted_value(binds: String?, value: ref Expr, names: ref winnow_grammar::InternerContext, walking: ref Walking) -> Accounted {
     return match value {
         Expr::TryCatch { expr, handler } => {
@@ -319,7 +319,7 @@ fn a_call_reaches(call: ref OneCall, caught: bool, walking: ref Walking, mut rea
     // entry without `touches` is the absence of an answer (D4).
     let contract = touches_described(key, walking) ?? return Accounted::NoTouches(key)
     // A failure nobody catches leaves the function, which makes the next
-    // statement conditional on this one (ADR-034 D2).
+    // statement conditional on this one (ADR-292 D1).
     if !caught && contract.fails_with.len() > 0 {
         return Accounted::UncaughtFailure(key)
     }
@@ -443,7 +443,7 @@ pub struct OneCall {
     pub arguments: Vec[Expr],
 }
 
-// What walking a statement's value found (ADR-033 §8.3): the calls it
+// What walking a statement's value found (ADR-292): the calls it
 // performs at any depth; whether it performs *something* even where this
 // could not say what; every method called, by name; and the first reason it
 // could not be taken apart.
@@ -525,7 +525,7 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
                 reduce(item, names, reduced)
             }
         }
-        // A jump ends the sequence (ADR-138 D1).
+        // A jump ends the sequence (ADR-276 D20).
         Expr::Return(_) => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
         Expr::Break => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
         Expr::Continue => stopped(reduced, Accounted::Opaque("a `return`, a `break` or a `continue`")),
@@ -566,7 +566,7 @@ fn reduce(node: ref Expr, names: ref winnow_grammar::InternerContext, mut reduce
             reduce(fallback, names, reduced)
         }
         Expr::LitInterpolated { .. } => stopped(reduced, Accounted::Opaque("text with code in it, whose holes this has not parsed")),
-        // *Which* entry `xs.len()` is needs the type checker (ADR-028); the
+        // *Which* entry `xs.len()` is needs the type checker (ADR-288); the
         // name is recorded and `accounted` asks whether every entry of it
         // reaches nothing. A `?.m()` is accounted for exactly as a `.m()`.
         Expr::MethodCall { receiver, method, args, config } => reduce_method(receiver, method, args, config, names, reduced),
@@ -672,11 +672,11 @@ fn an_arm_throws(arms: ref Vec[MatchArm], bound: bool) -> bool {
 }
 
 /// **Every `overlap { … }` block in a program, and what it was allowed**
-/// (ADR-050 D3): which branches are started first and which run while they
+/// (ADR-292 D3): which branches are started first and which run while they
 /// wait (D6), and - where two of them meet on something - the first pair
 /// that may not run together and why. `overlaps_in` is the blocks a body
 /// holds, at any depth; `pauses` whether a branch can pause, which is the
-/// emitter's answer and no analysis's here (ADR-033 §8.2b).
+/// emitter's answer and no analysis's here (ADR-292b).
 pub fn overlap_report(items: ref Vec[Spanned[Item]], names: ref winnow_grammar::InternerContext, walking: ref Walking, overlaps_in: fn(ref Block) -> Vec[Block] sync, pauses: fn(ref Spanned[Stmt]) -> bool sync) -> String {
     let mut out: String = ""
     for item in items {

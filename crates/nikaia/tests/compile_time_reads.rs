@@ -1,6 +1,6 @@
 //! **The files a build may read while it builds** —
-//! [ADR-072](../../../docs/specification/adr/adr-072.md) and
-//! [ADR-116](../../../docs/specification/adr/adr-116.md) D2.
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) and
+//! [ADR-310](../../../docs/specification/adr/adr-310.md) D3.
 //!
 //! `comptime CONFIG: &str = asset("config.txt")` puts a file's text into the
 //! program while it is built. Everything else here is about **which** files,
@@ -103,11 +103,11 @@ fn a_build_given_no_list_reads_nothing() {
     );
 }
 
-/// **Named in all three places, and the read happens** (D3, ADR-116 D2).
+/// **Named in all three places, and the read happens** (D3, ADR-310 D3).
 ///
 /// The flag is this test calling `Reads::with`, the list is `reads.txt`, and
 /// the literal is the line. What comes back is the file's text, and it crosses
-/// as the `&str` a `const` holds ([ADR-079](../../../docs/specification/adr/adr-079.md) D1).
+/// as the `&str` a `const` holds ([ADR-311](../../../docs/specification/adr/adr-311.md) D1).
 #[test]
 fn a_file_named_in_all_three_places_is_read() {
     let dir = scratch(
@@ -259,7 +259,7 @@ fn bytes_that_are_not_text_are_refused() {
 }
 
 /// **`asset` stands in a `comptime` initialiser and nowhere else**
-/// (ADR-116 D2), and the message names what a file read *while the program
+/// (ADR-310 D3), and the message names what a file read *while the program
 /// runs* is called — which is what a reader who wrote it here almost certainly
 /// meant.
 #[test]

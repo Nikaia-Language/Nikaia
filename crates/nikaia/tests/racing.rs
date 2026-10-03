@@ -1,14 +1,14 @@
 //! `select { … }` keeps the first arm to finish, and a task handle has
-//! `cancel()` ([ADR-148](../../../docs/specification/adr/adr-148.md)).
+//! `cancel()` ([ADR-292](../../../docs/specification/adr/adr-292.md)).
 //!
 //! Part II 12.4 wrote the block and
 //! [ADR-141](../../../docs/specification/adr/adr-141.md) D2 marked it
 //! *unspecified*: the **semantics** were built since
-//! [ADR-006](../../../docs/specification/adr/adr-006.md) D3 — the loser stops at
+//! [ADR-297](../../../docs/specification/adr/adr-297.md) D5 — the loser stops at
 //! its pause point, its `cleanup` is adopted, the deadline bounds it — and what
 //! was missing was the construct.
 //!
-//! [ADR-050](../../../docs/specification/adr/adr-050.md)'s `overlap` is the
+//! [ADR-292](../../../docs/specification/adr/adr-292.md)'s `overlap` is the
 //! other half of the pair (D4): it runs its branches at once and keeps
 //! **every** result, this one keeps the **first**.
 
@@ -114,7 +114,7 @@ fn every_arm_is_a_block_of_its_own() {
 }
 
 /// **D1: `_` is the ignore pattern and not a catch-all arm**
-/// ([ADR-126](../../../docs/specification/adr/adr-126.md) D1). A value
+/// ([ADR-291](../../../docs/specification/adr/adr-291.md) D6). A value
 /// *arrives* at that arm and is not wanted — which is exactly what `_` means in
 /// the language below, so nothing has to be translated.
 #[test]
@@ -160,13 +160,13 @@ fn one_arm_is_refused_with_its_reason() {
 }
 
 /// **D1: `select` is a keyword now**, which is the cost
-/// [ADR-084](../../../docs/specification/adr/adr-084.md) calls the most
+/// [ADR-276](../../../docs/specification/adr/adr-276.md) calls the most
 /// expensive thing a language adds and this record spends knowingly.
 #[test]
 fn select_is_a_reserved_word() {
     assert!(
         nikaia::parser::RESERVED_WORDS.contains(&"select"),
-        "`select` is reserved (ADR-148 D1)"
+        "`select` is reserved (ADR-292 D12)"
     );
     assert!(
         parse_to_ast("use std::time\n\nfn main() { let select = 3 }\n").is_err(),
@@ -336,7 +336,7 @@ fn a_task_that_is_not_cancelled_still_runs() {
 /// **A task that sleeps after `main` is done wakes when its clock says so**,
 /// and not at the drain's deadline: once `main`'s value was in, the drain went
 /// round without ever reaching the park where the clock is read, and a task
-/// nobody joined waited out the whole 30 seconds (found by ADR-239 D5).
+/// nobody joined waited out the whole 30 seconds (found by ADR-297 D5).
 #[test]
 fn a_task_that_sleeps_after_main_is_done_is_not_held_to_the_deadline() {
     let started = std::time::Instant::now();

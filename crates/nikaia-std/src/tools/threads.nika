@@ -1,16 +1,16 @@
 // crates/nikaia-std/src/tools/threads.nika
 //
 // Whether a value may cross a thread (ADR-005 §1 Group B, `NK25xx`). Moved
-// from the compiler's `contracts::send` (ADR-250, #125); the reasoning for
+// from the compiler's `contracts::send` (ADR-294, #125); the reasoning for
 // every row is that module's.
 //
-// One question, asked of a **type and a destination** (ADR-045 D1): may a
+// One question, asked of a **type and a destination** (ADR-312 D6): may a
 // value of this type go to *this* destination? The answer is a property of
 // the type and the destination and **the same at both settings of
 // `user_parallelism`** (Group B), so no switch reaches this file, and none
 // may. Into our own code a lock is answered by what it holds; into code
-// nothing describes it is refused (ADR-045 D3), and so is a shared count,
-// whose representation is chosen per value (ADR-061 D1). A described type
+// nothing describes it is refused (ADR-312 D8), and so is a shared count,
+// whose representation is chosen per value (ADR-312 D9). A described type
 // that says `crosses = false` is refused on its ledger's word (ADR-123 D1).
 // Everything nothing written down decides is `Undecided` - **not
 // permission** (ADR-010 D1).
@@ -26,31 +26,31 @@ comptime PLAIN_DATA: Array[ref String, 18] = ["bool", "char", "str", "String", "
 // since ADR-149 D4.
 comptime CONTAINER_TYPES: Array[ref String, 11] = ["BTreeMap", "BTreeSet", "HashMap", "HashSet", "List", "Option", "Receiver", "Result", "Sender", "Shared", "Vec"]
 
-// The family whose answer depends on where the value is going (ADR-045 D2,
-// D3; `Shared` joined by ADR-061 D1).
+// The family whose answer depends on where the value is going (ADR-312 D7,
+// D3; `Shared` joined by ADR-312 D9).
 comptime CHOSEN_TYPES: Array[ref String, 3] = ["Locked", "SharedMut", "Shared"]
 
 // How far into a type this walks before giving up: a struct that holds
 // itself through a container must terminate.
 comptime CROSSING_DEPTH: i64 = 16
 
-/// Where a value is going (ADR-045 D1).
+/// Where a value is going (ADR-312 D6).
 pub enum Going {
     /// Our own code on a thread of our own: a `spawn`ed task's body, and the
-    /// closure statement overlapping builds (ADR-033).
+    /// closure statement overlapping builds (ADR-292).
     Ours,
     /// Code nothing written down describes, which may do anything with what
-    /// it is given (ADR-038 D7).
+    /// it is given (ADR-303 D7).
     Foreign,
 }
 
 /// **Why** a value may not cross.
 pub enum Refusal {
-    /// A lock at a foreign destination (ADR-045 D3) - the one `NK2503` is
+    /// A lock at a foreign destination (ADR-312 D8) - the one `NK2503` is
     /// about.
     Lock,
     /// A shared count at a foreign destination holding nothing a lock refuses
-    /// first (ADR-061 D1).
+    /// first (ADR-312 D9).
     Count,
     /// A described type that says outright that it may not cross (ADR-123 D1).
     Said,
@@ -94,7 +94,7 @@ impl Crossing {
     }
 
     /// **Why** it is refused, where it is - the word `NK2503` reads
-    /// (ADR-039 D6).
+    /// (ADR-281 D32).
     pub fn why(ref self) -> Refusal? {
         return match self {
             Crossing::MayNot { why, .. } => why.clone(),
@@ -103,7 +103,7 @@ impl Crossing {
     }
 
     /// One concrete way out (Part III C.2), where there is anything to get
-    /// out of: the remedy ADR-045 D3 names for a lock, ADR-061 D1's for a
+    /// out of: the remedy ADR-312 D8 names for a lock, ADR-312 D9's for a
     /// count, and for a ledger's word, what a reader can always do.
     pub fn way_out(ref self) -> String? {
         return match self {
@@ -114,7 +114,7 @@ impl Crossing {
 
     /// One line saying why a value of this type may not cross, for a
     /// diagnostic's note; nothing where it may. No Rust vocabulary, and the
-    /// lock's sentence says the answer was chosen (ADR-045 D3).
+    /// lock's sentence says the answer was chosen (ADR-312 D8).
     pub fn note(ref self) -> String? {
         return match self {
             Crossing::May => null,
@@ -180,7 +180,7 @@ fn crossing_walk(ty: ref Ty, walking: ref Walking, mut seen: collections::BTreeS
         Ty::Unknown => Crossing::Undecided { part: "?" },
         // A count is part of the type and not of the value (ADR-152 D1).
         Ty::Count(_) => Crossing::May,
-        // What the C boundary lends lives for the call (ADR-147 D1); a
+        // What the C boundary lends lives for the call (ADR-302 D5); a
         // variable nothing bound, a lambda's captures and what a sequence
         // walks are written down nowhere.
         Ty::Pointed { .. } => Crossing::Undecided { part: ty.text() },
@@ -212,14 +212,14 @@ fn named_crossing(ty: ref Ty, name: ref String, args: ref Vec[Ty], walking: ref 
         // A container with no arguments said nothing about what it holds.
         let inside = if args.len() == 0 { Crossing::Undecided { part: ty.text() } } else { all_of(args, walking, seen, depth) }
         // **`Shared` is in both lists, and the contents answer first**: where
-        // there is a lock inside, the lock is the better sentence. ADR-061 D1
+        // there is a lock inside, the lock is the better sentence. ADR-312 D9
         // is what is left when nothing inside refuses.
         if foreign && one_of(CHOSEN_TYPES, name) && inside.refused_part() == null {
             return Crossing::MayNot { part: ty.text(), at: null, why: Refusal::Count }
         }
         return inside
     }
-    // **The one row the destination reaches** (ADR-045 D2, D3).
+    // **The one row the destination reaches** (ADR-312 D7, D8).
     if one_of(CHOSEN_TYPES, name) {
         if foreign {
             return Crossing::MayNot { part: ty.text(), at: null, why: Refusal::Lock }
@@ -273,7 +273,7 @@ fn all_of(parts: ref Vec[Ty], walking: ref Walking, mut seen: collections::BTree
 
 /// The worse of two answers, with `MayNot` worse than `Undecided`, and the
 /// first refusal kept: a refusal a reader can act on beats an admission of
-/// ignorance (ADR-033 D9's rule, applied to the same kind of choice).
+/// ignorance (ADR-292 D2's rule, applied to the same kind of choice).
 pub fn worst_of(worst: Crossing, answer: Crossing) -> Crossing {
     return match worst {
         Crossing::MayNot { .. } => worst,
@@ -302,7 +302,7 @@ fn field_named_at(field: ref String, part: ref String, at: ref String?, why: ref
 
 // What the ledgers say about a type, by the name a program writes: the
 // program's own first, then `std`'s, by the whole key and then by a key that
-// ends in `::` and the name (ADR-011 D2).
+// ends in `::` and the name (ADR-296 D17).
 fn ledger_type(name: ref String, own: ref Ledger, library: ref Ledger) -> TypeContract? {
     let suffix = f"::{name}"
     let mine = in_one_ledger(name, suffix, own)

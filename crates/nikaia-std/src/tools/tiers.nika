@@ -1,8 +1,8 @@
 // crates/nikaia-std/src/tools/tiers.nika
 //
-// What a declared `String` is below, decided by what flows into it (ADR-222,
-// ADR-223) - the questions the compiler's `text_tiers` asks of a method's name
-// and a written type, moved from Rust (ADR-250, #125). What stays Rust is the
+// What a declared `String` is below, decided by what flows into it (ADR-282,
+// ADR-282) - the questions the compiler's `text_tiers` asks of a method's name
+// and a written type, moved from Rust (ADR-294, #125). What stays Rust is the
 // walk that follows text into positions and the tiers it decides: its kinds
 // and positions are keys of ordered sets and maps, which a type this language
 // declares has no order for (ADR-204 §4).
@@ -97,7 +97,7 @@ pub fn is_a_container_name(callee: ref String) -> bool {
 
 /// A declared `String`, or `String?`: a value that may be absent is a
 /// position as well, and `null` puts no text of either kind into it
-/// (ADR-224 D1).
+/// (ADR-282 D12).
 pub fn plain_string(names: ref winnow_grammar::InternerContext, ty: ref Type) -> bool {
     return names.resolve(ty.name) == "String" && ty.generics.len() == 0 && !ty.is_view && !ty.is_tuple && !ty.is_slice && ty.code == null
 }

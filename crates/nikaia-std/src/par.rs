@@ -61,7 +61,7 @@ impl<I: ParallelIterator> Par<I> {
     }
 
     /// Everything the walk produces, in the list's order, as what the place it
-    /// goes declares - a list where nothing does (ADR-227 D1).
+    /// goes declares - a list where nothing does (ADR-293 D25).
     pub fn collect<C: FromParallelIterator<I::Item>>(self) -> C {
         self.0.collect()
     }

@@ -26,30 +26,27 @@ changelog and the roadmap, and are not repeated there.
 ## 2. The decisions — [`specification/adr/`](specification/adr)
 
 **Why the language is that way.** One decision per record, numbered `D1…Dn` so
-it can be cited, plus the evidence that settled it — including the number, when
-a number is what decided it.
+it can be cited, with the reasoning that settles it and, where a number decided
+it, that number. A record states the decision **as it stands today**: no story
+of how it was reached, no version that built it, no progress.
 
-Start at the [ADR index](specification/adr/README.md): every record, what it
-decides, whether it is built, and what supersedes what.
+Start at the [ADR index](specification/adr/README.md): every live record, what
+it decides, and whether it is built (`yes`, `no`, or `partly:` with what is
+missing).
 
-An ADR is written once. When a later decision **changes** it, the change is a
-new ADR that names the section or `Dn` it displaces — never a silent edit. That
-is why records marked *superseded* are still here and still cited: every
-supersession in this project is **partial**.
+When a later decision **changes** a record, the record is updated in place: the
+rule is rewritten to what holds now, with a one-line *Changed by ADR-MMM Dn*
+note under it. A decision **withdrawn** altogether is removed, with one sentence
+saying what is done instead. When a group of records is **replaced** by one
+record that states all their decisions in their current form, the old records
+move to [`history/adr/`](history/adr) and no live file cites them
+(`scripts/check-adr-refs.py` enforces it).
 
-**But a decision that is *withdrawn* is removed, not superseded.** When the
-project stops doing something altogether — a dependency it no longer has, a
-mechanism it no longer builds, a path nothing takes — the records are rewritten
-as though it had never been there, and one sentence says what is done instead.
-The ADRs do not owe a reader every loop the project turned; they owe the reason
-the current answer is the answer. Where the withdrawn thing went, and why, is
-[`../CHANGELOG.md`](../CHANGELOG.md) and these notes — which is what they are
-for.
-
-The line between the two: a supersession leaves a **live citation** behind,
-because something still rests on the displaced part. A withdrawal leaves none.
-If after the rewrite anything still cites it, it was a supersession and the
-rewrite was wrong.
+The route to a decision is history: the archive's
+[README](history/adr/README.md) maps each archived decision to the live one,
+`git log` shows how a live record changed, and
+[`../CHANGELOG.md`](../CHANGELOG.md) and the notes below hold what was built,
+tried and measured.
 
 ## 3. The notes — this directory
 
@@ -100,7 +97,7 @@ is normative and nothing may depend on it to know what a program means.
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and
   the 11 ns an uncontended acquisition costs where it can never be contended.
-* [`lock-free.md`](lock-free.md) — whether ADR-039 §3's open door is worth
+* [`lock-free.md`](lock-free.md) — whether ADR-281's open door is worth
   walking through: what a compare-and-swap loop would buy over the shipped
   crossing door, the **3.7×** defect the measurement uncovered on the way, and
   §6's finding that what decides it is not the saving but whether a real program
@@ -138,7 +135,7 @@ question the page was written to answer is no longer open.
   where compile-time staging would pay; every candidate is closed
   ([ADR-178](specification/adr/adr-178.md)).
 * [`from-for-throws-and-touches.md`](history/from-for-throws-and-touches.md) —
-  whether ADR-029 D3's `sync = "from(f)"` argument carries to the other two
+  whether ADR-288 D15's `sync = "from(f)"` argument carries to the other two
   effect columns; answered, and the syntax it was written against is
   superseded.
 * [`std-sysroot.md`](history/std-sysroot.md) — what `std`'s build graph cost
@@ -146,21 +143,21 @@ question the page was written to answer is no longer open.
 * [`nightly-cost.md`](history/nightly-cost.md) — what the pinned nightly
   toolchain cost and bought; withdrawn, per `../CHANGELOG.md`.
 * [`runtime-cost.md`](history/runtime-cost.md) — what a pair of operations
-  costs on a running runtime; the evidence behind ADR-038 §4.3 and ADR-033 D10,
+  costs on a running runtime; the evidence behind ADR-303 and ADR-292 D6,
   both decided.
 * [`break-continue-cost.md`](history/break-continue-cost.md) — `break` and
-  `continue`, priced before [ADR-084](specification/adr/adr-084.md) decided
+  `continue`, priced before [ADR-276](specification/adr/adr-276.md) decided
   them.
 * [`rc-or-arc.md`](history/rc-or-arc.md) — what an atomic reference count
   costs; the question ADR-037 D3 left open, closed by ADR-037 D6–D8.
 * [`fixed-map-lookup.md`](history/fixed-map-lookup.md) — a fixed map's lookup,
   `match` against a perfect hash; the crossover
-  [ADR-176](specification/adr/adr-176.md) D2 rests on.
+  [ADR-311](specification/adr/adr-311.md) D9 rests on.
 * [`zero-copy-send.md`](history/zero-copy-send.md) — what it costs to answer a
-  request with a file; [ADR-058](specification/adr/adr-058.md)'s evidence.
+  request with a file; [ADR-289](specification/adr/adr-289.md)'s evidence.
 * [`foreign-runtime.md`](history/foreign-runtime.md) — a Nikaia program that
   starts `hyper`; the finding changed no decision under
-  [ADR-038](specification/adr/adr-038.md) D7.
+  [ADR-303](specification/adr/adr-303.md) D7.
 * [`technical_notes.md`](history/technical_notes.md) — compiler-internals
   findings from the `rustc_ast` path; that path is withdrawn.
 * [`withdrawn-one-way-down.md`](history/withdrawn-one-way-down.md) — what the

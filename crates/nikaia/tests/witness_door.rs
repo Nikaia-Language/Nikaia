@@ -1,5 +1,5 @@
 //! `set(neu; after: seen)` is the one door for a stamped value
-//! ([ADR-111](../../../docs/specification/adr/adr-111.md) D5).
+//! ([ADR-281](../../../docs/specification/adr/adr-281.md) D26).
 //!
 //! D1 to D4 made a value a lock hands out a `Seen[T]` and refused every `set`
 //! that takes one — which left a stamped value exactly one way through, the
@@ -232,7 +232,7 @@ fn an_overtaken_witness_leaves_the_value_alone() {
 }
 
 /// **`Locked[T]` is the same door**, which is what one surface over two shapes
-/// means ([ADR-057](../../../docs/specification/adr/adr-057.md) D4).
+/// means ([ADR-281](../../../docs/specification/adr/adr-281.md) D9).
 #[test]
 fn the_local_shape_has_the_same_door() {
     let printed = ran(
@@ -303,7 +303,7 @@ fn the_lowering_is_not_a_second_door() {
 }
 
 /// **A `?.` decides whether the call happens and never what a call is**
-/// ([ADR-066](../../../docs/specification/adr/adr-066.md)), so the door is the
+/// ([ADR-278](../../../docs/specification/adr/adr-278.md)), so the door is the
 /// same door through one.
 ///
 /// This is the shape that would have been a **silent wrong value**: a witness
@@ -349,7 +349,7 @@ fn a_witness_is_lent_and_can_be_read_again() {
 /// **And the `&` that makes it one is the compiler's to write** (ADR-094 D1).
 ///
 /// `lends` withholds its claim on every method argument, because the emitter
-/// cannot resolve a receiver ([ADR-028](../../../docs/specification/adr/adr-028.md)),
+/// cannot resolve a receiver ([ADR-288](../../../docs/specification/adr/adr-288.md)),
 /// so this one position is refused on its own — without it a written `&` comes
 /// out `&&` and the reader meets `rustc` about the generated file.
 #[test]

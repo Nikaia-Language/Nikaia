@@ -1,11 +1,11 @@
 // crates/nikaia-std/src/tools/render.nika
 //
-// **A finding on the `.nika` line it is about** (ADR-012, Part III C.2): the
+// **A finding on the `.nika` line it is about** (ADR-300, Part III C.2): the
 // headline, the file and the place, the lines with each named place
 // underlined, then the reasons and one way out. Every message a reader gets
 // has this shape - the checker's own findings, `NK2202`, and `rustc`'s words
 // relayed - so it is written once, here. Moved from the compiler's
-// `diagnostics` (ADR-250, #125).
+// `diagnostics` (ADR-294, #125).
 //
 // ```text
 // error[NK1139]: You're changing `count`, but it wasn't declared as mutable.
@@ -257,9 +257,9 @@ pub struct Pause {
     /// The callee is `std`'s, not this program's.
     pub from_library: bool,
     /// Another package's function that does not pause today and whose source
-    /// does not say `sync` (ADR-244 D1).
+    /// does not say `sync` (ADR-288 D28).
     pub unpromised: bool,
-    /// An `overlap` or a `select` block rather than a call (ADR-163 D1).
+    /// An `overlap` or a `select` block rather than a call (ADR-292 D16).
     pub construct: bool,
 }
 
