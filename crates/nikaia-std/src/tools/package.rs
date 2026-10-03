@@ -503,7 +503,7 @@ fn the_boundary(on_the_line: Option<&str>, source: &str, boundaries: &[Boundary]
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Escape {
-    Result,
+    Returned,
     Param(String),
     Outer(String),
     Task,
@@ -702,7 +702,7 @@ fn plan_of(item: &Item, target: Option<String>, ask: &BufferAsk<'_>, holes_of: &
                 Stmt::Expr(ref value) => {
                     walk.statement = last.span.start as i64;
                     let origins = origins_of(value, ask, holes_of, unaliased, &mut walk);
-                    if !is_the_buffer(value, ask, &walk) { escape_all(&origins, &Escape::Result, &mut walk); }
+                    if !is_the_buffer(value, ask, &walk) { escape_all(&origins, &Escape::Returned, &mut walk); }
                 },
                 _ => { },
             }
@@ -779,7 +779,7 @@ fn buffer_statement(stmt: &Stmt, span: &Span, ask: &BufferAsk<'_>, holes_of: &im
             spawns_in(returned, ask, holes_of, walk);
             nested_blocks(returned, at, ask, holes_of, unaliased, walk);
             let origins = origins_of(returned, ask, holes_of, unaliased, walk);
-            if walk.result_carries && !is_the_buffer(returned, ask, &walk) { escape_all(&origins, &Escape::Result, walk); }
+            if walk.result_carries && !is_the_buffer(returned, ask, &walk) { escape_all(&origins, &Escape::Returned, walk); }
         },
         Stmt::Expr(expr) => {
             spawns_in(expr, ask, holes_of, walk);
@@ -971,7 +971,7 @@ fn same_escape(a: &Escape, b: &Escape) -> bool { escape_word(a) == escape_word(b
 
 fn escape_word(escaping: &Escape) -> String {
     match escaping {
-        Escape::Result => String::from("0"),
+        Escape::Returned => String::from("0"),
         Escape::Param(name) => format!("1{}", name),
         Escape::Outer(name) => format!("2{}", name),
         Escape::Task => String::from("3"),
@@ -1478,7 +1478,7 @@ fn decide_source(id: &(i64, String), source: &Source, path: &[(i64, bool)], walk
     for (_, way) in ways.iter() {
         plan.escapes.push((source.clone(), way.clone()));
         match way {
-            Escape::Result => { leaves = true; },
+            Escape::Returned => { leaves = true; },
             Escape::Param(_) => { leaves = true; },
             Escape::Task => { task = true; },
             Escape::Outer(name) => outer.push(name.to_owned()),

@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.404] — 2026-10-03
+
+**Where each buffer lives is walked in Nikaia** (ADR-283, ADR-294, #125).
+`contracts::keep`'s walk - which locals point into which buffers, where each
+view leaves its scope, and the keep each buffer goes into, with `NK2304`
+where none can hold it - moves into `tools/buffers.nika` (1 243 lines). What
+stays in Rust is the plan in the types the emitter reads. 24.5 % of the
+toolchain is Nikaia.
+
+Two compiler defects the move found, fixed in the compiler (ADR-294 D3):
+
+* **A copy of a number, a `bool`, a `char` or a tuple does not pause.** No
+  ledger describes `i64::clone`, so `at.clone()` was a method nothing
+  describes, and ADR-288's polarity made every function around it - and
+  every caller - `async`. It is the derived copy, answered as a declared
+  record's already was.
+* **A parameter lent by inference is a map key as it is.** `place: (i64,
+  String)` that the body only reads is a `&(i64, String)` below, and
+  `m[place]` put a second `&` in front of it, which the map has no `Borrow`
+  for.
+
 ## [0.0.403] — 2026-10-03
 
 **A claim the compiler shows false with values refuses the program**

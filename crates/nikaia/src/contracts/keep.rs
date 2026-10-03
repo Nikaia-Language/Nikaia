@@ -332,7 +332,7 @@ fn source_from(source: nikaia_std::tools::buffers::Source) -> Source {
 fn escape_from(escape: nikaia_std::tools::buffers::Escape) -> Escape {
     use nikaia_std::tools::buffers::Escape as Nika;
     match escape {
-        Nika::Result => Escape::Result,
+        Nika::Returned => Escape::Result,
         Nika::Param(name) => Escape::Param(name),
         Nika::Outer(name) => Escape::Outer(name),
         Nika::Task => Escape::Task,

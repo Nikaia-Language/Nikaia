@@ -18,8 +18,10 @@ use std::collections
 
 /// Where a view leaves the scope that made it.
 pub enum Escape {
-    /// Handed back to the caller.
-    Result,
+    /// Handed back to the caller. Not `Result`: a public name `Result` in
+    /// `std` makes `rustc` spell the real one `std::result::Result` in every
+    /// message, and what reads those messages looks for `` `Result< ``.
+    Returned,
     /// Kept by a `mut` parameter, or by the subject.
     Param(String),
     /// Kept by a local that outlives the buffer's scope.
@@ -245,7 +247,7 @@ fn plan_of(item: ref Item, target: String?, ask: ref BufferAsk, holes_of: fn(ref
                     walk.statement = last.span.start as i64
                     let origins = origins_of(value, ask, holes_of, unaliased, walk)
                     if !is_the_buffer(value, ask, walk) {
-                        escape_all(origins, Escape::Result, walk)
+                        escape_all(origins, Escape::Returned, walk)
                     }
                 }
                 else => {}
@@ -340,7 +342,7 @@ fn buffer_statement(stmt: ref Stmt, span: ref Span, ask: ref BufferAsk, holes_of
             // Only a result that can hold a view hands one back, and a buffer
             // handed back whole is a move.
             if walk.result_carries && !is_the_buffer(returned, ask, walk) {
-                escape_all(origins, Escape::Result, walk)
+                escape_all(origins, Escape::Returned, walk)
             }
         }
         Stmt::Expr(expr) => {
@@ -611,7 +613,7 @@ fn same_escape(a: ref Escape, b: ref Escape) -> bool {
 // An escape as one word, for comparing and for ordering.
 fn escape_word(escaping: ref Escape) -> String {
     return match escaping {
-        Escape::Result => "0",
+        Escape::Returned => "0",
         Escape::Param(name) => f"1{name}",
         Escape::Outer(name) => f"2{name}",
         Escape::Task => "3",
@@ -1269,7 +1271,7 @@ fn decide_source(id: (i64, String), source: ref Source, path: ref Vec[(i64, bool
     for (_, way) in ways {
         plan.escapes.push((source.clone(), way.clone()))
         match way {
-            Escape::Result => {
+            Escape::Returned => {
                 leaves = true
             }
             Escape::Param(_) => {
