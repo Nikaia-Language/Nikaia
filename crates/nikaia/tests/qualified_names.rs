@@ -246,21 +246,26 @@ fn a_head_nothing_declares_is_its_own_refusal() {
             .contains("is written under `nowhere`, but `nowhere` isn't declared anywhere"),
         "{head:#?}"
     );
-    // **A way out that can be taken** (Part III C.2): each of the three names
-    // a file the reader writes.
+    // **A way out that can be taken** (Part III C.2): a `use`, with the
+    // manifest line and the describer where the head is not yet declared - and
+    // never a new file, which would join this package's namespace and make no
+    // head (ADR-286 D33).
     let help = head.help.as_deref().unwrap_or("");
     assert!(
-        help.contains(".nika") && help.contains("[dependencies]") && help.contains("describe"),
+        help.contains("use nowhere")
+            && help.contains("[dependencies]")
+            && help.contains("describe"),
         "{head:#?}"
     );
+    assert!(!help.contains(".nika"), "{head:#?}");
 }
 
 /// **Every head the corpus writes still passes**, which is the measurement
 /// issue #141's entry rested on: seven distinct paths used as values, each
 /// either a variant of an enum the program declares or a key a ledger records.
 ///
-/// And the three the entry named as the reason to fail open — a module of this
-/// package, a package the manifest declares, a `std` module — are each a head
+/// And the three the entry named as the reason to fail open — a package `use`
+/// brings in, a package the manifest declares, a `std` module — are each a head
 /// this compiler has read, which is why the refusal can be written at all.
 #[test]
 fn a_head_this_program_has_is_not_refused() {

@@ -6308,7 +6308,7 @@ impl<'a> Checker<'a> {
     ///
     /// **What a head may legally be**, asked in order and every one of them
     /// something this compiler has already read: a **type** declared here or
-    /// recorded by either ledger, a **module** of this package, a **package**
+    /// recorded by either ledger, a **package** `use` brings in, a **package**
     /// the manifest declares, a **crate** a description covers, a `std`
     /// module, a **grammar**, an opaque handle, or a type parameter. A ledger
     /// that records *anything* under `head::` answers too, because a crate is
@@ -6367,16 +6367,19 @@ impl<'a> Checker<'a> {
                 "`{written}` is written under `{head}`, but `{head}` isn't declared anywhere."
             ),
             notes: vec![
-                "A name in front of `::` has to be a type, a module of this package, a \
+                "A name in front of `::` has to be a type, a package `use` brings in, a \
                  package in `nikaia.toml`, a described Rust crate or a `std` module, and \
                  `{head}` is none of them."
                     .replace("{head}", head)
                     .to_string(),
             ],
+            // **A `use`, never a file** (ADR-286 D33): a `.nika` file beside this
+            // one joins the package's one namespace and makes no head.
             help: Some(format!(
-                "To declare `{head}`, add a `{head}.nika` file beside this one, a \
-                 `[dependencies]` line in `nikaia.toml`, or run `nikaia describe {head}` \
-                 for a Rust crate."
+                "If `{head}` is a package or a `std` module, write `use {head}` at the top \
+                 of the file - for a package, also add it to `[dependencies]` in \
+                 `nikaia.toml`; for a Rust crate, run `nikaia describe {head}`. If it is \
+                 a type, declare it in this package."
             )),
             labels: Vec::new(),
         });
