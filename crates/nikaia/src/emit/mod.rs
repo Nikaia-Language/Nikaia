@@ -822,6 +822,18 @@ pub fn emit_std_items_against(
         target: Target::X86_64Linux,
         ..Build::default()
     };
+    emit_std_items_against_at(parsed, beside, own, described, build)
+}
+
+/// The same at a given build, for the test that holds the package to lowering
+/// the same at both settings of `user_parallelism` (ADR-002 D4).
+pub fn emit_std_items_against_at(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &crate::contracts::Ledger,
+    described: &crate::contracts::Ledger,
+    build: Build,
+) -> Result<Lowered> {
     let mut library = std_ledger().clone();
     library.types.extend(described.types.clone());
     library.functions.extend(described.functions.clone());

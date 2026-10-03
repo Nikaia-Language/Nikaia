@@ -50,7 +50,7 @@ COMPILER_NIKA = {
     "findings.nika": "a refusal a check of the toolchain reports, as one record (0.0.320)",
     "traits.nika": "traits: an impl against the trait it implements (0.0.320)",
     "throws.nika": "contracts::throws: the error sets' fixpoint, what a `throw` names, and the walk of what a body throws (0.0.321, 0.0.341)",
-    "locks.nika": "contracts::locks: which functions can open a lock, the fixpoint (0.0.322)",
+    "locks.nika": "contracts::locks: which functions can open a lock, the fixpoint (0.0.322), the walk, the doors and the graph over a unit (0.0.395)",
     "touch.nika": "contracts::touch: when two resources force an order, the touches fixpoint (0.0.324)",
     "calls.nika": "contracts::sync::reached: what a call resolves to, for every analysis (0.0.325)",
     "foreign.nika": "the walk of the tree, for foreign, contracts::trust, contracts::locks, contracts::keep, contracts::keeps, contracts::touch and contracts::sync (0.0.334-0.0.343)",
