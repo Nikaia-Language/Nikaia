@@ -1311,7 +1311,6 @@ body {
   gap: 16px;
 }
 
-.home-code.markdown-body pre.diagnostic .d-warning { color: #e3b341; font-weight: 700; }
 
 .stats {
   display: grid;

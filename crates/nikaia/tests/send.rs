@@ -134,6 +134,7 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         Path::new("app.nika"),
         source,
         user_parallelism,
+        "error",
     )
     .err()
     .map(|error| format!("{error:#}"))

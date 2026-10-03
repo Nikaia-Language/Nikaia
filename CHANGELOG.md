@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.403] — 2026-10-03
+
+**A claim the compiler shows false with values refuses the program**
+(ADR-269 D8). `NK1207` - an `assert`, or a call to a function with a
+precondition, false every time it is reached or for a value the compiler
+shows reaches it - was a warning, so that a better prover would never refuse
+what an older one built. That is turned round: a program the compiler has
+shown to break its own contract does not build, because fewer defects in
+production is what the language is for, and what a newer prover refuses was
+wrong before it was refused.
+
+The bypass is `[build] refuted-claims = "warn"`, or `--refuted-claims warn`
+for one build: each such claim is a warning with a note and stays D4's check
+where it is reached. It is resolved with the other build options, handed to
+the wrapper, part of the cache key at `warn`, and a word other than `error`
+or `warn` fails the build. The tally counts the refusals apart from the type
+errors (*1 claim shown false*), and the note that the program stops where
+the claim is checked moved to the bypass, where it is true. The tests that
+show a check failing at run time build with the bypass, and first show the
+program refused without it.
+
 ## [0.0.402] — 2026-10-03
 
 **A callee's precondition is carried back through the call, and a claim false

@@ -1145,17 +1145,14 @@ impl<'a> Prover<'a> {
         if let Some(values) = refuted.as_ref().filter(|_| !self.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
-                severity: Severity::Warning,
+                severity: Severity::Error,
                 span,
                 code: "NK1207",
                 message: format!("`{written}` is false every time it is reached."),
-                notes: vec![
-                    format!(
-                        "What is known before it rules the claim out: {}.",
-                        shown(values)
-                    ),
-                    "It is checked when the program runs, and stops it there.".to_string(),
-                ],
+                notes: vec![format!(
+                    "What is known before it rules the claim out: {}.",
+                    shown(values)
+                )],
                 help: Some(
                     "If the claim is right, the code before it is wrong; if the code is right, \
                      the claim is."
@@ -1173,7 +1170,7 @@ impl<'a> Prover<'a> {
         if let Some(values) = sometimes.as_ref().filter(|_| !self.collecting) {
             let written = crate::check::written(self.parsed, cond);
             self.out.findings.push(Finding {
-                severity: Severity::Warning,
+                severity: Severity::Error,
                 span,
                 code: "NK1207",
                 message: format!("`{written}` is false when {}.", shown(values)),
@@ -1181,7 +1178,6 @@ impl<'a> Prover<'a> {
                     "That state reaches it: what is known here pins every name the claim \
                      depends on."
                         .to_string(),
-                    "It is checked when the program runs, and stops it there.".to_string(),
                 ],
                 help: Some(
                     "If the claim is right, the code before it is wrong; if the code is right, \
@@ -1426,7 +1422,7 @@ impl<'a> Prover<'a> {
                     (None, _) => (pre.written.clone(), None),
                 };
                 self.out.findings.push(Finding {
-                    severity: Severity::Warning,
+                    severity: Severity::Error,
                     span,
                     code: "NK1207",
                     message: format!(
@@ -1436,10 +1432,6 @@ impl<'a> Prover<'a> {
                     notes: [Some(format!("Here {}.", shown(&given))), from]
                         .into_iter()
                         .flatten()
-                        .chain([
-                            "When the program runs, it stops where the precondition is checked."
-                                .to_string(),
-                        ])
                         .collect(),
                     help: Some(format!(
                         "Pass `{callee}` arguments for which `{written}` holds, or check them \
@@ -1470,7 +1462,7 @@ impl<'a> Prover<'a> {
                     )
                 });
                 self.out.findings.push(Finding {
-                    severity: Severity::Warning,
+                    severity: Severity::Error,
                     span,
                     code: "NK1207",
                     message: format!(
@@ -1480,10 +1472,6 @@ impl<'a> Prover<'a> {
                     notes: [Some(format!("Then {}.", shown(&given))), from]
                         .into_iter()
                         .flatten()
-                        .chain([
-                            "When the program runs, it stops where the precondition is checked."
-                                .to_string(),
-                        ])
                         .collect(),
                     help: Some(format!(
                         "Pass `{callee}` arguments for which `{written}` holds, or check them \

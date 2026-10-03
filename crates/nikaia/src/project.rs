@@ -59,6 +59,8 @@ const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 /// `--optimization`'s words, resolved
 /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1).
 const OPTIMIZATION_VAR: &str = "NIKAIA_OPTIMIZATION";
+/// `--refuted-claims`, resolved, for the wrapper ([ADR-269](../../docs/specification/adr/adr-269.md) D8).
+const REFUTED_VAR: &str = "NIKAIA_REFUTED_CLAIMS";
 /// Set where the build is `nikaia test`'s
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 const TESTS_VAR: &str = "NIKAIA_TESTS";
@@ -106,11 +108,29 @@ pub struct Settings {
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Empty where
     /// neither says anything.
     pub optimization: String,
+    /// **What a claim shown false with values is**
+    /// ([ADR-269](../../docs/specification/adr/adr-269.md) D8): `error`, the
+    /// default, refuses the program; `warn` builds it, the claim checked where
+    /// it is reached. The bypass for a program a better prover now refutes.
+    pub refuted_claims: String,
     /// **Whether this is `nikaia test`'s build**
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1): the program's
     /// `test` blocks are compiled, and its `main` runs them by number. A
     /// choice like the others, so the cache and the wrapper both see it.
     pub tests: bool,
+}
+
+/// `error` or `warn`, what `--refuted-claims` and `[build] refuted-claims`
+/// may say ([ADR-269](../../docs/specification/adr/adr-269.md) D8).
+fn refuted_claims(word: &str) -> Result<String> {
+    match word {
+        "error" | "warn" => Ok(word.to_string()),
+        other => Err(anyhow!(
+            "`refuted-claims` is `error` or `warn`, not `{other}`. `error` refuses a program \
+             with a claim the compiler shows false with values; `warn` builds it and checks the \
+             claim when it runs."
+        )),
+    }
 }
 
 /// **`name:level` words, comma-separated**, to what they decide
@@ -178,6 +198,7 @@ impl Settings {
             .setting("reentrancy-check", None, "yes")
             .to_string();
         let optimization = manifest.setting("optimization", None, "").to_string();
+        let refuted_claims = refuted_claims(manifest.setting("refuted-claims", None, "error"))?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
@@ -186,6 +207,7 @@ impl Settings {
             user_parallelism,
             reentrancy_check,
             optimization,
+            refuted_claims,
             tests: false,
         })
     }
@@ -194,6 +216,17 @@ impl Settings {
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D1). Nothing a
     /// program means depends on it, so a single build may say it, as it may
     /// say `--target`.
+    /// **The command line's `--refuted-claims` over the manifest's**
+    /// ([ADR-269](../../docs/specification/adr/adr-269.md) D8): a single build
+    /// may let through a claim a newer prover refutes, as it may name another
+    /// target.
+    pub fn refutations(&mut self, flag: Option<&str>) -> Result<()> {
+        if let Some(word) = flag {
+            self.refuted_claims = refuted_claims(word)?;
+        }
+        Ok(())
+    }
+
     pub fn optimize(&mut self, flags: &[String]) -> Result<()> {
         if flags.is_empty() {
             return Ok(());
@@ -223,6 +256,10 @@ impl Settings {
                 OPTIMIZATION_VAR.to_string(),
                 OsString::from(&self.optimization),
             ),
+            (
+                REFUTED_VAR.to_string(),
+                OsString::from(&self.refuted_claims),
+            ),
         ]
         .into_iter()
         .chain(
@@ -241,6 +278,7 @@ impl Settings {
         let user_parallelism = word(PARALLELISM_VAR, "no");
         let reentrancy_check = word(REENTRANCY_VAR, "yes");
         let optimization = word(OPTIMIZATION_VAR, "");
+        let refuted_claims = refuted_claims(&word(REFUTED_VAR, "error"))?;
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
         (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
@@ -249,6 +287,7 @@ impl Settings {
             user_parallelism,
             reentrancy_check,
             optimization,
+            refuted_claims,
             tests: std::env::var_os(TESTS_VAR).is_some(),
         })
     }
@@ -266,11 +305,18 @@ impl Settings {
     pub fn choices(&self) -> Choices {
         Choices::new(
             format!(
-                "{}/{}/{}{}{}{}",
+                "{}/{}/{}{}{}{}{}",
                 self.target,
                 self.user_parallelism,
                 self.reentrancy_check,
                 if self.tests { "/tests" } else { "" },
+                // A build that lets a refuted claim through must not hand its
+                // lowering to one that refuses it.
+                if self.refuted_claims == "warn" {
+                    "/refuted-claims:warn"
+                } else {
+                    ""
+                },
                 match self.build.bounds {
                     crate::bounds::BoundsChecks::Kept => String::new(),
                     level => format!("/remove-bounds-checks:{}", level.name()),
@@ -994,6 +1040,7 @@ pub fn lower_reading(
                     &unit.path,
                     &unit.source,
                     &settings.user_parallelism,
+                    &settings.refuted_claims,
                 )?;
             }
 
@@ -1316,6 +1363,7 @@ pub struct Around<'a> {
     pub beside: &'a [&'a crate::parser::Parsed],
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     parsed: &crate::parser::Parsed,
     own: &Ledger,
@@ -1324,6 +1372,7 @@ pub fn check(
     path: &Path,
     source: &str,
     user_parallelism: &str,
+    refuted_claims: &str,
 ) -> Result<()> {
     let Around {
         foreign,
@@ -1350,6 +1399,7 @@ pub fn check(
     ));
     all.sort_by_key(|finding| finding.span.at());
     lint_where_nothing_crosses(&mut all, user_parallelism);
+    let_refuted_claims_through(&mut all, refuted_claims);
     let violations = sync::check(parsed, own, &library);
     if all.is_empty() && violations.is_empty() {
         return Ok(());
@@ -1392,7 +1442,14 @@ pub fn check(
     };
     let plural = |n: usize| if n == 1 { "" } else { "s" };
 
-    let types = count("NK1");
+    // **`NK1207` is counted apart from the types** (ADR-269 D8): it is a
+    // claim the compiler showed false with values, and the way out is the
+    // program or the claim, never a type.
+    let refuted = count("NK1207");
+    if refuted > 0 {
+        refused.push(format!("{refuted} claim{} shown false", plural(refuted)));
+    }
+    let types = count("NK1") - refuted;
     if types > 0 {
         refused.push(format!("{types} type error{}", plural(types)));
     }
@@ -1576,6 +1633,7 @@ pub fn check(
     let others = findings.len()
         - locks
         - rules
+        - refuted
         - types
         - crossings
         - reaching
@@ -1628,6 +1686,24 @@ pub fn check(
 /// This is the only place a build switch meets a `NK25xx`, and it meets the
 /// **severity** rather than the verdict. The verdict is a property of the
 /// program and the analyses never see a switch.
+/// **`refuted-claims = "warn"`: a claim shown false with values builds**
+/// ([ADR-269](../../docs/specification/adr/adr-269.md) D8), as a warning, and
+/// is checked where it is reached. The bypass for the day a better prover
+/// refutes what an older one let through; without it the build stops.
+fn let_refuted_claims_through(findings: &mut [check::Finding], refuted_claims: &str) {
+    if refuted_claims != "warn" {
+        return;
+    }
+    for finding in findings.iter_mut().filter(|f| f.code == "NK1207") {
+        finding.severity = check::Severity::Warning;
+        finding.notes.push(
+            "`refuted-claims = \"warn\"` lets this build through: the claim is checked when \
+             the program runs, and stops it there"
+                .to_string(),
+        );
+    }
+}
+
 fn lint_where_nothing_crosses(findings: &mut [check::Finding], user_parallelism: &str) {
     if user_parallelism != "no" {
         return;

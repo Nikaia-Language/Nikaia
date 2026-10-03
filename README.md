@@ -56,8 +56,9 @@ That shows up in a few concrete ways:
 * **Formal verification that feels like writing `assert`.** There is no proof language, no
   annotation syntax, no `requires` clause. You write `assert(whole > 0)` where you would have
   written it anyway; the compiler proves it while it builds, turns it into a contract every
-  caller must meet, and warns with a counterexample when a call can break it. What it cannot
-  prove yet it checks when the program runs, so writing a claim never stops your build.
+  caller must meet, and **refuses to build** a program it can show breaks it, with the values
+  that do. What it cannot prove yet it checks when the program runs, so a claim that is merely
+  hard to prove never stops your build.
   [More below](#an-assert-is-a-proof).
 * **Safety that makes the program faster, not slower.** The same prover shows that an index
   stays inside its list or a sum inside its type, and then the check is not emitted. On the
@@ -110,21 +111,21 @@ fn main() {
 }
 ```
 
-`nikaia build --asserts` on exactly this program:
+`nikaia build --asserts` on exactly this program, which does not build:
 
 ```text
 asserts in src/main.nika: 1 - proved 0, preconditions 1, checked at run time 0, checked by a test 0, refused 0
   src/main.nika:2  assert(whole > 0)  precondition of `percent`: one call checks it when it runs; any other call proves it or reaches the entry that checks it
 
-warning[NK1207]: This call breaks `percent`'s precondition `whole > 0` every time it is reached.
+error[NK1207]: This call breaks `percent`'s precondition `whole > 0` every time it is reached.
    --> src/main.nika:13:5
     |
  13 |     println(f"{percent(1, 0)}%")
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: Here `whole` is 0.
-    = note: When the program runs, it stops where the precondition is checked.
     = help: Pass `percent` arguments for which `whole > 0` holds, or check them with a guard before the call.
+1 claim shown false
 ```
 
 What happened, without a single new keyword:
@@ -135,7 +136,13 @@ What happened, without a single new keyword:
   every `let`, assignment and branch (weakest preconditions), so you put it where it reads
   best.
 * **Every call has to establish it.** `report`'s guard proves it, so that call costs nothing
-  at run time. The call with `0` is shown to break it, with the concrete value.
+  at run time. The call with `0` is shown to break it, with the concrete value, and a program
+  the compiler has shown wrong does not build: fewer defects reach production. The same holds
+  for a value that only some turns of a loop pass (`for i in 0..<10 { percent(1, i) }` is
+  refused *when `i` is 0*), and through calls: a function that passes its parameter on hands
+  the precondition to its own callers, so the caller that passes the bad value is the one told.
+  `refuted-claims = "warn"` in `nikaia.toml` is the bypass for the day a better prover refutes
+  code an older one built.
 * **The contract crosses package boundaries.** A `pub fn`'s contract is published in its
   package's ledger, a consumer's calls are proved against it, and a change that weakens what
   callers can rely on warns its author.

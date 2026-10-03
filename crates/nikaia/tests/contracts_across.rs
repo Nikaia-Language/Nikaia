@@ -86,7 +86,12 @@ fn nikaia(dir: &Path, args: &[&str]) -> Output {
 #[test]
 fn a_contract_is_published_proved_and_checked_across_packages() {
     let dir = the_two("contracts-across");
-    let run = nikaia(&dir.join("app"), &["run"]);
+    // `ratio(1, 0)` is shown to break the contract while the program is
+    // built (D8): refused, and run here with the bypass.
+    let refused = nikaia(&dir.join("app"), &["build"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("error[NK1207]"));
+    let run = nikaia(&dir.join("app"), &["run", "--refuted-claims", "warn"]);
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(!run.status.success(), "{stdout}{stderr}");
@@ -118,6 +123,8 @@ fn a_contract_is_published_proved_and_checked_across_packages() {
             "src/main.nika",
             "--output",
             &lowered.to_string_lossy(),
+            "--refuted-claims",
+            "warn",
         ],
     );
     assert!(

@@ -48,14 +48,15 @@ description: >-
       <p>
         No specification language, no annotations, no <code>requires</code> clause. Write
         <code>assert(whole &gt; 0)</code> where you would have written it anyway. The compiler
-        works out that it is a precondition, makes every caller prove it, and shows you the
-        call that breaks it, with the value that breaks it.
+        works out that it is a precondition, makes every caller prove it, and refuses to build
+        the call that breaks it, with the value that breaks it.
       </p>
       <p>
-        A call the compiler proves costs nothing at run time. A claim it cannot prove yet is
-        checked when the program runs, so writing one never stops your build. Contracts cross
-        package boundaries, and every proof carries a certificate that is checked before a
-        check is dropped.
+        A defect the compiler can prove never reaches production. A call it proves correct costs
+        nothing at run time, and a claim it cannot prove yet is checked when the program runs,
+        so a claim that is merely hard to prove never stops your build. Contracts cross package
+        boundaries, and every proof carries a certificate that is checked before a check is
+        dropped.
       </p>
       <p><a href="{{ "/docs/specification/adr/adr-269.html" | relative_url }}">How a claim becomes a contract →</a></p>
     </div>
@@ -75,16 +76,17 @@ fn main() {
     println(f"{percent(1, 0)}%")   // breaks it
 }
 </code></pre>
-<pre class="diagnostic"><code><span class="d-warning">warning[NK1207]</span><b>: This call breaks `percent`'s precondition
+<pre class="diagnostic"><code><span class="d-error">error[NK1207]</span><b>: This call breaks `percent`'s precondition
 `whole &gt; 0` every time it is reached.</b>
 <span class="d-gutter">   --&gt;</span> src/main.nika:13:5
 <span class="d-gutter">    |</span>
 <span class="d-gutter"> 13 |</span>     println(f"{percent(1, 0)}%")
-<span class="d-gutter">    |</span>     <span class="d-warning">^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+<span class="d-gutter">    |</span>     <span class="d-error">^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
 <span class="d-gutter">    |</span>
 <span class="d-gutter">    =</span> <span class="d-note">note:</span> Here `whole` is 0.
 <span class="d-gutter">    =</span> <span class="d-help">help:</span> Pass `percent` arguments for which `whole &gt; 0` holds,
-           or check them with a guard before the call.</code></pre>
+           or check them with a guard before the call.
+1 claim shown false</code></pre>
     </div>
   </div>
 </section>
