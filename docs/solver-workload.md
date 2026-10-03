@@ -278,8 +278,8 @@ hand-written one:
 * **Overflow checks.** A Nikaia crate is built with them (Part III A.2), the
   Rust half here without. Measured with `-C overflow-checks=on` and fat LTO:
   rows 955.5 M (−1.1 % against the Rust half without), bignum 1 087.6 M
-  (−0.0 %), and **watch 10.44 M, +0.7 %** - the `u32` arithmetic of
-  `2 * v + 1` and `c * size`. The same proof that drops an index check can
+  (−0.0 %), and **watch 10.44 M, +0.7 %** - which §8.2 traces to one
+  addition, `start + at`, not to `2 * v + 1` as first written. The same proof that drops an index check can
   drop an overflow check ([ADR-269](specification/adr/adr-269.md) §6's
   implicit checks); that is [ADR-271](specification/adr/adr-271.md) §6's
   next step.
@@ -287,6 +287,67 @@ hand-written one:
   that LLVM already proves for itself. It exists for a check LLVM does not
   see through - a list behind a parameter, one inlined across a call - and as
   the level that asks no solver.
+
+### 8.2 What a bound on a list's values would buy (0.0.378)
+
+For [ADR-272](specification/adr/adr-272.md). **One correction to §8.1 first:**
+the watch kernel's overflow cost is not `2 * v + 1` and `c * size`. Each check
+was removed by hand from the lowered Rust (`<u32>::wrapping_*`) and counted
+alone, with `-C overflow-checks=on` and fat LTO:
+
+| the watch kernel, n = 2 000 | instructions |
+| :--- | ---: |
+| as lowered at `aggressive`, overflow checks off | 10.19 M |
+| as lowered at `aggressive`, overflow checks on | 10.44 M |
+| `2 * v` and `2 * v + 1` unchecked | 10.44 M (±0) |
+| `checksum += 1`, `+= 3`, `+= 7` unchecked | 10.53 M (+0.8 %, layout) |
+| `start + at` unchecked | 10.11 M (−3.2 %) |
+
+LLVM already drops what the walk of ADR-271 D4 can prove (`v < 2000`, so
+`2 * v + 1` fits). The one check that costs reads `start` out of a list
+(`let start = list[k]`, `list` one of `watched`), and nothing the walk keeps
+says anything about a value read from memory. The same is true of two index
+checks in the innermost loop, `value[blocks[k]]` and `value[arena[start +
+at]]`: the position is a value out of a list.
+
+**The upper bound of the gain**, by removing from the lowered Rust exactly the
+checks that a bound on a list's values would prove, and nothing else - the
+method of §8, against the same optimised `std`, fat LTO:
+
+| | checks dropped | overflow checks on | overflow checks off |
+| :--- | :--- | ---: | ---: |
+| Rust by hand | - | 10.69 M | 10.37 M |
+| Nikaia, `aggressive` | - | 10.44 M | 10.19 M |
+| **with values' bounds** | `start + at`; `value[…]` at `blocks[k]` and at `arena[…]` | **9.68 M (−7.3 %)** | 9.76 M |
+| **and a length from a filling loop** | the above; `arena[start + at]` | **9.41 M (−9.9 %)** | 9.44 M |
+
+The values' bounds are `arena`'s, `< 2 * variables` (each is `… % (2 *
+variables)`), which carries over to `blockers[*]`'s (each is one of
+`arena`'s), and `watched[*]`'s, `<= (clauses - 1) * size` (each is `c * size`
+with `c < clauses`). The second row also needs `arena.len() == clauses *
+size`: one `push` per turn of `for _ in 0..<(clauses * size)`. Every variant
+prints the same checksum.
+
+**Sites, of the 40 of §8.1:** 22 proved today; values' bounds add 6
+(`value[…]` twice, and `watched[first]`, `blockers[first]`, `watched[second]`,
+`blockers[second]` at set-up); a filling loop's length adds 3
+(`arena[start + at]`, `arena[c * size]`, `arena[c * size + 1]`). Of the 9
+left, 5 need `x % n` (ADR-271 §6) and 4 need two lists known to be as long as
+each other (`rv[i]` beside `rc[i]`, `blocks[k]` beside `list[k]`). rows and
+bignum gain nothing from values' bounds: rows' arithmetic multiplies by a
+parameter, bignum's `xi * y[j]` is a product of two unknowns, which no linear
+fact bounds.
+
+**What the walk costs today**, as the price a wider one starts from: `nikaia
+lower --no-cache`, release build, wall clock over three runs.
+
+| | `off` | `aggressive` |
+| :--- | ---: | ---: |
+| the 46 files of the repository that lower alone (8 024 lines) | 0.65 s | 0.66 s (+1 %) |
+| `benches/solver-kernels.nika`, one lowering | 24 ms | 34 ms (+42 %) |
+
+Wall clock on a shared machine, so the corpus row says "not measurable" and
+the kernel row says "index-heavy code pays tens of milliseconds", no more.
 
 ## 9. What this does not measure
 
