@@ -7502,6 +7502,85 @@ fn passes_on(handler: &Block, names: &winnow_grammar::InternerContext, holes_of:
 }
 
 
+// --- tiers.nika ---
+
+const OWNS: [&str; 10] = ["clone", "to_owned", "to_string", "clone_text", "to_uppercase", "to_lowercase", "repeat", "replace", "join", "concat"];
+
+const VIEWS: [&str; 17] = ["trim", "trim_start", "trim_end", "trim_matches", "trim_start_matches", "trim_end_matches", "strip_prefix", "strip_suffix", "lines", "split", "split_whitespace", "splitn", "rsplit", "rsplitn", "split_terminator", "matches", "as_str"];
+
+const ELEMENTS: [&str; 13] = ["collect", "next", "unwrap", "first", "last", "get", "iter", "nth", "peek", "pop", "remove", "values", "keys"];
+
+const PUTS: [&str; 6] = ["push", "push_back", "push_front", "insert", "extend", "append"];
+
+const RUNS: [&str; 4] = ["Vec", "List", "VecDeque", "Deque"];
+
+const SETS: [&str; 3] = ["HashSet", "BTreeSet", "Set"];
+
+const MAPS: [&str; 3] = ["HashMap", "BTreeMap", "Map"];
+
+pub fn owns_its_text(method: &str) -> bool {
+    for one in OWNS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn views_what_it_is_called_on(method: &str) -> bool {
+    for one in VIEWS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn hands_back_an_element(method: &str) -> bool {
+    for one in ELEMENTS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn puts_its_argument(method: &str) -> bool {
+    for one in PUTS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn is_a_map_name(name: &str) -> bool {
+    for one in MAPS.iter() {
+        let one = *one;
+        if one == name { return true; }
+    }
+    false
+}
+
+pub fn is_a_container_name(callee: &str) -> bool {
+    let name = last_segment(callee);
+    for one in RUNS.iter() {
+        let one = *one;
+        if one == name { return true; }
+    }
+    for one in SETS.iter() {
+        let one = *one;
+        if one == name { return true; }
+    }
+    is_a_map_name(&name)
+}
+
+pub fn plain_string(names: &winnow_grammar::InternerContext, ty: &Type) -> bool { names.resolve(ty.name) == "String" && ty.generics.is_empty() && !ty.is_view && !ty.is_tuple && !ty.is_slice && (*ty.code).is_none() }
+
+pub fn container_of(names: &winnow_grammar::InternerContext, ty: &Type) -> Option<String> {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || (*ty.code).is_some() { return None; }
+    let name = last_segment(names.resolve(ty.name));
+    if is_a_container_name(&name) { return Some(name); }
+    None
+}
+
+
 // --- touch.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10306,6 +10385,10 @@ pub mod threads {
 pub mod throws {
     #[allow(unused_imports)]
     pub use super::{error_sets, error_type, Thrown, Contribution, thrown_by};
+}
+pub mod tiers {
+    #[allow(unused_imports)]
+    pub use super::{owns_its_text, views_what_it_is_called_on, hands_back_an_element, puts_its_argument, is_a_map_name, is_a_container_name, plain_string, container_of};
 }
 pub mod touch {
     #[allow(unused_imports)]

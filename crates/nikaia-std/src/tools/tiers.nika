@@ -1,0 +1,117 @@
+// crates/nikaia-std/src/tools/tiers.nika
+//
+// What a declared `String` is below, decided by what flows into it (ADR-222,
+// ADR-223) - the questions the compiler's `text_tiers` asks of a method's name
+// and a written type, moved from Rust (ADR-250, #125). What stays Rust is the
+// walk that follows text into positions and the tiers it decides: its kinds
+// and positions are keys of ordered sets and maps, which a type this language
+// declares has no order for (ADR-204 §4).
+
+// Methods whose result is text of its own, whatever they are called on.
+comptime OWNS: Array[ref String, 10] = ["clone", "to_owned", "to_string", "clone_text", "to_uppercase", "to_lowercase", "repeat", "replace", "join", "concat"]
+
+// Methods of text whose result is a view of the text they are called on.
+comptime VIEWS: Array[ref String, 17] = ["trim", "trim_start", "trim_end", "trim_matches", "trim_start_matches", "trim_end_matches", "strip_prefix", "strip_suffix", "lines", "split", "split_whitespace", "splitn", "rsplit", "rsplitn", "split_terminator", "matches", "as_str"]
+
+// Methods whose result is an element of what they are called on, so it is the
+// same kind of text as the elements are.
+comptime ELEMENTS: Array[ref String, 13] = ["collect", "next", "unwrap", "first", "last", "get", "iter", "nth", "peek", "pop", "remove", "values", "keys"]
+
+// Methods that put their argument into a run or a set; `insert` on a map puts
+// a key and a value.
+comptime PUTS: Array[ref String, 6] = ["push", "push_back", "push_front", "insert", "extend", "append"]
+
+// Containers whose element is a position: a run or a set of one, and a map
+// whose key and value are two.
+comptime RUNS: Array[ref String, 4] = ["Vec", "List", "VecDeque", "Deque"]
+comptime SETS: Array[ref String, 3] = ["HashSet", "BTreeSet", "Set"]
+comptime MAPS: Array[ref String, 3] = ["HashMap", "BTreeMap", "Map"]
+
+/// A method whose result is text of its own, whatever it is called on.
+pub fn owns_its_text(method: ref String) -> bool {
+    for one in OWNS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method of text whose result is a view of the text it is called on.
+pub fn views_what_it_is_called_on(method: ref String) -> bool {
+    for one in VIEWS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method whose result is an element of what it is called on.
+pub fn hands_back_an_element(method: ref String) -> bool {
+    for one in ELEMENTS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// A method that puts its argument into what it is called on.
+pub fn puts_its_argument(method: ref String) -> bool {
+    for one in PUTS {
+        if one == method {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether a container's name is a map's, whose key and value are two
+/// positions.
+pub fn is_a_map_name(name: ref String) -> bool {
+    for one in MAPS {
+        if one == name {
+            return true
+        }
+    }
+    return false
+}
+
+/// Whether a callee names a container this pass follows text into, by its
+/// last segment.
+pub fn is_a_container_name(callee: ref String) -> bool {
+    let name = last_segment(callee)
+    for one in RUNS {
+        if one == name {
+            return true
+        }
+    }
+    for one in SETS {
+        if one == name {
+            return true
+        }
+    }
+    return is_a_map_name(name)
+}
+
+/// A declared `String`, or `String?`: a value that may be absent is a
+/// position as well, and `null` puts no text of either kind into it
+/// (ADR-224 D1).
+pub fn plain_string(names: ref winnow_grammar::InternerContext, ty: ref Type) -> bool {
+    return names.resolve(ty.name) == "String" && ty.generics.len() == 0 && !ty.is_view && !ty.is_tuple && !ty.is_slice && ty.code == null
+}
+
+/// The container a written type is, by its last segment, or nothing: a view,
+/// a nullable, a tuple and code are none.
+pub fn container_of(names: ref winnow_grammar::InternerContext, ty: ref Type) -> String? {
+    if ty.is_view || ty.is_nullable || ty.is_tuple || ty.code != null {
+        return null
+    }
+    let name = last_segment(names.resolve(ty.name))
+    if is_a_container_name(name) {
+        return name
+    }
+    return null
+}
+
