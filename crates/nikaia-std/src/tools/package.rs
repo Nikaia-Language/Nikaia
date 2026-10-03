@@ -3329,6 +3329,61 @@ fn choices(words: &[String]) -> String {
 }
 
 
+// --- modules.nika ---
+
+pub fn declared_names(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for item in items.iter() {
+        let name = name_declared(names, &item.node);
+        if !name.is_empty() { out.push(name); }
+    }
+    out
+}
+
+pub fn a_use_refused(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>], here: &str, reachable: &collections::BTreeSet<String>, alone: bool, beside: &impl Fn(&str) -> bool) -> Option<String> {
+    let mut named: Vec<(String, String)> = vec![];
+    for item in items.iter() {
+        let segments = use_segments(names, &item.node);
+        if segments.is_empty() || *nikaia_std::index::get(&segments, 0) == "std" { continue; }
+        let first = (*nikaia_std::index::get(&segments, 0)).to_owned();
+        if segments.len() > 1 {
+            let written = segments.join("::");
+            return Some(format!("`use {}` in {}: `use` takes a package name only, not a path into it. Write `use {}`, and `{}` where you need it.", written, here, first, written));
+        }
+        let called = alias_of(names, &item.node);
+        if !called.is_empty() { named.push((first, called)); } else { named.push((first.to_owned(), first)); }
+    }
+    let mut once: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for (_, called) in named.iter() {
+        if once.contains(called) { return Some(format!("`{}` is used twice in {}. Two packages can't have the same name in one file. Write `use … as …` to give one of them another name.", called, here)); }
+        once.insert(called.to_owned());
+    }
+    for (package, _) in named.iter() {
+        if reachable.contains(package) { continue; }
+        if alone { return Some(format!("`use {}` in {}: a single file outside a project has no dependencies, so there's no `{}` to use.\nDependencies are declared in a project's `nikaia.toml`. Put this file in a project whose `nikaia.toml` declares it:\n    [dependencies]\n    {} = {{ path = \"../{}\" }}", package, here, package, package, package)); }
+        if beside(package) { return Some(format!("`use {}` in {}: the files of a package already see each other, so there's nothing to bring in. Remove the line and use the name directly.", package, here)); }
+        return Some(format!("`use {}` in {}: there's no dependency called `{}`.\nAdd it to the project's `[dependencies]` under that name:\n    [dependencies]\n    {} = {{ path = \"../{}\" }}", package, here, package, package, package));
+    }
+    None
+}
+
+fn use_segments(names: &winnow_grammar::InternerContext, item: &Item) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    match item {
+        Item::Import { path, .. } => { for segment in path.iter() { out.push(names.resolve(*segment).to_owned()); } },
+        _ => { },
+    }
+    out
+}
+
+fn alias_of(names: &winnow_grammar::InternerContext, item: &Item) -> String {
+    match item {
+        Item::Import { alias, .. } => { let alias = *alias; a_symbols_text(names, alias) },
+        _ => String::from(""),
+    }
+}
+
+
 // --- names.nika ---
 
 pub fn names_in(expr: &Expr, words: &winnow_grammar::InternerContext, out: &mut collections::BTreeSet<String>) {
@@ -10179,6 +10234,10 @@ pub mod locks {
 pub mod manifest {
     #[allow(unused_imports)]
     pub use super::{Switch, known, build_key, targets, codegen_keys, codegen_table, codegen_key, DependencyShape, dependency, crate_name};
+}
+pub mod modules {
+    #[allow(unused_imports)]
+    pub use super::{declared_names, a_use_refused};
 }
 pub mod names {
     #[allow(unused_imports)]

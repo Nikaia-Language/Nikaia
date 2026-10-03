@@ -1344,3 +1344,35 @@ fn a_lent_copy_a_map_of_maybes_and_a_removal() {
         "a - 2 5 7 0\n",
     );
 }
+
+/// **Text a call made, moved whole into a tuple or a list** (0.0.379): the
+/// keep walk counted `named.push((first, c))` as a view of `c` kept outside
+/// the loop, put `c` into the frame's keep and handed the tuple a reference
+/// its `String` refused - *mismatched types* about a file nobody wrote. A
+/// struct literal already moved it. Found moving `modules`' `use` check into
+/// Nikaia (#125).
+#[test]
+fn text_moved_whole_into_a_tuple_or_a_list() {
+    runs(
+        "buffer-into-tuple",
+        "fn called(n: i64) -> String {\n\
+         \x20   return f\"n{n}\"\n\
+         }\n\
+         fn main() {\n\
+         \x20   let mut named: Vec[(String, String)] = []\n\
+         \x20   let mut listed: Vec[Vec[String]] = []\n\
+         \x20   for i in 0..<2 {\n\
+         \x20       let first = f\"f{i}\"\n\
+         \x20       let c = called(i)\n\
+         \x20       let d = called(i + 10)\n\
+         \x20       named.push((first, c))\n\
+         \x20       listed.push([d])\n\
+         \x20   }\n\
+         \x20   for (a, b) in named {\n\
+         \x20       println(f\"{a} {b}\")\n\
+         \x20   }\n\
+         \x20   println(f\"{listed.len()}\")\n\
+         }\n",
+        "f0 n0\nf1 n1\n2\n",
+    );
+}

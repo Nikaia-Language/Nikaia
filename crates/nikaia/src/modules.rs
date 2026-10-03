@@ -328,19 +328,7 @@ pub(crate) fn declared_once(files: &[(&Path, &Parsed)]) -> Result<()> {
 /// `trait Foo` beside `struct Foo` was accepted through every path, including
 /// this one, and `rustc` answered about the generated file.
 fn declared_names(parsed: &Parsed) -> Vec<String> {
-    parsed
-        .program
-        .items
-        .iter()
-        .filter_map(|item| match &item.node {
-            Item::Fn { name, .. } => name.map(|name| parsed.text(name).to_string()),
-            Item::Struct { name, .. } | Item::Enum { name, .. } | Item::Trait { name, .. } => {
-                Some(parsed.text(*name).to_string())
-            }
-            Item::Grammar(def) => Some(parsed.text(def.name).to_string()),
-            _ => None,
-        })
-        .collect()
+    nikaia_std::tools::modules::declared_names(&parsed.interner, &parsed.program.items)
 }
 
 /// **Every `use` in a file, against the packages it may name**
@@ -369,85 +357,22 @@ fn check_imports(
     reachable: &BTreeSet<String>,
     standing: Standing,
 ) -> Result<()> {
-    let here = at.display();
-
-    // What each `use` names, and what this file calls it. The two differ exactly
-    // where an alias is written (ADR-046 D3).
-    let mut named: Vec<(&str, &str)> = Vec::new();
-
-    // A path first, and every one of them, because it is the only shape that is
-    // wrong about *itself* rather than about what the project declares.
-    for item in &parsed.program.items {
-        let Item::Import { path, alias } = &item.node else {
-            continue;
-        };
-        let segments: Vec<&str> = path.iter().map(|s| parsed.text(*s)).collect();
-        if matches!(segments.as_slice(), ["std", ..]) {
-            continue;
-        }
-        if segments.len() > 1 {
-            return Err(crate::diagnostics::refuse(format!(
-                "`use {}` in {here}: `use` takes a package name only, not a path into it. \
-                 Write `use {}`, and `{}` where you need it.",
-                segments.join("::"),
-                segments[0],
-                segments.join("::")
-            )));
-        }
-        let package = segments[0];
-        named.push((package, alias.map_or(package, |a| parsed.text(a))));
+    let refused = nikaia_std::tools::modules::a_use_refused(
+        &parsed.interner,
+        &parsed.program.items,
+        &at.display().to_string(),
+        reachable,
+        matches!(standing, Standing::Alone),
+        &|package: &str| {
+            at.parent()
+                .map(|dir| dir.join(format!("{package}.nika")))
+                .is_some_and(|path| path.is_file())
+        },
+    );
+    match refused {
+        Some(message) => Err(crate::diagnostics::refuse(message)),
+        None => Ok(()),
     }
-
-    // **D5 before D4**, because a name written twice is a fact about this file and
-    // says nothing about whether either of them resolves: checking reachability
-    // first would answer a file with two unknown names by naming one of them.
-    //
-    // And it counts the name **this file introduces**, which is the alias where
-    // there is one: `use http as h` beside `use https as h` is the collision D3
-    // exists to let a consumer fix, so it has to be the collision D5 catches.
-    let mut once: BTreeSet<&str> = BTreeSet::new();
-    for (_, here_name) in &named {
-        if !once.insert(here_name) {
-            return Err(crate::diagnostics::refuse(format!(
-                "`{here_name}` is used twice in {here}. Two packages can't have the same \
-                 name in one file. Write `use … as …` to give one of them another name."
-            )));
-        }
-    }
-
-    for (package, _) in named {
-        if reachable.contains(package) {
-            continue;
-        }
-        let beside = at
-            .parent()
-            .map(|dir| dir.join(format!("{package}.nika")))
-            .is_some_and(|path| path.is_file());
-        return Err(crate::diagnostics::refuse(match (standing, beside) {
-            // **Before the file beside it**: outside a project nothing beside
-            // a file is read, so the advice that the files of a package see
-            // each other would be about a package this file is not part of.
-            (Standing::Alone, _) => format!(
-                "`use {package}` in {here}: a single file outside a project has no \
-                 dependencies, so there's no `{package}` to use.\n\
-                 Dependencies are declared in a project's `nikaia.toml`. Put this file in \
-                 a project whose `nikaia.toml` declares it:\n\
-                 \x20   [dependencies]\n\
-                 \x20   {package} = {{ path = \"../{package}\" }}"
-            ),
-            (Standing::InProject, true) => format!(
-                "`use {package}` in {here}: the files of a package already see each other, \
-                 so there's nothing to bring in. Remove the line and use the name directly."
-            ),
-            (Standing::InProject, false) => format!(
-                "`use {package}` in {here}: there's no dependency called `{package}`.\n\
-                 Add it to the project's `[dependencies]` under that name:\n\
-                 \x20   [dependencies]\n\
-                 \x20   {package} = {{ path = \"../{package}\" }}"
-            ),
-        }));
-    }
-    Ok(())
 }
 
 /// The units of one package, by file name and the SHA-256 of their bytes

@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.379] — 2026-10-03
+
+**What a file declares, and whether its `use` lines may name what they name,
+is Nikaia** (#125, ADR-250). `modules`' two questions about one parsed file
+moved into `tools/modules.nika`: the names a file declares into its package's
+one namespace (ADR-047 D1, ADR-144 D2), now read by the same `name_declared`
+the checker's `NK1148` uses, and the four refusals of a `use` - a path into a
+package, one name twice, a package no dependency declares or a file alone
+cannot have, and a file beside this one that its package already sees
+(ADR-046 D2, D4, D5). Reading the files, the manifest and the ledgers stays
+Rust. 18.8 % of the toolchain is Nikaia.
+
+The move found one defect, fixed in the compiler (ADR-250 D3): **text a call
+made, moved whole into a tuple or a list**, was counted by the keep walk
+(ADR-209) as a view of it kept outside the loop - `named.push((first, c))`
+put `c` into the frame's keep and handed the tuple a reference its `String`
+refused. A struct literal already moved it.
+
 ## [0.0.378] — 2026-10-03
 
 **A bound on a list's values, measured and proposed** (ADR-272, open).
