@@ -6805,6 +6805,94 @@ fn last_segment(written: &str) -> String {
 }
 
 
+// --- sync.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncReach {
+    pub blocked: bool,
+    pub calls: collections::BTreeSet<String>,
+    pub through_code: collections::BTreeSet<String>,
+    pub pauses_here: bool,
+}
+
+pub fn sync_holds(graph: &collections::BTreeMap<String, SyncReach>) -> collections::BTreeMap<String, bool> {
+    let mut holds: collections::BTreeMap<String, bool> = collections::BTreeMap::new();
+    for (name, reach) in graph.iter() { holds.insert(name.to_owned(), !reach.blocked && reach.through_code.is_empty()); }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, reach) in graph.iter() {
+            if !held(&holds, name) { continue; }
+            if reaches_one_that_pauses(&reach.calls, &holds) {
+                holds.insert(name.to_owned(), false);
+                changed = true;
+            }
+        }
+    }
+    holds
+}
+
+pub fn paused_only_by_code(graph: &collections::BTreeMap<String, SyncReach>, holds: &collections::BTreeMap<String, bool>) -> collections::BTreeMap<String, Vec<String>> {
+    let mut out: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for (name, reach) in graph.iter() {
+        if held(holds, name) || reach.blocked || reach.through_code.is_empty() { continue; }
+        if reaches_one_that_pauses(&reach.calls, holds) { continue; }
+        let mut parameters: Vec<String> = vec![];
+        for parameter in reach.through_code.iter() { parameters.push(parameter.to_owned()); }
+        out.insert(name.to_owned(), parameters);
+    }
+    out
+}
+
+pub fn pause_chain(graph: &collections::BTreeMap<String, SyncReach>, holds: &collections::BTreeMap<String, bool>, start: &str) -> Vec<String> {
+    let mut queue: Vec<String> = vec![start.to_owned()];
+    let mut came_from: collections::BTreeMap<String, String> = collections::BTreeMap::new();
+    let mut seen: collections::BTreeSet<String> = collections::BTreeSet::new();
+    seen.insert(start.to_owned());
+    let mut next: i64 = 0;
+    while ((next) as usize) < queue.len() {
+        let at = (*nikaia_std::index::get(&queue, (next) as usize)).to_owned();
+        next += 1;
+        let reach = match *nikaia_std::index::get(&graph, &at) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if reach.pauses_here || reach.blocked { return chain_back_to(&came_from, &at); }
+        for callee in reach.calls.iter() {
+            if graph.contains_key(callee) && !held(holds, callee) && !seen.contains(callee) {
+                seen.insert(callee.to_owned());
+                came_from.insert(callee.to_owned(), at.to_owned());
+                queue.push(callee.to_owned());
+            }
+        }
+    }
+    vec![]
+}
+
+fn chain_back_to(came_from: &collections::BTreeMap<String, String>, at: &str) -> Vec<String> {
+    let mut backwards: Vec<String> = vec![at.to_owned()];
+    let mut back = at.to_owned();
+    while came_from.contains_key(&back) {
+        back = nikaia_std::index::or(match *nikaia_std::index::get(&came_from, &back) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || "".into());
+        backwards.push(back.to_owned());
+    }
+    let mut chain: Vec<String> = vec![];
+    let mut i = backwards.len() as i64;
+    while i > 0 {
+        i -= 1;
+        chain.push((*nikaia_std::index::get(&backwards, nikaia_std::index::at(i))).to_owned());
+    }
+    chain
+}
+
+fn held(holds: &collections::BTreeMap<String, bool>, name: &str) -> bool { nikaia_std::index::or(*nikaia_std::index::get(&holds, name), || false) }
+
+fn reaches_one_that_pauses(calls: &collections::BTreeSet<String>, holds: &collections::BTreeMap<String, bool>) -> bool {
+    for callee in calls.iter() { if !held(holds, callee) { return true; } }
+    false
+}
+
+
 // --- template.nika ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10660,6 +10748,10 @@ pub mod spelling {
 pub mod surface {
     #[allow(unused_imports)]
     pub use super::{Arg, Function, Surface, empty, read_items, resolve, offered, candidates, imported};
+}
+pub mod sync {
+    #[allow(unused_imports)]
+    pub use super::{SyncReach, sync_holds, paused_only_by_code, pause_chain};
 }
 pub mod template {
     #[allow(unused_imports)]

@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.390] — 2026-10-03
+
+**Which functions stay `sync` is decided in Nikaia** (#125, ADR-250). The
+greatest fixpoint `contracts::sync` runs over the calls it collected
+(ADR-027 D1) moved into `tools/sync.nika`: every candidate starts `sync` and
+loses the claim on reaching a function without it, a callee the graph does not
+hold reads as one that pauses, and the answer does not depend on declaration
+order. With it, the functions that pause only where their lambdas do
+(ADR-244 D2) and the shortest way through the package's calls to a pause,
+breadth-first in key order (D5). Collecting and resolving the calls, the spans
+and writing the ledger stay Rust; the tools package lowers byte for byte as
+before. 19.1 % of the toolchain is Nikaia.
+
 ## [0.0.389] — 2026-10-03
 
 **What a build may read is decided in Nikaia** (#125, ADR-250). What the
