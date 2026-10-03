@@ -1350,6 +1350,10 @@ struct Emitter<'p> {
     view_coalesces: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::optional_fallbacks`.
     optional_fallbacks: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::flat_reads`.
+    flat_reads: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::copied_reads`.
+    copied_reads: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::text_in_lists`.
     text_in_lists: std::collections::BTreeSet<(usize, String)>,
     /// The f-string hole being written, whose literals are keyed by
@@ -2572,6 +2576,8 @@ impl<'p> Emitter<'p> {
             view_fallbacks: propagation.view_fallbacks,
             view_coalesces: propagation.view_coalesces,
             optional_fallbacks: propagation.optional_fallbacks,
+            flat_reads: propagation.flat_reads,
+            copied_reads: propagation.copied_reads,
             text_in_lists: propagation.text_in_lists,
             hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
@@ -7389,6 +7395,46 @@ impl<'p> Emitter<'p> {
             out.push(after);
             return Ok(());
         }
+        // **A map's read copied out where a `T?` of its own is kept**
+        // ([ADR-273](../../docs/specification/adr/adr-273.md) D4). A read
+        // through the brackets is `*get(…)`, whose `*` would take the whole
+        // chain, so it is held in parentheses.
+        let shape = (flow.statement, crate::check::argument_shape(expr));
+        if self.copied_reads.contains(&shape) {
+            let held = matches!(expr, Expr::Index { .. }) && !self.flat_reads.contains(&shape);
+            if held {
+                out.push("(");
+            }
+            self.expr_after_the_copy(out, expr, depth, flow)?;
+            if held {
+                out.push(")");
+            }
+            out.push(".copied()");
+            return Ok(());
+        }
+        self.expr_after_the_copy(out, expr, depth, flow)
+    }
+
+    /// [`Emitter::expr`]'s last step, after a copy out of a map's read.
+    fn expr_after_the_copy(
+        &self,
+        out: &mut Out,
+        expr: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        // **`get` on a map of `T?`** is one `T?`, as the brackets are
+        // ([ADR-273](../../docs/specification/adr/adr-273.md) D3).
+        if matches!(expr, Expr::MethodCall { .. })
+            && self
+                .flat_reads
+                .contains(&(flow.statement, crate::check::argument_shape(expr)))
+        {
+            out.push("nikaia_std::index::flat(");
+            self.expr_as_written(out, expr, depth, flow)?;
+            out.push(")");
+            return Ok(());
+        }
         self.expr_as_written(out, expr, depth, flow)
     }
 
@@ -8116,6 +8162,21 @@ impl<'p> Emitter<'p> {
                     //
                     // **A read that is lent is the reference it already was**
                     // (0.0.250): the `&` in front and the `*` cancel.
+                    // **A read of a map of `T?` is one `T?`**
+                    // ([ADR-273](../../docs/specification/adr/adr-273.md) D3):
+                    // `index::flat` over the read, which is the `Option<&T>`
+                    // a `ref T?` is below - so a lend in front of it is
+                    // already there, and is taken.
+                    if self
+                        .flat_reads
+                        .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                    {
+                        let _ = out.take_lend();
+                        out.push("nikaia_std::index::flat(");
+                        self.index_read(out, base, index, depth, flow, true)?;
+                        out.push(")");
+                        return Ok(());
+                    }
                     let lent = !self.slices(flow.statement, index) && out.take_lend();
                     return self.index_read(out, base, index, depth, flow, !lent);
                 }
@@ -12505,6 +12566,22 @@ impl<'p> Emitter<'p> {
                         })
                 })
                 .flatten();
+            // **A map's read is that option already**: `index::get` answers
+            // an `Option<&T>`, and so does a read `index::flat` writes for a
+            // map of `T?` ([ADR-273](../../docs/specification/adr/adr-273.md)
+            // D3) - so nothing is opened, and text is read as `str`. It was
+            // `(*get(&m, &k)).as_ref()`, an `Option<&&T>` (found writing
+            // ADR-273's tests).
+            let a_map_read = matches!(arg, Expr::Index { index, .. }
+                    if self.map_key(flow.statement, index, false).is_some())
+                || self
+                    .flat_reads
+                    .contains(&(flow.statement, crate::check::argument_shape(arg)));
+            let inside_the_option = match (inside_the_option, a_map_read) {
+                (Some(".as_deref()"), true) => Some(".map(String::as_str)"),
+                (Some(_), true) => Some(""),
+                (other, _) => other,
+            };
             let lend = lend && inside_the_option.is_none();
             if matches!(arg, Expr::LitNull) && inside_the_option.is_some() {
                 out.push("None");
@@ -12518,7 +12595,7 @@ impl<'p> Emitter<'p> {
                     out.push("&");
                 }
             }
-            if inside_the_option.is_some() {
+            if inside_the_option.is_some_and(|how| !how.is_empty()) {
                 out.push("(");
             }
             if let Some(Pointer::Reference { mutable }) = pointer {
@@ -12652,7 +12729,7 @@ impl<'p> Emitter<'p> {
             if let Some(Pointer::Handle { give: false }) = pointer {
                 out.push(".lent()");
             }
-            if let Some(how) = inside_the_option {
+            if let Some(how) = inside_the_option.filter(|how| !how.is_empty()) {
                 out.push(")");
                 out.push(how);
             }

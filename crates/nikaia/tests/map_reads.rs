@@ -372,3 +372,100 @@ fn a_map_keyed_by_numbers_is_read() {
         "2 6 -1 2 true 2\n10 10 true\n3 3 true\n40 40 true\ntrue true 0"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ADR-273: a map of `T?` values
+// ---------------------------------------------------------------------------
+
+/// **A map of `T?` reads one `T?`** ([ADR-273](../../../docs/specification/adr/adr-273.md)
+/// D1): a stored `null` and an absent key both answer `null`, through the
+/// brackets and through `get`, and `contains_key` tells them apart. **`m[k] =
+/// null` stores** (D2): the key is there afterwards and `len` counts it.
+#[test]
+fn a_map_of_maybes_reads_one_maybe() {
+    let source = "\
+use std::collections
+enum Kind { A, B }
+struct User { name: String }
+fn label(k: ref Kind?) -> String {
+    let known = k ?? Kind::B
+    return match known {
+        Kind::A => \"a\",
+        Kind::B => \"b\",
+    }
+}
+fn main() {
+    let mut m: collections::BTreeMap[i64, Kind?] = collections::BTreeMap()
+    m[1] = Kind::A
+    m[2] = null
+    m.insert(3, Kind::B)
+    let present = m[1]
+    let stored = m[2]
+    let absent = m[9]
+    println(f\"{present == null} {stored == null} {absent == null}\")
+    println(f\"{label(m[1])} {label(m[2])} {label(m[9])} {label(m.get(3))}\")
+    println(f\"{m.contains_key(2)} {m.contains_key(9)} {m.len()}\")
+    let mut users: collections::HashMap[String, User?] = collections::HashMap()
+    users[\"ann\"] = User { name: \"Ann\" }
+    users[\"bob\"] = null
+    println(f\"{users[\"ann\"]?.name ?? \"-\"} {users[\"bob\"]?.name ?? \"-\"} {users[\"cy\"]?.name ?? \"-\"}\")
+    let mut counts: collections::BTreeMap[String, i64?] = collections::BTreeMap()
+    counts[\"x\"] = 3
+    counts[\"y\"] = null
+    println(f\"{counts[\"x\"] ?? 0} {counts[\"y\"] ?? 0} {counts[\"z\"] ?? 0}\")
+}
+";
+    let rust = lowered(source);
+    assert!(rust.contains("nikaia_std::index::flat("), "{rust}");
+    assert_eq!(
+        output("map-of-maybes", source),
+        "false true true\na b b b\ntrue false 3\nAnn - -\n3 0 0"
+    );
+}
+
+/// **A map's read kept where a `T?` of its own is wanted** (D4): a value that
+/// copies is copied out, from a map of `T` and from a map of `T?` alike; one
+/// that does not is refused with the copy to write, `?.clone()`, which then
+/// runs.
+#[test]
+fn a_map_read_kept_is_copied_out_or_refused() {
+    let copied = "\
+use std::collections
+enum Kind { A, B }
+fn main() {
+    let mut plain: collections::BTreeMap[i64, Kind] = collections::BTreeMap()
+    plain[1] = Kind::A
+    let mut maybe: collections::BTreeMap[i64, Kind?] = collections::BTreeMap()
+    maybe[1] = Kind::B
+    maybe[2] = null
+    let a: Kind? = plain[1]
+    let b: Kind? = maybe[1]
+    let c: Kind? = maybe[2]
+    let mut kept: Vec[Kind?] = []
+    kept.push(maybe[1])
+    println(f\"{a == null} {b == null} {c == null} {kept.len()} {maybe.len()}\")
+}
+";
+    assert_eq!(output("map-read-copied", copied), "false false true 1 2");
+
+    let refused = "\
+use std::collections
+struct User { name: String }
+fn main() {
+    let mut users: collections::BTreeMap[i64, User?] = collections::BTreeMap()
+    users[1] = User { name: \"Ann\" }
+    let u: User? = users[1]
+    println(f\"{u == null}\")
+}
+";
+    let found = findings(refused);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK1102"
+                && f.help.as_deref().is_some_and(|h| h.contains("?.clone()"))),
+        "{found:#?}"
+    );
+    let written = refused.replace("users[1]\n", "users[1]?.clone()\n");
+    assert_eq!(output("map-read-cloned", &written), "false");
+}

@@ -495,6 +495,15 @@ pub struct Checked {
     /// the answer is the first side that has a value, or `null`, so it is a
     /// `T?` and the fallback is written as the option it is (Part I 3.5).
     pub optional_fallbacks: BTreeSet<(usize, String)>,
+    /// **A read of a map whose values are `T?`**, by statement and shape: it
+    /// is one `T?` and not a `T?` of a `T?` - a stored `null` and an absent key
+    /// both answer `null` ([ADR-273](../../docs/specification/adr/adr-273.md)
+    /// D1), and the read is written through `index::flat` (D3).
+    pub flat_reads: BTreeSet<(usize, String)>,
+    /// **A map's read copied out where a `T?` of its own is kept**, by
+    /// statement and shape ([ADR-273](../../docs/specification/adr/adr-273.md)
+    /// D4): the value copies, and the emitter writes `.copied()`.
+    pub copied_reads: BTreeSet<(usize, String)>,
     /// **A list of text asked whether it holds a view of text**, by statement
     /// and receiver: `xs.contains(name)` for a `name: ref String`, which is a
     /// `&str` below, where a `Vec<String>`'s own `contains` takes a `&String`.
@@ -1338,6 +1347,7 @@ fn walked<'a>(
         changed: Vec::new(),
         writing_index: false,
         read_a_map: false,
+        map_read_sites: BTreeSet::new(),
         map_views: BTreeSet::new(),
         hole: None,
         run_code: BTreeSet::new(),
@@ -1762,6 +1772,10 @@ pub struct Propagation {
     pub view_coalesces: BTreeSet<(usize, String)>,
     /// [`Checked::optional_fallbacks`].
     pub optional_fallbacks: BTreeSet<(usize, String)>,
+    /// [`Checked::flat_reads`].
+    pub flat_reads: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_reads`].
+    pub copied_reads: BTreeSet<(usize, String)>,
     /// [`Checked::text_in_lists`].
     pub text_in_lists: BTreeSet<(usize, String)>,
     /// [`Checked::counted`].
@@ -2047,6 +2061,8 @@ pub fn propagation_against(
         lent_coalesces: checked.lent_coalesces,
         view_coalesces: checked.view_coalesces,
         optional_fallbacks: checked.optional_fallbacks,
+        flat_reads: checked.flat_reads,
+        copied_reads: checked.copied_reads,
         text_in_lists: checked.text_in_lists,
         counted: checked.counted,
         lent_bindings: checked.lent_bindings,
@@ -2961,6 +2977,11 @@ struct Checker<'a> {
     /// Set where an `Index` read a **map**, for the `??` around it: a map read
     /// hands out a view of the value, whatever the value's type (ADR-213 D2).
     read_a_map: bool,
+    /// **Every read of a map**, by the expression's address: through the
+    /// brackets or `get`. It is an `Option<&T>` below whatever the type
+    /// says, so a place that keeps a `T?` of its own copies it out or is
+    /// refused ([ADR-273](../../docs/specification/adr/adr-273.md) D4).
+    map_read_sites: BTreeSet<usize>,
     /// **The bindings a `let` made of a map read** (#297), by
     /// [`Local::id`]: `let found = calls.get(key)` is a view of what the map
     /// holds, as the read itself is, and a `??` on the name is the `??` on
@@ -8050,6 +8071,7 @@ impl<'a> Checker<'a> {
             let (Some(want), Some(found)) = (expected.get(at), found.get(at)) else {
                 continue;
             };
+            self.a_map_read_kept(found, want, given, span);
             if let Some(how) = wrap_for(found, want, is_literal(given)) {
                 self.checked
                     .nullable_args
@@ -8492,6 +8514,44 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **A map's read kept where a `T?` of its own is wanted**
+    /// ([ADR-273](../../docs/specification/adr/adr-273.md) D4): the read is
+    /// a view of what the map keeps, an `Option<&T>` below, so a value that
+    /// copies is copied out - `let k: Kind? = m[1]` - and one that does not
+    /// is refused with the copy to write, where it reached `rustc` as
+    /// *mismatched types* about a file nobody wrote.
+    fn a_map_read_kept(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
+        if !self.map_read_sites.contains(&address(value)) {
+            return;
+        }
+        let (Ty::Nullable(inner), Ty::Nullable(read)) = (want, found) else {
+            return;
+        };
+        if inner.is_a_view() || inner.is_unknown() || read.is_a_view() || read.is_unknown() {
+            return;
+        }
+        if self.copied(inner) || !self.takes_away(inner) {
+            self.checked
+                .copied_reads
+                .insert((span.at(), argument_shape(value)));
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!(
+                "This keeps a `{want}` of its own, and a map's read is a view of what the map keeps."
+            ),
+            notes: vec![
+                "Nikaia never makes a copy behind your back, so the copy is written where it happens."
+                    .to_string(),
+            ],
+            help: Some("Write `?.clone()` after the read: `m[k]?.clone()`.".to_string()),
+            labels: Vec::new(),
+        });
+    }
+
     /// Part I 2.3: record where the emitter has to write the `Some(…)`.
     ///
     /// A type is non-nullable unless it says otherwise, so a plain `T` standing
@@ -8526,6 +8586,7 @@ impl<'a> Checker<'a> {
     ///
     /// `null` is in neither, being a `T?` itself.
     fn wraps_into_nullable(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) {
+        self.a_map_read_kept(found, want, value, span);
         let Some(how) = wrap_for(found, want, is_literal(value)) else {
             return;
         };
@@ -9832,6 +9893,30 @@ impl<'a> Checker<'a> {
 
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
         let ty = self.value_of(expr, span);
+        // **`get` on a map of `T?` is one `T?`, as the brackets are**
+        // ([ADR-273](../../docs/specification/adr/adr-273.md) D1): the
+        // signature hands back `V?`, and a `V` that is a `T?` would make it a
+        // `T?` of a `T?`.
+        let ty = match (expr, ty) {
+            (Expr::MethodCall { method, args, .. }, Ty::Nullable(outer))
+                if self.parsed.text(*method) == "get"
+                    && args.len() == 1
+                    && matches!(outer.as_ref(), Ty::Nullable(_)) =>
+            {
+                self.checked
+                    .flat_reads
+                    .insert((span.at(), argument_shape(expr)));
+                *outer
+            }
+            (_, ty) => ty,
+        };
+        if self.read_a_map
+            && (matches!(expr, Expr::Index { .. })
+                || matches!(expr, Expr::MethodCall { method, .. }
+                    if self.parsed.text(*method) == "get"))
+        {
+            self.map_read_sites.insert(address(expr));
+        }
         // **A value with a cleanup made here may die in this function**
         // (ADR-239 D2): by a call or a literal, which is where one comes from.
         // A read of a name or a field is not a death, and is not asked.
@@ -12172,7 +12257,21 @@ impl<'a> Checker<'a> {
                         let (keys, value) = (keys.clone(), value.clone());
                         self.read_a_map = !writing;
                         self.a_map_key(&keys, &key, index, writing, span);
-                        Ty::Nullable(Box::new(value))
+                        // **A map of `T?` reads one `T?`**
+                        // ([ADR-273](../../docs/specification/adr/adr-273.md)
+                        // D1): a stored `null` and an absent key are both
+                        // `null`, and `contains_key` tells them apart. A write
+                        // keeps the slot's own type, so `m[k] = null` stores
+                        // (D2).
+                        match (value, writing) {
+                            (Ty::Nullable(held), false) => {
+                                self.checked
+                                    .flat_reads
+                                    .insert((span.at(), argument_shape(expr)));
+                                Ty::Nullable(held)
+                            }
+                            (value, _) => Ty::Nullable(Box::new(value)),
+                        }
                     }
                     _ => Ty::Unknown,
                 }
@@ -12814,7 +12913,13 @@ impl<'a> Checker<'a> {
             true => Ty::named(crate::contracts::ty::TEXT),
             false => fallback.clone(),
         };
-        if !matches!(owned, Ty::Named { .. }) || !crate::contracts::keeps::moves(&owned) {
+        // **A type of this package that copies is a copy here too**, as a
+        // number is: `k ?? Kind::B` for a `k: ref Kind?` is `index::or`'s
+        // copy of it (found writing ADR-273's tests).
+        if !matches!(owned, Ty::Named { .. })
+            || !crate::contracts::keeps::moves(&owned)
+            || !self.takes_away(&owned)
+        {
             return;
         }
         let fallback = &owned;
@@ -14055,6 +14160,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let is_literal = given.get(at).is_some_and(is_literal);
+            if let Some(value) = given.get(at) {
+                self.a_map_read_kept(found, want, value, span);
+            }
             if let Some(how) = wrap_for(found, want, is_literal) {
                 self.checked
                     .nullable_args
