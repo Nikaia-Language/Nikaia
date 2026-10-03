@@ -7448,6 +7448,260 @@ fn reaches_one_that_pauses(calls: &collections::BTreeSet<String>, holds: &collec
     false
 }
 
+#[derive(Debug, Clone)]
+pub struct Site {
+    pub span: Span,
+    pub what: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncNode {
+    pub reach: SyncReach,
+    pub site: Option<Site>,
+    pub unit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncGraph {
+    pub methods: collections::BTreeMap<String, MethodsCalled>,
+    pub nodes: collections::BTreeMap<String, SyncNode>,
+    pub unit: i64,
+}
+
+pub fn unit_sync(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, own: &Ledger, library: &Ledger, graph: &mut SyncGraph) {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, args, body, .. } => {
+                let name = *name;
+                let key = key_of_function((name).as_ref(), "", names);
+                let mut node = sync_node(&seen_in(body, names, unaliased, holes_of, &no_root, false), program, &code_of(args, names), names, own, library, graph.unit);
+                sync_methods(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut node);
+                graph.nodes.insert(key, node);
+            },
+            Item::Impl { trait_name, target, methods, .. } => {
+                let trait_name = *trait_name;
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, args, body, .. } => {
+                            let name = *name;
+                            let key = key_of_function((name).as_ref(), &owner, names);
+                            let mut node = sync_node(&seen_in(body, names, unaliased, holes_of, &no_root, false), program, &code_of(args, names), names, own, library, graph.unit);
+                            sync_methods(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut node);
+                            declared_by((trait_name).as_ref(), &key_of_function((name).as_ref(), "", names), names, own, library, &mut node);
+                            graph.nodes.insert(key, node);
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            Item::Trait { name, methods, .. } => {
+                let name = *name;
+                let declaring = names.resolve(name).to_owned();
+                for method in methods.iter() {
+                    let key = format!("{}::{}", declaring, names.resolve(method.node.name));
+                    graph.nodes.insert(key, leaf(!method.node.is_sync));
+                }
+            },
+            Item::Grammar(def) => {
+                let named = names.resolve(def.name).to_owned();
+                for rule in def.rules.iter() { if rule.is_public { graph.nodes.insert(format!("{}::{}", named, names.resolve(rule.name)), leaf(false)); } }
+            },
+            _ => { },
+        }
+    }
+}
+
+fn leaf(blocked: bool) -> SyncNode { SyncNode { reach: SyncReach { blocked, calls: collections::BTreeSet::new(), through_code: collections::BTreeSet::new(), pauses_here: false }, site: None, unit: 0 } }
+
+fn declared_by(trait_name: Option<&winnow_grammar::Symbol>, method: &str, names: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, node: &mut SyncNode) {
+    let named = match trait_name { Some(__nikaia_value) => __nikaia_value, None => return };
+    let declared = format!("{}::{}", names.resolve(*named), method);
+    if own.functions.contains_key(&declared) || library.functions.contains_key(&declared) { node.reach.calls.insert(declared); }
+}
+
+fn code_of(args: &[FnArg], names: &winnow_grammar::InternerContext) -> collections::BTreeMap<String, bool> {
+    let mut code: collections::BTreeMap<String, bool> = collections::BTreeMap::new();
+    for arg in args.iter() {
+        let declared = match (*arg.ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+        code.insert(names.resolve(arg.name).to_owned(), !declared.is_sync);
+    }
+    code
+}
+
+fn sync_node(seen: &[Seen], program: &Program, code: &collections::BTreeMap<String, bool>, names: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, unit: i64) -> SyncNode {
+    let mut node = SyncNode { reach: SyncReach { blocked: false, calls: collections::BTreeSet::new(), through_code: collections::BTreeSet::new(), pauses_here: false }, site: None, unit };
+    for one in seen.iter() {
+        match one {
+            Seen::Joins { construct, span } => {
+                node.reach.blocked = true;
+                first_site(span, &format!("an `{}` block", construct), &mut node);
+            },
+            Seen::Call { name, span, .. } => sync_call((callee_named(names, name.to_owned(), own, library, &program.items)).as_ref(), span, code, &mut node),
+            Seen::Spawn { span } => sync_call(Some(&Callee::Opaque(None)), span, code, &mut node),
+            Seen::Opaque { span } => sync_call(Some(&Callee::Opaque(None)), span, code, &mut node),
+            _ => { },
+        }
+    }
+    node.reach.pauses_here = node.site.is_some();
+    node
+}
+
+fn sync_call(callee: Option<&Callee>, span: &Span, code: &collections::BTreeMap<String, bool>, node: &mut SyncNode) {
+    let known = match callee { Some(__nikaia_value) => __nikaia_value, None => return };
+    match known {
+        Callee::Own(name) => { node.reach.calls.insert(name.to_owned()); },
+        Callee::Library { key, never_pauses } => {
+            let never_pauses = *never_pauses;
+            if !never_pauses {
+                node.reach.blocked = true;
+                first_site(span, &format!("`{}`", key), node);
+            }
+        },
+        Callee::Opaque(name) => opaque_call((name).as_deref(), span, code, node),
+        _ => { },
+    }
+}
+
+fn opaque_call(name: Option<&str>, span: &Span, code: &collections::BTreeMap<String, bool>, node: &mut SyncNode) {
+    if name.is_none() {
+        node.reach.blocked = true;
+        first_site(span, "something this compiler cannot see the end of", node);
+        return;
+    }
+    let called = match name { Some(__nikaia_value) => __nikaia_value, None => return };
+    if code.contains_key(called) {
+        if nikaia_std::index::or(*nikaia_std::index::get(&code, called), || false) {
+            first_site(span, &format!("`{}`", called), node);
+            node.reach.through_code.insert(called.to_owned());
+        }
+        return;
+    }
+    node.reach.blocked = true;
+    first_site(span, &format!("`{}`", called), node);
+}
+
+fn first_site(span: &Span, what: &str, node: &mut SyncNode) { if node.site.is_none() { node.site = Some(Site { span: span.clone(), what: what.to_owned() }); } }
+
+fn sync_methods(resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, node: &mut SyncNode) {
+    let known = match resolved { Some(__nikaia_value) => __nikaia_value, None => return };
+    if known.unseen { node.reach.blocked = true; }
+    for callee in known.resolved.iter() { if own.functions.contains_key(callee) { node.reach.calls.insert(callee.to_owned()); } else if !never_pauses_in(library, callee) { node.reach.blocked = true; } }
+}
+
+fn never_pauses_in(library: &Ledger, callee: &str) -> bool {
+    let contract = match *nikaia_std::index::get(&library.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    contract.sync_claim.is_sync()
+}
+
+#[derive(Debug, Clone)]
+pub struct Violation {
+    pub span: Span,
+    pub caller: String,
+    pub promise: String,
+    pub callee: String,
+    pub from_library: bool,
+    pub unpromised: bool,
+    pub construct: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Promise {
+    caller: String,
+    promise: String,
+    allowed: collections::BTreeSet<String>,
+}
+
+pub fn unit_violations(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, own: &Ledger, library: &Ledger) -> Vec<Violation> {
+    let mut found: Vec<Violation> = vec![];
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, args, body, is_sync, sync_by, .. } => {
+                let is_sync = *is_sync; let name = *name;
+                let promise = match promise_of(&key_of_function((name).as_ref(), "", names), args, is_sync, sync_by, names) { Some(__nikaia_value) => __nikaia_value, None => continue };
+                violations_in(&seen_in(body, names, unaliased, holes_of, &no_root, false), &promise, program, names, own, library, &mut found);
+            },
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, args, body, is_sync, sync_by, .. } => {
+                            let is_sync = *is_sync; let name = *name;
+                            let promise = match promise_of(&key_of_function((name).as_ref(), &owner, names), args, is_sync, sync_by, names) { Some(__nikaia_value) => __nikaia_value, None => continue };
+                            violations_in(&seen_in(body, names, unaliased, holes_of, &no_root, false), &promise, program, names, own, library, &mut found);
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            _ => { },
+        }
+    }
+    found
+}
+
+fn promise_of(caller: &str, args: &[FnArg], is_sync: bool, sync_by: &[winnow_grammar::Symbol], names: &winnow_grammar::InternerContext) -> Option<Promise> {
+    if !is_sync && sync_by.is_empty() { return None; }
+    let mut allowed: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for arg in args.iter() {
+        let declared = match (*arg.ty.code).as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if declared.is_sync { allowed.insert(names.resolve(arg.name).to_owned()); }
+    }
+    let mut named: Vec<String> = vec![];
+    for one in sync_by.iter() {
+        let parameter = names.resolve(*one).to_owned();
+        allowed.insert(parameter.to_owned());
+        named.push(parameter);
+    }
+    let mut promise: String = String::from("sync");
+    if !named.is_empty() {
+        let joined = named.join(", ");
+        promise = format!("sync({})", joined);
+    }
+    Some(Promise { caller: caller.to_owned(), promise, allowed })
+}
+
+fn violations_in(seen: &[Seen], promise: &Promise, program: &Program, names: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, found: &mut Vec<Violation>) {
+    for one in seen.iter() {
+        match one {
+            Seen::Joins { construct, span } => found.push(violation(promise, span, construct, false, false, true)),
+            Seen::Call { name, span, .. } => {
+                if !name.contains("::") && promise.allowed.contains(name) { continue; }
+                pausing_call((callee_named(names, name.to_owned(), own, library, &program.items)).as_ref(), span, promise, own, found);
+            },
+            Seen::Spawn { span } => pausing_call(Some(&Callee::Opaque(None)), span, promise, own, found),
+            Seen::Opaque { span } => pausing_call(Some(&Callee::Opaque(None)), span, promise, own, found),
+            _ => { },
+        }
+    }
+}
+
+fn pausing_call(callee: Option<&Callee>, span: &Span, promise: &Promise, own: &Ledger, found: &mut Vec<Violation>) {
+    let known = match callee { Some(__nikaia_value) => __nikaia_value, None => return };
+    match known {
+        Callee::Own(name) => {
+            let contract = match *nikaia_std::index::get(&own.functions, name) { Some(__nikaia_value) => __nikaia_value, None => return };
+            if !contract.sync_claim.is_sync() { found.push(violation(promise, span, name, false, unpromised(&contract.sync_claim), false)); }
+        },
+        Callee::Library { key, never_pauses } => {
+            let never_pauses = *never_pauses;
+            if !never_pauses { found.push(violation(promise, span, key, true, false, false)); }
+        },
+        Callee::Opaque(name) => {
+            let called = nikaia_std::index::or(match name {
+                Some(__nikaia_it) => Some(__nikaia_it.to_owned()),
+                None => None,
+            }, || "something this compiler cannot resolve".into());
+            found.push(violation(promise, span, &called, false, false, false));
+        },
+        _ => { },
+    }
+}
+
+fn unpromised(claim: &Sync) -> bool { matches!(claim, Sync::Unpromised) }
+
+fn violation(promise: &Promise, span: &Span, callee: &str, from_library: bool, unpromised: bool, construct: bool) -> Violation { Violation { span: span.clone(), caller: promise.caller.to_owned(), promise: promise.promise.to_owned(), callee: callee.to_owned(), from_library, unpromised, construct } }
+
 
 // --- template.nika ---
 
@@ -11507,7 +11761,7 @@ pub mod surface {
 }
 pub mod sync {
     #[allow(unused_imports)]
-    pub use super::{SyncReach, sync_holds, paused_only_by_code, pause_chain};
+    pub use super::{SyncReach, sync_holds, paused_only_by_code, pause_chain, Site, SyncNode, SyncGraph, unit_sync, Violation, unit_violations};
 }
 pub mod template {
     #[allow(unused_imports)]

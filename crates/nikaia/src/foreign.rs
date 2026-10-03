@@ -176,19 +176,6 @@ fn written(parsed: &Parsed) -> Vec<(String, Span)> {
         .collect()
 }
 
-/// What the walk meets in one block, paths and calls, where nobody asks about
-/// a `root`.
-pub(crate) fn seen_in(parsed: &Parsed, block: &crate::ast::Block) -> Vec<Seen> {
-    nikaia_std::tools::foreign::seen_in(
-        block,
-        &parsed.interner,
-        &|name: &str| parsed.unaliased(name),
-        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
-        &|_: &str| -1,
-        false,
-    )
-}
-
 /// **Every bare name a block mentions**, by the same walk, and whether it met
 /// a `spawn` it did not read into: what a body keeps is asked of the names it
 /// reaches (`contracts::keep`, `contracts::keeps`).

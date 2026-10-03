@@ -72,7 +72,7 @@ COMPILER_NIKA = {
     "tiers.nika": "text_tiers: what a method's name says about the text it hands back, and which containers text is followed into (0.0.383)",
     "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384)",
     "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
-    "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390)",
+    "sync.nika": "contracts::sync: the greatest fixpoint of which functions keep their claim to be `sync`, the ones only their lambdas pause, and the shortest way to a pause (0.0.390), the walk of what a body does to its claim and the check of what a `sync` function may not call (0.0.398)",
     "escapes.nika": "build_time: what the `\\` in a written literal means, the escape nothing names, and a value spelled back as a literal (0.0.391)",
     "dump.nika": "grammar_run: the encoder a grammar run at build time prints its result with, written from the declaration (0.0.392)",
     "describe.nika": "describe: what a description holds - the entries, the types they name, what the describer saw and did not claim (0.0.394)",

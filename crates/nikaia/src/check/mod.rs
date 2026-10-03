@@ -6932,6 +6932,22 @@ impl<'a> Checker<'a> {
         if self.a_pending_coalesce_is_lent(given, span) {
             return true;
         }
+        // **A plain value lent to a `ref T?` is put in the option too** (Part
+        // I 2.3's wrap at an argument): `name_of(Kind::B)` for a `k: ref
+        // Kind?` is `Some(&Kind::B)`. Settled here, the wrap below was never
+        // recorded, and the emitter opened the value as if it were an option
+        // already - `(Kind::B).as_ref()` (found moving `sync`'s walk into
+        // Nikaia, #125).
+        if matches!(want, Ty::Nullable(inner) if inner.is_a_view())
+            && !matches!(found, Ty::Nullable(_))
+            && !found.is_unknown()
+        {
+            self.checked
+                .nullable_args
+                .entry((span.at(), written.to_string(), at))
+                .or_default()
+                .insert(argument_shape(given), Wrap::Constructor);
+        }
         self.checked
             .lent_args
             .entry((span.at(), written.to_string(), at))

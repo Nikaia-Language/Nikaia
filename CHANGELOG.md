@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.398] — 2026-10-03
+
+**What a body does to its claim to be `sync` is walked in Nikaia** (#125,
+ADR-294). `contracts::sync`'s walk joined its fixpoint in `tools/sync.nika`:
+every function and method of a unit, the calls by name each goes to by
+`callee_named`, an `overlap` or a `select` joining on the executor (ADR-292
+D16), a code parameter whose lambda decides (ADR-288 D29), the type checker's
+method calls merged in, where each body first pauses itself (D32), the edge
+from an implementation to the trait method it implements (D2), and a trait's
+methods and a grammar's `pub` rules as leaves (D24; ADR-296 D35). The check of
+what a `sync` function may not call moved with it, `Violation` included. The
+notes a build prints and writing the ledger stay Rust. A field that was never
+set - the code parameter a body *runs* - went with the move: the inference
+writes `inferred`, as it always did.
+
+Moving it found one gap, closed in the compiler (ADR-294 D3): **a plain value
+lent to a `ref T?` is put in the option.** `name_of(Kind::B)` for a `k: ref
+Kind?` is `Some(&Kind::B)`; the wrap was never recorded where the argument was
+lent, so the value was opened as if it were an option already -
+`(Kind::B).as_ref()`, `rustc`'s words about a file nobody wrote. 20.9 % of the
+toolchain is Nikaia.
+
 ## [0.0.397] — 2026-10-03
 
 **What a body reaches is walked in Nikaia** (#125, ADR-294). The walk

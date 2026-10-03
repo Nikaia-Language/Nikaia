@@ -1931,3 +1931,47 @@ fn main() {
         "a number's text form is owned: {found:#?}"
     );
 }
+
+/// **A plain value lent to a `ref T?` is put in the option** (Part I 2.3):
+/// `name_of(Kind::B)` is `Some(&Kind::B)`, a `String` reaches a `ref String?`
+/// as `Some(&owned)`, and only a value that is a `T?` already is opened with
+/// `.as_ref()`. The wrap was never recorded where the argument was lent, so
+/// the plain value was opened as if it were an option (found moving `sync`'s
+/// walk into Nikaia, #125).
+#[test]
+fn a_plain_value_lent_to_a_nullable_view_is_put_in_the_option() {
+    let source = "\
+enum Kind { A(String?), B }
+struct Labelled { label: String }
+fn name_of(k: ref Kind?) -> String {
+    let known = k ?? return \"none\"
+    return match known {
+        Kind::A(_) => \"a\",
+        Kind::B => \"b\",
+    }
+}
+fn label_of(b: ref Labelled?) -> String {
+    let known = b ?? return \"-\"
+    return known.label.clone()
+}
+fn text_of(t: ref String?) -> String {
+    let known = t ?? return \"-\"
+    return known.clone()
+}
+fn main() {
+    let found: Kind? = null
+    let boxed = Labelled { label: \"x\" }
+    let owned: String = \"own\"
+    println(f\"{name_of(Kind::A(null))} {name_of(found)} {name_of(Kind::B)} {label_of(boxed)} {text_of(owned)}\")
+    println(f\"{label_of(boxed)} {text_of(owned)}\")
+}
+";
+    let lowered = lowered(source);
+    assert!(lowered.contains("name_of(Some(&Kind::B))"), "{lowered}");
+    assert!(lowered.contains("text_of(Some(&owned))"), "{lowered}");
+    assert!(lowered.contains("name_of((found).as_ref())"), "{lowered}");
+    assert_eq!(
+        ran("plain-into-nullable-view", source),
+        "a none b x own\nx own\n"
+    );
+}
