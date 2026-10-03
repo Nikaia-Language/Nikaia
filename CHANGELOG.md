@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.376] — 2026-10-03
+
+**What a keep asks of a type, a method and a ledger is Nikaia** (#125,
+ADR-250). The questions `contracts::keep` (ADR-209) asks outside its walk
+moved into `tools/keep.nika`: which structs of a unit hold a view, and why a
+value of a type cannot go into a handle (ADR-221 D3); the struct of views a
+written type names; whether a ledger type holds a view; the methods that keep
+what they are given, drop entries, hand back what they remove or hand back a
+value of their own; whether a contract takes a keep and the key of a method
+that does; the name a callee is written as and the local an expression is
+rooted in. The walk that follows views by origin and the plan it decides stay
+in Rust, keyed by statement numbers this language has no `usize` for. 18.3 %
+of the toolchain is Nikaia.
+
 ## [0.0.375] — 2026-10-03
 
 **The sharing records and the `--sharing` report are Nikaia** (#125,

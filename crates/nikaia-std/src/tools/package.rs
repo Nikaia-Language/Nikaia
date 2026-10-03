@@ -1841,6 +1841,213 @@ pub fn read_head<'a>(written: &Written<'a>) -> Read<'a> {
 fn refused(why: &str) -> Read<'_> { Read { refused: why, method: "", target: "", length: 0, keep_alive: false, headers: vec![] } }
 
 
+// --- keep.nika ---
+
+#[derive(Debug, Clone)]
+pub struct KeepContext {
+    pub borrowing: collections::BTreeSet<String>,
+    pub structs: collections::BTreeMap<String, DeclaredStruct>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeclaredStruct {
+    pub generic: bool,
+    pub fields: Vec<(String, Type)>,
+}
+
+impl KeepContext {
+    pub fn of(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>]) -> KeepContext {
+        let mut structs: collections::BTreeMap<String, DeclaredStruct> = collections::BTreeMap::new();
+        for item in items.iter() {
+            match &item.node {
+                Item::Struct { name, generics, fields, .. } => {
+                    let name = *name;
+                    let mut written: Vec<(String, Type)> = vec![];
+                    for field in fields.iter() { written.push((names.resolve(field.name).to_owned(), field.ty.clone())); }
+                    structs.insert(names.resolve(name).to_owned(), DeclaredStruct { generic: !generics.is_empty(), fields: written });
+                },
+                _ => { },
+            }
+        }
+        KeepContext { borrowing: borrowing_types(names, items), structs }
+    }
+    pub fn not_held(&self, names: &winnow_grammar::InternerContext, ty: &Type, seen: &mut Vec<String>) -> Option<String> {
+        let name = names.resolve(ty.name);
+        if ty.is_view {
+            if name == "String" && ty.generics.is_empty() { return None; }
+            return Some(format!("a view of `{}` rather than of text", name));
+        }
+        if ty.is_tuple && self.carries(names, ty) { return Some(String::from("a tuple of views")); }
+        if self.structs.contains_key(name) && self.borrowing.contains(name) { return self.struct_not_held(names, name, seen); }
+        if !self.carries(names, ty) { return None; }
+        if name == "Vec" || name == "List" {
+            for argument in ty.generics.iter() {
+                let why = self.not_held(names, argument, seen);
+                if why.is_some() { return why; }
+            }
+            return None;
+        }
+        Some(format!("a `{}` of views", name))
+    }
+    pub fn struct_not_held(&self, names: &winnow_grammar::InternerContext, name: &str, seen: &mut Vec<String>) -> Option<String> {
+        let declared = match *nikaia_std::index::get(&self.structs, name) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        if declared.generic { return Some(format!("`{}`, a struct of views with type parameters", name)); }
+        for one in seen.iter() { if one == name { return None; } }
+        seen.push(name.to_owned());
+        for (field, ty) in declared.fields.iter() {
+            let why = self.not_held(names, ty, seen);
+            if why.is_some() {
+                let held = nikaia_std::index::or(why, || "".into());
+                return Some(format!("`{}.{}`, which holds {}", name, field, held));
+            }
+        }
+        None
+    }
+    pub fn carries(&self, names: &winnow_grammar::InternerContext, ty: &Type) -> bool {
+        if ty.is_view || self.borrowing.contains(names.resolve(ty.name)) { return true; }
+        for argument in ty.generics.iter() { if self.carries(names, argument) { return true; } }
+        false
+    }
+}
+
+pub fn struct_in(names: &winnow_grammar::InternerContext, ty: &Type, borrowing: &collections::BTreeSet<String>) -> Option<String> {
+    let name = names.resolve(ty.name);
+    if borrowing.contains(name) { return Some(name.to_owned()); }
+    for argument in ty.generics.iter() {
+        let found = struct_in(names, argument, borrowing);
+        if found.is_some() { return found; }
+    }
+    None
+}
+
+pub fn names_a_struct_of_views(names: &winnow_grammar::InternerContext, ty: &Type, borrowing: &collections::BTreeSet<String>) -> bool {
+    if borrowing.contains(names.resolve(ty.name)) { return true; }
+    for argument in ty.generics.iter() { if names_a_struct_of_views(names, argument, borrowing) { return true; } }
+    false
+}
+
+pub fn a_ledger_type_with_a_view(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { view, args, .. } => { let view = *view; view || any_with_a_view(args) },
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); a_ledger_type_with_a_view(inner) },
+        Ty::Tuple(parts) => any_with_a_view(parts),
+        Ty::Unknown => true,
+        _ => false,
+    }
+}
+
+fn any_with_a_view(types: &[Ty]) -> bool {
+    for one in types.iter() { if a_ledger_type_with_a_view(one) { return true; } }
+    false
+}
+
+pub fn takes_a_keep(contract: &FnContract) -> bool {
+    for held in contract.views.iter() { if held.state == State::Tethered { return true; } }
+    false
+}
+
+pub fn keeping_method_key(ledger: &Ledger, target: Option<&str>, on_self: bool, method: &str) -> Option<String> {
+    if on_self && target.is_some() {
+        let owner = nikaia_std::index::or(target, || "");
+        let key = format!("{}::{}", owner, method);
+        let contract = match *nikaia_std::index::get(&ledger.functions, &key) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        if takes_a_keep(&contract) { return Some(key); }
+        return None;
+    }
+    let suffix = format!("::{}", method);
+    let mut found: Option<String> = None;
+    for (key, contract) in ledger.functions.iter() {
+        if key.ends_with(&suffix) && takes_a_keep(contract) {
+            if found.is_some() { return None; }
+            found = Some(key.to_owned());
+        }
+    }
+    found
+}
+
+pub fn written_callee(names: &winnow_grammar::InternerContext, func: &Expr, unaliased: &impl Fn(&str) -> String) -> Option<String> {
+    match func {
+        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Path(segments) => Some(unaliased(&joined_segments(segments, names))),
+        _ => None,
+    }
+}
+
+pub fn root_of(names: &winnow_grammar::InternerContext, expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Variable(name) => { let name = *name; Some(names.resolve(name).to_owned()) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
+        Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); root_of(names, base) },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); root_of(names, expr) },
+        _ => None,
+    }
+}
+
+pub fn taken_from(names: &winnow_grammar::InternerContext, value: &Expr) -> Option<String> {
+    match value {
+        Expr::MethodCall { receiver, method, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; if hands_back_what_it_removes(names.resolve(method)) { root_of(names, receiver) } else { None } },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); taken_from(names, inner) },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); taken_from(names, expr) },
+        _ => None,
+    }
+}
+
+const OWNED: [&str; 14] = ["to_owned", "clone_text", "len", "is_empty", "count", "starts_with", "ends_with", "contains", "contains_key", "parse", "to_uppercase", "to_lowercase", "join", "repeat"];
+
+const KEEPS: [&str; 6] = ["push", "insert", "extend", "append", "push_front", "push_back"];
+
+const SHEDS: [&str; 9] = ["clear", "remove", "drain", "pop", "truncate", "retain", "pop_front", "pop_back", "take"];
+
+const TAKES: [&str; 6] = ["remove", "pop", "pop_front", "pop_back", "swap_remove", "take"];
+
+pub fn hands_back_its_own(method: &str) -> bool {
+    for one in OWNED.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn keeps_what_it_is_given(method: &str) -> bool {
+    for one in KEEPS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn drops_entries(method: &str) -> bool {
+    for one in SHEDS.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn hands_back_what_it_removes(method: &str) -> bool {
+    for one in TAKES.iter() {
+        let one = *one;
+        if one == method { return true; }
+    }
+    false
+}
+
+pub fn capitalised(text: &str) -> String {
+    let mut out: String = String::from("");
+    let mut first = true;
+    for c in text.chars() {
+        if first {
+            let mut letter: String = String::from("");
+            letter.push(c);
+            out.push_str(&letter.to_uppercase());
+            first = false;
+        } else { out.push(c); }
+    }
+    out
+}
+
+
 // --- ledger.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9711,6 +9918,10 @@ pub mod foreign {
 pub mod http1 {
     #[allow(unused_imports)]
     pub use super::{Field, Line, Written, Header, Read, Http1, read_head, written};
+}
+pub mod keep {
+    #[allow(unused_imports)]
+    pub use super::{KeepContext, DeclaredStruct, struct_in, names_a_struct_of_views, a_ledger_type_with_a_view, takes_a_keep, keeping_method_key, written_callee, root_of, taken_from, hands_back_its_own, keeps_what_it_is_given, drops_entries, hands_back_what_it_removes, capitalised};
 }
 pub mod ledger {
     #[allow(unused_imports)]
