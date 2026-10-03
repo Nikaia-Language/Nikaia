@@ -1,0 +1,254 @@
+// crates/nikaia-std/src/tools/tether.nika
+//
+// Which of Part I 6.6's states each view in a signature is in (ADR-008 D2,
+// D7), and whether a body makes a buffer of its own - the analysis half of
+// the compiler's `contracts::tether`, moved from Rust (ADR-250, #125). What
+// stays Rust is writing the answers into the ledger, the `--tethers` report
+// and the refusal, both of which read the keep plan.
+//
+// **Only Borrowed is built as a representation**, and `keep::infer` says
+// otherwise where a view really leaves (ADR-209 D6): so every position this
+// file writes is Borrowed, and it errs **towards Tethered** wherever it
+// cannot decide - a wider representation, never a program that does the
+// wrong thing.
+
+use std::collections
+
+/// The position a function's result occupies in the column - the spelling
+/// `sharing` uses for the same position.
+pub comptime RESULT_POSITION: ref String = "<result>"
+
+/// The position a parse's input occupies in the column.
+pub comptime INPUT_POSITION: ref String = "input"
+
+/// Whether a body makes a buffer, and whether this walk could **name** it.
+/// A named buffer is a fact a refusal may stand on; `Unknown` is a call no
+/// ledger describes, which the state errs towards and no refusal may.
+pub enum Buffer {
+    /// Nothing here owns text or bytes.
+    None,
+    /// This type, made here: `String`, `Bytes`, `Mapped`, a run of `u8`.
+    Named(String),
+    /// A call this walk could not resolve, which may be one.
+    Unknown,
+}
+
+/// What a **package's** declarations say about the types a parse can hand
+/// back, by name: a `Symbol` belongs to the parse that interned it, and the
+/// question crosses files.
+pub struct PackageTypes {
+    /// Every struct or enum of this package that holds a view.
+    pub borrowing: collections::BTreeSet[String],
+    /// Every type name this package declares.
+    pub named: collections::BTreeSet[String],
+}
+
+impl PackageTypes {
+    pub fn empty() -> PackageTypes {
+        return PackageTypes { borrowing: collections::BTreeSet(), named: collections::BTreeSet() }
+    }
+}
+
+/// One unit's declarations, added to the package's.
+pub fn declare_unit(names: ref winnow_grammar::InternerContext, items: ref Vec[Spanned[Item]], mut package: PackageTypes) {
+    for name in borrowing_types(names, items) {
+        package.borrowing.insert(name.clone())
+    }
+    for item in items {
+        match item.node {
+            Item::Struct { name, .. } => {
+                package.named.insert(names.resolve(name).clone())
+            }
+            Item::Enum { name, .. } => {
+                package.named.insert(names.resolve(name).clone())
+            }
+            else => {}
+        }
+    }
+}
+
+/// Whether a grammar entry's result **may point into the text it parsed**:
+/// the result is a view or names a type of this package that holds one; or
+/// it names only types with no room for a view; or - anything this walk did
+/// not read a declaration for - it may. One question with two readers, the
+/// `views` column and `keeps`, and the polarity of the second.
+pub fn a_parse_that_views(names: ref winnow_grammar::InternerContext, result: ref Type?, package: ref PackageTypes) -> bool {
+    let ty = result ?? return false
+    let name = names.resolve(ty.name)
+    if ty.is_view || package.borrowing.contains(name) {
+        return true
+    }
+    for argument in ty.generics {
+        let inner: Type? = argument.clone()
+        if a_parse_that_views(names, inner, package) {
+            return true
+        }
+    }
+    return !package.named.contains(name) && !a_type_with_no_room_for_a_view(name)
+}
+
+// The names the language below owns outright, and the containers whose
+// arguments the walk above already read.
+comptime ROOMLESS: Array[ref String, 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"]
+
+fn a_type_with_no_room_for_a_view(name: ref String) -> bool {
+    let base = base_name(name)
+    if base == "Locked" {
+        return true
+    }
+    for one in ROOMLESS {
+        if one == base {
+            return true
+        }
+    }
+    return false
+}
+
+/// The states one function's views solved to (D7): the receiver where its
+/// `impl`'s target carries a view, every parameter that carries one, and the
+/// result where it does - all Borrowed, the column's one author for anything
+/// else being the walk that follows views (`keep::infer`). Empty where the
+/// signature has no view.
+pub fn function_views(item: ref Item, target: ref String?, names: ref winnow_grammar::InternerContext, borrowing: ref collections::BTreeSet[String]) -> Vec[Held] {
+    let mut held: Vec[Held] = []
+    match item {
+        Item::Fn { receiver, args, ret_type, .. } => {
+            // **A parameter is lent for the call**, so the buffer is the
+            // caller's; a receiver carries whatever its type does.
+            if receiver != null && a_borrowing_target(target, borrowing) {
+                held.push(Held { position: "self", state: State::Borrowed })
+            }
+            for arg in args {
+                if carries_a_view(names, arg.ty, borrowing) {
+                    held.push(Held { position: names.resolve(arg.name).clone(), state: State::Borrowed })
+                }
+            }
+            if result_carries(names, ret_type, borrowing) {
+                held.push(Held { position: RESULT_POSITION.clone(), state: State::Borrowed })
+            }
+        }
+        else => {}
+    }
+    return held
+}
+
+fn a_borrowing_target(target: ref String?, borrowing: ref collections::BTreeSet[String]) -> bool {
+    let named = target ?? return false
+    return borrowing.contains(named)
+}
+
+fn result_carries(names: ref winnow_grammar::InternerContext, result: ref Type?, borrowing: ref collections::BTreeSet[String]) -> bool {
+    return carries_a_view(names, result ?? return false, borrowing)
+}
+
+/// Whether a written type **carries** a view: it is one, it names a type that
+/// holds one, or one of its arguments does.
+pub fn carries_a_view(names: ref winnow_grammar::InternerContext, ty: ref Type, borrowing: ref collections::BTreeSet[String]) -> bool {
+    if holds_view(ty) || borrowing.contains(names.resolve(ty.name)) {
+        return true
+    }
+    for argument in ty.generics {
+        if carries_a_view(names, argument, borrowing) {
+            return true
+        }
+    }
+    return false
+}
+
+/// **A name declared `String` holds text of this frame's own**, whatever its
+/// initialiser was (ADR-207 D2, ADR-216 D4).
+pub fn declares_text(names: ref winnow_grammar::InternerContext, ty: ref Type?) -> bool {
+    let written = ty ?? return false
+    return names.resolve(written.name) == "String" && written.generics.len() == 0 && !written.is_view && !written.is_nullable
+}
+
+/// Whether this expression hands back a buffer of its own. `asked` is the
+/// interner and the two ledgers; `unaliased` resolves a package's alias
+/// (ADR-046 D3).
+///
+/// `to_owned` is owned text by the name; `to_string` is the text form of a
+/// value (ADR-216 D4) - a literal's is the literal, a number's or an
+/// `f"…"`'s is text of its own, anything else unsure; a copy of a literal is
+/// text of its own (D2). A call is answered by its ledger entry's result -
+/// owned text or bytes - and a call no ledger describes is a buffer this
+/// walk cannot rule out. `catch` hands back whichever half ran.
+pub fn makes_a_buffer(expr: ref Expr, asked: ref Asked, unaliased: fn(ref String) -> String sync) -> Buffer {
+    return match expr {
+        Expr::MethodCall { method, receiver, .. } => a_method_buffer(asked.names.resolve(method), receiver),
+        Expr::Call { func, .. } => a_call_buffer(func, asked, unaliased),
+        Expr::TryCatch { expr, .. } => makes_a_buffer(expr, asked, unaliased),
+        else => Buffer::None,
+    }
+}
+
+fn a_method_buffer(method: ref String, receiver: ref Expr) -> Buffer {
+    if method == "to_owned" {
+        return Buffer::Named("String")
+    }
+    if method == "to_string" {
+        return match receiver {
+            Expr::LitStr { .. } => Buffer::None,
+            Expr::LitInterpolated { .. } => Buffer::Named("String"),
+            Expr::LitInt { .. } => Buffer::Named("String"),
+            Expr::LitFloat(_) => Buffer::Named("String"),
+            else => Buffer::Unknown,
+        }
+    }
+    if method == "clone" {
+        return match receiver {
+            Expr::LitStr { .. } => Buffer::Named("String"),
+            Expr::LitInterpolated { .. } => Buffer::Named("String"),
+            else => Buffer::None,
+        }
+    }
+    return Buffer::None
+}
+
+fn a_call_buffer(func: ref Expr, asked: ref Asked, unaliased: fn(ref String) -> String sync) -> Buffer {
+    let name = match func {
+        Expr::Variable(name) => asked.names.resolve(name).clone(),
+        Expr::Path(segments) => unaliased(joined_segments(segments, asked.names)),
+        else => return Buffer::None,
+    }
+    let constructor = f"{name}::new"
+    let contract = an_entry(name, asked) ?? an_entry(constructor, asked) ?? return Buffer::Unknown
+    let signature = contract.signature ?? return Buffer::None
+    let result = signature.result ?? return Buffer::None
+    if is_a_buffer(result) {
+        return Buffer::Named(result.text())
+    }
+    return Buffer::None
+}
+
+// The program's entry by this key, else `std`'s.
+fn an_entry(key: ref String, asked: ref Asked) -> FnContract? {
+    let mine: FnContract? = asked.own.functions[key]?.clone()
+    return mine ?? asked.library.functions[key]?.clone()
+}
+
+// Owned text or bytes - something a view can point **into**: `String`,
+// `Bytes`, a mapped file, a run of `u8`. A `Vec[Entry]` is not one.
+fn is_a_buffer(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, args, .. } => a_buffer_name(name, args),
+        else => false,
+    }
+}
+
+fn a_buffer_name(name: ref String, args: ref Vec[Ty]) -> bool {
+    let base = base_name(name)
+    if base == "String" || base == "Bytes" || base == "Mapped" {
+        return true
+    }
+    if (base == "Vec" || base == "List") && args.len() > 0 {
+        return names_u8(args[0])
+    }
+    return false
+}
+
+fn names_u8(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Named { name, .. } => base_name(name) == "u8",
+        else => false,
+    }
+}
