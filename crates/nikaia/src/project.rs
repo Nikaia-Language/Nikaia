@@ -56,6 +56,9 @@ const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 /// The third switch's word, down the same channel
 /// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
+/// `--optimization`'s words, resolved
+/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1).
+const OPTIMIZATION_VAR: &str = "NIKAIA_OPTIMIZATION";
 /// Set where the build is `nikaia test`'s
 /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1).
 const TESTS_VAR: &str = "NIKAIA_TESTS";
@@ -98,11 +101,42 @@ pub struct Settings {
     pub target: String,
     pub user_parallelism: String,
     pub reentrancy_check: String,
+    /// `--optimization`, or `[build] optimization`: `name:level` words,
+    /// comma-separated, the last one for a name deciding
+    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Empty where
+    /// neither says anything.
+    pub optimization: String,
     /// **Whether this is `nikaia test`'s build**
     /// ([ADR-269](../../docs/specification/adr/adr-269.md) D1): the program's
     /// `test` blocks are compiled, and its `main` runs them by number. A
     /// choice like the others, so the cache and the wrapper both see it.
     pub tests: bool,
+}
+
+/// **`name:level` words, comma-separated**, to what they decide
+/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). The one name is
+/// `remove-bounds-checks`; a later word for it wins over an earlier one.
+pub fn optimizations(words: &str) -> Result<crate::bounds::BoundsChecks> {
+    let mut bounds = crate::bounds::BoundsChecks::default();
+    for word in words.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+        let Some((name, level)) = word.split_once(':') else {
+            return Err(anyhow!(
+                "`--optimization={word}` needs a level: write \
+                 `--optimization=remove-bounds-checks:basic` or \
+                 `--optimization=remove-bounds-checks:aggressive`"
+            ));
+        };
+        if name != "remove-bounds-checks" {
+            return Err(anyhow!(
+                "there is no optimization called `{name}`: the one there is, is \
+                 `remove-bounds-checks`"
+            ));
+        }
+        bounds = crate::bounds::BoundsChecks::parse(level).ok_or_else(|| {
+            anyhow!("`remove-bounds-checks` is `off`, `basic` or `aggressive`, not `{level}`")
+        })?;
+    }
+    Ok(bounds)
 }
 
 impl Settings {
@@ -127,13 +161,31 @@ impl Settings {
         let reentrancy_check = manifest
             .setting("reentrancy-check", None, "yes")
             .to_string();
+        let optimization = manifest.setting("optimization", None, "").to_string();
+        let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
+        build.bounds = optimizations(&optimization)?;
         Ok(Settings {
-            build: Build::parse(&target, &user_parallelism, &reentrancy_check)?,
+            build,
             target,
             user_parallelism,
             reentrancy_check,
+            optimization,
             tests: false,
         })
+    }
+
+    /// **The command line's `--optimization` over the manifest's**
+    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). Nothing a
+    /// program means depends on it, so a single build may say it, as it may
+    /// say `--target`.
+    pub fn optimize(&mut self, flags: &[String]) -> Result<()> {
+        if flags.is_empty() {
+            return Ok(());
+        }
+        let words = flags.join(",");
+        self.build.bounds = optimizations(&words)?;
+        self.optimization = words;
+        Ok(())
     }
 
     /// The words, for the wrapper. Cargo owns the wrapper's arguments, so the
@@ -150,6 +202,10 @@ impl Settings {
             (
                 REENTRANCY_VAR.to_string(),
                 OsString::from(&self.reentrancy_check),
+            ),
+            (
+                OPTIMIZATION_VAR.to_string(),
+                OsString::from(&self.optimization),
             ),
         ]
         .into_iter()
@@ -168,11 +224,15 @@ impl Settings {
         let target = word(TARGET_VAR, Target::default().name());
         let user_parallelism = word(PARALLELISM_VAR, "no");
         let reentrancy_check = word(REENTRANCY_VAR, "yes");
+        let optimization = word(OPTIMIZATION_VAR, "");
+        let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
+        build.bounds = optimizations(&optimization)?;
         Ok(Settings {
-            build: Build::parse(&target, &user_parallelism, &reentrancy_check)?,
+            build,
             target,
             user_parallelism,
             reentrancy_check,
+            optimization,
             tests: std::env::var_os(TESTS_VAR).is_some(),
         })
     }
@@ -190,11 +250,15 @@ impl Settings {
     pub fn choices(&self) -> Choices {
         Choices::new(
             format!(
-                "{}/{}/{}{}",
+                "{}/{}/{}{}{}",
                 self.target,
                 self.user_parallelism,
                 self.reentrancy_check,
-                if self.tests { "/tests" } else { "" }
+                if self.tests { "/tests" } else { "" },
+                match self.build.bounds {
+                    crate::bounds::BoundsChecks::Kept => String::new(),
+                    level => format!("/remove-bounds-checks:{}", level.name()),
+                }
             ),
             "rust",
         )

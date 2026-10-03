@@ -52,7 +52,7 @@ pub fn is_deferred(target: &str, body: &str) -> bool {
 
 /// The Rust name of the shadow type for a parameter list, the same whatever
 /// order a call writes the names in.
-pub fn type_name(parameters: &Vec<String>) -> String {
+pub fn type_name(parameters: &[String]) -> String {
     nikaia_std::tools::dsl::type_name(parameters)
 }
 
@@ -101,8 +101,8 @@ mod tests {
     #[test]
     fn the_type_name_does_not_depend_on_the_order_a_call_writes() {
         assert_eq!(
-            type_name(&vec!["id".to_string(), "active".to_string()]),
-            type_name(&vec!["active".to_string(), "id".to_string()])
+            type_name(&["id".to_string(), "active".to_string()]),
+            type_name(&["active".to_string(), "id".to_string()])
         );
     }
 }

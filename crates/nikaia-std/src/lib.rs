@@ -61,6 +61,11 @@ pub mod rt;
 pub mod seq;
 pub mod task;
 pub mod tether;
+/// **An index the compiler proved inside**, read and written without its
+/// check: `--optimization=remove-bounds-checks`
+/// ([ADR-271](../../docs/specification/adr/adr-271.md) D5). The generated code
+/// calls it inside `unsafe`, at an index its proof covers, and nowhere else.
+pub use proven_index as proven;
 pub mod time;
 
 /// The parser backend a generated program's grammars run on.

@@ -81,7 +81,92 @@ fn instructions(label: &'static str, rust: &str, args: &[&str]) -> Run {
         "{label} did not compile:\n{}",
         String::from_utf8_lossy(&compiled.stderr)
     );
+    let run = counted(label, &binary, args);
+    let _ = std::fs::remove_dir_all(&dir);
+    run
+}
 
+/// **`std` as a build for throughput links it**: optimised, and carrying the
+/// bitcode link-time optimisation reads (Part III 13.3's `opt-level = 3`,
+/// `lto = true`).
+///
+/// The rlib the tests find beside themselves is the test profile's, at
+/// `opt-level = 0`, and linking a program against it is not neutral even where
+/// the program calls none of it: `rustc` then takes `std`'s unoptimised copies
+/// of generic code both crates instantiate - `RawVec<i64>::grow_one` among
+/// them - in place of its own, which cost the sparse-row kernel 88M
+/// instructions that no build of a program pays. Built once per run, into a
+/// target directory of its own, so the test build's rlibs are not touched.
+fn optimized_std() -> &'static [String] {
+    static STD: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    STD.get_or_init(|| {
+        let target = repo_root().join("target/measure-std");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let built = Command::new(cargo)
+            .args(["build", "--release", "-p", "nikaia-std", "--target-dir"])
+            .arg(&target)
+            .env("RUSTFLAGS", "-C embed-bitcode=yes")
+            .env("CARGO_INCREMENTAL", "0")
+            .current_dir(repo_root())
+            .output()
+            .expect("run cargo");
+        assert!(
+            built.status.success(),
+            "std did not build optimised:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let deps = target.join("release/deps");
+        let newest = |name: &str| {
+            let prefix = format!("lib{name}-");
+            let mut found: Vec<PathBuf> = std::fs::read_dir(&deps)
+                .expect("read the deps directory")
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    let file = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    file.starts_with(&prefix) && file.ends_with(".rlib")
+                })
+                .collect();
+            found.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+            found
+                .pop()
+                .unwrap_or_else(|| panic!("no {name} rlib in {}", deps.display()))
+        };
+        let mut args = vec!["-L".to_string(), format!("dependency={}", deps.display())];
+        for name in ["nikaia_std", "winnow_grammar", "winnow"] {
+            args.push("--extern".to_string());
+            args.push(format!("{name}={}", newest(name).display()));
+        }
+        args
+    })
+}
+
+/// [`instructions`], against [`optimized_std`] and with `flags` added to `-O`.
+fn instructions_optimized(label: &'static str, rust: &str, args: &[&str], flags: &[&str]) -> Run {
+    let dir = common::scratch_dir(&format!("measure-{}", label.replace([' ', ':', ','], "-")));
+    let source = dir.join("bench.rs");
+    std::fs::write(&source, rust).expect("write the Rust");
+    let binary = dir.join("bench");
+    let compiled = Command::new(common::rustc())
+        .args(["--edition", "2024", "--crate-type", "bin", "-O"])
+        .args(optimized_std())
+        .args(flags)
+        .arg("-o")
+        .arg(&binary)
+        .arg(&source)
+        .output()
+        .expect("run rustc");
+    assert!(
+        compiled.status.success(),
+        "{label} did not compile:\n{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let run = counted(label, &binary, args);
+    let _ = std::fs::remove_dir_all(&dir);
+    run
+}
+
+/// Run `binary` under callgrind and read the instructions it retired.
+fn counted(label: &'static str, binary: &std::path::Path, args: &[&str]) -> Run {
     let run = Command::new("valgrind")
         .args([
             "--tool=callgrind",
@@ -101,8 +186,6 @@ fn instructions(label: &'static str, rust: &str, args: &[&str]) -> Run {
         .map(|n| n.trim().replace(',', ""))
         .and_then(|n| n.parse::<u64>().ok())
         .unwrap_or_else(|| panic!("no instruction count in callgrind's output:\n{stderr}"));
-
-    let _ = std::fs::remove_dir_all(&dir);
     Run {
         label,
         instructions,
@@ -358,6 +441,9 @@ fn with_a_blocking_read(rust: &str) -> String {
     out
 }
 
+/// Link-time optimisation across every crate, as `lto = true` asks Cargo for.
+const LTO: &[&str] = &["-C", "lto=fat"];
+
 /// **The solver's inner loops, lowered from Nikaia against Rust by hand**
 /// ([ADR-270](../../../docs/specification/adr/adr-270.md) D8 step 1).
 ///
@@ -371,11 +457,20 @@ fn with_a_blocking_read(rust: &str) -> String {
 #[ignore = "shells out to valgrind; run with --ignored"]
 fn the_solver_kernels_lowered_against_rust_by_hand() {
     let nikaia = lower("solver-kernels.nika");
+    // And with every index check the solver proves unnecessary dropped
+    // ([ADR-271](../../../docs/specification/adr/adr-271.md) D4).
+    let proved = lower_with(
+        "solver-kernels.nika",
+        Build {
+            bounds: nikaia::bounds::BoundsChecks::Aggressive,
+            ..Build::default()
+        },
+    );
     let by_hand = std::fs::read_to_string(repo_root().join("benches/solver-workload/kernels.rs"))
         .expect("benches/solver-workload/kernels.rs");
 
     // The same program: the same checksums from both, at a small size.
-    let outputs: Vec<String> = [("nikaia", &nikaia), ("rust", &by_hand)]
+    let outputs: Vec<String> = [("nikaia", &nikaia), ("rust", &by_hand), ("proved", &proved)]
         .iter()
         .map(|(label, source)| {
             let dir = common::scratch_dir(&format!("kernels-check-{label}"));
@@ -409,12 +504,26 @@ fn the_solver_kernels_lowered_against_rust_by_hand() {
         outputs[0], outputs[1],
         "the two halves are not the same program"
     );
+    assert_eq!(
+        outputs[0], outputs[2],
+        "dropping proved checks changed what the program prints"
+    );
 
+    // Both halves link the same optimised `std`, as a build of either would,
+    // and both are counted at the two settings Part III 13.3 names for
+    // throughput: `-O` alone, and `-O` with link-time optimisation.
     for (kernel, n) in [("rows", "200000"), ("watch", "2000"), ("bignum", "20000")] {
         let runs = [
-            instructions("Rust, by hand", &by_hand, &[n, kernel]),
-            instructions("Nikaia, lowered", &nikaia, &[n, kernel]),
+            instructions_optimized("Rust, by hand", &by_hand, &[n, kernel], &[]),
+            instructions_optimized("Nikaia, lowered", &nikaia, &[n, kernel], &[]),
+            instructions_optimized("Nikaia, checks proved", &proved, &[n, kernel], &[]),
         ];
-        report(kernel, &format!("n = {n}"), &runs);
+        report(kernel, &format!("n = {n}, -O"), &runs);
+        let runs = [
+            instructions_optimized("Rust, by hand, lto", &by_hand, &[n, kernel], LTO),
+            instructions_optimized("Nikaia, lowered, lto", &nikaia, &[n, kernel], LTO),
+            instructions_optimized("Nikaia, checks proved, lto", &proved, &[n, kernel], LTO),
+        ];
+        report(kernel, &format!("n = {n}, -O, lto = fat"), &runs);
     }
 }

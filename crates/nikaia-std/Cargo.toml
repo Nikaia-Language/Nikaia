@@ -31,6 +31,9 @@ checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map"] }
 c-text = { path = "../unsafe/c-text" }
 # An error's site in one word, or its cold part boxed (ADR-211 D1).
 ref-or-box = { path = "../unsafe/ref-or-box" }
+# An index the compiler proved inside, read and written without its check
+# (ADR-271 D5).
+proven-index = { path = "../unsafe/proven-index" }
 # The parser backend every generated program runs on. Declared here, on the
 # runtime, so that a program's `std` and its parser are one dependency - and
 # so that the tests can find the parser's rlib by reading this crate's

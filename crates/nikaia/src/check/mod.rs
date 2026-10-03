@@ -464,6 +464,17 @@ pub struct Checked {
     /// starts at and the index's shape: a slice, like a range written in the
     /// brackets ([ADR-215](../../docs/specification/adr/adr-215.md) D3).
     pub slice_indices: BTreeSet<(usize, String)>,
+    /// **Indexes of a list**, by the node of the indexed expression
+    /// ([`value_node`] of the `base`): a position into a `Vec` or an `Array`,
+    /// not a range and not a key. What
+    /// `--optimization=remove-bounds-checks` may read without its check where
+    /// [`crate::bounds`] proved it inside
+    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D5).
+    pub list_indices: BTreeSet<usize>,
+    /// **`x.len()` of a `std` type**, by the node of `x`: a list, a run, text,
+    /// a map or a set, whose length is a count that reading changes nothing
+    /// of - what [`crate::bounds`] reads as a number of a proof (ADR-271 D4).
+    pub std_lengths: BTreeSet<usize>,
     /// `clone` calls that went to a `std` entry, by statement and receiver
     /// shape: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-215 D4).
@@ -1736,6 +1747,10 @@ pub struct Propagation {
     pub map_keys: BTreeMap<(usize, String, bool), KeyForm>,
     /// [`Checked::slice_indices`].
     pub slice_indices: BTreeSet<(usize, String)>,
+    /// [`Checked::list_indices`].
+    pub list_indices: BTreeSet<usize>,
+    /// [`Checked::std_lengths`].
+    pub std_lengths: BTreeSet<usize>,
     /// [`Checked::owned_copies`].
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
@@ -2024,6 +2039,8 @@ pub fn propagation_against(
         count_args: checked.count_args,
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
+        list_indices: checked.list_indices,
+        std_lengths: checked.std_lengths,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
@@ -8422,6 +8439,21 @@ impl<'a> Checker<'a> {
         if let Some(unsigned) = named.as_deref().filter(|n| matches!(*n, "u32" | "u64")) {
             self.literals_are(value, unsigned, span);
         }
+        // **And a list's elements take the element's type**: `let x:
+        // Vec[u32] = [4294967295, 7]` wrote `4294967295i64`, the widening of a
+        // number nothing asked, into a list of `u32` (found writing ADR-271's
+        // tests).
+        if let (Some(Ty::Named { name, args, .. }), Expr::ListLit { items, .. }) = (want, value)
+            && matches!(crate::contracts::ty::base(name), "Vec" | "List" | "Array")
+            && let Some(unsigned) = args
+                .first()
+                .and_then(integer_named)
+                .filter(|n| matches!(n.as_str(), "u32" | "u64"))
+        {
+            for item in items {
+                self.literals_are(item, &unsigned, span);
+            }
+        }
         let Some(folded) = self.constant_of(value) else {
             return;
         };
@@ -10265,6 +10297,32 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **A length `std` counts**: of a list, a run, text or a map,
+                // whose `len()` reads the value and changes nothing - what
+                // `crate::bounds` may take as a number of a proof (ADR-271 D4).
+                if args.is_empty() && self.parsed.text(*method) == "len" {
+                    let counted = match &on {
+                        Ty::Named { name, .. } => matches!(
+                            crate::contracts::ty::base(name),
+                            "Vec"
+                                | "List"
+                                | "Array"
+                                | "String"
+                                | "str"
+                                | "HashMap"
+                                | "Map"
+                                | "BTreeMap"
+                                | "HashSet"
+                                | "Set"
+                                | "BTreeSet"
+                        ),
+                        Ty::Pointed { slice: true, .. } => true,
+                        _ => false,
+                    };
+                    if counted {
+                        self.checked.std_lengths.insert(value_node(receiver));
+                    }
+                }
                 // **`m.get(k)` reads the map as `m[k]` does** (#297): what it
                 // hands back is a view of the value the map keeps.
                 let reads_a_map = self.parsed.text(*method) == "get"
@@ -11884,6 +11942,7 @@ impl<'a> Checker<'a> {
                         };
                     }
                     self.number_asked(index, &Ty::named("i64"), span, false);
+                    self.checked.list_indices.insert(value_node(base));
                     return (**item).clone();
                 }
                 let Ty::Named { name, args, .. } = &on else {
@@ -11936,7 +11995,10 @@ impl<'a> Checker<'a> {
                     // it has a `T` at every index it has at all, and an index
                     // it does not have is the program's own arithmetic gone
                     // wrong ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md)).
-                    ("Vec" | "List" | "Array", [item, ..]) => item.clone(),
+                    ("Vec" | "List" | "Array", [item, ..]) => {
+                        self.checked.list_indices.insert(value_node(base));
+                        item.clone()
+                    }
                     // **A map answers a `T?`** (D1). It has a value only where
                     // the key is, and *there is nothing there* is data about
                     // the world rather than a bug in the program — so the

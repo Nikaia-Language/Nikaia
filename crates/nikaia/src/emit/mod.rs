@@ -161,6 +161,11 @@ pub struct Build {
     pub target: Target,
     pub user_parallelism: UserParallelism,
     pub reentrancy_check: ReentrancyCheck,
+    /// `--optimization=remove-bounds-checks:<level>`
+    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D1): how hard the
+    /// compiler works to prove an index inside. Nothing a program means
+    /// depends on it.
+    pub bounds: crate::bounds::BoundsChecks,
 }
 
 impl Build {
@@ -169,6 +174,7 @@ impl Build {
             target: Target::parse(target)?,
             user_parallelism: UserParallelism::parse(user_parallelism)?,
             reentrancy_check: ReentrancyCheck::parse(reentrancy_check)?,
+            bounds: crate::bounds::BoundsChecks::default(),
         })
     }
 
@@ -1232,6 +1238,10 @@ struct Emitter<'p> {
     map_keys: std::collections::BTreeMap<(usize, String, bool), crate::check::KeyForm>,
     /// Indexes that are a range kept in a name (ADR-215 D3).
     slice_indices: std::collections::BTreeSet<(usize, String)>,
+    /// [`check::Checked::list_indices`], kept only where [`crate::bounds`]
+    /// proved the position inside: the indexes written without their check
+    /// ([ADR-271](../../docs/specification/adr/adr-271.md) D5).
+    proven_indices: std::collections::HashSet<usize>,
     /// `std` copies, written `to_owned` (ADR-215 D4).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// Whether the `?.` being written copies the view it reached, which is
@@ -2499,6 +2509,15 @@ impl<'p> Emitter<'p> {
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
+            proven_indices: {
+                let proven = crate::bounds::proven(parsed, build.bounds, &propagation.std_lengths);
+                propagation
+                    .list_indices
+                    .iter()
+                    .copied()
+                    .filter(|node| proven.contains(node))
+                    .collect()
+            },
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             lent_coalesces: propagation.lent_coalesces,
@@ -4188,8 +4207,24 @@ impl<'p> Emitter<'p> {
                 && (!a.ty.is_view || a.ty.either)
                 && !a.ty.is_nullable
                 && !a.ty.is_slice;
-            let written = match (reference, plain_text) {
-                ("&", true) => "str".to_string(),
+            // **A list the body only reads is a slice**, for the reason a
+            // `String` is a `&str`: a `&Vec<T>` is a pointer to a pointer, and
+            // every read through it loads the buffer and the length again
+            // where a `&[T]` holds them in two registers. Every caller's `Vec`
+            // reaches it through the `&` the call already writes.
+            let plain_list = self.text(a.ty.name) == "Vec"
+                && a.ty.generics.len() == 1
+                && !a.ty.is_nullable
+                && !a.ty.is_slice
+                && written.ends_with('>');
+            let written = match (reference, plain_text, plain_list) {
+                ("&", true, _) => "str".to_string(),
+                ("&", _, true) if written.starts_with("Vec<") => {
+                    format!("[{}]", &written[4..written.len() - 1])
+                }
+                ("", _, true) if written.starts_with("&Vec<") => {
+                    format!("&[{}]", &written[5..written.len() - 1])
+                }
                 _ => written,
             };
             // **A published parameter both kinds of text flow into takes
@@ -6113,20 +6148,58 @@ impl<'p> Emitter<'p> {
             _ => return Ok(None),
         };
         let written = Out::scratch(|s| self.nested(s, length, u8::MAX, depth, flow))?;
-        let Some(bare) = written
-            .buf
-            .strip_suffix(" as i64")
-            .or_else(|| {
-                written
-                    .buf
-                    .strip_prefix('(')
-                    .and_then(|b| b.strip_suffix(" as i64)"))
-            })
-        else {
+        let Some(bare) = written.buf.strip_suffix(" as i64").or_else(|| {
+            written
+                .buf
+                .strip_prefix('(')
+                .and_then(|b| b.strip_suffix(" as i64)"))
+        }) else {
             return Ok(None);
         };
-        let counted = Out::scratch(|s| self.expr(s, counter, depth, flow))?;
-        let counter = format!("(({}) as usize)", counted.buf);
+        // **Empty or not is asked as such**: `xs.len() > 0` is `clippy`'s
+        // `len_zero` about a file nobody wrote, and `!xs.is_empty()` is what
+        // a person writes.
+        if let (
+            Expr::LitInt {
+                value,
+                negative: false,
+            },
+            Some(receiver),
+        ) = (counter, bare.strip_suffix(".len()"))
+        {
+            // The comparison as `length op n`.
+            let op = match (counter_first, op) {
+                (false, op) => *op,
+                (true, BinaryOp::Lt) => BinaryOp::Gt,
+                (true, BinaryOp::Le) => BinaryOp::Ge,
+                (true, BinaryOp::Gt) => BinaryOp::Lt,
+                (true, BinaryOp::Ge) => BinaryOp::Le,
+                (true, op) => *op,
+            };
+            let empty = match (op, *value) {
+                (BinaryOp::Eq | BinaryOp::Le, 0) | (BinaryOp::Lt, 1) => Some(true),
+                (BinaryOp::Ne | BinaryOp::Gt, 0) | (BinaryOp::Ge, 1) => Some(false),
+                _ => None,
+            };
+            if let Some(empty) = empty {
+                let not = if empty { "" } else { "!" };
+                out.push(&format!("{not}{receiver}.is_empty()"));
+                return Ok(Some(()));
+            }
+        }
+        // A literal is written as it is: Rust gives it the length's type, and
+        // a cast on it is `clippy`'s `unnecessary_cast` about a file nobody
+        // wrote.
+        let counter = match counter {
+            Expr::LitInt {
+                value,
+                negative: false,
+            } => value.to_string(),
+            _ => {
+                let counted = Out::scratch(|s| self.expr(s, counter, depth, flow))?;
+                format!("(({}) as usize)", counted.buf)
+            }
+        };
         let (left, right) = match counter_first {
             true => (counter, bare.to_string()),
             false => (bare.to_string(), counter),
@@ -6584,6 +6657,26 @@ impl<'p> Emitter<'p> {
                 // D8 step 1).
                 let lent_on = matches!(&**base, Expr::Variable(name)
                     if self.changes_in_place(flow, self.text(*name)));
+                // **A position proved inside is written without its check**
+                // (ADR-271 D5), as it is read.
+                if self
+                    .proven_indices
+                    .contains(&crate::check::value_node(base))
+                    && self.map_key(span.at(), index, true).is_none()
+                {
+                    out.push(match lent_on {
+                        true => "; unsafe { nikaia_std::proven::write(&mut *",
+                        false => "; unsafe { nikaia_std::proven::write(&mut ",
+                    });
+                    self.expr(out, base, depth, flow.place())?;
+                    out.push(", (");
+                    match only_literals(index) {
+                        true => self.index_expr(out, index, depth, flow.inferred())?,
+                        false => self.index_expr(out, index, depth, flow)?,
+                    }
+                    out.push(&format!(") as usize, {STORED}) }}; }}"));
+                    return Ok(());
+                }
                 out.push(match lent_on {
                     true => "; nikaia_std::index::set(&mut *",
                     false => "; nikaia_std::index::set(&mut ",
@@ -11922,6 +12015,43 @@ impl<'p> Emitter<'p> {
         if deref && !slicing {
             out.push("*");
         }
+        // **An index proved inside is read without its check**
+        // ([ADR-271](../../docs/specification/adr/adr-271.md) D5): the proof
+        // is the argument the `unsafe` stands on, and `proven::read` is the
+        // one operation it licenses.
+        if !slicing
+            && self
+                .proven_indices
+                .contains(&crate::check::value_node(base))
+            && self.map_key(flow.statement, index, false).is_none()
+        {
+            out.push("unsafe { nikaia_std::proven::read(");
+            match base {
+                Expr::Index {
+                    base: inner,
+                    index: at,
+                } if !self.slices(flow.statement, at)
+                    && self.map_key(flow.statement, at, false).is_none()
+                    && !self.reads_through_handle(flow, inner) =>
+                {
+                    self.index_read(out, inner, at, depth, flow, false)?;
+                }
+                _ => {
+                    out.push("&");
+                    self.postfix_base(out, base, depth, flow)?;
+                }
+            }
+            out.push(", (");
+            match only_literals(index) {
+                true => self.index_expr(out, index, depth, flow.inferred())?,
+                false => self.index_expr(out, index, depth, flow)?,
+            }
+            out.push(") as usize) }");
+            if self.reads_through_handle(flow, base) {
+                out.push(".get()");
+            }
+            return Ok(());
+        }
         // **A read of a read is handed the reference it already is**
         // (0.0.238): `d[i][j]` over a list of lists was
         // `get(&(*get(&d, i)), j)`, a borrow of a deref - what `clippy`
@@ -14026,17 +14156,32 @@ fn mentions_symbol(expr: &Expr, name: Symbol) -> bool {
 /// only ever given or added a non-negative literal, and a range's binding where
 /// the range starts at one. A name declared twice, or handed to a call - which
 /// might change it - is left out.
+/// [`nonnegative_locals`], for [`crate::bounds`].
+pub(crate) fn nonnegative_names(body: &Block) -> HashSet<Symbol> {
+    nonnegative_locals(body)
+}
+
 fn nonnegative_locals(body: &Block) -> HashSet<Symbol> {
     let mut statements: Vec<&Stmt> = Vec::new();
     let mut seen: HashSet<*const Stmt> = HashSet::new();
     every_statement(body, &mut statements, &mut seen);
-    let literal = |e: &Expr| matches!(e, Expr::LitInt { negative: false, .. });
+    let literal = |e: &Expr| {
+        matches!(
+            e,
+            Expr::LitInt {
+                negative: false,
+                ..
+            }
+        )
+    };
     let mut declared: HashMap<Symbol, usize> = HashMap::new();
     let mut candidates: HashSet<Symbol> = HashSet::new();
     let mut spoiled: HashSet<Symbol> = HashSet::new();
     for stmt in &statements {
         match stmt {
-            Stmt::Let { names, ty, value, .. } => {
+            Stmt::Let {
+                names, ty, value, ..
+            } => {
                 for name in names {
                     *declared.entry(*name).or_default() += 1;
                 }
@@ -14094,11 +14239,7 @@ fn nonnegative_locals(body: &Block) -> HashSet<Symbol> {
 }
 
 /// Every statement of `block` and of every block inside it, once each.
-fn every_statement<'b>(
-    block: &'b Block,
-    out: &mut Vec<&'b Stmt>,
-    seen: &mut HashSet<*const Stmt>,
-) {
+fn every_statement<'b>(block: &'b Block, out: &mut Vec<&'b Stmt>, seen: &mut HashSet<*const Stmt>) {
     for stmt in &block.stmts {
         if !seen.insert(&stmt.node as *const Stmt) {
             continue;

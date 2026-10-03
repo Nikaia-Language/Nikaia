@@ -542,9 +542,16 @@ fn a_length_is_an_i64_and_the_conversions_are_emitted() {
 
     // Nothing the user wrote, and both directions emitted.
     assert!(rust.contains("0..xs.len() as i64"), "{rust}");
-    assert!(rust.contains("nikaia_std::index::at(i)"), "{rust}");
-    // The left of a comparison is parenthesised, or Rust reads `i64<2>`.
-    assert!(rust.contains("(xs.len() as i64) < 2"), "{rust}");
+    // A counter that starts at zero and only grows is converted as it is
+    // (0.0.373); a position that may be negative still goes through `at`.
+    assert!(rust.contains("(i) as usize"), "{rust}");
+    assert!(
+        rust.contains("nikaia_std::index::at(xs.len() as i64 - 1)"),
+        "{rust}"
+    );
+    // A length against a literal is compared as the length it is (0.0.373),
+    // so there is no `as i64` for Rust to read as `i64<2>`.
+    assert!(rust.contains("xs.len() < 2"), "{rust}");
     // And so is a sum that ends in one (#125).
     assert!(rust.contains("(1 + xs.len() as i64) < 5"), "{rust}");
 

@@ -407,7 +407,7 @@ pub fn a_stale_boundary(
         &reported,
         on_the_line.as_deref(),
         source,
-        &boundaries.to_vec(),
+        boundaries,
     ) else {
         return false;
     };

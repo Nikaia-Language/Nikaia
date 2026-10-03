@@ -220,6 +220,74 @@ the benchmark so that it measures:
   and `rustc` cannot infer what `watched[lit]` reads. The benchmark annotates
   it `i64`.
 
+### 8.1 Closed, piece by piece (0.0.373)
+
+Every piece of the gap above was traced to its cause and closed in the
+lowering; one item of the list above was **misattributed**, and the table above
+was taken against a `std` built without optimisation, which is not neutral
+either. The corrections first:
+
+* **The +56 % on big integers was not the `i64` counters.** It was `std`
+  having no `Vec` of a given length: the Nikaia half grew its product by
+  `push`, the Rust half allocated it with `vec![0; n]`. With `resize` in the
+  ledger, and `let mut xs = []` followed by `xs.resize(n, v)` written as
+  `vec![v; n]`, the kernel is at the Rust half's count.
+* **The measurement linked an unoptimised `std`.** The tests find the test
+  profile's `nikaia-std` beside themselves, at `opt-level = 0`, and `rustc`
+  then uses that crate's unoptimised copies of generic code both crates
+  instantiate - `RawVec<i64>::grow_one` among them - in place of its own: 88 M
+  instructions on the sparse-row kernel that no build of a program pays. The
+  measurement now builds `std` optimised, with the bitcode link-time
+  optimisation reads, into a target directory of its own.
+
+What the lowering changed, each found by reading the lowered Rust against the
+hand-written one:
+
+| piece | cost before | now |
+| :--- | :--- | :--- |
+| `index::at`'s sign test on every `xs[i]` | the gap of §8 | a counter that starts at a literal and only grows, and a range's binding, index `as usize`; a comparison with a length is made in `usize` |
+| `count::of`'s `try_from` on a length | a branch per call | the same sign test, inlined |
+| `Vec` of a given length | a `push` per element | `resize` in the ledger, fused into `vec![v; n]` |
+| `&Vec<T>` parameters | a second load for every read | a list the body only reads is a `&[T]`, as text is a `&str` (ADR-207 D3) |
+| a runtime started for a `main` that cannot pause | an I/O thread, so `malloc` takes locks | started on demand (`rt::on_demand`) |
+| an index into a `mut` parameter; a number its uses do not type | did not compile | lowered (`&mut *out`; the range binding joins its bounds) |
+| a literal no `i32` holds in a `Vec[u32]` | did not compile (`4294967295i64`) | the element's type |
+
+**The numbers**, both halves against the same optimised `std`, from
+`the_solver_kernels_lowered_against_rust_by_hand`:
+
+| kernel | Rust by hand | Nikaia | Nikaia, `remove-bounds-checks:aggressive` |
+| :--- | ---: | ---: | ---: |
+| rows, `-O` | 993.3 M | 995.6 M (+0.2 %) | 998.1 M (+0.5 %) |
+| rows, `-O`, `lto = fat` | 966.2 M | 959.0 M (−0.7 %) | 955.1 M (−1.2 %) |
+| watch, `-O` | 10.56 M | 10.56 M (−0.0 %) | 10.45 M (−1.1 %) |
+| watch, `-O`, `lto = fat` | 10.40 M | 10.33 M (−0.7 %) | 10.22 M (−1.8 %) |
+| bignum, `-O` | 1 088.3 M | 1 087.9 M (−0.0 %) | 720.8 M (−33.8 %) |
+| bignum, `-O`, `lto = fat` | 1 088.1 M | 1 087.6 M (−0.0 %) | 720.4 M (−33.8 %) |
+
+**What is left, and where it lives:**
+
+* **rows at `-O` without link-time optimisation, +0.2 %.** Not the
+  lowering: the hand-written Rust with nothing changed but `use
+  nikaia_std::prelude::*` at its top retires the same 1.76 M more. Linking
+  `std` makes the program use `std`'s own copies of `RawVec<Vec<i64>>::grow_one`
+  and `RawVecInner::finish_grow`, where alone it inlines its own; the
+  remaining 0.6 M is code layout. Any link-time optimisation removes it -
+  `lto = "thin"` gives 956.7 M against the Rust half's 966.2 M (−1.0 %) - and
+  Part III 13.3 already names `lto = true` for throughput.
+* **Overflow checks.** A Nikaia crate is built with them (Part III A.2), the
+  Rust half here without. Measured with `-C overflow-checks=on` and fat LTO:
+  rows 955.5 M (−1.1 % against the Rust half without), bignum 1 087.6 M
+  (−0.0 %), and **watch 10.44 M, +0.7 %** - the `u32` arithmetic of
+  `2 * v + 1` and `c * size`. The same proof that drops an index check can
+  drop an overflow check ([ADR-269](specification/adr/adr-269.md) §6's
+  implicit checks); that is [ADR-271](specification/adr/adr-271.md) §6's
+  next step.
+* **What `basic` buys here: nothing measurable.** Its one shape is the loop
+  that LLVM already proves for itself. It exists for a check LLVM does not
+  see through - a list behind a parameter, one inlined across a call - and as
+  the level that asks no solver.
+
 ## 9. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the

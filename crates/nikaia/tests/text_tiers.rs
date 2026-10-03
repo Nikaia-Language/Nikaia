@@ -653,7 +653,7 @@ fn a_view_handed_back_out_of_a_parameter_that_holds_views_is_the_buffers() {
     );
     let rust = lowered(OUT_OF_A_PARAMETER, Build::default());
     assert!(
-        rust.contains("fn first<'a>(xs: &Vec<&'a str>) -> &'a str"),
+        rust.contains("fn first<'a>(xs: &[&'a str]) -> &'a str"),
         "{rust}"
     );
     assert!(

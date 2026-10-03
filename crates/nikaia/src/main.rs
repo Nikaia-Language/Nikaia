@@ -50,6 +50,19 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub user_parallelism: Option<String>,
 
+    /// An optimization that changes nothing a program means, as
+    /// `NAME:LEVEL` (ADR-271 D1). One there is:
+    /// `remove-bounds-checks:basic` drops an index's check inside a loop over
+    /// the list's own length that cannot change it, and
+    /// `remove-bounds-checks:aggressive` also every one the solver proves
+    /// inside, with a certificate its checker accepts. A check nothing proves
+    /// stays at every level.
+    ///
+    /// May be given more than once; overrides `nikaia.toml`'s
+    /// `[build] optimization`.
+    #[arg(long, global = true, value_name = "NAME:LEVEL")]
+    pub optimization: Vec<String>,
+
     /// Verify the Borrow Contract Ledger instead of updating it (Part III,
     /// 13.5).
     ///
@@ -530,13 +543,14 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
             file: Some(file),
             args: program_args,
         } => {
-            let project = project::project_for_file(
+            let mut project = project::project_for_file(
                 file,
                 args.target.as_deref(),
                 args.user_parallelism.as_deref(),
                 args.no_cache,
                 args.allow_read_from_list.as_deref(),
             )?;
+            project.settings.optimize(&args.optimization)?;
             return drive(args, &project, "run", program_args);
         }
         Command::Run {
@@ -568,11 +582,12 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
         None => std::env::current_dir().context("finding the working directory")?,
     };
 
-    let project = Project::open(
+    let mut project = Project::open(
         &start,
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
     )?;
+    project.settings.optimize(&args.optimization)?;
     drive(args, &project, subcommand, &program_args)
 }
 
@@ -608,11 +623,12 @@ fn test_command(
         Some(directory) => directory,
         None => std::env::current_dir().context("finding the working directory")?,
     };
-    let project = Project::open(
+    let mut project = Project::open(
         &start,
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
     )?;
+    project.settings.optimize(&args.optimization)?;
     let tests =
         nikaia::modules::Program::read_for_tests(&project.entry(), &project.packages()?, true)?
             .tests;
@@ -642,6 +658,7 @@ fn test_command(
             }
             let mut built = Project::open(&start, args.target.as_deref(), Some(setting))?;
             built.settings.tests = testing;
+            built.settings.optimize(&args.optimization)?;
             let (code, binary) = built.drive_to(
                 "build",
                 &[],
@@ -705,11 +722,12 @@ fn single_file(args: &Cli, input: &std::path::Path, verb: Verb<'_>) -> Result<()
     // than any name this switch replaced (ADR-037 D1).
     let manifest = Manifest::find(input)?;
     report_moved_keys(&manifest);
-    let settings = Settings::resolve(
+    let mut settings = Settings::resolve(
         &manifest,
         args.target.as_deref(),
         args.user_parallelism.as_deref(),
     )?;
+    settings.optimize(&args.optimization)?;
     if let Some(missing) = settings.build.target.unbuildable() {
         refuse!(
             "cannot build for `{}` yet: {missing}",

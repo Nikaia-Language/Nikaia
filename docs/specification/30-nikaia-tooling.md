@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.372 (Draft)
+**Version:** 0.0.373 (Draft)
 **Date:** 2026-10-02
 
 ---
@@ -63,6 +63,8 @@ The manifest defines the project's metadata and the build options of Part I 1.2.
 
 The build options live in `[build]`. `--target` and `--user-parallelism` override `target` and `user-parallelism` for a single build. `reentrancy-check` is read from the manifest. A key `[build]` does not know fails the build.
 
+`optimization` names optimizations that change nothing a program means, as `NAME:LEVEL` words separated by commas. `--optimization=NAME:LEVEL` overrides it for a single build, and may be given more than once; a later word for a name wins. The one name is `remove-bounds-checks` ([ADR-271](adr/adr-271.md)): at `basic`, an index is written without its check inside a loop over the list's own length whose body cannot change that length; at `aggressive`, also wherever the solver proves `0 <= i < xs.len()` from the facts that hold there, with a certificate its checker accepts. The default is `off`. No level drops a check that is not proved, so a program stops at an index at every level where it stops at `off` (A.2). It is part of the build's cache key; `std` is lowered at `off`.
+
 The manifest carries what the **compiler** must know. How the program behaves on the machine it runs on — the number of I/O workers, the size of the pool for user code, the I/O mechanism, the shutdown drain — is runtime configuration (13.3b), read at startup by whoever runs the program.
 
 `reentrancy-check` is a build option. It changes what the compiler emits and is a cache-key dimension like `target` and `user-parallelism`. `cleanup-deadline` is runtime configuration. It changes what a running program waits for; the compiler does not read it.
@@ -94,6 +96,10 @@ target = "x86_64-linux"
 #   "yes"           - user code may run concurrently
 # The option bounds user code, not the compiler or the runtime.
 user-parallelism = "no"
+
+# Optimizations that change nothing a program means (ADR-271). "off" by
+# default; "basic" or "aggressive" drop an index's check where it is proved.
+# optimization = "remove-bounds-checks:aggressive"
 
 # `cleanup-deadline` is runtime configuration (13.3b). A manifest that carries
 # the key compiles, with a note naming where it went.

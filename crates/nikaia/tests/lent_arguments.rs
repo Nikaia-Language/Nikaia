@@ -356,7 +356,7 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
     // so the call must too. (It was a bare `catch` until 0.0.230, when a
     // `catch` took the type of what it guards.)
     let rust = lowered(source);
-    assert!(rust.contains("fn total(entries: &Vec<Entry>)"), "{rust}");
+    assert!(rust.contains("fn total(entries: &[Entry])"), "{rust}");
     assert!(rust.contains("total(&entries)"), "{rust}");
 
     // And the same program that writes its own `&` is not refused, because
@@ -408,7 +408,8 @@ fn a_parameter_a_method_changes_in_place_is_not_lent() {
         "fn width(xs: Vec[i64]) -> i64 { return xs.len() as i64 }\n\
          fn main() { let xs = Vec() println(f\"{width(xs)}\") }\n",
     );
-    assert!(rust.contains("fn width(xs: &Vec<i64>)"), "{rust}");
+    // A list the body only reads is a slice below (0.0.373).
+    assert!(rust.contains("fn width(xs: &[i64])"), "{rust}");
 }
 
 /// **The column survives the round trip**, which `--locked` needs: it compares

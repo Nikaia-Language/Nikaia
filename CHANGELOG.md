@@ -4,6 +4,49 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.373] — 2026-10-03
+
+**The lowering closes the solver kernels' gap to Rust by hand, piece by piece,
+and an index check a proof shows unneeded is not emitted** ([ADR-271](docs/specification/adr/adr-271.md)).
+With link-time optimisation, as Part III 13.3 names it for throughput, the
+lowered Nikaia now retires fewer instructions than the Rust by hand on all
+three kernels; with `--optimization=remove-bounds-checks:aggressive` the
+big-integer kernel retires 34 % fewer. `docs/solver-workload.md` §8.1 has the
+attribution and the tables.
+
+- **`--optimization=remove-bounds-checks:basic|aggressive`**, and
+  `[build] optimization`: `basic` drops the check of `xs[k]` in a loop over
+  `xs`'s own length that cannot change it; `aggressive` walks each body with
+  the linear facts that hold - lets, assignments, ranges, branch and loop
+  conditions read by polarity, lengths from `resize`, `push`, `clear` - and
+  drops a check where Fourier-Motzkin proves it inside and the certificate
+  passes the checker. No level drops a check that is not proved. A proved
+  read or write is `nikaia_std::proven::{read, write}`, from the new
+  `crates/unsafe/proven-index` (ADR-218). New: `src/bounds.rs`,
+  `Checked::list_indices`, `Checked::std_lengths`.
+- **A list the body only reads is a `&[T]`**, as text is a `&str`: one load
+  fewer for every read through it (rows −15 M instructions).
+- **`let mut xs = []` followed by `xs.resize(n, v)` is `vec![v; n]`**, and
+  `Vec::resize` is in the ledger. This, not the `i64` counters, was 0.0.372's
+  +56 % on big integers.
+- **A counter that starts at a literal and only grows indexes `as usize`**,
+  with no sign test, and is compared with a length in `usize`; a literal
+  against a length is written bare. `count::of`'s sign test is inlined.
+- **A `main` that cannot pause starts the runtime on demand**
+  (`rt::on_demand`): no I/O thread, so `malloc` takes no locks.
+- **Three programs that did not compile**: an index written into a `mut`
+  parameter (`&mut *out`), a number whose only uses are a range and an index,
+  and a literal no `i32` holds in a `Vec[u32]` (`4294967295i64`).
+- **The measurement links an optimised `std`.** The test profile's
+  unoptimised one made `rustc` use its unoptimised `RawVec` copies - 88 M
+  instructions no build pays. `the_solver_kernels_lowered_against_rust_by_hand`
+  now counts `-O` and `-O` with fat LTO, and the proved-checks lowering.
+- **Left**: +0.2 % on rows at `-O` without LTO, which is linking `std` at all
+  (the hand-written Rust with `use nikaia_std::prelude::*` pays the same, and
+  any LTO removes it); +0.7 % on watch lists with the overflow checks a
+  Nikaia crate is built with - the next name for the option (ADR-271 §6).
+- `tools/package.rs` re-lowered: its read-only list parameters are slices.
+
 ## [0.0.372] — 2026-10-02
 
 **The solver's kernels, lowered from Nikaia, against Rust by hand** (ADR-270
