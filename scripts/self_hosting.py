@@ -65,6 +65,7 @@ COMPILER_NIKA = {
     "boundaries.nika": "diagnostics: a backend mismatch at a boundary said as the stale ledger it is (0.0.358)",
     "threads.nika": "contracts::send: whether a value may cross a thread, to our own code or to code nothing describes (0.0.361)",
     "order.nika": "contracts::order: a statement reduced to an operation or the reason it cannot be, and whether two statements, or a run of them, keep their order, and the `--overlaps` report (0.0.362-0.0.364)",
+    "tether.nika": "contracts::tether: the states a signature's views solve to, a parse that views its input, a body that makes a buffer of its own (0.0.374)",
 }
 
 

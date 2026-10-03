@@ -6041,6 +6041,177 @@ fn quoted(attribute: &str) -> Position {
 fn blank(c: char) -> bool { c.is_whitespace() }
 
 
+// --- tether.nika ---
+
+pub const RESULT_POSITION: &str = "<result>";
+
+pub const INPUT_POSITION: &str = "input";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Buffer {
+    None,
+    Named(String),
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageTypes {
+    pub borrowing: collections::BTreeSet<String>,
+    pub named: collections::BTreeSet<String>,
+}
+
+impl PackageTypes {
+    pub fn empty() -> PackageTypes { PackageTypes { borrowing: collections::BTreeSet::new(), named: collections::BTreeSet::new() } }
+}
+
+pub fn declare_unit(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>], package: &mut PackageTypes) {
+    for name in borrowing_types(names, items) { package.borrowing.insert(name.to_owned()); }
+    for item in items.iter() {
+        match &item.node {
+            Item::Struct { name, .. } => {
+                let name = *name;
+                package.named.insert(names.resolve(name).to_owned());
+            },
+            Item::Enum { name, .. } => {
+                let name = *name;
+                package.named.insert(names.resolve(name).to_owned());
+            },
+            _ => { },
+        }
+    }
+}
+
+pub fn a_parse_that_views(names: &winnow_grammar::InternerContext, result: Option<&Type>, package: &PackageTypes) -> bool {
+    let ty = match result { Some(__nikaia_value) => __nikaia_value, None => return false };
+    let name = names.resolve(ty.name);
+    if ty.is_view || package.borrowing.contains(name) { return true; }
+    for argument in ty.generics.iter() {
+        let inner: Option<Type> = Some(argument.clone());
+        if a_parse_that_views(names, (inner).as_ref(), package) { return true; }
+    }
+    !package.named.contains(name) && !a_type_with_no_room_for_a_view(name)
+}
+
+const ROOMLESS: [&str; 27] = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "String", "Duration", "Instant", "Vec", "List", "Array", "Option", "Map", "Set", "Shared", "SharedMut"];
+
+fn a_type_with_no_room_for_a_view(name: &str) -> bool {
+    let base = base_name(name);
+    if base == "Locked" { return true; }
+    for one in ROOMLESS.iter() {
+        let one = *one;
+        if one == base { return true; }
+    }
+    false
+}
+
+pub fn function_views(item: &Item, target: Option<&str>, names: &winnow_grammar::InternerContext, borrowing: &collections::BTreeSet<String>) -> Vec<Held> {
+    let mut held: Vec<Held> = vec![];
+    match item {
+        Item::Fn { receiver, args, ret_type, .. } => {
+            if receiver.is_some() && a_borrowing_target(target, borrowing) { held.push(Held { position: String::from("self"), state: State::Borrowed }); }
+            for arg in args.iter() { if carries_a_view(names, &arg.ty, borrowing) { held.push(Held { position: names.resolve(arg.name).to_owned(), state: State::Borrowed }); } }
+            if result_carries(names, (ret_type).as_ref(), borrowing) { held.push(Held { position: RESULT_POSITION.to_owned(), state: State::Borrowed }); }
+        },
+        _ => { },
+    }
+    held
+}
+
+fn a_borrowing_target(target: Option<&str>, borrowing: &collections::BTreeSet<String>) -> bool {
+    let named = match target { Some(__nikaia_value) => __nikaia_value, None => return false };
+    borrowing.contains(named)
+}
+
+fn result_carries(names: &winnow_grammar::InternerContext, result: Option<&Type>, borrowing: &collections::BTreeSet<String>) -> bool { carries_a_view(names, match result { Some(__nikaia_value) => __nikaia_value, None => return false }, borrowing) }
+
+pub fn carries_a_view(names: &winnow_grammar::InternerContext, ty: &Type, borrowing: &collections::BTreeSet<String>) -> bool {
+    if holds_view(ty) || borrowing.contains(names.resolve(ty.name)) { return true; }
+    for argument in ty.generics.iter() { if carries_a_view(names, argument, borrowing) { return true; } }
+    false
+}
+
+pub fn declares_text(names: &winnow_grammar::InternerContext, ty: Option<&Type>) -> bool {
+    let written = match ty { Some(__nikaia_value) => __nikaia_value, None => return false };
+    names.resolve(written.name) == "String" && written.generics.is_empty() && !written.is_view && !written.is_nullable
+}
+
+pub fn makes_a_buffer(expr: &Expr, asked: &Asked<'_>, unaliased: &impl Fn(&str) -> String) -> Buffer {
+    match expr {
+        Expr::MethodCall { method, receiver, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; a_method_buffer(asked.names.resolve(method), receiver) },
+        Expr::Call { func, .. } => { let func = nikaia_std::boxed::open(func); a_call_buffer(func, asked, unaliased) },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); makes_a_buffer(expr, asked, unaliased) },
+        _ => Buffer::None,
+    }
+}
+
+fn a_method_buffer(method: &str, receiver: &Expr) -> Buffer {
+    if method == "to_owned" { return Buffer::Named(String::from("String")); }
+    if method == "to_string" {
+        return match receiver {
+            Expr::LitStr { .. } => Buffer::None,
+            Expr::LitInterpolated { .. } => Buffer::Named(String::from("String")),
+            Expr::LitInt { .. } => Buffer::Named(String::from("String")),
+            Expr::LitFloat(_) => Buffer::Named(String::from("String")),
+            _ => Buffer::Unknown,
+        };
+    }
+    if method == "clone" {
+        return match receiver {
+            Expr::LitStr { .. } => Buffer::Named(String::from("String")),
+            Expr::LitInterpolated { .. } => Buffer::Named(String::from("String")),
+            _ => Buffer::None,
+        };
+    }
+    Buffer::None
+}
+
+fn a_call_buffer(func: &Expr, asked: &Asked<'_>, unaliased: &impl Fn(&str) -> String) -> Buffer {
+    let name = match func {
+        Expr::Variable(name) => { let name = *name; asked.names.resolve(name).to_owned() },
+        Expr::Path(segments) => unaliased(&joined_segments(segments, asked.names)),
+        _ => return Buffer::None,
+    };
+    let constructor = format!("{}::new", name);
+    let contract = match an_entry(&name, asked) { Some(__nikaia_value) => __nikaia_value, None => match an_entry(&constructor, asked) { Some(__nikaia_value) => __nikaia_value, None => return Buffer::Unknown } };
+    let signature = match contract.signature { Some(__nikaia_value) => __nikaia_value, None => return Buffer::None };
+    let result = match signature.result { Some(__nikaia_value) => __nikaia_value, None => return Buffer::None };
+    if is_a_buffer(&result) { return Buffer::Named(result.text()); }
+    Buffer::None
+}
+
+fn an_entry(key: &str, asked: &Asked<'_>) -> Option<FnContract> {
+    let mine: Option<FnContract> = match *nikaia_std::index::get(&asked.own.functions, key) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    };
+    mine.or_else(|| match *nikaia_std::index::get(&asked.library.functions, key) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    })
+}
+
+fn is_a_buffer(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } => a_buffer_name(name, args),
+        _ => false,
+    }
+}
+
+fn a_buffer_name(name: &str, args: &[Ty]) -> bool {
+    let base = base_name(name);
+    if base == "String" || base == "Bytes" || base == "Mapped" { return true; }
+    if (base == "Vec" || base == "List") && !args.is_empty() { return names_u8(nikaia_std::index::get(&args, 0)); }
+    false
+}
+
+fn names_u8(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, .. } => base_name(name) == "u8",
+        _ => false,
+    }
+}
+
+
 // --- threads.nika ---
 
 const PLAIN_DATA: [&str; 18] = ["bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64"];
@@ -9328,6 +9499,10 @@ pub mod surface {
 pub mod template {
     #[allow(unused_imports)]
     pub use super::{Position, Segment, literal_length, split, illegal, illegal_message};
+}
+pub mod tether {
+    #[allow(unused_imports)]
+    pub use super::{RESULT_POSITION, INPUT_POSITION, Buffer, PackageTypes, declare_unit, a_parse_that_views, function_views, carries_a_view, declares_text, makes_a_buffer};
 }
 pub mod threads {
     #[allow(unused_imports)]

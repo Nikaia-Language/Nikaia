@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.374] — 2026-10-03
+
+**The view states are solved in Nikaia** (#125, ADR-250). The analysis half
+of `contracts::tether` (ADR-008 D2, D7) - the states one function's views
+solve to (receiver, parameters and result that carry a view, all Borrowed
+until `keep::infer` says a view leaves), whether a `pub` rule's result may
+point into the text it parsed, and whether an expression makes a buffer of
+its own (`to_owned`, the text form of a literal or a number, a call whose
+ledger entry hands back owned text or bytes) - moved into
+`tools/tether.nika`. Writing the states into the ledger, the `--tethers`
+report and the refusal stay in Rust beside the keep plan they read. 17.4 % of
+the toolchain is Nikaia, by `scripts/self_hosting.py` over today's larger
+compiler.
+
 ## [0.0.373] — 2026-10-03
 
 **The lowering closes the solver kernels' gap to Rust by hand, piece by piece,
