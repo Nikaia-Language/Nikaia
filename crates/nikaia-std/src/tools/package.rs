@@ -3677,6 +3677,166 @@ fn any_moves(types: &[Ty]) -> bool {
 
 // --- locks.nika ---
 
+const DOORS: [&str; 10] = ["Locked::get", "Locked::set", "Locked::set(after)", "Locked::access", "Locked::update", "SharedMut::get", "SharedMut::set", "SharedMut::set(after)", "SharedMut::access", "SharedMut::update"];
+
+const MULTI: [&str; 2] = ["access_all", "update_all"];
+
+const FIELD: &str = "field:";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyCalls {
+    pub resolved: collections::BTreeSet<String>,
+    pub unresolved: bool,
+    pub fields_called: collections::BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reaches {
+    pub itself: Lock,
+    pub callees: collections::BTreeSet<String>,
+}
+
+pub fn stored_reaches(field: &str, resolved: &collections::BTreeSet<String>, unresolved: bool, free: &collections::BTreeSet<String>, graph: &mut collections::BTreeMap<String, Reaches>) {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet::new() };
+    if unresolved { reaches.itself = reaches.itself.or(Lock::Undecided); }
+    if any_in(resolved, &DOORS) || any_in(free, &MULTI) { reaches.itself = reaches.itself.or(Lock::Holds); }
+    for to in resolved.iter() { reaches.callees.insert(to.to_owned()); }
+    for to in free.iter() { reaches.callees.insert(to.to_owned()); }
+    graph.insert(format!("{}{}", FIELD, field), reaches);
+}
+
+pub fn unit_reaches(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, calls: &collections::BTreeMap<String, BodyCalls>, graph: &mut collections::BTreeMap<String, Reaches>) {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, body, .. } => {
+                let name = *name;
+                let key = key_of_function((name).as_ref(), "", names);
+                graph.insert(key.to_owned(), body_reaches(body, *nikaia_std::index::get(&calls, &key), names, unaliased, holes_of));
+            },
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, body, .. } => {
+                            let name = *name;
+                            let key = key_of_function((name).as_ref(), &owner, names);
+                            graph.insert(key.to_owned(), body_reaches(body, *nikaia_std::index::get(&calls, &key), names, unaliased, holes_of));
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            Item::Grammar(def) => rules_reaches(def, names, unaliased, holes_of, calls, graph),
+            _ => { },
+        }
+    }
+}
+
+pub fn free_calls(body: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>) -> collections::BTreeSet<String> {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet::new() };
+    walk_calls(body, names, unaliased, holes_of, &mut reaches);
+    reaches.callees
+}
+
+pub fn declared_types(program: &Program, names: &winnow_grammar::InternerContext, declared: &mut collections::BTreeSet<String>) {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Enum { name, .. } => {
+                let name = *name;
+                declared.insert(names.resolve(name).to_owned());
+            },
+            Item::Struct { name, .. } => {
+                let name = *name;
+                declared.insert(names.resolve(name).to_owned());
+            },
+            _ => { },
+        }
+    }
+}
+
+pub fn locking_of(graph: &collections::BTreeMap<String, Reaches>, declared: &collections::BTreeSet<String>, library: &Ledger, own: &Ledger) -> Locking {
+    let mut itself: collections::BTreeMap<String, Lock> = collections::BTreeMap::new();
+    let mut callees: collections::BTreeMap<String, collections::BTreeSet<String>> = collections::BTreeMap::new();
+    for (name, reaches) in graph.iter() {
+        itself.insert(name.to_owned(), reaches.itself.clone());
+        callees.insert(name.to_owned(), reaches.callees.to_owned());
+    }
+    locking(&itself, &callees, declared, library, own)
+}
+
+fn key_of_function(name: Option<&winnow_grammar::Symbol>, owner: &str, names: &winnow_grammar::InternerContext) -> String {
+    let symbol = match name { Some(__nikaia_value) => __nikaia_value, None => return with_owner(owner, "new") };
+    with_owner(owner, names.resolve(*symbol))
+}
+
+fn with_owner(owner: &str, own: &str) -> String {
+    if owner.is_empty() { return own.to_owned(); }
+    format!("{}::{}", owner, own)
+}
+
+fn body_reaches(body: &Block, calls: Option<&BodyCalls>, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>) -> Reaches {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet::new() };
+    resolved_into(calls, true, &mut reaches);
+    walk_calls(body, names, unaliased, holes_of, &mut reaches);
+    reaches
+}
+
+fn resolved_into(calls: Option<&BodyCalls>, with_fields: bool, reaches: &mut Reaches) {
+    let known = match calls { Some(__nikaia_value) => __nikaia_value, None => return };
+    if known.unresolved { reaches.itself = reaches.itself.or(Lock::Undecided); }
+    if any_in(&known.resolved, &DOORS) { reaches.itself = reaches.itself.or(Lock::Holds); }
+    for to in known.resolved.iter() { reaches.callees.insert(to.to_owned()); }
+    if with_fields { for field in known.fields_called.iter() { reaches.callees.insert(format!("{}{}", FIELD, field)); } }
+}
+
+fn rules_reaches(def: &GrammarDef, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, calls: &collections::BTreeMap<String, BodyCalls>, graph: &mut collections::BTreeMap<String, Reaches>) {
+    let named = names.resolve(def.name).to_owned();
+    let mut whole = Reaches { itself: Lock::No, callees: collections::BTreeSet::new() };
+    for rule in def.rules.iter() {
+        for alt in rule.alts.iter() {
+            let action = match alt.action.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+            walk_calls(action, names, unaliased, holes_of, &mut whole);
+        }
+    }
+    for rule in def.rules.iter() {
+        if !rule.is_public { continue; }
+        let key = format!("{}::{}", named, names.resolve(rule.name));
+        let mut reaches = Reaches { itself: whole.itself.clone(), callees: whole.callees.to_owned() };
+        resolved_into(*nikaia_std::index::get(&calls, &key), false, &mut reaches);
+        graph.insert(key, reaches);
+    }
+}
+
+fn walk_calls(block: &Block, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, reaches: &mut Reaches) {
+    for seen in seen_in(block, names, unaliased, holes_of, &no_root, false) {
+        match seen {
+            Seen::Call { ref name, .. } => {
+                let called = unaliased(name);
+                if a_name_in(&called, &MULTI) { reaches.itself = reaches.itself.or(Lock::Holds); }
+                reaches.callees.insert(called);
+            },
+            _ => { },
+        }
+    }
+}
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+fn no_root(_name: &str) -> i64 { -1 }
+
+fn any_in(names: &collections::BTreeSet<String>, table: &[&str]) -> bool {
+    for name in names.iter() { if a_name_in(name, table) { return true; } }
+    false
+}
+
+fn a_name_in(name: &str, table: &[&str]) -> bool {
+    for one in table.iter() {
+        let one = *one;
+        if one == name { return true; }
+    }
+    false
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Locking {
     pub functions: collections::BTreeMap<String, Lock>,
@@ -11095,7 +11255,7 @@ pub mod lends {
 }
 pub mod locks {
     #[allow(unused_imports)]
-    pub use super::{Locking, locking};
+    pub use super::{BodyCalls, Reaches, stored_reaches, unit_reaches, free_calls, declared_types, locking_of, Locking, locking};
 }
 pub mod manifest {
     #[allow(unused_imports)]

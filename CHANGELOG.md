@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.395] — 2026-10-03
+
+**Which functions can open a lock is walked in Nikaia** (#125, ADR-294). The
+walk of `contracts::locks` (ADR-281 D3) joined its fixpoint in
+`tools/locks.nika`: the doors (D10), what a body opens itself and whom it calls
+- the checker's resolved calls outside a `spawn` as the base case (ADR-288),
+the free calls by `tools/foreign.nika`'s walk - a function field's stored code
+as a node of its own (ADR-230 D1), a `pub` grammar rule walked over every
+action of its grammar (ADR-296 D24), and the types a unit declares, so that a
+variant reads as a value. Handing in each unit and writing the answer into the
+ledger stay Rust; the lock suites pass unchanged. 20.1 % of the toolchain is
+Nikaia.
+
 ## [0.0.394] — 2026-10-03
 
 **What `nikaia describe` drafts is decided in Nikaia** (#125, ADR-294). The

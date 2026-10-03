@@ -4,14 +4,243 @@
 // `contracts::locks`, moved from Rust (ADR-294, #125), as `throws.nika` holds
 // `contracts::throws`'.
 //
-// **What moved is the fixpoint and what it writes back.** What stays Rust is
-// the walk that finds, per function, the door it opens itself and whom it
-// calls: it reads `sync`'s visitors and the checker's resolved calls, and it
-// moves with them. The compiler hands this module the graph the walk builds -
-// a function field's stored code a node of its own, keyed `field:Type.field`
-// (ADR-230 D1) - and writes back what it answers.
+// **The walk and the fixpoint.** Per function, the door it opens itself and
+// whom it calls: the base case is the checker's answer about method calls
+// (ADR-288), which the compiler hands in as `BodyCalls`, and the free calls
+// are `tools/foreign.nika`'s walk. A function field's stored code is a node
+// of its own, keyed `field:Type.field` (ADR-230 D1). What stays Rust is
+// handing in each unit and writing the answer into the ledger.
 
 use std::collections
+
+/// The entries that open a lock, by their ledger keys (ADR-281 D10). A closed
+/// list, like `touch`'s kinds and for the same reason: a name this does not
+/// know is answered *no*, and a name it knew wrongly would be a claim about a
+/// program nobody made. The witness door (D5) is under the key it is written
+/// with, and opens a lock exactly as `set` does.
+comptime DOORS: Array[ref String, 10] = ["Locked::get", "Locked::set", "Locked::set(after)", "Locked::access", "Locked::update", "SharedMut::get", "SharedMut::set", "SharedMut::set(after)", "SharedMut::access", "SharedMut::update"]
+
+/// The doors over **several** locks, which are free calls rather than
+/// methods, and so are named here rather than found among the resolved
+/// receivers.
+comptime MULTI: Array[ref String, 2] = ["access_all", "update_all"]
+
+/// The prefix a function field's node is keyed by: no function's key starts
+/// with it.
+comptime FIELD: ref String = "field:"
+
+/// What the checker resolved in one body, the part this walk reads: the calls
+/// it resolved **outside** a `spawn` (a task's body runs later and elsewhere,
+/// so a lock taken there is the ordinary case, D3), whether one of those could
+/// not be resolved, and the function fields it called.
+pub struct BodyCalls {
+    pub resolved: collections::BTreeSet[String],
+    pub unresolved: bool,
+    pub fields_called: collections::BTreeSet[String],
+}
+
+/// What one body reaches, before the fixpoint: what it says on its own - a
+/// door it opens, or the doubt an unresolvable call leaves - and whom it
+/// calls, by the keys the ledger records them under.
+pub struct Reaches {
+    pub itself: Lock,
+    pub callees: collections::BTreeSet[String],
+}
+
+/// Code stored in a function field, as a node of its own (ADR-230 D1): what
+/// every lambda and function put there reaches, under `field:Type.field`.
+pub fn stored_reaches(field: ref String, resolved: ref collections::BTreeSet[String], unresolved: bool, free: ref collections::BTreeSet[String], mut graph: collections::BTreeMap[String, Reaches]) {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet() }
+    if unresolved {
+        reaches.itself = reaches.itself.or(Lock::Undecided)
+    }
+    if any_in(resolved, DOORS) || any_in(free, MULTI) {
+        reaches.itself = reaches.itself.or(Lock::Holds)
+    }
+    for to in resolved {
+        reaches.callees.insert(to.clone())
+    }
+    for to in free {
+        reaches.callees.insert(to.clone())
+    }
+    graph.insert(f"{FIELD}{field}", reaches)
+}
+
+/// Every function, method and `pub` grammar rule of one unit, into `graph`,
+/// under the key the ledger uses. `calls` is the checker's answer by that key.
+pub fn unit_reaches(program: ref Program, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, calls: ref collections::BTreeMap[String, BodyCalls], mut graph: collections::BTreeMap[String, Reaches]) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { name, body, .. } => {
+                let key = key_of_function(name, "", names)
+                graph.insert(key.clone(), body_reaches(body, calls[key], names, unaliased, holes_of))
+            }
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    match method.node {
+                        Item::Fn { name, body, .. } => {
+                            let key = key_of_function(name, owner, names)
+                            graph.insert(key.clone(), body_reaches(body, calls[key], names, unaliased, holes_of))
+                        }
+                        else => {}
+                    }
+                }
+            }
+            // **A `pub` rule is an entry, so it gets the walk too** (ADR-296
+            // D24). Its body is every action block in the grammar: a rule's
+            // pattern names other rules of the same grammar and their actions
+            // run with it, so the grammar is the unit - which is the safe
+            // direction here, because a lock this walk does not see is a
+            // deadlock the checker does not refuse.
+            Item::Grammar(def) => rules_reaches(def, names, unaliased, holes_of, calls, graph),
+            else => {}
+        }
+    }
+}
+
+/// The free calls a lambda's body makes, for the checker to remember with the
+/// function field it is stored in (ADR-230 D1).
+pub fn free_calls(body: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> collections::BTreeSet[String] {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet() }
+    walk_calls(body, names, unaliased, holes_of, reaches)
+    return reaches.callees
+}
+
+/// The types one unit declares, into `declared`: **a variant is a value, not
+/// a callee** - `Json::Array(items)` builds a value and runs no body - and the
+/// type is everything but the last segment.
+pub fn declared_types(program: ref Program, names: ref winnow_grammar::InternerContext, mut declared: collections::BTreeSet[String]) {
+    for item in program.items {
+        match item.node {
+            Item::Enum { name, .. } => {
+                declared.insert(names.resolve(name).clone())
+            }
+            Item::Struct { name, .. } => {
+                declared.insert(names.resolve(name).clone())
+            }
+            else => {}
+        }
+    }
+}
+
+/// The fixpoint over a graph the walk built.
+pub fn locking_of(graph: ref collections::BTreeMap[String, Reaches], declared: ref collections::BTreeSet[String], library: ref Ledger, own: ref Ledger) -> Locking {
+    let mut itself: collections::BTreeMap[String, Lock] = collections::BTreeMap()
+    let mut callees: collections::BTreeMap[String, collections::BTreeSet[String]] = collections::BTreeMap()
+    for (name, reaches) in graph {
+        itself.insert(name.clone(), reaches.itself.clone())
+        callees.insert(name.clone(), reaches.callees.clone())
+    }
+    return locking(itself, callees, declared, library, own)
+}
+
+// The key a function is recorded under: its name, after its type's where it
+// is a method; the anonymous constructor of Part I 4.2 is `new`, which a
+// caller reaches as `Type::new`.
+fn key_of_function(name: ref winnow_grammar::Symbol?, owner: ref String, names: ref winnow_grammar::InternerContext) -> String {
+    let symbol = name ?? return with_owner(owner, "new")
+    return with_owner(owner, names.resolve(symbol))
+}
+
+fn with_owner(owner: ref String, own: ref String) -> String {
+    if owner.len() == 0 {
+        return own.clone()
+    }
+    return f"{owner}::{own}"
+}
+
+// What one body reaches: the checker's resolved calls, then the free calls the
+// walk finds.
+fn body_reaches(body: ref Block, calls: ref BodyCalls?, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync) -> Reaches {
+    let mut reaches = Reaches { itself: Lock::No, callees: collections::BTreeSet() }
+    resolved_into(calls, true, reaches)
+    walk_calls(body, names, unaliased, holes_of, reaches)
+    return reaches
+}
+
+// **The base case is the checker's answer** (ADR-288): which entry
+// `kasse.set(42)` goes to is a question about the receiver's type. A rule's
+// entry has no function fields of its own to call.
+fn resolved_into(calls: ref BodyCalls?, with_fields: bool, mut reaches: Reaches) {
+    let known = calls ?? return
+    if known.unresolved {
+        reaches.itself = reaches.itself.or(Lock::Undecided)
+    }
+    if any_in(known.resolved, DOORS) {
+        reaches.itself = reaches.itself.or(Lock::Holds)
+    }
+    for to in known.resolved {
+        reaches.callees.insert(to.clone())
+    }
+    if with_fields {
+        for field in known.fields_called {
+            reaches.callees.insert(f"{FIELD}{field}")
+        }
+    }
+}
+
+fn rules_reaches(def: ref GrammarDef, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, calls: ref collections::BTreeMap[String, BodyCalls], mut graph: collections::BTreeMap[String, Reaches]) {
+    let named = names.resolve(def.name).clone()
+    let mut whole = Reaches { itself: Lock::No, callees: collections::BTreeSet() }
+    for rule in def.rules {
+        for alt in rule.alts {
+            let action = alt.action ?? continue
+            walk_calls(action, names, unaliased, holes_of, whole)
+        }
+    }
+    for rule in def.rules {
+        if !rule.is_public {
+            continue
+        }
+        let key = f"{named}::{names.resolve(rule.name)}"
+        let mut reaches = Reaches { itself: whole.itself.clone(), callees: whole.callees.clone() }
+        resolved_into(calls[key], false, reaches)
+        graph.insert(key, reaches)
+    }
+}
+
+// Every free call a body makes, the blocks it holds included, by the walk of
+// `tools/foreign.nika`, each name with the file's alias resolved. A `spawn`'s
+// body is not descended into (D3). **A door over several locks is a free
+// call** (ADR-281), so it is named here where every other free call is.
+fn walk_calls(block: ref Block, names: ref winnow_grammar::InternerContext, unaliased: fn(ref String) -> String sync, holes_of: fn(ref Expr) -> Vec[Expr] sync, mut reaches: Reaches) {
+    for seen in seen_in(block, names, unaliased, holes_of, no_root, false) {
+        match seen {
+            Seen::Call { name, .. } => {
+                let called = unaliased(name)
+                if a_name_in(called, MULTI) {
+                    reaches.itself = reaches.itself.or(Lock::Holds)
+                }
+                reaches.callees.insert(called)
+            }
+            else => {}
+        }
+    }
+}
+
+// Nobody asks this walk where a `root` stands.
+fn no_root(_name: ref String) -> i64 sync {
+    return -1
+}
+
+fn any_in(names: ref collections::BTreeSet[String], table: ref Array[ref String]) -> bool {
+    for name in names {
+        if a_name_in(name, table) {
+            return true
+        }
+    }
+    return false
+}
+
+fn a_name_in(name: ref String, table: ref Array[ref String]) -> bool {
+    for one in table {
+        if one == name {
+            return true
+        }
+    }
+    return false
+}
 
 /// What the fixpoint answers: each function's `touches_a_lock`, and each
 /// function field's, by the keys the ledger records them under.
