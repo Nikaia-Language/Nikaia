@@ -756,6 +756,82 @@ pub fn type_entry(fields: &[String], derives: &collections::BTreeSet<String>) ->
 }
 
 
+// --- describe.nika ---
+
+#[derive(Debug, Clone)]
+pub struct Drafted {
+    pub functions: collections::BTreeMap<String, FnContract>,
+    pub types: collections::BTreeMap<String, TypeContract>,
+    pub unanswered: Vec<String>,
+    pub notes: Notes,
+}
+
+pub fn drafted(surface: &Surface, crate_word: &str, wanted: &collections::BTreeSet<String>) -> Drafted {
+    let mut functions: collections::BTreeMap<String, FnContract> = collections::BTreeMap::new();
+    let mut unanswered: Vec<String> = vec![];
+    let mut named_types: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for name in wanted.iter() {
+        if !answered(surface, name) {
+            unanswered.push(format!("{}::{}", crate_word, name));
+            continue;
+        }
+        let at = match *nikaia_std::index::get(&surface.reachable, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let function = match *nikaia_std::index::get(&surface.functions, at) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        functions.insert(format!("{}::{}", crate_word, name), contract_of(function, crate_word, &surface.types, &mut named_types));
+    }
+    for name in wanted.iter() { if surface.types.contains(name) { named_types.insert(name.to_owned()); } }
+    let mut types: collections::BTreeMap<String, TypeContract> = collections::BTreeMap::new();
+    let no_fields: Vec<String> = vec![];
+    let no_derives: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for name in named_types.iter() {
+        let fields = nikaia_std::index::or(*nikaia_std::index::get(&surface.fields, name), || &no_fields);
+        let derives = nikaia_std::index::or(*nikaia_std::index::get(&surface.derives, name), || &no_derives);
+        types.insert(format!("{}::{}", crate_word, name), type_entry(fields, derives));
+    }
+    Drafted { functions, types, unanswered, notes: notes_on(surface, crate_word, wanted) }
+}
+
+fn notes_on(surface: &Surface, crate_word: &str, wanted: &collections::BTreeSet<String>) -> Notes {
+    let mut notes = Notes::empty();
+    notes.about_the_crate = promise_lines(&surface.promises);
+    let mut calls: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for (path, function) in surface.functions.iter() { calls.insert(path.to_owned(), function.calls.to_owned()); }
+    for name in wanted.iter() {
+        let at = match *nikaia_std::index::get(&surface.reachable, name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let function = match *nikaia_std::index::get(&surface.functions, at) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let said = thread_lines(name, &bound_parameters(function), reaches_a_thread(at, &calls));
+        if !said.is_empty() { notes.about_a_function.insert(format!("{}::{}", crate_word, name), said); }
+    }
+    notes
+}
+
+fn answered(surface: &Surface, name: &str) -> bool {
+    let at = match *nikaia_std::index::get(&surface.reachable, name) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    surface.functions.contains_key(at)
+}
+
+fn bound_parameters(function: &Function) -> Vec<String> {
+    let mut names: Vec<String> = vec![];
+    let mut types: Vec<String> = vec![];
+    for arg in function.args.iter() {
+        names.push(arg.name.to_owned());
+        types.push(arg.ty.to_owned());
+    }
+    sent_across(&names, &types, &function.bounds)
+}
+
+fn contract_of(function: &Function, crate_word: &str, types: &collections::BTreeSet<String>, mentioned: &mut collections::BTreeSet<String>) -> FnContract {
+    let mut names: Vec<String> = vec![];
+    let mut written_types: Vec<String> = vec![];
+    for arg in function.args.iter() {
+        names.push(arg.name.to_owned());
+        written_types.push(arg.ty.to_owned());
+    }
+    let written = WrittenFn { names, types: written_types, result: function.result.to_owned(), pauses: function.pauses, parameters: function.parameters.to_owned() };
+    contract(&written, crate_word, types, mentioned)
+}
+
+
 // --- diffs.nika ---
 
 pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
@@ -1207,12 +1283,12 @@ fn a_parameter_call(callee: &str, passed: &[String], subject: Option<String>, sp
         found.push(refusal("NK1109", span.clone(), format!("`{}` has no option called `{}`.", shown, first), vec![format!("`{}` is a `dsl` statement, and its parameters go to a driver: a function declared with `...args: Self::dsl`. Nothing in this file declares `{}` that way, so {} would reach nothing.", name, shown, reached)], format!("Hand `{}` to a driver, a method declared `run(ref self, statement: ref String; ...args: Self::dsl)`, and pass the parameters there: `driver.run({}; {}: …)`.", name, name, first)));
         return;
     }
-    let listed = parameter_list(&declared);
+    let listed = parameter_list(declared);
     for parameter in declared.iter() { if !nikaia_std::list::contains(&passed, parameter) { found.push(refusal("NK1112", span.clone(), format!("`{}` needs `:{}`, but this call doesn't pass it.", name, parameter), vec![format!("The statement's parameters are {}.", listed)], format!("Pass it after the `;`: `{}: …`.", parameter))); } }
     for given in passed.iter() {
         if nikaia_std::list::contains(&declared, given) { continue; }
         let note: String = if declared.is_empty() { format!("`{}` has no parameters at all.", name) } else { format!("The statement's parameters are {}.", listed) };
-        let near = nearest_parameter(given, &declared);
+        let near = nearest_parameter(given, declared);
         let help: String = if near.is_some() {
             let one = nikaia_std::index::or(near, || "".into());
             format!("Did you mean `{}`?", one)
@@ -2325,7 +2401,7 @@ pub fn keeping_method_key(ledger: &Ledger, target: Option<&str>, on_self: bool, 
         let owner = nikaia_std::index::or(target, || "");
         let key = format!("{}::{}", owner, method);
         let contract = match *nikaia_std::index::get(&ledger.functions, &key) { Some(__nikaia_value) => __nikaia_value, None => return None };
-        if takes_a_keep(&contract) { return Some(key); }
+        if takes_a_keep(contract) { return Some(key); }
         return None;
     }
     let suffix = format!("::{}", method);
@@ -6492,7 +6568,7 @@ pub fn named_handle(expr: &Expr, names: &winnow_grammar::InternerContext, scope:
 
 fn a_handle_in_scope(name: &str, scope: &collections::BTreeMap<String, Ty>) -> Option<String> {
     let ty = match *nikaia_std::index::get(&scope, name) { Some(__nikaia_value) => __nikaia_value, None => return None };
-    if holds_shared(&ty) { return Some(name.to_owned()); }
+    if holds_shared(ty) { return Some(name.to_owned()); }
     None
 }
 
@@ -10964,6 +11040,10 @@ pub mod calls {
 pub mod crossing {
     #[allow(unused_imports)]
     pub use super::{crosses, plainly_sendable, is_plain, generic_of, bounds_send, a_list, reaches_a_thread, the_crates_own, promise_lines, thread_lines, type_entry};
+}
+pub mod describe {
+    #[allow(unused_imports)]
+    pub use super::{Drafted, drafted};
 }
 pub mod diffs {
     #[allow(unused_imports)]

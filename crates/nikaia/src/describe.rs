@@ -70,10 +70,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::contracts::{FnContract, Ledger, Notes};
-use nikaia_std::tools::crossing;
+use crate::contracts::{Ledger, Notes};
 
-use nikaia_std::tools::signature;
 use nikaia_std::tools::surface;
 
 /// What a run of the command did, for the line it prints.
@@ -144,87 +142,18 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         surface::read_items(&mut surface, relative, &items);
     }
     surface::resolve(&mut surface);
-    let types = surface.types.clone();
-    let fields = surface.fields.clone();
-    let derives = surface.derives.clone();
 
+    // **What the description holds is Nikaia's** (`tools/describe.nika`,
+    // #125): the entries, the types they name and what the describer saw and
+    // did not claim ([ADR-290](../../docs/specification/adr/adr-290.md) D8,
+    // D10). The header is this file's.
+    let drafted = nikaia_std::tools::describe::drafted(&surface, crate_word, &wanted);
     let mut ledger = Ledger::empty();
     ledger.inference = "described-from-signatures".to_string();
     ledger.sources = hashes;
-    let mut unanswered = Vec::new();
-    let mut named_types: BTreeSet<String> = BTreeSet::new();
-    for name in &wanted {
-        // **The path a caller writes, resolved through the `pub use` items**
-        // ([ADR-290](../../docs/specification/adr/adr-290.md) D17's own reason
-        // for reading them): a `pub fn` inside a private `mod` is reachable
-        // after all when one says so, and refusing such a call would be
-        // [Part III C.4](../../docs/specification/30-nikaia-tooling.md).
-        let Some(function) = surface
-            .reachable
-            .get(name)
-            .and_then(|at| surface.functions.get(at))
-        else {
-            unanswered.push(format!("{crate_word}::{name}"));
-            continue;
-        };
-        let (contract, mentions) = contract_of(function, crate_word, &types);
-        named_types.extend(mentions);
-        ledger
-            .functions
-            .insert(format!("{crate_word}::{name}"), contract);
-    }
-    // **A written type is a reach across the boundary too** (D1), and a type a
-    // described signature *names* is one the caller's compiler will look up. So
-    // both sets get an entry: what the program wrote, and what the entries
-    // mention.
-    for name in wanted.iter().filter(|name| types.contains(*name)) {
-        named_types.insert(name.clone());
-    }
-    let nothing = (Vec::new(), BTreeSet::new());
-    for name in named_types {
-        // **The one claim that comes from a field** (ADR-123 D2), and what
-        // the type derives (ADR-294 D9.3): `tools/crossing.nika`'s entry.
-        let entry = crossing::type_entry(
-            fields.get(&name).unwrap_or(&nothing.0),
-            derives.get(&name).unwrap_or(&nothing.1),
-        );
-        ledger.types.insert(format!("{crate_word}::{name}"), entry);
-    }
-
-    // **What the describer saw and did not claim**
-    // ([ADR-290](../../docs/specification/adr/adr-290.md) D8, D10), gathered
-    // after the entries because a proposal is written above the one it is
-    // about.
-    let mut notes = Notes::empty();
-    notes.about_the_crate = crossing::promise_lines(&surface.promises);
-    // What each of the crate's functions calls, by its path: what
-    // `crossing::reaches_a_thread` follows.
-    let calls: BTreeMap<String, Vec<String>> = surface
-        .functions
-        .iter()
-        .map(|(path, function)| (path.clone(), function.calls.clone()))
-        .collect();
-    for name in &wanted {
-        let Some(function) = surface
-            .reachable
-            .get(name)
-            .and_then(|at| surface.functions.get(at))
-        else {
-            continue;
-        };
-        // **What it saw and did not claim** (ADR-290 D8, D9): the bound, and
-        // a sink reached through the crate's own calls - which is the row an
-        // `unsafe impl Send` that took the bound away leaves.
-        let bound: Vec<String> = sent_across(function);
-        let at = surface.reachable.get(name).cloned().unwrap_or_default();
-        let said = crossing::thread_lines(name, &bound, crossing::reaches_a_thread(&at, &calls));
-        if said.is_empty() {
-            continue;
-        }
-        notes
-            .about_a_function
-            .insert(format!("{crate_word}::{name}"), said);
-    }
+    ledger.functions = drafted.functions;
+    ledger.types = drafted.types;
+    let (unanswered, notes) = (drafted.unanswered, drafted.notes);
 
     let described = Described {
         path: PathBuf::new(),
@@ -469,39 +398,4 @@ fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<St
         }
     }
     Ok(out)
-}
-
-/// **The parameters a `Send` bound reaches**, in declaration order
-/// ([ADR-290](../../docs/specification/adr/adr-290.md) D9).
-///
-/// Two shapes, and both are the same evidence: a parameter whose type is a
-/// type variable the bounds send, and one written `impl … Send …` at the
-/// parameter itself. Rust's own type system does the propagation, and the
-/// answer surfaces in the signature — which is why this is not a heuristic
-/// and why the shim's `across_a_thread_unchecked` is correctly silent: an
-/// `unsafe impl Send` took its bound away, and only following the calls
-/// reaches the `spawn`.
-fn sent_across(function: &surface::Function) -> Vec<String> {
-    let names: Vec<String> = function.args.iter().map(|arg| arg.name.clone()).collect();
-    let types: Vec<String> = function.args.iter().map(|arg| arg.ty.clone()).collect();
-    signature::sent_across(&names, &types, &function.bounds)
-}
-
-/// The entry, and the crate types its signature named: `tools/signature.nika`'s
-/// entry for the `Function` `tools/surface.nika` read.
-fn contract_of(
-    function: &surface::Function,
-    crate_word: &str,
-    types: &BTreeSet<String>,
-) -> (FnContract, BTreeSet<String>) {
-    let written = signature::WrittenFn {
-        names: function.args.iter().map(|arg| arg.name.clone()).collect(),
-        types: function.args.iter().map(|arg| arg.ty.clone()).collect(),
-        result: function.result.clone(),
-        pauses: function.pauses,
-        parameters: function.parameters.clone(),
-    };
-    let mut mentioned = BTreeSet::new();
-    let contract = signature::contract(&written, crate_word, types, &mut mentioned);
-    (contract, mentioned)
 }

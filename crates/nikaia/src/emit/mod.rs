@@ -1363,6 +1363,8 @@ struct Emitter<'p> {
     view_fallbacks: std::collections::BTreeSet<usize>,
     /// `check::Checked::view_coalesces`.
     view_coalesces: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::lent_map_fallbacks`.
+    lent_map_fallbacks: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::optional_fallbacks`.
     optional_fallbacks: std::collections::BTreeSet<(usize, String)>,
     /// `check::Checked::flat_reads`.
@@ -2600,6 +2602,7 @@ impl<'p> Emitter<'p> {
             preluded: std::cell::RefCell::new(HashSet::new()),
             view_fallbacks: propagation.view_fallbacks,
             view_coalesces: propagation.view_coalesces,
+            lent_map_fallbacks: propagation.lent_map_fallbacks,
             optional_fallbacks: propagation.optional_fallbacks,
             flat_reads: propagation.flat_reads,
             copied_reads: propagation.copied_reads,
@@ -8858,6 +8861,18 @@ impl<'p> Emitter<'p> {
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
+                // **A name lent beside what a map holds**
+                // (`check::Checked::lent_map_fallbacks`): the answer is a
+                // view, and so is the fallback.
+                if self
+                    .lent_map_fallbacks
+                    .contains(&(flow.statement, crate::check::argument_shape(expr)))
+                {
+                    out.push("&");
+                    self.expr(out, fallback, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
+                }
                 self.expr(out, fallback, depth, flow)?;
                 out.push(match bare {
                     true => ")",

@@ -497,6 +497,11 @@ pub struct Checked {
     /// by statement and shape: the answer is a view, and the fallback is
     /// written as it is - `m.get(k) ?? name` for a `name: ref String`.
     pub view_coalesces: BTreeSet<(usize, String)>,
+    /// **A `??` over what a map holds whose fallback is a name of that type**
+    /// (ADR-279 D7), by statement and shape: `m[k] ?? spare` for a map of
+    /// lists is a view whichever side answers, and the name is lent - written
+    /// `|| &spare` - as `r ?? spare` lends it over a `ref T?`.
+    pub lent_map_fallbacks: BTreeSet<(usize, String)>,
     /// **A `??` whose fallback may be `null` too**, by statement and shape:
     /// the answer is the first side that has a value, or `null`, so it is a
     /// `T?` and the fallback is written as the option it is (Part I 3.5).
@@ -1778,6 +1783,8 @@ pub struct Propagation {
     pub lent_coalesces: BTreeMap<(usize, String), &'static str>,
     /// [`Checked::view_coalesces`].
     pub view_coalesces: BTreeSet<(usize, String)>,
+    /// [`Checked::lent_map_fallbacks`].
+    pub lent_map_fallbacks: BTreeSet<(usize, String)>,
     /// [`Checked::optional_fallbacks`].
     pub optional_fallbacks: BTreeSet<(usize, String)>,
     /// [`Checked::flat_reads`].
@@ -2069,6 +2076,7 @@ pub fn propagation_against(
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
         view_coalesces: checked.view_coalesces,
+        lent_map_fallbacks: checked.lent_map_fallbacks,
         optional_fallbacks: checked.optional_fallbacks,
         flat_reads: checked.flat_reads,
         copied_reads: checked.copied_reads,
@@ -5206,6 +5214,15 @@ impl<'a> Checker<'a> {
         if ty.is_a_view() || matches!(given, Expr::LitStr { .. }) {
             return;
         }
+        // **A name that is a view below whatever its type says** - a `let`
+        // bound to a map read beside a jump - is a reference already (found
+        // moving `describe`'s draft into Nikaia, #125).
+        if crate::contracts::keeps::moves(ty)
+            && matches!(given, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+        {
+            return;
+        }
         // **A number is lent as it is**, typed or not (0.0.246): a literal, or
         // a name a literal folded into, can never be a view, and through
         // `AsKey` the language below had no type to give it but its default -
@@ -6888,6 +6905,18 @@ impl<'a> Checker<'a> {
         // argument agree without a second `&`.
         if found.is_a_view() && !a_lent_nullable {
             return false;
+        }
+        // **Nor a name that is a view below whatever its type says**: a `let`
+        // bound to a map read beside a jump (`let at = m[k] ?? continue`) is
+        // a `&String` already, and a second `&` was a `&&String` that
+        // `contains_key` has no `Borrow` for (found moving `describe`'s draft
+        // into Nikaia, #125). A number read that way is the emitter's `*`.
+        if !matches!(found, Ty::Nullable(_))
+            && crate::contracts::keeps::moves(found)
+            && matches!(given, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+        {
+            return true;
         }
         // **Nor does a function this function was lent**: a code parameter
         // the body only calls is an `&impl Fn` below already, and a second `&`
@@ -12152,6 +12181,31 @@ impl<'a> Checker<'a> {
                         .insert((span.at(), argument_shape(expr)));
                     return Ty::view("str");
                 }
+                // **And a name of the type the map holds** (ADR-279 D7):
+                // `m[k] ?? spare` reads the map's value, a view, and a view
+                // of `spare` exists for as long as the answer does - it is a
+                // name in scope at the `??` - so the name is lent, as
+                // `r ?? spare` lends it over a `ref T?`, rather than refused
+                // as a value of its own. Text has its own answers above.
+                if let Ty::Nullable(inner) = &left
+                    && from_a_map
+                    && matches!(&**fallback, Expr::Variable(_))
+                    && !other.is_a_view()
+                    && let Ty::Named { name, args, .. } = inner.as_ref()
+                    && !matches!(name.as_str(), "str" | "String")
+                    && other
+                        == (Ty::Named {
+                            name: name.clone(),
+                            args: args.clone(),
+                            view: false,
+                        })
+                    && crate::contracts::keeps::moves(&other)
+                {
+                    self.checked
+                        .lent_map_fallbacks
+                        .insert((span.at(), argument_shape(expr)));
+                    return view_of(&other);
+                }
                 if let Ty::Nullable(inner) = &left {
                     match from_a_map {
                         // **What a map holds has its own sentence**, whether
@@ -15603,7 +15657,16 @@ impl<'a> Checker<'a> {
                 }
                 KeyForm::Handed
             }
-            false => match found.is_a_view() || matches!(index, Expr::LitStr { .. }) {
+            // **A name that is a view below whatever its type says** - a
+            // `let` bound to a map read beside a jump, `let at = m[k] ??
+            // continue` - is a reference already, and a `&` in front of it
+            // was a `&&String` the map has no `Borrow` for (found moving
+            // `describe`'s draft into Nikaia, #125).
+            false => match found.is_a_view()
+                || matches!(index, Expr::LitStr { .. })
+                || matches!(index, Expr::Variable(name)
+                    if self.binding(self.parsed.text(*name)).is_some_and(|local| local.lent))
+            {
                 true => KeyForm::AsIs,
                 false => KeyForm::Lent,
             },

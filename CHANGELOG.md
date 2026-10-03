@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.394] — 2026-10-03
+
+**What `nikaia describe` drafts is decided in Nikaia** (#125, ADR-294). The
+entries a description holds, the crate types they name and what the describer
+saw and did not claim (ADR-290 D8, D10) moved into `tools/describe.nika`, over
+the surface `tools/surface.nika` already reads. The manifest, the crate's
+files, their hashes and the ledger's header stay Rust.
+
+Moving it found two gaps, closed in the compiler (ADR-294 D3):
+
+* **A name after `??` beside a map read is lent** (ADR-279 D7): `m[k] ?? none`
+  over a map of lists is a view whichever side answers, as `r ?? spare` is
+  over a `ref T?`. It was `NK1185`, and the way out it offered was a copy of
+  the map's list.
+* **A name bound to a map read beside a jump is handed on as the view it is**:
+  `let at = m[k] ?? continue` binds a reference, and the next map read, a
+  `contains_key` and a call that only reads it each wrote a second `&` -
+  `rustc`'s *`Borrow<&String>` is not implemented* about a file nobody wrote.
+
+19.8 % of the toolchain is Nikaia.
+
 ## [0.0.393] — 2026-10-03
 
 **What a grammar matched, what a callee promises and how often a loop turns,

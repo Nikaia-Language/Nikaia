@@ -1,0 +1,125 @@
+// crates/nikaia-std/src/tools/describe.nika
+//
+// What `nikaia describe` drafts from a crate's surface (ADR-290) - the entries,
+// the types they name and what the describer saw and did not claim - moved
+// from Rust (ADR-294, #125). Reading the manifest and the crate's files, the
+// hashes and the ledger's header stay Rust; reading the files' items is
+// `tools/rust.nika` and `tools/surface.nika` already.
+
+use std::collections
+
+/// What a description holds, before the header goes on it.
+pub struct Drafted {
+    /// One entry per function the program writes, by `crate::name`.
+    pub functions: collections::BTreeMap[String, FnContract],
+    /// One entry per crate type the program writes or an entry names.
+    pub types: collections::BTreeMap[String, TypeContract],
+    /// What the program writes and the crate does not offer.
+    pub unanswered: Vec[String],
+    /// What the describer saw and did not claim (D8, D10).
+    pub notes: Notes,
+}
+
+/// The description of `crate_word` for the names the program writes of it,
+/// from the crate's resolved `surface`.
+pub fn drafted(surface: ref Surface, crate_word: ref String, wanted: ref collections::BTreeSet[String]) -> Drafted {
+    let mut functions: collections::BTreeMap[String, FnContract] = collections::BTreeMap()
+    let mut unanswered: Vec[String] = []
+    let mut named_types: collections::BTreeSet[String] = collections::BTreeSet()
+    for name in wanted {
+        // **The path a caller writes, resolved through the `pub use` items**
+        // (D17's own reason for reading them): a `pub fn` inside a private
+        // `mod` is reachable after all when one says so, and refusing such a
+        // call would be Part III C.4.
+        if !answered(surface, name) {
+            unanswered.push(f"{crate_word}::{name}")
+            continue
+        }
+        let at = surface.reachable[name] ?? continue
+        let function = surface.functions[at] ?? continue
+        functions.insert(f"{crate_word}::{name}", contract_of(function, crate_word, surface.types, named_types))
+    }
+    // **A written type is a reach across the boundary too** (D1), and a type a
+    // described signature *names* is one the caller's compiler will look up.
+    // So both sets get an entry: what the program wrote, and what the entries
+    // mention.
+    for name in wanted {
+        if surface.types.contains(name) {
+            named_types.insert(name.clone())
+        }
+    }
+    let mut types: collections::BTreeMap[String, TypeContract] = collections::BTreeMap()
+    let no_fields: Vec[String] = []
+    let no_derives: collections::BTreeSet[String] = collections::BTreeSet()
+    for name in named_types {
+        // **The one claim that comes from a field** (ADR-123 D2), and what the
+        // type derives (ADR-294 D9.3).
+        let fields = surface.fields[name] ?? no_fields
+        let derives = surface.derives[name] ?? no_derives
+        types.insert(f"{crate_word}::{name}", type_entry(fields, derives))
+    }
+    return Drafted { functions: functions, types: types, unanswered: unanswered, notes: notes_on(surface, crate_word, wanted) }
+}
+
+// **What the describer saw and did not claim** (D8, D9, D10): the crate's
+// promises, and per function the bound and a sink reached through the
+// crate's own calls - which is the row an `unsafe impl Send` that took the
+// bound away leaves.
+fn notes_on(surface: ref Surface, crate_word: ref String, wanted: ref collections::BTreeSet[String]) -> Notes {
+    let mut notes = Notes::empty()
+    notes.about_the_crate = promise_lines(surface.promises)
+    // What each of the crate's functions calls, by its path: what
+    // `reaches_a_thread` follows.
+    let mut calls: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for (path, function) in surface.functions {
+        calls.insert(path.clone(), function.calls.clone())
+    }
+    for name in wanted {
+        let at = surface.reachable[name] ?? continue
+        let function = surface.functions[at] ?? continue
+        let said = thread_lines(name, bound_parameters(function), reaches_a_thread(at, calls))
+        if said.len() > 0 {
+            notes.about_a_function.insert(f"{crate_word}::{name}", said)
+        }
+    }
+    return notes
+}
+
+// Whether a name the program writes reaches a function, through the
+// `pub use` items.
+fn answered(surface: ref Surface, name: ref String) -> bool {
+    let at = surface.reachable[name] ?? return false
+    return surface.functions.contains_key(at)
+}
+
+// **The parameters a `Send` bound reaches**, in declaration order (D9): a
+// parameter whose type is a type variable the bounds send, and one written
+// `impl … Send …` at the parameter itself.
+fn bound_parameters(function: ref Function) -> Vec[String] {
+    let mut names: Vec[String] = []
+    let mut types: Vec[String] = []
+    for arg in function.args {
+        names.push(arg.name.clone())
+        types.push(arg.ty.clone())
+    }
+    return sent_across(names, types, function.bounds)
+}
+
+// The entry for the `Function` the surface read; the crate types its
+// signature names go into `mentioned`.
+fn contract_of(function: ref Function, crate_word: ref String, types: ref collections::BTreeSet[String], mut mentioned: collections::BTreeSet[String]) -> FnContract {
+    let mut names: Vec[String] = []
+    let mut written_types: Vec[String] = []
+    for arg in function.args {
+        names.push(arg.name.clone())
+        written_types.push(arg.ty.clone())
+    }
+    let written = WrittenFn {
+        names: names,
+        types: written_types,
+        result: function.result.clone(),
+        pauses: function.pauses,
+        parameters: function.parameters.clone(),
+    }
+    return contract(written, crate_word, types, mentioned)
+}
