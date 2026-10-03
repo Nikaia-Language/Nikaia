@@ -5677,6 +5677,18 @@ impl<'p> Emitter<'p> {
                     true => " + Send + Sync",
                     false => "",
                 };
+                // **What a kept function is handed is borrowed for the call
+                // alone**: its parameters' references are elided, which makes
+                // the closure take a borrow of any length. Written with the
+                // struct's `'a`, `node_of: fn(ref Expr) -> i64` in a struct
+                // that also holds a view took only what lives as long as that
+                // view, and a call with a local was a borrow `rustc` refused
+                // (found moving `text_tiers` into Nikaia, #125).
+                let params: Vec<String> = ty
+                    .generics
+                    .iter()
+                    .map(|g| self.ty_counted(g, Lifetimes::ELIDED, count))
+                    .collect();
                 return format!(
                     "nikaia_std::func::Kept<dyn Fn({}) -> {outcome}{crossing}>",
                     params.join(", ")
@@ -10383,6 +10395,12 @@ impl<'p> Emitter<'p> {
     /// `'static`* — is about the **lifetime** in the signature rather than about
     /// the `&`, so it is this question it wants answered.
     fn carries_a_view(&self, ty: &Type) -> bool {
+        // A function type carries what its result does ([`holds_view`]).
+        if let Some(code) = &*ty.code {
+            return (*code.result)
+                .as_ref()
+                .is_some_and(|result| self.carries_a_view(result));
+        }
         ty.is_view || self.borrows(ty.name) || ty.generics.iter().any(|g| self.carries_a_view(g))
     }
 
@@ -13449,11 +13467,24 @@ pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     }
 }
 
+/// **A function type holds what its result holds, and nothing it is
+/// handed**: a kept function's parameters are borrowed for the call alone and
+/// written without a lifetime ([`Emitter::ty_counted`]), so a struct whose
+/// only field is `fn(ref String) -> i64` names no lifetime either - with one,
+/// it was *lifetime parameter `'a` is never used*.
 pub(crate) fn holds_view(ty: &Type) -> bool {
+    if let Some(code) = &*ty.code {
+        return (*code.result).as_ref().is_some_and(holds_view);
+    }
     ty.is_view || ty.generics.iter().any(holds_view)
 }
 
 pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
+    if let Some(code) = &*ty.code {
+        return (*code.result)
+            .as_ref()
+            .is_some_and(|result| names_borrowing(result, borrowing));
+    }
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
 

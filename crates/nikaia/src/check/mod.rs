@@ -22708,7 +22708,12 @@ fn elements_of(over: &Ty, bindings: usize) -> Vec<Ty> {
             ("HashMap" | "Map" | "BTreeMap" | "TrustedMap", [key, value]) if bindings == 2 => {
                 Some(vec![key.clone(), value.clone()])
             }
-            ("Vec" | "List", [Ty::Tuple(parts)]) => Some(parts.clone()),
+            // **And a set of pairs is taken apart as a list of them is**:
+            // `for (a, b) in links` over a `BTreeSet[(String, String)]` bound
+            // two names of unknown type, so a `.clone()` of either resolved
+            // to nothing and the function around it was inferred `async`
+            // (found moving `text_tiers` into Nikaia, #125).
+            ("Vec" | "List" | "BTreeSet" | "HashSet", [Ty::Tuple(parts)]) => Some(parts.clone()),
             (name, [Ty::Tuple(parts), ..]) if name == ty::ARRAY => Some(parts.clone()),
             _ => None,
         },

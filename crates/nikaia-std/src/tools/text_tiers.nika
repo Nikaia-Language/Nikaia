@@ -1,0 +1,1534 @@
+// crates/nikaia-std/src/tools/text_tiers.nika
+//
+// **What a declared `String` is below, decided by what flows into it**
+// (ADR-282) - the walk the compiler's `text_tiers` runs over a whole program
+// and the tiers it decides, moved from Rust (ADR-294, #125). What stays in
+// Rust is writing the answer into the syntax tree, which this reads.
+//
+// A **position** is every place a program declares `String`: a struct's
+// field, a function's result, a function's parameter, an annotated `let` -
+// and inside each, the element of a list or a set and the key or value of a
+// map. Three tiers, and each pays only for itself: only text of its own flows
+// in, and it stays `String`; only views (and literals), and it becomes
+// `ref String`; both, and it becomes `ref String` that is either, per value.
+//
+// **What is published may become a view but never both kinds** (D25), and a
+// position a value reaches from inside an `f"…"` hole this pass cannot hand a
+// value over in is never mixed.
+//
+// A fixpoint: a read or a call hands on the tier found for its position, and
+// tiers only ever move up, so it ends. The last walk is against the final
+// tiers, which is what the wraps are read off.
+
+use std::collections
+
+/// What kinds of text a value may be: text of its own, a view, a literal (a
+/// view of text that lives as long as the program), or what a mixed position
+/// hands back - either of the first two, per value.
+pub struct Kinds {
+    pub owned: bool,
+    pub view: bool,
+    pub lasting: bool,
+    pub either: bool,
+}
+
+fn no_kinds() -> Kinds {
+    return Kinds { owned: false, view: false, lasting: false, either: false }
+}
+
+fn owned_kinds() -> Kinds {
+    return Kinds { owned: true, view: false, lasting: false, either: false }
+}
+
+fn view_kinds() -> Kinds {
+    return Kinds { owned: false, view: true, lasting: false, either: false }
+}
+
+fn lasting_kinds() -> Kinds {
+    return Kinds { owned: false, view: false, lasting: true, either: false }
+}
+
+fn either_kinds() -> Kinds {
+    return Kinds { owned: false, view: false, lasting: false, either: true }
+}
+
+fn kinds_joined(a: ref Kinds, b: ref Kinds) -> Kinds {
+    return Kinds { owned: a.owned || b.owned, view: a.view || b.view, lasting: a.lasting || b.lasting, either: a.either || b.either }
+}
+
+fn same_kinds(a: ref Kinds, b: ref Kinds) -> bool {
+    return a.owned == b.owned && a.view == b.view && a.lasting == b.lasting && a.either == b.either
+}
+
+fn no_text(kinds: ref Kinds) -> bool {
+    return !kinds.owned && !kinds.view && !kinds.lasting && !kinds.either
+}
+
+/// What a set of kinds makes of a position.
+pub enum Tier {
+    Owned,
+    View,
+    Mixed,
+}
+
+fn tier_of_kinds(kinds: ref Kinds) -> Tier {
+    if kinds.either || (kinds.view && kinds.owned) {
+        return Tier::Mixed
+    }
+    if kinds.view {
+        return Tier::View
+    }
+    return Tier::Owned
+}
+
+fn mixed(tier: ref Tier) -> bool {
+    return match tier {
+        Tier::Mixed => true,
+        else => false,
+    }
+}
+
+fn owned_tier(tier: ref Tier) -> bool {
+    return match tier {
+        Tier::Owned => true,
+        else => false,
+    }
+}
+
+/// Who declares a position.
+pub enum TextOwner {
+    Field(String, String),
+    /// What a function hands back. Not `Result`: a public name `Result` in
+    /// `std` makes `rustc` spell the real one in full in every message.
+    Returned(String),
+    Param(String, i64),
+    /// An annotated `let`, by the byte its statement starts at.
+    Let(i64),
+}
+
+/// A declared `String`: who declares it, and where inside the declared type -
+/// the argument indices from the outside in (`HashMap[String, i64]`'s key is
+/// `[0]`).
+pub struct TextPosition {
+    pub owner: TextOwner,
+    pub path: Vec[i64],
+}
+
+/// A position as a word, which is what every map here keys it by: an enum
+/// has no order of its own to key one with.
+fn owner_word(owner: ref TextOwner) -> String {
+    return match owner {
+        TextOwner::Field(of, field) => f"field {of} {field}",
+        TextOwner::Returned(key) => f"result {key}",
+        TextOwner::Param(key, at) => f"param {key} {at}",
+        TextOwner::Let(at) => f"let {at}",
+    }
+}
+
+fn position_word(owner: ref TextOwner, path: ref Vec[i64]) -> String {
+    let mut word = owner_word(owner)
+    word.push_str(" @")
+    for step in path {
+        word.push_str(f" {step}")
+    }
+    return word
+}
+
+/// How a value is handed into a mixed position: the method the rewrite
+/// writes after it, numbered as the rewrite's list of them is.
+pub enum Hand {
+    /// `value.into_either()`: into a `String`.
+    Either,
+    /// `value.into_either_maybe()`: into a `String?`, present or absent.
+    Maybe,
+    /// `iterator.either_items()`: before a `collect` into a list whose
+    /// element is mixed.
+    Items,
+    /// `pairs.either_keys()`, `either_values()`, `either_pairs()`: before a
+    /// `collect` into a map whose key, value or both are mixed (ADR-293 D26).
+    Keys,
+    Values,
+    Pairs,
+}
+
+pub fn hand_number(hand: ref Hand) -> i64 {
+    return match hand {
+        Hand::Either => 0,
+        Hand::Maybe => 1,
+        Hand::Items => 2,
+        Hand::Keys => 3,
+        Hand::Values => 4,
+        Hand::Pairs => 5,
+    }
+}
+
+/// What the tier pass is handed: the program's names and aliases, and
+/// `std`'s ledger. Where an expression stands is the one thing only the
+/// language below can say, and it is handed to the walk as `node_of`.
+pub struct TierAsk {
+    pub names: ref winnow_grammar::InternerContext,
+    pub aliases: ref collections::BTreeMap[String, String],
+    pub library: ref Ledger,
+}
+
+/// A value handed over inside an `f"…"` hole: a copy of it, whose shape is
+/// what the hole is parsed into again and matched by (ADR-229 D1).
+pub struct HoleWrap {
+    pub value: Expr,
+    pub hand: Hand,
+}
+
+/// What the pass decided: the positions that are not text of their own, the
+/// `let`s bound to a literal that are declared `String`, the type to declare
+/// them with, and every value handed into a mixed position - by where it
+/// stands, or inside an `f"…"` hole by the hole's place and the value's
+/// shape (ADR-229 D1).
+pub struct TextTiers {
+    pub tiers: Vec[(TextPosition, Tier)],
+    pub lets: collections::BTreeSet[i64],
+    pub text: Type?,
+    pub wraps: collections::BTreeMap[i64, Hand],
+    pub hole_wraps: collections::BTreeMap[i64, Vec[HoleWrap]],
+}
+
+/// A name as the program wrote it, with the alias a `use` gave its package
+/// spelled out.
+pub fn unaliased_in(aliases: ref collections::BTreeMap[String, String], name: ref String) -> String {
+    if aliases.len() == 0 {
+        return name.clone()
+    }
+    // A view keeps its `&`, which sits in front of the name here.
+    let mut amp: String = ""
+    let mut bare = name.clone()
+    if name.starts_with("&") {
+        amp = "&"
+        let chars: Vec[char] = name.chars().collect()
+        bare = ""
+        for k in 1..<chars.len() {
+            bare.push(chars[k])
+        }
+    }
+    let parts: Vec[ref String] = bare.splitn(2, "::").collect()
+    if parts.len() < 2 {
+        return name.clone()
+    }
+    let package = aliases[parts[0]] ?? return name.clone()
+    return f"{amp}{package}::{parts[1]}"
+}
+
+// --- What the program declares, read once ---
+
+struct FieldDecl {
+    ty: Type,
+    published: bool,
+}
+
+struct FnDecl {
+    params: Vec[Type],
+    result: Type?,
+    published: bool,
+}
+
+struct TextDeclared {
+    /// Every field of every struct, and whether it is published.
+    fields: collections::BTreeMap[(String, String), FieldDecl],
+    /// Every function and method, by key.
+    fns: collections::BTreeMap[String, FnDecl],
+    /// Method names declared in this program, to the keys that declare them.
+    methods: collections::BTreeMap[String, Vec[String]],
+}
+
+fn declared_of(program: ref Program, names: ref winnow_grammar::InternerContext) -> TextDeclared {
+    let mut declared = TextDeclared { fields: collections::BTreeMap(), fns: collections::BTreeMap(), methods: collections::BTreeMap() }
+    for item in program.items {
+        match item.node {
+            Item::Struct { name, fields, is_public, .. } => {
+                let owner = names.resolve(name).clone()
+                for field in fields {
+                    let key = (owner.clone(), names.resolve(field.name).clone())
+                    declared.fields.insert(key, FieldDecl { ty: field.ty.clone(), published: is_public && field.is_public })
+                }
+            }
+            Item::Fn { .. } => declare_function(item.node, null, names, declared),
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).clone()
+                for method in methods {
+                    declare_function(method.node, owner.clone(), names, declared)
+                }
+            }
+            else => {}
+        }
+    }
+    return declared
+}
+
+fn declare_function(item: ref Item, target: String?, names: ref winnow_grammar::InternerContext, mut declared: TextDeclared) {
+    let (name, args, ret_type, is_public) = match item {
+        Item::Fn { name, args, ret_type, is_public, .. } => (name, args, ret_type, is_public),
+        else => return,
+    }
+    let own = own_name(name, names)
+    let key = tier_key(target, own)
+    if target != null {
+        let mut keys: Vec[String] = declared.methods[own]?.clone() ?? []
+        keys.push(key.clone())
+        declared.methods.insert(own.clone(), keys)
+    }
+    let mut params: Vec[Type] = []
+    for arg in args {
+        params.push(arg.ty.clone())
+    }
+    declared.fns.insert(key, FnDecl { params: params, result: ret_type?.clone(), published: is_public })
+}
+
+fn own_name(name: ref winnow_grammar::Symbol?, names: ref winnow_grammar::InternerContext) -> String {
+    let symbol = name ?? return "new"
+    return names.resolve(symbol).clone()
+}
+
+fn tier_key(target: ref String?, own: ref String) -> String {
+    let owner = target ?? return own.clone()
+    return f"{owner}::{own}"
+}
+
+/// Whether what an owner declares is published.
+fn position_published(owner: ref TextOwner, declared: ref TextDeclared) -> bool {
+    return match owner {
+        TextOwner::Field(of, field) => field_published(of, field, declared),
+        TextOwner::Returned(key) => fn_published(key, declared),
+        TextOwner::Param(key, _) => fn_published(key, declared),
+        TextOwner::Let(_) => false,
+    }
+}
+
+fn field_published(of: ref String, field: ref String, declared: ref TextDeclared) -> bool {
+    let key = (of.clone(), field.clone())
+    let found = declared.fields[key] ?? return false
+    return found.published
+}
+
+fn fn_published(key: ref String, declared: ref TextDeclared) -> bool {
+    let found = declared.fns[key] ?? return false
+    return found.published
+}
+
+/// A written `String`, to declare a binding with.
+fn string_type(declared: ref TextDeclared, names: ref winnow_grammar::InternerContext) -> Type? {
+    for (_, field) in declared.fields {
+        if plain_string(names, field.ty) {
+            return field.ty.clone()
+        }
+    }
+    for (_, function) in declared.fns {
+        for param in function.params {
+            if plain_string(names, param) {
+                return param.clone()
+            }
+        }
+        let result = function.result ?? continue
+        if plain_string(names, result) {
+            return result.clone()
+        }
+    }
+    return null
+}
+
+// --- The walk ---
+
+/// The declared position a name or a place stands for, and its type.
+struct Declaring {
+    owner: TextOwner,
+    ty: Type,
+}
+
+/// One local, as far as this walk needs it.
+struct TierLocal {
+    kinds: Kinds,
+    /// The struct it is a value of, where that can be read off the program.
+    of: String?,
+    /// Bound by a `let` to a literal and nothing else: the byte the `let`
+    /// stands at, and -1 for anything else.
+    literal: i64,
+    /// The position it is declared as, and the declared type.
+    declared: Declaring?,
+}
+
+/// What one walk found, every position by its word.
+struct Flows {
+    positions: collections::BTreeMap[String, Kinds],
+    /// Each word's position, to hand back.
+    known: collections::BTreeMap[String, TextPosition],
+    /// A `let` binding a name to a literal, by the byte it stands at, and the
+    /// positions that name is kept in (ADR-282 D17).
+    literal_lets: collections::BTreeMap[i64, collections::BTreeSet[String]],
+    /// Values that go into a mixed position at a line whose lowering does not
+    /// wrap them itself, by where they stand.
+    wraps: collections::BTreeMap[i64, Hand],
+    /// A parameter's own value going into another position (ADR-282 D24).
+    param_into: collections::BTreeSet[(String, String)],
+    /// The same inside an `f"…"` hole, by the hole's place and the value's
+    /// shape (ADR-229 D1).
+    hole_wraps: collections::BTreeMap[i64, Vec[HoleWrap]],
+    /// Two positions a whole value goes between, which are therefore one
+    /// representation below and get one tier (ADR-282 D16).
+    links: collections::BTreeSet[(String, String)],
+    /// Positions a value goes into from inside an `f"…"` hole this pass has
+    /// no place to hand it over in: never mixed.
+    unwrappable: collections::BTreeSet[String],
+}
+
+fn no_flows() -> Flows {
+    return Flows { positions: collections::BTreeMap(), known: collections::BTreeMap(), literal_lets: collections::BTreeMap(), wraps: collections::BTreeMap(), param_into: collections::BTreeSet(), hole_wraps: collections::BTreeMap(), links: collections::BTreeSet(), unwrappable: collections::BTreeSet() }
+}
+
+struct TierWalk {
+    declared: TextDeclared,
+    /// The tiers decided so far, by word.
+    tiers: collections::BTreeMap[String, Tier],
+    flows: Flows,
+    /// Each name's bindings, innermost last, and the names each scope bound.
+    locals: collections::BTreeMap[String, Vec[TierLocal]],
+    frames: Vec[Vec[String]],
+    /// The function being walked, where its result is a position.
+    result: String?,
+    /// Inside an `f"…"` hole.
+    in_hole: bool,
+    /// The place of the hole being walked - the byte its `{` stands at - and
+    /// -1 outside one.
+    hole_text: i64,
+}
+
+fn open_tier_scope(mut walk: TierWalk) {
+    walk.frames.push([])
+}
+
+fn close_tier_scope(mut walk: TierWalk) {
+    if walk.frames.len() == 0 {
+        return
+    }
+    let names = walk.frames[walk.frames.len() - 1].clone()
+    for name in names {
+        let mut stack = walk.locals[name]?.clone() ?? continue
+        if stack.len() > 0 {
+            stack.pop()
+        }
+        walk.locals.insert(name.clone(), stack)
+    }
+    walk.frames.pop()
+}
+
+fn tier_local(name: ref String, walk: ref TierWalk) -> TierLocal? {
+    let stack = walk.locals[name] ?? return null
+    if stack.len() == 0 {
+        return null
+    }
+    return stack[stack.len() - 1].clone()
+}
+
+fn set_tier_local(name: ref String, local: TierLocal, mut walk: TierWalk) {
+    let mut stack = walk.locals[name]?.clone() ?? return
+    if stack.len() == 0 {
+        return
+    }
+    stack.pop()
+    stack.push(local)
+    walk.locals.insert(name.clone(), stack)
+}
+
+fn bind_tier_local(name: String, local: TierLocal, mut walk: TierWalk) {
+    let mut stack: Vec[TierLocal] = walk.locals[name]?.clone() ?? []
+    stack.push(local)
+    walk.locals.insert(name.clone(), stack)
+    if walk.frames.len() > 0 {
+        let last = walk.frames.len() - 1
+        walk.frames[last].push(name)
+    }
+}
+
+fn plain_local(kinds: Kinds) -> TierLocal {
+    return TierLocal { kinds: kinds, of: null, literal: -1, declared: null }
+}
+
+fn tier_at(word: ref String, walk: ref TierWalk) -> Tier {
+    let found = walk.tiers[word] ?? return Tier::Owned
+    return found.clone()
+}
+
+fn mixed_at(word: ref String, walk: ref TierWalk) -> bool {
+    return mixed(tier_at(word, walk))
+}
+
+/// A position seen: its word, remembered with the position it stands for.
+fn seen(owner: ref TextOwner, path: ref Vec[i64], mut walk: TierWalk) -> String {
+    let word = position_word(owner, path)
+    if !walk.flows.known.contains_key(word) {
+        walk.flows.known.insert(word.clone(), TextPosition { owner: owner.clone(), path: path.clone() })
+    }
+    return word
+}
+
+fn a_map(names: ref winnow_grammar::InternerContext, ty: ref Type) -> bool {
+    let name = container_of(names, ty) ?? return false
+    return is_a_map_name(name)
+}
+
+fn a_container(names: ref winnow_grammar::InternerContext, ty: ref Type) -> bool {
+    return container_of(names, ty) != null
+}
+
+/// Record that values of these kinds go into every declared `String` of
+/// `ty`: the type itself, or an element of it.
+fn flow_type(owner: ref TextOwner, ty: ref Type, mut path: Vec[i64], kinds: ref Kinds, ask: ref TierAsk, mut walk: TierWalk) {
+    if plain_string(ask.names, ty) {
+        let word = seen(owner, path, walk)
+        let before = walk.flows.positions[word]?.clone() ?? no_kinds()
+        walk.flows.positions.insert(word, kinds_joined(before, kinds))
+        return
+    }
+    if a_container(ask.names, ty) {
+        let mut at = 0
+        for arg in ty.generics {
+            path.push(at)
+            flow_type(owner, arg, path, kinds, ask, walk)
+            path.pop()
+            at += 1
+        }
+    }
+}
+
+/// A value going into one argument of a declared type, which is a position
+/// if it is `String`: recorded, and - where that position is mixed and
+/// `wrap` says the line is this pass's to wrap - marked to be handed over.
+fn flow_value(going: ref TierGoing, value: ref Expr?, kinds: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let owner = going.owner.clone()
+    let ty = going.ty.clone()
+    let path = going.path.clone()
+    let plain = plain_string(ask.names, ty)
+    // **A parameter handed on as it is** (ADR-282 D24), remembered so that
+    // what it goes into can hold it to text of its own.
+    if plain {
+        let from = handed_parameter(value, ask, walk)
+        if from != null {
+            let from_word: String = from ?? ""
+            let to = seen(owner, path, walk)
+            walk.flows.param_into.insert((from_word, to))
+        }
+    }
+    // A list that comes whole from a position is linked to it below, and the
+    // link is all that flows.
+    let linked = a_container(ask.names, ty) && comes_whole(value, ask, walk)
+    if !linked {
+        flow_type(owner, ty, path.clone(), kinds, ask, walk)
+    }
+    if walk.in_hole && walk.hole_text < 0 && going.wrap && plain {
+        let word = seen(owner, path, walk)
+        walk.flows.unwrappable.insert(word)
+        return
+    }
+    let given = value ?? return
+    // `null` is no text of either kind, and goes in as it is.
+    if plain && going.wrap && !a_null(given) && mixed_at(position_word(owner, path), walk) {
+        if ty.is_nullable {
+            hand_value_over(given, Hand::Maybe, node_of, walk)
+        } else {
+            hand_value_over(given, Hand::Either, node_of, walk)
+        }
+    }
+    kept_literal(given, owner, path, ty, ask, walk)
+    if a_container(ask.names, ty) {
+        flow_whole(going, given, node_of, ask, walk)
+    }
+}
+
+/// Where a value goes: the position's owner, the declared type there, the
+/// path inside it, and whether the line is this pass's to wrap.
+struct TierGoing {
+    owner: TextOwner,
+    ty: Type,
+    path: Vec[i64],
+    wrap: bool,
+}
+
+fn going_into(owner: ref TextOwner, ty: ref Type, path: Vec[i64], wrap: bool) -> TierGoing {
+    return TierGoing { owner: owner.clone(), ty: ty.clone(), path: path, wrap: wrap }
+}
+
+fn a_null(value: ref Expr) -> bool {
+    return match value {
+        Expr::LitNull => true,
+        else => false,
+    }
+}
+
+/// The word of the parameter a value is, where it is one of `String`.
+fn handed_parameter(value: ref Expr?, ask: ref TierAsk, walk: ref TierWalk) -> String? {
+    let given = value ?? return null
+    let name = match given {
+        Expr::Variable(name) => ask.names.resolve(name).clone(),
+        else => return null,
+    }
+    let local = tier_local(name, walk) ?? return null
+    let declared = local.declared ?? return null
+    let parameter = match declared.owner {
+        TextOwner::Param(_, _) => true,
+        else => false,
+    }
+    if !parameter || !plain_string(ask.names, declared.ty) {
+        return null
+    }
+    let empty: Vec[i64] = []
+    return position_word(declared.owner, empty)
+}
+
+fn comes_whole(value: ref Expr?, ask: ref TierAsk, walk: ref TierWalk) -> bool {
+    let given = value ?? return false
+    let collected = match given {
+        Expr::MethodCall { method, args, .. } => args.len() == 0 && ask.names.resolve(method) == "collect",
+        Expr::ListLit { .. } => true,
+        else => false,
+    }
+    return !collected && source_of(given, ask, walk) != null
+}
+
+/// **A container going in whole** (ADR-282 D16): a literal's items one by
+/// one, a `collect` item by item, and anything that already has a position
+/// linked to it, so that the two are one representation below.
+fn flow_whole(going: ref TierGoing, value: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let ty = going.ty.clone()
+    let a_list = a_container(ask.names, ty) && !a_map(ask.names, ty) && ty.generics.len() > 0
+    match value {
+        Expr::ListLit { items, .. } => {
+            if !a_list {
+                return
+            }
+            let element = ty.generics[0].clone()
+            for item in items {
+                let kinds = tier_expr(item, node_of, ask, walk)
+                let mut at = going.path.clone()
+                at.push(0)
+                flow_value(going_into(going.owner, element, at, true), item, kinds, node_of, ask, walk)
+            }
+        }
+        Expr::MethodCall { receiver, method, args, .. } => {
+            if ask.names.resolve(method) == "collect" && args.len() == 0 {
+                collected_into(going, receiver, node_of, ask, walk)
+                return
+            }
+            link_from(going, value, ask, walk)
+        }
+        else => link_from(going, value, ask, walk),
+    }
+}
+
+fn link_from(going: ref TierGoing, value: ref Expr, ask: ref TierAsk, mut walk: TierWalk) {
+    let from = source_of(value, ask, walk) ?? return
+    let to = Declaring { owner: going.owner.clone(), ty: going.ty.clone() }
+    link(from, [], to, going.path.clone(), ask, walk)
+}
+
+/// A `collect` into a container: a map is collected from pairs, its key and
+/// its value two positions, and a list item by item.
+fn collected_into(going: ref TierGoing, receiver: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let ty = going.ty.clone()
+    if a_map(ask.names, ty) {
+        let keys = mixed_part(going, 0, ask, walk)
+        let values = mixed_part(going, 1, ask, walk)
+        if keys && values {
+            hand_value_over(receiver, Hand::Pairs, node_of, walk)
+        } else if keys {
+            hand_value_over(receiver, Hand::Keys, node_of, walk)
+        } else if values {
+            hand_value_over(receiver, Hand::Values, node_of, walk)
+        }
+        return
+    }
+    if !a_container(ask.names, ty) || ty.generics.len() == 0 {
+        return
+    }
+    if !plain_string(ask.names, ty.generics[0]) {
+        return
+    }
+    let mut at = going.path.clone()
+    at.push(0)
+    let word = seen(going.owner, at, walk)
+    if walk.in_hole && walk.hole_text < 0 {
+        walk.flows.unwrappable.insert(word)
+    } else if mixed_at(word, walk) {
+        hand_value_over(receiver, Hand::Items, node_of, walk)
+    }
+}
+
+fn mixed_part(going: ref TierGoing, at: i64, ask: ref TierAsk, mut walk: TierWalk) -> bool {
+    if going.ty.generics.len() <= at {
+        return false
+    }
+    if !plain_string(ask.names, going.ty.generics[at]) {
+        return false
+    }
+    let mut path = going.path.clone()
+    path.push(at)
+    let word = seen(going.owner, path, walk)
+    if walk.in_hole && walk.hole_text < 0 {
+        walk.flows.unwrappable.insert(word)
+        return false
+    }
+    return mixed_at(word, walk)
+}
+
+/// The declared position a whole value comes from: a name declared with one,
+/// a field, what a function of this program hands back.
+fn source_of(value: ref Expr, ask: ref TierAsk, walk: ref TierWalk) -> Declaring? {
+    return match value {
+        Expr::Variable(_) => place_of(value, ask, walk),
+        Expr::Field { .. } => place_of(value, ask, walk),
+        Expr::Call { func, .. } => called_result(func, ask, walk),
+        Expr::MethodCall { method, .. } => method_result(ask.names.resolve(method), walk),
+        Expr::Try(inner) => source_of(inner, ask, walk),
+        else => null,
+    }
+}
+
+fn called_result(func: ref Expr, ask: ref TierAsk, walk: ref TierWalk) -> Declaring? {
+    let callee = tier_callee(func, ask) ?? return null
+    let function = walk.declared.fns[callee] ?? return null
+    let result = function.result ?? return null
+    return Declaring { owner: TextOwner::Returned(callee.clone()), ty: result.clone() }
+}
+
+fn method_result(method: ref String, walk: ref TierWalk) -> Declaring? {
+    let keys = walk.declared.methods[method] ?? return null
+    if keys.len() != 1 {
+        return null
+    }
+    let key = keys[0].clone()
+    let function = walk.declared.fns[key] ?? return null
+    let result = function.result ?? return null
+    return Declaring { owner: TextOwner::Returned(key.clone()), ty: result.clone() }
+}
+
+fn tier_callee(func: ref Expr, ask: ref TierAsk) -> String? {
+    return written_callee(ask.names, func, fn(name) { unaliased_in(ask.aliases, name) })
+}
+
+/// Link every `String` inside two types of one shape, position to position.
+fn link(from: ref Declaring, mut from_path: Vec[i64], to: ref Declaring, mut to_path: Vec[i64], ask: ref TierAsk, mut walk: TierWalk) {
+    let from_ty = from.ty.clone()
+    let to_ty = to.ty.clone()
+    if plain_string(ask.names, from_ty) && plain_string(ask.names, to_ty) {
+        let a = seen(from.owner, from_path, walk)
+        let b = seen(to.owner, to_path, walk)
+        if a != b {
+            walk.flows.links.insert((a, b))
+        }
+        return
+    }
+    if !a_container(ask.names, from_ty) || !a_container(ask.names, to_ty) || from_ty.generics.len() != to_ty.generics.len() {
+        return
+    }
+    for at in 0..<from_ty.generics.len() {
+        from_path.push(at)
+        to_path.push(at)
+        let inner_from = Declaring { owner: from.owner.clone(), ty: from_ty.generics[at].clone() }
+        let inner_to = Declaring { owner: to.owner.clone(), ty: to_ty.generics[at].clone() }
+        link(inner_from, from_path.clone(), inner_to, to_path.clone(), ask, walk)
+        from_path.pop()
+        to_path.pop()
+    }
+}
+
+/// Mark a value to be handed over as `hand` says: by where it stands, or
+/// inside an `f"…"` hole by the hole's text and the value's shape (ADR-229
+/// D1).
+fn hand_value_over(value: ref Expr, hand: Hand, node_of: fn(ref Expr) -> i64 sync, mut walk: TierWalk) {
+    if walk.in_hole && walk.hole_text >= 0 {
+        let at = walk.hole_text
+        let mut wraps: Vec[HoleWrap] = walk.flows.hole_wraps[at]?.clone() ?? []
+        wraps.push(HoleWrap { value: value.clone(), hand: hand })
+        walk.flows.hole_wraps.insert(at, wraps)
+        return
+    }
+    walk.flows.wraps.insert(node_of(value), hand)
+}
+
+/// What reading a value of a declared type gives: the tier of each `String`
+/// in it.
+fn kinds_of(owner: ref TextOwner, ty: ref Type, mut path: Vec[i64], ask: ref TierAsk, walk: ref TierWalk) -> Kinds {
+    if plain_string(ask.names, ty) {
+        return match tier_at(position_word(owner, path), walk) {
+            Tier::Owned => owned_kinds(),
+            Tier::View => view_kinds(),
+            Tier::Mixed => either_kinds(),
+        }
+    }
+    if ty.is_view && ask.names.resolve(ty.name) == "String" {
+        return view_kinds()
+    }
+    if a_container(ask.names, ty) {
+        let mut out = no_kinds()
+        let mut at = 0
+        for arg in ty.generics {
+            path.push(at)
+            out = kinds_joined(out, kinds_of(owner, arg, path.clone(), ask, walk))
+            path.pop()
+            at += 1
+        }
+        if !no_text(out) {
+            return out
+        }
+    }
+    return owned_kinds()
+}
+
+fn kinds_of_declared(declared: ref Declaring, ask: ref TierAsk, walk: ref TierWalk) -> Kinds {
+    return kinds_of(declared.owner, declared.ty, [], ask, walk)
+}
+
+/// The element a read of a container hands out: a map's value, anything
+/// else's element; `keys` a map's key.
+fn element_kinds(declared: ref Declaring, keys: bool, ask: ref TierAsk, walk: ref TierWalk) -> Kinds {
+    let ty = declared.ty.clone()
+    if !a_container(ask.names, ty) {
+        return kinds_of_declared(declared, ask, walk)
+    }
+    let mut at = 0
+    if a_map(ask.names, ty) && !keys {
+        at = 1
+    }
+    if ty.generics.len() <= at {
+        return owned_kinds()
+    }
+    return kinds_of(declared.owner, ty.generics[at], [at], ask, walk)
+}
+
+/// The declared position an expression names as a place: a local declared
+/// with a type, a field of a struct this walk can name.
+fn place_of(expr: ref Expr, ask: ref TierAsk, walk: ref TierWalk) -> Declaring? {
+    return match expr {
+        Expr::Variable(name) => declared_local(ask.names.resolve(name), walk),
+        Expr::Field { base, name } => field_place(base, ask.names.resolve(name), ask, walk),
+        else => null,
+    }
+}
+
+fn declared_local(name: ref String, walk: ref TierWalk) -> Declaring? {
+    let local = tier_local(name, walk) ?? return null
+    return local.declared?.clone()
+}
+
+fn field_place(base: ref Expr, field: ref String, ask: ref TierAsk, walk: ref TierWalk) -> Declaring? {
+    let owner = tier_struct_of(base, ask, walk) ?? return null
+    let key = (owner.clone(), field.clone())
+    let found = walk.declared.fields[key] ?? return null
+    return Declaring { owner: TextOwner::Field(owner.clone(), field.clone()), ty: found.ty.clone() }
+}
+
+fn tier_block(block: ref Block, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    open_tier_scope(walk)
+    let mut tail = no_kinds()
+    let mut k = 0
+    for stmt in block.stmts {
+        let kinds = tier_statement(stmt.node, stmt.span.start as i64, node_of, ask, walk)
+        if k + 1 == block.stmts.len() {
+            tail = kinds
+        }
+        k += 1
+    }
+    close_tier_scope(walk)
+    return tail
+}
+
+/// Walk a statement; what it is worth as a block's last value.
+fn tier_statement(stmt: ref Stmt, at: i64, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    match stmt {
+        Stmt::Let { names, value, ty, .. } => tier_let(names, value, ty, at, node_of, ask, walk),
+        Stmt::Assign { target, value, .. } => tier_assign(target, value, node_of, ask, walk),
+        Stmt::For { bindings, iter, body } => {
+            let kinds = tier_expr(iter, node_of, ask, walk)
+            open_tier_scope(walk)
+            for binding in bindings {
+                bind_tier_local(ask.names.resolve(binding).clone(), plain_local(kinds.clone()), walk)
+            }
+            tier_block(body, node_of, ask, walk)
+            close_tier_scope(walk)
+        }
+        Stmt::While { cond, body } => {
+            tier_expr(cond, node_of, ask, walk)
+            tier_block(body, node_of, ask, walk)
+        }
+        Stmt::Return(value) => {
+            let given = value ?? return no_kinds()
+            let kinds = tier_expr(given, node_of, ask, walk)
+            flow_result(given, kinds, node_of, ask, walk)
+        }
+        Stmt::Expr(expr) => return tier_expr(expr, node_of, ask, walk),
+        else => {}
+    }
+    return no_kinds()
+}
+
+fn tier_let(names: ref Vec[winnow_grammar::Symbol], value: ref Expr, ty: ref Type?, at: i64, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let kinds = tier_expr(value, node_of, ask, walk)
+    let mut of = tier_struct_of(value, ask, walk)
+    let mut literal = -1
+    let mut declared: Declaring? = null
+    let written = ty != null
+    if written {
+        let declared_ty = ty?.clone() ?? return
+        of = ask.names.resolve(declared_ty.name).clone()
+        declared = Declaring { owner: TextOwner::Let(at), ty: declared_ty }
+    } else {
+        if a_literal_text(value) {
+            literal = at
+        }
+        // **A name bound to a list without a type is that list** (ADR-282
+        // D16): what is put into it goes where the list came from.
+        let source = source_of(value, ask, walk)
+        if container_source(source, ask) {
+            declared = source
+        }
+    }
+    let mut bound = kinds
+    if declared != null {
+        let found = declared?.clone() ?? return
+        if !written {
+            bound = kinds_of_declared(found, ask, walk)
+        } else {
+            flow_value(going_into(found.owner, found.ty, [], true), value, kinds, node_of, ask, walk)
+            bound = kinds_of_declared(found, ask, walk)
+        }
+    }
+    if names.len() == 1 {
+        let local = TierLocal { kinds: bound, of: of, literal: literal, declared: declared }
+        bind_tier_local(ask.names.resolve(names[0]).clone(), local, walk)
+    }
+}
+
+fn container_source(source: ref Declaring?, ask: ref TierAsk) -> bool {
+    let found = source ?? return false
+    return a_container(ask.names, found.ty)
+}
+
+fn a_literal_text(value: ref Expr) -> bool {
+    return match value {
+        Expr::LitStr { .. } => true,
+        else => false,
+    }
+}
+
+fn tier_assign(target: ref Expr, value: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let kinds = tier_expr(value, node_of, ask, walk)
+    match target {
+        // `m[k] = v`: a map's key and value, a run's element.
+        Expr::Index { base, index } => {
+            let key = tier_expr(index, node_of, ask, walk)
+            let place = place_of(base, ask, walk) ?? return
+            let ty = place.ty.clone()
+            if !a_container(ask.names, ty) {
+                return
+            }
+            if a_map(ask.names, ty) {
+                if ty.generics.len() == 2 {
+                    flow_value(going_into(place.owner, ty.generics[0], [0], true), index, key, node_of, ask, walk)
+                    flow_value(going_into(place.owner, ty.generics[1], [1], true), value, kinds, node_of, ask, walk)
+                }
+                return
+            }
+            if ty.generics.len() > 0 {
+                flow_value(going_into(place.owner, ty.generics[0], [0], true), value, kinds, node_of, ask, walk)
+            }
+        }
+        else => {
+            let place = place_of(target, ask, walk)
+            if place != null {
+                let found = place ?? return
+                flow_value(going_into(found.owner, found.ty, [], true), value, kinds, node_of, ask, walk)
+            }
+            let name = match target {
+                Expr::Variable(name) => ask.names.resolve(name).clone(),
+                else => return,
+            }
+            let mut local = tier_local(name, walk) ?? return
+            if local.declared == null {
+                local.kinds = kinds_joined(local.kinds, kinds)
+            }
+            // Assigned again: no longer the literal it was bound to.
+            local.literal = -1
+            set_tier_local(name, local, walk)
+        }
+    }
+}
+
+/// What a function hands back: its result's position, wrapped by the emitter
+/// where it is mixed (ADR-282 D14), so not marked here.
+fn flow_result(value: ref Expr, kinds: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let key = walk.result?.clone() ?? return
+    let function = walk.declared.fns[key]?.clone() ?? return
+    let result = function.result ?? return
+    flow_value(going_into(TextOwner::Returned(key.clone()), result, [], false), value, kinds, node_of, ask, walk)
+}
+
+/// A name bound to a literal, kept in a position: remembered with it, so that
+/// where the position stays `String` the binding is declared `String`
+/// (ADR-282 D17).
+fn kept_literal(value: ref Expr, owner: ref TextOwner, path: ref Vec[i64], ty: ref Type, ask: ref TierAsk, mut walk: TierWalk) {
+    if !plain_string(ask.names, ty) {
+        return
+    }
+    let name = match value {
+        Expr::Variable(name) => ask.names.resolve(name).clone(),
+        else => return,
+    }
+    let local = tier_local(name, walk) ?? return
+    if local.literal < 0 {
+        return
+    }
+    let word = seen(owner, path, walk)
+    let mut kept: collections::BTreeSet[String] = walk.flows.literal_lets[local.literal]?.clone() ?? collections::BTreeSet()
+    kept.insert(word)
+    walk.flows.literal_lets.insert(local.literal, kept)
+}
+
+/// The struct a value is of, where the program says so without types: a
+/// literal of it, a name bound to one, `self` in its `impl`.
+fn tier_struct_of(expr: ref Expr, ask: ref TierAsk, walk: ref TierWalk) -> String? {
+    return match expr {
+        Expr::StructLit { name, .. } => ask.names.resolve(name).clone(),
+        Expr::Variable(name) => struct_of_local(ask.names.resolve(name), walk),
+        Expr::Unary { expr, .. } => tier_struct_of(expr, ask, walk),
+        Expr::Try(inner) => tier_struct_of(inner, ask, walk),
+        else => null,
+    }
+}
+
+fn struct_of_local(name: ref String, walk: ref TierWalk) -> String? {
+    let local = tier_local(name, walk) ?? return null
+    return local.of?.clone()
+}
+
+/// Arguments handed to a function of this program: each goes into its
+/// parameter's position. The emitter wraps an argument to a mixed parameter
+/// itself (`Emitter::either_param`), in a hole as anywhere else.
+fn flow_args(key: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let function = walk.declared.fns[key]?.clone() ?? return
+    let mut at = 0
+    while at < args.len() && at < given.len() {
+        if at < function.params.len() {
+            let owner = TextOwner::Param(key.clone(), at)
+            flow_value(going_into(owner, function.params[at], [], false), args[at], given[at], node_of, ask, walk)
+        }
+        at += 1
+    }
+}
+
+/// Walk an expression, recording what flows into the positions inside it;
+/// what kind of text its value is.
+fn tier_expr(expr: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    return match expr {
+        Expr::LitStr { .. } => lasting_kinds(),
+        // `null`, a number, a truth value and a character are no text.
+        Expr::LitNull => no_kinds(),
+        Expr::LitInt { .. } => no_kinds(),
+        Expr::LitFloat(_) => no_kinds(),
+        Expr::LitBool(_) => no_kinds(),
+        // **A hole is code** (ADR-309), and a value handed over inside one is
+        // handed over there (ADR-229 D1): each hole is walked with its place.
+        Expr::LitInterpolated { parts } => {
+            let outer = walk.in_hole
+            walk.in_hole = true
+            for part in parts {
+                match part {
+                    FPart::Hole { expr, at, .. } => {
+                        let held = walk.hole_text
+                        walk.hole_text = at as i64
+                        tier_expr(expr, node_of, ask, walk)
+                        walk.hole_text = held
+                    }
+                    else => {}
+                }
+            }
+            walk.in_hole = outer
+            owned_kinds()
+        }
+        Expr::Variable(name) => kinds_of_local(ask.names.resolve(name), walk),
+        Expr::MethodCall { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk),
+        Expr::SafeMethod { receiver, method, args, .. } => method_kinds(receiver, ask.names.resolve(method), args, node_of, ask, walk),
+        Expr::Call { func, args, .. } => call_kinds(func, args, node_of, ask, walk),
+        Expr::Field { base, .. } => field_kinds(expr, base, node_of, ask, walk),
+        Expr::SafeField { base, .. } => field_kinds(expr, base, node_of, ask, walk),
+        Expr::Index { base, index } => {
+            let received = tier_expr(base, node_of, ask, walk)
+            tier_expr(index, node_of, ask, walk)
+            if a_range(index) {
+                return viewed(received)
+            }
+            let place = place_of(base, ask, walk) ?? return received
+            element_kinds(place, false, ask, walk)
+        }
+        Expr::StructLit { name, fields } => {
+            let owner = ask.names.resolve(name).clone()
+            for field in fields {
+                tier_struct_field(owner, field, node_of, ask, walk)
+            }
+            owned_kinds()
+        }
+        Expr::With { base, fields, .. } => {
+            tier_expr(base, node_of, ask, walk)
+            let owner = tier_struct_of(base, ask, walk)
+            for field in fields {
+                let value = field.value ?? continue
+                let kinds = tier_expr(value, node_of, ask, walk)
+                let of = owner?.clone() ?? continue
+                let key = (of.clone(), ask.names.resolve(field.name).clone())
+                let found = walk.declared.fields[key]?.clone() ?? continue
+                let into = TextOwner::Field(of.clone(), ask.names.resolve(field.name).clone())
+                flow_value(going_into(into, found.ty, [], false), value, kinds, node_of, ask, walk)
+            }
+            owned_kinds()
+        }
+        Expr::If { cond, then_branch, else_branch } => {
+            tier_expr(cond, node_of, ask, walk)
+            let mut out = tier_block(then_branch, node_of, ask, walk)
+            if else_branch != null {
+                let otherwise = else_branch ?? return out
+                out = kinds_joined(out, tier_block(otherwise, node_of, ask, walk))
+            }
+            out
+        }
+        Expr::Match { value, arms } => {
+            tier_expr(value, node_of, ask, walk)
+            let mut out = no_kinds()
+            for arm in arms {
+                if arm.guard != null {
+                    let guard = arm.guard ?? continue
+                    tier_expr(guard, node_of, ask, walk)
+                }
+                out = kinds_joined(out, tier_expr(arm.body, node_of, ask, walk))
+            }
+            out
+        }
+        Expr::Block(block) => tier_block(block, node_of, ask, walk),
+        Expr::Unsafe(block) => tier_block(block, node_of, ask, walk),
+        Expr::Overlap(block) => tier_block(block, node_of, ask, walk),
+        // A lambda's `return` is the lambda's, not the function's.
+        Expr::Closure { body, .. } => {
+            let held = walk.result?.clone()
+            walk.result = null
+            tier_block(body, node_of, ask, walk)
+            walk.result = held
+            owned_kinds()
+        }
+        Expr::Spawn { body, .. } => {
+            let held = walk.result?.clone()
+            walk.result = null
+            tier_expr(body, node_of, ask, walk)
+            walk.result = held
+            owned_kinds()
+        }
+        Expr::Coalesce { value, fallback } => {
+            let out = tier_expr(value, node_of, ask, walk)
+            kinds_joined(out, tier_expr(fallback, node_of, ask, walk))
+        }
+        Expr::TryCatch { expr, handler } => {
+            let out = tier_expr(expr, node_of, ask, walk)
+            kinds_joined(out, tier_block(handler, node_of, ask, walk))
+        }
+        Expr::Try(inner) => tier_expr(inner, node_of, ask, walk),
+        Expr::Unary { expr, .. } => tier_expr(expr, node_of, ask, walk),
+        Expr::Throw(inner) => {
+            tier_expr(inner, node_of, ask, walk)
+            no_kinds()
+        }
+        Expr::Return(value) => {
+            let given = value ?? return no_kinds()
+            let kinds = tier_expr(given, node_of, ask, walk)
+            flow_result(given, kinds, node_of, ask, walk)
+            no_kinds()
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            tier_expr(lhs, node_of, ask, walk)
+            tier_expr(rhs, node_of, ask, walk)
+            owned_kinds()
+        }
+        Expr::Cast { expr, .. } => {
+            tier_expr(expr, node_of, ask, walk)
+            owned_kinds()
+        }
+        Expr::Tuple(items) => items_kinds(items, node_of, ask, walk),
+        Expr::ListLit { items, .. } => items_kinds(items, node_of, ask, walk),
+        Expr::Range { start, end, .. } => {
+            tier_expr(start, node_of, ask, walk)
+            tier_expr(end, node_of, ask, walk)
+            owned_kinds()
+        }
+        else => owned_kinds(),
+    }
+}
+
+fn a_range(index: ref Expr) -> bool {
+    return match index {
+        Expr::Range { .. } => true,
+        else => false,
+    }
+}
+
+fn kinds_of_local(name: ref String, walk: ref TierWalk) -> Kinds {
+    let local = tier_local(name, walk) ?? return owned_kinds()
+    return local.kinds.clone()
+}
+
+fn items_kinds(items: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    let mut out = no_kinds()
+    for item in items {
+        out = kinds_joined(out, tier_expr(item, node_of, ask, walk))
+    }
+    return out
+}
+
+fn field_kinds(expr: ref Expr, base: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    tier_expr(base, node_of, ask, walk)
+    let place = place_of(expr, ask, walk) ?? return owned_kinds()
+    return kinds_of_declared(place, ask, walk)
+}
+
+/// A field of a struct literal: what goes into it is a flow the emitter wraps
+/// itself where the field is mixed (ADR-282 D14).
+fn tier_struct_field(owner: ref String, field: ref FieldInit, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let shorthand = Expr::Variable(field.name)
+    let kinds = field_value_kinds(field, shorthand, node_of, ask, walk)
+    let name = ask.names.resolve(field.name).clone()
+    let key = (owner.clone(), name.clone())
+    let found = walk.declared.fields[key]?.clone() ?? return
+    let into = TextOwner::Field(owner.clone(), name)
+    flow_value(going_into(into, found.ty, [], false), field.value, kinds, node_of, ask, walk)
+    if field.value == null {
+        kept_literal(shorthand, into, no_path(), found.ty, ask, walk)
+    }
+}
+
+fn field_value_kinds(field: ref FieldInit, shorthand: ref Expr, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    if field.value != null {
+        let value = field.value ?? return no_kinds()
+        return tier_expr(value, node_of, ask, walk)
+    }
+    return tier_expr(shorthand, node_of, ask, walk)
+}
+
+fn call_kinds(func: ref Expr, args: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    let mut given: Vec[Kinds] = []
+    for arg in args {
+        given.push(tier_expr(arg, node_of, ask, walk))
+    }
+    let callee = tier_callee(func, ask) ?? return owned_kinds()
+    if walk.declared.fns.contains_key(callee) {
+        flow_args(callee, args, given, node_of, ask, walk)
+        return result_kinds(callee, ask, walk)
+    }
+    // `Vec()`, `HashMap()`: empty, so no text of any kind.
+    if args.len() == 0 && is_a_container_name(callee) {
+        return no_kinds()
+    }
+    return std_result(callee, ask)
+}
+
+fn method_kinds(receiver: ref Expr, method: ref String, args: ref Vec[Expr], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    let received = tier_expr(receiver, node_of, ask, walk)
+    let mut given: Vec[Kinds] = []
+    for arg in args {
+        given.push(tier_expr(arg, node_of, ask, walk))
+    }
+    // **A method this program declares answers for itself**, before any name
+    // in the lists below.
+    if walk.declared.methods.contains_key(method) {
+        let keys: Vec[String] = walk.declared.methods[method]?.clone() ?? []
+        for key in keys {
+            flow_args(key, args, given, node_of, ask, walk)
+        }
+        let mut out = no_kinds()
+        for key in keys {
+            out = kinds_joined(out, result_kinds(key, ask, walk))
+        }
+        return out
+    }
+    // **Into a container that declares its element `String`**.
+    let place = place_of(receiver, ask, walk)
+    if place != null {
+        let found = place ?? return owned_kinds()
+        let ty = found.ty.clone()
+        if puts_its_argument(method) && a_container(ask.names, ty) {
+            put_into_container(found, method, args, given, node_of, ask, walk)
+            return owned_kinds()
+        }
+        if hands_back_an_element(method) {
+            return element_kinds(found, method == "keys", ask, walk)
+        }
+    }
+    // **What `map` makes is what its lambda hands back**, with the lambda's
+    // parameter bound to what came in (ADR-293 D26).
+    if method == "map" && args.len() == 1 {
+        match args[0] {
+            Expr::Closure { params, body, .. } => return mapped(params, body, received, node_of, ask, walk),
+            else => {}
+        }
+    }
+    if method == "filter" || method == "rev" || method == "skip" || method == "take" || method == "step_by" {
+        return received
+    }
+    if owns_its_text(method) {
+        return owned_kinds()
+    }
+    if views_what_it_is_called_on(method) {
+        return viewed(received)
+    }
+    if hands_back_an_element(method) {
+        return received
+    }
+    return owned_kinds()
+}
+
+fn put_into_container(place: ref Declaring, method: ref String, args: ref Vec[Expr], given: ref Vec[Kinds], node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let ty = place.ty.clone()
+    if a_map(ask.names, ty) {
+        if args.len() == 2 && given.len() == 2 && ty.generics.len() == 2 {
+            flow_value(going_into(place.owner, ty.generics[0], [0], true), args[0], given[0], node_of, ask, walk)
+            flow_value(going_into(place.owner, ty.generics[1], [1], true), args[1], given[1], node_of, ask, walk)
+        }
+        return
+    }
+    // `insert(i, v)` on a run: the value is last.
+    if ty.generics.len() == 0 || args.len() == 0 || given.len() == 0 {
+        return
+    }
+    let wrap = method != "extend" && method != "append"
+    flow_value(going_into(place.owner, ty.generics[0], [0], wrap), args[args.len() - 1], given[given.len() - 1], node_of, ask, walk)
+}
+
+fn mapped(params: ref Vec[winnow_grammar::Symbol], body: ref Block, received: ref Kinds, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) -> Kinds {
+    let held = walk.result?.clone()
+    walk.result = null
+    open_tier_scope(walk)
+    if params.len() == 0 {
+        bind_tier_local("a", plain_local(received.clone()), walk)
+    }
+    for param in params {
+        bind_tier_local(ask.names.resolve(param).clone(), plain_local(received.clone()), walk)
+    }
+    let made = tier_block(body, node_of, ask, walk)
+    close_tier_scope(walk)
+    walk.result = held
+    return made
+}
+
+/// What a function of this program hands back.
+fn result_kinds(key: ref String, ask: ref TierAsk, walk: ref TierWalk) -> Kinds {
+    let function = walk.declared.fns[key] ?? return owned_kinds()
+    let result = function.result ?? return owned_kinds()
+    return kinds_of(TextOwner::Returned(key.clone()), result, [], ask, walk)
+}
+
+/// A view of text of these kinds: a view of a literal is as lasting as the
+/// literal, and a view of anything else is a view.
+fn viewed(received: ref Kinds) -> Kinds {
+    if received.lasting && !received.owned && !received.view && !received.either {
+        return lasting_kinds()
+    }
+    return view_kinds()
+}
+
+/// What a function of `std` hands back, off its ledger entry.
+fn std_result(callee: ref String, ask: ref TierAsk) -> Kinds {
+    let contract = ask.library.functions[callee] ?? return owned_kinds()
+    let signature = contract.signature ?? return owned_kinds()
+    let result = signature.result ?? return owned_kinds()
+    if result.text() == "ref String" {
+        return view_kinds()
+    }
+    return owned_kinds()
+}
+
+/// Walk every function of the program once against the tiers found so far.
+fn walk_program(program: ref Program, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    for item in program.items {
+        match item.node {
+            Item::Fn { .. } => walk_function(item.node, null, node_of, ask, walk),
+            Item::Impl { target, methods, .. } => {
+                let owner = ask.names.resolve(target.name).clone()
+                for method in methods {
+                    walk_function(method.node, owner.clone(), node_of, ask, walk)
+                }
+            }
+            else => {}
+        }
+    }
+}
+
+fn walk_function(item: ref Item, target: String?, node_of: fn(ref Expr) -> i64 sync, ask: ref TierAsk, mut walk: TierWalk) {
+    let (name, receiver, args, body) = match item {
+        Item::Fn { name, receiver, args, body, .. } => (name, receiver, args, body),
+        else => return,
+    }
+    let key = tier_key(target, own_name(name, ask.names))
+    walk.locals = collections::BTreeMap()
+    walk.frames = []
+    walk.result = key.clone()
+    walk.in_hole = false
+    walk.hole_text = -1
+    open_tier_scope(walk)
+    let mut at = 0
+    for arg in args {
+        let owner = TextOwner::Param(key.clone(), at)
+        let kinds = kinds_of(owner, arg.ty, [], ask, walk)
+        let of: String = ask.names.resolve(arg.ty.name).clone()
+        let local = TierLocal { kinds: kinds, of: of, literal: -1, declared: Declaring { owner: owner, ty: arg.ty.clone() } }
+        bind_tier_local(ask.names.resolve(arg.name).clone(), local, walk)
+        at += 1
+    }
+    if receiver != null && target != null {
+        let local = TierLocal { kinds: owned_kinds(), of: target?.clone(), literal: -1, declared: null }
+        bind_tier_local("self", local, walk)
+    }
+    let tail = tier_block(body, node_of, ask, walk)
+    // The body's last value is what it hands back.
+    if body.stmts.len() > 0 {
+        match body.stmts[body.stmts.len() - 1].node {
+            Stmt::Expr(last) => flow_result(last, tail, node_of, ask, walk),
+            else => {}
+        }
+    }
+    close_tier_scope(walk)
+}
+
+// --- The decision ---
+
+/// Linked positions are one representation: each gets what flows into any of
+/// them, and none is mixed where one of them cannot be.
+fn decide_tiers(flows: ref Flows, declared: ref TextDeclared) -> collections::BTreeMap[String, Tier] {
+    let mut positions = flows.positions.clone()
+    // **A published parameter's text may be either kind** (ADR-282 D23):
+    // below it takes whatever hands over as `EitherText`. Its elements, a
+    // published field and a published result stay what they are published
+    // as.
+    let mut fixed: collections::BTreeSet[String] = collections::BTreeSet()
+    for (word, _) in positions {
+        if flows.unwrappable.contains(word) || fixed_by_publishing(word, flows, declared) {
+            fixed.insert(word.clone())
+        }
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for (a, b) in flows.links {
+            let mut both = positions[a]?.clone() ?? no_kinds()
+            both = kinds_joined(both, positions[b]?.clone() ?? no_kinds())
+            if joins_kinds(a, both, positions) {
+                changed = true
+            }
+            if joins_kinds(b, both, positions) {
+                changed = true
+            }
+            if fixed.contains(a) != fixed.contains(b) {
+                fixed.insert(a.clone())
+                fixed.insert(b.clone())
+                changed = true
+            }
+        }
+        // **A parameter whose value leaves through something fixed is fixed**
+        // (ADR-282 D24).
+        for (from, to) in flows.param_into {
+            if fixed.contains(to) && !fixed.contains(from) {
+                fixed.insert(from.clone())
+                changed = true
+            }
+        }
+    }
+    let mut out: collections::BTreeMap[String, Tier] = collections::BTreeMap()
+    for (word, kinds) in positions {
+        let mut tier = tier_of_kinds(kinds)
+        if mixed(tier) && fixed.contains(word) {
+            tier = Tier::Owned
+        }
+        if !owned_tier(tier) {
+            out.insert(word.clone(), tier)
+        }
+    }
+    return out
+}
+
+fn joins_kinds(word: ref String, both: ref Kinds, mut positions: collections::BTreeMap[String, Kinds]) -> bool {
+    let before = positions[word]?.clone() ?? no_kinds()
+    if positions.contains_key(word) && same_kinds(before, both) {
+        return false
+    }
+    positions.insert(word.clone(), both.clone())
+    return true
+}
+
+fn fixed_by_publishing(word: ref String, flows: ref Flows, declared: ref TextDeclared) -> bool {
+    let position = flows.known[word] ?? return false
+    if !position_published(position.owner, declared) {
+        return false
+    }
+    let a_parameter = match position.owner {
+        TextOwner::Param(_, _) => true,
+        else => false,
+    }
+    return !(a_parameter && position.path.len() == 0)
+}
+
+fn same_tiers(a: ref collections::BTreeMap[String, Tier], b: ref collections::BTreeMap[String, Tier]) -> bool {
+    if a.len() != b.len() {
+        return false
+    }
+    for (word, tier) in a {
+        let other = b[word] ?? return false
+        if tier_word(tier) != tier_word(other) {
+            return false
+        }
+    }
+    return true
+}
+
+fn tier_word(tier: ref Tier) -> String {
+    return match tier {
+        Tier::Owned => "owned",
+        Tier::View => "view",
+        Tier::Mixed => "mixed",
+    }
+}
+
+/// **Decide the tiers of a program** - a fixpoint over walks of every
+/// function - and what the rewrite needs besides.
+pub fn text_tiers(program: ref Program, ask: ref TierAsk, node_of: fn(ref Expr) -> i64 sync) -> TextTiers {
+    let declared = declared_of(program, ask.names)
+    let text = string_type(declared, ask.names)
+    let mut walk = TierWalk { declared: declared, tiers: collections::BTreeMap(), flows: no_flows(), locals: collections::BTreeMap(), frames: [], result: null, in_hole: false, hole_text: -1 }
+    for _ in 0..<16 {
+        walk.flows = no_flows()
+        walk_program(program, node_of, ask, walk)
+        let next = decide_tiers(walk.flows, walk.declared)
+        if same_tiers(next, walk.tiers) {
+            break
+        }
+        walk.tiers = next
+    }
+    let mut tiers: Vec[(TextPosition, Tier)] = []
+    for (word, tier) in walk.tiers {
+        let position = walk.flows.known[word]?.clone() ?? continue
+        tiers.push((position, tier.clone()))
+    }
+    // **A name bound to a literal and kept where text of its own is wanted is
+    // declared `String`** (ADR-282 D17).
+    let mut lets: collections::BTreeSet[i64] = collections::BTreeSet()
+    for (at, kept) in walk.flows.literal_lets {
+        for word in kept {
+            if !walk.tiers.contains_key(word) {
+                lets.insert(at.clone())
+                break
+            }
+        }
+    }
+    return TextTiers { tiers: tiers, lets: lets, text: text, wraps: walk.flows.wraps.clone(), hole_wraps: walk.flows.hole_wraps.clone() }
+}
+
+fn no_path() -> Vec[i64] {
+    return []
+}

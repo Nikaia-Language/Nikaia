@@ -263,3 +263,36 @@ fn main() {
     assert!(!rust.contains("async fn"), "{rust}");
     runs("number-clone", source, "4\n");
 }
+
+/// **A set of pairs is taken apart as a list of them is**: `for (a, b) in
+/// links` over a `BTreeSet[(String, String)]` bound two names of unknown type,
+/// so `a.clone()` resolved to nothing and the function was lowered `async`
+/// (found moving `text_tiers` into Nikaia, #125).
+#[test]
+fn a_for_over_a_set_of_pairs_is_sync() {
+    let source = r#"use std::collections
+
+fn firsts(links: ref collections::BTreeSet[(String, String)]) -> i64 {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    for (a, b) in links {
+        out.insert(a.clone())
+        out.insert(b.clone())
+    }
+    return out.len()
+}
+
+fn main() {
+    let mut links: collections::BTreeSet[(String, String)] = collections::BTreeSet()
+    let x: String = "x"
+    let y: String = "y"
+    links.insert((x, y))
+    println(firsts(links))
+}
+"#;
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let rust = emit_program(&parsed, Build::default())
+        .expect("it lowers")
+        .rust;
+    assert!(!rust.contains("async fn firsts"), "{rust}");
+    runs("set-of-pairs", source, "2\n");
+}
