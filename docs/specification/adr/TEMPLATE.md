@@ -4,16 +4,19 @@
 The title is the answer, not the topic: "A list has no `+`", not "Operators on
 lists".*
 
-**Status:** Proposed | Accepted | Superseded by [ADR-MMM](adr-MMM.md)
+**Status:** Accepted | Open
 **Date:** <day the decision was taken>
 **Answers:** <the question, with the issue or `open-decisions.md` entry that
 asked it>
 **Supersedes / Related:** <records this changes or leans on, one line each: what
 it says that matters here>
 
-*There is no `Built:` line and no target version. Whether and when a decision
-is built is the issue's and the CHANGELOG's to say; a record is not edited as
-the code catches up (see the [index](README.md)).*
+*There is no `Built:` line and no target version: whether a decision is built is
+the index's **Built** column, and when it was built is the CHANGELOG's. The
+record states the decision as it stands today. When a later decision changes
+one of its rules, that rule is rewritten in place to say what holds now, with a
+one-line note under it naming the decision that changed it (see the
+[index](README.md)).*
 
 ## 1. Question
 
@@ -63,8 +66,9 @@ how it reads next to a neighbouring rule.*
 | **A** | | | | | what it costs to undo, and who notices |
 | **B** | | | | | |
 
-*Where a number decided it (an instruction count, a size, a latency), give the
-number and link the measurement; the method lives in the notes, not here.
+*Where a number decided it (an instruction count, a size, a latency), give
+that number and link the measurement; the method, the machine and any other
+figures live in the notes, not here.
 Where two weights pull apart, say so and say which one the language's promise
 to the program (D1, D3) or to the reader (D2, D4) is being traded for.*
 
@@ -72,9 +76,13 @@ to the program (D1, D3) or to the reader (D2, D4) is being traded for.*
 
 *The chosen option, stated as rules a reader can apply, each numbered (D1, D2,
 …) so that later records and code can cite one. Say which weight decided where
-the table did not. Say in a sentence why each rejected option lost.*
+the table did not. Say in a sentence why each rejected option lost. A rule a
+later decision changed reads as it holds now, with its note:*
 
 ### D1 — <rule>
+
+*Changed by [ADR-MMM](adr-MMM.md) Dn.* *(only when it was; otherwise leave it
+out)*
 
 ## 5. Consequences
 
@@ -94,9 +102,14 @@ none.*
 ## What does not belong in a record
 
 * **How far it is built**, which version built it, or a list of what was found
-  while building it: that is the issue and the CHANGELOG.
+  while building it: that is the index's **Built** column, the issue and the
+  CHANGELOG.
 * **How the decision was reached**: sessions, rounds, who asked what, what was
-  tried first. Only the reasoning that settles the question stays.
+  tried first, what an earlier version of the record said. Only the reasoning
+  that settles the question stays; the route is the CHANGELOG, the notes and
+  `git log`.
+* **Measurements beyond the deciding number**: one number, with a link to the
+  note that holds the method.
 * **The state of another list** ("the backlog is empty", "the status page says
   …"). A record is true on the day it is read, not only on the day it was
   written.

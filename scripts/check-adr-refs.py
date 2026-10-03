@@ -110,6 +110,10 @@ def citations():
     for f in sorted(files):
         if os.path.abspath(f) == os.path.abspath(__file__):
             continue
+        # The history is read as it was written; a section it cites may since
+        # have left a record. Build output is not ours to check.
+        if f.startswith("docs/history/") or "/target/" in f:
+            continue
         try:
             text = open(f, encoding="utf-8", errors="ignore").read()
         except OSError:
@@ -168,7 +172,7 @@ def banished():
     for p in SEARCH:
         files |= {f for f in glob.glob(p, recursive=True) if os.path.isfile(f)}
     for f in sorted(files):
-        if f.startswith("docs/history/") or f == "CHANGELOG.md" or "__pycache__" in f:
+        if f.startswith("docs/history/") or f == "CHANGELOG.md" or "__pycache__" in f or "/target/" in f:
             continue
         if os.path.abspath(f) == os.path.abspath(__file__):
             continue

@@ -26,32 +26,27 @@ changelog and the roadmap, and are not repeated there.
 ## 2. The decisions — [`specification/adr/`](specification/adr)
 
 **Why the language is that way.** One decision per record, numbered `D1…Dn` so
-it can be cited, plus the evidence that settled it — including the number, when
-a number is what decided it.
+it can be cited, with the reasoning that settles it and, where a number decided
+it, that number. A record states the decision **as it stands today**: no story
+of how it was reached, no version that built it, no progress.
 
-Start at the [ADR index](specification/adr/README.md): every record, what it
-decides, whether it is built, and what supersedes what.
+Start at the [ADR index](specification/adr/README.md): every live record, what
+it decides, and whether it is built (`yes`, `no`, or `partly:` with what is
+missing).
 
-An ADR is written once. When a later decision **changes** it, the change is a
-new ADR that names the section or `Dn` it displaces — never a silent edit. That
-is why records marked *superseded* are still here and still cited: a
-supersession is **partial**, or a **consolidation** — one record that restates
-several whole ones, maps every decision and decides nothing anew. Either way the
-old records hold the evidence.
+When a later decision **changes** a record, the record is updated in place: the
+rule is rewritten to what holds now, with a one-line *Changed by ADR-MMM Dn*
+note under it. A decision **withdrawn** altogether is removed, with one sentence
+saying what is done instead. When a group of records is **replaced** by one
+record that states all their decisions in their current form, the old records
+move to [`history/adr/`](history/adr) and no live file cites them
+(`scripts/check-adr-refs.py` enforces it).
 
-**But a decision that is *withdrawn* is removed, not superseded.** When the
-project stops doing something altogether — a dependency it no longer has, a
-mechanism it no longer builds, a path nothing takes — the records are rewritten
-as though it had never been there, and one sentence says what is done instead.
-The ADRs do not owe a reader every loop the project turned; they owe the reason
-the current answer is the answer. Where the withdrawn thing went, and why, is
-[`../CHANGELOG.md`](../CHANGELOG.md) and these notes — which is what they are
-for.
-
-The line between the two: a supersession leaves a **live citation** behind,
-because something still rests on the displaced part. A withdrawal leaves none.
-If after the rewrite anything still cites it, it was a supersession and the
-rewrite was wrong.
+The route to a decision is history: the archive's
+[README](history/adr/README.md) maps each archived decision to the live one,
+`git log` shows how a live record changed, and
+[`../CHANGELOG.md`](../CHANGELOG.md) and the notes below hold what was built,
+tried and measured.
 
 ## 3. The notes — this directory
 

@@ -114,7 +114,7 @@ A **comment** begins with `//` and runs to the end of the line, or begins with
 `/*` and runs to the matching `*/`. A block comment may span lines and may
 stand anywhere whitespace may stand. Block comments **nest**: `/* a /* b */ c */`
 is one comment. An unclosed `/*` is reported where it opened. A block comment
-is a comment wherever it stands, including `/** … */`.
+is a comment wherever it stands, including `/** … */` and `/*! … */`.
 
 **A run of `///` lines immediately before an item is that item's
 documentation.** An item is a `fn`, a `struct`, an `enum`, a `trait`, a field or
@@ -555,7 +555,9 @@ has no holes, so `"{"` is a brace and `"{{"` is two.
 
 The `f` and the quote are **one token**. `f"x"` interpolates; `f "x"` is a
 variable named `f` beside a string. Whitespace never decides what a program
-means.
+means. An `f"…"` is not a constant: it cannot stand as a default, a `match`
+pattern or a grammar's literal. Inside a hole, `\"` is refused - a hole is
+code, and a string in it has plain quotes.
 
 **A newline is an ordinary character in a literal.** Nothing ends a literal but
 the closing `"`. A literal left unterminated runs on to the next `"` in the file
@@ -1519,8 +1521,11 @@ The context of such a parameter is **inferred**, not written. A parameter the
 body only calls is immediate and borrows. A parameter the body keeps (stores,
 hands back, gives to a task) is detached and moves. It is the question 6.5 asks
 of every parameter, and there is no `@detached` to write. For an immediate
-parameter the callee's own promises follow the lambda, as `map`'s do. For a
-kept parameter they follow the type, so a `listen` that calls a stored
+parameter the lambda's `touches` and `throws` count for the callee, while
+whether the call may pause, and the shape it is lowered to, follow the
+parameter's type. `std`'s own lambda-taking entries, such as `map`, are written
+by hand and follow the lambda in everything. For a kept parameter the
+callee's promises follow the type, so a `listen` that calls a stored
 `fn(Request) -> Response` may pause. The capture at a `spawn` is reported with
 `NK2101` (8.3).
 
@@ -2247,7 +2252,8 @@ let port = read_port() catch { 8080 }     // replacement value
 ```
 
 Inside the block the error is named **`error`**. A handler that passes the
-error on writes `throw error`.
+error on writes `throw error`. A `catch` over an expression that cannot fail
+is refused (`NK1134`): the expression is the value, and the handler goes.
 
 The `catch` has the type of the value it guards: `config` above is what
 `load()` hands back, and a member of it is reached as on that value.

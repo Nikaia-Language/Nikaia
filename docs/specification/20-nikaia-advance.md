@@ -85,7 +85,7 @@ arrives as `const LIMIT: i32 = 4096;`. A `let` may be folded while the program
 is built; a `comptime` must be. A `comptime` binding the compiler cannot
 evaluate is refused with `NK1127`. It is never evaluated at run time instead.
 
-**What an initialiser may hold:** an integer, a `bool`, **text**, a **list**, a
+**What an initialiser may hold:** an integer, a float, a `bool`, **text**, a **list**, an **`enum` variant**, a
 **pair** or a **struct**: literals, `f"… {n} …"`, arithmetic and comparisons
 over them and over other constants, `+`, `==` and `.len()` over text, `xs[i]`,
 `xs[i] = …`, `xs.push(…)` and `xs.len()` over a list, a struct literal and a
@@ -140,7 +140,9 @@ are no patterns. `asset("…")` yields the file's **text**, which crosses to the
 program as the `ref String` a `const` holds; bytes that are not UTF-8 are
 refused. An `asset` written outside a `comptime` is refused with `NK1177`,
 naming the run-time read. The list binds the whole build, a dependency's read
-included.
+included. A path stays inside the project: one with a `..` component, or an
+absolute one, is refused. A list entry nothing reads is a warning at the end
+of the build.
 
 ### 10.3. Generating Code from a Type's Shape
 Where 10.1 reads data, this section reads **types**. A function such as
@@ -371,12 +373,12 @@ rule MEASUREMENT -> Reading =
     name:NAME ";" => temp:TENTHS frame_end { Reading { name, temp } }
 ```
 
-A bare `@frame` takes the boundary from the rule's trailing literal. A frame that ends in `frame_end` names the boundary in the attribute. A frame must end in its boundary. A frame is a **lexical** (uppercase) rule.
+A bare `@frame` takes the boundary from the rule's trailing literal. A frame that ends in `frame_end` names the boundary in the attribute. A frame must end in its boundary. A frame is usually a **lexical** (uppercase) rule. A syntactic one, and a syntactic rule a frame reaches, is accepted where the whitespace it skips cannot consume the boundary: a grammar's own `WS` is walked like any other rule, and the default `WS` is refused for a boundary it can match, such as `"\n"`.
 
 **The declaration is checked, and a pattern is never rewritten.** The boundary may not appear *inside* a frame. The compiler walks everything the rule can reach, and each element that consumes input is one of two things:
 
 * **Safe:** a literal without the boundary in it; a built-in that cannot produce it (`digit`, `ident`); lookahead; an `until(…)` whose terminator *covers* the boundary, as `NAME` above does with `frame_end`.
-* **Rejected**, with the rule and the pattern named: a literal that contains the boundary; a built-in that can consume it (`any`, `multispace0`); a syntactic rule; an `until(…)` that does not cover the boundary, where the message says what to add; and `recover(…)`. A grammar recovers per frame instead: `(item | until(frame_end)) frame_end`.
+* **Rejected**, with the rule and the pattern named: a literal that contains the boundary; a built-in that can consume it (`any`, `multispace0`); the whitespace a syntactic rule skips, where it can consume the boundary; an `until(…)` that does not cover the boundary, where the message says what to add; and `recover(…)`. A grammar recovers per frame instead: `(item | until(frame_end)) frame_end`.
 
 Nothing here changes what a pattern means. `until(";")` consumes up to the next `;` wherever it is written; inside a frame the compiler refuses it and names what to write. The parser generated for a rule is the same whether or not a frame reaches it.
 
@@ -472,7 +474,7 @@ for the message where it fails at its own start, in place of the list of what
 its alternatives could have begun with (10.6). `alt # "label"` after one
 alternative names that alternative alone.
 
-**Frames.** `@frame(boundary: "\n")` before a lexical rule says a record can be
+**Frames.** `@frame(boundary: "\n")` before a rule says a record can be
 found from any offset by scanning to the boundary, which lets the input be cut
 and parsed in parallel; the compiler checks that no rule reachable from it
 consumes the boundary in the middle (10.7).
