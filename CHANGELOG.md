@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.405] — 2026-10-03
+
+**What a declared `String` is below is decided in Nikaia** (ADR-282,
+ADR-294, #125). `text_tiers`' walk - every value's kind of text, the
+positions it flows into, the fixpoint that decides each one owned, a view or
+mixed, and where a value is handed into a mixed position - moves into
+`tools/text_tiers.nika` (1 256 lines), and so does reading a `use` alias
+(`Parsed::unaliased`). What stays in Rust is writing the answer into the
+syntax tree. 26.5 % of the toolchain is Nikaia.
+
+Two compiler defects the move found, fixed in the compiler (ADR-294 D3):
+
+* **`for (a, b)` over a set of pairs binds two typed names.** A list of
+  pairs was taken apart and a set was not, so `a.clone()` resolved to
+  nothing and the function around it was inferred `async`.
+* **What a kept function is handed is borrowed for the call alone.** A
+  function stored in a struct that also holds a view was written
+  `dyn Fn(&'a str)`, so it took only what lives as long as the struct's
+  view, and a call with a local was a borrow `rustc` refused. Its parameters'
+  references are elided now.
+
 ## [0.0.404] — 2026-10-03
 
 **Where each buffer lives is walked in Nikaia** (ADR-283, ADR-294, #125).

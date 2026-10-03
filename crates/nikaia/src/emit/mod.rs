@@ -5677,6 +5677,18 @@ impl<'p> Emitter<'p> {
                     true => " + Send + Sync",
                     false => "",
                 };
+                // **What a kept function is handed is borrowed for the call
+                // alone**: its parameters' references are elided, which makes
+                // the closure take a borrow of any length. Written with the
+                // struct's `'a`, `node_of: fn(ref Expr) -> i64` in a struct
+                // that also holds a view took only what lives as long as that
+                // view, and a call with a local was a borrow `rustc` refused
+                // (found moving `text_tiers` into Nikaia, #125).
+                let params: Vec<String> = ty
+                    .generics
+                    .iter()
+                    .map(|g| self.ty_counted(g, Lifetimes::ELIDED, count))
+                    .collect();
                 return format!(
                     "nikaia_std::func::Kept<dyn Fn({}) -> {outcome}{crossing}>",
                     params.join(", ")

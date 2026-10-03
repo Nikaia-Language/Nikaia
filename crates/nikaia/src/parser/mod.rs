@@ -363,7 +363,7 @@ pub struct Parsed {
     /// the file's own dictionary, and the dictionary is part of what was parsed.
     /// The alternative was the same lookup at fourteen call sites in three
     /// modules, where the fifteenth would have been the one that forgot.
-    aliases: std::collections::BTreeMap<String, String>,
+    pub(crate) aliases: std::collections::BTreeMap<String, String>,
     /// What [`crate::text_tiers`] decided about a `String` field or result
     /// that is not text of its own below, one line each, for `--tethers`
     /// ([ADR-282](../../../docs/specification/adr/adr-282.md) D26).
@@ -516,21 +516,9 @@ impl Parsed {
     /// which is every name in a program that writes no alias, so this costs such
     /// a program one failed lookup.
     pub fn unaliased(&self, name: &str) -> String {
-        if self.aliases.is_empty() {
-            return name.to_string();
-        }
-        // A view keeps its `&`, which sits in front of the name here.
-        let (amp, bare) = match name.strip_prefix('&') {
-            Some(rest) => ("&", rest),
-            None => ("", name),
-        };
-        match bare.split_once("::") {
-            Some((head, rest)) => match self.aliases.get(head) {
-                Some(package) => format!("{amp}{package}::{rest}"),
-                None => name.to_string(),
-            },
-            None => name.to_string(),
-        }
+        // In Nikaia (`tools/text_tiers.nika`, #125), which the tier pass
+        // reads the dictionary with as well.
+        nikaia_std::tools::text_tiers::unaliased_in(&self.aliases, name)
     }
 
     /// The aliases this file declares, read off its `use` items.

@@ -762,3 +762,38 @@ fn a_mut_parameter_handed_to_another_mut_parameter_gains_no_second_reference() {
     );
     assert_eq!(ran("mut-passed-on", source).trim(), "3");
 }
+
+/// **What a kept function is handed is borrowed for the call alone**: a
+/// struct that holds a view and a function took, below, only what lives as
+/// long as that view, so a call with a local's text was a borrow `rustc`
+/// refused (found moving `text_tiers` into Nikaia, #125).
+#[test]
+fn a_kept_function_takes_a_borrow_of_any_length() {
+    let source = r#"struct Ask {
+    name: ref String,
+    size_of: fn(ref String) -> i64 sync,
+}
+
+fn sum(ask: ref Ask, words: ref Vec[String]) -> i64 {
+    let mut total = ask.size_of(ask.name)
+    for word in words {
+        let local: String = f"{word}!"
+        total += ask.size_of(local)
+    }
+    return total
+}
+
+fn main() {
+    let name: String = "abc"
+    let ask = Ask { name: ref name, size_of: fn(s) { s.len() } }
+    let words: Vec[String] = ["x", "yy"]
+    println(sum(ask, words))
+}
+"#;
+    assert!(
+        lowered(source).contains("Kept<dyn Fn(&str) -> i64>"),
+        "{}",
+        lowered(source)
+    );
+    assert_eq!(ran("kept-borrow", source), "8\n");
+}
