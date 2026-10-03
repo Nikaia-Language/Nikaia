@@ -8154,6 +8154,65 @@ pub fn held_across_a_pause(bound: &[(String, i64)], pauses: &[i64], named: &coll
 
 // --- throws.nika ---
 
+const UNNAMED: &str = "?";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MethodsCalled {
+    pub resolved: collections::BTreeSet<String>,
+    pub unseen: bool,
+}
+
+pub fn unit_throws(program: &Program, names: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, contribution_of: &impl Fn(&Expr) -> Contribution, method_calls: &collections::BTreeMap<String, MethodsCalled>, own: &Ledger, library: &Ledger, direct: &mut collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &mut collections::BTreeMap<String, collections::BTreeSet<String>>) {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, body, can_throw, .. } => {
+                let can_throw = *can_throw; let name = *name;
+                if can_throw {
+                    let thrown = thrown_by(body, names, holes_of, contribution_of);
+                    let key = key_of_function((name).as_ref(), "", names);
+                    with_methods(&key, &thrown, *nikaia_std::index::get(&method_calls, &key), own, library, direct, calls);
+                }
+            },
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, body, can_throw, .. } => {
+                            let can_throw = *can_throw; let name = *name;
+                            if can_throw {
+                                let thrown = thrown_by(body, names, holes_of, contribution_of);
+                                let key = key_of_function((name).as_ref(), &owner, names);
+                                with_methods(&key, &thrown, *nikaia_std::index::get(&method_calls, &key), own, library, direct, calls);
+                            }
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            _ => { },
+        }
+    }
+}
+
+fn with_methods(key: &str, thrown: &Thrown, resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, direct: &mut collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &mut collections::BTreeMap<String, collections::BTreeSet<String>>) {
+    let mut named = thrown.direct.to_owned();
+    let mut called = thrown.calls.to_owned();
+    methods_into(resolved, own, library, &mut named, &mut called);
+    direct.insert(key.to_owned(), named);
+    calls.insert(key.to_owned(), called);
+}
+
+fn methods_into(resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, named: &mut collections::BTreeSet<String>, called: &mut collections::BTreeSet<String>) {
+    let known = match resolved { Some(__nikaia_value) => __nikaia_value, None => return };
+    if known.unseen { named.insert(UNNAMED.to_owned()); }
+    for callee in known.resolved.iter() { if own.functions.contains_key(callee) { called.insert(callee.to_owned()); } else { for error in fails_with_of(library, callee) { named.insert(error); } } }
+}
+
+fn fails_with_of(library: &Ledger, callee: &str) -> Vec<String> {
+    let contract = match *nikaia_std::index::get(&library.functions, callee) { Some(__nikaia_value) => __nikaia_value, None => return vec![String::from("?")] };
+    contract.fails_with.to_owned()
+}
+
 pub fn error_sets(direct: &collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &collections::BTreeMap<String, collections::BTreeSet<String>>, own: &Ledger) -> collections::BTreeMap<String, Vec<String>> {
     let mut sets = direct.to_owned();
     let mut changed = true;
@@ -11335,7 +11394,7 @@ pub mod threads {
 }
 pub mod throws {
     #[allow(unused_imports)]
-    pub use super::{error_sets, error_type, Thrown, Contribution, thrown_by};
+    pub use super::{MethodsCalled, unit_throws, error_sets, error_type, Thrown, Contribution, thrown_by};
 }
 pub mod tiers {
     #[allow(unused_imports)]

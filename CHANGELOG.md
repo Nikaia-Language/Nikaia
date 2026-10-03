@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.396] — 2026-10-03
+
+**Which errors leave a function is gathered in Nikaia** (#125, ADR-294). The
+graph `contracts::throws` builds before its fixpoint moved into
+`tools/throws.nika` beside the walk and the fixpoint already there: every
+`throws` function and method of a unit, what its body throws itself and whom
+in the package it calls, merged with the type checker's method calls
+(ADR-288) - a resolved callee of the package is a call, one of a library
+brings what its ledger says it fails with, and one no ledger carries, or a
+call that did not resolve, is `?` (ADR-010 D1). What one expression reaches is
+`sync`'s answer and stays Rust, handed in; so does writing the ledger. The
+contracts and error suites pass unchanged. 20.2 % of the toolchain is Nikaia.
+
 ## [0.0.395] — 2026-10-03
 
 **Which functions can open a lock is walked in Nikaia** (#125, ADR-294). The
