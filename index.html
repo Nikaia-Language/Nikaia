@@ -3,12 +3,15 @@ layout: home
 title: Nikaia
 description: >-
   A programming language where you write what should happen and the compiler
-  decides how: no async/await, no garbage collector, data races refused
-  before the program runs.
+  decides how: an assert is a proof, safe code can beat hand-written Rust,
+  no async/await, no garbage collector, data races refused before the
+  program runs.
 ---
 <!--
-  The home page. The words are the README's "The idea" and "Hello, world",
-  shortened for a first screen; where the two disagree, the README is the
+  The home page. The words are the README's "The idea", "An assert is a
+  proof", "Faster than the Rust you would write", "Hello, world" and "Built
+  in the open, at full speed", shortened for a first screen; the numbers in
+  the last two are dated there and here, and change together; where the two disagree, the README is the
   one to fix first and this page follows it.
 -->
 
@@ -16,11 +19,13 @@ description: >-
   <div class="hero-inner">
     <div class="hero-text">
       <p class="hero-eyebrow">A programming language · pre-alpha</p>
-      <h1>Write what should happen.<br><span>The compiler decides how.</span></h1>
+      <h1>Write what should happen.<br><span>The compiler proves the rest.</span></h1>
       <p class="hero-lead">
         Nikaia reads like a scripting language and compiles like a systems language.
-        No <code>async</code>/<code>await</code>, no garbage collector, no manual memory
-        management, and data races are refused before the program runs.
+        Formal verification is a plain <code>assert</code>: the compiler proves it while it
+        builds. Every check it proves unneeded disappears, so safe Nikaia can beat the safe
+        Rust you would have written by hand. No <code>async</code>/<code>await</code>, no
+        garbage collector, and data races are refused before the program runs.
       </p>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/guide/getting-started.html" | relative_url }}">Get started</a>
@@ -32,6 +37,90 @@ description: >-
     <div class="hero-art">
       <img src="{{ "/assets/hero.jpg" | relative_url }}" alt="The Nikaia logo: a wing turning into a blue letter N" width="900" height="764">
     </div>
+  </div>
+</section>
+
+<section class="home-section home-code-section" id="proofs">
+  <div class="home-inner home-split">
+    <div class="home-split-text">
+      <p class="home-eyebrow">Formal verification, without the ceremony</p>
+      <h2>An <code>assert</code> is a proof.</h2>
+      <p>
+        No specification language, no annotations, no <code>requires</code> clause. Write
+        <code>assert(whole &gt; 0)</code> where you would have written it anyway. The compiler
+        works out that it is a precondition, makes every caller prove it, and shows you the
+        call that breaks it, with the value that breaks it.
+      </p>
+      <p>
+        A call the compiler proves costs nothing at run time. A claim it cannot prove yet is
+        checked when the program runs, so writing one never stops your build. Contracts cross
+        package boundaries, and every proof carries a certificate that is checked before a
+        check is dropped.
+      </p>
+      <p><a href="{{ "/docs/specification/adr/adr-269.html" | relative_url }}">How a claim becomes a contract →</a></p>
+    </div>
+    <div class="home-code markdown-body home-code-stack">
+<pre><code class="language-nika">fn percent(part: i64, whole: i64) -&gt; i64 {
+    assert(whole &gt; 0)              // the whole specification
+    return part * 100 / whole
+}
+
+fn report(done: i64, total: i64) -&gt; i64 {
+    return 0 if total &lt;= 0         // proves it for this call
+    return percent(done, total)
+}
+
+fn main() {
+    println(f"{report(3, 4)}%")
+    println(f"{percent(1, 0)}%")   // breaks it
+}
+</code></pre>
+<pre class="diagnostic"><code><span class="d-warning">warning[NK1207]</span><b>: This call breaks `percent`'s precondition
+`whole &gt; 0` every time it is reached.</b>
+<span class="d-gutter">   --&gt;</span> src/main.nika:13:5
+<span class="d-gutter">    |</span>
+<span class="d-gutter"> 13 |</span>     println(f"{percent(1, 0)}%")
+<span class="d-gutter">    |</span>     <span class="d-warning">^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+<span class="d-gutter">    |</span>
+<span class="d-gutter">    =</span> <span class="d-note">note:</span> Here `whole` is 0.
+<span class="d-gutter">    =</span> <span class="d-help">help:</span> Pass `percent` arguments for which `whole &gt; 0` holds,
+           or check them with a guard before the call.</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="home-section home-section-alt" id="performance">
+  <div class="home-inner">
+    <p class="home-eyebrow home-eyebrow-center">Safety that makes code faster</p>
+    <h2 class="home-heading">Faster than the Rust you would write</h2>
+    <p class="home-intro">
+      Rust checks every index unless LLVM happens to see why it cannot fail; the rest takes
+      <code>unsafe</code>. Nikaia's prover removes every index and overflow check it can
+      <em>prove</em> cannot fail, and keeps the others. Measured against the same algorithms
+      written by hand in safe Rust, same output, link-time optimisation on both sides.
+    </p>
+    <div class="stats">
+      <div class="stat">
+        <p class="stat-value">−34&nbsp;%</p>
+        <p class="stat-label">instructions on big-integer multiplication</p>
+        <p class="stat-detail">720 M against 1 088 M for Rust by hand, with Nikaia's overflow checks still on</p>
+      </div>
+      <div class="stat">
+        <p class="stat-value">−12&nbsp;%</p>
+        <p class="stat-label">on an SMT solver's unit propagation</p>
+        <p class="stat-detail">9.41 M against 10.69 M, overflow checks on in both</p>
+      </div>
+      <div class="stat">
+        <p class="stat-value">0.46&nbsp;s</p>
+        <p class="stat-label">One Billion Row Challenge, one core</p>
+        <p class="stat-detail">against 0.75 s for the Rust loop a competent programmer writes first</p>
+      </div>
+    </div>
+    <p class="home-footnote">
+      Not a claim against the best <code>unsafe</code> Rust a specialist can write: a tuned
+      1BRC entry is still faster, and the benchmark says why.
+      <a href="{{ "/docs/solver-workload.html#8-the-solvers-kernels-lowered-from-nikaia" | relative_url }}">Method and full tables →</a>
+    </p>
   </div>
 </section>
 
@@ -171,14 +260,54 @@ fn main() throws {
   </div>
 </section>
 
+<section class="home-section home-section-alt" id="progress">
+  <div class="home-inner">
+    <p class="home-eyebrow home-eyebrow-center">Built in the open, at full speed</p>
+    <h2 class="home-heading">The compiler is becoming Nikaia</h2>
+    <div class="progress">
+      <figure class="bars" aria-labelledby="bars-title">
+        <figcaption id="bars-title">
+          <b>Self-hosted share of the toolchain</b>
+          <span>lines of compiler code written in Nikaia, end of each day; the bars run to 25 %</span>
+        </figcaption>
+        <div class="bar-row" title="September 28: 2.0 %"><span class="bar-day">Sep 28</span><span class="bar-track"><span class="bar" style="--v: 2.0"></span></span><span class="bar-value">2.0&nbsp;%</span></div>
+        <div class="bar-row" title="September 29: 2.4 %"><span class="bar-day">Sep 29</span><span class="bar-track"><span class="bar" style="--v: 2.4"></span></span><span class="bar-value">2.4&nbsp;%</span></div>
+        <div class="bar-row" title="September 30: 8.4 %"><span class="bar-day">Sep 30</span><span class="bar-track"><span class="bar" style="--v: 8.4"></span></span><span class="bar-value">8.4&nbsp;%</span></div>
+        <div class="bar-row" title="October 1: 10.2 %"><span class="bar-day">Oct 1</span><span class="bar-track"><span class="bar" style="--v: 10.2"></span></span><span class="bar-value">10.2&nbsp;%</span></div>
+        <div class="bar-row" title="October 2: 17.6 %"><span class="bar-day">Oct 2</span><span class="bar-track"><span class="bar" style="--v: 17.6"></span></span><span class="bar-value">17.6&nbsp;%</span></div>
+        <div class="bar-row" title="October 3: 19.7 %"><span class="bar-day">Oct 3</span><span class="bar-track"><span class="bar" style="--v: 19.7"></span></span><span class="bar-value"><b>19.7&nbsp;%</b></span></div>
+      </figure>
+      <div class="progress-text">
+        <p>
+          Sharing, pausing, what a function throws, which statements may overlap: the
+          analyses that make Nikaia Nikaia are already Nikaia code, <b>11 432 lines in 44
+          modules</b>, moved over at <b>about 3.5 percentage points a day</b>.
+        </p>
+        <p>
+          Since Claude Opus started writing the compiler on September 5, 2026, every design
+          decision argued in a public ADR and accepted by a human:
+        </p>
+        <div class="stats stats-compact">
+          <div class="stat"><p class="stat-value">≈&nbsp;40</p><p class="stat-label">commits a day</p></div>
+          <div class="stat"><p class="stat-value">≈&nbsp;2&nbsp;000</p><p class="stat-label">lines of compiler code a day</p></div>
+          <div class="stat"><p class="stat-value">≈&nbsp;26</p><p class="stat-label">CHANGELOG entries a day</p></div>
+        </div>
+        <p class="home-footnote">As of 0.0.393, October 3, 2026, counted from <code>git log</code> and
+          <code>scripts/self_hosting.py</code>.
+          <a href="{{ "/CHANGELOG.html" | relative_url }}">Every change, one entry each →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="home-section">
   <div class="home-inner home-status">
     <div>
       <h2>Pre-alpha, and honest about it</h2>
       <p>
         The compiler builds real programs today: a calculator, a JSON parser, a log analyser, a
-        small HTTP server, the One Billion Row Challenge. There is no package registry, test
-        runner or editor integration yet. The roadmap lists what works, the walls you will hit,
+        small HTTP server, the One Billion Row Challenge. There is no package registry, formatter or
+        language server yet. The roadmap lists what works, the walls you will hit,
         and where a bug report helps most.
       </p>
     </div>

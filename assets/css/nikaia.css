@@ -1252,6 +1252,242 @@ body {
   }
 }
 
+/*
+ * The proofs, the numbers and the progress sections. Stat tiles carry a
+ * headline number each; the self-hosting chart is one series, so it needs no
+ * legend: its caption names it, and every bar carries its value as text.
+ */
+.home-eyebrow {
+  margin: 0 0 10px;
+  color: var(--nk-accent);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.home-split-text .home-eyebrow {
+  color: var(--nk-accent);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.home-eyebrow-center {
+  text-align: center;
+}
+
+.home-eyebrow-center + .home-heading {
+  margin-bottom: 16px;
+}
+
+.home-intro {
+  max-width: 760px;
+  margin: 0 auto 32px;
+  color: var(--nk-fg-muted);
+  font-size: 16px;
+  line-height: 1.65;
+  text-align: center;
+}
+
+.home-footnote {
+  margin: 24px 0 0;
+  color: var(--nk-fg-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+#performance .home-footnote {
+  text-align: center;
+}
+
+.home-footnote a {
+  color: var(--nk-link);
+  font-weight: 600;
+}
+
+.home-code-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.home-code.markdown-body pre.diagnostic .d-warning { color: #e3b341; font-weight: 700; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.stat {
+  padding: 24px;
+  border: 1px solid var(--nk-border);
+  border-radius: 12px;
+  background-color: var(--nk-bg);
+}
+
+.stat p {
+  margin: 0;
+}
+
+.stat-value {
+  color: var(--nk-fg);
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: 8px !important;
+  color: var(--nk-fg);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.stat-detail {
+  margin-top: 6px !important;
+  color: var(--nk-fg-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.stats-compact {
+  gap: 12px;
+  margin: 16px 0 0;
+}
+
+.stats-compact .stat {
+  padding: 16px;
+}
+
+.stats-compact .stat-value {
+  font-size: 28px;
+}
+
+.stats-compact .stat-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--nk-fg-muted);
+}
+
+.progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 48px;
+}
+
+.progress-text p {
+  color: var(--nk-fg-muted);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.progress-text p:first-child {
+  margin-top: 0;
+}
+
+.progress-text b {
+  color: var(--nk-fg);
+}
+
+.progress-text .stat-value {
+  color: var(--nk-fg);
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.progress-text .stat-label {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.progress-text .home-footnote {
+  font-size: 14px;
+}
+
+.bars {
+  margin: 0;
+  padding: 24px;
+  border: 1px solid var(--nk-border);
+  border-radius: 12px;
+  background-color: var(--nk-bg);
+}
+
+.bars figcaption {
+  margin-bottom: 16px;
+}
+
+.bars figcaption b {
+  display: block;
+  color: var(--nk-fg);
+  font-size: 16px;
+}
+
+.bars figcaption span {
+  color: var(--nk-fg-muted);
+  font-size: 13px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-radius: 4px;
+}
+
+.bar-row:hover {
+  background-color: var(--nk-surface);
+}
+
+.bar-day,
+.bar-value {
+  color: var(--nk-fg-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-value {
+  text-align: right;
+  color: var(--nk-fg);
+}
+
+.bar-track {
+  display: block;
+  height: 14px;
+}
+
+/* Scaled to 25 %, not 100 %: the chart is about the climb, and the axis is
+   stated by every bar's own value. */
+.bar {
+  display: block;
+  width: calc(var(--v) / 25 * 100%);
+  min-width: 2px;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background-color: var(--nk-accent);
+}
+
+@media (max-width: 899px) {
+  .stats,
+  .progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .progress {
+    gap: 24px;
+  }
+
+  .stat-value {
+    font-size: 36px;
+  }
+}
+
 /* A link to a heading (the guides' Specification links, a shared #anchor)
    lands below the sticky header instead of behind it. */
 .markdown-body [id] {
