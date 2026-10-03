@@ -233,7 +233,7 @@ fn main() {
     );
 }
 
-/// **What the compiler chose is a report** (ADR-282 D26, ADR-282 D26):
+/// **What the compiler chose is a report** (ADR-282 D26):
 /// `--tethers` names each `String` field or result that is not text of its
 /// own below, and why.
 #[test]

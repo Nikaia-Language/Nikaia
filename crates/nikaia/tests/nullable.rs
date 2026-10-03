@@ -1864,3 +1864,70 @@ fn main() {
     assert!(found.iter().any(|f| f.code == "NK1104"), "{found:#?}");
     assert!(found.iter().all(|f| f.code != "NK2106"), "{found:#?}");
 }
+
+/// **`.to_string()` of text is the text itself, so it is no copy beside `??`**
+/// ([ADR-282](../../../docs/specification/adr/adr-282.md) D8, Part I 2.3).
+///
+/// `?? "nobody".to_string()` is the literal and `?? who.to_string()` of a
+/// `ref String` is the view - both join the view on the left, and both run.
+/// Owned text stays owned text handed over, so `?? nobody.to_string()` of a
+/// `String` name is refused exactly as `?? nobody` is.
+#[test]
+fn the_text_form_of_text_beside_a_view_is_the_text_itself() {
+    let printed = ran(
+        "to-string-beside-a-view",
+        "\
+struct User { name: String }
+
+fn pick(user: ref User?, who: ref String) -> i64 {
+    let name = user?.name ?? who.to_string()
+    return name.len()
+}
+
+fn main() {
+    let user: User? = User { name: \"Ada\" }
+    let none: User? = null
+    let name = user?.name ?? \"nobody\".to_string()
+    let other = none?.name ?? \"nobody\".to_string()
+    let who: String = \"someone\"
+    println(f\"{name} {other} {pick(none, who)}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "Ada nobody 7");
+
+    let found = findings(
+        "\
+struct User { name: String }
+
+fn main() {
+    let user: User? = User { name: \"Ada\" }
+    let nobody: String = \"nobody\"
+    let name = user?.name ?? nobody.to_string()
+    println(f\"{name}\")
+}
+",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1185"),
+        "owned text stays owned text: {found:#?}"
+    );
+
+    // The text form of a number is text of its own, and is refused as such.
+    let found = findings(
+        "\
+struct User { name: String }
+
+fn main() {
+    let user: User? = User { name: \"Ada\" }
+    let n = 5
+    let name = user?.name ?? n.to_string()
+    println(f\"{name}\")
+}
+",
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1185"),
+        "a number's text form is owned: {found:#?}"
+    );
+}

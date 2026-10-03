@@ -67,16 +67,15 @@ const SAME_AT_BOTH: &str = "This is checked even when the program runs on one th
 
 /// Whether a finding stops the build.
 ///
-/// Everything the checker says is an **error** but one, and that one is a
-/// migration: ADR-309 gave the interpolated string an `f`, and a string written
-/// before it looks exactly like one that meant its braces. A warning is what
-/// that deserves - it cannot be an error, because `"{ margin: 0 }"` is correct
-/// CSS and rejecting it would break the property this checker is built on (it
-/// never refuses a program that is right); and it cannot be silence, because a
-/// silent change of meaning is what Part III C.1 calls a compiler bug.
-///
-/// **It is temporary on purpose.** The variant exists for one release, with the
-/// one code that uses it, and goes when the corpus has moved (ADR-309 D15).
+/// Almost everything the checker says is an **error**. A warning is for a
+/// finding that may be about a program that is right, such as `NK1111`: the
+/// interpolated string carries an `f` (ADR-309), and a plain string that looks
+/// as though it meant a hole looks exactly like one that meant its braces. It
+/// cannot be an error, because `"{ margin: 0 }"` is correct CSS and rejecting it
+/// would break the property this checker is built on (it never refuses a
+/// program that is right); and it cannot be silence, because a silent change of
+/// meaning is what Part III C.1 calls a compiler bug. It is a standing warning,
+/// kept narrow: only braces that name something that is here (ADR-309 D15).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Severity {
     /// The build stops.
@@ -488,7 +487,7 @@ pub struct Checked {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// `.to_string()` on **text**, by statement and receiver shape: the text
     /// form of text is the text itself, so the call is written as its receiver
-    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D3).
+    /// ([ADR-282](../../docs/specification/adr/adr-282.md) D8).
     pub text_as_is: BTreeSet<(usize, String)>,
     /// **`??`s that lend their left side** (ADR-279 D5), by statement and
     /// shape, with how the option is opened below: `.as_deref()` for text and
@@ -10839,7 +10838,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.a_copy_under_another_name(receiver, *method, args, span);
-                // **The text form of text is the text** (ADR-282 D3): a view
+                // **The text form of text is the text** (ADR-282 D8): a view
                 // stays a view and a literal stays a literal, and whoever keeps
                 // it asks for text of its own as anywhere else - by building a
                 // literal there, or by a `.clone()` the program writes.
@@ -12966,18 +12965,33 @@ impl<'a> Checker<'a> {
         if !viewed.is_a_view() || fallback.is_a_view() {
             return;
         }
-        // **`.to_owned()` and `.to_string()` by name**, which no ledger
-        // describes and which this compiler already reads this way one file
-        // over (`contracts::tether::makes_a_buffer`): *all four entries of
-        // either name hand back owned text*. Without it the one spelling the
-        // whole question is about - `?? "nobody".to_owned()` - types as `?` and
-        // walks past the refusal into `rustc`'s *expected `String`, found
-        // `&str`* about a file nobody wrote (Part III C.1).
-        let names_a_copy = matches!(
-            written,
-            Expr::MethodCall { method, .. }
-                if matches!(self.parsed.text(*method), "clone" | "to_owned" | "to_string")
-        );
+        // **`.clone()` and `.to_owned()` by name**, which no ledger describes
+        // and which this compiler already reads this way one file over
+        // (`contracts::tether::makes_a_buffer`): both hand back owned text.
+        // Without it the one spelling the whole question is about -
+        // `?? "nobody".to_owned()` - types as `?` and walks past the refusal
+        // into `rustc`'s *expected `String`, found `&str`* about a file nobody
+        // wrote (Part III C.1).
+        //
+        // **`.to_string()` is not among them**
+        // ([ADR-282](../../docs/specification/adr/adr-282.md) D8): the text
+        // form of text is the text itself, so a view stays a view and a
+        // literal a literal, and the call is typed as its receiver above
+        // (`text_as_is`). Of anything else it is text of its own - a number's
+        // text form is built - and is refused here as any owned text is.
+        let names_a_copy = match written {
+            Expr::MethodCall {
+                receiver, method, ..
+            } => match self.parsed.text(*method) {
+                "clone" | "to_owned" => true,
+                "to_string" => !self
+                    .checked
+                    .text_as_is
+                    .contains(&(span.at(), argument_shape(receiver))),
+                _ => false,
+            },
+            _ => false,
+        };
         let owned = match names_a_copy {
             true => Ty::named(crate::contracts::ty::TEXT),
             false => fallback.clone(),
@@ -15659,7 +15673,7 @@ impl<'a> Checker<'a> {
     /// outside a loop or a lambda handed over inside it is refused where it is
     /// handed, because the next turn hands over what is already gone.
     fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
-        // `name.to_string()` is `name` (ADR-282 D3): what is handed over is it.
+        // `name.to_string()` is `name` (ADR-282 D8): what is handed over is it.
         if let Expr::MethodCall { receiver, .. } = value
             && self
                 .checked
@@ -18527,7 +18541,7 @@ impl<'a> Checker<'a> {
         let text = Ty::named("String");
         match (want, value) {
             (Ty::Nullable(inner), _) => self.text_literal(inner, value, owned),
-            // `"x".to_string()` is `"x"` (ADR-282 D3), so it is built where it
+            // `"x".to_string()` is `"x"` (ADR-282 D8), so it is built where it
             // is kept exactly as the literal is.
             (
                 _,

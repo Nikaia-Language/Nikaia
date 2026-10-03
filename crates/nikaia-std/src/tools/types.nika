@@ -360,11 +360,11 @@ fn written_at(names: ref winnow_grammar::InternerContext, ty: ref Type, known: r
     written_at_the_boundary(names, ty, known, a_parameter, false, span, out)
 }
 
-// The same, where `at_c` says the type stands at the C boundary: a `&mut`
+// The same, where `at_c` says the type stands at the C boundary: a `ref mut`
 // there is the boundary's own, and checked as the type it points at.
 fn written_at_the_boundary(names: ref winnow_grammar::InternerContext, ty: ref Type, known: ref collections::BTreeSet[String], a_parameter: bool, at_c: bool, span: ref Span, mut out: Vec[Finding]) {
     if ty.is_mut && !at_c {
-        out.push(refusal("NK1158", span.clone(), "`&mut` can only be used when talking to C.", ["`&mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it."], "Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`."))
+        out.push(refusal("NK1158", span.clone(), "`ref mut` can only be used when talking to C.", ["`ref mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it."], "Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`."))
         return
     }
     let name = names.resolve(ty.name).clone()

@@ -810,16 +810,16 @@ where
 }
 
 /// **Both locks written, changed in place**
-/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D18,
-/// [ADR-281](../../../docs/specification/adr/adr-281.md) D18).
+/// ([ADR-281](../../../docs/specification/adr/adr-281.md) D18).
 ///
-/// D1 widened: **one `mut` per lock and nothing returned**. Both are held for
-/// the whole of the block, so nothing sees either between the two changes, and
-/// the same address order as above is what makes a cycle impossible.
+/// D12's one form, widened: **one `mut` per lock and nothing returned**. Both
+/// are held for the whole of the block, so nothing sees either between the two
+/// changes, and the same address order as above is what makes a cycle
+/// impossible.
 ///
 /// It used to take the old values by value and hand back a pair. That is what
 /// made an empty slot a state — a block that panicked between the two left one
-/// lock without a value — and D1 takes the cause away rather than the symptom.
+/// lock without a value — and D18 takes the cause away rather than the symptom.
 #[track_caller]
 pub fn update_all<A, B>(a: &A, b: &B, f: impl FnOnce(&mut A::Held, &mut B::Held))
 where

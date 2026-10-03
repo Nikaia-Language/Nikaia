@@ -10015,7 +10015,7 @@ fn written_at(names: &winnow_grammar::InternerContext, ty: &Type, known: &collec
 
 fn written_at_the_boundary(names: &winnow_grammar::InternerContext, ty: &Type, known: &collections::BTreeSet<String>, a_parameter: bool, at_c: bool, span: &Span, out: &mut Vec<Finding>) {
     if ty.is_mut && !at_c {
-        out.push(refusal("NK1158", span.clone(), String::from("`&mut` can only be used when talking to C."), vec![String::from("`&mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it.")], String::from("Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.")));
+        out.push(refusal("NK1158", span.clone(), String::from("`ref mut` can only be used when talking to C."), vec![String::from("`ref mut` is only for `extern \"C\"` declarations. Everywhere else, Nikaia has its own way to say it.")], String::from("Put `mut` in front of the name instead: `fn fill(mut out: Vec[i64])`.")));
         return;
     }
     let name = names.resolve(ty.name).to_owned();

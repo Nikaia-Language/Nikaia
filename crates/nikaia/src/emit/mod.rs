@@ -1262,7 +1262,7 @@ struct Emitter<'p> {
     /// Whether the `?.` being written copies the view it reached, which is
     /// `owned_copies` asked of the receiver the `match` bound.
     reached_copy: std::cell::Cell<bool>,
-    /// `.to_string()` on text, written as its receiver (ADR-282 D3).
+    /// `.to_string()` on text, written as its receiver (ADR-282 D8).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// `??`s that lend their left side, and how it is opened (ADR-279 D5).
     lent_coalesces: std::collections::BTreeMap<(usize, String), &'static str>,
@@ -11810,7 +11810,7 @@ impl<'p> Emitter<'p> {
                     .map(|a| &a.value),
                 false => None,
             };
-        // **The text form of text is the text** (ADR-282 D3): nothing is
+        // **The text form of text is the text** (ADR-282 D8): nothing is
         // called, and whether it is lent, built or handed over is decided
         // around it as for any other text.
         if let Some(text) = receiver.filter(|receiver| {

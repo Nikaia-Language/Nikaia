@@ -158,7 +158,7 @@ fn the_shapes_do_not_fit_each_other() {
     assert!(Ty::parse("ref mut Array[u8]").fits(&Ty::parse("ref mut Array[u8]")));
 }
 
-/// **`&mut` is the C boundary's and nowhere else's** (`NK1158`), and since
+/// **`ref mut` is the C boundary's and nowhere else's** (`NK1158`), and since
 /// 0.0.127 that is the whole of the rule
 /// ([ADR-179](../../../docs/specification/adr/adr-179.md) D1, which supersedes
 /// [ADR-302](../../../docs/specification/adr/adr-302.md) D5 in part).
@@ -187,7 +187,13 @@ fn the_mut_is_the_boundarys_and_the_run_is_not() {
     );
     let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1158").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
-    assert!(refused[0].message.contains("`&mut`"), "{refused:#?}");
+    // In this language's words (Part III C.1): `ref mut`, never Rust's `&mut`.
+    assert!(refused[0].message.contains("`ref mut`"), "{refused:#?}");
+    assert!(
+        !refused[0].message.contains("&mut")
+            && refused[0].notes.iter().all(|n| !n.contains("&mut")),
+        "{refused:#?}"
+    );
     assert!(
         refused[0]
             .help

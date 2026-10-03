@@ -1007,22 +1007,25 @@ pub mod io {
     /// **The same wait, as something that can be awaited**
     /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
     ///
-    /// This is what the record is for. The reply arrives on an I/O worker, and a
-    /// worker rings a bell that - since D1 - *both* parks hear, so a `Pending`
-    /// from here is one the executor can sleep on whichever mechanism the
-    /// process got. Before D1 it could not: on the completion path the park
-    /// answered off a count of ring jobs, a worker's reply was not one, and a
-    /// future fed from one either spun or met `exec::block_on`'s panic about a
-    /// waker nobody arranged.
+    /// This is what the record is for. The wait is a **registration** on the
+    /// process's one poller, armed here on the calling thread
+    /// ([ADR-303](../../../docs/specification/adr/adr-303.md) D8); no worker
+    /// holds it. The poller's thread answers, and rings the bell that - since
+    /// ADR-121 D1 - *both* parks hear (ADR-303 D11), so a `Pending` from here is
+    /// one the executor can sleep on whichever mechanism the process got. The
+    /// registration counts as outstanding until it is answered or dropped
+    /// (ADR-303 D10).
     ///
-    /// **No waker is stored**, for the reason [`Reading`] gives at length: the
-    /// executor is the only thing on this thread that parks, and it parks in the
-    /// I/O.
+    /// The slot keeps the poll's waker, for an executor that honours one; the
+    /// bell is what reaches this one, for the reason [`Reading`] gives at
+    /// length: the executor is the only thing on this thread that parks, and it
+    /// parks in the I/O.
     ///
-    /// The descriptor the worker polls is a **duplicate** of this one
-    /// ([`worker::Op::Readiness`] says why), so a `Waiting` dropped before its
-    /// answer arrives leaves the worker with a descriptor of its own rather than
-    /// with a number the caller may since have closed.
+    /// The descriptor the poller holds is a **duplicate** of this one
+    /// ([`super::readiness`] says why), so it stays open for exactly as long as
+    /// it is registered, whatever the caller does with its own; and a `Waiting`
+    /// dropped before its answer deletes the registration and closes the
+    /// duplicate (ADR-303 D12).
     pub fn waiting(
         socket: &impl std::os::fd::AsFd,
         interest: Interest,

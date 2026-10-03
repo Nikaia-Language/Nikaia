@@ -50,8 +50,9 @@ fn the_specifications_programs_are_the_ones_in_expected_txt() {
 /// **No page holds a plain string with a hole in it**, except where the page is
 /// about exactly that.
 ///
-/// `NK1111` is the one-release migration warning for `"{name}"` after
-/// [ADR-309](../../../docs/specification/adr/adr-309.md) D15, and a page that
+/// `NK1111` is the standing, narrow warning for a plain string that looks as
+/// though it meant a hole, such as `"{name}"`
+/// ([ADR-309](../../../docs/specification/adr/adr-309.md) D15), and a page that
 /// trips it is a page written before that decision. Part I 2.5 trips it on
 /// purpose — it is the section that explains the difference — so the allowance
 /// is that one block, named by where it is rather than by a marker somebody has

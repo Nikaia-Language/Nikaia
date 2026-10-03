@@ -656,7 +656,7 @@ fn a_copy_is_owned_whatever_it_copied() {
     );
 }
 
-/// **The text form of text is the text itself** (ADR-282 D3): a view stays a
+/// **The text form of text is the text itself** (ADR-282 D8): a view stays a
 /// view and a literal a literal, so nothing is copied and nothing is written
 /// below - and a view put where text of its own is kept is refused naming
 /// `.clone()`, as it is without the `.to_string()`.
