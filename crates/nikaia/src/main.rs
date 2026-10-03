@@ -51,12 +51,14 @@ pub struct Cli {
     pub user_parallelism: Option<String>,
 
     /// An optimization that changes nothing a program means, as
-    /// `NAME:LEVEL` (ADR-271 D1). One there is:
+    /// `NAME:LEVEL` (ADR-271 D1). There are two:
     /// `remove-bounds-checks:basic` drops an index's check inside a loop over
     /// the list's own length that cannot change it, and
     /// `remove-bounds-checks:aggressive` also every one the solver proves
-    /// inside, with a certificate its checker accepts. A check nothing proves
-    /// stays at every level.
+    /// inside, with a certificate its checker accepts;
+    /// `remove-overflow-checks:aggressive` drops the check of a `+`, `-` or
+    /// `*` the solver proves stays inside its type (ADR-272). A check nothing
+    /// proves stays at every level.
     ///
     /// May be given more than once; overrides `nikaia.toml`'s
     /// `[build] optimization`.

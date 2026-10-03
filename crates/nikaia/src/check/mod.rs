@@ -475,6 +475,13 @@ pub struct Checked {
     /// a map or a set, whose length is a count that reading changes nothing
     /// of - what [`crate::bounds`] reads as a number of a proof (ADR-271 D4).
     pub std_lengths: BTreeSet<usize>,
+    /// **Every `+`, `-` and `*` of one whole-number type**, by the byte its
+    /// operator starts at, with that type: both sides that type, or one a
+    /// literal. What `--optimization=remove-overflow-checks` may write without
+    /// its check where [`crate::bounds`] proved it fits
+    /// ([ADR-272](../../docs/specification/adr/adr-272.md) D5) - the type is
+    /// named in what is written, so the proof and the operation agree on it.
+    pub arithmetic: BTreeMap<usize, String>,
     /// `clone` calls that went to a `std` entry, by statement and receiver
     /// shape: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-215 D4).
@@ -1762,6 +1769,8 @@ pub struct Propagation {
     pub list_indices: BTreeSet<usize>,
     /// [`Checked::std_lengths`].
     pub std_lengths: BTreeSet<usize>,
+    /// [`Checked::arithmetic`].
+    pub arithmetic: BTreeMap<usize, String>,
     /// [`Checked::owned_copies`].
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
@@ -2056,6 +2065,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         list_indices: checked.list_indices,
         std_lengths: checked.std_lengths,
+        arithmetic: checked.arithmetic,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
@@ -11911,17 +11921,49 @@ impl<'a> Checker<'a> {
                     // ([ADR-233](../../docs/specification/adr/adr-233.md) D4):
                     // `0 - y` over a `ref i64` makes an `i64`, which is what
                     // the language below's operators make of a `&i64` too.
-                    _ => match (
-                        left.is_unknown(),
-                        right.is_unknown(),
-                        value_of_a_copy(left),
-                        value_of_a_copy(right),
-                    ) {
-                        (true, _, _, right) => right,
-                        (_, true, left, _) => left,
-                        (_, _, left, right) if left == right => left,
-                        _ => Ty::Unknown,
-                    },
+                    _ => {
+                        // **One whole-number type on both sides**, or one side
+                        // a literal: what an unchecked operation may name
+                        // (ADR-272 D5). A view is not the number here - the
+                        // operation would be handed a reference.
+                        if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) {
+                            let whole = |side: &Expr, ty: &Ty| match (side, ty.unseen()) {
+                                (Expr::LitInt { .. }, _) => Some(None),
+                                (
+                                    _,
+                                    Ty::Named {
+                                        name,
+                                        args,
+                                        view: false,
+                                    },
+                                ) if args.is_empty() && is_a_whole_number(&name) => {
+                                    Some(Some(name))
+                                }
+                                _ => None,
+                            };
+                            if let (Some(a), Some(b)) = (whole(lhs, &left), whole(rhs, &right)) {
+                                let named = match (a, b) {
+                                    (Some(a), Some(b)) if a == b => Some(a),
+                                    (Some(a), None) | (None, Some(a)) => Some(a),
+                                    _ => None,
+                                };
+                                if let Some(name) = named {
+                                    self.checked.arithmetic.insert(at.at(), name);
+                                }
+                            }
+                        }
+                        match (
+                            left.is_unknown(),
+                            right.is_unknown(),
+                            value_of_a_copy(left),
+                            value_of_a_copy(right),
+                        ) {
+                            (true, _, _, right) => right,
+                            (_, true, left, _) => left,
+                            (_, _, left, right) if left == right => left,
+                            _ => Ty::Unknown,
+                        }
+                    }
                 };
                 match stamped {
                     true => Ty::seen(outcome.unseen()),
@@ -24263,4 +24305,13 @@ enum Depth {
 fn binds_a_part(part: &MatchPattern) -> bool {
     matches!(part, MatchPattern::Path(one) if one.len() == 1)
         || matches!(part, MatchPattern::Otherwise)
+}
+
+/// The whole-number types an operation may be written unchecked in
+/// (ADR-272 D5).
+fn is_a_whole_number(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    )
 }

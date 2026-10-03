@@ -114,29 +114,45 @@ pub struct Settings {
 }
 
 /// **`name:level` words, comma-separated**, to what they decide
-/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). The one name is
-/// `remove-bounds-checks`; a later word for it wins over an earlier one.
-pub fn optimizations(words: &str) -> Result<crate::bounds::BoundsChecks> {
+/// ([ADR-271](../../docs/specification/adr/adr-271.md) D1). The names are
+/// `remove-bounds-checks` and `remove-overflow-checks`
+/// ([ADR-272](../../docs/specification/adr/adr-272.md) D1); a later word for
+/// a name wins over an earlier one.
+pub fn optimizations(
+    words: &str,
+) -> Result<(crate::bounds::BoundsChecks, crate::bounds::OverflowChecks)> {
     let mut bounds = crate::bounds::BoundsChecks::default();
+    let mut overflow = crate::bounds::OverflowChecks::default();
     for word in words.split(',').map(str::trim).filter(|w| !w.is_empty()) {
         let Some((name, level)) = word.split_once(':') else {
             return Err(anyhow!(
                 "`--optimization={word}` needs a level: write \
-                 `--optimization=remove-bounds-checks:basic` or \
-                 `--optimization=remove-bounds-checks:aggressive`"
+                 `--optimization=remove-bounds-checks:aggressive` or \
+                 `--optimization=remove-overflow-checks:aggressive`"
             ));
         };
-        if name != "remove-bounds-checks" {
-            return Err(anyhow!(
-                "there is no optimization called `{name}`: the one there is, is \
-                 `remove-bounds-checks`"
-            ));
+        match name {
+            "remove-bounds-checks" => {
+                bounds = crate::bounds::BoundsChecks::parse(level).ok_or_else(|| {
+                    anyhow!(
+                        "`remove-bounds-checks` is `off`, `basic` or `aggressive`, not `{level}`"
+                    )
+                })?;
+            }
+            "remove-overflow-checks" => {
+                overflow = crate::bounds::OverflowChecks::parse(level).ok_or_else(|| {
+                    anyhow!("`remove-overflow-checks` is `off` or `aggressive`, not `{level}`")
+                })?;
+            }
+            _ => {
+                return Err(anyhow!(
+                    "there is no optimization called `{name}`: the ones there are, are \
+                     `remove-bounds-checks` and `remove-overflow-checks`"
+                ));
+            }
         }
-        bounds = crate::bounds::BoundsChecks::parse(level).ok_or_else(|| {
-            anyhow!("`remove-bounds-checks` is `off`, `basic` or `aggressive`, not `{level}`")
-        })?;
     }
-    Ok(bounds)
+    Ok((bounds, overflow))
 }
 
 impl Settings {
@@ -163,7 +179,7 @@ impl Settings {
             .to_string();
         let optimization = manifest.setting("optimization", None, "").to_string();
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
-        build.bounds = optimizations(&optimization)?;
+        (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
             build,
             target,
@@ -183,7 +199,7 @@ impl Settings {
             return Ok(());
         }
         let words = flags.join(",");
-        self.build.bounds = optimizations(&words)?;
+        (self.build.bounds, self.build.overflow) = optimizations(&words)?;
         self.optimization = words;
         Ok(())
     }
@@ -226,7 +242,7 @@ impl Settings {
         let reentrancy_check = word(REENTRANCY_VAR, "yes");
         let optimization = word(OPTIMIZATION_VAR, "");
         let mut build = Build::parse(&target, &user_parallelism, &reentrancy_check)?;
-        build.bounds = optimizations(&optimization)?;
+        (build.bounds, build.overflow) = optimizations(&optimization)?;
         Ok(Settings {
             build,
             target,
@@ -250,7 +266,7 @@ impl Settings {
     pub fn choices(&self) -> Choices {
         Choices::new(
             format!(
-                "{}/{}/{}{}{}",
+                "{}/{}/{}{}{}{}",
                 self.target,
                 self.user_parallelism,
                 self.reentrancy_check,
@@ -258,6 +274,10 @@ impl Settings {
                 match self.build.bounds {
                     crate::bounds::BoundsChecks::Kept => String::new(),
                     level => format!("/remove-bounds-checks:{}", level.name()),
+                },
+                match self.build.overflow {
+                    crate::bounds::OverflowChecks::Kept => String::new(),
+                    level => format!("/remove-overflow-checks:{}", level.name()),
                 }
             ),
             "rust",

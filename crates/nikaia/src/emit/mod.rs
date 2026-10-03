@@ -166,6 +166,9 @@ pub struct Build {
     /// compiler works to prove an index inside. Nothing a program means
     /// depends on it.
     pub bounds: crate::bounds::BoundsChecks,
+    /// `--optimization=remove-overflow-checks:<level>`
+    /// ([ADR-272](../../docs/specification/adr/adr-272.md) D1).
+    pub overflow: crate::bounds::OverflowChecks,
 }
 
 impl Build {
@@ -175,6 +178,7 @@ impl Build {
             user_parallelism: UserParallelism::parse(user_parallelism)?,
             reentrancy_check: ReentrancyCheck::parse(reentrancy_check)?,
             bounds: crate::bounds::BoundsChecks::default(),
+            overflow: crate::bounds::OverflowChecks::default(),
         })
     }
 
@@ -932,6 +936,13 @@ pub struct Needs {
 
 impl Needs {
     pub fn of(parsed: &Parsed, build: Build) -> Needs {
+        // What a program needs does not depend on which checks were proved,
+        // and proving them is the slowest thing an emitter is built with.
+        let build = Build {
+            bounds: crate::bounds::BoundsChecks::Kept,
+            overflow: crate::bounds::OverflowChecks::Kept,
+            ..build
+        };
         let emitter = Emitter::new(parsed, build, crate::contracts::Provenance::Trusted);
         Needs {
             grammar: parsed
@@ -1242,6 +1253,10 @@ struct Emitter<'p> {
     /// proved the position inside: the indexes written without their check
     /// ([ADR-271](../../docs/specification/adr/adr-271.md) D5).
     proven_indices: std::collections::HashSet<usize>,
+    /// [`check::Checked::arithmetic`], kept only where [`crate::bounds`]
+    /// proved the operation stays inside its type: written `<T>::wrapping_*`
+    /// ([ADR-272](../../docs/specification/adr/adr-272.md) D5).
+    proven_arithmetic: std::collections::HashMap<usize, String>,
     /// `std` copies, written `to_owned` (ADR-215 D4).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// Whether the `?.` being written copies the view it reached, which is
@@ -2463,6 +2478,13 @@ impl<'p> Emitter<'p> {
         // there is one type checker (ADR-028).
         let propagation =
             crate::check::propagation_against(parsed, beside, &own_contracts, described, reads);
+        let proven = crate::bounds::proven(
+            parsed,
+            build.bounds,
+            build.overflow,
+            &propagation.std_lengths,
+            &propagation.arithmetic,
+        );
 
         // ADR-037 D7: which count each `Shared` value gets. Computed over the
         // whole unit, because a count belongs to an allocation and a handle's
@@ -2513,15 +2535,18 @@ impl<'p> Emitter<'p> {
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
-            proven_indices: {
-                let proven = crate::bounds::proven(parsed, build.bounds, &propagation.std_lengths);
-                propagation
-                    .list_indices
-                    .iter()
-                    .copied()
-                    .filter(|node| proven.contains(node))
-                    .collect()
-            },
+            proven_indices: propagation
+                .list_indices
+                .iter()
+                .copied()
+                .filter(|node| proven.indices.contains(node))
+                .collect(),
+            proven_arithmetic: propagation
+                .arithmetic
+                .iter()
+                .filter(|(at, _)| proven.arithmetic.contains(at))
+                .map(|(at, ty)| (*at, ty.clone()))
+                .collect(),
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             lent_coalesces: propagation.lent_coalesces,
@@ -8625,6 +8650,25 @@ impl<'p> Emitter<'p> {
                     && let Some(compared) = self.against_a_length(out, op, lhs, rhs, depth, flow)?
                 {
                     return Ok(compared);
+                }
+                // **An operation proved to stay inside its type** is written
+                // without its check, naming the type the proof was about
+                // ([ADR-272](../../docs/specification/adr/adr-272.md) D5).
+                if let Some(ty) = self.proven_arithmetic.get(&at.at())
+                    && !flow.widen
+                    && !flow.inferred
+                {
+                    let name = match op {
+                        BinaryOp::Add => "wrapping_add",
+                        BinaryOp::Sub => "wrapping_sub",
+                        _ => "wrapping_mul",
+                    };
+                    out.push(&format!("<{ty}>::{name}("));
+                    self.expr(out, lhs, depth, flow)?;
+                    out.push(", ");
+                    self.expr(out, rhs, depth, flow)?;
+                    out.push(")");
+                    return Ok(());
                 }
                 // Parenthesised only where precedence needs it: the operators
                 // mean the same in both languages, so `value * 10 + n` should
