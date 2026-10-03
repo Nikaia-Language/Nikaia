@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.383] — 2026-10-03
+
+**What a method's name says about text, and which containers text is followed
+into, is Nikaia** (#125, ADR-250). `text_tiers`' tables and the questions on
+them moved into `tools/tiers.nika`: the methods whose result is text of its
+own, a view of what they are called on, or an element of it; the methods that
+put their argument into a container; the runs, sets and maps whose elements
+are positions; and whether a written type is a plain `String` or a container
+(ADR-222, ADR-224 D1). The walk that follows text into positions and the tiers
+it decides stay in Rust: its kinds and positions are keys of ordered sets and
+maps, which a type this language declares has no order for. 18.9 % of the
+toolchain is Nikaia.
+
 ## [0.0.382] — 2026-10-03
 
 **Where `??`'s answer is only read, a value that is a word by its kind is

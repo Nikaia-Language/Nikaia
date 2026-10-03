@@ -82,64 +82,12 @@ fn tier(kinds: &Kinds) -> Tier {
     }
 }
 
-/// Methods whose result is text of its own, whatever they are called on.
-const OWNS: &[&str] = &[
-    "clone",
-    "to_owned",
-    "to_string",
-    "clone_text",
-    "to_uppercase",
-    "to_lowercase",
-    "repeat",
-    "replace",
-    "join",
-    "concat",
-];
-
-/// Methods of text whose result is a view **of the text they are called on**.
-const VIEWS: &[&str] = &[
-    "trim",
-    "trim_start",
-    "trim_end",
-    "trim_matches",
-    "trim_start_matches",
-    "trim_end_matches",
-    "strip_prefix",
-    "strip_suffix",
-    "lines",
-    "split",
-    "split_whitespace",
-    "splitn",
-    "rsplit",
-    "rsplitn",
-    "split_terminator",
-    "matches",
-    "as_str",
-];
-
-/// Methods whose result is an element of what they are called on, so it is
-/// the same kind of text as the elements are.
-const ELEMENTS: &[&str] = &[
-    "collect", "next", "unwrap", "first", "last", "get", "iter", "nth", "peek", "pop", "remove",
-    "values", "keys",
-];
-
-/// Containers whose element is a position: a run or a set of one, and a map
-/// whose key and value are two.
-const RUNS: &[&str] = &["Vec", "List", "VecDeque", "Deque"];
-const SETS: &[&str] = &["HashSet", "BTreeSet", "Set"];
-const MAPS: &[&str] = &["HashMap", "BTreeMap", "Map"];
-
-/// Methods that put their argument into a run or a set; `insert` on a map puts
-/// a key and a value.
-const PUTS: &[&str] = &[
-    "push",
-    "push_back",
-    "push_front",
-    "insert",
-    "extend",
-    "append",
-];
+/// What a method's name says about the text it hands back, and which
+/// containers this pass follows text into: `tools/tiers.nika` (ADR-250, #125).
+use nikaia_std::tools::tiers::{
+    hands_back_an_element, is_a_container_name, is_a_map_name, owns_its_text, puts_its_argument,
+    views_what_it_is_called_on,
+};
 
 /// Who declares a position.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -163,25 +111,12 @@ struct Position {
 /// A declared `String`, or `String?`: a value that may be absent is a position
 /// as well, and `null` puts no text of either kind into it (ADR-224 D1).
 fn plain_string(parsed: &Parsed, ty: &Type) -> bool {
-    parsed.text(ty.name) == "String"
-        && ty.generics.is_empty()
-        && !ty.is_view
-        && !ty.is_tuple
-        && !ty.is_slice
-        && ty.code.is_none()
+    nikaia_std::tools::tiers::plain_string(&parsed.interner, ty)
 }
 
-fn container(parsed: &Parsed, ty: &Type) -> Option<&'static str> {
-    if ty.is_view || ty.is_nullable || ty.is_tuple || ty.code.is_some() {
-        return None;
-    }
-    let name = parsed.text(ty.name);
-    let name = name.rsplit("::").next().unwrap_or(name);
-    [RUNS, SETS, MAPS]
-        .iter()
-        .flat_map(|list| list.iter())
-        .find(|n| **n == name)
-        .copied()
+/// The container a written type is, by its last segment.
+fn container(parsed: &Parsed, ty: &Type) -> Option<String> {
+    nikaia_std::tools::tiers::container_of(&parsed.interner, ty)
 }
 
 /// A function as this pass needs it.
@@ -516,7 +451,7 @@ impl Walk<'_, '_> {
     fn flow_whole(&mut self, owner: &Owner, ty: &Type, path: Vec<usize>, value: &Expr) {
         let parsed = self.declared.parsed;
         let element = match container(parsed, ty) {
-            Some(name) if !MAPS.contains(&name) => ty.generics.first(),
+            Some(name) if !is_a_map_name(&name) => ty.generics.first(),
             _ => None,
         };
         match value {
@@ -537,7 +472,7 @@ impl Walk<'_, '_> {
             } if self.text(*method) == "collect" && args.is_empty() => {
                 // A map is collected from pairs: its key and its value are two
                 // positions, and each is handed over as it is where it is mixed.
-                if container(parsed, ty).is_some_and(|name| MAPS.contains(&name)) {
+                if container(parsed, ty).is_some_and(|name| is_a_map_name(&name)) {
                     let mixed = |walk: &mut Self, at: usize| {
                         let Some(part) = ty.generics.get(at) else {
                             return false;
@@ -712,7 +647,7 @@ impl Walk<'_, '_> {
     fn element_kinds(&self, owner: &Owner, ty: &Type, keys: bool) -> Kinds {
         let parsed = self.declared.parsed;
         let at = match container(parsed, ty) {
-            Some(name) if MAPS.contains(&name) && !keys => 1,
+            Some(name) if is_a_map_name(&name) && !keys => 1,
             Some(_) => 0,
             None => return self.kinds_of(owner, ty, &mut Vec::new()),
         };
@@ -802,7 +737,7 @@ impl Walk<'_, '_> {
                         let key = self.expr(index);
                         if let Some((owner, ty)) = self.place(base) {
                             match container(self.declared.parsed, &ty) {
-                                Some(name) if MAPS.contains(&name) => {
+                                Some(name) if is_a_map_name(&name) => {
                                     if let [k, v] = ty.generics.as_slice() {
                                         self.flow_value(
                                             &owner,
@@ -1020,8 +955,8 @@ impl Walk<'_, '_> {
                 // **Into a container that declares its element `String`**.
                 if let Some((owner, ty)) = self.place(receiver) {
                     let kind = container(self.declared.parsed, &ty);
-                    if PUTS.contains(&method.as_str()) && kind.is_some() {
-                        let is_map = kind.is_some_and(|k| MAPS.contains(&k));
+                    if puts_its_argument(&method) && kind.is_some() {
+                        let is_map = kind.as_deref().is_some_and(is_a_map_name);
                         match (is_map, args.as_slice(), given.as_slice()) {
                             (true, [k, v], [kk, vk]) => {
                                 if let [kt, vt] = ty.generics.as_slice() {
@@ -1049,7 +984,7 @@ impl Walk<'_, '_> {
                         }
                         return one(Kind::Owned);
                     }
-                    if ELEMENTS.contains(&method.as_str()) {
+                    if hands_back_an_element(&method) {
                         return self.element_kinds(&owner, &ty, method == "keys");
                     }
                 }
@@ -1085,13 +1020,13 @@ impl Walk<'_, '_> {
                 ) {
                     return received;
                 }
-                if OWNS.contains(&method.as_str()) {
+                if owns_its_text(&method) {
                     return one(Kind::Owned);
                 }
-                if VIEWS.contains(&method.as_str()) {
+                if views_what_it_is_called_on(&method) {
                     return viewed(&received);
                 }
-                if ELEMENTS.contains(&method.as_str()) {
+                if hands_back_an_element(&method) {
                     return received;
                 }
                 one(Kind::Owned)
@@ -1261,11 +1196,6 @@ impl Walk<'_, '_> {
             None => one(Kind::Owned),
         }
     }
-}
-
-fn is_a_container_name(callee: &str) -> bool {
-    let name = callee.rsplit("::").next().unwrap_or(callee);
-    [RUNS, SETS, MAPS].iter().any(|list| list.contains(&name))
 }
 
 /// A view of text of these kinds: a view of a literal is as lasting as the
