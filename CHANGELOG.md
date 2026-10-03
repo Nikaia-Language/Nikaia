@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.382] — 2026-10-03
+
+**Where `??`'s answer is only read, a value that is a word by its kind is
+copied and everything else is lent** ([ADR-274](docs/specification/adr/adr-274.md),
+the owner's choice, option B.b). A number, a `bool`, a `char`, an enum whose
+variants hold nothing and a type the ledger says copies are copied; a copy type
+made of parts - a struct, a tuple, an array, an enum with a payload - is lent
+at every size, as it was until 0.0.376: `total(found ?? spare)` over a 64-byte
+`Grid` is `or(found.as_ref(), || &spare)` again, not a copy of both sides at
+every read. No size is computed. The record keeps the options looked at: copy
+every copy type (A), and three exceptions to lending - the scalars only
+(B.a), a word by its kind (B.b) and a size the compiler computes (B.c). What
+0.0.377 decided about keeping - a copy type handed on is not taken - stays.
+
 ## [0.0.381] — 2026-10-03
 
 **Whether `??` lends a value that copies, prepared for the owner**
