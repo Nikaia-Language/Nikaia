@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.378] — 2026-10-03
+
+**A bound on a list's values, measured and proposed** (ADR-272, open).
+ADR-271 §6's next step, overflow checks dropped by the same proof, was
+measured before it was built, and buys nothing: the checks the walk proves
+are the ones LLVM already drops. The watch kernel's +0.7 % with overflow
+checks on is one addition, `start + at`, where `start` is read out of a list -
+not `2 * v + 1` as `solver-workload.md` §8.1 had it, now corrected. Removing
+from the lowered Rust exactly the checks a bound on a list's values would
+prove takes the kernel from 10.44 M to 9.68 M instructions (−9.4 % against
+Rust by hand), and with a filling loop's length to 9.41 M (§8.2). ADR-272
+compares how Wuffs, Ada, SPARK, Pascal, Liquid Haskell, Dafny, Astrée,
+Clousot, LLVM and the JITs answer the same question, weighs four options,
+and proposes the bound inferred by ADR-271's walk with a criterion to meet
+before it is accepted. Nothing in the compiler changed.
+
 ## [0.0.377] — 2026-10-03
 
 **The sharing classes are decided in Nikaia** (#125, ADR-250). The
