@@ -23,7 +23,8 @@ Two compiler defects the move found, fixed in the compiler (ADR-294 D3):
   function stored in a struct that also holds a view was written
   `dyn Fn(&'a str)`, so it took only what lives as long as the struct's
   view, and a call with a local was a borrow `rustc` refused. Its parameters'
-  references are elided now.
+  references are elided now, and a struct holds a view through a function
+  only where its result does.
 
 ## [0.0.404] — 2026-10-03
 

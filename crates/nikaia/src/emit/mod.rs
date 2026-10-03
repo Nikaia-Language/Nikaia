@@ -10395,6 +10395,12 @@ impl<'p> Emitter<'p> {
     /// `'static`* — is about the **lifetime** in the signature rather than about
     /// the `&`, so it is this question it wants answered.
     fn carries_a_view(&self, ty: &Type) -> bool {
+        // A function type carries what its result does ([`holds_view`]).
+        if let Some(code) = &*ty.code {
+            return (*code.result)
+                .as_ref()
+                .is_some_and(|result| self.carries_a_view(result));
+        }
         ty.is_view || self.borrows(ty.name) || ty.generics.iter().any(|g| self.carries_a_view(g))
     }
 
@@ -13461,11 +13467,24 @@ pub(crate) fn borrowing_structs(parsed: &Parsed) -> HashSet<Symbol> {
     }
 }
 
+/// **A function type holds what its result holds, and nothing it is
+/// handed**: a kept function's parameters are borrowed for the call alone and
+/// written without a lifetime ([`Emitter::ty_counted`]), so a struct whose
+/// only field is `fn(ref String) -> i64` names no lifetime either - with one,
+/// it was *lifetime parameter `'a` is never used*.
 pub(crate) fn holds_view(ty: &Type) -> bool {
+    if let Some(code) = &*ty.code {
+        return (*code.result).as_ref().is_some_and(holds_view);
+    }
     ty.is_view || ty.generics.iter().any(holds_view)
 }
 
 pub(crate) fn names_borrowing(ty: &Type, borrowing: &HashSet<Symbol>) -> bool {
+    if let Some(code) = &*ty.code {
+        return (*code.result)
+            .as_ref()
+            .is_some_and(|result| names_borrowing(result, borrowing));
+    }
     borrowing.contains(&ty.name) || ty.generics.iter().any(|g| names_borrowing(g, borrowing))
 }
 
