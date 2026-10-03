@@ -314,59 +314,27 @@ pub fn infer(
         }
     }
 
-    // Start optimistic, then take the claim away until nothing changes.
-    let mut holds: BTreeMap<&str, bool> = graph
+    // **The fixpoint is Nikaia** (`tools/sync.nika`, #125): start optimistic,
+    // take the claim away until nothing changes, and name the functions whose
+    // only pausing is their lambdas' (ADR-244 D2).
+    let reached: BTreeMap<String, nikaia_std::tools::sync::SyncReach> = graph
         .iter()
         .map(|(name, reach)| {
             (
-                name.as_str(),
-                !reach.blocked && reach.through_code.is_empty(),
+                name.clone(),
+                nikaia_std::tools::sync::SyncReach {
+                    blocked: reach.blocked,
+                    calls: reach.calls.clone(),
+                    through_code: reach.through_code.clone(),
+                    pauses_here: reach.site.is_some(),
+                },
             )
         })
         .collect();
+    let holds = nikaia_std::tools::sync::sync_holds(&reached);
+    let by_code = nikaia_std::tools::sync::paused_only_by_code(&reached, &holds);
 
-    loop {
-        let mut changed = false;
-        for (name, reach) in &graph {
-            if !holds[name.as_str()] {
-                continue;
-            }
-            // A call to something this package does not declare was already
-            // resolved against the library above and folded into `blocked`;
-            // what is left here is this package's own, and an unknown name among
-            // them would be a bug in `reach_of` rather than a licence to assume.
-            let reaches_pausing = reach
-                .calls
-                .iter()
-                .any(|callee| !holds.get(callee.as_str()).copied().unwrap_or(false));
-            if reaches_pausing {
-                holds.insert(name.as_str(), false);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
-    // **Only its lambdas stand in the way**: nothing it reaches blocks, every
-    // function of the package it calls holds, and it calls a code parameter
-    // that may pause.
-    let by_code: BTreeMap<String, Vec<String>> = graph
-        .iter()
-        .filter(|(name, reach)| {
-            !holds[name.as_str()]
-                && !reach.blocked
-                && !reach.through_code.is_empty()
-                && reach
-                    .calls
-                    .iter()
-                    .all(|callee| holds.get(callee.as_str()).copied().unwrap_or(false))
-        })
-        .map(|(name, reach)| (name.clone(), reach.through_code.iter().cloned().collect()))
-        .collect();
-
-    for (name, holds) in holds.clone() {
+    for (name, holds) in &holds {
         if !holds {
             continue;
         }
@@ -393,38 +361,16 @@ pub fn infer(
     // on every build.
     let mut why: BTreeMap<String, Pause> = BTreeMap::new();
     for start in graph.keys().filter(|name| !holds[name.as_str()]) {
-        let mut came_from: BTreeMap<&str, &str> = BTreeMap::new();
-        let mut queue = std::collections::VecDeque::from([start.as_str()]);
-        let mut seen = BTreeSet::from([start.as_str()]);
-        while let Some(at) = queue.pop_front() {
-            let reach = &graph[at];
-            if reach.site.is_some() || reach.blocked {
-                let mut chain = vec![at.to_string()];
-                let mut back = at;
-                while let Some(previous) = came_from.get(back) {
-                    chain.push(previous.to_string());
-                    back = previous;
-                }
-                chain.reverse();
-                why.insert(
-                    start.clone(),
-                    Pause {
-                        chain,
-                        unit: reach.unit,
-                        site: reach.site.clone(),
-                    },
-                );
-                break;
-            }
-            for callee in &reach.calls {
-                if graph.contains_key(callee)
-                    && !holds[callee.as_str()]
-                    && seen.insert(callee.as_str())
-                {
-                    came_from.insert(callee.as_str(), at);
-                    queue.push_back(callee.as_str());
-                }
-            }
+        let chain = nikaia_std::tools::sync::pause_chain(&reached, &holds, start);
+        if let Some(reach) = chain.last().and_then(|at| graph.get(at)) {
+            why.insert(
+                start.clone(),
+                Pause {
+                    chain: chain.clone(),
+                    unit: reach.unit,
+                    site: reach.site.clone(),
+                },
+            );
         }
     }
     Noted { by_code, why }

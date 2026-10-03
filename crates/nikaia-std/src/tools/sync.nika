@@ -1,0 +1,130 @@
+// crates/nikaia-std/src/tools/sync.nika
+//
+// Which functions of a package keep their claim to be `sync` (ADR-027 D1) -
+// the fixpoint the compiler's `contracts::sync` runs over the calls it
+// collected, moved from Rust (ADR-250, #125). Collecting the calls out of the
+// bodies, resolving them and writing the ledger stay Rust.
+//
+// The fixpoint is a **greatest** one: every candidate starts `sync` and loses
+// the claim on reaching a function without it, until nothing changes. Mutual
+// recursion between pure functions keeps the claim; the walk is over a map in
+// key order, so the answer does not depend on the order things were declared.
+
+use std::collections
+
+/// What one function's body does to its own claim, as the walk found it.
+pub struct SyncReach {
+    /// It calls something that can pause, or something nothing can name.
+    pub blocked: bool,
+    /// The functions of this package it calls.
+    pub calls: collections::BTreeSet[String],
+    /// The code parameters that may pause and that it calls (ADR-244 D2).
+    pub through_code: collections::BTreeSet[String],
+    /// It pauses itself, at a statement of its own body (ADR-244 D5).
+    pub pauses_here: bool,
+}
+
+/// The functions that keep the claim. Starts optimistic, then takes the claim
+/// away from anything that reaches a function without it; a callee the graph
+/// does not hold is read as one that pauses.
+pub fn sync_holds(graph: ref collections::BTreeMap[String, SyncReach]) -> collections::BTreeMap[String, bool] {
+    let mut holds: collections::BTreeMap[String, bool] = collections::BTreeMap()
+    for (name, reach) in graph {
+        holds.insert(name.clone(), !reach.blocked && reach.through_code.len() == 0)
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, reach) in graph {
+            if !held(holds, name) {
+                continue
+            }
+            if reaches_one_that_pauses(reach.calls, holds) {
+                holds.insert(name.clone(), false)
+                changed = true
+            }
+        }
+    }
+    return holds
+}
+
+/// The functions that pause **only where their lambdas do** (ADR-244 D2):
+/// nothing they reach blocks, every function of the package they call holds,
+/// and they call a code parameter that may pause. By key, those parameters.
+pub fn paused_only_by_code(graph: ref collections::BTreeMap[String, SyncReach], holds: ref collections::BTreeMap[String, bool]) -> collections::BTreeMap[String, Vec[String]] {
+    let mut out: collections::BTreeMap[String, Vec[String]] = collections::BTreeMap()
+    for (name, reach) in graph {
+        if held(holds, name) || reach.blocked || reach.through_code.len() == 0 {
+            continue
+        }
+        if reaches_one_that_pauses(reach.calls, holds) {
+            continue
+        }
+        let mut parameters: Vec[String] = []
+        for parameter in reach.through_code {
+            parameters.push(parameter.clone())
+        }
+        out.insert(name.clone(), parameters)
+    }
+    return out
+}
+
+/// **Why a function that does not hold pauses** (ADR-244 D5): the shortest
+/// way through the package's calls, from `start` to a function that pauses
+/// itself or blocks. Breadth-first and in key order, so the answer is the same
+/// on every build; the last name is where the pause is. Empty where none is
+/// found.
+pub fn pause_chain(graph: ref collections::BTreeMap[String, SyncReach], holds: ref collections::BTreeMap[String, bool], start: ref String) -> Vec[String] {
+    let mut queue: Vec[String] = [start.clone()]
+    let mut came_from: collections::BTreeMap[String, String] = collections::BTreeMap()
+    let mut seen: collections::BTreeSet[String] = collections::BTreeSet()
+    seen.insert(start.clone())
+    let mut next = 0
+    while next < queue.len() {
+        let at = queue[next].clone()
+        next += 1
+        let reach = graph[at] ?? continue
+        if reach.pauses_here || reach.blocked {
+            return chain_back_to(came_from, at)
+        }
+        for callee in reach.calls {
+            if graph.contains_key(callee) && !held(holds, callee) && !seen.contains(callee) {
+                seen.insert(callee.clone())
+                came_from.insert(callee.clone(), at.clone())
+                queue.push(callee.clone())
+            }
+        }
+    }
+    return []
+}
+
+// The names from the start to `at`, following where each was reached from.
+fn chain_back_to(came_from: ref collections::BTreeMap[String, String], at: ref String) -> Vec[String] {
+    let mut backwards: Vec[String] = [at.clone()]
+    let mut back = at.clone()
+    while came_from.contains_key(back) {
+        back = came_from[back]?.clone() ?? ""
+        backwards.push(back.clone())
+    }
+    let mut chain: Vec[String] = []
+    let mut i = backwards.len()
+    while i > 0 {
+        i -= 1
+        chain.push(backwards[i].clone())
+    }
+    return chain
+}
+
+// Whether a name keeps the claim; one the map does not hold does not.
+fn held(holds: ref collections::BTreeMap[String, bool], name: ref String) -> bool {
+    return holds[name] ?? false
+}
+
+fn reaches_one_that_pauses(calls: ref collections::BTreeSet[String], holds: ref collections::BTreeMap[String, bool]) -> bool {
+    for callee in calls {
+        if !held(holds, callee) {
+            return true
+        }
+    }
+    return false
+}
