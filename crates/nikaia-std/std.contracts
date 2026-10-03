@@ -2165,6 +2165,19 @@ sync = true
 touches = []
 signature = "(self: ref String) -> String"
 
+# The same text with every place `from` stands replaced by `to`, as owned
+# text.
+#
+# Each match is replaced once, from the start, and what a replacement writes
+# is not searched again. Undescribed, `value.replace(…)` was a method nothing
+# described, and every function around it was taken to pause (found moving
+# the ledger's writer into Nikaia, #125).
+[fn."str::replace"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref String, from: ref String, to: ref String) -> String"
+
 # The same text with every character in upper case, as new text.
 #
 # It follows Unicode rather than ASCII.
