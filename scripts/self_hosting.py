@@ -71,6 +71,7 @@ COMPILER_NIKA = {
     "modules.nika": "modules: the names a file declares, and the refusal for a `use` that names a path, a name twice, or a package the file cannot reach (0.0.379)",
     "tiers.nika": "text_tiers: what a method's name says about the text it hands back, and which containers text is followed into (0.0.383)",
     "lends.nika": "contracts::keeps: whether a callee lends a parameter, whether a ledger says a type copies, and whether a value moves (0.0.384)",
+    "assets.nika": "assets: why a read at build time is refused and the way out, the allowlist's lines, a path that leaves the root, the entries nothing read (0.0.389)",
 }
 
 
