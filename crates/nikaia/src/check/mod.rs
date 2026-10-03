@@ -1218,6 +1218,7 @@ fn walked<'a>(
         own,
         library,
         structs: BTreeMap::new(),
+        copies_in_the_package: BTreeSet::new(),
         enums: BTreeMap::new(),
         enum_payloads: BTreeMap::new(),
         variant_parts: BTreeMap::new(),
@@ -2670,6 +2671,10 @@ struct Checker<'a> {
     /// stand somewhere else - so the unit that writes the copies asks the
     /// others. Without this flag that question asks itself back.
     harvesting: bool,
+    /// **Every type of the package that copies**, this file's and the ones
+    /// beside it (`collect_copies`): what a view of a value is read as, where
+    /// `Checked::copies` is what this file derives `Copy` for.
+    copies_in_the_package: BTreeSet<String>,
     /// `Shape::Spot` → `Shape`, for every variant that carries **named**
     /// fields — the ones a struct literal builds.
     ///
@@ -3652,7 +3657,7 @@ impl<'a> Checker<'a> {
         copies_as_a_view(ty)
             || matches!(ty, Ty::Named { name, args, view: true }
                 if args.is_empty()
-                    && (self.checked.copies.contains(name)
+                    && (self.copies_in_the_package.contains(name)
                         || self.library.types.get(name).is_some_and(|contract| contract.copies)))
     }
 
@@ -3679,24 +3684,87 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
+        // **And every type another file of the package declares**
+        // (ADR-047 D1): whether `Count` from `ty.nika` copies is the same
+        // answer in `sharing.nika`, and each file decides it alike because
+        // each asks over the whole package. Asked only here; what this unit
+        // derives `Copy` for is still its own (found moving the compiler's
+        // `sharing` into Nikaia, #125).
+        let beside: Vec<String> = self
+            .beside
+            .iter()
+            .filter(|other| !std::ptr::eq(**other, self.parsed))
+            .flat_map(|other| {
+                other
+                    .program
+                    .items
+                    .iter()
+                    .filter_map(|item| match &item.node {
+                        Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                            Some(other.text(*name).to_string())
+                        }
+                        _ => None,
+                    })
+            })
+            .filter(|name| !declared.contains(name))
+            .collect();
+        let package: Vec<String> = declared.iter().chain(&beside).cloned().collect();
+        // What each type beside is made of, read off its declaration: the
+        // fields of a struct, every payload of an enum's variants.
+        let mut beside_parts: BTreeMap<String, Vec<Ty>> = BTreeMap::new();
+        for other in self.beside {
+            if std::ptr::eq(*other, self.parsed) {
+                continue;
+            }
+            for item in &other.program.items {
+                let (name, parts): (String, Vec<Ty>) = match &item.node {
+                    Item::Struct {
+                        name,
+                        generics,
+                        fields,
+                        ..
+                    } if generics.is_empty() => (
+                        other.text(*name).to_string(),
+                        fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect(),
+                    ),
+                    Item::Enum { name, variants, .. } => (
+                        other.text(*name).to_string(),
+                        variants
+                            .iter()
+                            .flat_map(|v| match &v.fields {
+                                ast::VariantFields::Unit => Vec::new(),
+                                ast::VariantFields::Tuple(types) => {
+                                    types.iter().map(|ty| Ty::from_ast(other, ty)).collect()
+                                }
+                                ast::VariantFields::Named(fields) => {
+                                    fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect()
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => continue,
+                };
+                beside_parts.entry(name).or_insert(parts);
+            }
+        }
         // **A type the program writes a `Drop` for** is not one either, for
         // the reason a cleanup is not: Part I's `FileHandle { fd: i32 }` is a
         // struct of one number with `impl Drop`, and `rustc` refuses `Copy`
         // beside it (E0184).
-        let dropped: BTreeSet<String> = self
-            .parsed
-            .program
-            .items
-            .iter()
-            .filter_map(|item| match &item.node {
-                Item::Impl {
-                    trait_name: Some(name),
-                    target,
-                    ..
-                } if self.parsed.text(*name) == "Drop" => {
-                    Some(self.parsed.text(target.name).to_string())
-                }
-                _ => None,
+        let dropped: BTreeSet<String> = std::iter::once(self.parsed)
+            .chain(self.beside.iter().copied())
+            .flat_map(|unit| {
+                unit.program
+                    .items
+                    .iter()
+                    .filter_map(|item| match &item.node {
+                        Item::Impl {
+                            trait_name: Some(name),
+                            target,
+                            ..
+                        } if unit.text(*name) == "Drop" => Some(unit.text(target.name).to_string()),
+                        _ => None,
+                    })
             })
             .collect();
         // **A described Rust type that says it copies** is a part that copies
@@ -3711,18 +3779,24 @@ impl<'a> Checker<'a> {
             .map(|(name, _)| name.clone())
             .collect();
         loop {
-            let joining: Vec<String> = declared
+            let joining: Vec<String> = package
                 .iter()
                 .filter(|name| !copies.contains(*name))
                 .filter(|name| {
-                    let parts: Vec<Ty> = match self.enum_payloads.get(*name) {
-                        Some(held) => held.clone(),
-                        None => match self.structs.get(*name) {
+                    let parts: Vec<Ty> = match (
+                        declared.contains(*name),
+                        self.enum_payloads.get(*name),
+                        beside_parts.get(*name),
+                    ) {
+                        (true, Some(held), _) => held.clone(),
+                        (true, None, _) => match self.structs.get(*name) {
                             Some(fields) => fields.iter().map(|f| f.ty.clone()).collect(),
                             // Neither a struct nor an enum this unit knows
                             // the parts of: nothing is claimed.
                             None => return false,
                         },
+                        (false, _, Some(parts)) => parts.clone(),
+                        (false, _, None) => return false,
                     };
                     // **Never a type with a cleanup** (ADR-239 D1): its
                     // cleanup is a `Drop` below, and a copied value would run
@@ -3745,7 +3819,13 @@ impl<'a> Checker<'a> {
             copies.extend(joining);
         }
         // What the emitter derives `Copy` for: the program's own types. A
-        // described one was a part here, and its derive is its crate's.
+        // described one was a part here, and its derive is its crate's; one
+        // beside is its own file's.
+        self.copies_in_the_package = copies
+            .iter()
+            .filter(|name| package.contains(name))
+            .cloned()
+            .collect();
         self.checked.copies = copies
             .into_iter()
             .filter(|name| declared.contains(name))
@@ -6004,6 +6084,39 @@ impl<'a> Checker<'a> {
     /// arithmetic; this is the same reading for a comparison. Recorded only
     /// where the other side is known and is not a view, so two views still
     /// compare as they are.
+    /// **A `T?` compared with a `T`** (`NK1102`, Part I 2.3): the two sides
+    /// disagree, and the language below said *expected `Option<i64>`, found
+    /// `i64`* about a file nobody wrote (found moving `sharing` into Nikaia,
+    /// #125). A `T?` is a type of its own, read with `??` or `?.`; `x == null`
+    /// is the one comparison it takes with something that is not one. Asked
+    /// only where both sides are known (C.4).
+    fn a_maybe_compared_with_a_value(&mut self, left: &Ty, right: &Ty, span: &Span) {
+        let known_maybe = |ty: &Ty| matches!(ty, Ty::Nullable(inner) if !inner.is_unknown());
+        let known_value = |ty: &Ty| !ty.is_unknown() && !matches!(ty, Ty::Nullable(_));
+        let (maybe, value) = match (left, right) {
+            (maybe, value) if known_maybe(maybe) && known_value(value) => (maybe, value),
+            (value, maybe) if known_maybe(maybe) && known_value(value) => (maybe, value),
+            _ => return,
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1102",
+            message: format!("This compares `{maybe}` with `{value}`."),
+            notes: vec![
+                "A `T?` is a type of its own (Part I 2.3): it is read with `??` or `?.`, and \
+                 compared with nothing but `null` or another `T?`."
+                    .to_string(),
+            ],
+            help: Some(
+                "Say what an absent value compares as, `(x ?? fallback) == y`, or ask `x != null` \
+                 first."
+                    .to_string(),
+            ),
+            labels: Vec::new(),
+        });
+    }
+
     fn a_view_compared_with_a_value(
         &mut self,
         lhs: &Expr,
@@ -11617,10 +11730,14 @@ impl<'a> Checker<'a> {
                         if !asks_for_null {
                             self.a_type_that_does_not_compare(&left, &right, at);
                         }
+                        if !asks_for_null {
+                            self.a_maybe_compared_with_a_value(&left, &right, span);
+                        }
                         self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }
                     BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                        self.a_maybe_compared_with_a_value(&left, &right, span);
                         self.a_view_compared_with_a_value(lhs, &left, rhs, &right, at);
                         Ty::named("bool")
                     }
@@ -12701,6 +12818,9 @@ impl<'a> Checker<'a> {
             || *held == Ty::named(crate::contracts::ty::TEXT)
             || !matches!(held, Ty::Named { .. })
             || !crate::contracts::keeps::moves(held)
+            // **A type of the package that copies** is read out of the map as
+            // a number is (`collect_copies`).
+            || matches!(held, Ty::Named { name, .. } if self.copies_in_the_package.contains(name))
         {
             return;
         }
@@ -14217,7 +14337,7 @@ impl<'a> Checker<'a> {
             && viewed_args == args
             && !matches!(ty::base(name), "String" | "str")
             && !self.copied(want)
-            && !self.checked.copies.contains(name)
+            && !self.copies_in_the_package.contains(name)
     }
 
     /// The refusal [`Checker::a_view_of_what_does_not_copy`] answers with.
@@ -18240,9 +18360,31 @@ impl<'a> Checker<'a> {
                 || matches!(arm, Some(Expr::Unary { op: crate::ast::UnaryOp::Neg, expr })
                     if matches!(&**expr, Expr::LitInt { .. } | Expr::LitFloat(_)))
         };
+        // **And a text literal takes `String` where its neighbours are text
+        // of their own** (ADR-207 D2, as [`Checker::arms_meet_at_text`]
+        // reads it): `match e { A => "a", B => kind(b), C => null }` into a
+        // `String?` is one `T?`, where the literal's view kept the arms apart
+        // and the language below said *`match` arms have incompatible types*
+        // (found moving `sharing` into Nikaia, #125). A view arm that is not
+        // a literal keeps the disagreement.
+        let a_text_literal = |arm: &Option<&Expr>| matches!(arm, Some(Expr::LitStr { .. }));
+        let text = Ty::named("String");
+        let owned_beside = arms.iter().any(|(arm, ty)| {
+            (!a_text_literal(arm) && matches!(ty, Ty::Nullable(inner) if **inner == text))
+                || *ty == text
+        });
+        let literals_own = owned_beside
+            || arms
+                .iter()
+                .all(|(arm, _)| is_null(arm) || a_text_literal(arm));
         let mut plain: Option<Ty> = None;
+        let mut literals = false;
         for (arm, ty) in arms.iter().filter(|(arm, _)| !is_null(arm)) {
             if a_number(arm) {
+                continue;
+            }
+            if literals_own && a_text_literal(arm) {
+                literals = true;
                 continue;
             }
             let inner = match ty {
@@ -18258,11 +18400,21 @@ impl<'a> Checker<'a> {
                 Some(_) => return None,
             }
         }
+        if literals {
+            match &plain {
+                None => plain = Some(text.clone()),
+                Some(seen) if *seen == text => {}
+                Some(_) => return None,
+            }
+        }
         for (arm, ty) in arms {
             if let Some(arm) = arm
                 && !matches!(ty, Ty::Nullable(_))
                 && !matches!(arm, Expr::LitNull)
             {
+                if literals && a_text_literal(&Some(*arm)) {
+                    self.text_literal(&text, arm, true);
+                }
                 self.checked.some_tails.insert(*arm as *const Expr as usize);
             }
         }

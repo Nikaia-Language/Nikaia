@@ -1197,3 +1197,68 @@ fn a_large_literal_in_a_list_of_u32_is_a_u32() {
         "4294967295 7\n",
     );
 }
+
+/// **Text literals beside a `String?` call and `null` meet at `String?`**
+/// (0.0.375): the literal arms stayed views, the call's arm was text of its
+/// own, and `rustc` said *`match` arms have incompatible types*; a `match` of
+/// literals and `null` alone was refused as a view returned for a `String`.
+/// Found moving `sharing` into Nikaia (#125).
+#[test]
+fn text_literals_beside_a_nullable_call_in_a_match() {
+    runs(
+        "nullable-text-arms",
+        "enum E {\n\
+         \x20   Text(String),\n\
+         \x20   Neg(E),\n\
+         \x20   Other,\n\
+         }\n\
+         fn kind(e: ref E) -> String? {\n\
+         \x20   return match e {\n\
+         \x20       E::Text(_) => \"String\",\n\
+         \x20       E::Neg(inner) => kind(inner),\n\
+         \x20       E::Other => null,\n\
+         \x20   }\n\
+         }\n\
+         fn named(x: i64) -> String? {\n\
+         \x20   return match x { 0 => \"zero\", 1 => \"one\", else => null }\n\
+         }\n\
+         fn main() {\n\
+         \x20   println(f\"{kind(E::Neg(E::Text(\"x\"))) ?? \"-\"} {kind(E::Other) ?? \"-\"} {named(1) ?? \"-\"} {named(2) ?? \"-\"}\")\n\
+         }\n",
+        "String - one -\n",
+    );
+}
+
+/// **A `T?` compared with a `T` is refused** (`NK1102`, 0.0.375): it reached
+/// the language below as *expected `Option<i64>`, found `i64`*. Found moving
+/// `sharing` into Nikaia (#125).
+#[test]
+fn a_maybe_compared_with_a_value_is_refused() {
+    let found = findings(
+        "fn same(at: i64?, now: i64) -> bool {\n\
+         \x20   return at == now\n\
+         }\n\
+         fn after(at: ref String?, now: ref String) -> bool {\n\
+         \x20   return at != now\n\
+         }\n\
+         fn main() {\n\
+         \x20   println(f\"{same(3, 3)} {after(null, \"a\")}\")\n\
+         }\n",
+    );
+    let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["NK1102", "NK1102"], "{found:#?}");
+    assert!(found[0].message.contains("`i64?` with `i64`"), "{found:#?}");
+    // `null` and another `T?` are what a `T?` compares with.
+    let found = findings(
+        "fn absent(at: i64?) -> bool {\n\
+         \x20   return at == null\n\
+         }\n\
+         fn same(a: i64?, b: i64?) -> bool {\n\
+         \x20   return a == b\n\
+         }\n\
+         fn main() {\n\
+         \x20   println(f\"{absent(null)} {same(1, 1)}\")\n\
+         }\n",
+    );
+    assert!(found.is_empty(), "{found:#?}");
+}

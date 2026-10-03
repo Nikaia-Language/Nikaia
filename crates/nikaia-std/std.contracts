@@ -1193,6 +1193,14 @@ sync = true
 touches = []
 signature = "[K, V](self: ref collections::BTreeMap[K, V], key: ?) -> bool"
 
+# The keys, one at a time, in their order (#125: without an entry a
+# `.keys()` resolved to nothing and read as a call that may pause).
+[fn."collections::BTreeMap::keys"]
+pub = true
+sync = true
+touches = []
+signature = "[K, V](self: ref collections::BTreeMap[K, V]) -> Seq[ref K] sync sized"
+
 # How many pairs the map holds.
 [fn."collections::BTreeMap::len"]
 pub = true

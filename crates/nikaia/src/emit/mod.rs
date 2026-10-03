@@ -5396,7 +5396,7 @@ impl<'p> Emitter<'p> {
     /// its own, and nothing about the emitted file needs them shortened.
     fn written_name(&self, name: &str, count: crate::contracts::sharing::Count) -> String {
         match name {
-            SHARED => crate::contracts::sharing::rust_name(count).to_string(),
+            SHARED => crate::contracts::sharing::rust_name(count),
             // **The same question, the same answer**
             // ([ADR-057](../../../docs/specification/adr/adr-057.md) D3): a lock
             // is only reachable from two places through a shared handle, so the
@@ -5412,8 +5412,7 @@ impl<'p> Emitter<'p> {
             LOCKED => crate::contracts::sharing::lock_name(match self.build.user_parallelism {
                 UserParallelism::No => crate::contracts::sharing::Count::Plain,
                 UserParallelism::Yes => count,
-            })
-            .to_string(),
+            }),
             // `unaliased`, for the reason [`Emitter::path`] gives: a type may be
             // written with this file's own name for the package that declares it
             // ([ADR-046](../../../docs/specification/adr/adr-046.md) D3).

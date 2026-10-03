@@ -723,8 +723,13 @@ fn a_sharing_line_that_says_nothing_meaningful_is_refused() {
 /// remedy is a row D8 has not answered.
 #[test]
 fn every_fallback_is_enumerated_with_a_remedy() {
-    assert_eq!(Fallback::ALL.len(), 7, "{:?}", Fallback::ALL);
-    for fallback in Fallback::ALL {
+    assert_eq!(
+        sharing::every_fallback().len(),
+        7,
+        "{:?}",
+        sharing::every_fallback()
+    );
+    for fallback in sharing::every_fallback() {
         assert!(!fallback.as_str().is_empty(), "{fallback:?}");
         assert!(!fallback.remedy().is_empty(), "{fallback:?}");
     }
@@ -744,9 +749,9 @@ fn every_fallback_is_enumerated_with_a_remedy() {
          fn lokal(hits: Shared[i64]) -> i64 { 1 }",
     );
     let report = sharing::report(&parsed, &own, &library, true);
-    for fallback in Fallback::ALL {
+    for fallback in sharing::every_fallback() {
         assert!(
-            report.contains(fallback.as_str()),
+            report.contains(&fallback.as_str()),
             "{fallback:?} in:\n{report}"
         );
     }
