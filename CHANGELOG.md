@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.397] — 2026-10-03
+
+**What a body reaches is walked in Nikaia** (#125, ADR-294). The walk
+`contracts::touch` runs before its fixpoint moved into `tools/touch.nika`
+(ADR-288 D22): every function, method and `pub` grammar rule of a unit - a
+rule over every action of its grammar (ADR-296 D24) - the calls by name each
+goes to by `callee_named`, the type checker's method calls merged in, a
+described callee's touch set taken over unless it names a parameter, and a
+`spawn`, a `dsl` statement or an unnamed call leaving the claim unknown
+(ADR-292 D3). Writing the answer, only where nobody said and in the order a
+set is kept, stays Rust; the touch and overlap suites pass unchanged.
+
+Moving it found one gap, closed in the compiler (ADR-294 D3): **an `else if`
+lends its arguments as an `if` does.** The condition is a statement of the
+`else` block, and the checker records the `&` it owes under that statement;
+the emitter wrote the chain under the outer `if`'s, so `else if !has(r.items,
+x)` handed a `Vec` to a slice parameter - `rustc`'s words about a file nobody
+wrote.
+
+The walks of `throws` and `touch` take their graph as one record with the
+type checker's method calls in it, which keeps every lowered function within
+seven arguments - the clippy bound CI holds the tools package to. 20.4 % of
+the toolchain is Nikaia.
+
 ## [0.0.396] — 2026-10-03
 
 **Which errors leave a function is gathered in Nikaia** (#125, ADR-294). The
@@ -15,7 +39,7 @@ in the package it calls, merged with the type checker's method calls
 brings what its ledger says it fails with, and one no ledger carries, or a
 call that did not resolve, is `?` (ADR-010 D1). What one expression reaches is
 `sync`'s answer and stays Rust, handed in; so does writing the ledger. The
-contracts and error suites pass unchanged. 20.2 % of the toolchain is Nikaia.
+contracts and error suites pass unchanged.
 
 ## [0.0.395] — 2026-10-03
 

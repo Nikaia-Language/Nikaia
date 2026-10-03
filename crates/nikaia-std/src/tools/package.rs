@@ -8162,15 +8162,21 @@ pub struct MethodsCalled {
     pub unseen: bool,
 }
 
-pub fn unit_throws(program: &Program, names: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, contribution_of: &impl Fn(&Expr) -> Contribution, method_calls: &collections::BTreeMap<String, MethodsCalled>, own: &Ledger, library: &Ledger, direct: &mut collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &mut collections::BTreeMap<String, collections::BTreeSet<String>>) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThrowsGraph {
+    pub methods: collections::BTreeMap<String, MethodsCalled>,
+    pub direct: collections::BTreeMap<String, collections::BTreeSet<String>>,
+    pub calls: collections::BTreeMap<String, collections::BTreeSet<String>>,
+}
+
+pub fn unit_throws(program: &Program, names: &winnow_grammar::InternerContext, holes_of: &impl Fn(&Expr) -> Vec<Expr>, contribution_of: &impl Fn(&Expr) -> Contribution, own: &Ledger, library: &Ledger, graph: &mut ThrowsGraph) {
     for item in program.items.iter() {
         match &item.node {
             Item::Fn { name, body, can_throw, .. } => {
                 let can_throw = *can_throw; let name = *name;
                 if can_throw {
                     let thrown = thrown_by(body, names, holes_of, contribution_of);
-                    let key = key_of_function((name).as_ref(), "", names);
-                    with_methods(&key, &thrown, *nikaia_std::index::get(&method_calls, &key), own, library, direct, calls);
+                    with_methods(&key_of_function((name).as_ref(), "", names), &thrown, own, library, graph);
                 }
             },
             Item::Impl { target, methods, .. } => {
@@ -8181,8 +8187,7 @@ pub fn unit_throws(program: &Program, names: &winnow_grammar::InternerContext, h
                             let can_throw = *can_throw; let name = *name;
                             if can_throw {
                                 let thrown = thrown_by(body, names, holes_of, contribution_of);
-                                let key = key_of_function((name).as_ref(), &owner, names);
-                                with_methods(&key, &thrown, *nikaia_std::index::get(&method_calls, &key), own, library, direct, calls);
+                                with_methods(&key_of_function((name).as_ref(), &owner, names), &thrown, own, library, graph);
                             }
                         },
                         _ => { },
@@ -8194,12 +8199,12 @@ pub fn unit_throws(program: &Program, names: &winnow_grammar::InternerContext, h
     }
 }
 
-fn with_methods(key: &str, thrown: &Thrown, resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, direct: &mut collections::BTreeMap<String, collections::BTreeSet<String>>, calls: &mut collections::BTreeMap<String, collections::BTreeSet<String>>) {
+fn with_methods(key: &str, thrown: &Thrown, own: &Ledger, library: &Ledger, graph: &mut ThrowsGraph) {
     let mut named = thrown.direct.to_owned();
     let mut called = thrown.calls.to_owned();
-    methods_into(resolved, own, library, &mut named, &mut called);
-    direct.insert(key.to_owned(), named);
-    calls.insert(key.to_owned(), called);
+    methods_into(*nikaia_std::index::get(&graph.methods, key), own, library, &mut named, &mut called);
+    graph.direct.insert(key.to_owned(), named);
+    graph.calls.insert(key.to_owned(), called);
 }
 
 fn methods_into(resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, named: &mut collections::BTreeSet<String>, called: &mut collections::BTreeSet<String>) {
@@ -8645,6 +8650,130 @@ pub fn touches_of(unknown: &collections::BTreeMap<String, bool>, outside: &colle
         settled.insert(name.to_owned(), found);
     }
     settled
+}
+
+#[derive(Debug, Clone)]
+pub struct Reach {
+    pub unknown: bool,
+    pub outside: Vec<Touch>,
+    pub calls: collections::BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TouchGraph {
+    pub methods: collections::BTreeMap<String, MethodsCalled>,
+    pub reaches: collections::BTreeMap<String, Reach>,
+}
+
+pub fn unit_touches(program: &Program, names: &winnow_grammar::InternerContext, unaliased: &impl Fn(&str) -> String, holes_of: &impl Fn(&Expr) -> Vec<Expr>, own: &Ledger, library: &Ledger, graph: &mut TouchGraph) {
+    for item in program.items.iter() {
+        match &item.node {
+            Item::Fn { name, body, .. } => {
+                let name = *name;
+                let key = key_of_function((name).as_ref(), "", names);
+                let mut reach = Reach { unknown: false, outside: vec![], calls: collections::BTreeSet::new() };
+                reached_by(&seen_in(body, names, unaliased, holes_of, &no_root, false), program, names, own, library, &mut reach);
+                methods_reach(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut reach);
+                graph.reaches.insert(key, reach);
+            },
+            Item::Impl { target, methods, .. } => {
+                let owner = names.resolve(target.name).to_owned();
+                for method in methods.iter() {
+                    match &method.node {
+                        Item::Fn { name, body, .. } => {
+                            let name = *name;
+                            let key = key_of_function((name).as_ref(), &owner, names);
+                            let mut reach = Reach { unknown: false, outside: vec![], calls: collections::BTreeSet::new() };
+                            reached_by(&seen_in(body, names, unaliased, holes_of, &no_root, false), program, names, own, library, &mut reach);
+                            methods_reach(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut reach);
+                            graph.reaches.insert(key, reach);
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            Item::Grammar(def) => {
+                let mut whole = Reach { unknown: false, outside: vec![], calls: collections::BTreeSet::new() };
+                for rule in def.rules.iter() {
+                    for alt in rule.alts.iter() {
+                        let action = match alt.action.as_ref() { Some(__nikaia_value) => __nikaia_value, None => continue };
+                        reached_by(&seen_in(action, names, unaliased, holes_of, &no_root, false), program, names, own, library, &mut whole);
+                    }
+                }
+                rules_into(def, names, &whole, own, library, graph);
+            },
+            _ => { },
+        }
+    }
+}
+
+pub fn touches_of_graph(graph: &TouchGraph) -> collections::BTreeMap<String, Vec<Touch>> {
+    let mut unknown: collections::BTreeMap<String, bool> = collections::BTreeMap::new();
+    let mut outside: collections::BTreeMap<String, Vec<Touch>> = collections::BTreeMap::new();
+    let mut calls: collections::BTreeMap<String, collections::BTreeSet<String>> = collections::BTreeMap::new();
+    for (name, reach) in graph.reaches.iter() {
+        unknown.insert(name.to_owned(), reach.unknown);
+        outside.insert(name.to_owned(), reach.outside.to_owned());
+        calls.insert(name.to_owned(), reach.calls.to_owned());
+    }
+    touches_of(&unknown, &outside, &calls)
+}
+
+fn rules_into(def: &GrammarDef, names: &winnow_grammar::InternerContext, whole: &Reach, own: &Ledger, library: &Ledger, graph: &mut TouchGraph) {
+    let named = names.resolve(def.name).to_owned();
+    for rule in def.rules.iter() {
+        if !rule.is_public { continue; }
+        let key = format!("{}::{}", named, names.resolve(rule.name));
+        let mut reach = Reach { unknown: whole.unknown, outside: whole.outside.to_owned(), calls: whole.calls.to_owned() };
+        methods_reach(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut reach);
+        graph.reaches.insert(key, reach);
+    }
+}
+
+fn reached_by(seen: &[Seen], program: &Program, names: &winnow_grammar::InternerContext, own: &Ledger, library: &Ledger, reach: &mut Reach) {
+    for one in seen.iter() {
+        match one {
+            Seen::Call { name, .. } => reached_call((callee_named(names, name.to_owned(), own, library, &program.items)).as_ref(), library, reach),
+            Seen::Spawn { .. } => { reach.unknown = true; },
+            Seen::Opaque { .. } => { reach.unknown = true; },
+            _ => { },
+        }
+    }
+}
+
+fn reached_call(callee: Option<&Callee>, library: &Ledger, reach: &mut Reach) {
+    let known = match callee { Some(__nikaia_value) => __nikaia_value, None => return };
+    match known {
+        Callee::Own(name) => { reach.calls.insert(name.to_owned()); },
+        Callee::Library { key, .. } => absorb(*nikaia_std::index::get(&library.functions, key), reach),
+        Callee::Opaque(_) => { reach.unknown = true; },
+        _ => { },
+    }
+}
+
+fn methods_reach(resolved: Option<&MethodsCalled>, own: &Ledger, library: &Ledger, reach: &mut Reach) {
+    let known = match resolved { Some(__nikaia_value) => __nikaia_value, None => return };
+    if known.unseen { reach.unknown = true; }
+    for callee in known.resolved.iter() { if own.functions.contains_key(callee) { reach.calls.insert(callee.to_owned()); } else { absorb(*nikaia_std::index::get(&library.functions, callee), reach); } }
+}
+
+fn absorb(contract: Option<&FnContract>, reach: &mut Reach) {
+    if !touches_said(contract) {
+        reach.unknown = true;
+        return;
+    }
+    let known = match contract { Some(__nikaia_value) => __nikaia_value, None => return };
+    for touch in known.touches.iter() { if touch.parameter.is_some() { reach.unknown = true; } else if !holds_touch(&reach.outside, touch) { reach.outside.push(touch.clone()); } }
+}
+
+fn touches_said(contract: Option<&FnContract>) -> bool {
+    let known = match contract { Some(__nikaia_value) => __nikaia_value, None => return false };
+    known.touches_known
+}
+
+fn holds_touch(touches: &[Touch], touch: &Touch) -> bool {
+    for one in touches.iter() { if one.kind == touch.kind && one.write == touch.write { return true; } }
+    false
 }
 
 
@@ -11394,7 +11523,7 @@ pub mod threads {
 }
 pub mod throws {
     #[allow(unused_imports)]
-    pub use super::{MethodsCalled, unit_throws, error_sets, error_type, Thrown, Contribution, thrown_by};
+    pub use super::{MethodsCalled, ThrowsGraph, unit_throws, error_sets, error_type, Thrown, Contribution, thrown_by};
 }
 pub mod tiers {
     #[allow(unused_imports)]
@@ -11402,7 +11531,7 @@ pub mod tiers {
 }
 pub mod touch {
     #[allow(unused_imports)]
-    pub use super::{Reached, touches_of};
+    pub use super::{Reached, touches_of, Reach, TouchGraph, unit_touches, touches_of_graph};
 }
 pub mod traits {
     #[allow(unused_imports)]

@@ -486,3 +486,40 @@ fn push_str_takes_a_view_and_says_so() {
     assert_eq!(rust.matches("out.push_str(&name)").count(), 2, "{rust}");
     assert!(rust.contains("out.push_str(&format!("), "{rust}");
 }
+
+/// **An `else if` lends what an `if` lends**: the condition is a statement of
+/// the `else` block, and the checker records the `&` it owes under that
+/// statement. Written under the outer `if`'s, the reference was missing -
+/// `else if !has(r.items, x)` handed a `Vec` to a slice parameter (found
+/// moving `touch`'s walk into Nikaia, #125).
+#[test]
+fn an_else_if_lends_its_arguments_as_an_if_does() {
+    let source = "\
+struct R { items: Vec[i64], unknown: bool }
+fn has(xs: ref Vec[i64], x: i64) -> bool {
+    for one in xs {
+        if one == x {
+            return true
+        }
+    }
+    return false
+}
+fn add(given: ref Vec[i64], mut r: R) {
+    for x in given {
+        if x < 0 {
+            r.unknown = true
+        } else if !has(r.items, x) {
+            r.items.push(x)
+        }
+    }
+}
+fn main() {
+    let mut r = R { items: [], unknown: false }
+    add([1, 1, -2, 3], r)
+    println(f\"{r.items.len()} {r.unknown}\")
+}
+";
+    let lowered = lowered(source);
+    assert!(lowered.contains("else if !has(&r.items, x)"), "{lowered}");
+    assert_eq!(ran("else-if-lends", source), "2 true\n");
+}

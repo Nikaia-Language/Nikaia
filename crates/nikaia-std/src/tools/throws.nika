@@ -30,17 +30,25 @@ pub struct MethodsCalled {
     pub unseen: bool,
 }
 
+/// The graph the walk builds - what each `throws` function throws itself and
+/// whom in this package it calls - with the type checker's method calls by
+/// the key it files each body's answers under: one record, because every
+/// function of a unit reads the one and writes the others.
+pub struct ThrowsGraph {
+    pub methods: collections::BTreeMap[String, MethodsCalled],
+    pub direct: collections::BTreeMap[String, collections::BTreeSet[String]],
+    pub calls: collections::BTreeMap[String, collections::BTreeSet[String]],
+}
+
 /// Every `throws` function and method of one unit, by the key the ledger
-/// records it under, with what it throws itself and whom in this package it
-/// calls - into `direct` and `calls`, which `error_sets` takes.
-pub fn unit_throws(program: ref Program, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, method_calls: ref collections::BTreeMap[String, MethodsCalled], own: ref Ledger, library: ref Ledger, mut direct: collections::BTreeMap[String, collections::BTreeSet[String]], mut calls: collections::BTreeMap[String, collections::BTreeSet[String]]) {
+/// records it under, into `graph`, which `error_sets` takes.
+pub fn unit_throws(program: ref Program, names: ref winnow_grammar::InternerContext, holes_of: fn(ref Expr) -> Vec[Expr] sync, contribution_of: fn(ref Expr) -> Contribution sync, own: ref Ledger, library: ref Ledger, mut graph: ThrowsGraph) {
     for item in program.items {
         match item.node {
             Item::Fn { name, body, can_throw, .. } => {
                 if can_throw {
                     let thrown = thrown_by(body, names, holes_of, contribution_of)
-                    let key = key_of_function(name, "", names)
-                    with_methods(key, thrown, method_calls[key], own, library, direct, calls)
+                    with_methods(key_of_function(name, "", names), thrown, own, library, graph)
                 }
             }
             Item::Impl { target, methods, .. } => {
@@ -50,8 +58,7 @@ pub fn unit_throws(program: ref Program, names: ref winnow_grammar::InternerCont
                         Item::Fn { name, body, can_throw, .. } => {
                             if can_throw {
                                 let thrown = thrown_by(body, names, holes_of, contribution_of)
-                                let key = key_of_function(name, owner, names)
-                                with_methods(key, thrown, method_calls[key], own, library, direct, calls)
+                                with_methods(key_of_function(name, owner, names), thrown, own, library, graph)
                             }
                         }
                         else => {}
@@ -68,12 +75,12 @@ pub fn unit_throws(program: ref Program, names: ref winnow_grammar::InternerCont
 // and nothing else. A resolved callee of this package is a call; one of a
 // library brings what its ledger says it fails with; one no ledger carries
 // after all is `?`, as an unresolved one is.
-fn with_methods(key: ref String, thrown: ref Thrown, resolved: ref MethodsCalled?, own: ref Ledger, library: ref Ledger, mut direct: collections::BTreeMap[String, collections::BTreeSet[String]], mut calls: collections::BTreeMap[String, collections::BTreeSet[String]]) {
+fn with_methods(key: ref String, thrown: ref Thrown, own: ref Ledger, library: ref Ledger, mut graph: ThrowsGraph) {
     let mut named = thrown.direct.clone()
     let mut called = thrown.calls.clone()
-    methods_into(resolved, own, library, named, called)
-    direct.insert(key.clone(), named)
-    calls.insert(key.clone(), called)
+    methods_into(graph.methods[key], own, library, named, called)
+    graph.direct.insert(key.clone(), named)
+    graph.calls.insert(key.clone(), called)
 }
 
 fn methods_into(resolved: ref MethodsCalled?, own: ref Ledger, library: ref Ledger, mut named: collections::BTreeSet[String], mut called: collections::BTreeSet[String]) {

@@ -156,6 +156,79 @@ impl TouchOps for Touch {
 /// ledger, because `eprintln` genuinely does not write standard output.
 pub use nikaia_std::tools::touch::Reached;
 
+// --- what a body reaches (ADR-288 D22) ---------------------------------------
+
+use std::collections::BTreeMap;
+
+use crate::ast::Expr;
+use crate::check::MethodCalls;
+use crate::contracts::Ledger;
+use crate::parser::Parsed;
+use nikaia_std::tools::throws::MethodsCalled;
+use nikaia_std::tools::touch::{self as nika, TouchGraph};
+
+/// Give every function in the ledger the `touches` its body earns
+/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D22).
+///
+/// **The fourth derived column, and the one that was specified without one.**
+/// `sync`, `throws` and `sharing` are each read off a body over the call graph;
+/// `touches` was written with the same fail-closed polarity
+/// ([ADR-292](../../../../docs/specification/adr/adr-292.md) D3) and only ever
+/// hand-written in `std`'s ledger — so every function a `.nika` file declared
+/// said *"nobody said"*, which means *"it touches everything"*.
+///
+/// **The walk, the graph and the fixpoint are Nikaia** (`tools/touch.nika`,
+/// #125): the greatest fixpoint, for `sync::infer`'s reason, and a resource
+/// named by a parameter does not travel. What stays here is handing in each
+/// unit and the checker's method calls, and writing the answer - only where
+/// nobody said, in the order a set is kept.
+pub fn infer(
+    ledger: &mut Ledger,
+    units: &[&Parsed],
+    library: &Ledger,
+    resolved: &BTreeMap<String, MethodCalls>,
+) {
+    let mut graph = TouchGraph {
+        methods: resolved
+            .iter()
+            .map(|(key, calls)| {
+                let called = MethodsCalled {
+                    resolved: calls.resolved.clone(),
+                    unseen: calls.unresolved,
+                };
+                (key.clone(), called)
+            })
+            .collect(),
+        reaches: BTreeMap::new(),
+    };
+    for parsed in units.iter().copied() {
+        nika::unit_touches(
+            &parsed.program,
+            &parsed.interner,
+            &|name: &str| parsed.unaliased(name),
+            &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+            ledger,
+            library,
+            &mut graph,
+        );
+    }
+    for (name, touches) in nika::touches_of_graph(&graph) {
+        if let Some(contract) = ledger.functions.get_mut(&name) {
+            // **Only where nobody said.** A hand-written entry is what its
+            // author wrote, the way `sync::infer` leaves an assertion alone.
+            if !contract.touches_known {
+                // Kept and written in one order, and once each.
+                let found: BTreeMap<TouchKey, Touch> = touches
+                    .into_iter()
+                    .map(|touch| (order_of(&touch), touch))
+                    .collect();
+                contract.touches = found.into_values().collect();
+                contract.touches_known = true;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,254 +375,5 @@ mod tests {
         assert!(reached("file", Some("a.txt"), false).conflicts_with(&unknown));
         // Still not a conflict with another kind entirely.
         assert!(!unknown.conflicts_with(&reached("stdout", None, true)));
-    }
-}
-
-// --- what a body reaches (ADR-288 D22) ---------------------------------------
-
-use std::collections::{BTreeMap, BTreeSet};
-
-use crate::ast::Item;
-use crate::check::MethodCalls;
-// `Reached` is a name this file already has for something else, so the one
-// `sync` uses for a call site comes in as `Call`.
-use crate::contracts::Ledger;
-use crate::parser::Parsed;
-
-/// What one function's body reaches, before the fixpoint joins it up.
-#[derive(Clone, Default)]
-struct Reach {
-    /// Something it calls is not accounted for: a name no ledger knows, a
-    /// construct that runs something, or a described callee whose own touch set
-    /// is *"nobody said"*. The claim is off and no fixpoint brings it back.
-    unknown: bool,
-    /// What it reaches directly, through callees a library describes.
-    outside: BTreeMap<TouchKey, Touch>,
-    /// The functions in this **package** it calls — every unit of it, since
-    /// [ADR-100](../../../docs/specification/adr/adr-100.md) D2. Its claim holds
-    /// only while theirs do.
-    calls: BTreeSet<String>,
-}
-
-/// Give every function in the ledger the `touches` its body earns
-/// ([ADR-288](../../../../docs/specification/adr/adr-288.md) D22).
-///
-/// **The fourth derived column, and the one that was specified without one.**
-/// `sync`, `throws` and `sharing` are each read off a body over the call graph;
-/// `touches` was written with the same fail-closed polarity
-/// ([ADR-292](../../../../docs/specification/adr/adr-292.md) D3) and only ever
-/// hand-written in `std`'s ledger — so every function a `.nika` file declared
-/// said *"nobody said"*, which means *"it touches everything"*. Safe, and
-/// useless: the walk stopped at the first call out of `std`.
-///
-/// The fixpoint is the greatest one, for `sync::infer`'s reason: start from
-/// "every function touches nothing", and take the claim away from anything that
-/// reaches one without it. Mutual recursion between two functions that touch
-/// nothing keeps the claim, which is right.
-///
-/// **A resource named by a parameter does not travel.** `fs::read` touches
-/// `file(path)`, and `path` is *its* parameter: a caller's argument may be a
-/// literal, or a parameter of its own under another name, and mapping one to the
-/// other is a piece of work of its own. Until it is done, a callee whose touch
-/// names a parameter leaves the caller unknown — conservative in the direction
-/// this column is conservative in.
-pub fn infer(
-    ledger: &mut Ledger,
-    units: &[&Parsed],
-    library: &Ledger,
-    resolved: &BTreeMap<String, MethodCalls>,
-) {
-    let mut graph: BTreeMap<String, Reach> = BTreeMap::new();
-    for parsed in units.iter().copied() {
-        for item in &parsed.program.items {
-            match &item.node {
-                Item::Fn { .. } => {
-                    if let Some((name, reach)) =
-                        reach_of(parsed, &item.node, None, ledger, library, resolved)
-                    {
-                        graph.insert(name, reach);
-                    }
-                }
-                Item::Impl {
-                    target, methods, ..
-                } => {
-                    let target = parsed.text(target.name).to_string();
-                    for method in methods {
-                        if let Some((name, reach)) = reach_of(
-                            parsed,
-                            &method.node,
-                            Some(&target),
-                            ledger,
-                            library,
-                            resolved,
-                        ) {
-                            graph.insert(name, reach);
-                        }
-                    }
-                }
-                // **A `pub` rule is an entry, so it gets the walk too**
-                // ([ADR-296](../../../docs/specification/adr/adr-296.md) D24,
-                // [ADR-186](../../../docs/specification/adr/adr-186.md)). Its
-                // body is every **action block**
-                // in the grammar: a rule's pattern names other rules of the same
-                // grammar and their actions run with it, and which ones is the
-                // parser backend's question rather than this walk's — so the
-                // grammar is the unit, which is the over-approximation ADR-292
-                // D4 asks for in this column.
-                Item::Grammar(def) => {
-                    let named = parsed.text(def.name).to_string();
-                    let mut whole = Reach::default();
-                    for rule in &def.rules {
-                        for alt in &rule.alts {
-                            if let Some(action) = &alt.action {
-                                collect(parsed, action, ledger, library, &mut whole);
-                            }
-                        }
-                    }
-                    for rule in def.rules.iter().filter(|r| r.is_public) {
-                        let key = format!("{named}::{}", parsed.text(rule.name));
-                        let mut reach = whole.clone();
-                        // The method calls the type checker resolved, under the
-                        // key it files a rule's answers under.
-                        if let Some(methods) = resolved.get(&key) {
-                            reach.unknown |= methods.unresolved;
-                            for callee in &methods.resolved {
-                                if ledger.functions.contains_key(callee) {
-                                    reach.calls.insert(callee.clone());
-                                } else {
-                                    absorb(library.functions.get(callee), &mut reach);
-                                }
-                            }
-                        }
-                        graph.insert(key, reach);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // **The fixpoint is Nikaia** (`tools/touch.nika`, #125): start
-    // optimistic, take the claim away until nothing changes, and give every
-    // function whose claim holds the union of what its reachable graph
-    // touches.
-    let unknown: BTreeMap<String, bool> = graph
-        .iter()
-        .map(|(name, reach)| (name.clone(), reach.unknown))
-        .collect();
-    let outside: BTreeMap<String, Vec<Touch>> = graph
-        .iter()
-        .map(|(name, reach)| (name.clone(), reach.outside.values().cloned().collect()))
-        .collect();
-    let calls: BTreeMap<String, BTreeSet<String>> = graph
-        .into_iter()
-        .map(|(name, reach)| (name, reach.calls))
-        .collect();
-    for (name, touches) in nikaia_std::tools::touch::touches_of(&unknown, &outside, &calls) {
-        if let Some(contract) = ledger.functions.get_mut(&name) {
-            // **Only where nobody said.** A hand-written entry is what its
-            // author wrote, the way `sync::infer` leaves an assertion alone.
-            if !contract.touches_known {
-                // Kept and written in one order, and once each.
-                let found: BTreeMap<TouchKey, Touch> = touches
-                    .into_iter()
-                    .map(|touch| (order_of(&touch), touch))
-                    .collect();
-                contract.touches = found.into_values().collect();
-                contract.touches_known = true;
-            }
-        }
-    }
-}
-
-/// One function's reach, by the key the ledger records it under.
-fn reach_of(
-    parsed: &Parsed,
-    item: &Item,
-    target: Option<&str>,
-    own: &Ledger,
-    library: &Ledger,
-    resolved: &BTreeMap<String, MethodCalls>,
-) -> Option<(String, Reach)> {
-    let Item::Fn { name, body, .. } = item else {
-        return None;
-    };
-    let own_name = match name {
-        Some(name) => parsed.text(*name).to_string(),
-        None => "new".to_string(),
-    };
-    let key = match target {
-        Some(target) => format!("{target}::{own_name}"),
-        None => own_name,
-    };
-
-    let mut reach = Reach::default();
-    collect(parsed, body, own, library, &mut reach);
-
-    // The method calls the type checker resolved, which this walk cannot
-    // (ADR-288) - the same hand-over `sync::infer` takes.
-    if let Some(methods) = resolved.get(&key) {
-        reach.unknown |= methods.unresolved;
-        for callee in &methods.resolved {
-            if own.functions.contains_key(callee) {
-                reach.calls.insert(callee.clone());
-            } else {
-                absorb(library.functions.get(callee), &mut reach);
-            }
-        }
-    }
-
-    Some((key, reach))
-}
-
-/// What a body reaches: the walk is Nikaia (`tools/foreign.nika`, #125), and
-/// what each call by name goes to is `calls::callee_named`, the one resolution
-/// every analysis shares (ADR-288). A method call is answered per function by
-/// the type checker and merged in by `reach_of`; a `spawn`, a `dsl` statement
-/// and a call of something that is not a name are calls nobody can name.
-fn collect(
-    parsed: &Parsed,
-    block: &crate::ast::Block,
-    own: &Ledger,
-    library: &Ledger,
-    reach: &mut Reach,
-) {
-    use crate::foreign::Seen;
-    use nikaia_std::tools::calls::{Callee, callee_named};
-    for seen in crate::foreign::seen_in(parsed, block) {
-        let callee = match seen {
-            Seen::Call { name, .. } => {
-                callee_named(&parsed.interner, name, own, library, &parsed.program.items)
-            }
-            Seen::Spawn { .. } | Seen::Opaque { .. } => Some(Callee::Opaque(None)),
-            _ => None,
-        };
-        match callee {
-            Some(Callee::Own(name)) => {
-                reach.calls.insert(name);
-            }
-            Some(Callee::Library { key, .. }) => absorb(library.functions.get(&key), reach),
-            Some(Callee::Opaque(_)) => reach.unknown = true,
-            Some(Callee::Method) | None => {}
-        }
-    }
-}
-
-/// Take a described callee's touch set into a caller's, or give up.
-fn absorb(contract: Option<&crate::contracts::FnContract>, reach: &mut Reach) {
-    let Some(contract) = contract.filter(|c| c.touches_known) else {
-        reach.unknown = true;
-        return;
-    };
-    for touch in &contract.touches {
-        // A resource named by a **parameter** is named in the callee's words.
-        // Until a caller's argument can be mapped onto it, inheriting the name
-        // would be claiming something about the wrong resource.
-        match touch.parameter {
-            Some(_) => reach.unknown = true,
-            None => {
-                reach.outside.insert(order_of(touch), touch.clone());
-            }
-        }
     }
 }

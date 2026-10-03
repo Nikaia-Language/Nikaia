@@ -25,40 +25,42 @@
 //! bug, but a set that said "something I cannot name" about a call the compiler
 //! had already named.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::sync::{Reached, reached};
 use super::{Ledger, UNNAMED_ERROR};
 use crate::ast::Expr;
 use crate::check::MethodCalls;
 use crate::parser::Parsed;
-use nikaia_std::tools::throws::{self as nika, MethodsCalled};
+use nikaia_std::tools::throws::{self as nika, MethodsCalled, ThrowsGraph};
 
 /// Give every `throws` function of this package its `fails_with`.
 ///
 /// **The walk, the graph and the fixpoint are Nikaia** (`tools/throws.nika`,
-/// #125). What stays here is handing in each unit, what one expression reaches
-/// - `sync`'s single answer (ADR-288) - and the type checker's method calls as
-/// plain data, and writing the answer into the ledger. A callee the graph does
-/// not hold still has the set the ledger gives it (ADR-296 D40).
+/// #125). What stays here is handing in each unit, what one expression
+/// reaches (`sync`'s single answer, ADR-288) and the type checker's method
+/// calls as plain data, and writing the answer into the ledger. A callee the
+/// graph does not hold still has the set the ledger gives it (ADR-296 D40).
 pub fn infer(
     ledger: &mut Ledger,
     units: &[&Parsed],
     library: &Ledger,
     resolved: &BTreeMap<String, MethodCalls>,
 ) {
-    let methods: BTreeMap<String, MethodsCalled> = resolved
-        .iter()
-        .map(|(key, calls)| {
-            let called = MethodsCalled {
-                resolved: calls.resolved.clone(),
-                unseen: calls.unresolved || calls.code_fails,
-            };
-            (key.clone(), called)
-        })
-        .collect();
-    let mut direct: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut calls: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut graph = ThrowsGraph {
+        methods: resolved
+            .iter()
+            .map(|(key, calls)| {
+                let called = MethodsCalled {
+                    resolved: calls.resolved.clone(),
+                    unseen: calls.unresolved || calls.code_fails,
+                };
+                (key.clone(), called)
+            })
+            .collect(),
+        direct: BTreeMap::new(),
+        calls: BTreeMap::new(),
+    };
     for parsed in units.iter().copied() {
         let own: &Ledger = ledger;
         nika::unit_throws(
@@ -66,14 +68,12 @@ pub fn infer(
             &parsed.interner,
             &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
             &|expr: &Expr| contribution(parsed, expr, own, library),
-            &methods,
             own,
             library,
-            &mut direct,
-            &mut calls,
+            &mut graph,
         );
     }
-    for (name, errors) in nika::error_sets(&direct, &calls, ledger) {
+    for (name, errors) in nika::error_sets(&graph.direct, &graph.calls, ledger) {
         if let Some(contract) = ledger.functions.get_mut(&name) {
             contract.fails_with = errors;
         }
