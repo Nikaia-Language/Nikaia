@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.384 (Draft)
+**Version:** 0.0.385 (Draft)
 **Date:** 2026-10-03
 
 ---
@@ -944,6 +944,14 @@ line; `let shown = user ?? "Guest"` takes `user`, as `let b = a` takes `a`.
 The positions that only read are an argument the function only reads, an
 `f"…"` hole, a comparison of text, and the receiver of a method that only
 reads it.
+
+**A left side that is itself only borrowed, beside a fallback that jumps, is
+a view wherever it stands** ([ADR-275](adr/adr-275.md)): over a `c: ref
+Contract`, `let s = c.signature ?? return false` binds a view of the field.
+Nothing can take a part of a loan, and a `return`, `throw`, `continue` or
+`break` has no value of its own, so the answer can only be the left side,
+lent. Kept past the loan - returned, stored, pushed - the view is refused, and
+`.clone()` is the copy.
 
 **`?.` reaches a method.** `find(1)?.greet("Hallo")` calls the method only
 where there is something to call it on; the arguments reach it, and the result

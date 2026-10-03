@@ -12033,6 +12033,33 @@ impl<'a> Checker<'a> {
                 // refused in the language's words - unrecorded, it reached
                 // `rustc` as *cannot move out of `self.parameter`* (found moving
                 // the ledger's records into Nikaia, ADR-257).
+                // **A loan on the left and a jump on the right is a view**
+                // ([ADR-275](../../docs/specification/adr/adr-275.md) D1):
+                // `let s = c.signature ?? return false` over a lent `c` cannot
+                // take the field, and a jump has no value, so the answer is a
+                // view of the left side wherever it stands - a `let` binds a
+                // view, as `let found = m[k]` does.
+                let lent_and_jumps = matches!(&**value, Expr::Variable(_) | Expr::Field { .. })
+                    && matches!(
+                        &**fallback,
+                        Expr::Return(_) | Expr::Throw(_) | Expr::Continue | Expr::Break
+                    )
+                    && matches!(&left, Ty::Nullable(inner) if self.takes_away(&inner.unseen()))
+                    && self
+                        .rooted_at(value)
+                        .is_some_and(|root| self.lent_here(&root));
+                if lent_and_jumps {
+                    let text = matches!(&left, Ty::Nullable(inner)
+                        if matches!(inner.as_ref(), Ty::Named { name, args, view: false }
+                            if args.is_empty() && name == ty::TEXT));
+                    self.checked.lent_coalesces.insert(
+                        (span.at(), argument_shape(expr)),
+                        if text { ".as_deref()" } else { ".as_ref()" },
+                    );
+                    if let Ty::Nullable(inner) = &left {
+                        return view_of(inner);
+                    }
+                }
                 if matches!(&**value, Expr::Variable(_) | Expr::Field { .. }) {
                     match self.a_coalesce_that_may_lend(&left, fallback, &other) {
                         Some(opened) => self.pending_coalesces.push(PendingCoalesce {

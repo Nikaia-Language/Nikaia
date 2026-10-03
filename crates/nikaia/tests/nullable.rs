@@ -1816,3 +1816,51 @@ fn main() {
     assert!(!lowered.contains("kind.as_ref()"), "{lowered}");
     assert_eq!(ran("word-or-parts", source), "b\n8\ntrue false\n");
 }
+
+/// **A loan on the left of `??` and a jump on the right is a view**
+/// ([ADR-275](../../../docs/specification/adr/adr-275.md) D1): `let s =
+/// c.signature ?? return -1` over a lent `c` binds a view of the field, for
+/// text as for anything else, and the view kept past the loan is refused in
+/// the language's words with `.clone()` as the way out (D2).
+#[test]
+fn a_loan_beside_a_jump_binds_a_view() {
+    let source = r#"
+struct Sig { names: Vec[String] }
+struct Contract { signature: Sig?, label: String? }
+fn count(c: ref Contract) -> i64 {
+    let signature = c.signature ?? return -1
+    return signature.names.len()
+}
+fn labels(cs: ref Vec[Contract]) -> i64 {
+    let mut total = 0
+    for c in cs {
+        let label = c.label ?? continue
+        total += label.len()
+    }
+    return total
+}
+fn main() {
+    let a = Contract { signature: Sig { names: ["x", "y"] }, label: "ab" }
+    let b = Contract { signature: null, label: null }
+    println(f"{count(a)} {count(b)} {labels([a, b])}")
+}
+"#;
+    let lowered = lowered(source);
+    assert!(lowered.contains("match c.signature.as_ref()"), "{lowered}");
+    assert_eq!(ran("loan-beside-a-jump", source), "2 -1 2\n");
+
+    let kept = r#"
+struct Sig { names: Vec[String] }
+struct Contract { signature: Sig? }
+fn kept(c: ref Contract) -> Sig {
+    let signature = c.signature ?? return Sig { names: [] }
+    return signature
+}
+fn main() {
+    println(f"{kept(Contract { signature: null }).names.len()}")
+}
+"#;
+    let found = findings(kept);
+    assert!(found.iter().any(|f| f.code == "NK1104"), "{found:#?}");
+    assert!(found.iter().all(|f| f.code != "NK2106"), "{found:#?}");
+}

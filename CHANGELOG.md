@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.385] — 2026-10-03
+
+**A borrowed left side of `??` beside a jump is a view wherever it stands**
+([ADR-275](docs/specification/adr/adr-275.md), the owner's choice).
+`let s = c.signature ?? return false` and `let label = c.label ?? continue`
+over a lent `c` were refused as a part of a loan taken (`NK2106`): ADR-259 D1
+makes a `let` keep the answer, and nothing can take a part of a loan. The
+left side is now opened, not taken - `match c.signature.as_ref() { … }` below,
+`.as_deref()` for text - and the `let` binds a view, as `let found = m[k]`
+does. A view kept past the loan is refused as any view is, with `.clone()`.
+`tools/lends.nika` writes the line directly instead of going round it
+through a helper.
+
 ## [0.0.384] — 2026-10-03
 
 **Whether a callee lends a parameter is decided in Nikaia** (#125, ADR-250).
