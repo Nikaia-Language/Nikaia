@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.388] — 2026-10-03
+
+**A lowercase `par_fold` rule skips no whitespace, and 1BRC is 10.8 % fewer
+instructions for it.** `winnow-grammar` is pinned to 28cf576, which generates
+a `par_fold` rule as lexical whatever its name (winnow-grammar#21). Before,
+`examples/1brc.nika`'s `pub rule file` skipped whitespace at its start and
+before every item at `user-parallelism = "no"` and not in pieces, so the core
+count changed the answer: ` b;2.0` was station `b` sequentially and ` b` in
+parallel, and a blank line passed in one and failed in the other - against
+ADR-009 D2. `tests/one_brc.rs` now pins both cases. Measured with the
+hand-written halves of `benches/brc` (#358, taken here): 658 to 587
+instructions a row, against 860 for `naive` and 312 for `tuned`; on the clock
+0.51 s to 0.49 s over 8 million rows. The README says where the rest of the
+distance to `tuned` is.
+
 ## [0.0.387] — 2026-10-03
 
 **What the sharing walk asks of one expression is Nikaia** (#125, ADR-250).

@@ -70,6 +70,38 @@ about 1.6×). The input is read once either way and the UTF-8 check is already
 spread across cores at both settings, so what the four cores divide is the parse
 and the fold, not the whole program.
 
+## A lowercase `par_fold` rule, and what its whitespace cost (0.0.388)
+
+`examples/1brc.nika` writes its entry rule `pub rule file` - lowercase, so
+syntactic. Its entry point skipped no whitespace (ADR-009 D2), but the rule
+itself still skipped at its start and before every item of the fold, until
+`winnow-grammar` 28cf576. That broke the one thing `par_fold` promises: at
+`user-parallelism = "no"` a station ` b` lost its leading blank and a blank
+line between rows passed, while at `"yes"` the blank stayed and the blank line
+failed. And on every valid row the skip ran and found nothing.
+
+Callgrind over 1 000 000 rows of `handwritten gen` (413 stations), every
+program printing the same:
+
+| | instructions per row |
+|---|---:|
+| Rust, `naive` | 860 |
+| Nikaia, before the fix | 658 |
+| **Nikaia, with it** | **587 (−10.8 %)** |
+| Rust, `tuned` | 312 |
+
+On the clock it is smaller - 0.51 s to 0.49 s over 8 million rows, best of 5 -
+because a skip that always finds nothing is a branch that is always predicted.
+The rows above, 8 million, same box: `naive` 0.91 s, Nikaia 0.49 s, `tuned`
+0.33 s, Nikaia on four cores 0.23 s.
+
+What is left between the grammar and `tuned` is the parser itself: per row
+about 205 instructions in the rule, the temperature read a character at a
+time and `until(";" | frame_end)` searched line by line, against `tuned`'s one
+`memchr` over the file and fixed-width indexing. The hash table is the
+cheaper of the two (about 85 against 124). That is the next question for the
+grammar, and it is a decision of its own.
+
 ## What this does not claim
 
 Nothing about the 1BRC leaderboard. The entries there are not parsers: they are
