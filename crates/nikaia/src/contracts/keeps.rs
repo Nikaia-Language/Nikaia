@@ -27,10 +27,9 @@
 // purpose: the answer can be diffed against the corpus before one call site
 // changes.
 
-use crate::contracts::LedgerOps;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Block, Expr, Item, Stmt};
+use crate::ast::{Expr, Item};
 use crate::parser::Parsed;
 
 use super::{INPUT, Ledger};
@@ -93,16 +92,16 @@ pub fn moves(ty: &super::ty::Ty) -> bool {
     nikaia_std::tools::lends::moves(ty)
 }
 
-/// What one function's body does with each of its parameters.
-#[derive(Debug, Default)]
-struct Uses {
-    /// Kept on this body's own evidence — stored, assigned, returned by value,
-    /// given to a task, or handed to a callee nothing describes.
-    kept: BTreeSet<String>,
-    /// Handed to a callee: this parameter, the callee as the ledger names it,
-    /// and which of that callee's parameters it landed in. Whether it is kept
-    /// is that callee's answer, which the fixpoint below waits for.
-    passed: BTreeSet<(String, String, usize)>,
+/// What one function's body does with each of its parameters, declared in
+/// Nikaia (`tools/lends.nika`): kept on its own evidence, or handed to a callee
+/// whose answer the fixpoint waits for.
+use nikaia_std::tools::lends::{Uses, kept_by};
+
+fn no_uses() -> Uses {
+    Uses {
+        kept: BTreeSet::new(),
+        passed: Vec::new(),
+    }
 }
 
 /// Give every function in the ledger the `keeps` its body earns.
@@ -176,7 +175,7 @@ pub fn infer(
                 Item::Grammar(def) => {
                     let named = parsed.text(def.name).to_string();
                     for rule in def.rules.iter().filter(|r| r.is_public) {
-                        let mut uses = Uses::default();
+                        let mut uses = no_uses();
                         if super::tether::a_parse_that_views(
                             parsed,
                             rule.ret_type.as_ref(),
@@ -195,26 +194,7 @@ pub fn infer(
     // **The least fixpoint is Nikaia** (`tools/lends.nika`, #125): it starts
     // from what each body keeps on its own evidence and adds what the callees
     // it hands a parameter to keep, until nothing changes.
-    use nikaia_std::tools::lends::{Passed, Uses as Found, kept_by};
-    let found: BTreeMap<String, Found> = graph
-        .into_iter()
-        .map(|(name, uses)| {
-            let found = Found {
-                kept: uses.kept,
-                passed: uses
-                    .passed
-                    .into_iter()
-                    .map(|(parameter, callee, at)| Passed {
-                        parameter,
-                        callee,
-                        at: at as i64,
-                    })
-                    .collect(),
-            };
-            (name, found)
-        })
-        .collect();
-    let kept = kept_by(&found, ledger, library);
+    let kept = kept_by(&graph, ledger, library);
     for (name, parameters) in kept {
         if let Some(contract) = ledger.functions.get_mut(&name) {
             contract.keeps = parameters.into_iter().collect();
@@ -265,7 +245,7 @@ fn uses_of(
         parameters.insert("self".to_string());
     }
     if parameters.is_empty() {
-        return Some((key, Uses::default()));
+        return Some((key, no_uses()));
     }
     // **The parameters the author lent**: `ref self`, `ref mut self`, an
     // argument whose type is written `ref`, and one written `mut`, which the
@@ -318,570 +298,41 @@ fn uses_of(
         })
         .collect();
 
-    let mut uses = Uses::default();
     // **Whether this body's method calls resolved at all.** A receiver whose
     // method nothing describes may be a `self`-by-value method, and a parameter
     // handed to one is moved out of — so the fail-closed answer for a *whole
     // body* is the one the type checker already computed
     // ([ADR-288](../../../docs/specification/adr/adr-288.md)).
     let unresolved = resolved.get(&key).is_some_and(|m| m.unresolved);
-    let mut walk = Walk {
-        parsed,
-        parameters: &parameters,
-        lent: &lent,
-        fields: &fields,
+    // **The walk is Nikaia** (`tools/keeps.nika`, #125): every statement's
+    // expressions classified where they stand, then the blocks it holds, and
+    // **the value a body ends in leaves the call**, as a `return` does.
+    let context = nikaia_std::tools::keeps::KeepsBody {
+        parameters: parameters.clone(),
+        lent,
+        fields,
         returns_a_view,
+        hands_back_its_last: ret_type.is_some() && !returns_a_view,
         unresolved,
+    };
+    let mut uses = nikaia_std::tools::keeps::uses_in(
+        body,
+        &parsed.interner,
+        &|expr: &Expr| crate::emit::literal_expressions(parsed, expr),
+        &context,
         ledger,
         library,
-        uses: &mut uses,
-        aliases: BTreeMap::new(),
-    };
-    walk.block(body);
-    // **The value a body ends in leaves the call**, as a `return` does: `fn
-    // f(name: String) -> String { name }` keeps `name`. It used to be read as
-    // lent, and the declaration came out `&String` with the body handing the
-    // loan back as a `String` - `rustc`'s *mismatched types* about a file
-    // nobody wrote (Part III C.1), for the shortest program that keeps.
-    if ret_type.is_some()
-        && !returns_a_view
-        && let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node)
-    {
-        walk.hand_over(value);
-    }
-    // **A receiver the author wrote `ref` is not kept** (issue #173
-    // issue #173, found at 0.0.254 in the ledger `template.nika` lowers to), **nor
-    // an argument written `mut`** (found at 0.0.258 in `ledger.nika`'s, where
-    // `entries.push(…)` kept the list it pushes to). Each is a reference by
-    // the author's word, which no walk here widens - a use that would need it
-    // whole is `NK1131`'s, and names `fn …(self)` as the way out. An argument
-    // written `ref` is not in this rule: a parse keeps the text its result
-    // views ([ADR-186](../../../docs/specification/adr/adr-186.md) D1), and
-    // that is how a caller learns it.
+    );
+    // **A receiver the author wrote `ref` is not kept** (issue #173), **nor an
+    // argument written `mut`** (0.0.258): each is a reference by the author's
+    // word, which no walk here widens - a use that would need it whole is
+    // `NK1131`'s. An argument written `ref` is not in this rule: a parse keeps
+    // the text its result views
+    // ([ADR-186](../../../docs/specification/adr/adr-186.md) D1).
     uses.kept.retain(|name| !unkept.contains(name));
-    uses.passed.retain(|(name, _, _)| !unkept.contains(name));
+    uses.passed
+        .retain(|passed| !unkept.contains(&passed.parameter));
     Some((key, uses))
-}
-
-struct Walk<'a> {
-    parsed: &'a Parsed,
-    parameters: &'a BTreeSet<String>,
-    /// The parameters the author wrote `ref`, which a `match` does not keep.
-    lent: &'a BTreeSet<String>,
-    /// **What each parameter's fields are**, for the one shape a bare name does
-    /// not cover: `return answer.text` takes a piece out of `answer`.
-    ///
-    /// Empty for a parameter whose type this file does not declare, which
-    /// [`Walk::hand_over`] reads as *unknown*.
-    fields: &'a BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
-    returns_a_view: bool,
-    /// Whether any method call in this body went to an entry no ledger has.
-    unresolved: bool,
-    ledger: &'a Ledger,
-    library: &'a Ledger,
-    uses: &'a mut Uses,
-    /// **The names a `let` bound to what may be a parameter**, and which ones:
-    /// `let s = name` and then `return s` hands `name` out of the call. A
-    /// `let` still keeps nothing by itself; it is the second name leaving that
-    /// does, and this is how the walk knows the second name is the first.
-    ///
-    /// Per body and not per scope, so a shadowing `let` counts both: that can
-    /// only keep more, which is this column's safe direction.
-    aliases: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl Walk<'_> {
-    fn block(&mut self, block: &Block) {
-        for stmt in &block.stmts {
-            self.stmt(&stmt.node);
-        }
-    }
-
-    fn stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            // **An assignment keeps, whatever the target is.** `self.name = x`,
-            // `row.total = x` and `xs[i] = x` all put the value somewhere this
-            // call does not end.
-            Stmt::Assign { value, .. } => self.hand_over(value),
-            Stmt::Return(Some(value)) if !self.returns_a_view => self.hand_over(value),
-            Stmt::Let { names, value, .. } => {
-                let reached = self.reached(value);
-                if !reached.is_empty() {
-                    for name in names {
-                        let name = self.parsed.text(*name).to_string();
-                        self.aliases
-                            .entry(name)
-                            .or_default()
-                            .extend(reached.iter().cloned());
-                    }
-                }
-            }
-            // **A `let` does not keep.** It binds a second name to the same
-            // value *inside* this body, and what happens to that name is what
-            // decides — which the statements below say. What a `let` cannot do
-            // is make the value outlive the call.
-            _ => {}
-        }
-
-        // Then every expression of the statement, each classified where it
-        // stands. The scan is flat rather than recursive because
-        // [`super::sync::visit_stmt`] already reaches every sub-expression,
-        // holes in an `f"…"` included.
-        let (parsed, parameters, ledger, library) =
-            (self.parsed, self.parameters, self.ledger, self.library);
-        let (unresolved, lent) = (self.unresolved, self.lent);
-        let fields = self.fields;
-        let uses = &mut *self.uses;
-        super::sync::visit_stmt(parsed, stmt, &mut |expr| {
-            classify(
-                parsed, parameters, lent, fields, ledger, library, unresolved, uses, expr,
-            );
-        });
-
-        // And the blocks it holds. A lambda's body is one of them — it runs
-        // during the call it is given to ([ADR-288](../../../docs/specification/adr/adr-288.md)
-        // D4), so what it does with a parameter is what this body does with it.
-        // A `spawn` is deliberately not among them and is handled in
-        // [`classify`], because its body runs later and elsewhere.
-        let mut blocks: Vec<&Block> = Vec::new();
-        super::sync::visit_stmt_blocks(stmt, &mut |block| blocks.push(block));
-        for block in blocks {
-            self.block(block);
-        }
-    }
-
-    /// This expression's value leaves the call, so a parameter standing at its
-    /// top is kept.
-    /// **A parameter handed out of the call keeps**, whether it is handed out
-    /// whole or in pieces.
-    ///
-    /// `return answer` is the bare name. `return answer.text` is the second
-    /// shape, and it was missing: the parameter stayed **lent**, the declaration
-    /// was written `&Answer`, and the body took a piece out of a loan — *cannot
-    /// move out of `answer.text` which is behind a shared reference*, about a
-    /// file nobody wrote ([Part III
-    /// C.1](../../../docs/specification/30-nikaia-tooling.md)).
-    ///
-    /// **A field that copies does not keep**, and that is the half this has to
-    /// get right: `return point.x` for an `i64` takes nothing away, and owning
-    /// the parameter for it would take the value from a caller that still wants
-    /// it — a correct program refused, one call up. Where the field's type is
-    /// not known it **keeps**, which is the polarity this whole column already
-    /// has ([`keeps_its`]: *unknown keeps*).
-    ///
-    /// **`self` is not this rule's**, and deliberately: a `ref self` is a word
-    /// the author wrote, so what a method does with its subject may not silently
-    /// turn it into `fn(self)`. That shape is `NK1131`, which names `.clone()`
-    /// and `fn …(self)` as the two ways out.
-    fn hand_over(&mut self, expr: &Expr) {
-        let reached = self.reached(expr);
-        self.uses.kept.extend(reached);
-    }
-
-    /// The parameters an expression's value may **be** — what leaves with it
-    /// when it leaves.
-    ///
-    /// **Through every way the value can come out**: an `if`'s two arms, each
-    /// arm of a `match`, a block's last expression, and a name a `let` bound to
-    /// one of them. `if c { name } else { "anonymous" }` hands `name` out of the
-    /// call as surely as `return name` does, and reading only the top of the
-    /// expression called it lent.
-    fn reached(&self, expr: &Expr) -> BTreeSet<String> {
-        let mut found = BTreeSet::new();
-        match expr {
-            Expr::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                for block in std::iter::once(then_branch).chain(else_branch.as_ref()) {
-                    if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
-                        found.extend(self.reached(value));
-                    }
-                }
-            }
-            Expr::Match { arms, .. } => {
-                for arm in arms {
-                    found.extend(self.reached(&arm.body));
-                }
-            }
-            Expr::Block(block) => {
-                if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
-                    found.extend(self.reached(value));
-                }
-            }
-            Expr::Variable(ident) => {
-                let name = self.parsed.text(*ident);
-                if self.parameters.contains(name) {
-                    found.insert(name.to_string());
-                }
-                if let Some(aliased) = self.aliases.get(name) {
-                    found.extend(aliased.iter().cloned());
-                }
-            }
-            Expr::Field { base, name } => {
-                let Some(parameter) = parameter_named(self.parsed, self.parameters, base) else {
-                    return found;
-                };
-                if parameter == "self" {
-                    return found;
-                }
-                let field = self.parsed.text(*name);
-                let copies = self
-                    .fields
-                    .get(&parameter)
-                    .and_then(|fields| fields.get(field))
-                    .is_some_and(|ty| !moves(ty));
-                if !copies {
-                    found.insert(parameter);
-                }
-            }
-            _ => {}
-        }
-        found
-    }
-}
-
-/// What one expression does with a parameter, where it stands.
-///
-/// Called on every sub-expression of a statement, so each rule is about *this*
-/// node and never about what is under it.
-#[allow(clippy::too_many_arguments)]
-fn classify(
-    parsed: &Parsed,
-    parameters: &BTreeSet<String>,
-    lent: &BTreeSet<String>,
-    fields: &BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
-    ledger: &Ledger,
-    library: &Ledger,
-    unresolved: bool,
-    uses: &mut Uses,
-    expr: &Expr,
-) {
-    match expr {
-        // **A struct literal keeps every field it is given.** The struct
-        // outlives the call wherever it goes, and where it goes is not this
-        // expression's question.
-        Expr::StructLit {
-            fields: written, ..
-        } => {
-            for field in written {
-                let Some(value) = field.value.as_ref() else {
-                    // `P { x }` is the field and the name in one, and the name
-                    // may be a parameter.
-                    if parameters.contains(parsed.text(field.name)) {
-                        uses.kept.insert(parsed.text(field.name).to_string());
-                    }
-                    continue;
-                };
-                if let Some(name) = part_of_a_parameter(parsed, parameters, fields, value) {
-                    uses.kept.insert(name);
-                }
-            }
-        }
-        // **So does a list or a tuple literal every element it is given**
-        // ([ADR-297](../../../docs/specification/adr/adr-297.md) D13), for the
-        // same reason: `[h]` builds a list that holds `h`. Missing it lent the
-        // parameter, and `rustc` met a `&Handle` where the list wanted a
-        // `Handle` - about a file nobody wrote.
-        Expr::ListLit { items, .. } | Expr::Tuple(items) => {
-            for item in items {
-                if let Some(name) = part_of_a_parameter(parsed, parameters, fields, item) {
-                    uses.kept.insert(name);
-                }
-            }
-        }
-        // **And three more shapes the *lowering* consumes**, which is the same
-        // clause one position over: `a ?? b` is `unwrap_or_else`, `x?.f` takes
-        // the value it reaches through (Part I 3.5's own Status note), and `x?`
-        // unwraps one. Each moves the value in the language below, so a
-        // parameter standing there is kept whatever the body looks like here.
-        Expr::Coalesce { value, .. } | Expr::SafeField { base: value, .. } | Expr::Try(value) => {
-            if let Some(name) = parameter_named(parsed, parameters, value) {
-                uses.kept.insert(name);
-            }
-        }
-        // **A parameter a `match` takes apart counts as kept**, and this one is
-        // an over-approximation the fail-closed clause of D2 licenses in as
-        // many words: *a use the inference cannot resolve counts as keeping*.
-        //
-        // What cannot be resolved here is the **lowering**, not the body. Rust
-        // matches through a reference with its default binding modes, so
-        // `Json::Bool(b)` over a `&Json` binds `b: &bool` and `if b` stops
-        // compiling — and this compiler writes no `*`. Lending a matched
-        // parameter would therefore hand `rustc` a file nobody wrote
-        // (Part III C.1) for every arm that uses a copied payload.
-        //
-        // `examples/json/src/main.nika`'s `show` is where that was met. It is a limit of
-        // the emitter and is written down as one; when a deref can be written,
-        // this arm goes and nothing else changes.
-        //
-        // **A parameter the author lent is not this arm's**: it is a reference
-        // in the Rust whatever this column says, so keeping it bought nothing
-        // and told a caller the receiver of `Position::escapable(ref self)`
-        // was taken (issue #173).
-        Expr::Match { value, .. } => {
-            if let Some(name) = parameter_named(parsed, parameters, value)
-                && !lent.contains(&name)
-            {
-                uses.kept.insert(name);
-            }
-        }
-        // **A task keeps everything it names**
-        // ([ADR-312](../../../docs/specification/adr/adr-312.md) D1): a body
-        // that may outlive the statement takes what it names by value.
-        Expr::Spawn { body, .. } => {
-            let mut found = Named::default();
-            match body.as_ref() {
-                // `spawn fn { … }` is the form the language writes
-                // ([ADR-277](../../../docs/specification/adr/adr-277.md)), so
-                // the body arrives as a lambda; `Expr::Block` is what a
-                // `spawn { … }` would be and is kept because both are shapes
-                // this walk can read to the bottom.
-                Expr::Closure { body, .. } => names_in_block(parsed, body, &mut found),
-                Expr::Block(block) => names_in_block(parsed, block, &mut found),
-                // A body shape this walk cannot read to the bottom. There is no
-                // third answer: every parameter is kept.
-                other => {
-                    names_in_expr(parsed, other, &mut found);
-                    found.exhaustive = false;
-                }
-            }
-            match found.exhaustive {
-                true => {
-                    for name in found.names {
-                        if parameters.contains(&name) {
-                            uses.kept.insert(name);
-                        }
-                    }
-                }
-                false => uses.kept.extend(parameters.iter().cloned()),
-            }
-        }
-        Expr::Call { func, args, .. } => {
-            let callee = resolve(parsed, ledger, library, func);
-            for (at, arg) in args.iter().enumerate() {
-                let Some(name) = part_of_a_parameter(parsed, parameters, fields, arg) else {
-                    continue;
-                };
-                match &callee {
-                    // Recorded rather than decided: whether this keeps is the
-                    // callee's answer, and the callee may not have one yet.
-                    Some(callee) => {
-                        uses.passed.insert((name, callee.clone(), at));
-                    }
-                    // **A callee no ledger describes** — D2's fail-closed case,
-                    // and the one the whole polarity is written for.
-                    None => {
-                        uses.kept.insert(name);
-                    }
-                }
-            }
-        }
-        // **Which entry a method call goes to is the type checker's answer and
-        // not this file's** ([ADR-288](../../../docs/specification/adr/adr-288.md)).
-        // A weaker question can be asked without types, the way
-        // [`Ledger::candidates`] already asks it for `touches`: if **no** entry
-        // named `::push` keeps its argument, this call keeps none whatever the
-        // receiver turns out to be. A name no entry carries at all is
-        // unresolved, and unresolved keeps.
-        Expr::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        }
-        | Expr::SafeMethod {
-            receiver,
-            method,
-            args,
-            ..
-        } => {
-            let method = parsed.text(*method);
-            // **A receiver a method takes by value is moved out of.**
-            // `account.access fn(to) { … }` where `access` takes `self` leaves
-            // nothing behind, so a parameter standing there is kept.
-            //
-            // Which entry the call goes to is the type checker's answer
-            // ([ADR-288](../../../docs/specification/adr/adr-288.md)), and the
-            // weaker question this walk can ask is the one `touches` asks —
-            // with one addition: where **any** method call in this body went to
-            // an entry no ledger has, the candidates are not the whole list and
-            // may not be believed. `crates/nikaia/tests/lambdas.rs`'s `Account`
-            // is exactly that: its `access` is a Rust stand-in taking `self`,
-            // and the two `::access` entries `std` does carry both take `&self`.
-            if let Some(name) = parameter_named(parsed, parameters, receiver) {
-                let candidates: Vec<_> = ledger
-                    .candidates(method)
-                    .into_iter()
-                    .chain(library.candidates(method))
-                    .collect();
-                let consumed = unresolved
-                    || candidates.is_empty()
-                    || candidates.iter().any(|(_, contract)| {
-                        // **A method that changes its subject needs a `&mut`,
-                        // and this compiler writes none** (D3). The ledger's
-                        // type language spells both receivers `&T`, so the
-                        // claim is its own column: without it `out.push(1)` on
-                        // a lent parameter reached `rustc` as *cannot borrow as
-                        // mutable*, about a file nobody wrote.
-                        //
-                        // **A receiver taken by value that copies is not moved
-                        // out of**: `c.to_ascii_lowercase()` on a `char` leaves
-                        // `c` where it was, as `n.abs()` leaves an `i64`
-                        // (issue #173).
-                        contract.mutates
-                            || !contract
-                                .signature
-                                .as_ref()
-                                .and_then(|s| s.params.first())
-                                .is_some_and(|(name, ty)| {
-                                    name == "self"
-                                        && (ty.is_a_view()
-                                            || (matches!(ty, super::ty::Ty::Named { .. })
-                                                && !moves(ty)))
-                                })
-                    });
-                if consumed {
-                    uses.kept.insert(name);
-                }
-            }
-            for (at, arg) in args.iter().enumerate() {
-                let Some(name) = part_of_a_parameter(parsed, parameters, fields, arg) else {
-                    continue;
-                };
-                // The receiver is the callee's first parameter, so an
-                // argument's own position is one further along.
-                if any_candidate_keeps(ledger, library, method, at + 1) {
-                    uses.kept.insert(name);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Whether any entry a bare method name could reach keeps position `at`.
-fn any_candidate_keeps(ledger: &Ledger, library: &Ledger, method: &str, at: usize) -> bool {
-    let candidates: Vec<_> = ledger
-        .candidates(method)
-        .into_iter()
-        .chain(library.candidates(method))
-        .collect();
-    if candidates.is_empty() {
-        return true;
-    }
-    candidates.iter().any(|(_, contract)| {
-        match contract
-            .signature
-            .as_ref()
-            .and_then(|s| s.params.get(at))
-            .map(|(parameter, _)| parameter.clone())
-        {
-            Some(parameter) => contract.keeps.contains(&parameter),
-            // An entry whose signature is shorter than this call is one this
-            // walk did not resolve, and that is fail-closed again.
-            None => true,
-        }
-    })
-}
-
-/// The parameter this expression **is**, where it is one.
-///
-/// A bare name and nothing else. `x.field` hands over the field rather than the
-/// parameter, and `f(x)` is the call's question rather than this position's.
-fn parameter_named(parsed: &Parsed, parameters: &BTreeSet<String>, expr: &Expr) -> Option<String> {
-    let Expr::Variable(ident) = expr else {
-        return None;
-    };
-    let name = parsed.text(*ident).to_string();
-    parameters.contains(&name).then_some(name)
-}
-
-/// **The parameter an expression is, or is a moving part of**
-/// ([ADR-293](../../../docs/specification/adr/adr-293.md) D32).
-///
-/// `xs.push(p.name)` hands over the field, and a field cannot be taken out of a
-/// loan: the parameter was written `&P` and `rustc` said *cannot move out of
-/// `p.name` which is behind a shared reference*, about a file nobody wrote.
-/// So a part handed to what keeps it keeps the whole, as a part handed **back**
-/// already did ([`Walk::reached`]). A field that copies takes nothing away, a
-/// field this file cannot see the type of keeps (the column's polarity), and
-/// `self` is `NK1131`'s rather than this one's.
-fn part_of_a_parameter(
-    parsed: &Parsed,
-    parameters: &BTreeSet<String>,
-    fields: &BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
-    expr: &Expr,
-) -> Option<String> {
-    let Expr::Field { base, name } = expr else {
-        return parameter_named(parsed, parameters, expr);
-    };
-    let root = match parameter_named(parsed, parameters, base) {
-        Some(root) => {
-            let copies = fields
-                .get(&root)
-                .and_then(|fields| fields.get(parsed.text(*name)))
-                .is_some_and(|ty| !moves(ty));
-            (!copies).then_some(root)?
-        }
-        // A deeper part: its type is not in the table, so it keeps.
-        None => part_of_a_parameter(parsed, parameters, fields, base)?,
-    };
-    (root != "self").then_some(root)
-}
-
-/// The ledger key a plain call's callee resolves to, if any names it.
-fn resolve(parsed: &Parsed, ledger: &Ledger, library: &Ledger, func: &Expr) -> Option<String> {
-    let written = match func {
-        Expr::Variable(ident) => parsed.text(*ident).to_string(),
-        Expr::Path(segments) => segments
-            .iter()
-            .map(|s| parsed.text(*s).to_string())
-            .collect::<Vec<_>>()
-            .join("::"),
-        _ => return None,
-    };
-    ledger
-        .lookup(&written)
-        .or_else(|| library.lookup(&written))
-        .map(|(key, _)| key)
-}
-
-/// Every bare name a `spawn` body mentions, and whether the walk reached all of
-/// it.
-#[derive(Debug)]
-struct Named {
-    names: BTreeSet<String>,
-    /// **A `spawn` inside a `spawn` clears this.** The shared walkers do not
-    /// descend into a detached context — deliberately, for `sync`'s sake — so
-    /// this walk cannot claim to have read one, and a name it did not see is a
-    /// name it would wrongly call lent. The caller then keeps everything, which
-    /// is the answer that cannot be wrong.
-    exhaustive: bool,
-}
-
-impl Default for Named {
-    fn default() -> Self {
-        Named {
-            names: BTreeSet::new(),
-            exhaustive: true,
-        }
-    }
-}
-
-/// By the walk in Nikaia (`tools/foreign.nika`, #125): every bare name, and a
-/// `spawn` it does not read into clears `exhaustive`.
-fn names_in_block(parsed: &Parsed, block: &Block, found: &mut Named) {
-    let (names, a_spawn) = crate::foreign::names_in_block(parsed, block);
-    found.names.extend(names);
-    found.exhaustive &= !a_spawn;
-}
-
-fn names_in_expr(parsed: &Parsed, expr: &Expr, found: &mut Named) {
-    let (names, a_spawn) = crate::foreign::names_in_expression(parsed, expr);
-    found.names.extend(names);
-    found.exhaustive &= !a_spawn;
 }
 
 /// Whether a declared type has text both kinds flow into anywhere in it.

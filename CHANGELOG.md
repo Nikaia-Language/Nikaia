@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.400] — 2026-10-03
+
+**What a body does with each of its parameters is walked in Nikaia** (#125,
+ADR-294). The walk `contracts::keeps` runs before its fixpoint (ADR-094 D2)
+moved into `tools/keeps.nika`: each statement's expressions classified where
+they stand, the holes of a literal included, then the blocks it holds - a
+lambda's body among them, a `spawn`'s not; an assignment, a `return` and the
+value a body ends in hand a parameter out of the call, through an `if`'s arms,
+a `match`'s, a block's last expression and a name a `let` bound to one; a
+struct, list or tuple literal keeps what it is given; `??`, `?.` and `?`
+consume what they stand on; a `match` takes apart what the author did not
+lend; a task keeps what it names; a call records what it hands on for the
+fixpoint, and a method call asks every entry the bare name could reach. What
+needs a type - the parameters, the ones the author lent, each one's fields,
+whether the result is a view - is worked out by the compiler and handed in.
+
+The tools package lowers byte for byte as it did, every `&` its 12 000 lines
+are declared with included, and the keeps and lending suites pass unchanged.
+21.8 % of the toolchain is Nikaia.
+
 ## [0.0.399] — 2026-10-03
 
 **What a function keeps is settled in Nikaia** (#125, ADR-294). The least
