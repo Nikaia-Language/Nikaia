@@ -1564,7 +1564,10 @@ fn main() {
     assert!(lowered.contains("user.as_deref()"), "{lowered}");
     // `Row` copies, so `r ?? spare` is the copy rather than a loan (0.0.377):
     // `r` is still there afterwards either way.
-    assert!(lowered.contains("nikaia_std::index::or(r, || spare"), "{lowered}");
+    assert!(
+        lowered.contains("nikaia_std::index::or(r, || spare"),
+        "{lowered}"
+    );
     assert!(!lowered.contains("clone()"), "nothing is copied: {lowered}");
     assert_eq!(
         ran("coalesce-lends", source),
