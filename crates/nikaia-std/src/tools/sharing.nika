@@ -959,3 +959,590 @@ pub fn call_path(func: ref Expr, names: ref winnow_grammar::InternerContext) -> 
         else => null,
     }
 }
+
+// ---------------------------------------------------------------------------
+// The walk (ADR-312, ADR-037): every `Shared` handle a unit makes or is
+// handed, joined into allocation classes, with what forces a class atomic
+// ---------------------------------------------------------------------------
+
+/// The name of the slot standing for what a function hands back.
+comptime RESULT: ref String = "<result>"
+
+/// The walk's state: the classes it fills, the names bound to a walk that runs
+/// in parallel (ADR-235 D1) - over-approximate, a name is never taken out -
+/// and, per function, its key and the types of the names in scope.
+pub struct SharingWalk {
+    pub slots: Slots,
+    pub parallel: collections::BTreeSet[String],
+    pub function: String,
+    pub scope: collections::BTreeMap[String, Ty],
+}
+
+/// Every `Shared` value in a unit, which count each would get, and the
+/// per-function summary. `ty_of` is the compiler's reading of a written type.
+/// Where nothing can cross, every count is plain (ADR-312 D10), applied to the
+/// finished answer so the duplication sites are kept as they were found.
+pub fn sharing_of(program: ref Program, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, crossings_are_possible: bool) -> Sharing {
+    let mut walk = SharingWalk { slots: Slots(declared_here(asked.names, program.items)), parallel: collections::BTreeSet(), function: "", scope: collections::BTreeMap() }
+    for item in program.items {
+        match item.node {
+            Item::Fn { .. } => sharing_function(item.node, "", asked, holes_of, ty_of, walk),
+            Item::Impl { target, methods, .. } => {
+                let owner = asked.names.resolve(target.name).clone()
+                for method in methods {
+                    sharing_function(method.node, owner, asked, holes_of, ty_of, walk)
+                }
+            }
+            // A `pub` field of a `pub` type is a place code this build never
+            // reads can take the value out of: the library boundary one level
+            // in from a signature (ADR-037 D8).
+            Item::Struct { name, fields, is_public, .. } => {
+                if is_public {
+                    public_fields(asked.names.resolve(name), fields, asked, ty_of, walk)
+                }
+            }
+            else => {}
+        }
+    }
+    let mut sharing = decided(walk.slots)
+    if !crossings_are_possible {
+        every_count_plain(sharing)
+    }
+    return sharing
+}
+
+fn public_fields(owner: ref String, fields: ref Vec[FieldDef], asked: ref Asked, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    for field in fields {
+        if !field.is_public {
+            continue
+        }
+        let ty = ty_of(field.ty)
+        if !holds_shared(ty) {
+            continue
+        }
+        let key = f"{owner}.{asked.names.resolve(field.name)}"
+        walk.slots.note(FIELDS, key, ty, true, false)
+        walk.slots.force(FIELDS, key, f"`{key}` is a public field of a public type, so code this build cannot see may take the value out of it and cross with it", Fallback::PublicField)
+    }
+}
+
+// A function's parameters and result are the slots a *caller* meets; a
+// public function's are forced, and so is every field a public one's types
+// hold a `Shared` in - `send::crossing`'s walk through the ledger's `fields`,
+// run the other way round.
+fn sharing_function(item: ref Item, owner: ref String, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    match item {
+        Item::Fn { name, args, body, ret_type, is_public, .. } => {
+            walk.function = key_of_function(name, owner, asked.names)
+            walk.scope = collections::BTreeMap()
+            for arg in args {
+                let ty = ty_of(arg.ty)
+                let named = asked.names.resolve(arg.name).clone()
+                position(named, ty, is_public, asked, walk)
+                walk.scope.insert(named, ty)
+            }
+            if ret_type != null {
+                let result = ret_type ?? return
+                position(RESULT, ty_of(result), is_public, asked, walk)
+            }
+            sharing_block(body, asked, holes_of, ty_of, walk)
+        }
+        else => {}
+    }
+}
+
+fn position(named: ref String, ty: ref Ty, is_public: bool, asked: ref Asked, mut walk: SharingWalk) {
+    let function = walk.function.clone()
+    if holds_shared(ty) {
+        walk.slots.note(function, named, ty.clone(), named == RESULT, true)
+        if is_public {
+            walk.slots.force(function, named, published_reason(function, named), Fallback::PublicSignature)
+        }
+    } else if is_public {
+        for field in shared_fields(ty.text(), asked) {
+            walk.slots.force(FIELDS, field, published_reason(function, named), Fallback::PublicSignature)
+        }
+    }
+}
+
+fn sharing_block(block: ref Block, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    for stmt in block.stmts {
+        sharing_statement(stmt.node, asked, holes_of, ty_of, walk)
+    }
+}
+
+fn sharing_statement(stmt: ref Stmt, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    match stmt {
+        Stmt::Let { names, ty, value, .. } => {
+            // **One name only** (ADR-291): a destructure records no handle,
+            // which leaves each part at the atomic floor (ADR-037 D6) - the safe
+            // direction, since D7 may only ever take an atomic away.
+            if names.len() != 1 {
+                return
+            }
+            let_binding(asked.names.resolve(names[0]).clone(), ty, value, asked, ty_of, walk)
+            sharing_expression(value, asked, holes_of, ty_of, walk)
+        }
+        // **A `const` never holds a handle** (ADR-287 D4): its value is what
+        // the fold came to, and a hull is made by a call.
+        Stmt::Comptime { .. } => {}
+        Stmt::Assign { target, value, .. } => {
+            // `a = b` makes `a` a handle on `b`'s allocation - and `a` may be a
+            // field of a struct as easily as a name.
+            let target_slot = slot_of(target, asked, walk)
+            if target_slot != null {
+                let known = target_slot ?? ""
+                let source = slot_of(value, asked, walk)
+                if source == null {
+                    let (at, named) = split_slot(known)
+                    origin_unseen(at, named, value, asked, walk)
+                } else {
+                    walk.slots.join(known, source ?? "")
+                }
+            }
+            sharing_expression(target, asked, holes_of, ty_of, walk)
+            sharing_expression(value, asked, holes_of, ty_of, walk)
+        }
+        Stmt::For { iter, body, .. } => {
+            sharing_expression(iter, asked, holes_of, ty_of, walk)
+            sharing_block(body, asked, holes_of, ty_of, walk)
+        }
+        Stmt::While { cond, body } => {
+            sharing_expression(cond, asked, holes_of, ty_of, walk)
+            sharing_block(body, asked, holes_of, ty_of, walk)
+        }
+        // Part I 3.1: the last statement of a value-returning body is the
+        // value, and joining it with the result slot costs nothing where the
+        // function returns no `Shared`. A jump carries no value.
+        Stmt::Return(value) => {
+            let returned = value ?? return
+            hands_back(returned, asked, walk)
+            sharing_expression(returned, asked, holes_of, ty_of, walk)
+        }
+        Stmt::Expr(value) => {
+            hands_back(value, asked, walk)
+            sharing_expression(value, asked, holes_of, ty_of, walk)
+        }
+        else => {}
+    }
+}
+
+// A `let` of one name: its type from the annotation, from the handle it
+// names, from the struct literal it builds, or from the hull a call writes
+// (ADR-281 D2, D8) - and then which allocation it is a handle on.
+fn let_binding(named: String, written: ref Type?, value: ref Expr, asked: ref Asked, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    if walks_in_parallel(value, asked.names, walk.parallel) {
+        walk.parallel.insert(named.clone())
+    }
+    let aliased = named_handle(value, asked.names, walk.scope)
+    let ty = binding_type(written, aliased, value, asked, ty_of, walk.scope) ?? return
+    if holds_shared(ty) {
+        let function = walk.function.clone()
+        walk.slots.note(function, named, ty.clone(), false, false)
+        if aliased != null {
+            walk.slots.join(slot(function, named), slot(function, aliased ?? ""))
+        } else {
+            let source = slot_of(value, asked, walk)
+            if source != null {
+                walk.slots.join(slot(function, named), source ?? "")
+            } else if !(by_value_shared(ty) && allocates_here(value, asked)) {
+                origin_unseen(function, named, value, asked, walk)
+            }
+        }
+    }
+    walk.scope.insert(named, ty)
+}
+
+fn binding_type(written: ref Type?, aliased: ref String?, value: ref Expr, asked: ref Asked, ty_of: fn(ref Type) -> Ty sync, scope: ref collections::BTreeMap[String, Ty]) -> Ty? {
+    if written != null {
+        return ty_of(written ?? return null)
+    }
+    if aliased != null {
+        let handle = aliased ?? return null
+        let ty = scope[handle] ?? return null
+        return ty.clone()
+    }
+    return match value {
+        Expr::StructLit { name, .. } => plain_type(asked.names.resolve(name)),
+        Expr::Call { func, args, .. } => hull_written(func, args, asked),
+        else => null,
+    }
+}
+
+// **A hull written by a call** (ADR-281 D2): `SharedMut(0)` makes one here,
+// and holds what its literal says (D8); anything else is left unsaid, and an
+// unsaid type is never a word.
+fn hull_written(func: ref Expr, args: ref Vec[Expr], asked: ref Asked) -> Ty? {
+    let named = match func {
+        Expr::Variable(name) => asked.names.resolve(name).clone(),
+        else => return null,
+    }
+    if !is_hull(named) {
+        return null
+    }
+    if args.len() == 1 {
+        let held = literal_type(args[0]) ?? return plain_type(named)
+        return Ty::Named { name: named, args: [plain_type(held)], view: false }
+    }
+    return plain_type(named)
+}
+
+fn plain_type(name: ref String) -> Ty {
+    return Ty::Named { name: name.clone(), args: [], view: false }
+}
+
+// What a function hands back is the same allocation as whatever it names.
+fn hands_back(value: ref Expr, asked: ref Asked, mut walk: SharingWalk) {
+    let source = slot_of(value, asked, walk) ?? return
+    walk.slots.join(slot(walk.function, RESULT), source)
+}
+
+// A handle whose allocation this analysis did not watch being made: the floor
+// holds and says so (ADR-037 D7: only a proof may take an atomic away).
+fn origin_unseen(function: ref String, named: ref String, value: ref Expr, asked: ref Asked, mut walk: SharingWalk) {
+    walk.slots.force(function, named, origin_reason(value, asked.names), Fallback::UnseenOrigin)
+}
+
+// A crossing reached this name: whatever count it owns, or owns through a
+// field, must be atomic - `send::crossing`'s transitivity asked the other way
+// round.
+fn a_crossing_reaches(named: ref String, why: ref String, fallback: Fallback?, asked: ref Asked, mut walk: SharingWalk) {
+    let ty = walk.scope[named]?.clone() ?? return
+    if holds_shared(ty) {
+        walk.slots.force(walk.function, named, why.clone(), fallback)
+        return
+    }
+    for field in shared_fields(ty.text(), asked) {
+        walk.slots.force(FIELDS, field, why.clone(), fallback)
+    }
+}
+
+// The slot an expression names: a name in scope, or a **field** of a value
+// whose type the ledger records - `c.hits` is the `Counter.hits` slot.
+fn slot_of(expr: ref Expr, asked: ref Asked, mut walk: SharingWalk) -> String? {
+    let handle = named_handle(expr, asked.names, walk.scope)
+    if handle != null {
+        return slot(walk.function, handle ?? "")
+    }
+    return match expr {
+        Expr::Field { base, name } => field_slot(base, asked.names.resolve(name), asked, walk),
+        else => null,
+    }
+}
+
+fn field_slot(base: ref Expr, field: ref String, asked: ref Asked, mut walk: SharingWalk) -> String? {
+    let owner = named_type(base, asked.names, walk.scope) ?? return null
+    let ty = declared_field_type(owner, field, asked) ?? return null
+    if !holds_shared(ty) {
+        return null
+    }
+    let key = f"{owner}.{field}"
+    walk.slots.note(FIELDS, key, ty, true, false)
+    return slot(FIELDS, key)
+}
+
+fn sharing_expression(expr: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    match expr {
+        // Part II 11.2: a task runs on a thread of its own, and a task that
+        // uses a handle takes one of its own (ADR-312 D1).
+        Expr::Spawn { body, .. } => {
+            for named in names_used_by(body, asked) {
+                if a_handle_by_value(named, walk) {
+                    walk.slots.duplicates(walk.function, named, "used by a `spawn` body, which takes a handle of its own")
+                }
+                a_crossing_reaches(named, "a `spawn` body uses it, and a task runs on a thread of its own", null, asked, walk)
+            }
+            sharing_expression(body, asked, holes_of, ty_of, walk)
+        }
+        Expr::Call { func, args, config } => {
+            let callee = call_path(func, asked.names)
+            // A door over several locks names the handles it holds together
+            // (ADR-281 D18).
+            let path = callee?.clone() ?? ""
+            if path == "access_all" || path == "update_all" {
+                for arg in args {
+                    let handle = named_handle(arg, asked.names, walk.scope) ?? continue
+                    walk.slots.held_together.push(slot(walk.function, handle))
+                }
+            }
+            sharing_arguments(SharingCall { callee: callee, is_method: false }, args, config, asked, holes_of, ty_of, walk)
+            sharing_expression(func, asked, holes_of, ty_of, walk)
+        }
+        // **A handle handed to a `?.m()` is handed over**: whether the call
+        // happens does not change where the value would go if it did.
+        Expr::MethodCall { .. } => sharing_method(expr, asked, holes_of, ty_of, walk),
+        Expr::SafeMethod { .. } => sharing_method(expr, asked, holes_of, ty_of, walk),
+        // A `Shared` put into a struct is the struct's field's allocation, and
+        // the field is where a crossing of the struct lands.
+        Expr::StructLit { name, fields } => {
+            let owner = asked.names.resolve(name).clone()
+            for field in fields {
+                struct_field(owner, field, asked, holes_of, ty_of, walk)
+            }
+        }
+        // **A hole is Nikaia source and is walked like any other** (ADR-309
+        // D13): an analysis that stops at a literal is one a hole can be
+        // hidden in.
+        Expr::LitInterpolated { .. } => {
+            for hole in holes_of(expr) {
+                sharing_expression(hole, asked, holes_of, ty_of, walk)
+            }
+        }
+        Expr::Closure { body, .. } => sharing_block(body, asked, holes_of, ty_of, walk),
+        Expr::Block(block) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::Overlap(block) => sharing_block(block, asked, holes_of, ty_of, walk),
+        Expr::If { cond, then_branch, else_branch } => {
+            sharing_expression(cond, asked, holes_of, ty_of, walk)
+            sharing_block(then_branch, asked, holes_of, ty_of, walk)
+            sharing_block(else_branch ?? return, asked, holes_of, ty_of, walk)
+        }
+        Expr::Match { value, arms } => {
+            sharing_expression(value, asked, holes_of, ty_of, walk)
+            for arm in arms {
+                sharing_expression(arm.body, asked, holes_of, ty_of, walk)
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            sharing_expression(lhs, asked, holes_of, ty_of, walk)
+            sharing_expression(rhs, asked, holes_of, ty_of, walk)
+        }
+        Expr::Unary { expr, .. } => sharing_expression(expr, asked, holes_of, ty_of, walk),
+        Expr::Try(inner) => sharing_expression(inner, asked, holes_of, ty_of, walk),
+        Expr::Throw(inner) => sharing_expression(inner, asked, holes_of, ty_of, walk),
+        Expr::Cast { expr, .. } => sharing_expression(expr, asked, holes_of, ty_of, walk),
+        Expr::Field { base, .. } => sharing_expression(base, asked, holes_of, ty_of, walk),
+        Expr::SafeField { base, .. } => sharing_expression(base, asked, holes_of, ty_of, walk),
+        Expr::Index { base, index } => {
+            sharing_expression(base, asked, holes_of, ty_of, walk)
+            sharing_expression(index, asked, holes_of, ty_of, walk)
+        }
+        Expr::Coalesce { value, fallback } => {
+            sharing_expression(value, asked, holes_of, ty_of, walk)
+            sharing_expression(fallback, asked, holes_of, ty_of, walk)
+        }
+        Expr::TryCatch { expr, handler } => {
+            sharing_expression(expr, asked, holes_of, ty_of, walk)
+            sharing_block(handler, asked, holes_of, ty_of, walk)
+        }
+        Expr::Tuple(parts) => {
+            for part in parts {
+                sharing_expression(part, asked, holes_of, ty_of, walk)
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            sharing_expression(start, asked, holes_of, ty_of, walk)
+            sharing_expression(end, asked, holes_of, ty_of, walk)
+        }
+        else => {}
+    }
+}
+
+fn names_used_by(expr: ref Expr, asked: ref Asked) -> collections::BTreeSet[String] {
+    let mut out: collections::BTreeSet[String] = collections::BTreeSet()
+    names_in(expr, asked.names, out)
+    return out
+}
+
+fn a_handle_by_value(named: ref String, walk: ref SharingWalk) -> bool {
+    let ty = walk.scope[named] ?? return false
+    return by_value_shared(ty)
+}
+
+// `Counter { hits }` is the shorthand: the field takes the variable of its own
+// name (Part I 4.1). A handle joins the field's class; a `Shared`-holding
+// field filled from something this walk cannot follow holds the floor.
+fn struct_field(owner: ref String, field: ref FieldInit, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    let field_name = asked.names.resolve(field.name).clone()
+    let value = field.value?.clone() ?? Expr::Variable(field.name)
+    let key = f"{owner}.{field_name}"
+    let handle = named_handle(value, asked.names, walk.scope)
+    if handle != null {
+        let named = handle ?? ""
+        let ty = walk.scope[named]?.clone() ?? return
+        walk.slots.note(FIELDS, key, ty, true, false)
+        walk.slots.join(slot(walk.function, named), slot(FIELDS, key))
+    } else {
+        let declared = declared_field_type(owner, field_name, asked)
+        if declared != null && holds_shared(declared ?? Ty::Unknown) {
+            walk.slots.note(FIELDS, key, declared ?? Ty::Unknown, true, false)
+            let source = slot_of(value, asked, walk)
+            if source == null {
+                origin_unseen(FIELDS, key, value, asked, walk)
+            } else {
+                walk.slots.join(source ?? "", slot(FIELDS, key))
+            }
+        }
+    }
+    sharing_expression(value, asked, holes_of, ty_of, walk)
+}
+
+// A method call: a `get` of a value that does not copy cheaply copies the whole
+// of it out each time (ADR-281 D3); a lambda handed to a walk that runs in
+// parallel - `par_iter()`, or one chained onto it - runs on every core
+// (ADR-235 D1); and a method nothing describes is a body this compiler cannot
+// see the end of (ADR-296 D17).
+fn sharing_method(call: ref Expr, asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    let (receiver, method, args, config) = match call {
+        Expr::MethodCall { receiver, method, args, config } => (receiver, asked.names.resolve(method).clone(), args, config),
+        Expr::SafeMethod { receiver, method, args, config } => (receiver, asked.names.resolve(method).clone(), args, config),
+        else => return,
+    }
+    if method == "get" && args.len() == 0 {
+        a_copy_out_of_the_lock(receiver, asked, walk)
+    }
+    if a_parallel_method(method) || walks_in_parallel(receiver, asked.names, walk.parallel) {
+        let why = f"a lambda handed to `{method}` uses it, and that lambda runs on a thread the program asked for"
+        for arg in args {
+            for named in names_used_by(arg, asked) {
+                a_crossing_reaches(named, why, null, asked, walk)
+            }
+        }
+    }
+    sharing_arguments(SharingCall { callee: method, is_method: true }, args, config, asked, holes_of, ty_of, walk)
+    sharing_expression(receiver, asked, holes_of, ty_of, walk)
+}
+
+fn a_copy_out_of_the_lock(receiver: ref Expr, asked: ref Asked, mut walk: SharingWalk) {
+    let handle = named_handle(receiver, asked.names, walk.scope) ?? return
+    let ty = walk.scope[handle] ?? return
+    let held = held_that_does_not_copy(ty) ?? return
+    walk.slots.copies.push((slot(walk.function, handle), f"`{handle}.get()` copies the whole `{held}` out of the lock"))
+}
+
+// What a call names: the callee as written where it names one, and whether it
+// is a method - which is all a reason says about it.
+struct SharingCall {
+    callee: String?,
+    is_method: bool,
+}
+
+// **What happens to a handle handed to a call.** A callee the ledger
+// describes has a parameter slot, and the handle joins it: one allocation,
+// one count. A callee nothing describes may start a thread of its own
+// (ADR-303 D7), so the count is atomic - for every name inside the argument,
+// a lambda that captures a handle or an expression with one in it included,
+// and for the options after the `;`, which no contract covers.
+fn sharing_arguments(called: ref SharingCall, args: ref Vec[Expr], config: ref Vec[ConfigArg], asked: ref Asked, holes_of: fn(ref Expr) -> Vec[Expr] sync, ty_of: fn(ref Type) -> Ty sync, mut walk: SharingWalk) {
+    let described = parameters_of(called.callee, asked)
+    for at in 0..<args.len() {
+        let arg = args[at]
+        let handle = named_handle(arg, asked.names, walk.scope)
+        if handle == null {
+            an_argument_that_is_not_a_handle(called, described, at, arg, asked, walk)
+            sharing_expression(arg, asked, holes_of, ty_of, walk)
+            continue
+        }
+        a_handle_handed_on(called, described, at, handle ?? "", walk)
+    }
+    for setting in config {
+        let why = f"it is handed to `{called.callee?.clone() ?? "the callee"}` as the option `{asked.names.resolve(setting.name)}`, and no contract says what happens to a `Shared` in an option"
+        for named in names_used_by(setting.value, asked) {
+            a_crossing_reaches(named, why, Fallback::UncoveredArgument, asked, walk)
+        }
+        sharing_expression(setting.value, asked, holes_of, ty_of, walk)
+    }
+}
+
+// Not a handle itself: it may hold one, capture one, or have one inside it,
+// and a callee nothing describes may put any of those on a thread. A handle
+// read out of a **field** and handed on by value joins the parameter's class
+// as a named one would.
+fn an_argument_that_is_not_a_handle(called: ref SharingCall, described: ref Described?, at: i64, arg: ref Expr, asked: ref Asked, mut walk: SharingWalk) {
+    if described == null {
+        let why = unseen(called.callee)
+        for named in names_used_by(arg, asked) {
+            a_crossing_reaches(named, why, unseen_kind(called), asked, walk)
+        }
+        return
+    }
+    let known = described ?? return
+    if at >= known.params.len() {
+        return
+    }
+    let param = known.params[at].0.clone()
+    if !by_value_shared(known.params[at].1) {
+        return
+    }
+    let source = slot_of(arg, asked, walk) ?? return
+    let (owner, named) = split_slot(source)
+    walk.slots.duplicates(owner, named, handed_on_to(known.key, param))
+    walk.slots.join(source, slot(known.key, param))
+}
+
+// A handle handed on: into the parameter's class where a contract describes
+// the position - duplicated where the position takes it by value (ADR-312
+// D1) - and atomic where nothing does.
+fn a_handle_handed_on(called: ref SharingCall, described: ref Described?, at: i64, handle: ref String, mut walk: SharingWalk) {
+    let function = walk.function.clone()
+    if described == null {
+        walk.slots.force(function, handle, unseen(called.callee), unseen_kind(called))
+        return
+    }
+    let known = described ?? return
+    if at >= known.params.len() {
+        let callee = called.callee?.clone() ?? "the callee"
+        walk.slots.force(function, handle, f"`{callee}` takes it in a position no contract describes", Fallback::UncoveredArgument)
+        return
+    }
+    let param = known.params[at].0.clone()
+    if by_value_shared(known.params[at].1) {
+        walk.slots.duplicates(function, handle, handed_on_to(known.key, param))
+    }
+    walk.slots.join(slot(function, handle), slot(known.key, param))
+}
+
+fn unseen_kind(called: ref SharingCall) -> Fallback {
+    if called.is_method {
+        return Fallback::UnseenMethod
+    }
+    return Fallback::UnseenCall
+}
+
+// A callee's ledger key and the parameters a call passes - name and declared
+// type - where a ledger has them: the program's own ledger first, then the
+// library's, by the name or with the suffix rule every other resolution uses
+// (ADR-296 D17). The type answers one question: whether the position takes
+// the handle by value (a second handle, ADR-312 D1) or lends it.
+struct Described {
+    key: String,
+    params: Vec[(String, Ty)],
+}
+
+fn parameters_of(callee: ref String?, asked: ref Asked) -> Described? {
+    let named = callee ?? return null
+    let in_own = described_key(named, asked.own)
+    if in_own != null {
+        return described_by(in_own ?? "", asked.own)
+    }
+    let in_library = described_key(named, asked.library) ?? return null
+    return described_by(in_library, asked.library)
+}
+
+// The key a ledger has the callee under: by its name, or by the first key
+// that ends in `::callee`.
+fn described_key(callee: ref String, ledger: ref Ledger) -> String? {
+    if ledger.functions.contains_key(callee) {
+        return callee.clone()
+    }
+    let suffix = f"::{callee}"
+    for (one, _) in ledger.functions {
+        if one.ends_with(ref suffix) {
+            return one.clone()
+        }
+    }
+    return null
+}
+
+fn described_by(key: ref String, ledger: ref Ledger) -> Described? {
+    let contract = ledger.functions[key] ?? return null
+    let signature = contract.signature ?? return null
+    let mut params: Vec[(String, Ty)] = []
+    let mut first = true
+    for (name, ty) in signature.params {
+        if !(first && name == "self") {
+            params.push((name.clone(), ty.clone()))
+        }
+        first = false
+    }
+    return Described { key: key.clone(), params: params }
+}

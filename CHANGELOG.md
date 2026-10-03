@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.401] — 2026-10-03
+
+**Which count each `Shared` gets is walked in Nikaia** (#125, ADR-294). The
+walk `contracts::sharing` runs before its classes are coloured (ADR-312,
+ADR-037) moved into `tools/sharing.nika` beside the decisions already there:
+every handle a unit makes, names, aliases, stores in a field or hands to a
+call, joined into allocation classes; a public signature's and a public
+field's forced atomic (ADR-037 D8); a `spawn`, a lambda handed to a walk that
+runs in parallel (ADR-235 D1) and a callee nothing describes reaching what
+they use; a handle handed on by value duplicated (ADR-312 D1); a door over
+several locks and a `get` that copies out of one recorded (ADR-281 D18, D3);
+the holes of a literal walked as source (ADR-309 D13). What a written type
+means is the compiler's to say, handed in. The sharing, count and lock suites
+pass unchanged.
+
+Moving it found one gap, closed in the compiler (ADR-294 D3): **a parameter
+handed to a method of the program that keeps it is kept.** The walk asked
+each candidate's `keeps` column, which is what the fixpoint is still filling,
+so every method of the package answered *keeps nothing* - a `fallback` handed
+to `Slots::force`, which stores it, was lent, and the declaration
+`&Option<Fallback>` met a method wanting the value. A candidate of the package
+is now asked through the fixpoint, as a free call is. 22.7 % of the toolchain
+is Nikaia.
+
 ## [0.0.400] — 2026-10-03
 
 **What a body does with each of its parameters is walked in Nikaia** (#125,
