@@ -3,11 +3,14 @@
 // Whether a callee **lends** a parameter, so that the compiler writes the
 // reference and the caller does not (ADR-094 D1, D2) - the rule the
 // compiler's `contracts::keeps` answers from the `keeps` column, moved from
-// Rust (ADR-294, #125). The walk that fills the column stays Rust.
+// Rust (ADR-294, #125), with the least fixpoint that fills the column from
+// the uses each body's walk found (0.0.399). The walk stays Rust.
 //
 // One answer with three readers - the emitter writing the declaration, the
 // emitter writing the call, and the checker refusing a `&` somebody wrote -
 // because two of the three disagreeing is a `&&T` or a moved value.
+
+use std::collections
 
 // The names whose values are copied when handed on: the numbers, the two
 // machine-width names (ADR-302 D6), a span of time (ADR-150 D1), and the
@@ -97,4 +100,110 @@ fn any_moves(types: ref Vec[Ty]) -> bool {
         }
     }
     return false
+}
+
+// ---------------------------------------------------------------------------
+// Which parameters a function keeps (ADR-094 D2): the fixpoint over the uses
+// each body's walk found
+// ---------------------------------------------------------------------------
+
+/// A parameter handed to a callee: the parameter, the callee as the ledger
+/// names it, and the position it landed in. Whether it is kept is that
+/// callee's answer, which the fixpoint waits for.
+pub struct Passed {
+    pub parameter: String,
+    pub callee: String,
+    pub at: i64,
+}
+
+/// What one function's body does with each of its parameters: the ones kept on
+/// its own evidence - stored, assigned, returned by value, given to a task,
+/// handed to a callee nothing describes - and the ones handed on.
+pub struct Uses {
+    pub kept: collections::BTreeSet[String],
+    pub passed: Vec[Passed],
+}
+
+/// The parameters each function keeps. A **least** fixpoint, where `sync`'s is
+/// a greatest one, and the difference is which direction is safe: `sync` is a
+/// promise and is taken away on doubt, `keeps` is a restriction and is added on
+/// doubt. So two functions that pass each other a parameter neither stores
+/// keep neither. Over maps, so the answer does not depend on the order the
+/// source declared things in (Part III 13.5).
+pub fn kept_by(graph: ref collections::BTreeMap[String, Uses], own: ref Ledger, library: ref Ledger) -> collections::BTreeMap[String, collections::BTreeSet[String]] {
+    let mut kept: collections::BTreeMap[String, collections::BTreeSet[String]] = collections::BTreeMap()
+    for (name, uses) in graph {
+        kept.insert(name.clone(), uses.kept.clone())
+    }
+    let mut changed = true
+    while changed {
+        changed = false
+        for (name, uses) in graph {
+            for passed in uses.passed {
+                if keeps_already(kept, name, passed.parameter) {
+                    continue
+                }
+                if keeps_its(passed.callee, passed.at, kept, own, library) {
+                    add_kept(kept, name, passed.parameter)
+                    changed = true
+                }
+            }
+        }
+    }
+    return kept
+}
+
+fn keeps_already(kept: ref collections::BTreeMap[String, collections::BTreeSet[String]], name: ref String, parameter: ref String) -> bool {
+    let parameters = kept[name] ?? return false
+    return parameters.contains(parameter)
+}
+
+fn add_kept(mut kept: collections::BTreeMap[String, collections::BTreeSet[String]], name: ref String, parameter: ref String) {
+    let mut parameters: collections::BTreeSet[String] = collections::BTreeSet()
+    if kept.contains_key(name) {
+        let held = kept[name] ?? return
+        for one in held {
+            parameters.insert(one.clone())
+        }
+    }
+    parameters.insert(parameter.clone())
+    kept.insert(name.clone(), parameters)
+}
+
+// Whether `callee` keeps whatever is passed in position `at`. This package's
+// own answer comes from the fixpoint in progress; anybody else's from their
+// ledger, where **an absent `keeps` on a present entry means it keeps
+// nothing**. An entry that is absent is unknown, and unknown keeps - as does a
+// position the signature does not have, which is a call read wrongly, and
+// reading it wrongly is not a licence to assume.
+fn keeps_its(callee: ref String, at: i64, settling: ref collections::BTreeMap[String, collections::BTreeSet[String]], own: ref Ledger, library: ref Ledger) -> bool {
+    if settling.contains_key(callee) {
+        let contract = own.functions[callee] ?? return true
+        let parameter = parameter_at(contract, at) ?? return true
+        return keeps_already(settling, callee, parameter)
+    }
+    if own.functions.contains_key(callee) {
+        let contract = own.functions[callee] ?? return true
+        return keeps_at(contract, at)
+    }
+    let contract = library.functions[callee] ?? return true
+    return keeps_at(contract, at)
+}
+
+// What a ledger says about the parameter at `at`.
+fn keeps_at(contract: ref FnContract, at: i64) -> bool {
+    let parameter = parameter_at(contract, at) ?? return true
+    return contract.keeps.contains(parameter)
+}
+
+fn parameter_at(contract: ref FnContract, at: i64) -> String? {
+    let signature = contract.signature ?? return null
+    let mut position = 0
+    for (name, _) in signature.params {
+        if position == at {
+            return name.clone()
+        }
+        position += 1
+    }
+    return null
 }

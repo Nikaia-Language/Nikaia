@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.399] — 2026-10-03
+
+**What a function keeps is settled in Nikaia** (#125, ADR-294). The least
+fixpoint `contracts::keeps` runs over the uses each body's walk found (ADR-094
+D2) moved into `tools/lends.nika` beside the lending rule it feeds: it starts
+from what each body keeps on its own evidence and adds what the callees it
+hands a parameter to keep, until nothing changes; a callee of the package
+answers from the fixpoint in progress, any other from its ledger, where an
+absent `keeps` on a present entry keeps nothing and an absent entry keeps
+everything. The body's walk and writing the ledger stay Rust; the keeps and
+lending suites pass unchanged. 21.0 % of the toolchain is Nikaia.
+
 ## [0.0.398] — 2026-10-03
 
 **What a body does to its claim to be `sync` is walked in Nikaia** (#125,
