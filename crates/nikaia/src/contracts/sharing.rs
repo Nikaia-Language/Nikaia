@@ -46,13 +46,11 @@
 //
 // Every crossing is therefore a **seed**, and a missed seed is unsoundness
 // rather than a missed optimisation. The seeds are ADR-005 §5.2's own
-// enumeration of the crossings, asked per value rather than per type - including
-// the one D6 made live. `task::both`, the crossing the *compiler* chooses for
-// statement overlapping, used to be safe to leave out because a `Shared` was
-// `MayNot` and was never overlapped; since D6 the result of an overlapped
-// operation is a `Shared` that crosses back to the thread that started it, so it
-// is a seed now, reached through [`Fallback::UnseenOrigin`] - a handle whose
-// allocation this analysis did not watch being made.
+// enumeration of the crossings, asked per value rather than per type. An
+// `overlap` branch is not one: it is polled on the block's own thread
+// (ADR-292 D4). A handle whose allocation this analysis did not watch being
+// made - one a call handed back - stays at the floor through
+// [`Fallback::UnseenOrigin`], because what is not seen is not proved.
 //
 // ## Why the fixpoint degenerates, which is itself a finding
 //
@@ -578,11 +576,10 @@ impl<'a> Analysis<'a> {
 
     /// A handle whose allocation this analysis did not watch being made.
     ///
-    /// The floor holds and says so. It is [`Fallback::UnseenOrigin`], and it is
-    /// also the seed that step 1 made necessary: since ADR-037 D6 the
-    /// overlapping analysis may run a call on a thread of its own and hand the
-    /// result back (ADR-005 §5.2's `task::both` row), so a `Shared` that came
-    /// out of a call is a `Shared` that crosses.
+    /// The floor holds and says so ([`Fallback::UnseenOrigin`]). A `Shared`
+    /// that came out of a call was allocated where this analysis did not look,
+    /// so nothing proves it never crosses, and only a proof may take an atomic
+    /// away (ADR-037 D7).
     fn origin_unseen(&mut self, function: &str, name: &str, value: &Expr) {
         self.force(
             function,
