@@ -1104,12 +1104,12 @@ fn a_call(expr: &Expr, span: &Span, words: &winnow_grammar::InternerContext, bou
     match expr {
         Expr::MethodCall { receiver, method, args, config } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
-            let subject = bound_subject(receiver, words, bound).or_else(|| bound_argument(args, words, bound));
+            let subject = nikaia_std::index::or_maybe(bound_subject(receiver, words, bound), || bound_argument(args, words, bound));
             a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
         },
         Expr::SafeMethod { receiver, method, args, config } => {
             let receiver = nikaia_std::boxed::open(receiver); let method = *method;
-            let subject = bound_subject(receiver, words, bound).or_else(|| bound_argument(args, words, bound));
+            let subject = nikaia_std::index::or_maybe(bound_subject(receiver, words, bound), || bound_argument(args, words, bound));
             a_parameter_call(words.resolve(method), &option_names(config, words), subject, span, bound, takers, found);
         },
         Expr::Call { func, args, config } => {
@@ -5636,6 +5636,252 @@ pub fn lock_name(count: Count) -> String {
     }
 }
 
+pub const FIELDS: &str = "<field>";
+
+#[derive(Debug, Clone)]
+pub struct Handle {
+    pub function: String,
+    pub value: String,
+    pub ty: Ty,
+    pub internal: bool,
+    pub position: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Forced {
+    pub key: String,
+    pub why: String,
+    pub fallback: Option<Fallback>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Slots {
+    pub declared_here: collections::BTreeSet<String>,
+    pub handles: collections::BTreeMap<String, Handle>,
+    pub index: collections::BTreeMap<String, i64>,
+    pub parent: Vec<i64>,
+    pub forced: Vec<Forced>,
+    pub duplicated: Vec<(String, String)>,
+    pub held_together: Vec<String>,
+    pub copies: Vec<(String, String)>,
+}
+
+impl Slots {
+    pub fn new(declared_here: collections::BTreeSet<String>) -> Slots { Slots { declared_here, handles: collections::BTreeMap::new(), index: collections::BTreeMap::new(), parent: vec![], forced: vec![], duplicated: vec![], held_together: vec![], copies: vec![] } }
+    pub fn id(&mut self, key: &str) -> i64 {
+        let found = *nikaia_std::index::get(&self.index, key);
+        if found.is_some() { return nikaia_std::index::or(found, || 0); }
+        let fresh = self.parent.len() as i64;
+        self.parent.push(fresh);
+        self.index.insert(key.to_owned(), fresh);
+        fresh
+    }
+    pub fn root(&mut self, start: i64) -> i64 {
+        let mut at = start;
+        while *nikaia_std::index::get(&self.parent, nikaia_std::index::at(at)) != at {
+            let up = *nikaia_std::index::get(&self.parent, nikaia_std::index::at(at));
+            { let __nikaia_stored = *nikaia_std::index::get(&self.parent, nikaia_std::index::at(up)); nikaia_std::index::set(&mut self.parent, nikaia_std::index::at(at), __nikaia_stored); }
+            at = *nikaia_std::index::get(&self.parent, nikaia_std::index::at(at));
+        }
+        at
+    }
+    pub fn class_of(&mut self, key: &str) -> i64 {
+        let id = self.id(key);
+        self.root(id)
+    }
+    pub fn join(&mut self, left: &str, right: &str) {
+        let one = self.class_of(left);
+        let other = self.class_of(right);
+        if one != other { { let __nikaia_stored = other; nikaia_std::index::set(&mut self.parent, nikaia_std::index::at(one), __nikaia_stored); } }
+    }
+    pub fn note(&mut self, function: &str, value: &str, ty: Ty, internal: bool, position: bool) {
+        let key = slot(function, value);
+        self.id(&key);
+        if !self.handles.contains_key(&key) { self.handles.insert(key.to_owned(), Handle { function: function.to_owned(), value: value.to_owned(), ty, internal, position }); }
+    }
+    pub fn force(&mut self, function: &str, value: &str, why: String, fallback: Option<Fallback>) {
+        let key = slot(function, value);
+        self.id(&key);
+        self.forced.push(Forced { key, why, fallback });
+    }
+    pub fn duplicates(&mut self, function: &str, value: &str, site: String) {
+        let key = slot(function, value);
+        self.id(&key);
+        self.duplicated.push((key, site));
+    }
+    fn foreign_slots_hold_the_floor(&mut self) {
+        let field_prefix = format!("{}::", FIELDS);
+        let mut foreign: Vec<(String, String)> = vec![];
+        for key in self.index.keys() {
+            if !key.contains("::") { continue; }
+            let mut owner = before_last(key, "::");
+            let mut named = key.to_owned();
+            if key.starts_with(&field_prefix) {
+                let parts: Vec<&str> = key.splitn(2, "::").collect::<Vec<_>>();
+                named = (*nikaia_std::index::get(&parts, 1)).to_owned();
+                owner = before_last(&named, ".");
+            }
+            if !self.declared_here.contains(&owner) { foreign.push((key.to_owned(), named)); }
+        }
+        for (key, named) in foreign.iter() {
+            let why = format!("`{}` belongs to another file of this package, and that file's own pass decides its count - this one reads only one of the two", named);
+            self.forced.push(Forced { key: key.to_owned(), why, fallback: Some(Fallback::ForeignFile) });
+        }
+    }
+}
+
+fn before_last(text: &str, separator: &str) -> String {
+    let parts: Vec<&str> = text.split(separator).collect::<Vec<_>>();
+    if parts.len() < 2 { return text.to_owned(); }
+    let mut kept: Vec<String> = vec![];
+    for i in 0..parts.len() as i64 - 1 { kept.push((*nikaia_std::index::get(&parts, (i) as usize)).to_owned()); }
+    kept.join(separator)
+}
+
+pub fn decided(slots: &mut Slots) -> Sharing {
+    slots.foreign_slots_hold_the_floor();
+    let mut why_of: collections::BTreeMap<i64, String> = collections::BTreeMap::new();
+    let mut fallback_of: collections::BTreeMap<i64, Fallback> = collections::BTreeMap::new();
+    let mut floor: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    let forced = slots.forced.to_owned();
+    for one in forced.iter() {
+        let root = slots.class_of(&one.key);
+        if one.fallback.is_some() { floor.insert(root); }
+        if !why_of.contains_key(&root) || fallback_of.contains_key(&root) && one.fallback.is_none() {
+            why_of.insert(root, one.why.to_owned());
+            set_fallback(&mut fallback_of, root, one.fallback);
+        }
+    }
+    let mut held: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    let together = slots.held_together.to_owned();
+    for key in together.iter() { held.insert(slots.class_of(key)); }
+    let keys: Vec<String> = handle_keys(&slots);
+    let mut not_a_word: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    for key in keys.iter() {
+        let root = slots.class_of(key);
+        if !holds_a_word(&handle_type(&slots, key)) { not_a_word.insert(root); }
+    }
+    let duplicated = sites_by_slot(&slots.duplicated);
+    let copied_out = sites_by_slot(&slots.copies);
+    let mut decisions: Vec<Decision> = vec![];
+    let mut counts: collections::BTreeMap<String, Count> = collections::BTreeMap::new();
+    let mut classes: collections::BTreeMap<String, collections::BTreeMap<i64, Class>> = collections::BTreeMap::new();
+    for key in keys.iter() {
+        let root = slots.class_of(key);
+        let handle = match match *nikaia_std::index::get(&slots.handles, key) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        } { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let a_word = !not_a_word.contains(&root);
+        let mut count = Count::Plain;
+        let mut why: Option<String> = None;
+        let mut fallback: Option<Fallback> = None;
+        if why_of.contains_key(&root) {
+            why = match *nikaia_std::index::get(&why_of, &root) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            };
+            fallback = nikaia_std::index::or_maybe(*nikaia_std::index::get(&fallback_of, &root), || None);
+            count = Count::Atomic;
+            if fallback.is_none() && a_word && !floor.contains(&root) && !held.contains(&root) { count = Count::Word; }
+        }
+        if handle.position { put_in_class(&mut classes, &handle.function, root, &handle.value, count); }
+        counts.insert(key.to_owned(), count);
+        if !handle.internal {
+            decisions.push(Decision { function: handle.function.to_owned(), value: handle.value.to_owned(), ty: handle.ty.text(), count, why, fallback, duplications: nikaia_std::index::or(match *nikaia_std::index::get(&duplicated, key) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || vec![].into()), copied_out: nikaia_std::index::or(match *nikaia_std::index::get(&copied_out, key) {
+                Some(__nikaia_it) => Some(__nikaia_it.clone()),
+                None => None,
+            }, || vec![].into()), kept_its_lock: lock_kept(&count, a_word, held.contains(&root)) });
+        }
+    }
+    let mut summaries: collections::BTreeMap<String, Vec<Class>> = collections::BTreeMap::new();
+    for (function, roots) in classes.iter() {
+        let mut found: Vec<Class> = vec![];
+        for (_, class) in roots.iter() { found.push(Class { members: sorted_once(&class.members), count: class.count }); }
+        summaries.insert(function.to_owned(), in_class_order(&found));
+    }
+    Sharing { decisions, summaries, counts }
+}
+
+fn set_fallback(fallback_of: &mut collections::BTreeMap<i64, Fallback>, root: i64, fallback: Option<Fallback>) {
+    fallback_of.remove(&root);
+    let row = match fallback { Some(__nikaia_value) => __nikaia_value, None => return };
+    fallback_of.insert(root, row);
+}
+
+fn handle_keys(slots: &Slots) -> Vec<String> {
+    let mut keys: Vec<String> = vec![];
+    for key in slots.handles.keys() { keys.push(key.to_owned()); }
+    keys
+}
+
+fn handle_type(slots: &Slots, key: &str) -> Ty {
+    let handle = match *nikaia_std::index::get(&slots.handles, key) { Some(__nikaia_value) => __nikaia_value, None => return Ty::Unknown };
+    handle.ty.clone()
+}
+
+fn sites_by_slot(pairs: &[(String, String)]) -> collections::BTreeMap<String, Vec<String>> {
+    let mut out: collections::BTreeMap<String, Vec<String>> = collections::BTreeMap::new();
+    for (key, site) in pairs.iter() {
+        let mut sites = nikaia_std::index::or(match *nikaia_std::index::get(&out, key) {
+            Some(__nikaia_it) => Some(__nikaia_it.clone()),
+            None => None,
+        }, || vec![].into());
+        if !nikaia_std::list::contains(&sites, site) { sites.push(site.to_owned()); }
+        out.insert(key.to_owned(), sites);
+    }
+    out
+}
+
+fn put_in_class(classes: &mut collections::BTreeMap<String, collections::BTreeMap<i64, Class>>, function: &str, root: i64, member: &str, count: Count) {
+    let mut roots = nikaia_std::index::or(match *nikaia_std::index::get(&classes, function) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || collections::BTreeMap::new().into());
+    let mut class = nikaia_std::index::or(match *nikaia_std::index::get(&roots, &root) {
+        Some(__nikaia_it) => Some(__nikaia_it.clone()),
+        None => None,
+    }, || Class { members: vec![], count });
+    class.members.push(member.to_owned());
+    class.count = class.count.join(count);
+    roots.insert(root, class);
+    classes.insert(function.to_owned(), roots);
+}
+
+fn lock_kept(count: &Count, a_word: bool, held_together: bool) -> Option<String> {
+    if *count != Count::Atomic || !a_word { return None; }
+    if held_together { return Some(String::from("a word, but a door over several locks takes it, and a compare-and-swap cannot be held, so it keeps its lock")); }
+    Some(String::from("a word, but the floor answered for it rather than a crossing, so it keeps its lock"))
+}
+
+fn sorted_once(members: &[String]) -> Vec<String> {
+    let mut sorted = members.to_owned();
+    sorted.sort();
+    let mut out: Vec<String> = vec![];
+    for one in sorted.iter() { if out.is_empty() || *nikaia_std::index::get(&out, nikaia_std::index::at(out.len() as i64 - 1)) != *one { out.push(one.to_owned()); } }
+    out
+}
+
+fn in_class_order(classes: &[Class]) -> Vec<Class> {
+    let mut out: Vec<Class> = vec![];
+    for class in classes.iter() {
+        let mut at = out.len() as i64;
+        while at > 0 && class_before(class, nikaia_std::index::get(&out, nikaia_std::index::at(at - 1))) { at -= 1; }
+        out.insert(nikaia_std::count::of(at), class.clone());
+    }
+    out
+}
+
+fn class_before(a: &Class, b: &Class) -> bool {
+    let shorter = if (a.members.len() as i64) < b.members.len() as i64 { a.members.len() as i64 } else { b.members.len() as i64 };
+    for i in 0..shorter { if *nikaia_std::index::get(&a.members, (i) as usize) != *nikaia_std::index::get(&b.members, (i) as usize) { return *nikaia_std::index::get(&a.members, (i) as usize) < *nikaia_std::index::get(&b.members, (i) as usize); } }
+    if (a.members.len() as i64) != b.members.len() as i64 { return (a.members.len() as i64) < b.members.len() as i64; }
+    a.count.rank() < b.count.rank()
+}
+
 
 // --- signature.nika ---
 
@@ -6435,7 +6681,7 @@ impl Scan {
     // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
     // this was written - see `contracts::sync`.
     fn position(&self) -> Position {
-        match &self.state {
+        match self.state {
             ScanState::Text => Position::Text,
             ScanState::Script => Position::Script,
             ScanState::Style => Position::Style,
@@ -6465,7 +6711,7 @@ impl Scan {
             for k in self.tail.len() as i64 - 9..self.tail.len() as i64 { kept.push(*nikaia_std::index::get(&self.tail, nikaia_std::index::at(k))); }
             self.tail = kept;
         }
-        match &self.state {
+        match self.state {
             ScanState::Text => {
                 if self.ended_with("<!--") { self.state = ScanState::Comment; } else if c == '<' {
                     self.state = ScanState::Tag;
@@ -6474,7 +6720,6 @@ impl Scan {
             },
             ScanState::Comment => { if self.ended_with("-->") { self.state = ScanState::Text; } },
             ScanState::Quoted(quote) => {
-                let quote = *quote;
                 if c == quote {
                     self.state = ScanState::Tag;
                     self.attribute = String::from("");
@@ -6667,7 +6912,7 @@ fn an_entry(key: &str, asked: &Asked<'_>) -> Option<FnContract> {
         Some(__nikaia_it) => Some(__nikaia_it.clone()),
         None => None,
     };
-    mine.or_else(|| match *nikaia_std::index::get(&asked.library.functions, key) {
+    nikaia_std::index::or_maybe(mine, || match *nikaia_std::index::get(&asked.library.functions, key) {
         Some(__nikaia_it) => Some(__nikaia_it.clone()),
         None => None,
     })
@@ -6820,7 +7065,7 @@ fn named_crossing(ty: &Ty, name: &str, args: &[Ty], walking: &Walking<'_>, seen:
         if args.is_empty() { return Crossing::May; }
         return Crossing::Undecided { part: ty.text() };
     }
-    let foreign = match &walking.into {
+    let foreign = match walking.into {
         Going::Foreign => true,
         Going::Ours => false,
     };
@@ -6871,7 +7116,7 @@ pub fn worst_of(worst: Crossing, answer: Crossing) -> Crossing {
 
 fn name_the_field(field: &str, answer: Crossing) -> Crossing {
     match answer {
-        Crossing::MayNot { ref part, ref at, ref why } => field_named_at(field, &part, (at).as_deref(), &why),
+        Crossing::MayNot { ref part, ref at, why } => field_named_at(field, &part, (at).as_deref(), &why),
         _ => answer,
     }
 }
@@ -9965,7 +10210,7 @@ pub mod rustc_words {
 }
 pub mod sharing {
     #[allow(unused_imports)]
-    pub use super::{Fallback, every_fallback, Decision, Sharing, every_count_plain, sharing_report, slot, split_slot, holds_a_word, held_that_does_not_copy, literal_type, published_reason, handed_on_to, unseen, by_value_shared, is_hull, holds_shared, shared_fields, declared_field_type, rust_name, lock_name};
+    pub use super::{Fallback, every_fallback, Decision, Sharing, every_count_plain, sharing_report, slot, split_slot, holds_a_word, held_that_does_not_copy, literal_type, published_reason, handed_on_to, unseen, by_value_shared, is_hull, holds_shared, shared_fields, declared_field_type, rust_name, lock_name, FIELDS, Handle, Forced, Slots, decided};
 }
 pub mod signature {
     #[allow(unused_imports)]

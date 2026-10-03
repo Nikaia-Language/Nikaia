@@ -6151,12 +6151,23 @@ impl<'a> Checker<'a> {
         // where `&str == String` does - so the view of owned text is read as
         // well (found moving `describe`'s signature reading into Nikaia, #124).
         let owned_text = |ty: &Ty| matches!(ty, Ty::Named { name, .. } if matches!(ty::base(name), "String" | "str"));
+        // **And a parameter the function is lent** of a type that is not
+        // text: `k: Kind` that the body only reads is a `&Kind` below, and
+        // `k == Kind::A` compared a reference with a value - `rustc`'s *can't
+        // compare `&Kind` with `Kind`* (found moving `sharing`'s classes into
+        // Nikaia, #125). Two such parameters are two references and agree.
+        let a_lent_parameter = |side: &Expr, ty: &Ty| {
+            !ty.is_unknown() && !ty.is_a_view() && !owned_text(ty) && self.a_lent_parameter(side)
+        };
         let is_view = |side: &Expr, ty: &Ty| {
             copies_as_a_view(ty)
                 || a_view_of_a_type(ty)
                 || (lent(side) && (copied(ty) || owned_text(ty)))
+                || a_lent_parameter(side, ty)
         };
-        let is_value = |side: &Expr, ty: &Ty| !ty.is_unknown() && !ty.is_a_view() && !lent(side);
+        let is_value = |side: &Expr, ty: &Ty| {
+            !ty.is_unknown() && !ty.is_a_view() && !lent(side) && !a_lent_parameter(side, ty)
+        };
         let read_left = is_view(lhs, left) && is_value(rhs, right);
         let read_right = is_view(rhs, right) && is_value(lhs, left);
         // **By the operator's own span and the side**: a statement may hold
@@ -6804,6 +6815,16 @@ impl<'a> Checker<'a> {
             // own `&` stands in for what would have been recorded.
             if matches!(found, Ty::Unknown) {
                 return false;
+            }
+            // **A `&` at a method call is left alone** (Part III's `NK1137`):
+            // it is the reference the compiler would have written, and the
+            // source's own stands in for it.
+            if contract
+                .signature
+                .as_ref()
+                .is_some_and(|s| s.takes_a_receiver())
+            {
+                return true;
             }
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
@@ -8020,6 +8041,23 @@ impl<'a> Checker<'a> {
         self.a_view_kept_where_the_receiver_says_text(
             &key, contract, args, &found, &expected, span,
         );
+        // **A plain value where the receiver says `T?`** (Part I 2.3):
+        // `m.insert(1, Kind::B)` on a map of `Kind?` values wants `$V`, which
+        // the receiver binds to a `T?` and `arguments` does not see - the
+        // `Some(…)` was never written, and `rustc` said *mismatched types*
+        // (found moving `sharing`'s classes into Nikaia, #125).
+        for (at, given) in args.iter().enumerate() {
+            let (Some(want), Some(found)) = (expected.get(at), found.get(at)) else {
+                continue;
+            };
+            if let Some(how) = wrap_for(found, want, is_literal(given)) {
+                self.checked
+                    .nullable_args
+                    .entry((span.at(), written.clone(), at))
+                    .or_default()
+                    .insert(argument_shape(given), how);
+            }
+        }
         self.a_pattern_of_owned_text(&key, args, &found, span);
         // The receiver first (ADR-031), then whatever the arguments can still
         // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
@@ -12013,7 +12051,16 @@ impl<'a> Checker<'a> {
                 // not type claims nothing, which is
                 // [Part III C.4](../../../docs/specification/30-nikaia-tooling.md):
                 // the answer is more information than before and no new claim.
+                //
+                // **A view of a number beside a value is the number**
+                // (ADR-233 D4): `let found = m[k]` binds a view of what the
+                // map keeps, and `found ?? 0` is `index::or`'s copy of it, as
+                // `m[k] ?? 0` is - it was typed a `ref i64`, and `return found
+                // ?? 0` from an `-> i64` was `NK1104` (found moving `sharing`'s
+                // classes into Nikaia, #125). A view beside it is the other
+                // impl, whose answer stays the reference.
                 match left {
+                    Ty::Nullable(inner) if !other.is_a_view() => value_of_a_copy(*inner),
                     Ty::Nullable(inner) => *inner,
                     _ => Ty::Unknown,
                 }
@@ -22923,7 +22970,28 @@ impl Checker<'_> {
     /// ([ADR-252](../../docs/specification/adr/adr-252.md) D4.1, the reading):
     /// a `winnow_grammar::Symbol` handed on is still there to hand on again.
     fn takes_away(&self, ty: &Ty) -> bool {
-        moves_away(ty) && !crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
+        moves_away(ty)
+            && !crate::contracts::keeps::a_ledger_copies(ty, &[self.library])
+            && !self.a_package_copy(ty)
+    }
+
+    /// **A type this package declares that copies**, nullable or in a tuple
+    /// of such: handed on, it is still there to hand on again, as a number
+    /// is. `one.kind` for a `kind: Kind?` of a lent `one` was refused as
+    /// taken out of a loan (`NK2106`), and a `Count` declared in another file
+    /// as used after it was kept (`NK2105`) - found moving `sharing`'s classes
+    /// into Nikaia (#125).
+    fn a_package_copy(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } => args.is_empty() && self.copies_in_the_package.contains(name),
+            Ty::Nullable(inner) => self.a_package_copy(inner) || !self.takes_away(inner),
+            Ty::Tuple(parts) => parts.iter().all(|part| !self.takes_away(part)),
+            _ => false,
+        }
     }
 
     /// [`copies`], and a type the library says copies: a
@@ -23909,6 +23977,13 @@ fn is_a_lookup(key: &str) -> bool {
         "HashMap::contains_key",
         "HashSet::contains",
         "HashSet::remove",
+        // **A removal is a lookup** that takes the entry along: the key is
+        // lent as `get`'s is - `kept.remove(root)` for an `i64` reached the
+        // language below with no `&` (found moving `sharing`'s classes into
+        // Nikaia, #125).
+        "HashMap::remove",
+        "BTreeMap::remove",
+        "BTreeSet::remove",
         "BTreeMap::get",
         "BTreeMap::contains_key",
         "BTreeSet::contains",

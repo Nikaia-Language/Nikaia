@@ -504,6 +504,36 @@ where
     value.or(fallback)
 }
 
+/// What `??` does where the fallback **may be absent too** (Part I 3.5): the
+/// first that has a value, and an option still. `m[k] ?? maybe` reads the map
+/// as `Option<&V>` beside an `Option<V>`, which `or_else` cannot join - and
+/// written as a method after the read, the read's `*` took the whole chain
+/// (found moving `sharing`'s classes into Nikaia, #125). The same two shapes
+/// as [`Or`], and the same `T: Copy` on the view.
+pub trait OrMaybe<T> {
+    fn or_maybe(self, fallback: impl FnOnce() -> Option<T>) -> Option<T>;
+}
+
+impl<T> OrMaybe<T> for Option<T> {
+    fn or_maybe(self, fallback: impl FnOnce() -> Option<T>) -> Option<T> {
+        self.or_else(fallback)
+    }
+}
+
+impl<T: Copy> OrMaybe<T> for Option<&T> {
+    fn or_maybe(self, fallback: impl FnOnce() -> Option<T>) -> Option<T> {
+        self.copied().or_else(fallback)
+    }
+}
+
+/// The emitted spelling: `nikaia_std::index::or_maybe(value, || fallback)`.
+pub fn or_maybe<S, T>(value: S, fallback: impl FnOnce() -> Option<T>) -> Option<T>
+where
+    S: OrMaybe<T>,
+{
+    value.or_maybe(fallback)
+}
+
 /// **A write through the brackets is not an index**, and that is what this
 /// exists to say ([ADR-080](../../../docs/specification/adr/adr-080.md) D2).
 ///

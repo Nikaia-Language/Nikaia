@@ -8726,8 +8726,9 @@ impl<'p> Emitter<'p> {
                     .optional_fallbacks
                     .contains(&(flow.statement, crate::check::argument_shape(expr)))
                 {
-                    self.nested(out, value, u8::MAX - 1, depth, flow)?;
-                    out.push(".or_else(|| ");
+                    out.push("nikaia_std::index::or_maybe(");
+                    self.expr(out, value, depth, flow)?;
+                    out.push(", || ");
                     self.expr(out, fallback, depth, flow)?;
                     out.push(")");
                     return Ok(());

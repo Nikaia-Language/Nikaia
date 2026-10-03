@@ -458,8 +458,10 @@ fn the_mutates_column_renders_and_parses_back() {
 /// **`std`'s `push_str` takes a view**, and says so (found moving
 /// `contracts::trust` into Nikaia): its ledger entry said `text: ?`, so
 /// `out.push_str(name)` for a `name: String` passed the check and was
-/// `rustc`'s *expected `&str`, found `String`*. A method's argument is lent
-/// where the program writes `ref`, as for any method.
+/// `rustc`'s *expected `&str`, found `String`*. **The compiler writes the
+/// `&` there now** (0.0.377): a parameter declared a view is lent at a method
+/// as at a free function (ADR-094 D1), and a `ref` the program writes at a
+/// method call stays its own.
 #[test]
 fn push_str_takes_a_view_and_says_so() {
     let found = findings(
@@ -470,21 +472,17 @@ fn push_str_takes_a_view_and_says_so() {
          \x20   println(out)\n\
          }\n",
     );
-    assert!(
-        found
-            .iter()
-            .any(|f| f.code == "NK1102" && f.help.as_deref().is_some_and(|h| h.contains("ref"))),
-        "{found:#?}"
-    );
+    assert!(found.is_empty(), "{found:#?}");
     let rust = lowered(
         "fn main() {\n\
          \x20   let mut out: String = \"a\"\n\
          \x20   let name = \"b\".clone()\n\
+         \x20   out.push_str(name)\n\
          \x20   out.push_str(ref name)\n\
          \x20   out.push_str(ref f\"{name.len()}\")\n\
          \x20   println(out)\n\
          }\n",
     );
-    assert!(rust.contains("out.push_str(&name)"), "{rust}");
+    assert_eq!(rust.matches("out.push_str(&name)").count(), 2, "{rust}");
     assert!(rust.contains("out.push_str(&format!("), "{rust}");
 }

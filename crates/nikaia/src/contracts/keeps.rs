@@ -93,11 +93,20 @@ pub fn lends_in(contract: &super::FnContract, at: usize, copying: &[&super::Ledg
     // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3): it lowers to
     // `&mut T`, written off the declaration rather than off this column, and
     // both answering would put two references on one parameter.
+    //
+    // **A parameter declared a view is the exception, at a method too**: its
+    // declaration is the `&` the author wrote and not this column's, so the
+    // call and the declaration cannot part - and a `String` of the caller's
+    // handed to `self.id(key)` for a `key: ref String` needs the `&` the
+    // compiler writes, which it was refused for as `NK1102` (found moving
+    // `sharing`'s classes into Nikaia, #125).
     !signature.mutable.contains(name)
-        && !signature.takes_a_receiver()
         && name != "self"
         && (ty.is_a_view()
-            || (moves(ty) && !a_ledger_copies(ty, copying) && !contract.keeps.contains(name)))
+            || (!signature.takes_a_receiver()
+                && moves(ty)
+                && !a_ledger_copies(ty, copying)
+                && !contract.keeps.contains(name)))
 }
 
 /// Whether a ledger says values of `ty` are copies.
