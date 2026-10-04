@@ -985,7 +985,7 @@ impl<'a> BuildTime<'a> {
                     // ring is printed with each entry in backticks, and two
                     // functions may both have a `t`.
                     let held = format!("{option}` of `{callee}");
-                    if self.resolving.iter().any(|name| *name == held) {
+                    if self.resolving.contains(&held) {
                         let mut ring = self.resolving.clone();
                         ring.push(held);
                         return Err(Refusal::Circular { ring });

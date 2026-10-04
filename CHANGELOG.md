@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.464] — 2026-10-04
+
+**A function the build calls is not *never used*** (#446). A `comptime`'s
+value and an option's default reach the Rust as literals, so the Rust no
+longer called the function that computed them, and `rustc`'s `dead_code`
+warning reached the reader as *Function `three` is never used* about a
+function the program used. The emitter now collects what a `comptime` and a
+default call, transitively through the program's own functions, and writes
+`#[allow(dead_code)]` above each; a function nothing calls is still warned.
+
 ## [0.0.463] — 2026-10-04
 
 **A function with options runs at build time, and a default that needs itself

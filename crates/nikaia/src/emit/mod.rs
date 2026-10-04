@@ -1528,6 +1528,8 @@ struct Emitter<'p> {
     /// knows what `PAGE` is. A statement with no entry never arrives, because
     /// the checker refused it as `NK1127` first.
     comptime_values: std::collections::BTreeMap<usize, (String, String)>,
+    /// **The functions the build runs** (#446): `built_at_build_time`.
+    built_at_build_time: HashSet<String>,
     /// **The type each `with` copies**, by the byte the word stands at
     /// (`check::Checked::with_types`,
     /// [ADR-118](../../docs/specification/adr/adr-118.md) D1).
@@ -1831,6 +1833,80 @@ const UNCHECKED: &str = "__unchecked";
 /// `contracts::sharing`'s answer ([ADR-037](../../../docs/specification/adr/adr-037.md)
 /// D7).
 use crate::contracts::ty::ARRAY;
+
+/// **The functions of this file the build calls** (#446): what a `comptime`
+/// and an option's default call, and what those call in turn.
+///
+/// Their values reach the Rust as literals, so the Rust may never call them,
+/// and `rustc` would say *never used* about a function the program used. Each
+/// gets `#[allow(dead_code)]`; a function nothing calls is still warned.
+fn built_at_build_time(parsed: &Parsed) -> HashSet<String> {
+    use crate::contracts::sync::{visit_expr, visit_expr_blocks, visit_stmt, visit_stmt_blocks};
+
+    fn calls(parsed: &Parsed, expr: &Expr, found: &mut Vec<String>) {
+        visit_expr(parsed, expr, &mut |inner| {
+            if let Expr::Call { func, .. } = inner
+                && let Expr::Variable(name) = func.as_ref()
+            {
+                found.push(parsed.text(*name).to_string());
+            }
+        });
+        visit_expr_blocks(expr, &mut |block| block_calls(parsed, block, found));
+    }
+    fn block_calls(parsed: &Parsed, block: &Block, found: &mut Vec<String>) {
+        for stmt in &block.stmts {
+            visit_stmt(parsed, &stmt.node, &mut |expr| calls(parsed, expr, found));
+            visit_stmt_blocks(&stmt.node, &mut |inner| block_calls(parsed, inner, found));
+        }
+    }
+    fn comptimes(parsed: &Parsed, block: &Block, found: &mut Vec<String>) {
+        for stmt in &block.stmts {
+            if let Stmt::Comptime { value, .. } = &stmt.node {
+                calls(parsed, value, found);
+            }
+            visit_stmt_blocks(&stmt.node, &mut |inner| comptimes(parsed, inner, found));
+        }
+    }
+
+    let mut bodies: HashMap<String, &Block> = HashMap::new();
+    let mut waiting: Vec<String> = Vec::new();
+    let mut functions: Vec<(&Item, bool)> = Vec::new();
+    for item in &parsed.program.items {
+        match &item.node {
+            Item::Comptime { value, .. } => calls(parsed, value, &mut waiting),
+            Item::Impl { methods, .. } => {
+                functions.extend(methods.iter().map(|method| (&method.node, false)));
+            }
+            other => functions.push((other, true)),
+        }
+    }
+    for (item, free) in functions {
+        let Item::Fn {
+            name, config, body, ..
+        } = item
+        else {
+            continue;
+        };
+        for option in config {
+            calls(parsed, &option.default, &mut waiting);
+        }
+        comptimes(parsed, body, &mut waiting);
+        if let Some(name) = name
+            && free
+        {
+            bodies.insert(parsed.text(*name).to_string(), body);
+        }
+    }
+    let mut built = HashSet::new();
+    while let Some(name) = waiting.pop() {
+        if let Some(body) = bodies.get(&name)
+            && built.insert(name)
+        {
+            block_calls(parsed, body, &mut waiting);
+        }
+    }
+    built
+}
 
 /// **`std`'s own handle** ([ADR-302](../../docs/specification/adr/adr-302.md)
 /// D4): text a C library owns, which no `extern "C"` block declares because
@@ -2651,6 +2727,7 @@ impl<'p> Emitter<'p> {
             keep_function: std::cell::RefCell::new(String::new()),
             nonnegative: std::cell::RefCell::new(HashMap::new()),
             comptime_values: propagation.comptime_values,
+            built_at_build_time: built_at_build_time(parsed),
             with_types: propagation.with_types,
             unrolled: propagation.unrolled,
             walks_fields: propagation.walks_fields,
@@ -3315,14 +3392,19 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            Item::Fn { .. } => self.function(
-                out,
-                item,
-                0,
-                Lifetimes::ELIDED,
-                self.carries_input.get(&span.at()),
-                None,
-            ),
+            Item::Fn { name, .. } => {
+                if name.is_some_and(|name| self.built_at_build_time.contains(self.text(name))) {
+                    out.push("#[allow(dead_code)]\n");
+                }
+                self.function(
+                    out,
+                    item,
+                    0,
+                    Lifetimes::ELIDED,
+                    self.carries_input.get(&span.at()),
+                    None,
+                )
+            }
             Item::Impl {
                 trait_name,
                 target,

@@ -144,3 +144,52 @@ fn pub_reaches_the_language_below() {
         "{private}"
     );
 }
+
+/// **A function the build calls is used** (#446): its value reaches the Rust
+/// as a literal, so `rustc` would call it *never used*. What a `comptime` and
+/// an option's default reach, transitively, is not warned; a function nothing
+/// calls still is.
+#[test]
+fn a_function_called_only_at_build_time_is_not_warned_unused() {
+    let source = "fn helper() -> i64 {\n\
+         \x20   return 3\n\
+         }\n\
+         \n\
+         fn three() -> i64 {\n\
+         \x20   return helper()\n\
+         }\n\
+         \n\
+         fn scaled() -> i64 {\n\
+         \x20   return 4\n\
+         }\n\
+         \n\
+         fn unused() -> i64 {\n\
+         \x20   return 5\n\
+         }\n\
+         \n\
+         comptime A = three()\n\
+         \n\
+         fn f(t: i64 = scaled()) -> i64 {\n\
+         \x20   return t\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{A} {f()}\")\n\
+         }\n";
+    let rust = lowered(source);
+    let dir = common::scratch_dir("comptime-item-unused");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{said}\n{rust}");
+    for used in ["helper", "three", "scaled"] {
+        assert!(
+            !said.contains(&format!("function `{used}` is never used")),
+            "`{used}` runs at build time:\n{said}"
+        );
+    }
+    assert!(said.contains("function `unused` is never used"), "{said}");
+}
