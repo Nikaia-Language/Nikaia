@@ -3675,8 +3675,7 @@ fn attempt(keys: &[String], seed: u64, buckets: i64, n: i64) -> Option<Table> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant {
-    pub magnitude: u64,
-    pub negative: bool,
+    pub value: Integer,
     pub pinned: String,
 }
 
@@ -3696,63 +3695,45 @@ const I16_LOW: u64 = 32768;
 
 const I16_HIGH: u64 = 32767;
 
-const I32_LOW: u64 = 2147483648;
-
-const I32_HIGH: u64 = 2147483647;
-
-const I64_LOW: u64 = 9223372036854775808;
-
-const I64_HIGH: u64 = 9223372036854775807;
-
 const U8_HIGH: u64 = 255;
 
 const U16_HIGH: u64 = 65535;
 
-const U32_HIGH: u64 = 4294967295;
-
-const U64_HIGH: u64 = 18446744073709551615;
-
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
 pub fn fits(c: &Constant, ty: &str) -> bool {
-    let (low, high) = match ty {
-        "i8" => (I8_LOW, I8_HIGH),
-        "i16" => (I16_LOW, I16_HIGH),
-        "i32" => (I32_LOW, I32_HIGH),
-        "i64" => (I64_LOW, I64_HIGH),
-        "u8" => (0, U8_HIGH),
-        "u16" => (0, U16_HIGH),
-        "u32" => (0, U32_HIGH),
-        "u64" => (0, U64_HIGH),
-        _ => return true,
-    };
-    if c.negative { return c.magnitude <= low; }
-    c.magnitude <= high
-}
-
-fn number(magnitude: u64, negative: bool, pinned: String) -> Constant { Constant { magnitude, negative: negative && magnitude != 0u64, pinned } }
-
-fn added(a: &Constant, b_magnitude: u64, b_negative: bool, pinned: String) -> Folded {
-    if a.negative == b_negative {
-        let sum = a.magnitude.wrapping_add(b_magnitude);
-        if sum < a.magnitude { return Folded::TooLarge(a.negative); }
-        return Folded::Value(number(sum, a.negative, pinned));
+    let n = c.value;
+    match ty {
+        "i64" => integer_as_count(&n).is_some(),
+        "i32" => fits_an_i32(&n),
+        "u64" => !n.negative,
+        "u32" => !n.negative && u32::try_from(n.magnitude).ok().is_some(),
+        "i8" => within(&n, I8_LOW, I8_HIGH),
+        "i16" => within(&n, I16_LOW, I16_HIGH),
+        "u8" => within(&n, 0u64, U8_HIGH),
+        "u16" => within(&n, 0u64, U16_HIGH),
+        _ => true,
     }
-    if a.magnitude >= b_magnitude { return Folded::Value(number(a.magnitude - b_magnitude, a.negative, pinned)); }
-    Folded::Value(number(b_magnitude - a.magnitude, b_negative, pinned))
 }
 
-fn multiplied(a: &Constant, b: &Constant, pinned: String) -> Folded {
-    let negative = a.negative != b.negative;
-    if a.magnitude == 0u64 { return Folded::Value(number(0u64, false, pinned)); }
-    let product = a.magnitude.wrapping_mul(b.magnitude);
-    if product.wrapping_div(a.magnitude) != b.magnitude { return Folded::TooLarge(negative); }
-    Folded::Value(number(product, negative, pinned))
+fn fits_an_i32(n: &Integer) -> bool {
+    let count = match integer_as_count(n) { Some(__nikaia_value) => __nikaia_value, None => return false };
+    i32::try_from(count).ok().is_some()
+}
+
+fn within(n: &Integer, low: u64, high: u64) -> bool {
+    if n.negative { return n.magnitude <= low; }
+    n.magnitude <= high
+}
+
+fn stepped(n: Option<Integer>, heading: bool, pinned: String) -> Folded {
+    let found = match n { Some(__nikaia_value) => __nikaia_value, None => return Folded::TooLarge(heading) };
+    Folded::Value(Constant { value: found, pinned })
 }
 
 pub fn constant_of(expr: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Folded) -> Folded {
     match expr {
-        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; Folded::Value(number(value, negative, String::from(""))) },
+        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; Folded::Value(Constant { value: integer(value, negative), pinned: String::from("") }) },
         Expr::Variable(name) => { let name = *name; name_is(name) },
         Expr::Unary { op, expr } => { let expr = nikaia_std::boxed::open(expr); negated(op, expr, name_is) },
         Expr::Binary { op, lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); combined(op, lhs, rhs, name_is) },
@@ -3763,7 +3744,7 @@ pub fn constant_of(expr: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Fol
 fn negated(op: &UnaryOp, inner: &Expr, name_is: &impl Fn(winnow_grammar::Symbol) -> Folded) -> Folded {
     if *op != UnaryOp::Neg { return Folded::Nothing; }
     match constant_of(inner, name_is) {
-        Folded::Value(c) => pinned_step(number(c.magnitude, !c.negative, c.pinned)),
+        Folded::Value(c) => pinned_step(Constant { value: integer_negated(&c.value), pinned: c.pinned }),
         Folded::TooLarge(negative) => Folded::TooLarge(!negative),
         other => other,
     }
@@ -3782,12 +3763,14 @@ fn combined(op: &BinaryOp, lhs: &Expr, rhs: &Expr, name_is: &impl Fn(winnow_gram
     };
     if !a.pinned.is_empty() && !b.pinned.is_empty() && a.pinned != b.pinned { return Folded::Nothing; }
     let pinned = if a.pinned.is_empty() { b.pinned.to_owned() } else { a.pinned.to_owned() };
+    let x = a.value;
+    let y = b.value;
     let folded = match op {
-        BinaryOp::Add => added(&a, b.magnitude, b.negative, pinned),
-        BinaryOp::Sub => added(&a, b.magnitude, !b.negative, pinned),
-        BinaryOp::Mul => multiplied(&a, &b, pinned),
-        BinaryOp::Div => divided(&a, &b, pinned, false),
-        BinaryOp::Rem => divided(&a, &b, pinned, true),
+        BinaryOp::Add => stepped(integer_sum(&x, &y), x.negative, pinned),
+        BinaryOp::Sub => stepped(integer_difference(&x, &y), x.negative, pinned),
+        BinaryOp::Mul => stepped(integer_product(&x, &y), x.negative != y.negative, pinned),
+        BinaryOp::Div => divided(integer_quotient(&x, &y, false), pinned),
+        BinaryOp::Rem => divided(integer_quotient(&x, &y, true), pinned),
         _ => Folded::Nothing,
     };
     match folded {
@@ -3796,10 +3779,9 @@ fn combined(op: &BinaryOp, lhs: &Expr, rhs: &Expr, name_is: &impl Fn(winnow_gram
     }
 }
 
-fn divided(a: &Constant, b: &Constant, pinned: String, remainder: bool) -> Folded {
-    if b.magnitude == 0u64 { return Folded::Nothing; }
-    if remainder { return Folded::Value(number(a.magnitude % b.magnitude, a.negative, pinned)); }
-    Folded::Value(number(a.magnitude / b.magnitude, a.negative != b.negative, pinned))
+fn divided(n: Option<Integer>, pinned: String) -> Folded {
+    let found = match n { Some(__nikaia_value) => __nikaia_value, None => return Folded::Nothing };
+    Folded::Value(Constant { value: found, pinned })
 }
 
 pub fn wants_widening(folded: &Folded) -> bool {
@@ -4207,13 +4189,9 @@ pub fn integer_of_count(n: i64) -> Integer {
 }
 
 pub fn integer_as_count(n: &Integer) -> Option<i64> {
-    if !n.negative {
-        if n.magnitude > 9223372036854775807u64 { return None; }
-        return Some(i64::try_from(n.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`")));
-    }
-    if n.magnitude > 9223372036854775808u64 { return None; }
-    if n.magnitude == 9223372036854775808u64 { return (-9223372036854775807i64 - 1i64).into(); }
-    Some(0 - i64::try_from(n.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`")))
+    if !n.negative { return i64::try_from(n.magnitude).ok(); }
+    let below = match i64::try_from(n.magnitude - 1u64).ok() { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(-1 - below)
 }
 
 pub fn integer_text(n: &Integer) -> String {
@@ -4225,8 +4203,7 @@ pub fn integer_negated(n: &Integer) -> Integer { integer(n.magnitude, !n.negativ
 
 pub fn integer_sum(a: &Integer, b: &Integer) -> Option<Integer> {
     if a.negative == b.negative {
-        let sum = a.magnitude.wrapping_add(b.magnitude);
-        if sum < a.magnitude { return None; }
+        let sum = match a.magnitude.checked_add(b.magnitude) { Some(__nikaia_value) => __nikaia_value, None => return None };
         return Some(integer(sum, a.negative));
     }
     if a.magnitude >= b.magnitude { return Some(integer(a.magnitude - b.magnitude, a.negative)); }
@@ -4236,16 +4213,17 @@ pub fn integer_sum(a: &Integer, b: &Integer) -> Option<Integer> {
 pub fn integer_difference(a: &Integer, b: &Integer) -> Option<Integer> { integer_sum(a, &integer_negated(b)) }
 
 pub fn integer_product(a: &Integer, b: &Integer) -> Option<Integer> {
-    if a.magnitude == 0u64 || b.magnitude == 0u64 { return Some(integer(0u64, false)); }
-    let product = a.magnitude.wrapping_mul(b.magnitude);
-    if product / a.magnitude != b.magnitude { return None; }
+    let product = match a.magnitude.checked_mul(b.magnitude) { Some(__nikaia_value) => __nikaia_value, None => return None };
     Some(integer(product, a.negative != b.negative))
 }
 
 pub fn integer_quotient(a: &Integer, b: &Integer, remainder: bool) -> Option<Integer> {
-    if b.magnitude == 0u64 { return None; }
-    if remainder { return Some(integer(a.magnitude % b.magnitude, a.negative)); }
-    Some(integer(a.magnitude / b.magnitude, a.negative != b.negative))
+    if remainder {
+        let left = match a.magnitude.checked_rem(b.magnitude) { Some(__nikaia_value) => __nikaia_value, None => return None };
+        return Some(integer(left, a.negative));
+    }
+    let quotient = match a.magnitude.checked_div(b.magnitude) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(integer(quotient, a.negative != b.negative))
 }
 
 pub fn integer_order(a: &Integer, b: &Integer) -> i64 {
@@ -4276,10 +4254,7 @@ pub fn integer_shifted(a: &Integer, b: &Integer, left: bool) -> Option<Integer> 
     let count = i64::try_from(b.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`"));
     if left {
         let mut magnitude = a.magnitude;
-        for _ in 0..count {
-            if magnitude > 9223372036854775807u64 { return None; }
-            magnitude *= 2;
-        }
+        for _ in 0..count { magnitude = match magnitude.checked_mul(2u64) { Some(__nikaia_value) => __nikaia_value, None => return None }; }
         return Some(integer(magnitude, a.negative));
     }
     if !a.negative {

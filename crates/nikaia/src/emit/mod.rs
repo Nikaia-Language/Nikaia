@@ -11846,6 +11846,21 @@ impl<'p> Emitter<'p> {
             out.push(&format!(" as {into}"));
             return Ok(());
         }
+        // **`x.checked_i32()` is Rust's `try_from`, kept or not**
+        // ([ADR-315](../../docs/specification/adr/adr-315.md)): the number
+        // where the destination holds it, `None` where it does not. A call
+        // around the receiver, so nothing about precedence is left to decide.
+        if let Some(into) = checked(self.text(method)) {
+            out.push(&format!("{into}::try_from("));
+            match receiver {
+                // An argument: nothing binds looser than the call's own
+                // parentheses, so it needs none of its own.
+                Some(expr) => self.nested(out, expr, 0, depth, flow)?,
+                None => self.receiver(out, receiver, depth, flow, false)?,
+            }
+            out.push(").ok()");
+            return Ok(());
+        }
         // **`len` hands back an `i64`** (ADR-285 D1), and Rust's hands
         // back a `usize`. Parenthesised where it has to be and nowhere
         // else, exactly as the conversion above is.
@@ -13551,6 +13566,20 @@ fn truncating(method: &str) -> Option<&'static str> {
         "i32" => Some("i32"),
         "i64" => Some("i64"),
         // ADR-285 D3.
+        "u32" => Some("u32"),
+        "u64" => Some("u64"),
+        _ => None,
+    }
+}
+
+/// The type a `checked_` conversion converts to, if the name is one
+/// ([ADR-315](../../../docs/specification/adr/adr-315.md)): the four
+/// `truncating_` has. `checked_add` and the arithmetic are Rust's own methods
+/// and lower as any method does.
+fn checked(method: &str) -> Option<&'static str> {
+    match method.strip_prefix("checked_")? {
+        "i32" => Some("i32"),
+        "i64" => Some("i64"),
         "u32" => Some("u32"),
         "u64" => Some("u64"),
         _ => None,

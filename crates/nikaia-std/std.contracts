@@ -975,6 +975,257 @@ sync = true
 touches = []
 signature = "(self) -> u64"
 
+# ## Arithmetic and conversions that may not fit (ADR-315)
+#
+# An overflow aborts (ADR-285 D1), and a conversion that may not fit aborts
+# too (D4). These are how a program asks **whether** it fits: the answer is
+# the number, or `null` where there is none - an overflow, a division by zero,
+# a value the destination does not hold. Named as `wrapping_` and
+# `saturating_` are, because a third way to do arithmetic is as rare and as
+# worth seeing in the line that does it.
+#
+# **No `checked_shl` or `checked_shr`**: Rust's ask only whether the count is
+# inside the width, not whether the bits that leave were zero - a name saying
+# "checked" over a shift that still loses digits would say more than it does.
+#
+# `touches = []` and `sync = true` for the reason the arithmetic entries give.
+
+# Addition of an `i32`, or `null` where the answer does not fit.
+[fn."i32::checked_add"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32?"
+
+# Subtraction of an `i32`, or `null` where the answer does not fit.
+[fn."i32::checked_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32?"
+
+# Multiplication of an `i32`, or `null` where the answer does not fit.
+[fn."i32::checked_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32?"
+
+# Division of an `i32`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."i32::checked_div"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32?"
+
+# The remainder of an `i32`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."i32::checked_rem"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32?"
+
+# Negation of an `i32`, or `null` where the answer does not fit.
+[fn."i32::checked_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32?"
+
+# The number without its sign of an `i32`, or `null` where the answer does not fit.
+[fn."i32::checked_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32?"
+
+# Addition of an `i64`, or `null` where the answer does not fit.
+[fn."i64::checked_add"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64?"
+
+# Subtraction of an `i64`, or `null` where the answer does not fit.
+[fn."i64::checked_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64?"
+
+# Multiplication of an `i64`, or `null` where the answer does not fit.
+[fn."i64::checked_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64?"
+
+# Division of an `i64`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."i64::checked_div"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64?"
+
+# The remainder of an `i64`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."i64::checked_rem"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64?"
+
+# Negation of an `i64`, or `null` where the answer does not fit.
+[fn."i64::checked_neg"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64?"
+
+# The number without its sign of an `i64`, or `null` where the answer does not fit.
+[fn."i64::checked_abs"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64?"
+
+# Addition of a `u32`, or `null` where the answer does not fit.
+[fn."u32::checked_add"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32?"
+
+# Subtraction of a `u32`, or `null` where the answer does not fit.
+[fn."u32::checked_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32?"
+
+# Multiplication of a `u32`, or `null` where the answer does not fit.
+[fn."u32::checked_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32?"
+
+# Division of a `u32`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."u32::checked_div"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32?"
+
+# The remainder of a `u32`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."u32::checked_rem"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32?"
+
+# Addition of a `u64`, or `null` where the answer does not fit.
+[fn."u64::checked_add"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64?"
+
+# Subtraction of a `u64`, or `null` where the answer does not fit.
+[fn."u64::checked_sub"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64?"
+
+# Multiplication of a `u64`, or `null` where the answer does not fit.
+[fn."u64::checked_mul"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64?"
+
+# Division of a `u64`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."u64::checked_div"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64?"
+
+# The remainder of a `u64`, or `null` where the answer does not fit, or a divisor of zero.
+[fn."u64::checked_rem"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64?"
+
+# **A conversion that asks whether it fits** (ADR-315): the number in the
+# destination type, or `null` where that type does not hold it. One entry per
+# destination, as `truncating_` has, and only out of a type that has values
+# the destination lacks - a widening always fits and is written `as`.
+
+# An `i64` as an `i32`, or `null` where an `i32` does not hold it.
+[fn."i64::checked_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32?"
+
+# An `i64` as a `u32`, or `null` where a `u32` does not hold it.
+[fn."i64::checked_u32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32?"
+
+# An `i64` as a `u64`, or `null` where a `u64` does not hold it.
+[fn."i64::checked_u64"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u64?"
+
+# A `u64` as an `i32`, or `null` where an `i32` does not hold it.
+[fn."u64::checked_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32?"
+
+# A `u64` as an `i64`, or `null` where an `i64` does not hold it.
+[fn."u64::checked_i64"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64?"
+
+# A `u64` as a `u32`, or `null` where a `u32` does not hold it.
+[fn."u64::checked_u32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32?"
+
+# An `i32` as a `u32`, or `null` where a `u32` does not hold it.
+[fn."i32::checked_u32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32?"
+
+# An `i32` as a `u64`, or `null` where a `u64` does not hold it.
+[fn."i32::checked_u64"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u64?"
+
+# A `u32` as an `i32`, or `null` where an `i32` does not hold it.
+[fn."u32::checked_i32"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32?"
+
 # The place in the map this key names, whether or not anything is there yet.
 #
 # One lookup rather than two: `or_insert` puts a value in where there is none,
