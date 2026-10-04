@@ -23,9 +23,10 @@
 // as [ADR-010](../../../docs/specification/adr/adr-010.md) D1, pointing the
 // other way because the claim points the other way.
 //
-// **Nothing reads this column yet**, which is ADR-094 §5's first step on
-// purpose: the answer can be diffed against the corpus before one call site
-// changes.
+// **Three readers act on it** (`lends` below): the emitter writing a
+// declaration, the emitter writing a call, and the checker refusing a `&`
+// somebody wrote. ADR-094 §5's first step had none, on purpose, so that the
+// answer could be diffed against the corpus before one call site changed.
 
 use std::collections::{BTreeMap, BTreeSet};
 

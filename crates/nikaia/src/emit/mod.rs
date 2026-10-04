@@ -1125,7 +1125,13 @@ fn std_ledger() -> &'static crate::contracts::Ledger {
     crate::contracts::std_ledger()
 }
 
-/// The words the **language below** reserves and this one does not.
+/// The words the **language below** reserves.
+///
+/// Most of them this language does not reserve. Four it does - `ref`, `trait`,
+/// `extern` and `unsafe` - and they stay because a reserved word is still a name
+/// after `.` and `::` ([ADR-298](../../../docs/specification/adr/adr-298.md)
+/// D3): a member called `ref` that a library declares is written `x.r#ref`
+/// below. `tests/reserved_below.rs` holds all four to the escape.
 ///
 /// Measured rather than copied out of a reference, and measured **twice**: the
 /// first sweep read `rustc`'s *"found keyword"* at a `let` and came back with

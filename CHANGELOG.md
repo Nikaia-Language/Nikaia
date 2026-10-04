@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.439] — 2026-10-04
+
+**Five of #381's smaller inconsistencies, settled.** `RESERVED_BELOW`'s comment
+said it held only words this language does not reserve; `ref`, `trait`,
+`extern` and `unsafe` are reserved in both, and they stay because after `.` and
+`::` a reserved word is a name (ADR-298 D3) - a test now holds the four to the
+escape. `contracts/keeps.rs` said nothing reads the column; three readers do.
+ADR-080 D1's *three parts* are three checks under two codes, and says so.
+ADR-282 §2 cites ADR-283 D19-D21 for `Bytes`, not ADR-289 D22. ADR-013 D3
+says ADR-280 changed how `throws` lowers.
+
 ## [0.0.438] — 2026-10-04
 
 **A method of a number that `std` does not describe is refused in this

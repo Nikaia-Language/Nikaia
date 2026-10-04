@@ -325,3 +325,18 @@ fn a_word_this_language_reserves_never_reaches_the_escape() {
         );
     }
 }
+
+/// **A word both languages reserve is still escaped**, because after `.` and
+/// `::` it is a name ([ADR-298](../../../docs/specification/adr/adr-298.md) D3):
+/// no program declares a member called `ref`, but a library can, and the call
+/// `x.ref` has to reach the language below as `x.r#ref` (#381).
+#[test]
+fn a_word_reserved_in_both_languages_is_escaped_after_a_dot() {
+    for word in RESERVED_HERE_TOO {
+        assert_eq!(
+            nikaia::emit::escaped(word),
+            format!("r#{word}"),
+            "`{word}` is reserved below and can follow a `.` or a `::`"
+        );
+    }
+}
