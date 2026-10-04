@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.437] — 2026-10-04
+
+**An `impl` on a type the program does not declare is refused in this
+compiler's words** (Part I 4.7, Part III C.1, #375). `impl time::Duration { … }`
+came back as `rustc`'s *cannot define inherent `impl` for a type outside of the
+crate*, about generated code. `tools/types.nika` now refuses an `impl` with no
+trait on a built-in type, a `std` type or a type written with a module in front
+with `NK1209`, and its help names the way that works: a trait of the program's
+own, implemented for the type.
+
+Found writing the check in Nikaia, and fixed in the compiler (ADR-294 D3):
+`NAMES.contains(name)` for a `comptime NAMES: Array[ref String, N]` and an owned
+`name` was a call no ledger knew - the function around it was lowered `async`,
+and the value went below where a `&&str` was taken. `Array::contains` is in
+`std`'s ledger, it is a lookup, and a list of text asked about any text compares
+as text (`nikaia_std::list::contains`). And `let t = if c { x } else { return }`
+had no type: an arm that leaves now gives the other arm's type, as a `match`
+arm that returns already did.
+
+#376's program (a program trait's method called on a `std` type) already
+lowers with its `.await`; a test now holds it.
+
 ## [0.0.436] — 2026-10-04
 
 **What the aggressive bounds walk reads off a body is Nikaia** (ADR-306 D4,

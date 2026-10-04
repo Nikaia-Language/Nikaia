@@ -14,12 +14,15 @@ impl<T> ListExt<T> for Vec<T> {
     }
 }
 
-/// **Whether a list holds a value, asked with a view of it**: `xs.contains(name)`
-/// for a `Vec[String]` and a `name: ref String`, which is a `&str` here, where
-/// the list's own `contains` takes a `&String`. Compared element by element,
-/// which a `String` and a `str` can be - with nothing copied to ask.
-pub fn contains<T: PartialEq<A>, A: ?Sized>(items: &[T], value: &A) -> bool {
-    items.iter().any(|item| item == value)
+/// **Whether a list of text holds a text**: `xs.contains(name)` for a
+/// `Vec[String]` and a `name: ref String`, which is a `&str` here, where the
+/// list's own `contains` takes a `&String` - and for a `comptime NAMES:
+/// Array[ref String, N]`, a `[&str; N]` here, and a `name: String`, where the
+/// array's takes a `&&str` (#375). Compared as text, element by element, with
+/// nothing copied to ask: the value is any of `&str`, `&String` and `&&str`,
+/// each of which is a `&str` by the coercion a call makes.
+pub fn contains<T: AsRef<str>>(items: &[T], value: &str) -> bool {
+    items.iter().any(|item| item.as_ref() == value)
 }
 
 /// `text.chars().collect()` into a `Vec[char]`, with the room for every

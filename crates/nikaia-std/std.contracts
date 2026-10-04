@@ -1710,6 +1710,15 @@ sync = true
 touches = []
 signature = "(self: ref Array[?, ?]) -> bool"
 
+# **Whether the array holds a value** (#375): a lookup, lent as a list's is.
+# Nothing described it, so `NAMES.contains(name)` was a call no ledger knew:
+# the function around it was taken to pause, and the value went below unlent.
+[fn."Array::contains"]
+pub = true
+sync = true
+touches = []
+signature = "(self: ref Array[?, ?], value: ?) -> bool"
+
 # A list with nothing in it. It is written `Vec()`.
 [fn."Vec::new"]
 pub = true

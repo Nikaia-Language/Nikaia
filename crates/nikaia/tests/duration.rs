@@ -140,6 +140,30 @@ fn a_sleep_carries_an_await() {
     assert!(rust.contains("async fn __nikaia_main()"), "{rust}");
 }
 
+/// **A program's trait method on a `std` type is awaited** (#376,
+/// ADR-295 D14): the call resolves to the program's own entry, which may
+/// pause, and not to `Duration`'s ledger entry, which has no `label`.
+#[test]
+fn a_program_trait_method_on_a_duration_is_awaited() {
+    let rust = lowered(
+        "use std::time\n\
+         \n\
+         trait Label { fn label(self) -> String }\n\
+         \n\
+         impl Label for time::Duration {\n\
+         \x20   fn label(self) -> String { return \"span\" }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(5.seconds().label())\n\
+         \x20   let span = 3.seconds()\n\
+         \x20   println(span.label())\n\
+         }\n",
+    );
+    assert!(rust.contains("5i32.seconds().label().await"), "{rust}");
+    assert!(rust.contains("span.label().await"), "{rust}");
+}
+
 /// **Either integer type**, which is why the ledger has ten entries and not
 /// five: `5` is an `i32` where nothing asks otherwise, and a count that came
 /// from a length is an `i64` ([ADR-285](../../../docs/specification/adr/adr-285.md)

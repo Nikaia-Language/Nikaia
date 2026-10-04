@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.436 (Draft)
+**Version:** 0.0.437 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -1307,6 +1307,22 @@ impl Summarize for User {
 
 A trait's methods are **signatures** without a body. The declaration says what
 a type must have, and the `impl` says what it does.
+
+**A type's own methods are its declarer's.** An `impl` without a trait works
+only on a `struct` or an `enum` the program declares. One on a built-in type,
+a `std` type or any type written with a module in front is refused with
+`NK1209`. To give such a type a method, declare a trait and implement it for
+the type:
+
+```nika
+use std::time
+
+trait Doubled { fn doubled(self) -> time::Duration }
+
+impl Doubled for time::Duration {           // not `impl time::Duration`
+    fn doubled(self) -> time::Duration { return self * 2 }
+}
+```
 
 A type parameter may be **bound** by a trait. The bound is what gives a generic
 body something it may do (4.6):

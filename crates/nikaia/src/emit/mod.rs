@@ -11945,9 +11945,11 @@ impl<'p> Emitter<'p> {
                     .text_in_lists
                     .contains(&(flow.statement, crate::check::argument_shape(receiver)))
         }) {
+            // The value lent with `&` whichever text it is (#375): `&str`,
+            // `String` and their references compare with each other.
             out.push("nikaia_std::list::contains(&");
             self.expr(out, list, depth, flow)?;
-            out.push(", ");
+            out.push(", &");
             self.expr(out, &args[0], depth, flow)?;
             out.push(")");
             return Ok(());

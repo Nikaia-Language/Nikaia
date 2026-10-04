@@ -151,7 +151,7 @@ pub fn is_a_lookup(key: ref String) -> bool {
         let parts: Vec[ref String] = key.splitn(2, "::").collect()
         bare = parts[1].clone()
     }
-    return bare == "HashMap::get" || bare == "HashMap::contains_key" || bare == "HashSet::contains" || bare == "HashSet::remove" || bare == "HashMap::remove" || bare == "BTreeMap::remove" || bare == "BTreeSet::remove" || bare == "BTreeMap::get" || bare == "BTreeMap::contains_key" || bare == "BTreeSet::contains" || bare == "Vec::contains"
+    return bare == "HashMap::get" || bare == "HashMap::contains_key" || bare == "HashSet::contains" || bare == "HashSet::remove" || bare == "HashMap::remove" || bare == "BTreeMap::remove" || bare == "BTreeSet::remove" || bare == "BTreeMap::get" || bare == "BTreeMap::contains_key" || bare == "BTreeSet::contains" || bare == "Vec::contains" || bare == "Array::contains"
 }
 
 /// How a member that may be boxed is named, the same in the checker and the

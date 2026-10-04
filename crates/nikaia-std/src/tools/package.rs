@@ -3453,7 +3453,7 @@ pub fn is_a_lookup(key: &str) -> bool {
         let parts: Vec<&str> = key.splitn(2, "::").collect::<Vec<_>>();
         bare = (*nikaia_std::index::get(&parts, 1)).to_owned();
     }
-    bare == "HashMap::get" || bare == "HashMap::contains_key" || bare == "HashSet::contains" || bare == "HashSet::remove" || bare == "HashMap::remove" || bare == "BTreeMap::remove" || bare == "BTreeSet::remove" || bare == "BTreeMap::get" || bare == "BTreeMap::contains_key" || bare == "BTreeSet::contains" || bare == "Vec::contains"
+    bare == "HashMap::get" || bare == "HashMap::contains_key" || bare == "HashSet::contains" || bare == "HashSet::remove" || bare == "HashMap::remove" || bare == "BTreeMap::remove" || bare == "BTreeSet::remove" || bare == "BTreeMap::get" || bare == "BTreeMap::contains_key" || bare == "BTreeSet::contains" || bare == "Vec::contains" || bare == "Array::contains"
 }
 
 pub fn boxed_member(owner: &str, at: i64, field: &str) -> String {
@@ -3927,7 +3927,7 @@ pub fn changed_lines(ledger: &str, committed: &str) -> Vec<String> {
             entry = line.to_owned();
             named = String::from("");
         }
-        if line.is_empty() || line.starts_with("#") || nikaia_std::list::contains(&kept, line) { continue; }
+        if line.is_empty() || line.starts_with("#") || nikaia_std::list::contains(&kept, &line) { continue; }
         if !entry.is_empty() && entry != line {
             if named != entry {
                 out.push(format!("  {}", entry));
@@ -4039,7 +4039,7 @@ pub fn parameters(body: &str) -> Vec<String> {
         if end > start && a_name_begins(*nikaia_std::index::get(&c, nikaia_std::index::at(start))) {
             let mut name: String = String::new();
             for k in start..end { name.push(*nikaia_std::index::get(&c, nikaia_std::index::at(k))); }
-            if !found.contains(&name) { found.push(name); }
+            if !nikaia_std::list::contains(&found, &name) { found.push(name); }
             i = end;
         } else { i += 1; }
     }
@@ -4358,7 +4358,7 @@ fn a_parameter_call(callee: &str, passed: &[String], subject: Option<String>, sp
     if passed.is_empty() { return; }
     let name = match subject { Some(__nikaia_value) => __nikaia_value, None => return };
     let declared = match *nikaia_std::index::get(&bound, &name) { Some(__nikaia_value) => __nikaia_value, None => return };
-    if callee.is_empty() || !nikaia_std::list::contains(&takers, callee) {
+    if callee.is_empty() || !nikaia_std::list::contains(&takers, &callee) {
         let shown: String = if callee.is_empty() { String::from("this call") } else { callee.to_owned() };
         let first: String = if !passed.is_empty() { (*nikaia_std::index::get(&passed, 0)).to_owned() } else { String::from("") };
         let reached = parameter_list(&passed);
@@ -4366,9 +4366,9 @@ fn a_parameter_call(callee: &str, passed: &[String], subject: Option<String>, sp
         return;
     }
     let listed = parameter_list(declared);
-    for parameter in declared.iter() { if !nikaia_std::list::contains(&passed, parameter) { found.push(refusal("NK1112", span.clone(), format!("`{}` needs `:{}`, but this call doesn't pass it.", name, parameter), vec![format!("The statement's parameters are {}.", listed)], format!("Pass it after the `;`: `{}: …`.", parameter))); } }
+    for parameter in declared.iter() { if !nikaia_std::list::contains(&passed, &parameter) { found.push(refusal("NK1112", span.clone(), format!("`{}` needs `:{}`, but this call doesn't pass it.", name, parameter), vec![format!("The statement's parameters are {}.", listed)], format!("Pass it after the `;`: `{}: …`.", parameter))); } }
     for given in passed.iter() {
-        if nikaia_std::list::contains(&declared, given) { continue; }
+        if nikaia_std::list::contains(&declared, &given) { continue; }
         let note: String = if declared.is_empty() { format!("`{}` has no parameters at all.", name) } else { format!("The statement's parameters are {}.", listed) };
         let near = nearest_parameter(given, declared);
         let help: String = if near.is_some() {
@@ -6413,7 +6413,7 @@ pub fn read(written: &str) -> Result<Ledger, nikaia_std::error::Thrown<Refused>>
     }
     let mut done: Vec<String> = vec![];
     for (trait_name, _) in answers.iter() {
-        if !nikaia_std::list::contains(&done, trait_name) {
+        if !nikaia_std::list::contains(&done, &trait_name) {
             let mut types: collections::BTreeSet<String> = collections::BTreeSet::new();
             for (other, answering) in answers.iter() { if other == trait_name { types.insert(answering.to_owned()); } }
             ledger.implementations.insert(trait_name.to_owned(), types);
@@ -6976,12 +6976,12 @@ fn pointed_into(result: &str, order: &[String]) -> Vec<String> {
     for group in groups.iter() {
         for name in group.iter() {
             let name = *name;
-            if !nikaia_std::list::contains(&named, name) { named.push(name.to_owned()); }
+            if !nikaia_std::list::contains(&named, &name) { named.push(name.to_owned()); }
         }
     }
     let mut borrows: Vec<String> = vec![];
-    for name in order.iter() { if nikaia_std::list::contains(&named, name) { borrows.push(name.to_owned()); } }
-    for name in named.iter() { if !nikaia_std::list::contains(&borrows, name) { borrows.push(name.to_owned()); } }
+    for name in order.iter() { if nikaia_std::list::contains(&named, &name) { borrows.push(name.to_owned()); } }
+    for name in named.iter() { if !nikaia_std::list::contains(&borrows, &name) { borrows.push(name.to_owned()); } }
     borrows
 }
 
@@ -7105,7 +7105,7 @@ pub fn spell(text: &str, key: &str, borrows: &[String], mutates: bool) -> Spelle
         body = format!("{}; {}", body, options);
     }
     for variable in variables(&format!("{}{}", body, result)) {
-        if !seen.contains(&variable) {
+        if !nikaia_std::list::contains(&seen, &variable) {
             seen.push(variable.to_owned());
             declared.push(variable.to_owned());
         }
@@ -7196,7 +7196,7 @@ fn variables(text: &str) -> Vec<String> {
             let mut end = at + 1;
             while end < c.len() as i64 && is_word_char(*nikaia_std::index::get(&c, nikaia_std::index::at(end))) { end += 1; }
             let name = slice(&c, at + 1, end);
-            if !name.is_empty() && !out.contains(&name) { out.push(name); }
+            if !name.is_empty() && !nikaia_std::list::contains(&out, &name) { out.push(name); }
         }
     }
     out
@@ -7547,9 +7547,9 @@ pub fn lends_in(contract: &FnContract, at: i64, copying: &[&Ledger]) -> bool {
     let mut position: i64 = 0;
     for (name, ty) in signature.params.iter() {
         if position == at {
-            if nikaia_std::list::contains(&signature.mutable, name) || name == "self" { return false; }
+            if nikaia_std::list::contains(&signature.mutable, &name) || name == "self" { return false; }
             if ty.is_a_view() { return true; }
-            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !nikaia_std::list::contains(&contract.keeps, name);
+            return !signature.takes_a_receiver() && moves(ty) && !a_ledger_copies(ty, copying) && !nikaia_std::list::contains(&contract.keeps, &name);
         }
         position += 1;
     }
@@ -7662,7 +7662,7 @@ fn keeps_its(callee: &str, at: i64, settling: &collections::BTreeMap<String, col
 
 fn keeps_at(contract: &FnContract, at: i64) -> bool {
     let parameter = match parameter_at(contract, at) { Some(__nikaia_value) => __nikaia_value, None => return true };
-    contract.keeps.contains(&parameter)
+    nikaia_std::list::contains(&contract.keeps, &parameter)
 }
 
 fn parameter_at(contract: &FnContract, at: i64) -> Option<String> {
@@ -8064,7 +8064,7 @@ pub fn could_promise(contracts: &Ledger, theirs: &collections::BTreeSet<String>,
         let contract = match *nikaia_std::index::get(&contracts.functions, key) { Some(__nikaia_value) => __nikaia_value, None => continue };
         if of_a_dependency(key, theirs) || !contract.public || !no_sync(&contract.sync_claim) { continue; }
         let mut named: Vec<String> = vec![];
-        for lambda in lambdas.iter() { if !nikaia_std::list::contains(&contract.keeps, lambda) { named.push(lambda.to_owned()); } }
+        for lambda in lambdas.iter() { if !nikaia_std::list::contains(&contract.keeps, &lambda) { named.push(lambda.to_owned()); } }
         if (named.len() as i64) == lambdas.len() as i64 { through.push(format!("`{}` (`sync({})`)", key, named.join(", "))); }
     }
     let mut out: String = String::from("");
@@ -10274,7 +10274,7 @@ pub fn sharing_report(sharing: &Sharing) -> String {
     out.push_str("An atomic count is the safe default. A plain count is an optimisation, and where it isn't taken the reason is one of these:\n");
     for fallback in every_fallback() {
         let said = fallback.as_str();
-        let mark = if caught.contains(&said) { "*" } else { " " };
+        let mark = if nikaia_std::list::contains(&caught, &said) { "*" } else { " " };
         let remedy = fallback.remedy();
         out.push_str(&format!("  {} {} - {}\n", mark, said, remedy));
     }
@@ -10622,7 +10622,7 @@ fn sites_by_slot(pairs: &[(String, String)]) -> collections::BTreeMap<String, Ve
             Some(__nikaia_it) => Some(__nikaia_it.clone()),
             None => None,
         }, || vec![].into());
-        if !nikaia_std::list::contains(&sites, site) { sites.push(site.to_owned()); }
+        if !nikaia_std::list::contains(&sites, &site) { sites.push(site.to_owned()); }
         out.insert(key.to_owned(), sites);
     }
     out
@@ -15644,7 +15644,7 @@ impl Signature {
         for (name, ty) in self.params.iter() {
             if !inside.is_empty() { inside.push_str(", "); }
             if name == "self" { inside.push_str(&ty.text()); } else {
-                if nikaia_std::list::contains(&self.mutable, name) { inside.push_str("mut "); }
+                if nikaia_std::list::contains(&self.mutable, &name) { inside.push_str("mut "); }
                 inside.push_str(&format!("{}: {}", name, ty.text()));
             }
         }
@@ -16216,8 +16216,20 @@ pub fn types_checked(names: &winnow_grammar::InternerContext, items: &[Spanned<I
         for parameter in (*nikaia_std::index::get(&impl_parameters, (k) as usize)).iter() { here.insert(parameter.to_owned()); }
         bounds_of(names, &nikaia_std::index::get(&items, (k) as usize).node, &traits, &nikaia_std::index::get(&items, (k) as usize).span, &mut found);
         item_types(names, &nikaia_std::index::get(&items, (k) as usize).node, &here, &nikaia_std::index::get(&items, (k) as usize).span, &mut found);
+        inherent_at_home(names, &nikaia_std::index::get(&items, (k) as usize).node, library, declared, &nikaia_std::index::get(&items, (k) as usize).span, &mut found);
     }
     found
+}
+
+fn inherent_at_home(names: &winnow_grammar::InternerContext, item: &Item, library: &Ledger, declared: &collections::BTreeSet<String>, span: &Span, out: &mut Vec<Finding>) {
+    let target = match item {
+        Item::Impl { trait_name, target, .. } => { let trait_name = *trait_name; if trait_name.is_none() { names.resolve(target.name).to_owned() } else { return; } },
+        _ => return,
+    };
+    if declared.contains(&target) || target == "Self" { return; }
+    let foreign = target.contains("::") || nikaia_std::list::contains(&BUILT_IN, &target) || library.types.contains_key(&target);
+    if !foreign { return; }
+    out.push(refusal("NK1209", span.clone(), format!("You can't add methods to `{}` with `impl {}`: your program doesn't declare it.", target, target), vec![String::from("A type's own methods belong to the code that declares the type, so an `impl` without a trait works only on your own `struct` or `enum`.")], format!("Declare a trait and implement it for the type: `trait Doubled {{ fn doubled(self) -> ... }}` and `impl Doubled for {} {{ ... }}`.", target)));
 }
 
 fn known_traits(names: &winnow_grammar::InternerContext, items: &[Spanned<Item>], own: &Ledger, library: &Ledger) -> collections::BTreeSet<String> {

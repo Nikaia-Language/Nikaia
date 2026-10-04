@@ -36,8 +36,26 @@ pub fn types_checked(names: ref winnow_grammar::InternerContext, items: ref Vec[
         }
         bounds_of(names, items[k].node, traits, items[k].span, found)
         item_types(names, items[k].node, here, items[k].span, found)
+        inherent_at_home(names, items[k].node, library, declared, items[k].span, found)
     }
     return found
+}
+
+// **`NK1209`: an `impl` with no trait on a type the program does not declare**
+// (#375). Rust's rule forbids it - a type's own methods are its crate's - and
+// the program would otherwise come back as `rustc`'s words about generated
+// code (Part III C.1). Asked of a built-in type, one a `std` ledger declares,
+// and one written with a module in front; a bare name nothing declares is
+// `NK1135`'s.
+fn inherent_at_home(names: ref winnow_grammar::InternerContext, item: ref Item, library: ref Ledger, declared: ref collections::BTreeSet[String], span: ref Span, mut out: Vec[Finding]) {
+    let target = match item {
+        Item::Impl { trait_name, target, .. } => if trait_name == null { names.resolve(target.name).clone() } else { return },
+        else => return,
+    }
+    if declared.contains(target) || target == "Self" { return }
+    let foreign = target.contains("::") || BUILT_IN.contains(target) || library.types.contains_key(target)
+    if !foreign { return }
+    out.push(refusal("NK1209", span.clone(), f"You can't add methods to `{target}` with `impl {target}`: your program doesn't declare it.", ["A type's own methods belong to the code that declares the type, so an `impl` without a trait works only on your own `struct` or `enum`."], f"Declare a trait and implement it for the type: `trait Doubled {{ fn doubled(self) -> ... }}` and `impl Doubled for {target} {{ ... }}`."))
 }
 
 // Every trait a bound may name: the shapes, the traits a ledger knows - by

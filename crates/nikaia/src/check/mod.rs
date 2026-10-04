@@ -10286,8 +10286,16 @@ impl<'a> Checker<'a> {
                         self.branch.pop();
                         // Only when both arms agree is there something to say
                         // - or when they meet at text (ADR-282 D4).
+                        // **An arm that leaves gives no value** (#375):
+                        // `let t = if c { name } else { return }` is the other
+                        // arm's type, as a `match` arm that returns is.
+                        let leaves = |block: &Block| block_exits(block) || block_leaves(block);
                         if then == other {
                             then
+                        } else if leaves(otherwise) && !leaves(then_branch) {
+                            then
+                        } else if leaves(then_branch) && !leaves(otherwise) {
+                            other
                         } else {
                             let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
                             self.arms_meet_at_text(&arms)
@@ -11074,11 +11082,17 @@ impl<'a> Checker<'a> {
                     // file - and the way round it written in Nikaia was a copy
                     // of the name (`ref name.clone()`), which ADR-283 D3 says
                     // is never the program's to need.
-                    if key == "Vec::contains"
+                    //
+                    // **And an owned text in a list of views** (#375):
+                    // `NAMES.contains(name)` for a `comptime NAMES:
+                    // Array[ref String, N]` and a `name: String`, where the
+                    // array's own `contains` takes a `&&str`. Element by element
+                    // answers every pairing of `String` and `str`.
+                    if (key == "Vec::contains" || key == "Array::contains")
                         && let [Expr::Variable(name)] = args
-                        && self
-                            .binding(self.parsed.text(*name))
-                            .is_some_and(|local| local.ty == Ty::view("str"))
+                        && self.binding(self.parsed.text(*name)).is_some_and(|local| {
+                            local.ty == Ty::view("str") || local.ty == Ty::named("String")
+                        })
                     {
                         self.checked
                             .text_in_lists
