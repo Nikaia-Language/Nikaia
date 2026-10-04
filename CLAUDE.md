@@ -28,3 +28,34 @@
   branch (`git fetch origin develop && git checkout -B work-<name> origin/develop`),
   rebases with `git pull --rebase origin develop` and pushes with
   `git push origin HEAD:develop`.
+
+## Decision rounds with the owner
+
+Some sessions only prepare and take decisions; another session builds them.
+What the owner expects from such a round:
+
+* **Start every topic with an introduction from zero**, before any table,
+  option or error code: what the feature is, a small example, what the
+  program or the user sees today, and why a question arises at all. Never
+  open with the question or the options.
+* **Say where the question comes from**: which issue or record asks it, who
+  wrote it, and whether anything concrete needs the answer now (a program,
+  a user, a measurement) or it is bookkeeping. A question nothing needs may
+  be answered *as it is today, until someone needs more*.
+* **Check what is already decided before asking.** Read the records the issue
+  cites (they may have been merged into another record since) and the code.
+  Do not ask again what a record already settles, and do not take a record's
+  *deferred* for the owner's current view either - say which it is.
+* **Facts before options, checked in the code**: what the compiler does today
+  (try it), what is measured and what is not, what goes wrong if the
+  decision is wrong and how badly (a wrong value, a refusal, undefined
+  behaviour). Name the risk honestly, also where it argues against the
+  recommendation.
+* **A topic that is not prepared well enough is not asked yet.** Say what is
+  missing and prepare a decision basis first: the problem, today's state,
+  how other languages and tools do it, options with their consequences, the
+  measurements still owed, and a recommendation.
+* **Do not ask which issue to take next**: the order is arbitrary, pick one.
+* **Record each decision in its issue** in a form another session can build
+  from: the decision, the reasons, and a numbered *To build* list with tests.
+  Leave the issue open until it is built.
