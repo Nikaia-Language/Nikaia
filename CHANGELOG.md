@@ -4,7 +4,7 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.412] — 2026-10-04
+## [0.0.413] — 2026-10-04
 
 **A file operation on an idle runtime runs on the calling thread** (ADR-263
 D1, D2, D4, #378, #320). When `main` is the one future being polled - no task
@@ -19,6 +19,19 @@ did. Over 1,000 reads, what a read costs for being `async` falls from about
 2,600 to about 770 instructions at `user_parallelism = no` and from about
 2,550 to about 930 at `yes` (runtime-cost §7.4). Two test binaries of their
 own, one per setting, hold every case D2 names.
+
+## [0.0.412] — 2026-10-04
+
+**What the checker asks of one type is Nikaia** (ADR-294, #125). Whether
+handing a value out takes it away or copies it (ADR-152 D2), a view of a type
+and what a view is of, what a hull holds and what goes into one (ADR-037 D7),
+which types are lists, collections or text, the numbers Part I 2.2 offers,
+and the one way out a mismatch offers (Part III C.2) move into
+`tools/check_types.nika`. 28.5 % of the toolchain is Nikaia.
+
+A gap found on the way, and written around rather than fixed here: an `if`
+used as a value inside a `match` arm whose function hands back a `T?` does
+not put a plain branch in the option (#410).
 
 ## [0.0.411] — 2026-10-04
 

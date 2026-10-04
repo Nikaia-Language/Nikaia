@@ -84,6 +84,7 @@ COMPILER_NIKA = {
     "ledger_ops.nika": "contracts: what a build does with a package's ledger as a whole - the entries it publishes, whether it may be believed against its sources, and taking it in under the names a caller writes (0.0.408)",
     "written.nika": "check: an expression or a pattern written back the way the source wrote it, for an `assert`'s failure and a refusal's quote (0.0.410)",
     "check_words.nika": "check: the words its refusals are made of - an article, a count, a list of names, the nearest spelling, the note on a word another language reserves - and which lookups lend their key (0.0.411)",
+    "check_types.nika": "check: what it asks of one type by itself - whether it moves or copies, a view of it and what a view is of, what a hull holds and what goes into one, lists, collections and text, and the way out of a mismatch (0.0.412)",
 }
 
 
