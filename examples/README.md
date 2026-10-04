@@ -344,7 +344,7 @@ depending on what reached it. `par_fold(rule, init, step, merge)` supplies the m
 parser skips no whitespace at its entry, so pieces and the sequential parse agree on every input,
 rejections included. All of it is in `winnow-grammar` `main` (`#[frame(boundary = …)]`,
 `frame_end`, `par_fold`, `unchecked` for the formats a byte-string boundary cannot cut — its
-ADR 16 names them), with `frames_<RULE>`, `merge_<RULE>` and the driver
+ADR 24 names them), with `frames_<RULE>`, `merge_<RULE>` and the driver
 `parse_<RULE>_pieces(input, ctx, Parallelism)` generated; Nikaia chooses the `Parallelism` from
 the switch and the executor. The blind split, the
 seam repair, the per-core accumulators and the reduce are then generated; `1brc.nika`'s `main`

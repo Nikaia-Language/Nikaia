@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.418] — 2026-10-04
+
+**`winnow-grammar` moves to 9446f25: a fixed-width run is matched by index**
+(#392). Its ADR 24 withdraws ADR 16 and carries frames forward, and measures
+the two shapes #392 named one at a time. `"-"? digit{1,2} "." digit` is now a
+few byte comparisons and one advance in the fast pass instead of four parser
+calls; one search over the file instead of one per line was built, came out
+slower (706 against 608 instructions per row upstream, +17 % on the clock),
+and is not in it - `tuned`'s walk back to the last `;` would also accept
+`a;b;1.0`, which the grammar rejects. Here, `examples/1brc.nika` over 1 M rows:
+587 → 566 instructions per row (−3.6 %), and on the clock nothing outside the
+noise: the one-or-two-digit branch moved from the parser's repetition into the
+action's `for d in whole.chars()` rather than going away (mispredicts 4.22 →
+5.22 per row). The compiler is unchanged, 382.54 M → 382.56 M instructions
+lowering `tools/ty.nika`. `benches/brc/README.md` has the tables; a value
+made while matching (`digit{1,2}` handed over as an `i32`) is the open
+question it leaves.
+
 ## [0.0.417] — 2026-10-04
 
 **What a build-time expression comes to is Nikaia** (ADR-287, ADR-294, #125).

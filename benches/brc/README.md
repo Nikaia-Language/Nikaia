@@ -62,8 +62,9 @@ mapping depend on it
 measured and divided across cores rather than skipped). `tuned` also knows the
 temperature is four characters or three and indexes it directly, where the
 grammar states `"-"? digit{1,2} "." digit` and a general repetition walks it.
-The first is a guarantee the compiler cannot drop; the second is a bound it
-could in principle use and does not.
+The first is a guarantee the compiler cannot drop; the second is a bound the
+parser now uses (0.0.415, below), and it moved the instruction count more than
+the clock.
 
 **The parallel row is not a 4× speed-up over the sequential one** (0.46 → 0.29,
 about 1.6×). The input is read once either way and the UTF-8 check is already
@@ -101,6 +102,53 @@ time and `until(";" | frame_end)` searched line by line, against `tuned`'s one
 `memchr` over the file and fixed-width indexing. The hash table is the
 cheaper of the two (about 85 against 124). That is the next question for the
 grammar, and it is a decision of its own.
+
+## The temperature by index, and one search per line kept (0.0.415)
+
+Both shapes named above were built in `winnow-grammar` and measured one at a
+time; the record is its
+[ADR 24](https://github.com/keywan-ghadami/winnow-grammar/blob/main/docs/adr/adr24-frames-and-bounded-formats.md)
+§8–§10. One is in the pin this release moves to, the other was rejected there:
+
+- **`"-"? digit{1,2} "." digit` is matched by index.** A run of literals,
+  `digit`s and bounded `digit{m,n}` in a lexical rule is a few byte
+  comparisons and one advance in the fast pass, where it was four parser
+  calls and a repetition with a checkpoint per digit. A failed match, and the
+  diagnosing pass, run the elements as before, so no error changes.
+- **One `memchr` over the file instead of one `memchr2` per line was slower**:
+  706 against 608 instructions per row upstream and +17 % on the clock,
+  because a line of fifteen bytes was then searched twice instead of once.
+  `tuned`'s walk back from the line's end to the `;` would only pay without
+  the forward search, and it finds the *last* `;` where `until(";" |
+  frame_end)` means the first - it accepts `a;b;1.0`, which the grammar
+  rejects. It measured 649.
+
+From here, the same 1 000 000 rows, both binaries built by `nikaia build`
+against their own pin, output compared before anything was counted:
+
+| | instructions per row | mispredicted branches per row |
+|---|---:|---:|
+| Nikaia, `winnow-grammar` 28cf576 | 587 | 4.22 |
+| **Nikaia, `winnow-grammar` 9446f25** | **566 (−3.6 %)** | 5.22 |
+
+On the clock it does not show. Pinned to one core, best of 25 over 8 million
+rows, interleaved: 0.395 s → 0.390 s, in two rounds the same, inside the
+noise. `brc.sh` prints the same table before and after (Nikaia 0.56 s on one
+core, 0.37 s → 0.36 s on four).
+
+The reason is the one mispredicted branch the change added, and where it
+went. Whether a temperature has one whole digit or two is a coin toss per row.
+The repetition in the parser used to pay for it; now the action's `for d in
+whole.chars()` does, once per row, in `Chars::next`. Twenty-one instructions
+were cheap ones, and the branch the CPU cannot guess was moved, not removed.
+What would remove it is a value made while matching - the grammar handing the
+action an `i32` for `digit{1,2}` instead of the text - and that is a language
+question this release does not answer.
+
+The compiler itself is unchanged: `nikaia lower` on
+`crates/nikaia-std/src/tools/ty.nika`, the largest Nikaia source in the tree,
+382.54 M → 382.56 M instructions with the same Rust out. Its grammar has few
+runs of this shape.
 
 ## What this does not claim
 

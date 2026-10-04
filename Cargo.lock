@@ -954,7 +954,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 [[package]]
 name = "winnow-grammar"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=28cf576f1ff2e20715ce0c4434543c19c85fb545#28cf576f1ff2e20715ce0c4434543c19c85fb545"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=9446f25b48a86c48e6408ae4bd38a5797519c238#9446f25b48a86c48e6408ae4bd38a5797519c238"
 dependencies = [
  "ahash",
  "lasso",
@@ -969,7 +969,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-macros"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=28cf576f1ff2e20715ce0c4434543c19c85fb545#28cf576f1ff2e20715ce0c4434543c19c85fb545"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=9446f25b48a86c48e6408ae4bd38a5797519c238#9446f25b48a86c48e6408ae4bd38a5797519c238"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -980,7 +980,7 @@ dependencies = [
 [[package]]
 name = "winnow-grammar-model"
 version = "0.1.0"
-source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=28cf576f1ff2e20715ce0c4434543c19c85fb545#28cf576f1ff2e20715ce0c4434543c19c85fb545"
+source = "git+https://github.com/keywan-ghadami/winnow-grammar?rev=9446f25b48a86c48e6408ae4bd38a5797519c238#9446f25b48a86c48e6408ae4bd38a5797519c238"
 dependencies = [
  "proc-macro2",
  "quote",
