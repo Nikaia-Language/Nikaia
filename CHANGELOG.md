@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.431] — 2026-10-04
+
+**What a loop's body does is Nikaia** (ADR-306 D4, D7, ADR-294, #125). The
+questions the aggressive bounds and overflow walk asks of a body - whether a
+`break` leaves the loop from it, which lists a turn pushes onto exactly once,
+and which names a lambda, a task, an `overlap` branch or a `select` arm
+changes or hands on - move into `tools/bounds_body.nika`, answered by one walk
+told which by an `Ask`. 30.2 % of the toolchain is Nikaia.
+
+**Text bound out of a value the `match` was lent is read where it is
+compared**: `wanted` in `Ask::Named(wanted)` over a `ref Ask` is a `&String`
+below, though it types as the view a `ref String` parameter is (a `&str`
+there), and `(x ?? "") == wanted` compared a `String` with a `&String`. Such a
+binding is lent, and the comparison reads it.
+
 ## [0.0.430] — 2026-10-04
 
 **A trusted map hashes text with `rustc-hash` 2's byte hash** (ADR-316 D5,
