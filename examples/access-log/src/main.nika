@@ -45,7 +45,7 @@ grammar Log {
     // A fold hands each entry to an accumulator instead of collecting them
     // all, as `ENTRY*` would. `par_fold` also says how two partial reports
     // merge, so each core can fold its own piece of the file.
-    pub rule file -> Report =
+    entry rule file -> Report =
         par_fold(ENTRY, Report, fn(acc, e) { acc.record(e) }, Report::merge)
 }
 

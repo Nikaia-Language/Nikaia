@@ -25,7 +25,7 @@ grammar Calc {
     //
     // `a - b - c` means `(a - b) - c`: the tails are collected and folded left to
     // right in the action. (`expr = expr "-" term` would never terminate.)
-    pub rule expr -> i64 =
+    entry rule expr -> i64 =
         head:term tail:add_tail* {
             let mut value = head
             for t in tail { value = value + t }

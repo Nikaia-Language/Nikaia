@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.422] — 2026-10-04
+
+**A grammar's entries are `entry rule`, and `pub` belongs to the grammar**
+(ADR-296 D25). `pub rule` said two things at once: that the program may call
+the rule, and - in a language whose privacy is per package (ADR-286 D2) - that
+other packages may; a one-file program had to write it for the first. Now
+`entry rule file` says the rule was written to be entered, `rule` keeps a
+helper such as 1BRC's `NAME` the grammar's own, and offering a grammar to
+other packages will be `pub grammar`, for all its entries at once, as a
+`pub enum` offers its variants. An entry is never inferred from a call, which
+would make one out of a typo. `pub rule` is refused with both words in the
+message; `pub grammar` is refused as decided and not built, since a grammar is
+entered only from its own file today. `entry` is a word of the grammar
+sublanguage, a name everywhere else. Every grammar in the tree moves, the
+toolchain's own in `tools/` included; `examples/1brc.nika` has neither `pub`
+nor `sync` left. A test that cut `struct Reading` out of the example by its old
+`pub` is fixed with it.
+
 ## [0.0.421] — 2026-10-04
 
 **`examples/1brc.nika` writes only what 1BRC needs.** Seven `sync`s, the

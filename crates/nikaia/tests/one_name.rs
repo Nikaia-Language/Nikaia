@@ -78,7 +78,7 @@ fn a_trait_and_a_grammar_declare_a_name_too() {
 
     let with_grammar = refusals(
         "struct Nums { n: i64 }\n\
-         grammar Nums { pub rule number -> i64 = d:dec[i64](digit+) { d } }\n",
+         grammar Nums { entry rule number -> i64 = d:dec[i64](digit+) { d } }\n",
     );
     assert_eq!(with_grammar.len(), 1, "{with_grammar:#?}");
     assert!(
@@ -110,8 +110,8 @@ fn a_method_is_not_a_declaration() {
 #[test]
 fn a_rule_is_not_a_declaration() {
     let found = refusals(
-        "grammar A { pub rule number -> i64 = d:dec[i64](digit+) { d } }\n\
-         grammar B { pub rule number -> i64 = d:dec[i64](digit+) { d } }\n",
+        "grammar A { entry rule number -> i64 = d:dec[i64](digit+) { d } }\n\
+         grammar B { entry rule number -> i64 = d:dec[i64](digit+) { d } }\n",
     );
     assert!(found.is_empty(), "{found:#?}");
 }
@@ -124,7 +124,7 @@ fn a_program_that_declares_each_name_once_is_untouched() {
         "struct Reading { name: String, temp: i64 }\n\
          enum Op { Plus, Times }\n\
          trait Summary { fn s(ref self) -> i64 }\n\
-         grammar Nums { pub rule number -> i64 = d:dec[i64](digit+) { d } }\n\
+         grammar Nums { entry rule number -> i64 = d:dec[i64](digit+) { d } }\n\
          fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n\
          fn main() { println(f\"{read(\"7\")}\") }\n",
     );

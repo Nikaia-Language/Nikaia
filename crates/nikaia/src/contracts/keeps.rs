@@ -156,7 +156,7 @@ pub fn infer(
                         }
                     }
                 }
-                // **A `pub` rule is an entry, and its one parameter is the
+                // **A `entry` rule is an entry, and its one parameter is the
                 // text** ([ADR-296](../../../docs/specification/adr/adr-296.md)
                 // D1). Whether it keeps that text is not a question about an
                 // action block at all: a parse keeps its input exactly when
@@ -174,7 +174,7 @@ pub fn infer(
                 // derived now, so an empty column means *asked and no*.
                 Item::Grammar(def) => {
                     let named = parsed.text(def.name).to_string();
-                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                    for rule in def.rules.iter().filter(|r| r.is_entry) {
                         let mut uses = no_uses();
                         if super::tether::a_parse_that_views(
                             parsed,

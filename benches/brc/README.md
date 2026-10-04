@@ -125,7 +125,7 @@ whole program.
 
 ## A lowercase `par_fold` rule, and what its whitespace cost (0.0.388)
 
-`examples/1brc.nika` writes its entry rule `pub rule file` - lowercase, so
+`examples/1brc.nika` writes its entry rule `entry rule file` - lowercase, so
 syntactic. Its entry point skipped no whitespace (ADR-296 D10), but the rule
 itself still skipped at its start and before every item of the fold, until
 `winnow-grammar` 28cf576. That broke the one thing `par_fold` promises: at

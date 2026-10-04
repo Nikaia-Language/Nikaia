@@ -1255,7 +1255,7 @@ fn walked<'a>(
                     parsed.text(def.name).to_string(),
                     def.rules
                         .iter()
-                        .filter(|r| r.is_public)
+                        .filter(|r| r.is_entry)
                         .map(|r| parsed.text(r.name).to_string())
                         .collect(),
                 )),
@@ -2717,7 +2717,7 @@ struct Checker<'a> {
     /// which `enum` a literal for it has. [`Self::structs`] holds its fields
     /// under the same key, so one field check serves both shapes.
     variant_owner: BTreeMap<String, String>,
-    /// Every **grammar** declared here, with the names of its `pub` rules
+    /// Every **grammar** declared here, with the names of its `entry` rules
     /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     ///
     /// A grammar is entered by an ordinary call — `Json.value(input)` — so its
@@ -4448,7 +4448,7 @@ impl<'a> Checker<'a> {
         for rule in &grammar.rules {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
             // **The rule's own key, so its answers land in its own entry.**
-            // A `pub` rule *is* a ledger entry
+            // A `entry` rule *is* a ledger entry
             // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), and the
             // walks that derive `touches` and `locks` read the method answers
             // this checker files under the caller's key — which was `None` for
@@ -6623,7 +6623,7 @@ impl<'a> Checker<'a> {
     /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md) is why that
     /// is silence rather than a guess.
     /// The ledger key `Json.value(input)` enters through, where the receiver
-    /// names a grammar of this file and the method one of its `pub` rules
+    /// names a grammar of this file and the method one of its `entry` rules
     /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     ///
     /// `None` for everything else, which is every other method call: a grammar
@@ -6642,7 +6642,7 @@ impl<'a> Checker<'a> {
 
     /// The same key off a **path**, which is how a grammar is entered
     /// ([ADR-140](../../docs/specification/adr/adr-140.md) D3): `Json::value(x)`
-    /// names the grammar `Json` and its `pub` rule `value`.
+    /// names the grammar `Json` and its `entry` rule `value`.
     ///
     /// A grammar's name is a name and a rule of it is reached the way every
     /// other qualified name is. The dot is for a **value's** members, and a
@@ -6683,7 +6683,7 @@ impl<'a> Checker<'a> {
     /// what comes back is what the rule declares.
     ///
     /// **Whether it can fail comes from the contract**, which is the whole of
-    /// what D2 changed: a `pub` rule is an entry in the ledger with
+    /// what D2 changed: a `entry` rule is an entry in the ledger with
     /// `throws = ["?"]`, because a rule past a commit point can fail
     /// ([ADR-023](../../docs/specification/adr/adr-023.md) D9). The old form
     /// was not a call and carried no contract, so `NK1134` had to be told in
@@ -10608,7 +10608,7 @@ impl<'a> Checker<'a> {
                 // **A grammar is entered by an ordinary call**
                 // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), so
                 // this is that call: a receiver naming a grammar of this file
-                // and a method naming one of its `pub` rules. Answered before
+                // and a method naming one of its `entry` rules. Answered before
                 // the receiver is typed, because a grammar name is not a value
                 // and typing it would be asking the wrong question.
                 // **Both ways out of here owe the witness its walk.** It was

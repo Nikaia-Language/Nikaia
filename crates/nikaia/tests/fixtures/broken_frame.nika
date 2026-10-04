@@ -16,7 +16,7 @@ grammar Measurements {
         { s }
 
     @frame(boundary: "\n")
-    pub rule MEASUREMENT -> ref String =
+    entry rule MEASUREMENT -> ref String =
         name:NAME ";" frame_end
         { name }
 }

@@ -73,7 +73,7 @@ grammar Http1 {
 
     // The head, which ends in an empty line - the only one it has, since the
     // buffer hands over the text up to the first.
-    pub rule head -> Written =
+    entry rule head -> Written =
         words:list(WORD, " ") "\r\n" lines:line* "\r\n" eof {
             Written { words, fields: fields(lines) }
         }

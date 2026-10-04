@@ -353,7 +353,7 @@ pub struct GrammarDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrammarRule {
     pub name: winnow_grammar::Symbol,
-    pub is_public: bool,
+    pub is_entry: bool,
     pub frame: Option<FrameAttr>,
     pub ret_type: Option<Type>,
     pub label: Option<String>,
@@ -6615,7 +6615,7 @@ fn rules_reaches(def: &GrammarDef, names: &winnow_grammar::InternerContext, unal
         }
     }
     for rule in def.rules.iter() {
-        if !rule.is_public { continue; }
+        if !rule.is_entry { continue; }
         let key = format!("{}::{}", named, names.resolve(rule.name));
         let mut reaches = Reaches { itself: whole.itself.clone(), callees: whole.callees.to_owned() };
         resolved_into(*nikaia_std::index::get(&calls, &key), false, &mut reaches);
@@ -10828,7 +10828,7 @@ pub fn unit_sync(program: &Program, names: &winnow_grammar::InternerContext, una
             },
             Item::Grammar(def) => {
                 let named = names.resolve(def.name).to_owned();
-                for rule in def.rules.iter() { if rule.is_public { graph.nodes.insert(format!("{}::{}", named, names.resolve(rule.name)), leaf(false)); } }
+                for rule in def.rules.iter() { if rule.is_entry { graph.nodes.insert(format!("{}::{}", named, names.resolve(rule.name)), leaf(false)); } }
             },
             _ => { },
         }
@@ -13551,7 +13551,7 @@ pub fn touches_of_graph(graph: &TouchGraph) -> collections::BTreeMap<String, Vec
 fn rules_into(def: &GrammarDef, names: &winnow_grammar::InternerContext, whole: &Reach, own: &Ledger, library: &Ledger, graph: &mut TouchGraph) {
     let named = names.resolve(def.name).to_owned();
     for rule in def.rules.iter() {
-        if !rule.is_public { continue; }
+        if !rule.is_entry { continue; }
         let key = format!("{}::{}", named, names.resolve(rule.name));
         let mut reach = Reach { unknown: whole.unknown, outside: whole.outside.to_owned(), calls: whole.calls.to_owned() };
         methods_reach(*nikaia_std::index::get(&graph.methods, &key), own, library, &mut reach);

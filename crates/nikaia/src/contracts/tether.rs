@@ -87,7 +87,7 @@ impl HeldOps for Held {
 }
 
 /// Give every entry of this package the states its views solved to (D7):
-/// each function's (`function_views`), and a `pub` rule's whose result may
+/// each function's (`function_views`), and a `entry` rule's whose result may
 /// point into the text it parsed - the entry holds the input and the result
 /// borrows it ([ADR-296](../../../../docs/specification/adr/adr-296.md) D24).
 /// Then which positions really leave, over the whole package, to a fixpoint
@@ -139,7 +139,7 @@ pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
                 }
                 Item::Grammar(def) => {
                     let named = parsed.text(def.name).to_string();
-                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                    for rule in def.rules.iter().filter(|r| r.is_entry) {
                         if a_parse_that_views(parsed, rule.ret_type.as_ref(), &package) {
                             keep(
                                 format!("{named}::{}", parsed.text(rule.name)),

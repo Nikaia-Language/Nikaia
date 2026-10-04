@@ -5,7 +5,7 @@
 // the other half of ADR-296 D19.
 
 grammar Digits {
-    pub rule pair -> Pair =
+    entry rule pair -> Pair =
         left:i32 "," right:i32 { Pair { left, right } }
 }
 

@@ -99,7 +99,7 @@ const SETTINGS: &str = "pub struct Setting {\n\
      \x20   rule NAME -> ref String = s:raw_ident { s }\n\
      \x20   rule VALUE -> ref String = s:until(\"#\" | line_ending) { s.trim() }\n\
      \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE { Setting { key, value } }\n\
-     \x20   pub rule file -> Vec[Setting] = settings:setting* { settings }\n\
+     \x20   entry rule file -> Vec[Setting] = settings:setting* { settings }\n\
      }\n";
 
 /// **The parse happens while the program is built, and what is left is the
@@ -193,7 +193,7 @@ const SHADES: &str = "enum Shade { Odd, Even, Named(ref String), Weight(f64) }\n
      \x20   rule THREE -> Shade = \"n:\" s:raw_ident { Shade::Named(s) }\n\
      \x20   rule FOUR -> Shade = \"w:\" n:NUM { Shade::Weight(n) }\n\
      \x20   rule SHADE -> Shade = s:(ONE | TWO | THREE | FOUR) { s }\n\
-     \x20   pub rule many -> Vec[Shade] = shades:SHADE* { shades }\n\
+     \x20   entry rule many -> Vec[Shade] = shades:SHADE* { shades }\n\
      }\n";
 
 /// **An `enum` crosses, by the variant the value *is*.**
@@ -264,7 +264,7 @@ fn a_float_crosses_from_a_grammar_as_the_bits_the_parser_had() {
     let (dir, reads) = workshop("grammar-float");
     let source = "grammar Num {\n\
          \x20   rule WS = multispace0 { }\n\
-         \x20   pub rule one -> f64 = n:dec[f64](text(digit+ (\".\" digit+)?)) { n }\n\
+         \x20   entry rule one -> f64 = n:dec[f64](text(digit+ (\".\" digit+)?)) { n }\n\
          }\n\
          \n\
          comptime N: f64 = Num::one(\"0.1\")\n\
@@ -294,7 +294,7 @@ fn a_variant_with_named_fields_is_refused_by_name() {
          \n\
          grammar Pick {\n\
          \x20   rule WS = multispace0 { }\n\
-         \x20   pub rule one -> Shape = \"spot\" { Shape::Spot { x: 1 } }\n\
+         \x20   entry rule one -> Shape = \"spot\" { Shape::Spot { x: 1 } }\n\
          }\n\
          \n\
          comptime CHOICE: Shape = Pick::one(\"spot\")\n\

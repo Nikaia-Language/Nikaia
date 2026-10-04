@@ -224,7 +224,7 @@ grammar Rust {
     rule LINE = "//" until(line_ending) { }
     rule BLOCK = "/*" until("*/") "*/" { }
 
-    pub rule file -> Vec[RustItem] = items:public eof { items }
+    entry rule file -> Vec[RustItem] = items:public eof { items }
 
     // ---- the two bodies ------------------------------------------------
     //

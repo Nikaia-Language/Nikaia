@@ -45,7 +45,7 @@ grammar Json_ {
     // A lowercase rule skips whitespace between its parts, so nothing below
     // mentions blanks, and `[1, 2]` and a document spread over forty lines
     // parse the same. `value` reaches `value` again through `[` and `{`.
-    pub rule value -> Json =
+    entry rule value -> Json =
           "null" { Json::Null }
         | "true" { Json::Bool(true) }
         | "false" { Json::Bool(false) }

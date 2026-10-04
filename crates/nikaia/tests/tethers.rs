@@ -192,14 +192,14 @@ const VIEWING: &str = "grammar Stock {\n\
                        \x20   rule ENTRY -> Entry =\n\
                        \x20       category:FIELD \";\" => count:COUNT frame_end\n\
                        \x20       { Entry { category, count } }\n\
-                       \x20   pub rule file -> Vec[Entry] = entries:ENTRY* { entries }\n\
+                       \x20   entry rule file -> Vec[Entry] = entries:ENTRY* { entries }\n\
                        }\n\
                        \n\
                        pub struct Entry { pub category: ref String, pub count: i64 }\n";
 
 const COUNTING: &str = "grammar Calc {\n\
                         \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
-                        \x20   pub rule expr -> i64 = n:NUM { n }\n\
+                        \x20   entry rule expr -> i64 = n:NUM { n }\n\
                         }\n";
 
 /// **A parse hands back views into the text it was given**

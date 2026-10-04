@@ -767,7 +767,7 @@ impl<'a> BuildTime<'a> {
             })
     }
 
-    /// The file a grammar was declared in, and what its `pub` rule hands back.
+    /// The file a grammar was declared in, and what its `entry` rule hands back.
     fn rule_of(&self, grammar: &str, rule: &str) -> Option<(&'a Parsed, crate::contracts::ty::Ty)> {
         std::iter::once(self.parsed)
             .chain(self.beside.iter().copied())
@@ -780,7 +780,7 @@ impl<'a> BuildTime<'a> {
                         Item::Grammar(def) if parsed.text(def.name) == grammar => def
                             .rules
                             .iter()
-                            .find(|r| r.is_public && parsed.text(r.name) == rule),
+                            .find(|r| r.is_entry && parsed.text(r.name) == rule),
                         _ => None,
                     })?;
                 let ty = found.ret_type.as_ref()?;

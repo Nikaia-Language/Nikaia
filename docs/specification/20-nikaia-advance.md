@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.421 (Draft)
+**Version:** 0.0.422 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -23,7 +23,7 @@ Nikaia grammars are **scannerless**: there is no separate tokenizer stage. A gra
 
 ```nika
 grammar Json {
-    pub rule value -> Value =
+    entry rule value -> Value =
         o:object { Value::Object(o) }
       | a:array  { Value::Array(a) }
       | s:string { Value::String(s) }
@@ -45,8 +45,12 @@ grammar Json {
 ### 10.2. Dual-Mode Parsing (Static vs. Dynamic)
 A grammar defined once runs at compile time and at runtime, **with the same
 syntax and the same meaning**. A grammar is entered by an **ordinary call**.
-Every `pub` rule in it is an entry named after the rule: `Json::value(x)` runs
-the rule `value` of the grammar `Json`. The word in front of the binding decides
+Every `entry rule` in it is an entry named after the rule: `Json::value(x)`
+runs the rule `value` of the grammar `Json`. A rule without `entry` is the
+grammar's own, and a call to it is refused. A grammar is entered from the file
+that declares it; `pub grammar`, which offers all of a grammar's entries to
+other packages at once, is *decided, not built yet* - a rule is never `pub` on
+its own (ADR-296 D25). The word in front of the binding decides
 *when* the call runs.
 
 **The separator is `::`, as it is for every other qualified name.** The dot is
@@ -387,7 +391,7 @@ Nothing here changes what a pattern means. `until(";")` consumes up to the next 
 **How two pieces combine.** The entry rule folds with a **merge**:
 
 ```nika
-pub rule file -> Summary =
+entry rule file -> Summary =
     par_fold(MEASUREMENT, Summary, fn(acc, m) { acc.record(m) }, Summary::merge)
 ```
 
@@ -414,13 +418,13 @@ and nothing is copied (10.6).
 
 **A rule.** `rule name -> Type = pattern { action }`. The `->` names the
 result type; the block after the pattern is the action, one per alternative,
-and it may read every binding of that alternative. `pub` before `rule` makes
+and it may read every binding of that alternative. `entry` before `rule` makes
 the rule an entry a call can reach (`Json::value(input)`).
 A rule may take arguments and be used as `list(pair, ",")` is.
 
 **An action may not pause.** A call that can pause is refused where it stands
 with `NK2209`. A fold's `init`, `step` and `merge` are action code. An action
-may **fail**, which is what a `pub` rule's `throws` is about: an entry throws
+may **fail**, which is what an entry's `throws` is about: an entry throws
 `ParseError`, which carries the parser's rendered message and nothing else. A grammar may be
 entered from a body that pauses; what is refused is a pause *inside* the parse.
 

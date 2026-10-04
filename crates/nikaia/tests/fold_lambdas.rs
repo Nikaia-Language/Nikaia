@@ -37,7 +37,7 @@ fn program(rule: &str) -> String {
     let entry = rule
         .split_whitespace()
         .nth(2)
-        .expect("`pub rule <name> -> …`");
+        .expect("`entry rule <name> -> …`");
     format!(
         "grammar Nums {{\n\
          \x20   rule N -> i64 = d:dec[i64](digit+) {{ d }}\n\
@@ -65,7 +65,7 @@ fn codes(rule: &str) -> Vec<String> {
 #[test]
 fn an_undeclared_name_in_a_step_is_refused() {
     let found = findings(&program(
-        "pub rule file -> i64 = fold(N, zero, fn(acc, m) { nothing_declares_this })",
+        "entry rule file -> i64 = fold(N, zero, fn(acc, m) { nothing_declares_this })",
     ));
     assert_eq!(found.len(), 1, "one refusal: {found:#?}");
     assert_eq!(found[0].code, "NK1117");
@@ -82,12 +82,12 @@ fn an_undeclared_name_in_a_step_is_refused() {
 #[test]
 fn init_and_merge_are_walked_too() {
     assert_eq!(
-        codes("pub rule a -> i64 = fold(N, undeclared_init, fn(acc, m) { acc + m })"),
+        codes("entry rule a -> i64 = fold(N, undeclared_init, fn(acc, m) { acc + m })"),
         ["NK1117"],
         "the `init`"
     );
     assert_eq!(
-        codes("pub rule a -> i64 = par_fold(N, zero, fn(acc, m) { acc + m }, undeclared_merge)"),
+        codes("entry rule a -> i64 = par_fold(N, zero, fn(acc, m) { acc + m }, undeclared_merge)"),
         ["NK1117"],
         "the `merge` of a `par_fold`"
     );
@@ -103,8 +103,8 @@ fn init_and_merge_are_walked_too() {
 #[test]
 fn what_the_examples_write_is_left_alone() {
     for rule in [
-        "pub rule a -> i64 = fold(N, zero, fn(acc, m) { acc + m })",
-        "pub rule a -> i64 = par_fold(N, zero, fn(acc, m) { acc + m }, zero)",
+        "entry rule a -> i64 = fold(N, zero, fn(acc, m) { acc + m })",
+        "entry rule a -> i64 = par_fold(N, zero, fn(acc, m) { acc + m }, zero)",
     ] {
         assert!(
             codes(rule).is_empty(),
@@ -120,7 +120,7 @@ fn what_the_examples_write_is_left_alone() {
 /// exist.
 #[test]
 fn a_sibling_binding_reaches_into_the_lambda() {
-    let rule = "pub rule mixed -> i64 = \
+    let rule = "entry rule mixed -> i64 = \
                 head:N rest:fold(N, zero, fn(acc, m) { acc + m + head }) { rest }";
     assert!(
         codes(rule).is_empty(),
@@ -139,7 +139,7 @@ fn a_sibling_binding_reaches_into_the_lambda() {
 #[test]
 fn a_jump_in_a_step_names_the_lambda() {
     let found = findings(&program(
-        "pub rule a -> i64 = fold(N, zero, fn(acc, m) { break })",
+        "entry rule a -> i64 = fold(N, zero, fn(acc, m) { break })",
     ));
     assert_eq!(found.len(), 1, "one refusal: {found:#?}");
     assert_eq!(found[0].code, "NK1132");
@@ -154,7 +154,7 @@ fn a_jump_in_a_step_names_the_lambda() {
 /// jump may leave, so nothing is refused.
 #[test]
 fn a_loop_written_inside_the_step_takes_its_own_jump() {
-    let rule = "pub rule a -> i64 = fold(N, zero, fn(acc, m) { \
+    let rule = "entry rule a -> i64 = fold(N, zero, fn(acc, m) { \
                 let mut t = acc\n\
                 \x20       for i in 0..<m {\n\
                 \x20           if i > 3 { break }\n\

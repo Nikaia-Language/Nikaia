@@ -491,12 +491,12 @@ fn a_grammar_reads_a_list_with_a_separator() {
     runs(
         "grammar-list",
         "grammar Csv {\n\
-         \x20   pub rule row -> Vec[ref String] = cells:list(CELL, \",\") eof { cells }\n\
+         \x20   entry rule row -> Vec[ref String] = cells:list(CELL, \",\") eof { cells }\n\
          \n\
          \x20   rule CELL -> ref String = c:text(CELL_PIECE*) { c }\n\
          \x20   rule CELL_PIECE = not(\",\") any { }\n\
          \n\
-         \x20   pub rule numbers -> Vec[i64] = ns:list(number, \";\") eof { ns }\n\
+         \x20   entry rule numbers -> Vec[i64] = ns:list(number, \";\") eof { ns }\n\
          \x20   rule number -> i64 = n:dec[i64](digit+) { n }\n\
          }\n\
          \n\

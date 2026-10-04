@@ -204,13 +204,13 @@ pub fn unit_sync(program: ref Program, names: ref winnow_grammar::InternerContex
                     graph.nodes.insert(key, leaf(!method.node.is_sync))
                 }
             }
-            // **A grammar's `pub` rules are leaves too, and they hold**
+            // **A grammar's entries are leaves too, and they hold**
             // (ADR-296 D35, D36): an action may not pause, so the entry is
             // `sync` and a caller keeps its own claim.
             Item::Grammar(def) => {
                 let named = names.resolve(def.name).clone()
                 for rule in def.rules {
-                    if rule.is_public {
+                    if rule.is_entry {
                         graph.nodes.insert(f"{named}::{names.resolve(rule.name)}", leaf(false))
                     }
                 }

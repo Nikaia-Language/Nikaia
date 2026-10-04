@@ -1606,6 +1606,9 @@ grammar! {
 
         rule kw_sync -> () = KW_SYNC -> { () }
         rule kw_pub -> () = KW_PUB -> { () }
+        // `entry rule file` (ADR-296 D25). A word of the grammar sublanguage,
+        // like `rule`: a name everywhere else.
+        rule kw_entry -> () = KW_ENTRY -> { () }
 
         // **`sync` and `throws` stand after the result type**
         // ([ADR-140](../../../../docs/specification/adr/adr-140.md) D4), which
@@ -2243,13 +2246,39 @@ grammar! {
         // --- Part II, Kapitel 10: Grammatiken ---
 
         rule grammar_item -> Item =
-            KW_GRAMMAR name:NAME
+            // **`pub grammar` is decided and not built** (ADR-296 D25): it
+            // will offer the grammar's entries to other packages, and a grammar
+            // is entered only from its own file today.
+            KW_PUB KW_GRAMMAR fail("A grammar can't be offered to other packages yet: \
+                                    `pub grammar` is decided and not built. Write \
+                                    `grammar`, and call its entries from this file.") -> {
+                Item::Import { path: Vec::new(), alias: None }
+            }
+          | KW_GRAMMAR name:NAME
             "{" rules:grammar_rule* "}"
             -> { Item::Grammar(GrammarDef { name, rules }) }
 
         rule grammar_rule -> GrammarRule @=
-            frame:frame_attr?
-            vis:kw_pub?
+            // **A rule is not `pub` on its own** (ADR-296 D25): whether the
+            // program may enter it is what `entry` says, and offering a
+            // grammar to other packages is `pub grammar`'s, for all its
+            // entries at once.
+            frame_attr? KW_PUB KW_RULE
+            fail("A rule isn't `pub` on its own. Write `entry rule` for a rule the \
+                  program calls; a grammar's entries are offered to other packages \
+                  together, by `pub grammar`.") -> {
+                GrammarRule {
+                    name: _state.intern(""),
+                    is_entry: false,
+                    frame: None,
+                    ret_type: None,
+                    label: None,
+                    alts: Vec::new(),
+                    span: Span::from(_span),
+                }
+            }
+          | frame:frame_attr?
+            entry:kw_entry?
             KW_RULE
             name:NAME
             ret:return_type_arrow?
@@ -2259,7 +2288,7 @@ grammar! {
             -> {
                 GrammarRule {
                     name,
-                    is_public: vis.is_some(),
+                    is_entry: entry.is_some(),
                     frame,
                     ret_type: ret,
                     label,
@@ -3647,8 +3676,8 @@ grammar! {
         // **The form that is gone** ([ADR-296](../../../docs/specification/adr/adr-296.md)
         // D1). A grammar is entered by an ordinary call — `Json::value(input)`,
         // through a path since ADR-140 D3, the dot being `NK1147` — and every
-        // `pub` rule is an entry (D2), which is what took the silent choice
-        // away: the emitter used to pick the *first* `pub` rule, a `par_fold`
+        // `entry` rule is an entry (D2), which is what took the silent choice
+        // away: the emitter used to pick the *first* `entry` rule, a `par_fold`
         // one beating an earlier one.
         //
         // `fail` beats the alternatives at this position, the shape ADR-277
@@ -3807,6 +3836,7 @@ grammar! {
         // backend's `ident` accepts both, so they are covered by the same line.
         rule KW_AS = "as" not(ident)
         rule KW_BOUNDARY = "boundary" not(ident)
+        rule KW_ENTRY = "entry" not(ident)
         rule KW_BREAK = "break" not(ident)
         rule KW_CATCH = "catch" not(ident)
         rule KW_COMPTIME = "comptime" not(ident)

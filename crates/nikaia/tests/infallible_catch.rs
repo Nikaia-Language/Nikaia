@@ -142,7 +142,7 @@ fn a_nested_catch_leaves_the_outer_one_alone() {
 fn a_grammar_run_over_an_input_may_fail() {
     let source = r#"
 grammar Nums {
-    pub rule number -> i64 =
+    entry rule number -> i64 =
         n:dec[i64](digit+) { n }
 }
 

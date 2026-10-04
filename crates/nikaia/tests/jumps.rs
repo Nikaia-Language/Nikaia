@@ -427,7 +427,7 @@ fn a_break_at_the_end_of_its_block_is_silent() {
 fn a_jump_the_checker_walk_misses_is_still_not_emitted() {
     let source = "grammar Nums {\n\
          \x20   rule N -> i64 = d:i64 { d }\n\
-         \x20   pub rule file -> i64 = fold(N, zero, fn(acc, m) { let h = spawn fn { break } })\n\
+         \x20   entry rule file -> i64 = fold(N, zero, fn(acc, m) { let h = spawn fn { break } })\n\
          }\n\
          \n\
          fn zero() -> i64 { return 0 }\n";

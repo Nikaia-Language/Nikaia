@@ -35,7 +35,7 @@ grammar Fasta {
     // would otherwise eat the line endings this grammar is made of.
     rule WS = "" { }
 
-    pub rule file -> Vec[Section] =
+    entry rule file -> Vec[Section] =
         sections:section* { sections }
 
     // A header, then every line that does not start a new one. `not(">")`

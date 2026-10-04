@@ -87,7 +87,7 @@ pub fn unit_reaches(program: ref Program, names: ref winnow_grammar::InternerCon
                     }
                 }
             }
-            // **A `pub` rule is an entry, so it gets the walk too** (ADR-296
+            // **A `entry` rule is an entry, so it gets the walk too** (ADR-296
             // D24). Its body is every action block in the grammar: a rule's
             // pattern names other rules of the same grammar and their actions
             // run with it, so the grammar is the unit - which is the safe
@@ -190,7 +190,7 @@ fn rules_reaches(def: ref GrammarDef, names: ref winnow_grammar::InternerContext
         }
     }
     for rule in def.rules {
-        if !rule.is_public {
+        if !rule.is_entry {
             continue
         }
         let key = f"{named}::{names.resolve(rule.name)}"

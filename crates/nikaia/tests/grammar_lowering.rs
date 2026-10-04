@@ -179,7 +179,7 @@ grammar Measurements {
     @frame(boundary: "\n")
     rule MEASUREMENT -> i32 = t:i32 frame_end { t }
 
-    pub rule file -> i64 =
+    entry rule file -> i64 =
         par_fold(MEASUREMENT, zero, fn(acc, m) { acc + m }, add)
 }
 
@@ -546,7 +546,7 @@ fn one_brc_grammar_half() -> String {
     let mut out = String::new();
     let mut inside = false;
     for line in source.lines() {
-        if line.starts_with("grammar Measurements {") || line.starts_with("pub struct Reading") {
+        if line.starts_with("grammar Measurements {") || line.starts_with("struct Reading") {
             inside = true;
         }
         if inside {
@@ -620,7 +620,7 @@ fn a_type_argument_is_written_with_brackets_and_emitted_with_angles() {
 grammar Ids {
     rule N -> i32 = n:dec[i32](digit{1,2}) { n }
     rule T -> ref String = t:text(alpha1 digit*) { t }
-    pub rule entry -> i32 = n:N { n }
+    entry rule entry -> i32 = n:N { n }
 }
 "#;
     let emitted = emit(source, Build::default());
@@ -646,8 +646,8 @@ grammar Two {
     rule M -> i32 = t:i32 frame_end { t }
     rule N -> i64 = d:dec[i64](digit+) { d }
 
-    pub rule both -> i64 = par_fold(M, zero, fn(acc, m) { acc + m }, add)
-    pub rule one -> i64 = n:N { n }
+    entry rule both -> i64 = par_fold(M, zero, fn(acc, m) { acc + m }, add)
+    entry rule one -> i64 = n:N { n }
 }
 
 fn zero() -> i64 { return 0 }
@@ -674,7 +674,7 @@ fn single() { let s = Two::one(data) }
 #[test]
 fn a_rule_reached_through_a_dot_is_refused() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
+                  \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read(text: ref String) { let n = Nums.number(text) catch { 0 } }\n";
@@ -698,7 +698,7 @@ fn a_rule_reached_through_a_dot_is_refused() {
 #[test]
 fn a_method_on_a_value_is_not_a_grammar_entry() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
+                  \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read(text: String) -> i64 { return text.len() }\n";
@@ -713,8 +713,8 @@ fn a_method_on_a_value_is_not_a_grammar_entry() {
     );
 }
 
-/// **A rule that is not `pub` is not an entry** (D2), and the message says which
-/// of the two it is.
+/// **A rule that is not an `entry rule` is the grammar's own** (D25), and the
+/// message says which of the two it is.
 ///
 /// A grammar name can only stand where a callee stands, so `Two::N(data)` is not
 /// a path that happens to miss — it is an entry naming a rule that is there and
@@ -725,7 +725,7 @@ fn a_private_rule_is_not_an_entry() {
     let source = r#"
 grammar Two {
     rule N -> i64 = d:dec[i64](digit+) { d }
-    pub rule one -> i64 = n:N { n }
+    entry rule one -> i64 = n:N { n }
 }
 
 fn reach() { let s = Two::N(data) }
@@ -736,10 +736,10 @@ fn reach() { let s = Two::N(data) }
     };
     let message = format!("{error:#}");
     assert!(
-        message.contains("`N` in grammar `Two` isn't `pub`"),
+        message.contains("`N` in grammar `Two` isn't an entry"),
         "{message}"
     );
-    assert!(message.contains("Write `pub rule N`."), "{message}");
+    assert!(message.contains("Write `entry rule N`."), "{message}");
 }
 
 /// **The old spelling is refused, and the message names the new one**
@@ -750,7 +750,7 @@ fn reach() { let s = Two::N(data) }
 #[test]
 fn the_old_from_form_is_refused_with_the_call_in_the_message() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
+                  \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read() { let n = dsl Nums from text }\n";
@@ -773,4 +773,73 @@ fn the_old_from_form_is_refused_with_the_call_in_the_message() {
             .is_some_and(|h| h.contains("X::rule(e)") && !h.contains("X.rule")),
         "{finding:#?}"
     );
+}
+
+/// **A rule is not `pub` on its own** (ADR-296 D25): `entry` says the program
+/// may call it, and offering a grammar to other packages is `pub grammar`'s,
+/// for all its entries at once. Every grammar written before 0.0.421 said
+/// `pub rule`, so the refusal names both words rather than failing at `rule`.
+#[test]
+fn pub_rule_is_refused_and_the_message_says_entry() {
+    let source = "grammar Nums {\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
+                  }\n";
+    let Err(error) = parse_to_ast(source) else {
+        panic!("`pub rule` still parses");
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("A rule isn't `pub` on its own."),
+        "{message}"
+    );
+    // The headline says what is refused; the help names the two words.
+    let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
+    let help = finding.help.as_deref().unwrap_or_default();
+    assert!(help.contains("Write `entry rule`"), "{finding:#?}");
+    assert!(help.contains("`pub grammar`"), "{finding:#?}");
+}
+
+/// `pub grammar` is decided and not built (D25): a grammar is entered from its
+/// own file today, so there is nothing for it to offer yet, and saying so beats
+/// a parse error at `grammar`.
+#[test]
+fn pub_grammar_is_refused_as_not_built() {
+    let source = "pub grammar Nums {\n\
+                  \x20   entry rule number -> i64 = d:dec[i64](digit+) { d }\n\
+                  }\n";
+    let Err(error) = parse_to_ast(source) else {
+        panic!("`pub grammar` parses but means nothing yet");
+    };
+    let finding = nikaia::diagnostics::refused_finding(&error).expect("a parse refusal");
+    assert!(
+        finding
+            .message
+            .contains("`pub grammar` is decided and not built"),
+        "{finding:#?}"
+    );
+    assert!(
+        finding
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("Write `grammar`")),
+        "{finding:#?}"
+    );
+}
+
+/// `entry` is a word of the grammar sublanguage, as `rule` is: a program may
+/// still use it as a name, and a grammar may still have a rule called `entry`.
+#[test]
+fn entry_is_a_name_outside_its_place() {
+    let source = r#"
+grammar Two {
+    entry rule entry -> i64 = d:dec[i64](digit+) { d }
+}
+
+fn main() {
+    let entry = 1
+    println(f"{entry}")
+}
+"#;
+    let parsed = parse_to_ast(source).expect("`entry` as a rule name and a variable parses");
+    emit_program(&parsed, Build::default()).expect("and lowers");
 }

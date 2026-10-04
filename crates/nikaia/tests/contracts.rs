@@ -1377,7 +1377,7 @@ fn a_grammar_rules_entry_carries_what_its_actions_reach() {
     let own = ledger(
         "grammar Stock {\n\
          \x20   rule FIELD -> ref String = s:until(\";\") { s }\n\
-         \x20   pub rule file -> Vec[i64] = n:FIELD* { [1] }\n\
+         \x20   entry rule file -> Vec[i64] = n:FIELD* { [1] }\n\
          }\n\
          \n\
          pub fn read(data: ref String) -> Vec[i64] throws { return Stock::file(data) }\n",
@@ -1406,7 +1406,7 @@ fn a_grammar_rules_entry_carries_what_its_actions_reach() {
 fn a_grammar_rule_that_prints_carries_the_touch() {
     let own = ledger(
         "grammar Noisy {\n\
-         \x20   pub rule one -> i64 = n:dec[i64](digit+) { println(\"seen\") n }\n\
+         \x20   entry rule one -> i64 = n:dec[i64](digit+) { println(\"seen\") n }\n\
          }\n\
          \n\
          pub fn read(data: ref String) -> i64 throws { return Noisy::one(data) }\n",
@@ -1434,7 +1434,7 @@ fn a_rule_carries_what_the_grammar_beside_it_reaches() {
     let own = ledger(
         "grammar Mixed {\n\
          \x20   rule LOUD -> i64 = n:dec[i64](digit+) { println(\"seen\") n }\n\
-         \x20   pub rule quiet -> i64 = n:LOUD { n }\n\
+         \x20   entry rule quiet -> i64 = n:LOUD { n }\n\
          }\n\
          \n\
          fn main() { println(\"x\") }\n",

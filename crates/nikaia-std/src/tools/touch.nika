@@ -176,7 +176,7 @@ pub fn unit_touches(program: ref Program, names: ref winnow_grammar::InternerCon
                     }
                 }
             }
-            // **A `pub` rule is an entry, so it gets the walk too** (ADR-296
+            // **A `entry` rule is an entry, so it gets the walk too** (ADR-296
             // D24). Its body is every action block in the grammar: which
             // rules' actions run with it is the parser backend's question, so
             // the grammar is the unit - the over-approximation ADR-292 D4
@@ -209,12 +209,12 @@ pub fn touches_of_graph(graph: ref TouchGraph) -> collections::BTreeMap[String, 
     return touches_of(unknown, outside, calls)
 }
 
-// Each `pub` rule of a grammar reaches what the whole grammar does, and the
+// Each `entry` rule of a grammar reaches what the whole grammar does, and the
 // method calls the type checker resolved under the rule's own key.
 fn rules_into(def: ref GrammarDef, names: ref winnow_grammar::InternerContext, whole: ref Reach, own: ref Ledger, library: ref Ledger, mut graph: TouchGraph) {
     let named = names.resolve(def.name).clone()
     for rule in def.rules {
-        if !rule.is_public {
+        if !rule.is_entry {
             continue
         }
         let key = f"{named}::{names.resolve(rule.name)}"

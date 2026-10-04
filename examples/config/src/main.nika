@@ -45,7 +45,7 @@ grammar Config {
     // before a comment. A `#` can therefore not appear inside a value.
     rule VALUE -> ref String = s:until("#" | line_ending) { s.trim() }
 
-    pub rule file -> Vec[Section] =
+    entry rule file -> Vec[Section] =
         sections:section* { sections }
 }
 

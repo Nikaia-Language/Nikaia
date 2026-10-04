@@ -196,7 +196,7 @@ fn an_items_refusal_names_the_item() {
 fn a_grammar_entry_that_is_not_there_names_its_line() {
     let source = "grammar Tiny {\n\
                   \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
-                  \x20   pub rule one -> i64 = n:NUM { n }\n\
+                  \x20   entry rule one -> i64 = n:NUM { n }\n\
                   }\n\
                   \n\
                   fn main() {\n\
@@ -204,12 +204,12 @@ fn a_grammar_entry_that_is_not_there_names_its_line() {
                   \x20   println(f\"{n}\")\n\
                   }\n";
     let missing = nikaia(&source.replace("{RULE}", "two"), "no-such-rule");
-    assert!(said_about(&missing, "has no `pub` rule called `two`", 7));
+    assert!(said_about(&missing, "has no entry called `two`", 7));
 
     let private = nikaia(&source.replace("{RULE}", "NUM"), "rule-not-pub");
     assert!(said_about(
         &private,
-        "`NUM` in grammar `Tiny` isn't `pub`, so it can't be called from outside.",
+        "`NUM` in grammar `Tiny` isn't an entry, so the program can't call it.",
         7
     ));
 }

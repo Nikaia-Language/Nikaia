@@ -32,7 +32,7 @@ grammar Stock {
         category:FIELD ";" => item:FIELD ";" count:COUNT frame_end
         { Entry { category, item, count } }
 
-    pub rule file -> Vec[Entry] = entries:ENTRY* { entries }
+    entry rule file -> Vec[Entry] = entries:ENTRY* { entries }
 }
 
 // `ref String`: the category and the item are slices of the input file, not

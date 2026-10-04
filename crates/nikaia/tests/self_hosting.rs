@@ -122,7 +122,7 @@ grammar Mini {
     rule term -> Expr = a:atom "*" b:term { Expr::Mul(a, b) } | a:atom { a }
     rule expr -> Expr = a:term "+" b:expr { Expr::Add(a, b) } | a:term { a }
     rule line -> Let = NL "let" WS name:NAME WS "=" value:expr { Let { name, value } }
-    pub rule program -> Vec[Let] = lines:line* NL { lines }
+    entry rule program -> Vec[Let] = lines:line* NL { lines }
 }
 
 fn emit(e: ref Expr) -> String {

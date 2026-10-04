@@ -69,7 +69,7 @@ grammar LedgerText {
     // Nothing is skipped: a line is read character by character.
     rule WS = "" { }
 
-    pub rule file -> Vec[LedgerLine] =
+    entry rule file -> Vec[LedgerLine] =
         ls:line* last:BODY eof {
             let mut all = Vec()
             for l in ls.drain() { all.push(l) }
@@ -118,7 +118,7 @@ grammar LedgerText {
 // and a `\` before a character keeps it from ending one.
 grammar LedgerValue {
 
-    pub rule list -> Vec[ref String] = "[" items:list(QUOTED, ",") TRAILING "]" eof { items }
+    entry rule list -> Vec[ref String] = "[" items:list(QUOTED, ",") TRAILING "]" eof { items }
 
     rule TRAILING = "," { } | empty { }
     rule QUOTED -> ref String = "\"" s:text(INSIDE) "\"" { s }
@@ -770,7 +770,7 @@ struct Signed {
 // `Ty`'s reader reads it.
 grammar SignatureText {
 
-    pub rule signature -> Signed =
+    entry rule signature -> Signed =
         d:bracket "(" ps:list(part, ",") TRAILING ss:settings ")" r:result? eof {
             Signed { declared: d, parts: ps, settings: ss, result: r }
         }
@@ -800,7 +800,7 @@ grammar SignatureText {
 
     // The names a result points into: every `ref(a | b)` in it, and a word
     // that only ends in `ref` is not one.
-    pub rule pointed -> Vec[Vec[ref String]] = ps:POINTING* eof { ps }
+    entry rule pointed -> Vec[Vec[ref String]] = ps:POINTING* eof { ps }
 
     rule POINTING -> Vec[ref String] =
           "ref(" ns:list(POINTED_NAME, "|") ")" { ns }

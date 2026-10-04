@@ -69,7 +69,7 @@ grammar Measurements {
     // with that and the frame, the compiler writes the splitting, one
     // accumulator per core and the final merge. The merge is exact because
     // everything is summed in integer tenths.
-    pub rule file -> Summary =
+    entry rule file -> Summary =
         par_fold(MEASUREMENT, Summary, fn(acc, m) { acc.record(m) },
                  Summary::merge)
 }

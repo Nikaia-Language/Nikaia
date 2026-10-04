@@ -1080,10 +1080,12 @@ pub struct GrammarDef {
     pub rules: Vec[GrammarRule],
 }
 
-/// `@frame(boundary: "\n") pub rule MEASUREMENT -> Reading = ... -> { ... }`
+/// `@frame(boundary: "\n") rule MEASUREMENT -> Reading = ... -> { ... }`
 pub struct GrammarRule {
     pub name: winnow_grammar::Symbol,
-    pub is_public: bool,
+    /// `entry rule file`: the program may call it, `Measurements::file(data)`
+    /// (ADR-296 D25). Every other rule is the grammar's own.
+    pub is_entry: bool,
     /// Part II, 10.7: the rule is a resynchronization unit.
     pub frame: FrameAttr?,
     pub ret_type: Type?,

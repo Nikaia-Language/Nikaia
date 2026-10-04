@@ -38,7 +38,7 @@ grammar Measurements {
 
     // A frame plus a monoid is a parallel parse (ADR-296 D10), and that is the
     // whole of what the user writes down.
-    pub rule file -> Summary =
+    entry rule file -> Summary =
         par_fold(MEASUREMENT, Summary::new, fn(acc, m) { acc.record(m) },
                  Summary::merge)
 }

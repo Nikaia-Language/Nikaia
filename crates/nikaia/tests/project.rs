@@ -2053,7 +2053,7 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
          \x20   rule NAME -> ref String = s:raw_ident { s }\n\
          \x20   rule VALUE -> ref String = s:until(\"#\" | line_ending) { s.trim() }\n\
          \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE { Setting { key, value } }\n\
-         \x20   pub rule file -> Vec[Setting] = settings:setting* { settings }\n\
+         \x20   entry rule file -> Vec[Setting] = settings:setting* { settings }\n\
          }\n\
          \n\
          comptime SETTINGS: Array[Setting, 2] = \
@@ -2246,7 +2246,7 @@ fn a_grammar_entry_in_tail_position_over_a_local_runs() {
         "[package]\nname = \"tail\"\nversion = \"0.1.0\"\n",
         "grammar Tiny {\n\
          \x20   rule WS = multispace0 { }\n\
-         \x20   pub rule number -> i64 = n:dec[i64](digit+) { n }\n\
+         \x20   entry rule number -> i64 = n:dec[i64](digit+) { n }\n\
          }\n\
          \n\
          fn both(text: ref String) -> i64 throws {\n\

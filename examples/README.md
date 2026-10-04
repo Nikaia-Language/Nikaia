@@ -57,7 +57,7 @@ They are deliberately different shapes.
   cores, 0.52 s → 0.14 s, identical output), and one function it calls for every digit is
   written in Nikaia and compiled into `std` by the compiler itself.
 * **`calc.nika`** is the same protocol with none of that: no frame, no fold, no I/O, one
-  `pub rule` that returns a number — recursion and precedence, which is what a grammar can say
+  `entry rule` that returns a number — recursion and precedence, which is what a grammar can say
   and a chain of combinators cannot.
 * **`access-log.nika`** is the shape most real work has: a line with several fields of
   different kinds, a record built from them, a report at the end — including what a *rejected*
@@ -301,7 +301,7 @@ not fit in memory. `fold` now exists in `winnow-grammar` (upstream, with
 and never builds a collection:
 
 ```nika
-pub rule file -> Summary =
+entry rule file -> Summary =
     fold(measurement, Summary::new, fn(acc, m) { acc.record(m) })
 ```
 

@@ -3122,7 +3122,7 @@ impl<'p> Emitter<'p> {
         let mut found = false;
         let mut parallel = |grammar: &Symbol, entry: &Symbol| {
             if let Some(def) = self.grammars.get(grammar) {
-                let rule = def.rules.iter().find(|r| r.is_public && r.name == *entry);
+                let rule = def.rules.iter().find(|r| r.is_entry && r.name == *entry);
                 if rule.map(|r| par_fold_of(r).is_some()).unwrap_or(false) {
                     found = true;
                 }
@@ -4916,7 +4916,9 @@ impl<'p> Emitter<'p> {
             out.push(&format!("        {}\n", frame_attribute(frame)));
         }
 
-        let vis = if rule.is_public { "pub " } else { "" };
+        // An entry is a `pub` rule to the backend: one function per entry
+        // (ADR-296 D25).
+        let vis = if rule.is_entry { "pub " } else { "" };
         let ret = match &rule.ret_type {
             Some(ty) => format!(" -> {}", self.ty(ty, Lifetimes::NAMED)),
             None => String::new(),
@@ -9231,7 +9233,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// Whether `receiver.method(…)` **enters a grammar**: a receiver naming one
-    /// of this file's grammars and a method naming one of its `pub` rules
+    /// of this file's grammars and a method naming one of its entries
     /// ([ADR-296](../../docs/specification/adr/adr-296.md) D24, D25).
     fn enters_a_grammar(&self, receiver: &Expr, method: Symbol) -> bool {
         let Expr::Variable(name) = receiver else {
@@ -9239,7 +9241,7 @@ impl<'p> Emitter<'p> {
         };
         self.grammars
             .get(name)
-            .is_some_and(|def| def.rules.iter().any(|r| r.is_public && r.name == method))
+            .is_some_and(|def| def.rules.iter().any(|r| r.is_entry && r.name == method))
     }
 
     /// A call. `Stats(temp)` is the anonymous constructor of Kap 4.2 - Rust has
@@ -9407,7 +9409,7 @@ impl<'p> Emitter<'p> {
         // ([ADR-296](../../docs/specification/adr/adr-296.md) D24), through a
         // **path** since [ADR-140](../../docs/specification/adr/adr-140.md) D3:
         // `Json::value(input)`, where `Json` names a grammar in this file and
-        // `value` one of its `pub` rules. First, because it is not a call to
+        // `value` one of its `entry` rules. First, because it is not a call to
         // anything the recursion graph or the ledger knows.
         if let Expr::Path(segments) = func
             && let [grammar, rule] = segments.as_slice()
@@ -11822,7 +11824,7 @@ impl<'p> Emitter<'p> {
         // **A grammar is entered by an ordinary call**
         // ([ADR-296](../../docs/specification/adr/adr-296.md) D24):
         // `Json.value(input)`, where `Json` names a grammar in this file and
-        // `value` one of its `pub` rules. It is a method call in the grammar
+        // `value` one of its `entry` rules. It is a method call in the grammar
         // of this language and nothing else could have been — a grammar name is
         // not a value, so there is no receiver to resolve and no ambiguity to
         // settle.
@@ -13010,28 +13012,29 @@ impl<'p> Emitter<'p> {
         })?;
 
         // **The rule is named at the call** ([ADR-296](../../docs/specification/adr/adr-296.md)
-        // D1, D2). It used to be picked here — the first `pub` rule, a
+        // D1, D2). It used to be picked here — the first `entry` rule, a
         // `par_fold` one beating an earlier one — so a grammar with two of them
-        // got one by source order, in silence. Every `pub` rule is an entry
+        // got one by source order, in silence. Every `entry` rule is an entry
         // now, and which one is what the program wrote.
         let rule = def
             .rules
             .iter()
-            .find(|r| r.is_public && r.name == entry)
+            .find(|r| r.is_entry && r.name == entry)
             .ok_or_else(|| {
                 let rule = self.text(entry);
                 match def.rules.iter().any(|r| r.name == entry) {
-                    // **A rule that is not `pub` is not an entry** (D2), and
-                    // saying *there is no such rule* about one written three
-                    // lines up is the message a reader cannot act on.
+                    // **A rule that is not an entry is the grammar's own**
+                    // (D25), and saying *there is no such rule* about one
+                    // written three lines up is the message a reader cannot
+                    // act on.
                     true => refused_at!(
                         flow.statement,
-                        "`{rule}` in grammar `{name}` isn't `pub`, so it can't be called \
-                         from outside. Write `pub rule {rule}`."
+                        "`{rule}` in grammar `{name}` isn't an entry, so the program can't \
+                         call it. Write `entry rule {rule}`."
                     ),
                     false => refused_at!(
                         flow.statement,
-                        "Grammar `{name}` has no `pub` rule called `{rule}`."
+                        "Grammar `{name}` has no entry called `{rule}`."
                     ),
                 }
             })?;

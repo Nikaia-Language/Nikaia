@@ -608,7 +608,7 @@ impl LedgerOps for Ledger {
                             },
                         );
                     }
-                    // **Every `pub` rule of a grammar is an entry**
+                    // **Every `entry` rule of a grammar is an entry**
                     // ([ADR-296](../../../docs/specification/adr/adr-296.md) D25).
                     // A grammar is entered by an ordinary call — `Json.value(input)`
                     // — so the thing entered has to be an ordinary contract, and
@@ -626,7 +626,7 @@ impl LedgerOps for Ledger {
                     // into their own set; a type is all it ever needed.
                     Item::Grammar(def) => {
                         let grammar = parsed.text(def.name).to_string();
-                        for rule in def.rules.iter().filter(|r| r.is_public) {
+                        for rule in def.rules.iter().filter(|r| r.is_entry) {
                             let key = format!("{grammar}::{}", parsed.text(rule.name));
                             ledger.functions.insert(
                                 key,

@@ -25,7 +25,7 @@ use nikaia::parser::parse_to_ast;
 
 const GRAMMAR: &str = "use std::fs\n\n\
                        grammar Tiny {\n\
-                       \x20   pub rule number -> i64 = n:dec[i64](digit+) { n }\n\
+                       \x20   entry rule number -> i64 = n:dec[i64](digit+) { n }\n\
                        }\n";
 
 fn ledger_of(source: &str) -> Ledger {
