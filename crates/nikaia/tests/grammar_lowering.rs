@@ -605,7 +605,7 @@ fn the_grammar_half_of_the_1brc_example_lowers() {
         "the constructor is the key where the type is declared"
     );
     assert!(emitted.contains("s:until(\";\" | frame_end)"), "{emitted}");
-    assert!(emitted.contains("whole:digit{1,2}"), "{emitted}");
+    assert!(emitted.contains("whole:dec<i32>(digit{1,2})"), "{emitted}");
 }
 
 // --- Type arguments to a built-in ---

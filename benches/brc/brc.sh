@@ -38,6 +38,10 @@ proj="$work/project"
 mkdir -p "$proj/src"
 cp "$root/examples/1brc.nika" "$proj/src/main.nika"
 
+# The fairest build Nikaia has against `cargo build --release`: its own
+# optimizations on (they change nothing in this program's Rust, and say so by
+# producing the same binary), and `incremental` off, which is the one setting of
+# the generated profile that trades run time for rebuild time (ADR-002 D5).
 nikaia_toml() {
 cat > "$proj/nikaia.toml" <<TOML
 [package]
@@ -46,9 +50,11 @@ version = "0.1.0"
 
 [build]
 user-parallelism = "$1"
+optimization = "remove-bounds-checks:aggressive,remove-overflow-checks:aggressive"
 
 [build.x86_64-linux]
 opt-level = 3
+incremental = false
 TOML
 }
 

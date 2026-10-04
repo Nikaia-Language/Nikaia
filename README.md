@@ -184,9 +184,10 @@ where the row says so
 | sparse-row combination | 966 M | **947 M** | **−2 %** |
 
 And on the [One Billion Row Challenge](benches/brc/README.md), a grammar that describes the
-whole file beats the loop a competent Rust programmer writes first, on one core: **0.46 s
-against 0.75 s**. A tuned single-core 1BRC entry that skips UTF-8 validation is still faster
-(0.24 s); [the benchmark's README](benches/brc/README.md) says why, and what is left.
+whole file beats the loop a competent Rust programmer writes first, on one core: **0.49 s
+against 0.74 s**. A tuned single-core 1BRC entry that skips UTF-8 validation is still faster
+(0.22 s); [the benchmark's README](benches/brc/README.md) says why, where the rest goes, and how
+it was measured.
 
 The claim is not that Nikaia beats the best Rust a specialist can write with `unsafe`. It is
 that the **safe** program you write in Nikaia without thinking about it can beat the safe

@@ -54,11 +54,14 @@ pub struct Package {
 /// ADR-002 D1: the build switches "set `opt-level` and the panic strategy from
 /// there". `opt-level` and `lto` are a project's own choice about output size
 /// and speed (Part III 13.3); `panic` is not a choice at all - it follows from
-/// the machine, which is why it arrives here already decided.
+/// the machine, which is why it arrives here already decided. `incremental`
+/// is the third choice of the codegen table (ADR-002 D5): absent, Cargo's
+/// `dev` default holds and it is on.
 #[derive(Debug, Clone, Default)]
 pub struct Profile {
     pub opt_level: Option<toml::Value>,
     pub lto: Option<toml::Value>,
+    pub incremental: Option<toml::Value>,
     pub panic: Option<String>,
 }
 
@@ -214,11 +217,21 @@ impl Workspace {
         // language is named back onto the program's side.
         out.push_str(&format!("\n[profile.{}]\n", self.profile_name));
         out.push_str("overflow-checks = false\n");
+        // **No debug assertions, in any build** (ADR-002 D5). The profile is
+        // Cargo's `dev` because a Nikaia build has one profile, not because it
+        // is a debug build, and `dev` would otherwise switch on `debug_assert!`
+        // in every dependency and the standard library's precondition checks
+        // in all code inlined into the program - nothing a Nikaia program
+        // means, and a fifth of 1BRC's instructions (516 -> 438 per row).
+        out.push_str("debug-assertions = false\n");
         if let Some(opt) = &self.profile.opt_level {
             out.push_str(&format!("opt-level = {opt}\n"));
         }
         if let Some(lto) = &self.profile.lto {
             out.push_str(&format!("lto = {lto}\n"));
+        }
+        if let Some(incremental) = &self.profile.incremental {
+            out.push_str(&format!("incremental = {incremental}\n"));
         }
         if let Some(panic) = &self.profile.panic {
             out.push_str(&format!("panic = {}\n", string(panic)));
@@ -861,6 +874,7 @@ mod tests {
             profile: Profile {
                 opt_level: Some(toml::Value::Integer(3)),
                 lto: Some(toml::Value::Boolean(true)),
+                incremental: Some(toml::Value::Boolean(false)),
                 panic: Some("unwind".into()),
             },
         }
@@ -905,6 +919,22 @@ mod tests {
         assert!(library.get("lib").is_some() && library.get("bin").is_none());
     }
 
+    /// ADR-002 D5: `incremental` is written only where the codegen table says
+    /// it, so a project that says nothing keeps Cargo's `dev` default - on.
+    #[test]
+    fn incremental_is_written_only_where_the_table_says_it() {
+        let mut silent = workspace();
+        silent.profile.incremental = None;
+        let parsed: toml::Value = toml::from_str(&silent.render()).expect("parses");
+        assert!(parsed["profile"]["dev"].get("incremental").is_none());
+
+        let parsed: toml::Value = toml::from_str(&workspace().render()).expect("parses");
+        assert_eq!(
+            parsed["profile"]["dev"]["incremental"].as_bool(),
+            Some(false)
+        );
+    }
+
     /// The workspace root: the members, the profile, and
     /// [ADR-285](../../../docs/specification/adr/adr-285.md) D8 written out per
     /// crate ([ADR-286](../../../docs/specification/adr/adr-286.md) D22).
@@ -928,7 +958,16 @@ mod tests {
 
         assert_eq!(parsed["profile"]["dev"]["opt-level"].as_integer(), Some(3));
         assert_eq!(parsed["profile"]["dev"]["lto"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["profile"]["dev"]["incremental"].as_bool(),
+            Some(false)
+        );
         assert_eq!(parsed["profile"]["dev"]["panic"].as_str(), Some("unwind"));
+        assert_eq!(
+            parsed["profile"]["dev"]["debug-assertions"].as_bool(),
+            Some(false),
+            "the one profile is not a debug build (ADR-002 D5):\n{text}"
+        );
 
         // ADR-285 D8 in the shape D4 gives it: off by default, because `"*"`
         // would reach the members too, and on by name for every crate of this

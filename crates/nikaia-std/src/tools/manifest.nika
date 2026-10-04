@@ -79,9 +79,9 @@ pub fn targets() -> Vec[String] {
 
 /// What a `[build.<target>]` table may carry (Part III 13.3). Same rule as
 /// `[build]`: a silently ignored `opt_level` leaves a build at a setting its
-/// author believed they had changed.
+/// author believed they had changed. `incremental` is ADR-002 D5.
 pub fn codegen_keys() -> Vec[String] {
-    return ["opt-level", "lto"]
+    return ["opt-level", "lto", "incremental"]
 }
 
 /// `[build.<target>]` names a machine, or is refused naming the ones there are.

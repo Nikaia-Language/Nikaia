@@ -42,13 +42,13 @@ grammar Measurements {
     // Temperatures always carry exactly one decimal, so they are parsed as
     // tenths and all the arithmetic stays in integers until printing.
     // `digit{1,2}` is the width the format allows (-99.9 to 99.9), so
-    // "123.0" is a parse error.
+    // "123.0" is a parse error. `dec[i32](…)` hands over the number those
+    // digits write rather than their text, so the action has nothing left to
+    // decode.
     rule TENTHS -> i32 =
-        neg:"-"? whole:digit{1,2} "." frac:digit
+        neg:"-"? whole:dec[i32](digit{1,2}) "." frac:digit
         {
-            let mut value = 0
-            for d in whole.chars() { value = value * 10 + text::digit_value(d) }
-            value = value * 10 + text::digit_value(frac)
+            let value = whole * 10 + text::digit_value(frac)
             if neg != null { -value } else { value }
         }
 

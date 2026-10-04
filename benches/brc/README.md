@@ -28,48 +28,100 @@ carry non-ASCII characters, as the real ones do — an all-ASCII file lets a UTF
 validator run eight bytes at a time, and the compiler's side of the comparison
 would look better than it is ([ADR-016](../../docs/specification/adr/adr-016.md) §3).
 
+## How it is measured
+
+Read this before quoting a number from this page. Every figure below says which
+of these it is.
+
+**The box.** 4 cores, Intel Xeon @ 2.10 GHz, 8 MiB L2 per core, Linux
+6.18.44, rustc 1.97.0, valgrind 3.22.0. `brc.sh` prints the machine with its
+table, and so should any quotation of it.
+
+**The input.** `handwritten gen`, 413 stations, about a quarter of the names
+non-ASCII: 8 million rows (123 MB) for the clock, 1 million for callgrind. Every
+program's output is compared byte for byte with the others before anything is
+counted.
+
+**The builds.** The two Rust halves are `cargo build --release`: `opt-level =
+3`, 16 codegen units, no debug assertions, no overflow checks. Nikaia's is
+`nikaia build` with what `brc.sh` writes: `opt-level = 3`, `incremental =
+false`, and its own optimizations on. Its generated profile has no debug
+assertions (since 0.0.419; ADR-002 D5), keeps Cargo's 256 codegen units, and
+checks overflow in the program's crates, because Part I says an overflow
+aborts. **Its optimizations on or off make no difference here**: the program
+has no index, and no arithmetic the prover can show stays in range, so both
+settings emit the same Rust and link the same binary. Figures taken before
+0.0.419 carried Cargo's `dev` defaults instead - debug assertions on, and with
+them the standard library's precondition checks in every inlined function -
+and are only comparable with each other.
+
+**Instructions** are callgrind's total over 1 million rows divided by the row
+count, start-up included (under one a row); **mispredictions** are its
+`--branch-sim`. They are deterministic, and they are what this page uses to
+say *where* time goes.
+
+**The clock** is taken two ways. `brc.sh` runs each program five times,
+unpinned, and keeps the best; Nikaia's runs go through `nikaia run`, which
+re-checks the project first, so its rows include that. For a comparison of two
+builds of one program, the variants are interleaved, pinned to one core
+(`taskset -c 2`), best of 25, and the binary is run directly.
+
+**What the clock can and cannot say on this box.** A difference under about
+10 % is not a result. Round after round, the same binaries have swapped places:
+`tuned` measured 0.225 s in one interleaved round and 0.259 s in the next, and
+two builds 0.343 s and 0.415 s in one round came out the other way round in
+the following. `docs/history/runtime-cost.md` §6.3 has absolutes moving by
+1.4–1.9× from one day to the next. **Only the ratios travel, and only the large
+ones.** Where a change is smaller than that, its instruction and misprediction
+counts are the measurement, and the clock is quoted only to say that it did not
+move.
+
 ## The table
 
-8 million rows (123 MB), 413 stations, best of 5, on a 4-core box. The script
-prints the machine with the table and so should any quotation of it:
-`docs/history/runtime-cost.md` §6.3 has absolutes on this kind of box moving by
-1.4–1.9× from one day to the next, and **only the ratios travel**.
+`brc.sh`, 8 million rows, best of 5, Nikaia 0.0.419:
 
 | | cores | best | against `tuned` |
 |---|---:|---:|---:|
-| Rust, `naive` | 1 | 0.75 s | 3.1× |
-| **Nikaia, `user-parallelism = "no"`** | 1 | **0.46 s** | **1.9×** |
-| Rust, `tuned` | 1 | 0.24 s | 1.0 |
-| Nikaia, `user-parallelism = "yes"` | 4 | 0.29 s | 1.2× |
+| Rust, `naive` | 1 | 0.74 s | 3.4× |
+| **Nikaia, `user-parallelism = "no"`** | 1 | **0.49 s** | **2.2×** |
+| Rust, `tuned` | 1 | 0.22 s | 1.0 |
+| Nikaia, `user-parallelism = "yes"` | 4 | 0.31 s | 1.4× |
 
-Four runs, one output. That the two Nikaia rows agree is
+The same programs pinned to one core, binaries run directly, interleaved, best
+of 25 - so without `nikaia run`'s check, and without the cores `fs::map`
+validates on at either setting:
+
+| | instructions per row | mispredictions per row | one core |
+|---|---:|---:|---:|
+| Rust, `naive` | 862.6 | 8.74 | 0.668 s |
+| **Nikaia** | **390.1** | **4.28** | **0.371 s** |
+| Rust, `tuned` | 312.7 | 3.61 | 0.234 s |
+
+Four runs, one output. That the two Nikaia rows of `brc.sh` agree is
 [ADR-296](../../docs/specification/adr/adr-296.md) D10's whole claim — the chunk
 count does not change the result — checked rather than asserted, and the script
 fails if it ever stops being true.
 
 ### What the rows say
 
-**Against the loop you would actually write, the grammar wins: 0.46 s against
-0.75 s, one core each.** That is the row the example's claim turns on, and it is
-why both halves are here: measured against `tuned` alone the grammar looks
-1.9× slow, and measured against `naive` alone it looks 1.6× fast. Neither number
-means anything without the other.
+**Against the loop you would actually write, the grammar wins**: 0.371 s
+against 0.668 s on one core, and less than half `naive`'s instructions. That is
+the row the example's claim turns on, and it is why both halves are here:
+measured against `tuned` alone the grammar looks 1.6× slow, and measured
+against `naive` alone it looks 1.8× fast. Neither number means anything
+without the other.
 
-**The remaining 1.9× is not all parser overhead.** `tuned` never validates
+**The rest against `tuned` is not all parser overhead.** `tuned` never validates
 UTF-8, and `std::fs::map` must — the `&str` views a grammar cuts out of a
 mapping depend on it
 ([ADR-016](../../docs/specification/adr/adr-016.md) D1, where that check is
-measured and divided across cores rather than skipped). `tuned` also knows the
-temperature is four characters or three and indexes it directly, where the
-grammar states `"-"? digit{1,2} "." digit` and a general repetition walks it.
-The first is a guarantee the compiler cannot drop; the second is a bound the
-parser now uses (0.0.415, below), and it moved the instruction count more than
-the clock.
+measured and divided across cores rather than skipped). Where the rest of it
+is, line by line, is the last section below.
 
-**The parallel row is not a 4× speed-up over the sequential one** (0.46 → 0.29,
-about 1.6×). The input is read once either way and the UTF-8 check is already
-spread across cores at both settings, so what the four cores divide is the parse
-and the fold, not the whole program.
+**The parallel row is not a 4× speed-up over the sequential one**. The input is
+read once either way and the UTF-8 check is already spread across cores at both
+settings, so what the four cores divide is the parse and the fold, not the
+whole program.
 
 ## A lowercase `par_fold` rule, and what its whitespace cost (0.0.388)
 
@@ -103,12 +155,12 @@ time and `until(";" | frame_end)` searched line by line, against `tuned`'s one
 cheaper of the two (about 85 against 124). That is the next question for the
 grammar, and it is a decision of its own.
 
-## The temperature by index, and one search per line kept (0.0.415)
+## The temperature by index, and one search per line kept (0.0.418)
 
 Both shapes named above were built in `winnow-grammar` and measured one at a
 time; the record is its
 [ADR 24](https://github.com/keywan-ghadami/winnow-grammar/blob/main/docs/adr/adr24-frames-and-bounded-formats.md)
-§8–§10. One is in the pin this release moves to, the other was rejected there:
+§8–§10:
 
 - **`"-"? digit{1,2} "." digit` is matched by index.** A run of literals,
   `digit`s and bounded `digit{m,n}` in a lexical rule is a few byte
@@ -123,32 +175,61 @@ time; the record is its
   frame_end)` means the first - it accepts `a;b;1.0`, which the grammar
   rejects. It measured 649.
 
-From here, the same 1 000 000 rows, both binaries built by `nikaia build`
-against their own pin, output compared before anything was counted:
+Here it was 587 → 566 instructions per row, with the profile Nikaia then
+inherited (debug assertions on), and nothing on the clock.
 
-| | instructions per row | mispredicted branches per row |
+## No debug assertions, `dec[i32]`, a separator as a byte (0.0.419)
+
+Three changes, each measured on its own with callgrind over 1 million rows,
+Nikaia's optimizations on and `incremental = false` throughout:
+
+| | instructions per row | mispredictions per row |
 |---|---:|---:|
-| Nikaia, `winnow-grammar` 28cf576 | 587 | 4.22 |
-| **Nikaia, `winnow-grammar` 9446f25** | **566 (−3.6 %)** | 5.22 |
+| 0.0.418, as `cargo` defaulted the profile | 516 | 4.22 |
+| **no debug assertions** in the generated profile (ADR-002 D5) | 438 | 4.55 |
+| and **`whole:dec[i32](digit{1,2})`** in `TENTHS`, instead of the text and a `chars()` loop | 417 | 4.13 |
+| and **a one-byte literal compared as a byte** (`winnow-grammar` bbc8683, ADR 24 §8a) | **390** | **4.28** |
 
-On the clock it does not show. Pinned to one core, best of 25 over 8 million
-rows, interleaved: 0.395 s → 0.390 s, in two rounds the same, inside the
-noise. `brc.sh` prints the same table before and after (Nikaia 0.56 s on one
-core, 0.37 s → 0.36 s on four).
+`incremental` on costs this program 50 instructions a row (566 against 516,
+taken with the debug assertions still on) and saves a third of a second on a
+rebuild after an edit (1.56 s against 1.90 s); it stays on by default and
+`brc.sh` turns it off. `codegen-units` at 16 or 1 instead of 256 moved nothing
+(437–439).
 
-The reason is the one mispredicted branch the change added, and where it
-went. Whether a temperature has one whole digit or two is a coin toss per row.
-The repetition in the parser used to pay for it; now the action's `for d in
-whole.chars()` does, once per row, in `Chars::next`. Twenty-one instructions
-were cheap ones, and the branch the CPU cannot guess was moved, not removed.
-What would remove it is a value made while matching - the grammar handing the
-action an `i32` for `digit{1,2}` instead of the text - and that is a language
-question this release does not answer.
+`dec[i32](…)` was made for exactly this field. Folding it further into the
+indexed match - the value accumulated while the digits are matched - was built
+and measured upstream, as a loop and unrolled, and came out even with `dec`'s
+own `FromStr` once mispredictions are counted; it is not in (ADR 24 §8b).
 
-The compiler itself is unchanged: `nikaia lower` on
+## Where the rest is, against `tuned` (0.0.419)
+
+Callgrind, 1 million rows, per row; Nikaia attributed by the source file each
+instruction came from, `tuned` by its own lines:
+
+| what | Nikaia | `tuned` | Nikaia − `tuned` |
+|---|---:|---:|---:|
+| finding the `;` and the line's end | 57 instr, 0.00 mispred. (`memchr2` per line) | 93, 1.23 (`memchr_iter` 46 + the walk back 47) | **−36** |
+| the rest of the parse: temperature, separators, the fold's loop, the stream | 134, 0.88 | ~50, 0.26 | **+84** |
+| hash table and key compare | 137, 2.48 | 131, 1.69 | +6, **+0.79** |
+| updating the stats | 23 | 11 | +12 |
+| UTF-8 validation (`fs::map`) | 35.5, 0.89 | 0 | +35.5 |
+| **total** | **390, 4.28** | **313, 3.61** | **+77** |
+
+- **Finding the separator is not where `tuned` wins.** One `memchr2` per line
+  is cheaper than its one `memchr_iter` plus the walk back, and predicts better.
+- **The parse's 134** are `str` slicing and its character-boundary checks
+  (about 27), the arithmetic and digit tests of `core` (24), the fold's loop in
+  `winnow-grammar` (21), the generated rules and the action (17) and winnow's
+  stream (13).
+- **The hash** costs about what `tuned`'s does, but mispredicts more: the
+  tail of `nikaia_std::hash::FxHasher` branches on the key's length three
+  times, where `tuned` copies the tail into a word.
+- **UTF-8** is the check `tuned` does not make and `fs::map` must (ADR-016 D1).
+
+The compiler itself does not move with any of this: `nikaia lower` on
 `crates/nikaia-std/src/tools/ty.nika`, the largest Nikaia source in the tree,
-382.54 M → 382.56 M instructions with the same Rust out. Its grammar has few
-runs of this shape.
+went 382.54 M → 382.56 M instructions with the same Rust out across
+`winnow-grammar` 28cf576 → 9446f25.
 
 ## What this does not claim
 

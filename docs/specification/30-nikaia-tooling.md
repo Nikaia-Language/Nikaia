@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.418 (Draft)
+**Version:** 0.0.419 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -137,13 +137,16 @@ regex = { type = "rust", version = "1.5" }
 
 # Code generation, per target. These keys decide output size and speed and
 # change nothing a program means. The table of the chosen target becomes the
-# generated `Cargo.toml`'s profile. The panic strategy follows from `target`.
+# generated `Cargo.toml`'s profile. The panic strategy follows from `target`,
+# and a build never has debug assertions (ADR-002 D5).
 [build.wasm32-unknown]
 opt-level = "z"     # Optimize for binary size
 
 [build.x86_64-linux]
 opt-level = 3       # Maximize throughput
 lto = true          # Link Time Optimization
+incremental = false # Compile as one piece: slower rebuilds, faster program.
+                    # Absent, it is on (ADR-002 D5).
 ```
 
 ### 13.3b. Runtime Configuration (`nikaia-runtime.toml`)

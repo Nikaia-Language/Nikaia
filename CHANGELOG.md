@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.419] — 2026-10-04
+
+**A build has no debug assertions, `incremental` is a switch, and 1BRC reads
+its temperature with `dec[i32]`** (ADR-002 D5, #392). The generated profile is
+Cargo's `dev` because a Nikaia build has one profile, and it inherited `dev`'s
+debug assertions: `debug_assert!` in every dependency and the standard
+library's precondition checks in every inlined function. It now writes
+`debug-assertions = false`, with no key to change it. `incremental` is a key of
+`[build.<target>]` beside `opt-level` and `lto`, on where absent; off, a
+program compiles as one piece and runs faster, which `benches/brc/brc.sh` now
+writes along with `optimization = "…:aggressive"`. `winnow-grammar` moves to
+bbc8683, where a one-byte literal is compared as a byte in the fast pass, and
+`examples/1brc.nika` reads `whole:dec[i32](digit{1,2})` instead of folding the
+digits' text in its action. 1BRC over 1 M rows: 516 → 390 instructions per row
+(debug assertions 78, `dec` 21, the separator 27), against `tuned`'s 313 and
+`naive`'s 863. `benches/brc/README.md` now says how every figure on it was
+taken, that the clock on this box does not separate differences under 10 %,
+that Nikaia's own optimizations change nothing in this program, and where the
+77 instructions left against `tuned` are.
+
 ## [0.0.418] — 2026-10-04
 
 **`winnow-grammar` moves to 9446f25: a fixed-width run is matched by index**
