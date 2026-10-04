@@ -22717,8 +22717,7 @@ fn elements_of(over: &Ty, bindings: usize) -> Vec<Ty> {
 /// A number, a `bool` or a `char`: read through a view, the value is the same
 /// value ([`Checked::copied_loop_bindings`]).
 fn a_copy_by_value(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, args, view: false }
-        if args.is_empty() && (is_number(name) || matches!(name.as_str(), "bool" | "char")))
+    nikaia_std::tools::check_types::a_copy_by_value(ty)
 }
 
 fn element_of(over: &Ty, bindings: usize) -> Ty {
@@ -22783,36 +22782,7 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
 /// same expression there, and picking one would report an error that is not
 /// there.
 fn view_of(inner: &Ty) -> Ty {
-    match inner {
-        // A view of a view is the view: `&&str` is not a type this language has.
-        Ty::Named { view: true, .. } => inner.clone(),
-        // `&String` is the one rewrite, because a text view is spelled `&str`
-        // and `&String` is not a type a signature may ask for (6.5).
-        Ty::Named { name, args, .. } if args.is_empty() && name == "String" => Ty::view("str"),
-        // **Arguments are kept.** `&Vec[i64]` is a view of a `Vec[i64]`, and
-        // answering `Unknown` here left every view of a generic type
-        // *unchecked* - so a mismatch was reported by `rustc`, about the
-        // generated file, which is the one thing Part III C.1 forbids.
-        Ty::Named { name, args, .. } => Ty::Named {
-            name: name.clone(),
-            args: args.clone(),
-            view: true,
-        },
-        // **A view of a `T?` is a nullable view**, which is the one shape
-        // Part I 2.3 already writes: `&str?` is a view that may be absent, and
-        // `is_view` and `is_nullable` are independent flags on a written type
-        // for exactly that reason.
-        //
-        // Answering `Unknown` here left `&m[k]` unchecked the day a map read
-        // became a `T?` ([ADR-293](../../docs/specification/adr/adr-293.md)
-        // D1): `let s = &m[k]` followed by `s.min` reached no `NK1125` and was
-        // refused by `rustc`, about the generated file
-        // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
-        Ty::Nullable(inner) => Ty::Nullable(Box::new(view_of(inner))),
-        // A tuple of views is not a view of a tuple, and nothing writes down
-        // what a view of a lambda would be.
-        _ => Ty::Unknown,
-    }
+    nikaia_std::tools::check_types::view_of_type(inner)
 }
 
 /// What a `&x` was a view **of**, as far as [`view_of`] runs backwards.
@@ -22827,23 +22797,7 @@ fn view_of(inner: &Ty) -> Ty {
 /// raised and a list that is too long costs a correct program refused, so it is
 /// the short one: only the views this compiler itself makes.
 fn viewed_from(view: &Ty) -> Vec<Ty> {
-    match view {
-        Ty::Named {
-            name,
-            args,
-            view: true,
-        } if args.is_empty() && name == "str" => vec![Ty::named("String")],
-        Ty::Named {
-            name,
-            args,
-            view: true,
-        } => vec![Ty::Named {
-            name: name.clone(),
-            args: args.clone(),
-            view: false,
-        }],
-        _ => Vec::new(),
-    }
+    nikaia_std::tools::check_types::viewed_from_type(view)
 }
 
 /// The type several parts of a program own at once (Part I 6.2).
@@ -22931,13 +22885,7 @@ impl MultiLock {
 /// `SharedMut[T]` is a count around a lock and `Locked[T]` is the lock on its
 /// own; both hold a `T` and a door over several takes either.
 fn locked_content_of(ty: &Ty) -> Option<Ty> {
-    let Ty::Named { name, args, .. } = ty else {
-        return None;
-    };
-    if name != SHARED_MUT && name != LOCKED {
-        return None;
-    }
-    args.first().cloned()
+    nikaia_std::tools::check_types::locked_content_of(ty)
 }
 
 /// Whether a value **is** a handle on a shared one, held by value.
@@ -22947,7 +22895,7 @@ fn locked_content_of(ty: &Ty) -> Option<Ty> {
 /// D1's correction). A type that merely *holds* one is not either - a struct is
 /// carried by whatever holds it.
 fn is_a_handle(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, view: false, .. } if name == SHARED || name == SHARED_MUT)
+    nikaia_std::tools::check_types::is_a_handle(ty)
 }
 
 /// Whether a plain value stands where a **hull** is wanted - the shape whose
@@ -22966,100 +22914,12 @@ fn is_a_handle(ty: &Ty) -> bool {
 /// type of its own, so nothing knew the hull was wanted - and `SharedMut(0)`
 /// needs nobody to know.
 fn becomes_shared(found: &Ty, want: &Ty) -> bool {
-    let Ty::Named { name, args, view } = want else {
-        return false;
-    };
-    if !is_hull(name) || *view {
-        return false;
-    }
-    match args.as_slice() {
-        [held] => {
-            if found.is_unknown() {
-                return false;
-            }
-            // A `SharedMut[T]` beside a `T` is the same shape as a `Shared[T]`
-            // beside one: the value that would go in. Asked in this order so a
-            // value that is *already* what the hull holds matches at the first
-            // level ([ADR-281](../../docs/specification/adr/adr-281.md) D2).
-            found.fits(held) || found.fits(&locked_content(held))
-        }
-        _ => false,
-    }
-}
-
-/// What a `Locked[T]` holds, or the type itself where it is not one.
-fn locked_content(ty: &Ty) -> Ty {
-    match ty {
-        Ty::Named { name, args, view } if name == LOCKED && !*view => match args.as_slice() {
-            [held] => held.clone(),
-            _ => ty.clone(),
-        },
-        _ => ty.clone(),
-    }
+    nikaia_std::tools::check_types::becomes_shared(found, want)
 }
 
 /// Part III C.2: every diagnostic names a concrete way out.
 fn convert(found: &Ty, want: &Ty) -> String {
-    // **A shared value is wanted and a plain one is here**, and the place this
-    // comes up is a `return` into a `-> Shared[T]` signature. Sharing may only
-    // begin on a line that writes the type (Part I 6.2), and a signature line is
-    // not that line - so the generic "make it a `Shared[T]`" below would name a
-    // destination without a road, which is what made this look like a dead end.
-    // It is not: there are two roads and this says both.
-    if becomes_shared(found, want)
-        && let Ty::Named { name, .. } = want
-    {
-        return format!("Wrap it: `{name}(…)`.");
-    }
-    // **A slice where a list is declared** (ADR-293 D23): the parameter is
-    // what changes, to the type that takes a run of any list - a slice and a
-    // whole list alike - with the element the declaration already names.
-    if let (
-        Ty::Named {
-            name: slice,
-            args: run,
-            view: true,
-        },
-        Ty::Named {
-            name: list,
-            args: elements,
-            ..
-        },
-    ) = (found, want)
-        && slice == ty::ARRAY
-        && run.len() == 1
-        && ty::base(list) == "Vec"
-    {
-        let element = elements
-            .first()
-            .map(Ty::text)
-            .unwrap_or_else(|| "?".to_string());
-        return format!(
-            "This is part of a list. Declare the parameter `ref Array[{element}]` to take \
-             a part or a whole list alike."
-        );
-    }
-    let (found, want) = (found.text(), want.text());
-    match (found.as_str(), want.as_str()) {
-        // **The spelling this checker prints is `ref String`**, and these arms
-        // used to match `&str` - which nothing prints any more, so the one
-        // mismatch every newcomer meets fell through to *make it a `String`*
-        // and never said how. A literal no longer reaches here in a position
-        // that wants text of its own (ADR-282 D4); what does is a view of text
-        // the program **has**, and a copy of that is written, never inserted
-        // (ADR-282 D7).
-        ("ref String", "String") => {
-            "Write `.clone()` to turn this view into text of its own.".to_string()
-        }
-        ("String", "ref String") => "Write `ref` in front of it to pass a view of it.".to_string(),
-        _ if is_number(&found) && is_number(&want) => {
-            format!("Convert it with `as {want}`. Nikaia never converts numbers on its own.")
-        }
-        _ => format!(
-            "Make it {} `{want}`, or change the declaration to `{found}`.",
-            an_or_a(&want)
-        ),
-    }
+    nikaia_std::tools::check_types::way_out_of_a_mismatch(found, want)
 }
 
 /// The name of the integer type this is, among the three Part I 2.2 offers.
@@ -23253,27 +23113,7 @@ fn gives_back(body: &Expr, name: &str, parsed: &Parsed) -> bool {
 ///   * **Nothing is claimed**, for a type nothing describes or a nullable of
 ///     one: `Unknown` is the absence of an answer and not a licence to refuse.
 fn moves_away(ty: &Ty) -> bool {
-    match ty {
-        // **An array copies as its elements do**
-        // ([ADR-152](../../docs/specification/adr/adr-152.md) D2): `N` elements
-        // inline and nothing allocated, so an `Array[i64, 3]` takes as little
-        // away as an `i64` does and an `Array[String, 3]` takes as much as a
-        // `String`. The count among the arguments answers `false` on its own.
-        Ty::Named { name, args, .. } if name == ty::ARRAY => args.iter().any(moves_away),
-        Ty::Named { name, view, .. } => {
-            !view
-                && !is_number(name)
-                && !matches!(name.as_str(), "bool" | "char")
-                && name != "Shared"
-                && name != "SharedMut"
-        }
-        // A nullable of data is still data: `Option<String>` moves.
-        Ty::Nullable(inner) => moves_away(inner),
-        // A tuple of copied parts is copied; one with anything else in it is
-        // not. `Unknown`, a function type and a type variable claim nothing.
-        Ty::Tuple(parts) => parts.iter().any(moves_away),
-        _ => false,
-    }
+    nikaia_std::tools::check_types::moves_away(ty)
 }
 
 impl Checker<'_> {
@@ -23359,35 +23199,24 @@ fn is_one_of_part_one_2_2(name: &str) -> bool {
 /// A view of a value that copies - a number, a truth value, a character - and
 /// nothing else (ADR-231 D1).
 fn copies_as_a_view(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, args, view: true }
-        if args.is_empty() && (is_number(name) || name == "bool" || name == "char"))
+    nikaia_std::tools::check_types::copies_as_a_view(ty)
 }
 
 /// `ref String` as the language below has it, a `&String`: what a `$T` bound
 /// to `String` becomes under `ref $T`, which is an element of `words.iter()`.
 fn is_a_view_of_a_string(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, args, view: true } if args.is_empty() && ty::base(name) == "String")
+    nikaia_std::tools::check_types::is_a_view_of_a_string(ty)
 }
 
 /// A view of a value that copies read as the value, and anything else as it is
 /// ([ADR-233](../../docs/specification/adr/adr-233.md) D4).
 fn value_of_a_copy(ty: Ty) -> Ty {
-    match copies_as_a_view(&ty) {
-        true => unviewed(&ty),
-        false => ty,
-    }
+    nikaia_std::tools::check_types::value_of_a_copy(&ty)
 }
 
 /// The value a view is of.
 fn unviewed(ty: &Ty) -> Ty {
-    match ty {
-        Ty::Named { name, args, .. } => Ty::Named {
-            name: name.clone(),
-            args: args.clone(),
-            view: false,
-        },
-        other => other.clone(),
-    }
+    nikaia_std::tools::check_types::unviewed_type(ty)
 }
 
 /// **`--asserts`** ([ADR-269](../../docs/specification/adr/adr-269.md) D7):
@@ -23508,20 +23337,7 @@ pub fn written(parsed: &Parsed, expr: &Expr) -> String {
 }
 
 fn is_number(name: &str) -> bool {
-    matches!(
-        name,
-        "i8" | "i16"
-            | "i32"
-            | "i64"
-            | "isize"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "usize"
-            | "f32"
-            | "f64"
-    )
+    nikaia_std::tools::check_types::a_number_name(name)
 }
 
 /// A float, written as a literal `rustc` reads — or nothing, where it cannot be.
@@ -23729,12 +23545,7 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
 /// it holds, so a list of anything else reaches that rule and leaves it
 /// untouched ([ADR-152](../../docs/specification/adr/adr-152.md) D4).
 fn holds_an_array(ty: &Ty) -> bool {
-    match ty {
-        Ty::Named { name, args, .. } => name == ty::ARRAY || args.iter().any(holds_an_array),
-        Ty::Tuple(parts) => parts.iter().any(holds_an_array),
-        Ty::Nullable(inner) => holds_an_array(inner),
-        _ => false,
-    }
+    nikaia_std::tools::check_types::holds_an_array(ty)
 }
 
 /// Whether handing a value of this type out takes nothing away.
@@ -23954,18 +23765,7 @@ fn a_copied_part(ty: &Ty, copies: &BTreeSet<String>) -> bool {
 
 /// is one this says nothing about only when it is also unknown.
 fn copies(ty: &Ty) -> bool {
-    match ty {
-        // `moves_away`'s other half, and ADR-152 D2's same sentence.
-        Ty::Named { name, args, .. } if name == ty::ARRAY => args.iter().all(copies),
-        Ty::Named { name, view, .. } => {
-            *view
-                || matches!(
-                    name.as_str(),
-                    "i32" | "i64" | "u8" | "u32" | "u64" | "f64" | "bool" | "char"
-                )
-        }
-        _ => false,
-    }
+    nikaia_std::tools::check_types::copies_plainly(ty)
 }
 
 /// The declared types `ty` holds **inline** - itself, nullable or not, a
@@ -24093,17 +23893,12 @@ fn is_a_lookup(key: &str) -> bool {
 
 /// A list: what `[…]` makes, and what `Vec()` builds.
 fn is_a_list(ty: &Ty) -> bool {
-    matches!(ty.unseen(), Ty::Named { name, .. } if matches!(name.as_str(), "Vec" | "List" | "Array"))
+    nikaia_std::tools::check_types::is_a_list_type(ty)
 }
 
 /// A list, a map or a set - the types Part I gives no operator.
 fn is_a_collection(ty: &Ty) -> bool {
-    is_a_list(ty)
-        || matches!(ty.unseen(), Ty::Named { name, .. }
-        if matches!(
-            name.rsplit("::").next().unwrap_or(name.as_str()),
-            "HashMap" | "HashSet" | "BTreeMap" | "BTreeSet" | "TrustedMap" | "TrustedSet"
-        ))
+    nikaia_std::tools::check_types::is_a_collection_type(ty)
 }
 
 /// Whether a type is one this language calls text.
@@ -24112,7 +23907,7 @@ fn is_a_collection(ty: &Ty) -> bool {
 /// `maybe + "x"` is a member reached off a nullable, which Part I 2.3 answers
 /// and this must not quietly paper over.
 fn is_text(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, args, .. } if args.is_empty() && (name == "String" || name == "str"))
+    nikaia_std::tools::check_types::is_text_type(ty)
 }
 
 /// Every `{…}` group in a string, by the text between the braces.

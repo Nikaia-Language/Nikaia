@@ -1699,6 +1699,199 @@ fn names_a_variant(names: &winnow_grammar::InternerContext, name: &str, own: &Le
 }
 
 
+// --- check_types.nika ---
+
+pub fn a_number_name(name: &str) -> bool { name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "f32" || name == "f64" }
+
+fn type_last_segment(name: &str) -> String {
+    let parts: Vec<&str> = name.split("::").collect::<Vec<_>>();
+    (*nikaia_std::index::get(&parts, nikaia_std::index::at(parts.len() as i64 - 1))).to_owned()
+}
+
+pub fn view_of_type(inner: &Ty) -> Ty {
+    match inner {
+        Ty::Named { name, args, view } => { let view = *view; if view { inner.clone() } else if args.is_empty() && name == "String" { Ty::Named { name: String::from("str"), args: vec![], view: true } } else { Ty::Named { name: name.to_owned(), args: args.to_owned(), view: true } } },
+        Ty::Nullable(held) => { let held = nikaia_std::boxed::open(held); Ty::Nullable(Box::new(view_of_type(held))) },
+        _ => Ty::Unknown,
+    }
+}
+
+pub fn viewed_from_type(view: &Ty) -> Vec<Ty> {
+    match view {
+        Ty::Named { name, args, view } => { let view = *view; if !view { vec![] } else if args.is_empty() && name == "str" { vec![Ty::Named { name: String::from("String"), args: vec![], view: false }] } else { vec![Ty::Named { name: name.to_owned(), args: args.to_owned(), view: false }] } },
+        _ => vec![],
+    }
+}
+
+pub fn unviewed_type(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named { name, args, .. } => Ty::Named { name: name.to_owned(), args: args.to_owned(), view: false },
+        _ => ty.clone(),
+    }
+}
+
+pub fn copies_as_a_view(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char") },
+        _ => false,
+    }
+}
+
+pub fn value_of_a_copy(ty: &Ty) -> Ty {
+    if copies_as_a_view(ty) { return unviewed_type(ty); }
+    ty.clone()
+}
+
+pub fn is_a_view_of_a_string(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; view && args.is_empty() && type_last_segment(name) == "String" },
+        _ => false,
+    }
+}
+
+pub fn a_copy_by_value(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; !view && args.is_empty() && (a_number_name(name) || name == "bool" || name == "char") },
+        _ => false,
+    }
+}
+
+pub fn moves_away(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { any_moves_away(args) } else { !view && !a_number_name(name) && name != "bool" && name != "char" && name != "Shared" && name != "SharedMut" } },
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); moves_away(inner) },
+        Ty::Tuple(parts) => any_moves_away(parts),
+        _ => false,
+    }
+}
+
+fn any_moves_away(types: &[Ty]) -> bool {
+    for ty in types.iter() { if moves_away(ty) { return true; } }
+    false
+}
+
+pub fn copies_plainly(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; if name == ARRAY { all_copy(args) } else { view || name == "i32" || name == "i64" || name == "u8" || name == "u32" || name == "u64" || name == "f64" || name == "bool" || name == "char" } },
+        _ => false,
+    }
+}
+
+fn all_copy(types: &[Ty]) -> bool {
+    for ty in types.iter() { if !copies_plainly(ty) { return false; } }
+    true
+}
+
+pub fn holds_an_array(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } => name == ARRAY || any_holds_an_array(args),
+        Ty::Tuple(parts) => any_holds_an_array(parts),
+        Ty::Nullable(inner) => { let inner = nikaia_std::boxed::open(inner); holds_an_array(inner) },
+        _ => false,
+    }
+}
+
+fn any_holds_an_array(types: &[Ty]) -> bool {
+    for ty in types.iter() { if holds_an_array(ty) { return true; } }
+    false
+}
+
+pub fn is_a_list_type(ty: &Ty) -> bool {
+    match ty.unseen() {
+        Ty::Named { ref name, .. } => name == "Vec" || name == "List" || name == "Array",
+        _ => false,
+    }
+}
+
+pub fn is_a_collection_type(ty: &Ty) -> bool {
+    if is_a_list_type(ty) { return true; }
+    match ty.unseen() {
+        Ty::Named { ref name, .. } => {
+            let last = type_last_segment(name);
+            last == "HashMap" || last == "HashSet" || last == "BTreeMap" || last == "BTreeSet" || last == "TrustedMap" || last == "TrustedSet"
+        },
+        _ => false,
+    }
+}
+
+pub fn is_text_type(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, args, .. } => args.is_empty() && (name == "String" || name == "str"),
+        _ => false,
+    }
+}
+
+pub fn is_a_hull(name: &str) -> bool { name == "Shared" || name == "SharedMut" || name == "Locked" }
+
+pub fn locked_content_of(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Named { name, args, .. } => if (name == "SharedMut" || name == "Locked") && !args.is_empty() { Some((*nikaia_std::index::get(&args, 0)).clone()) } else { None },
+        _ => None,
+    }
+}
+
+pub fn is_a_handle(ty: &Ty) -> bool {
+    match ty {
+        Ty::Named { name, view, .. } => { let view = *view; !view && (name == "Shared" || name == "SharedMut") },
+        _ => false,
+    }
+}
+
+pub fn locked_content(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Named { name, args, view } => { let view = *view; if name == "Locked" && !view && args.len() == 1 { (*nikaia_std::index::get(&args, 0)).clone() } else { ty.clone() } },
+        _ => ty.clone(),
+    }
+}
+
+pub fn becomes_shared(found: &Ty, want: &Ty) -> bool {
+    match want {
+        Ty::Named { name, args, view } => {
+            let view = *view;
+            if !is_a_hull(name) || view || args.len() != 1 || found.is_unknown() { false } else { found.fits(nikaia_std::index::get(&args, 0)) || found.fits(&locked_content(nikaia_std::index::get(&args, 0))) }
+        },
+        _ => false,
+    }
+}
+
+pub fn way_out_of_a_mismatch(found: &Ty, want: &Ty) -> String {
+    if becomes_shared(found, want) {
+        let hull = match want {
+            Ty::Named { name, .. } => name.to_owned(),
+            _ => String::from(""),
+        };
+        return format!("Wrap it: `{}(…)`.", hull);
+    }
+    let element = part_of_a_list(found, want);
+    if element.is_some() {
+        let written = nikaia_std::index::or(element, || "?".into());
+        return format!("This is part of a list. Declare the parameter `ref Array[{}]` to take a part or a whole list alike.", written);
+    }
+    let found_text = found.text();
+    let want_text = want.text();
+    if found_text == "ref String" && want_text == "String" { return String::from("Write `.clone()` to turn this view into text of its own."); }
+    if found_text == "String" && want_text == "ref String" { return String::from("Write `ref` in front of it to pass a view of it."); }
+    if a_number_name(&found_text) && a_number_name(&want_text) { return format!("Convert it with `as {}`. Nikaia never converts numbers on its own.", want_text); }
+    let article = if want_text.starts_with("i") || want_text.starts_with("a") || want_text.starts_with("e") || want_text.starts_with("o") || want_text.starts_with("I") || want_text.starts_with("A") || want_text.starts_with("E") || want_text.starts_with("O") { "an" } else { "a" };
+    format!("Make it {} `{}`, or change the declaration to `{}`.", article, want_text, found_text)
+}
+
+fn part_of_a_list(found: &Ty, want: &Ty) -> Option<String> {
+    let run = match found {
+        Ty::Named { name, args, view } => { let view = *view; view && name == ARRAY && args.len() == 1 },
+        _ => false,
+    };
+    if !run { return None; }
+    let (name, args) = match want {
+        Ty::Named { name, args, .. } => (name, args),
+        _ => return None,
+    };
+    if type_last_segment(name) != "Vec" { return None; }
+    if args.is_empty() { return Some(String::from("?")); }
+    Some((*nikaia_std::index::get(&args, 0)).text())
+}
+
+
 // --- check_words.nika ---
 
 pub fn reserved_elsewhere(name: &str) -> Option<String> {
@@ -15837,6 +16030,10 @@ pub mod buffers {
 pub mod calls {
     #[allow(unused_imports)]
     pub use super::{Callee, callee_of, callee_named};
+}
+pub mod check_types {
+    #[allow(unused_imports)]
+    pub use super::{a_number_name, view_of_type, viewed_from_type, unviewed_type, copies_as_a_view, value_of_a_copy, is_a_view_of_a_string, a_copy_by_value, moves_away, copies_plainly, holds_an_array, is_a_list_type, is_a_collection_type, is_text_type, is_a_hull, locked_content_of, is_a_handle, locked_content, becomes_shared, way_out_of_a_mismatch};
 }
 pub mod check_words {
     #[allow(unused_imports)]
