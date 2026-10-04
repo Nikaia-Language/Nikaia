@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.442] — 2026-10-04
+
+**Standard input is read 64 KiB a hop, a pipe's capacity** (#423, ADR-263
+§6). `io::lines()` asked a worker for 8 KiB at a time - `BufReader`'s size - and
+on a pipe that is already full (`cat data | prog`) the hops were the cost:
+4 M lines (60 MB) took 791 ms at 8 KiB and 414 ms at 64 KiB, best of 9, and a
+file redirected to standard input 671 against 389 ms. Still one read a hop, so
+a slow pipe hands over whatever is there, as before. Not zeroing the buffer
+before the read, measured on its own, saved nothing that showed. Whether a
+calling-thread path saves what is left stays open.
+
 ## [0.0.441] — 2026-10-04
 
 **Four more of #381's records, made to say what is built.** ADR-283 D6 said the

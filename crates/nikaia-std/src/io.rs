@@ -254,10 +254,14 @@ pub struct Lines {
 
 /// How much of standard input one hop to a worker asks for.
 ///
-/// The size `BufReader` uses by default, and for the reason it does: big
-/// enough that the hops are rare, small enough that a program holding one per
-/// stream is holding nothing worth counting.
-const CHUNK: usize = 8 * 1024;
+/// **A pipe's capacity on Linux**, so that one read can take everything a full
+/// pipe holds (#423). It was `BufReader`'s 8 KiB, and on a pipe that is already
+/// full - `cat file | prog` - the hops were the cost: 4 M lines (60 MB) took
+/// 791 ms at 8 KiB and 414 ms at 64 KiB, best of 9, and 671 against 389 ms
+/// read from a file redirected to standard input. It is still **one read** a
+/// hop, so a slow pipe hands over whatever is there, as before. Zeroing the
+/// buffer before the read, measured on its own, cost nothing that showed.
+const CHUNK: usize = 64 * 1024;
 
 impl Lines {
     /// The next line, **pausing** while the stream has nothing to give
