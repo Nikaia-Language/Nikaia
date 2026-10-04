@@ -130,7 +130,7 @@ missing rather than emitting code for a different machine.
 whole machine, and the other cores stand idle. Here it bounds **your instructions** and
 nothing else. Waiting for I/O happens on the runtime's own threads, and what the standard
 library does uses the whole machine whatever this switch says: a file's text is checked
-in chunks across every core, **63.7 ms down to 16.5 ms**
+in chunks across every core
 ([ADR-016](../docs/specification/adr/adr-016.md)). Your code stays a straight line, and
 the machine does not stand still.
 

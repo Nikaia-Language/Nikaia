@@ -60,55 +60,33 @@ count, start-up included (under one a row); **mispredictions** are its
 `--branch-sim`. They are deterministic, and they are what this page uses to
 say *where* time goes.
 
-**The clock** is taken two ways. `brc.sh` runs each program five times,
-unpinned, and keeps the best; Nikaia's runs go through `nikaia run`, which
-re-checks the project first, so its rows include that. For a comparison of two
-builds of one program, the variants are interleaved, pinned to one core
-(`taskset -c 2`), best of 25, and the binary is run directly.
-
-**What the clock can and cannot say on this box.** A difference under about
-10 % is not a result. Round after round, the same binaries have swapped places:
-`tuned` measured 0.225 s in one interleaved round and 0.259 s in the next, and
-two builds 0.343 s and 0.415 s in one round came out the other way round in
-the following. `docs/history/runtime-cost.md` §6.3 has absolutes moving by
-1.4–1.9× from one day to the next. **Only the ratios travel, and only the large
-ones.** Where a change is smaller than that, its instruction and misprediction
-counts are the measurement, and the clock is quoted only to say that it did not
-move.
+**No clock.** This page reports instructions and mispredictions only. On this
+box the same binaries swap places from one round to the next, and absolutes
+move by 1.4–1.9× from one day to the next (`docs/history/runtime-cost.md`
+§6.3), so a time says nothing a count does not say better.
 
 ## The table
 
-`brc.sh`, 8 million rows, best of 5, Nikaia 0.0.419:
+Callgrind over 1 million rows, Nikaia 0.0.419, one core:
 
-| | cores | best | against `tuned` |
-|---|---:|---:|---:|
-| Rust, `naive` | 1 | 0.74 s | 3.4× |
-| **Nikaia, `user-parallelism = "no"`** | 1 | **0.49 s** | **2.2×** |
-| Rust, `tuned` | 1 | 0.22 s | 1.0 |
-| Nikaia, `user-parallelism = "yes"` | 3 | 0.31 s | 1.4× |
+| | instructions per row | mispredictions per row |
+|---|---:|---:|
+| Rust, `naive` | 862.6 | 8.74 |
+| **Nikaia** | **390.1** | **4.28** |
+| Rust, `tuned` | 312.7 | 3.61 |
 
-The same programs pinned to one core, binaries run directly, interleaved, best
-of 25 - so without `nikaia run`'s check, and without the cores `fs::map`
-validates on at either setting:
-
-| | instructions per row | mispredictions per row | one core |
-|---|---:|---:|---:|
-| Rust, `naive` | 862.6 | 8.74 | 0.668 s |
-| **Nikaia** | **390.1** | **4.28** | **0.371 s** |
-| Rust, `tuned` | 312.7 | 3.61 | 0.234 s |
-
-Four runs, one output. That the two Nikaia rows of `brc.sh` agree is
+One output. That `brc.sh`'s Nikaia runs at both settings agree is
 [ADR-296](../../docs/specification/adr/adr-296.md) D10's whole claim — the chunk
 count does not change the result — checked rather than asserted, and the script
 fails if it ever stops being true.
 
 ### What the rows say
 
-**Against the loop you would actually write, the grammar wins**: 0.371 s
-against 0.668 s on one core, and less than half `naive`'s instructions. That is
+**Against the loop you would actually write, the grammar wins**: less than
+half `naive`'s instructions and mispredictions. That is
 the row the example's claim turns on, and it is why both halves are here:
-measured against `tuned` alone the grammar looks 1.6× slow, and measured
-against `naive` alone it looks 1.8× fast. Neither number means anything
+measured against `tuned` alone the grammar takes 1.25× the instructions, and
+measured against `naive` alone 0.45×. Neither number means anything
 without the other.
 
 **The rest against `tuned` is not all parser overhead.** `tuned` works on bytes
@@ -145,10 +123,6 @@ program printing the same:
 | **Nikaia, with it** | **587 (−10.8 %)** |
 | Rust, `tuned` | 312 |
 
-On the clock it is smaller - 0.51 s to 0.49 s over 8 million rows, best of 5 -
-because a skip that always finds nothing is a branch that is always predicted.
-The rows above, 8 million, same box: `naive` 0.91 s, Nikaia 0.49 s, `tuned`
-0.33 s, Nikaia on four cores 0.23 s.
 
 What is left between the grammar and `tuned` is the parser itself: per row
 about 205 instructions in the rule, the temperature read a character at a
@@ -193,8 +167,8 @@ Nikaia's optimizations on and `incremental = false` throughout:
 | and **a one-byte literal compared as a byte** (`winnow-grammar` bbc8683, ADR 24 §8a) | **390** | **4.28** |
 
 `incremental` on costs this program 50 instructions a row (566 against 516,
-taken with the debug assertions still on) and saves a third of a second on a
-rebuild after an edit (1.56 s against 1.90 s); it stays on by default and
+taken with the debug assertions still on) and makes a
+rebuild after an edit faster; it stays on by default and
 `brc.sh` turns it off. `codegen-units` at 16 or 1 instead of 256 moved nothing
 (437–439).
 
@@ -240,16 +214,13 @@ instructions a row and 0.89 of 4.28 mispredictions. `checked-text` now checks
 each piece with `simdutf8`, which answers as the standard library does, verdict
 and offset ([ADR-016](../../docs/specification/adr/adr-016.md) D4):
 
-| | instructions per row | mispredictions per row | one core | unpinned | all-ASCII twin, one core |
-|---|---:|---:|---:|---:|---:|
-| `std::str::from_utf8` | 390.0 | 4.28 | 0.332 s | 0.305 s | 0.301 s |
-| **`simdutf8`** | **364.9** | **3.42** | **0.305 s** | **0.278 s** | 0.302 s |
+| | instructions per row | mispredictions per row |
+|---|---:|---:|
+| `std::str::from_utf8` | 390.0 | 4.28 |
+| **`simdutf8`** | **364.9** | **3.42** |
 
 Same output, and a file with a stray byte is refused with the same message at
-the same offset. The clock columns are under this box's 10 %, and quoted for
-what they rule out: on no input, pinned or not, is the check slower than it
-was. The all-ASCII twin is the case where the standard library's own fast path
-was already good, and there the two are the same.
+the same offset.
 
 What is left of the check is about 10 instructions a row. Making it nothing,
 as `tuned` does, would take the grammar reading bytes and the text check moved

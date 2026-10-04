@@ -53,8 +53,8 @@ tests read the examples rather than a copy, so an example cannot drift from what
 They are deliberately different shapes.
 
 * **`1brc.nika`** is the protocol at scale — `@frame`, `par_fold`, a memory-mapped file, one
-  accumulator per core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines, 4
-  cores, 0.52 s → 0.14 s, identical output), and one function it calls for every digit is
+  accumulator per core ([ADR-014](../docs/specification/adr/adr-014.md): 8 million lines
+  over every core, identical output), and one function it calls for every digit is
   written in Nikaia and compiled into `std` by the compiler itself.
 * **`calc.nika`** is the same protocol with none of that: no frame, no fold, no I/O, one
   `entry rule` that returns a number — recursion and precedence, which is what a grammar can say

@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.457] — 2026-10-04
+
+**Performance is counted, not timed.** On a shared machine the same binaries
+swap places from one round to the next, so the 1BRC benchmark page, the
+getting-started guide, the examples' overview and the roadmap drop their
+seconds; instructions and mispredictions per row stay. The README's and the
+home page's performance sections follow once they are measured against tuned
+Rust.
+
 ## [0.0.456] — 2026-10-04
 
 **`??` after a value that is never absent is `NK1211`** (ADR-279 D12, #342).
