@@ -7685,18 +7685,30 @@ impl<'a> Checker<'a> {
     /// **A place inside the subject and not the subject itself.** `return self`
     /// out of a `ref self` method is a different sentence — the subject is
     /// already a view there, and nothing is owed.
+    ///
+    /// **Or a parameter lent to the function** (#96): `fn a(row: ref Row) ->
+    /// ref String { return row.name }` hands back a view of the caller's row,
+    /// exactly as `return self.name` does of a borrowed subject. Only a
+    /// parameter declared `ref T`: its buffer is the caller's. A `let` bound to
+    /// a view of something this body owns is not one, and keeps its words.
     fn hands_back_a_view_of_the_subject(&self, value: &Expr) -> bool {
-        if !self.borrowing_self {
-            return false;
-        }
         if !self.expected.as_ref().is_some_and(Ty::is_a_view) {
             return false;
         }
-        let rooted_at_self = |place: &Expr| {
-            matches!(place, Expr::Field { .. } | Expr::Index { .. })
-                && self.rooted_at(place).as_deref() == Some("self")
-        };
-        rooted_at_self(value)
+        if !matches!(value, Expr::Field { .. } | Expr::Index { .. }) {
+            return false;
+        }
+        match self.rooted_at(value).as_deref() {
+            Some("self") => self.borrowing_self,
+            Some(root) => self.binding(root).is_some_and(|local| {
+                local
+                    .immutable
+                    .as_ref()
+                    .is_some_and(|i| i.kind == Kind::Parameter)
+                    && matches!(&local.ty, Ty::Named { view: true, .. })
+            }),
+            None => false,
+        }
     }
 
     /// **`NK1188`: `==` on a type that does not compare**
@@ -22224,6 +22236,23 @@ impl<'a> Checker<'a> {
         let lending = value.is_some_and(|value| self.hands_back_a_view_of_the_subject(value));
         if lending {
             self.checked.lent_returns.insert(span.at());
+        }
+        // **And a `ref` written there is the compiler's line said twice**
+        // (#96, ADR-094 D4): `return ref row.name` where `return row.name`
+        // already lends.
+        if let Some(
+            written @ Expr::Unary {
+                op: crate::ast::UnaryOp::Ref,
+                expr: inner,
+            },
+        ) = value
+            && self.hands_back_a_view_of_the_subject(inner)
+        {
+            self.the_caller_writes_no_reference(
+                written,
+                span,
+                "a place inside what this function borrows is handed back as a view of it",
+            );
         }
         if let Some(value) = value
             && !lending

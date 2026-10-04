@@ -273,11 +273,11 @@ struct Row {
 
 impl Row {
     fn name(ref self) -> ref String {
-        return ref self.name
+        return self.name
     }
 
     fn tags(ref self) -> ref Vec[i64] {
-        return ref self.tags
+        return self.tags
     }
 }
 
@@ -397,7 +397,7 @@ fn main() {
 /// nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
 #[test]
 fn the_reference_is_written_once_whichever_way_the_source_says_it() {
-    let both = ["return self.name", "return ref self.name", "self.name"];
+    let both = ["return self.name", "self.name"];
     for body in both {
         let source = format!(
             "struct Row {{ name: String }}\n\
@@ -572,4 +572,59 @@ fn a_mut_parameter_given_away_whole_is_refused() {
          }\n",
     );
     assert_eq!(printed.trim(), "1 1");
+}
+
+/// **The written `ref` is the compiler's line said twice** (#96, ADR-202 D2):
+/// at a `return` of a place inside a borrowed subject or a lent parameter it is
+/// `NK1137`, and the line without it lends - a parameter declared `ref Row`
+/// as a `ref self` does.
+#[test]
+fn a_written_ref_at_a_lending_return_is_refused_and_a_lent_parameter_lends() {
+    for body in ["return ref self.name", "return ref row.name"] {
+        let source = format!(
+            "struct Row {{ name: String }}\n\
+             \n\
+             impl Row {{\n\
+             \x20   fn name(ref self) -> ref String {{\n\
+             \x20       {}\n\
+             \x20   }}\n\
+             }}\n\
+             \n\
+             fn of(row: ref Row) -> ref String {{\n\
+             \x20   {}\n\
+             }}\n\
+             \n\
+             fn main() {{ println(\"x\") }}\n",
+            if body.contains("self") {
+                body
+            } else {
+                "return self.name"
+            },
+            if body.contains("row") {
+                body
+            } else {
+                "return row.name"
+            },
+        );
+        let codes: Vec<&str> = findings(&source).iter().map(|f| f.code).collect();
+        assert_eq!(codes, vec!["NK1137"], "`{body}`");
+    }
+    let printed = ran(
+        "a lent parameter lends",
+        r#"
+struct Row {
+    name: String,
+}
+
+fn of(row: ref Row) -> ref String {
+    return row.name
+}
+
+fn main() {
+    let r = Row { name: "ada" }
+    println(f"{of(r)}")
+}
+"#,
+    );
+    assert_eq!(printed.trim(), "ada");
 }

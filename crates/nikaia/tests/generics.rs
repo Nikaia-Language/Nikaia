@@ -443,7 +443,7 @@ impl Holder[T] {
     }
 
     fn seen(ref self) -> ref T {
-        return ref self.value
+        return self.value
     }
 }
 

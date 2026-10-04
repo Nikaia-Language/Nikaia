@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.447] — 2026-10-04
+
+**`return ref x` has one spelling left: none** (ADR-202 D2, #96). The compiler
+wrote the `&` at a `return` of a place inside a borrowed `self`, but not inside
+a parameter lent to the function: `fn of(row: ref Row) -> ref String { return
+row.name }` was `NK1104`, and `return ref row.name` was the only way to say it.
+A parameter declared `ref T` now lends as `ref self` does. With every root a
+lending `return` can have covered, a `ref` written there is `NK1137`, as it is
+at a `for` and at a call. A `let` bound to a view keeps its own words.
+
 ## [0.0.446] — 2026-10-04
 
 **A compound assignment is proved as the operation it is** (ADR-306 D5a,
