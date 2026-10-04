@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.443] — 2026-10-04
+
+**A span of time is read back as `timeout.in_seconds()`** (#377, ADR-150 D5).
+`in_hours`, `in_minutes`, `in_seconds`, `in_millis` and `in_micros` mirror
+the five constructors: whole units, cut off (90 seconds is one minute), as an
+`i64`, and a span longer than an `i64` counts reads as `i64::MAX`, as a count
+too large to make a span saturates. Rust's own `as_secs` and kin stay out of
+the ledger. Part III 17.1 shows `std::time`; ADR-150 D2 says *saturates*,
+which is what the code did, where it said *stops*. On the way: `time::Duration`'s
+ledger entry lacked `copies = true`, so a span handed to `time::sleep` was
+gone for the next line (`NK2105`) although D1 says it copies.
+
 ## [0.0.442] — 2026-10-04
 
 **Standard input is read 64 KiB a hop, a pipe's capacity** (#423, ADR-263

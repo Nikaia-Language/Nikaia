@@ -2888,6 +2888,8 @@ pub = true
 #
 # `crosses = true` is a claim reviewed like code, and it is an easy one: a
 # duration is a number of ticks and nothing else, so it may go anywhere.
+# `copies = true` for the same reason (ADR-150 D1, *a value that copies*):
+# without it a span handed to `time::sleep` was gone for the line after.
 # A span of time: how long something takes, how long to wait, how long is too
 # long.
 #
@@ -2899,6 +2901,7 @@ pub = true
 pub = true
 crosses = true
 compares = true
+copies = true
 
 # `touches = []` and `sync = true` for the arithmetic entries' reason: a pure
 # computation that reaches no resource. A count below zero is no time at all
@@ -2972,6 +2975,47 @@ pub = true
 sync = true
 touches = []
 signature = "(self) -> time::Duration"
+
+# **Read back** ([ADR-150](../../docs/specification/adr/adr-150.md) D5): the
+# five units a span is made in, as a count. Whole units, cut off - 90 seconds
+# is one minute - and an `i64`, a count's type (ADR-285 D1). A span longer than
+# an `i64` holds reads as `i64::MAX`, the constructors' saturation mirrored.
+# `touches = []` and `sync = true` for the arithmetic entries' reason. Rust's
+# own `as_secs` and kin are not here: one spelling per unit.
+# How many whole hours the span holds, cut off.
+[fn."time::Duration::in_hours"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# How many whole minutes the span holds, cut off.
+[fn."time::Duration::in_minutes"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# How many whole seconds the span holds, cut off.
+[fn."time::Duration::in_seconds"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# How many whole thousandths of a second the span holds, cut off.
+[fn."time::Duration::in_millis"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# How many whole millionths of a second the span holds, cut off.
+[fn."time::Duration::in_micros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
 
 # **In `std::time` and not in the prelude**
 # ([ADR-313](../../docs/specification/adr/adr-313.md) D2): the rule the list is

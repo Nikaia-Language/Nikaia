@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.442 (Draft)
+**Version:** 0.0.443 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -880,6 +880,26 @@ println(f"{count} rows")
 ```
 
 `print` is for output composed piece by piece, where a newline after every fragment would be wrong.
+
+**`std::time` — a span of time**
+
+A span is made by a method on an integer and read back by its mirror on the
+span ([ADR-150](adr/adr-150.md) D2, D5):
+
+```nika
+use std::time
+
+fn main() {
+    let timeout = 90.seconds()          // also millis, micros, minutes, hours
+    time::sleep(timeout)
+    println(f"{timeout.in_minutes()}")  // 1: whole units, cut off
+}
+```
+
+`in_hours`, `in_minutes`, `in_seconds`, `in_millis` and `in_micros` answer an
+`i64`; a span longer than an `i64` counts reads as `i64::MAX`, as a count too
+large to make a span saturates. `time::sleep` pauses, and gives the thread up
+while it does.
 
 **`http` — a package, not a module of `std`**
 An HTTP/1.1 server: `GET` and `POST`, bodies by `Content-Length`, one answer per connection. Keep-alive, chunked bodies, TLS, HTTP/2 and a client are not built. `http` is not part of `std`: it is a package reached by path, `http = { path = "../http" }`.

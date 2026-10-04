@@ -265,3 +265,52 @@ fn nothing_here_is_a_keyword() {
         lowered(source)
     );
 }
+
+/// **D5: a span is read back by the unit it was made in**, in whole units and
+/// as an `i64` — `in_seconds` beside `seconds`, a program that runs.
+#[test]
+fn a_span_reads_back_as_a_count() {
+    let (printed, _) = output(
+        "duration-reads-back",
+        "use std::time\n\
+         \n\
+         fn main() {\n\
+         \x20   let timeout = 90.seconds()\n\
+         \x20   let whole: i64 = timeout.in_minutes()\n\
+         \x20   println(f\"{timeout.in_seconds()} {whole} {timeout.in_millis()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "90 1 90000");
+}
+
+/// **The answer's type is the ledger's**: the entries are what the checker
+/// reads, so an `i64` put where a `String` goes is refused in this language's
+/// words rather than in `rustc`'s.
+#[test]
+fn a_count_read_back_is_an_i64() {
+    let source = "use std::time\n\
+         \n\
+         fn main() {\n\
+         \x20   let wrong: String = 5.seconds().in_seconds()\n\
+         \x20   println(wrong)\n\
+         }\n";
+    assert!(!findings(source).is_empty(), "the ledger types the answer");
+}
+
+/// **D1: a span copies**, so it is still there after it was handed to
+/// `time::sleep`. The ledger's type entry says `copies = true`; without it the
+/// checker refused the next line with `NK2105`.
+#[test]
+fn a_span_handed_over_is_still_there() {
+    let (printed, _) = output(
+        "duration-copies",
+        "use std::time\n\
+         \n\
+         fn main() {\n\
+         \x20   let timeout = 90.millis()\n\
+         \x20   time::sleep(timeout)\n\
+         \x20   println(f\"{timeout.in_millis()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "90");
+}

@@ -66,6 +66,52 @@ macro_rules! spans {
 
 spans!(i32, i64);
 
+/// **`timeout.in_seconds()`** ([ADR-150](../../../docs/specification/adr/adr-150.md)
+/// D5): a span read back as a number, in the five units it is made in.
+///
+/// **Whole units, cut off**: 90 seconds is one minute, as an integer division
+/// is. The answer is an `i64`, a count's type
+/// ([ADR-285](../../../docs/specification/adr/adr-285.md) D1). **Past
+/// `i64::MAX` it stays at `i64::MAX`**, mirroring the constructors: only a
+/// span that was itself saturated (`i64::MAX.hours()`) gets there, and *for
+/// ever* read back as the largest number is what a timeout computation wants
+/// rather than an abort. Rust's own `as_secs` and kin are not in the ledger.
+pub trait DurationIn {
+    /// How many whole hours.
+    fn in_hours(self) -> i64;
+    /// How many whole minutes.
+    fn in_minutes(self) -> i64;
+    /// How many whole seconds.
+    fn in_seconds(self) -> i64;
+    /// How many whole thousandths of a second.
+    fn in_millis(self) -> i64;
+    /// How many whole millionths of a second.
+    fn in_micros(self) -> i64;
+}
+
+impl DurationIn for Duration {
+    fn in_hours(self) -> i64 {
+        counted(u128::from(self.as_secs() / 3600))
+    }
+    fn in_minutes(self) -> i64 {
+        counted(u128::from(self.as_secs() / 60))
+    }
+    fn in_seconds(self) -> i64 {
+        counted(u128::from(self.as_secs()))
+    }
+    fn in_millis(self) -> i64 {
+        counted(self.as_millis())
+    }
+    fn in_micros(self) -> i64 {
+        counted(self.as_micros())
+    }
+}
+
+/// A count read back out of a span: past `i64::MAX` it stays there.
+fn counted(count: u128) -> i64 {
+    i64::try_from(count).unwrap_or(i64::MAX)
+}
+
 /// A count as the language below's durations take it: negative is none.
 fn unsigned(count: impl Into<i64>) -> u64 {
     u64::try_from(count.into()).unwrap_or(0)
@@ -149,5 +195,27 @@ mod tests {
     #[test]
     fn a_count_too_large_stops_rather_than_wrapping() {
         assert!(i64::MAX.hours() >= i64::MAX.seconds());
+    }
+
+    /// **D5: whole units, cut off**, as an integer division is.
+    #[test]
+    fn a_span_reads_back_in_whole_units() {
+        let span = 90.seconds();
+        assert_eq!(span.in_seconds(), 90);
+        assert_eq!(span.in_minutes(), 1);
+        assert_eq!(span.in_hours(), 0);
+        assert_eq!(span.in_millis(), 90_000);
+        assert_eq!(span.in_micros(), 90_000_000);
+        assert_eq!(1500.micros().in_millis(), 1);
+    }
+
+    /// **Past `i64::MAX` it stays there**: only a span that was itself
+    /// saturated gets there, and it reads back as the largest number.
+    #[test]
+    fn a_span_too_long_for_the_count_reads_as_the_largest() {
+        let ever = i64::MAX.hours();
+        assert_eq!(ever.in_micros(), i64::MAX);
+        assert_eq!(ever.in_millis(), i64::MAX);
+        assert_eq!(i64::MAX.seconds().in_seconds(), i64::MAX);
     }
 }
