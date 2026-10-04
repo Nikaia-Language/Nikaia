@@ -450,3 +450,46 @@ fn a_while_lowers_to_a_while() {
     );
     assert!(rust.contains("while n < 5 { n += 1; }"), "{rust}");
 }
+
+/// **A `(` at the start of a line begins what is written there**
+/// ([ADR-317](../../../docs/specification/adr/adr-317.md), #426), as a `[`
+/// does (ADR-135 D3). `return null if open` then `(x, 2)` was the call
+/// `open(x, 2)`: a `bool` called, and the function taken to pause.
+#[test]
+fn a_paren_that_starts_a_line_is_not_a_call() {
+    let emitted = emit(
+        "enum E {\n    V(i64),\n    W,\n}\n\
+         fn first(open: bool, e: ref E) -> i64? {\n\
+             let (a, b) = match e {\n\
+                 E::V(x) => {\n\
+                     return null if open\n\
+                     (x, 2)\n\
+                 },\n\
+                 else => return null,\n\
+             }\n\
+             return a + b\n\
+         }\n",
+    );
+    assert!(emitted.contains("if open { return None; }"), "{emitted}");
+    assert!(!emitted.contains("open("), "{emitted}");
+    assert!(!emitted.contains("async fn first"), "{emitted}");
+}
+
+/// **And a call is still a call** where its `(` is on its callee's line, with
+/// the arguments running on below it - a function's and a method's alike.
+#[test]
+fn a_call_whose_paren_is_on_its_line_still_calls() {
+    let emitted = emit(
+        "fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\
+         fn main() {\n\
+             let n = add(\n        1,\n        2)\n\
+             let xs: Vec[i64] = [n]\n\
+             println(f\"{xs.contains(\n        n)}\")\n\
+         }\n",
+    );
+    assert!(
+        emitted.contains("add(1, 2)") || emitted.contains("add(1i64, 2i64)"),
+        "{emitted}"
+    );
+    assert!(emitted.contains(".contains("), "{emitted}");
+}

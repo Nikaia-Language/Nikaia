@@ -112,9 +112,7 @@ fn counted_statement(stmt: ref Stmt, mut over: Vec[CountedLoop], words: ref winn
 fn loop_over_length(binding: winnow_grammar::Symbol, iter: ref Expr, body: ref Block, over: ref Vec[CountedLoop], words: ref winnow_grammar::InternerContext) -> CountedLoop? {
     let (start, end) = match iter {
         Expr::Range { start, end, inclusive } => {
-            if inclusive {
-                return null
-            }
+            return null if inclusive
             (start, end)
         },
         else => return null,
