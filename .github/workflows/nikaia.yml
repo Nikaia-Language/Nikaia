@@ -2,11 +2,17 @@ name: Nikaia
 
 # **Once per change, not twice.** A push to a pull request's branch used to
 # start the workflow as a `push` and again as a `pull_request`, the same
-# commit twice. Pull requests run as `pull_request`; `main` runs on its push;
-# everything runs weekly and by hand.
+# commit twice. Pull requests run as `pull_request`; `develop` and `main` run
+# on their push; everything runs weekly and by hand.
+#
+# **`develop` is where every change lands at once; `main` is what was tested**
+# (#437). A push to `develop` runs everything, and when every job passed,
+# `promote` moves `main` forward to that commit. Runs on `develop` queue rather
+# than cancel, so `main` moves on with every finished run however often
+# `develop` is pushed.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   schedule:
     - cron: "17 3 * * 1"
@@ -123,6 +129,27 @@ jobs:
             (cd "$dir" && cargo test --quiet --all-features)
             echo "::endgroup::"
           done
+
+  # **`main` moves only to a commit `develop` tested** (#437). Every job above
+  # ran or was not needed, and none failed: `main` is fast-forwarded to this
+  # commit. A push that is not a fast-forward is refused, so a commit that
+  # landed on `main` some other way stops the promotion until `develop` has it.
+  promote:
+    needs: [changes, rust_floor, arm64, unsafe_crates, bootstrap_compiler]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/develop'
+      && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward main to the tested commit
+        run: git push origin "${GITHUB_SHA}:refs/heads/main"
 
   # The crates that hold `unsafe`, one topic each (ADR-218). Each is its own
   # workspace and is checked on its own: tests and lints on stable, and Miri on
