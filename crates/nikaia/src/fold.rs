@@ -17,14 +17,13 @@
 //! **The fold is Nikaia** (`nikaia-std/src/tools/fold.nika`,
 //! [ADR-294](../../../docs/specification/adr/adr-294.md) D11): a magnitude and
 //! a sign, 65 bits, held at every step to the type a declared operand pinned.
-//! This module is its adapter: the checker keeps a constant in an `i128`, so
-//! the answer is turned into one here, and a fold that left the 65 bits is a
-//! number one past `u64::MAX` - which no type holds, and which the checker
-//! says as *more than* the widest.
+//! This module is its adapter: the checker keeps a constant as the same
+//! `Integer`, and a fold that left the 65 bits as one marked `beyond` - which
+//! no type holds, and which the checker says as *more than* the widest.
 //!
 //! **Every step is `checked_`, and `None` means nothing is claimed.** A name the
 //! lookup cannot evaluate, an operator this does not fold, a division by a
-//! constant zero, a fold that leaves the `i128` - each one stops the whole
+//! constant zero - each one stops the whole
 //! expression. An expression that does not fold is never refused, which is the
 //! polarity both callers are held to (Part III, C.4): the compiler may fail to
 //! refuse a program `rustc` will, and may never refuse one that is right.
@@ -33,15 +32,18 @@ use winnow_grammar::Symbol;
 
 use crate::ast::Expr;
 use nikaia_std::tools::fold as nika;
+use nikaia_std::tools::integers::{Integer, integer};
 
 /// What a constant integer expression came to, and the type an operand's
 /// declaration pinned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constant {
-    /// A number the checker can compare against a type's range. A fold that
-    /// left the 65 bits every literal fits in is one past `u64::MAX`, with its
-    /// sign.
-    pub value: i128,
+    /// A number the checker can compare against a type's range: a magnitude
+    /// and a sign (ADR-294 D11).
+    pub value: Integer,
+    /// **A fold that left the 65 bits** every literal fits in: no type holds
+    /// it, and `value` is only its sign, heading the way it went.
+    pub beyond: bool,
     /// The integer type an operand's *declaration* fixed, where one did. **A
     /// literal pins nothing**: `3000000000` is an `i64` wherever a use asks for
     /// one (Part I 2.4), which is why a literal standing alone may not be
@@ -49,9 +51,6 @@ pub struct Constant {
     /// to take the wider type ([ADR-285](../../../docs/specification/adr/adr-285.md)).
     pub pinned: Option<String>,
 }
-
-/// The magnitude of a number no integer type holds: one past `u64::MAX`.
-pub const BEYOND: i128 = u64::MAX as i128 + 1;
 
 /// What a name is worth, where the caller knows anything about it.
 ///
@@ -81,7 +80,8 @@ pub fn constant_of(expr: &Expr, name_is: Lookup<'_>) -> Option<Constant> {
     match nika::constant_of(expr, &lookup) {
         nika::Folded::Value(c) | nika::Folded::Overflows(c) => Some(from_nikaia(c)),
         nika::Folded::TooLarge(negative) => Some(Constant {
-            value: if negative { -BEYOND } else { BEYOND },
+            value: integer(u64::MAX, negative),
+            beyond: true,
             pinned: None,
         }),
         nika::Folded::Nothing => None,
@@ -97,20 +97,45 @@ pub fn wants_widening(folded: &Constant) -> bool {
     to_nikaia(folded).is_some_and(|c| nika::wants_widening(&nika::Folded::Value(c)))
 }
 
-/// An `i128` as the fold counts: `None` past the 65 bits.
+impl Constant {
+    /// A number nothing pinned.
+    pub fn of(value: Integer) -> Constant {
+        Constant {
+            value,
+            beyond: false,
+            pinned: None,
+        }
+    }
+
+    /// Whether it is a number of the integer type `ty` - the fold's own answer
+    /// (`fold.nika`'s `integer_fits`). A number past the 65 bits is one of
+    /// none.
+    pub fn fits(&self, ty: &str) -> bool {
+        !self.beyond && nika::integer_fits(&self.value, ty)
+    }
+
+    /// The type a number with nothing declaring one takes: the first of `i32`
+    /// and `i64` that holds it (Part I 2.4).
+    pub fn first_type(&self) -> &'static str {
+        match self.fits("i32") {
+            true => "i32",
+            false => "i64",
+        }
+    }
+}
+
+/// The checker's constant as the fold counts: `None` past the 65 bits.
 fn to_nikaia(c: &Constant) -> Option<nika::Constant> {
-    Some(nika::Constant {
-        value: nikaia_std::tools::integers::integer(
-            u64::try_from(c.value.unsigned_abs()).ok()?,
-            c.value < 0,
-        ),
+    (!c.beyond).then(|| nika::Constant {
+        value: c.value,
         pinned: c.pinned.clone().unwrap_or_default(),
     })
 }
 
 fn from_nikaia(c: nika::Constant) -> Constant {
     Constant {
-        value: crate::build_time::integer_value(&c.value),
+        value: c.value,
+        beyond: false,
         pinned: (!c.pinned.is_empty()).then_some(c.pinned),
     }
 }

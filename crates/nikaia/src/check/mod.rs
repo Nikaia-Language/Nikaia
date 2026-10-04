@@ -2315,12 +2315,7 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
     for item in items {
         let ty = match item {
             build_time::Value::Bool(_) => "bool".to_string(),
-            build_time::Value::Int(value) => {
-                match i32::try_from(build_time::integer_value(value)) {
-                    Ok(_) => "i32".to_string(),
-                    Err(_) => "i64".to_string(),
-                }
-            }
+            build_time::Value::Int(value) => Constant::of(*value).first_type().to_string(),
             // **A float is an `f64` where nothing declared otherwise**, which
             // is Part I 2.4's widest-holder rule read over the one shape it
             // has two of: `f32` is a *declaration*, never an inference.
@@ -2461,11 +2456,11 @@ struct OpenNumber {
     /// assigned to it - with the statement and whether it is a bare literal.
     /// These decide the type where no use does (D3), and every one of them has
     /// to fit the type that is decided.
-    given: Vec<(i128, Span, bool)>,
+    given: Vec<(Constant, Span, bool)>,
     /// What an operation over it comes to, where that folds: held to the type
     /// and never deciding it, because a name is where the widening stops
     /// (ADR-285 D26).
-    derived: Vec<(i128, Span)>,
+    derived: Vec<(Constant, Span)>,
     /// The statements that give it a number, by the byte they start at, and
     /// every literal in them: the emitter writes each with the type's suffix
     /// where it would otherwise write another.
@@ -2485,7 +2480,7 @@ struct OpenNumber {
 struct Local {
     name: String,
     ty: Ty,
-    constant: Option<i128>,
+    constant: Option<build_time::Integer>,
     /// **The binding is a view the emitter lent**, which a `for` over a place
     /// is ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
     ///
@@ -8765,7 +8760,7 @@ impl<'a> Checker<'a> {
         let Some(folded) = self.constant_of(value) else {
             return;
         };
-        let ty = match named.or(folded.pinned) {
+        let ty = match named.or(folded.pinned.clone()) {
             Some(ty) => ty,
             // **Nothing beside it and nothing pinning it**, which is the
             // constant that decides its own type
@@ -8773,96 +8768,37 @@ impl<'a> Checker<'a> {
             // the first that holds it, so the only thing left to report here is
             // a value no type holds at all. Reported against the wider one,
             // because that is the one it fell out of.
-            None if i64::try_from(folded.value).is_err() => "i64".to_string(),
+            None if !folded.fits("i64") => "i64".to_string(),
             None => return,
         };
         let bare = matches!(value, Expr::LitInt { .. });
-        self.a_number_that_does_not_fit(folded.value, bare, &ty, span, None);
+        self.a_number_that_does_not_fit(&folded, bare, &ty, span, None);
     }
 
     /// `NK1116` for a number and the type it has to fit, where it does not;
-    /// nothing where it does. `why` is a note saying where the type came from,
-    /// for one the uses decided ([ADR-285](../../docs/specification/adr/adr-285.md)).
+    /// nothing where it does (`tools/check_numbers.nika`). `why` is a note
+    /// saying where the type came from, for one the uses decided
+    /// ([ADR-285](../../docs/specification/adr/adr-285.md)).
     fn a_number_that_does_not_fit(
         &mut self,
-        value: i128,
+        number: &Constant,
         bare: bool,
         ty: &str,
         span: &Span,
         why: Option<String>,
     ) {
-        let fits = match ty {
-            "i32" => i32::try_from(value).is_ok(),
-            "i64" => i64::try_from(value).is_ok(),
-            // **And the byte**, which needed no range here while it had no
-            // crossed form: once `const B: u8 = …` is something this compiler
-            // writes, `let x: u8 = 300` writing it is `rustc` about the
-            // generated file ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-            "u8" => u8::try_from(value).is_ok(),
-            // ADR-285 D3 and D19.
-            "u32" => u32::try_from(value).is_ok(),
-            "u64" => u64::try_from(value).is_ok(),
-            _ => return,
-        };
-        if fits {
-            return;
+        if let Some(found) = nikaia_std::tools::check_numbers::a_number_that_does_not_fit(
+            &number.value,
+            number.beyond,
+            bare,
+            ty,
+            *span,
+            why,
+        ) {
+            self.checked
+                .findings
+                .push(crate::traits::from_nikaia(found));
         }
-        let (low, high) = match ty {
-            "i32" => (i32::MIN as i128, i32::MAX as i128),
-            "u8" => (u8::MIN as i128, u8::MAX as i128),
-            "u32" => (u32::MIN as i128, u32::MAX as i128),
-            "u64" => (u64::MIN as i128, u64::MAX as i128),
-            _ => (i64::MIN as i128, i64::MAX as i128),
-        };
-        // A bare literal says its own digits; anything folded says what it came
-        // to, because the expression is on the line the caret is under and the
-        // number is the part the reader cannot see.
-        // **A fold that left the 65 bits** has no number to name
-        // ([ADR-294](../../docs/specification/adr/adr-294.md) D11): it is said
-        // as what it is past, which is the widest there is.
-        let comes_to = match value.unsigned_abs() > u128::from(u64::MAX) {
-            true if value < 0 => format!("less than -{}", u64::MAX),
-            true => format!("more than {}", u64::MAX),
-            false => value.to_string(),
-        };
-        let message = match bare {
-            true => format!("`{value}` doesn't fit in {} `{ty}`.", an_or_a(ty)),
-            false => format!(
-                "This comes to {comes_to}, which doesn't fit in {} `{ty}`.",
-                an_or_a(ty)
-            ),
-        };
-        self.checked.findings.push(Finding {
-            severity: Severity::Error,
-            span: *span,
-            code: "NK1116",
-            message,
-            // **`a u8` and `an i32`**, because the article is read off how the
-            // name is *said*: a reader says "you-eight" and "eye-thirty-two",
-            // and `an u8` is the kind of sentence that makes a message look
-            // generated.
-            notes: std::iter::once(format!("{} `{ty}` holds {low} to {high}.", an_or_a(ty)))
-                .chain(why)
-                .collect(),
-            help: Some(match ty {
-                "i32" => "Use `i64` where the number needs more room.".to_string(),
-                "u8" => "A `u8` is one byte. Use `i32` or `i64` where the number is \
-                         a count rather than a byte."
-                    .to_string(),
-                "u32" => "Use `u64` where the number needs more room.".to_string(),
-                "u64" => "A `u64` is the widest number Nikaia has, so the computation \
-                          has to stay inside it."
-                    .to_string(),
-                _ if value > 0 && u64::try_from(value).is_ok() => {
-                    "A number this big only fits a `u64`. Write the type: `let x: u64 = …`."
-                        .to_string()
-                }
-                _ => "An `i64` is the widest signed number Nikaia has, so the computation \
-                      has to stay inside it."
-                    .to_string(),
-            }),
-            labels: Vec::new(),
-        });
     }
 
     /// What a constant integer expression comes to, and the type an operand's
@@ -8886,10 +8822,7 @@ impl<'a> Checker<'a> {
                 .binding(self.parsed.text(name))
                 .is_some_and(|local| local.open_number.is_some())
             {
-                return Some(Constant {
-                    value,
-                    pinned: None,
-                });
+                return Some(Constant::of(value));
             }
             Some(Constant {
                 // **A name pins, and a literal does not**
@@ -8899,13 +8832,9 @@ impl<'a> Checker<'a> {
                 // `let a = 2000000000` is an `i32` and `a + a` is arithmetic in
                 // one, the same as in every language that has both widths. The
                 // way out is one word: `let a: i64 = …`.
-                pinned: integer_named(&ty).or_else(|| {
-                    Some(match i32::try_from(value) {
-                        Ok(_) => "i32".to_string(),
-                        Err(_) => "i64".to_string(),
-                    })
-                }),
-                value,
+                pinned: integer_named(&ty)
+                    .or_else(|| Some(Constant::of(value).first_type().to_string())),
+                ..Constant::of(value)
             })
         })
     }
@@ -9022,10 +8951,10 @@ impl<'a> Checker<'a> {
         if let Some(folded) = &pure {
             entry
                 .given
-                .push((folded.value, *span, matches!(value, Expr::LitInt { .. })));
+                .push((folded.clone(), *span, matches!(value, Expr::LitInt { .. })));
         }
         if let Some(folded) = derived {
-            entry.derived.push((folded.value, *span));
+            entry.derived.push((folded, *span));
         }
         entry.written.push((
             span.at(),
@@ -9084,7 +9013,7 @@ impl<'a> Checker<'a> {
                 let small = members
                     .iter()
                     .flat_map(|m| &m.given)
-                    .all(|(value, _, _)| i32::try_from(*value).is_ok());
+                    .all(|(value, _, _)| value.fits("i32"));
                 match small {
                     true => "i32".to_string(),
                     false => "i64".to_string(),
@@ -9102,7 +9031,7 @@ impl<'a> Checker<'a> {
             let before = self.checked.findings.len();
             for member in &members {
                 for (value, at, bare) in &member.given {
-                    self.a_number_that_does_not_fit(*value, *bare, &held, at, why.clone());
+                    self.a_number_that_does_not_fit(value, *bare, &held, at, why.clone());
                 }
             }
             if self.checked.findings.len() == before {
@@ -9116,7 +9045,7 @@ impl<'a> Checker<'a> {
                     {
                         continue;
                     }
-                    self.a_number_that_does_not_fit(*value, false, &held, at, why.clone());
+                    self.a_number_that_does_not_fit(value, false, &held, at, why.clone());
                 }
             }
             // **The type is written** (D4), and a literal the emitter would
@@ -9301,15 +9230,29 @@ impl<'a> Checker<'a> {
         let (Some(left), Some(right)) = (self.constant_of(lhs), self.constant_of(rhs)) else {
             return;
         };
-        let value = match op {
-            BinaryOp::Add => left.value.checked_add(right.value),
-            BinaryOp::Sub => left.value.checked_sub(right.value),
-            BinaryOp::Mul => left.value.checked_mul(right.value),
-            BinaryOp::Div => left.value.checked_div(right.value),
-            _ => left.value.checked_rem(right.value),
-        };
-        let Some(value) = value else {
+        // An operand past the 65 bits has said so where it was folded.
+        if left.beyond || right.beyond {
             return;
+        }
+        // `integers.nika`'s arithmetic. A sum or a difference that leaves the
+        // 65 bits heads the way the left operand does, a product the way the
+        // signs together do; a division by zero is `NK1118`'s, not this.
+        use nikaia_std::tools::integers as int;
+        let (a, b) = (&left.value, &right.value);
+        let (value, heading) = match op {
+            BinaryOp::Add => (int::integer_sum(a, b), a.negative),
+            BinaryOp::Sub => (int::integer_difference(a, b), a.negative),
+            BinaryOp::Mul => (int::integer_product(a, b), a.negative != b.negative),
+            BinaryOp::Div => (int::integer_quotient(a, b, false), false),
+            _ => (int::integer_quotient(a, b, true), false),
+        };
+        let value = match value {
+            Some(value) => Constant::of(value),
+            None if matches!(op, BinaryOp::Div | BinaryOp::Rem) => return,
+            None => Constant {
+                beyond: true,
+                ..Constant::of(int::integer(u64::MAX, heading))
+            },
         };
         // **An open number in it is measured with that number**, once its
         // uses have decided what it is (ADR-285 D25) - and a refusal there
@@ -9323,7 +9266,7 @@ impl<'a> Checker<'a> {
         if !open.is_empty() {
             for number in open {
                 if let Some(number) = self.open_numbers.get_mut(&number) {
-                    number.derived.push((value, *span));
+                    number.derived.push((value.clone(), *span));
                 }
             }
             return;
@@ -9332,7 +9275,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let before = self.checked.findings.len();
-        self.a_number_that_does_not_fit(value, false, &ty, span, None);
+        self.a_number_that_does_not_fit(&value, false, &ty, span, None);
         if self.checked.findings.len() > before {
             self.overflowed.insert(span.at());
         }
@@ -9345,7 +9288,7 @@ impl<'a> Checker<'a> {
         let Some(divisor) = self.constant_of(rhs) else {
             return;
         };
-        if divisor.value != 0 {
+        if divisor.beyond || divisor.value.magnitude != 0 {
             return;
         }
         let what = match op {
@@ -17723,7 +17666,7 @@ impl<'a> Checker<'a> {
                 let value = local
                     .built
                     .clone()
-                    .or_else(|| local.constant.map(build_time::int));
+                    .or_else(|| local.constant.map(build_time::Value::Int));
                 match value {
                     Some(value) => held.insert(local.name.as_str(), value),
                     None => held.remove(local.name.as_str()),
@@ -17745,7 +17688,7 @@ impl<'a> Checker<'a> {
                 (None, true)
             }
             Err(build_time::Refusal::OutOfBounds { at, len }) => {
-                self.a_build_time_index_is_not_there(build_time::integer_value(&at), len, span);
+                self.a_build_time_index_is_not_there(&at, len, span);
                 (None, true)
             }
             Err(build_time::Refusal::Circular { ring }) => {
@@ -18039,7 +17982,13 @@ impl<'a> Checker<'a> {
     /// this sentence at run time, and saying *this compiler cannot evaluate it*
     /// instead would send the reader looking for a missing feature rather than
     /// at the line ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)).
-    fn a_build_time_index_is_not_there(&mut self, at: i128, len: usize, span: &Span) {
+    fn a_build_time_index_is_not_there(
+        &mut self,
+        at: &build_time::Integer,
+        len: usize,
+        span: &Span,
+    ) {
+        let at = nikaia_std::tools::integers::integer_text(at);
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: *span,
@@ -18380,20 +18329,25 @@ impl<'a> Checker<'a> {
             {
                 continue;
             }
-            let folded = self.constant_of(count).map(|c| c.value);
+            let folded = self
+                .constant_of(count)
+                .filter(|c| !c.beyond)
+                .map(|c| c.value);
             // A constant the buffer's own length covers. `Array[T, N]` is the
             // one buffer whose length this compiler knows, and a zero is
             // covered by every buffer there is.
             let room = match found.get(at) {
                 Some(Ty::Named { name, args, .. }) if name == ty::ARRAY => match args.as_slice() {
-                    [_, Ty::Count(n)] => Some(*n as i128),
+                    [_, Ty::Count(n)] => Some(*n),
                     _ => None,
                 },
                 _ => None,
             };
             let fits = match (folded, room) {
-                (Some(0), _) => true,
-                (Some(c), Some(n)) => c >= 0 && c <= n,
+                (Some(c), _) if c.magnitude == 0 => true,
+                (Some(c), Some(n)) => {
+                    !c.negative && u64::try_from(n).is_ok_and(|n| c.magnitude <= n)
+                }
                 _ => false,
             };
             if fits {
@@ -20755,7 +20709,7 @@ impl<'a> Checker<'a> {
 
     /// Bind a name, with the constant it stands for where there is one
     /// (ADR-285 D29). Only [`Stmt::Let`] ever passes anything but `None`.
-    fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
+    fn bind_with(&mut self, name: String, ty: Ty, constant: Option<build_time::Integer>) {
         self.bind_local(Local {
             id: a_new_binding(),
             literal: None,
@@ -20791,7 +20745,7 @@ impl<'a> Checker<'a> {
 
     /// The innermost binding of a name: its type, and the constant it stands
     /// for where the checker could evaluate one.
-    fn local(&self, name: &str) -> Option<(Ty, Option<i128>)> {
+    fn local(&self, name: &str) -> Option<(Ty, Option<build_time::Integer>)> {
         self.scope
             .iter()
             .rev()
@@ -21715,7 +21669,10 @@ impl<'a> Checker<'a> {
         // integer type a *declaration* pinned — a question the interpreter does
         // not ask and does not need to.
         let (evaluated, said) = match &folded {
-            Some(folded) => (Some(build_time::int(folded.value)), false),
+            // A fold past the 65 bits has been refused already, and has no
+            // number to hand on.
+            Some(folded) if folded.beyond => (None, false),
+            Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
             None => self.build_time_value(value, &bound, span),
         };
         // Counted rather than returned, so that every refusal below - the
@@ -21832,10 +21789,7 @@ impl<'a> Checker<'a> {
                 }),
             (None, Some(folded), _) => Some(match &folded.pinned {
                 Some(pinned) => pinned.clone(),
-                None => match i32::try_from(folded.value) {
-                    Ok(_) => "i32".to_string(),
-                    Err(_) => "i64".to_string(),
-                },
+                None => folded.first_type().to_string(),
             }),
             (None, None, _) => match &evaluated {
                 // A float with nothing declaring which one it is takes the
@@ -21845,10 +21799,7 @@ impl<'a> Checker<'a> {
                 // was written `true` or came out of a call.
                 Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
                 Some(build_time::Value::Int(value)) => {
-                    Some(match i32::try_from(build_time::integer_value(value)) {
-                        Ok(_) => "i32".to_string(),
-                        Err(_) => "i64".to_string(),
-                    })
+                    Some(Constant::of(*value).first_type().to_string())
                 }
                 // **An array with nothing declaring its type.** The element
                 // type is the **checker's** where it has one - a body declared
@@ -21983,7 +21934,7 @@ impl<'a> Checker<'a> {
             // The fold's number, which is what `constant_of` reads one
             // `comptime` later and what `ADR-285 D29's overflow check needs.
             constant: match &evaluated {
-                Some(build_time::Value::Int(value)) => Some(build_time::integer_value(value)),
+                Some(build_time::Value::Int(value)) => Some(*value),
                 _ => None,
             },
             // …and the whole value, which is what a *call* one `comptime`

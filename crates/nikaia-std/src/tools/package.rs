@@ -1933,6 +1933,54 @@ pub fn a_pausing_sequence(result: Ty, on: &Ty) -> Ty {
 }
 
 
+// --- check_numbers.nika ---
+
+const U64_HIGHEST: u64 = 18446744073709551615;
+
+fn the_low_end_of(ty: &str) -> String {
+    match ty {
+        "i32" => String::from("-2147483648"),
+        "u8" => String::from("0"),
+        "u32" => String::from("0"),
+        "u64" => String::from("0"),
+        _ => String::from("-9223372036854775808"),
+    }
+}
+
+fn the_high_end_of(ty: &str) -> String {
+    match ty {
+        "i32" => String::from("2147483647"),
+        "u8" => String::from("255"),
+        "u32" => String::from("4294967295"),
+        "u64" => String::from("18446744073709551615"),
+        _ => String::from("9223372036854775807"),
+    }
+}
+
+pub fn a_number_that_does_not_fit(value: &Integer, beyond: bool, bare: bool, ty: &str, span: Span, why: Option<String>) -> Option<Finding> {
+    if ty != "i32" && ty != "i64" && ty != "u8" && ty != "u32" && ty != "u64" { return None; }
+    if !beyond && integer_fits(value, ty) { return None; }
+    let article = an_or_a(ty);
+    let written = integer_text(value);
+    let mut comes_to = written.to_owned();
+    if beyond && value.negative { comes_to = format!("less than -{}", U64_HIGHEST); } else if beyond { comes_to = format!("more than {}", U64_HIGHEST); }
+    let mut message = format!("This comes to {}, which doesn't fit in {} `{}`.", comes_to, article, ty);
+    if bare { message = format!("`{}` doesn't fit in {} `{}`.", written, article, ty); }
+    let low = the_low_end_of(ty);
+    let high = the_high_end_of(ty);
+    let mut notes: Vec<String> = vec![format!("{} `{}` holds {} to {}.", article, ty, low, high)];
+    if why.is_some() { notes.push(nikaia_std::index::or(why, || "".into())); }
+    let help: String = match ty {
+        "i32" => String::from("Use `i64` where the number needs more room."),
+        "u8" => String::from("A `u8` is one byte. Use `i32` or `i64` where the number is a count rather than a byte."),
+        "u32" => String::from("Use `u64` where the number needs more room."),
+        "u64" => String::from("A `u64` is the widest number Nikaia has, so the computation has to stay inside it."),
+        _ => if !beyond && !value.negative && value.magnitude > 0u64 { String::from("A number this big only fits a `u64`. Write the type: `let x: u64 = …`.") } else { String::from("An `i64` is the widest signed number Nikaia has, so the computation has to stay inside it.") },
+    };
+    Some(refusal("NK1116", span, message, notes, help))
+}
+
+
 // --- check_types.nika ---
 
 pub fn a_number_name(name: &str) -> bool { name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" || name == "f32" || name == "f64" }
@@ -3701,17 +3749,20 @@ const U16_HIGH: u64 = 65535;
 
 // sync (Part II, 12.1): pure CPU, cannot pause. Checked before
 // this was written - see `contracts::sync`.
-pub fn fits(c: &Constant, ty: &str) -> bool {
-    let n = c.value;
+pub fn fits(c: &Constant, ty: &str) -> bool { integer_fits(&c.value, ty) }
+
+// sync (Part II, 12.1): pure CPU, cannot pause. Checked before
+// this was written - see `contracts::sync`.
+pub fn integer_fits(n: &Integer, ty: &str) -> bool {
     match ty {
-        "i64" => integer_as_count(&n).is_some(),
-        "i32" => fits_an_i32(&n),
+        "i64" => integer_as_count(n).is_some(),
+        "i32" => fits_an_i32(n),
         "u64" => !n.negative,
         "u32" => !n.negative && u32::try_from(n.magnitude).ok().is_some(),
-        "i8" => within(&n, I8_LOW, I8_HIGH),
-        "i16" => within(&n, I16_LOW, I16_HIGH),
-        "u8" => within(&n, 0u64, U8_HIGH),
-        "u16" => within(&n, 0u64, U16_HIGH),
+        "i8" => within(n, I8_LOW, I8_HIGH),
+        "i16" => within(n, I16_LOW, I16_HIGH),
+        "u8" => within(n, 0u64, U8_HIGH),
+        "u16" => within(n, 0u64, U16_HIGH),
         _ => true,
     }
 }
@@ -16391,6 +16442,10 @@ pub mod check_calls {
     #[allow(unused_imports)]
     pub use super::{call_arguments, expected_arguments, receiver_bindings, argument_bindings, walks_by_value, shape_through, a_paused_chain, a_pausing_sequence};
 }
+pub mod check_numbers {
+    #[allow(unused_imports)]
+    pub use super::{a_number_that_does_not_fit};
+}
 pub mod check_types {
     #[allow(unused_imports)]
     pub use super::{a_number_name, view_of_type, viewed_from_type, unviewed_type, copies_as_a_view, value_of_a_copy, is_a_view_of_a_string, a_copy_by_value, moves_away, copies_plainly, holds_an_array, is_a_list_type, is_a_collection_type, is_text_type, is_a_hull, locked_content_of, is_a_handle, locked_content, becomes_shared, way_out_of_a_mismatch, element_walked, elements_walked};
@@ -16437,7 +16492,7 @@ pub mod fixed {
 }
 pub mod fold {
     #[allow(unused_imports)]
-    pub use super::{Constant, Folded, fits, constant_of, wants_widening};
+    pub use super::{Constant, Folded, fits, integer_fits, constant_of, wants_widening};
 }
 pub mod foreign {
     #[allow(unused_imports)]

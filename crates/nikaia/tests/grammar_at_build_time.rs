@@ -349,7 +349,7 @@ fn the_decoder_reads_every_shape_the_dumper_writes() {
 
     assert_eq!(
         decode("(i 42)").expect("an integer"),
-        nikaia::build_time::int(42)
+        Value::Int(nikaia_std::tools::integers::integer(42, false))
     );
     assert_eq!(decode("(b true)").expect("a bool"), Value::Bool(true));
     assert_eq!(
@@ -358,7 +358,10 @@ fn the_decoder_reads_every_shape_the_dumper_writes() {
     );
     assert_eq!(
         decode("(l (i 1) (i 2))").expect("a list"),
-        Value::List(vec![nikaia::build_time::int(1), nikaia::build_time::int(2)])
+        Value::List(vec![
+            Value::Int(nikaia_std::tools::integers::integer(1, false)),
+            Value::Int(nikaia_std::tools::integers::integer(2, false))
+        ])
     );
     assert_eq!(decode("(f 1.5)").expect("a float"), Value::Float(1.5));
     // **The variant and its type are two words**, and the one defect this
@@ -378,7 +381,10 @@ fn the_decoder_reads_every_shape_the_dumper_writes() {
         Value::Variant {
             ty: "Shape".to_string(),
             variant: "Pair".to_string(),
-            payload: vec![nikaia::build_time::int(7), Value::Text("x".to_string())],
+            payload: vec![
+                Value::Int(nikaia_std::tools::integers::integer(7, false)),
+                Value::Text("x".to_string())
+            ],
         }
     );
     let Value::Struct { name, fields } =
@@ -388,7 +394,10 @@ fn the_decoder_reads_every_shape_the_dumper_writes() {
     };
     assert_eq!(name, "Setting");
     assert_eq!(fields["key"], Value::Text("a".to_string()));
-    assert_eq!(fields["value"], nikaia::build_time::int(1));
+    assert_eq!(
+        fields["value"],
+        Value::Int(nikaia_std::tools::integers::integer(1, false))
+    );
 
     // And a shape it does not know is said rather than guessed at.
     assert!(decode("(q 1)").is_err());

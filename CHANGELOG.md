@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.426] — 2026-10-04
+
+**A number that does not fit is said in Nikaia, and counted as one**
+(ADR-285, ADR-294 D11, #125). `NK1116` - the number, the type, what that type
+holds and the way out - moves into `tools/check_numbers.nika`. The constant
+the checker keeps is `integers.nika`'s `Integer` rather than an `i128` with a
+sentinel one past `u64::MAX` for a fold that left the 65 bits: such a fold is
+marked as one, each place that compared a wide number against a type's ends
+asks `fold.nika`'s `integer_fits`, and the overflow at an operation is counted
+with `integers.nika`'s arithmetic (ADR-315's `checked_` underneath). The
+build-time evaluator's `i128` adapters are gone. 29.1 % of the toolchain is
+Nikaia.
+
 ## [0.0.425] — 2026-10-04
 
 **What is left between 1BRC and `tuned` is written down, and each item is an
