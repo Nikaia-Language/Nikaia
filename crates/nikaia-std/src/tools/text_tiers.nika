@@ -908,9 +908,40 @@ fn container_source(source: ref Declaring?, ask: ref TierAsk) -> bool {
     return a_container(ask.names, found.ty)
 }
 
+/// A literal, or an `if` or a `match` whose every value is one (#441): static
+/// text whichever way it goes, so D17 builds it into a `String` where it is
+/// bound, as it does a bare literal.
 fn a_literal_text(value: ref Expr) -> bool {
     return match value {
         Expr::LitStr { .. } => true,
+        Expr::Block(block) => a_literal_tail(block),
+        Expr::If { then_branch, else_branch, .. } => {
+            let otherwise = else_branch ?? return false
+            a_literal_tail(then_branch) && a_literal_tail(otherwise)
+        }
+        Expr::Match { arms, .. } => {
+            if arms.is_empty() {
+                return false
+            }
+            for arm in arms {
+                if !a_literal_text(arm.body) {
+                    return false
+                }
+            }
+            true
+        }
+        else => false,
+    }
+}
+
+/// A block whose last statement is a literal text, and nothing it says before
+/// that is a value.
+fn a_literal_tail(block: ref Block) -> bool {
+    if block.stmts.len() != 1 {
+        return false
+    }
+    return match block.stmts[0].node {
+        Stmt::Expr(last) => a_literal_text(last),
         else => false,
     }
 }

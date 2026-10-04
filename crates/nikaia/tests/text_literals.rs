@@ -253,3 +253,37 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     );
     assert!(help.contains(".clone()"), "{help}");
 }
+
+/// **An `if` or a `match` of literals is static text too** (#441, ADR-282
+/// D17), and the rule holds in a program that writes `String` nowhere but in a
+/// list's type: kept, each is declared `String`; only looked at, it stays a
+/// view.
+#[test]
+fn a_branch_of_literals_kept_is_declared_string_and_one_looked_at_is_not() {
+    let source = "fn look(s: ref String) -> i64 {\n\
+         \x20   return s.len()\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let k = 3\n\
+         \x20   let mut xs: Vec[String] = Vec()\n\
+         \x20   let n = \"ada\"\n\
+         \x20   xs.push(n)\n\
+         \x20   let q = if k > 1 { \"x\" } else { \"y\" }\n\
+         \x20   xs.push(q)\n\
+         \x20   let r = match k {\n\
+         \x20       1 => \"one\",\n\
+         \x20       else => \"many\",\n\
+         \x20   }\n\
+         \x20   xs.push(r)\n\
+         \x20   let v = if k > 1 { \"only\" } else { \"viewed\" }\n\
+         \x20   println(f\"{xs.len()} {xs[1]} {xs[2]} {look(v)}\")\n\
+         }\n";
+    let found = findings(source);
+    assert!(found.is_empty(), "{found:#?}");
+    let rust = lowered(source);
+    assert!(rust.contains("let q: String = if"), "{rust}");
+    assert!(rust.contains("let r: String = match"), "{rust}");
+    assert!(rust.contains("let v = if"), "{rust}");
+    assert_eq!(ran("branch-of-literals", source).trim(), "3 x many 4");
+}

@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.444] — 2026-10-04
+
+**An `if` or a `match` of literals, kept, is declared `String`** (ADR-282
+D17, #441). `let m = "bob"` pushed into a `Vec[String]` compiled, but
+`let q = if k > 1 { "x" } else { "y" }` was refused with *write `.clone()`*,
+as if the text belonged to something else. A branch whose every value is a
+literal is static text whichever way it goes, and is now declared `String`
+where it is kept, each literal built where it stands; only looked at, it stays
+a view.
+
+Found on the way: D17 borrowed the type node it writes from a field, a
+parameter or a result declared `String`, and a program with none - a `main`
+that pushes into a `Vec[String]` - had no node, so even `let n = "ada"` stayed
+a view there and the push was refused. The compiler makes the node itself now.
+
 ## [0.0.443] — 2026-10-04
 
 **A span of time is read back as `timeout.in_seconds()`** (#377, ADR-150 D5).

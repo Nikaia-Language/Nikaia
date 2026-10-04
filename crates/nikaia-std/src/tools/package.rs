@@ -13377,7 +13377,30 @@ fn container_source(source: Option<&Declaring>, ask: &TierAsk<'_>) -> bool {
     a_container(ask.names, &found.ty)
 }
 
-fn a_literal_text(value: &Expr) -> bool { matches!(value, Expr::LitStr { .. }) }
+fn a_literal_text(value: &Expr) -> bool {
+    match value {
+        Expr::LitStr { .. } => true,
+        Expr::Block(block) => a_literal_tail(block),
+        Expr::If { then_branch, else_branch, .. } => {
+            let otherwise = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return false };
+            a_literal_tail(then_branch) && a_literal_tail(otherwise)
+        },
+        Expr::Match { arms, .. } => {
+            if arms.is_empty() { return false; }
+            for arm in arms.iter() { if !a_literal_text(&arm.body) { return false; } }
+            true
+        },
+        _ => false,
+    }
+}
+
+fn a_literal_tail(block: &Block) -> bool {
+    if block.stmts.len() != 1 { return false; }
+    match &nikaia_std::index::get(&block.stmts, 0).node {
+        Stmt::Expr(last) => a_literal_text(last),
+        _ => false,
+    }
+}
 
 fn tier_assign(target: &Expr, value: &Expr, node_of: &impl Fn(&Expr) -> i64, ask: &TierAsk<'_>, walk: &mut TierWalk) {
     let kinds = tier_expr(value, node_of, ask, walk);

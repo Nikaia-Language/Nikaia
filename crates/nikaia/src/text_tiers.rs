@@ -161,7 +161,26 @@ pub fn refine(parsed: &mut Parsed) {
             (*at as u32, wraps)
         })
         .collect();
-    rewrite(parsed, &tiers, &lets, decided.text, &wraps, into);
+    // **The `String` a binding is declared with does not have to be written
+    // anywhere else** (#441): `text` is the type node of a declared field,
+    // parameter or result, and a program with none of them - a `main` that
+    // pushes `let n = "ada"` into a `Vec[String]` - had no node, so D17's
+    // binding stayed a view and the push was refused.
+    let text = decided.text.or_else(|| {
+        (!lets.is_empty()).then(|| crate::ast::Type {
+            name: parsed.interner.intern_string("String"),
+            generics: Vec::new(),
+            is_view: false,
+            is_tuple: false,
+            is_nullable: false,
+            code: Box::new(None),
+            count: None,
+            is_mut: false,
+            is_slice: false,
+            either: false,
+        })
+    });
+    rewrite(parsed, &tiers, &lets, text, &wraps, into);
     parsed.text_tiers = said;
 }
 
