@@ -99,23 +99,41 @@ fn threads() -> usize {
 /// check gives, found in chunks.
 fn validate(bytes: &[u8]) -> Result<(), usize> {
     if bytes.len() < CHUNKED_ABOVE || threads() < 2 {
-        return std::str::from_utf8(bytes)
-            .map(|_| ())
-            .map_err(|e| e.valid_up_to());
+        return piece(bytes);
     }
     let cuts = char_boundaries(bytes, threads());
     chunks(bytes, &cuts)
+}
+
+/// One piece checked: UTF-8, or the offset of the first byte that is not.
+///
+/// With `simd`, `simdutf8`'s fast check answers the common case - the bytes
+/// are text - and only a piece that fails is checked again by its `compat`
+/// half, which finds the offset the standard library would. Both halves give
+/// the standard library's verdict; the tests hold them to it.
+fn piece(bytes: &[u8]) -> Result<(), usize> {
+    #[cfg(feature = "simd")]
+    {
+        if simdutf8::basic::from_utf8(bytes).is_ok() {
+            return Ok(());
+        }
+        simdutf8::compat::from_utf8(bytes)
+            .map(|_| ())
+            .map_err(|e| e.valid_up_to())
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        std::str::from_utf8(bytes)
+            .map(|_| ())
+            .map_err(|e| e.valid_up_to())
+    }
 }
 
 #[cfg(feature = "rayon")]
 fn chunks(bytes: &[u8], cuts: &[usize]) -> Result<(), usize> {
     use rayon::prelude::*;
     cuts.par_windows(2)
-        .filter_map(|w| {
-            std::str::from_utf8(&bytes[w[0]..w[1]])
-                .err()
-                .map(|e| w[0] + e.valid_up_to())
-        })
+        .filter_map(|w| piece(&bytes[w[0]..w[1]]).err().map(|at| w[0] + at))
         .min()
         .map_or(Ok(()), Err)
 }
@@ -123,11 +141,7 @@ fn chunks(bytes: &[u8], cuts: &[usize]) -> Result<(), usize> {
 #[cfg(not(feature = "rayon"))]
 fn chunks(bytes: &[u8], cuts: &[usize]) -> Result<(), usize> {
     cuts.windows(2)
-        .filter_map(|w| {
-            std::str::from_utf8(&bytes[w[0]..w[1]])
-                .err()
-                .map(|e| w[0] + e.valid_up_to())
-        })
+        .filter_map(|w| piece(&bytes[w[0]..w[1]]).err().map(|at| w[0] + at))
         .min()
         .map_or(Ok(()), Err)
 }
@@ -161,7 +175,7 @@ fn char_boundaries(bytes: &[u8], n: usize) -> Vec<usize> {
 mod tests {
     #[cfg(feature = "rayon")]
     use super::CHUNKED_ABOVE;
-    use super::{CheckedText, validate};
+    use super::{CheckedText, piece, validate};
 
     #[test]
     #[cfg(feature = "map")]
@@ -188,7 +202,6 @@ mod tests {
         assert_eq!(view.chars().count(), 5);
     }
 
-    #[cfg(feature = "rayon")]
     fn serial(bytes: &[u8]) -> Result<(), usize> {
         std::str::from_utf8(bytes)
             .map(|_| ())
@@ -255,6 +268,46 @@ mod tests {
             bytes[w[0] + (w[1] - w[0]) / 2] = 0xFF;
         }
         assert_eq!(validate(&bytes), serial(&bytes));
+    }
+
+    /// The check of one piece gives the standard library's answer - verdict
+    /// and offset - for every one- and two-byte sequence, and for every
+    /// two-byte sequence followed by a third and fourth byte drawn from the
+    /// bytes UTF-8 treats differently. Each sits once at the start, once in
+    /// the middle of a long ASCII text and once across the 64-byte blocks a
+    /// SIMD check reads, so that with `simd` the vector path is the one
+    /// answering and its block edges are crossed.
+    #[test]
+    fn one_piece_answers_as_the_standard_library_does() {
+        let edges: [u8; 12] = [
+            0x00, 0x41, 0x7F, 0x80, 0xBF, 0xC0, 0xC2, 0xDF, 0xE0, 0xED, 0xF0, 0xF4,
+        ];
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for a in 0..=255u8 {
+            cases.push(vec![a]);
+            for b in 0..=255u8 {
+                cases.push(vec![a, b]);
+            }
+        }
+        for &a in &[0xE0u8, 0xE1, 0xED, 0xEF, 0xF0, 0xF1, 0xF4, 0xF5] {
+            for b in 0x7Fu8..=0xC1 {
+                for &c in &edges {
+                    cases.push(vec![a, b, c]);
+                    for &d in &edges {
+                        cases.push(vec![a, b, c, d]);
+                    }
+                }
+            }
+        }
+        let ascii = |n: usize| vec![b'a'; n];
+        for case in &cases {
+            for (head, tail) in [(0, 0), (100, 0), (61, 70), (127, 3)] {
+                let mut bytes = ascii(head);
+                bytes.extend_from_slice(case);
+                bytes.extend(ascii(tail));
+                assert_eq!(piece(&bytes), serial(&bytes), "{bytes:02X?}");
+            }
+        }
     }
 
     #[test]

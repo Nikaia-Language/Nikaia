@@ -26,7 +26,7 @@ trace = ["winnow-grammar/trace"]
 tether = { path = "../unsafe/tether" }
 # Bytes checked as text once, in chunks across the pool, and a file mapped and
 # checked (Part III 17.1).
-checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map"] }
+checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map", "simd"] }
 # Text a C library owns, copied out (ADR-302 D8).
 c-text = { path = "../unsafe/c-text" }
 # An error's site in one word, or its cold part boxed (ADR-280 D24).

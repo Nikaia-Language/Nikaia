@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.424] — 2026-10-04
+
+**`fs::map` checks UTF-8 with SIMD** (ADR-016 D4). `checked-text` checks each
+piece with `simdutf8` behind a new `simd` feature, which `nikaia-std` turns on:
+its fast check for text, its `compat` half for the offset of a bad byte, so
+the verdict and the offset are the standard library's, held to it by a test
+across the vector check's block edges. ADR-016 had rejected it while the check
+was 10 ms of a 140 ms program; on 1BRC it had become the largest thing left
+against the loop that does not validate. Over 1 M rows: 390 → 365 instructions
+a row, mispredictions 4.28 → 3.42, the same output and the same refusal of a
+stray byte; on the clock the same or faster, pinned and unpinned, and the same
+on an all-ASCII file.
+
 ## [0.0.423] — 2026-10-04
 
 **ADR-314 is decided: what a grammar matched and what a callee promises are

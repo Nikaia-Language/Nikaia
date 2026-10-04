@@ -111,12 +111,14 @@ measured against `tuned` alone the grammar looks 1.6× slow, and measured
 against `naive` alone it looks 1.8× fast. Neither number means anything
 without the other.
 
-**The rest against `tuned` is not all parser overhead.** `tuned` never validates
-UTF-8, and `std::fs::map` must — the `&str` views a grammar cuts out of a
-mapping depend on it
-([ADR-016](../../docs/specification/adr/adr-016.md) D1, where that check is
-measured and divided across cores rather than skipped). Where the rest of it
-is, line by line, is the last section below.
+**The rest against `tuned` is not all parser overhead.** `tuned` works on bytes
+and makes text only of the 413 distinct names, once each, when it prints them;
+a stray byte in a temperature it reads as a wrong number without noticing.
+`std::fs::map` checks the whole file, because every `&str` view a grammar cuts
+out of a mapping depends on it
+([ADR-016](../../docs/specification/adr/adr-016.md) D1: without the check, the
+program prints a station name that is not text). Where the rest of it is, line
+by line, is in the sections below.
 
 **The parallel row is not a 4× speed-up over the sequential one**. The input is
 read once either way and the UTF-8 check is already spread across cores at both
@@ -230,6 +232,29 @@ The compiler itself does not move with any of this: `nikaia lower` on
 `crates/nikaia-std/src/tools/ty.nika`, the largest Nikaia source in the tree,
 went 382.54 M → 382.56 M instructions with the same Rust out across
 `winnow-grammar` 28cf576 → 9446f25.
+
+## The UTF-8 check with SIMD (0.0.424)
+
+The check `tuned` does not make was the largest single thing left: 35.5 of 390
+instructions a row and 0.89 of 4.28 mispredictions. `checked-text` now checks
+each piece with `simdutf8`, which answers as the standard library does, verdict
+and offset ([ADR-016](../../docs/specification/adr/adr-016.md) D4):
+
+| | instructions per row | mispredictions per row | one core | unpinned | all-ASCII twin, one core |
+|---|---:|---:|---:|---:|---:|
+| `std::str::from_utf8` | 390.0 | 4.28 | 0.332 s | 0.305 s | 0.301 s |
+| **`simdutf8`** | **364.9** | **3.42** | **0.305 s** | **0.278 s** | 0.302 s |
+
+Same output, and a file with a stray byte is refused with the same message at
+the same offset. The clock columns are under this box's 10 %, and quoted for
+what they rule out: on no input, pinned or not, is the check slower than it
+was. The all-ASCII twin is the case where the standard library's own fast path
+was already good, and there the two are the same.
+
+What is left of the check is about 10 instructions a row. Making it nothing,
+as `tuned` does, would take the grammar reading bytes and the text check moved
+to what becomes text - here only the names, and of those only each distinct one
+- which ADR-016 §4 defers as a decision about what a view is.
 
 ## What this does not claim
 

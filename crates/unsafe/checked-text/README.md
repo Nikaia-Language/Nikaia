@@ -8,6 +8,9 @@ not once per view. Optional features:
   only where a character begins, and reports the same first bad byte a serial
   check would.
 * `map`: a file mapped and checked in one step.
+* `simd`: each piece is checked with `simdutf8`, which gives the standard
+  library's verdict and the same offset for a bad byte; a test holds it to
+  `std::str::from_utf8` across the vector check's block edges.
 
 No dependencies without features.
 

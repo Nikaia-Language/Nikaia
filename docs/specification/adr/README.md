@@ -146,7 +146,7 @@ implementation.
 | ADR | Decides | Status | Built |
 | :--- | :--- | :--- | :--- |
 | [296](adr-296.md) | A grammar is part of the language: scannerless, entered by a call to any `entry rule`, cut in parallel only where a checked frame says so, lowered name for name, and its actions neither pause nor fail without a name. | Accepted | partly: D5's `args.values()`, D14's prefix hash, D15's skipped teardown |
-| [016](adr-016.md) | The UTF-8 check is divided across frames, never skipped. | Accepted | yes |
+| [016](adr-016.md) | The UTF-8 check is divided across frames, never skipped, and each piece is checked with SIMD (`simdutf8`), answering as the standard library does. | Accepted | yes |
 
 ### Diagnostics
 
