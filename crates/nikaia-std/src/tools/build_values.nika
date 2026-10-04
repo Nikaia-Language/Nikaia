@@ -1,0 +1,149 @@
+// crates/nikaia-std/src/tools/build_values.nika
+//
+// **What a build-time expression comes to** (ADR-287) - a number, a truth
+// value, text, a list, a pair, a variant or a struct of the program's own -
+// and what the evaluator does with two of them, moved from the compiler's
+// `build_time` (ADR-294, #125).
+//
+// Each kind is one a `const` can carry (ADR-287 D6): Rust's `const` needs a
+// type this compiler can spell. An integer is a magnitude and a sign
+// (`integers.nika`), and a float is carried as the machine carries one - it
+// does not take part in the fold's arithmetic, and a value that is not finite
+// is refused where it crosses, since no literal names one.
+
+use std::collections
+
+/// A value the build computed.
+pub enum BuildValue {
+    Int(Integer),
+    Float(f64),
+    Bool(bool),
+    /// A fixed-length list, every element already a value (ADR-152).
+    List(Vec[BuildValue]),
+    /// Text, **decoded** - the value, not the spelling.
+    Text(String),
+    /// A variant of an `enum` this program declares, with what it carries.
+    Variant { ty: String, variant: String, payload: Vec[BuildValue] },
+    /// A tuple, which is what a pair is (ADR-311 D8).
+    Tuple(Vec[BuildValue]),
+    /// A value of a `struct` this program declares, by field name.
+    Struct { name: String, fields: collections::BTreeMap[String, BuildValue] },
+}
+
+/// **Two values and an operator** - integers by `integers.nika`, floats as
+/// the machine does (a float does not wrap, and what reaches infinity is
+/// refused where it crosses), Part I 4.7's `+` over text and a comparison of
+/// decoded text, and the logic of truth values. Nothing where the shape is
+/// not one this evaluator reads.
+pub fn operated(op: ref BinaryOp, left: ref BuildValue, right: ref BuildValue) -> BuildValue? {
+    return match left {
+        BuildValue::Int(a) => match right {
+            BuildValue::Int(b) => integers_operated(op, a, b),
+            else => null,
+        },
+        BuildValue::Float(a) => match right {
+            BuildValue::Float(b) => floats_operated(op, a, b),
+            else => null,
+        },
+        BuildValue::Text(a) => match right {
+            BuildValue::Text(b) => texts_operated(op, a, b),
+            else => null,
+        },
+        BuildValue::Bool(a) => match right {
+            BuildValue::Bool(b) => truths_operated(op, a, b),
+            else => null,
+        },
+        else => null,
+    }
+}
+
+fn integers_operated(op: ref BinaryOp, a: ref Integer, b: ref Integer) -> BuildValue? {
+    let order = integer_order(a, b)
+    return match op {
+        BinaryOp::Add => an_integer(integer_sum(a, b)),
+        BinaryOp::Sub => an_integer(integer_difference(a, b)),
+        BinaryOp::Mul => an_integer(integer_product(a, b)),
+        BinaryOp::Div => an_integer(integer_quotient(a, b, false)),
+        BinaryOp::Rem => an_integer(integer_quotient(a, b, true)),
+        BinaryOp::Eq => BuildValue::Bool(order == 0),
+        BinaryOp::Ne => BuildValue::Bool(order != 0),
+        BinaryOp::Lt => BuildValue::Bool(order < 0),
+        BinaryOp::Le => BuildValue::Bool(order <= 0),
+        BinaryOp::Gt => BuildValue::Bool(order > 0),
+        BinaryOp::Ge => BuildValue::Bool(order >= 0),
+        BinaryOp::BitAnd => an_integer(integer_bits(a, b, "&")),
+        BinaryOp::BitOr => an_integer(integer_bits(a, b, "|")),
+        BinaryOp::BitXor => an_integer(integer_bits(a, b, "^")),
+        BinaryOp::Shl => an_integer(integer_shifted(a, b, true)),
+        BinaryOp::Shr => an_integer(integer_shifted(a, b, false)),
+        else => null,
+    }
+}
+
+fn an_integer(n: Integer?) -> BuildValue? {
+    let found = n ?? return null
+    return BuildValue::Int(found)
+}
+
+fn floats_operated(op: ref BinaryOp, a: f64, b: f64) -> BuildValue? {
+    return match op {
+        BinaryOp::Add => BuildValue::Float(a + b),
+        BinaryOp::Sub => BuildValue::Float(a - b),
+        BinaryOp::Mul => BuildValue::Float(a * b),
+        BinaryOp::Div => BuildValue::Float(a / b),
+        BinaryOp::Rem => BuildValue::Float(a % b),
+        BinaryOp::Eq => BuildValue::Bool(a == b),
+        BinaryOp::Ne => BuildValue::Bool(a != b),
+        BinaryOp::Lt => BuildValue::Bool(a < b),
+        BinaryOp::Le => BuildValue::Bool(a <= b),
+        BinaryOp::Gt => BuildValue::Bool(a > b),
+        BinaryOp::Ge => BuildValue::Bool(a >= b),
+        else => null,
+    }
+}
+
+fn texts_operated(op: ref BinaryOp, a: ref String, b: ref String) -> BuildValue? {
+    return match op {
+        BinaryOp::Add => BuildValue::Text(f"{a}{b}"),
+        BinaryOp::Eq => BuildValue::Bool(a == b),
+        BinaryOp::Ne => BuildValue::Bool(a != b),
+        else => null,
+    }
+}
+
+fn truths_operated(op: ref BinaryOp, a: bool, b: bool) -> BuildValue? {
+    return match op {
+        BinaryOp::Eq => BuildValue::Bool(a == b),
+        BinaryOp::Ne => BuildValue::Bool(a != b),
+        BinaryOp::And => BuildValue::Bool(a && b),
+        BinaryOp::Or => BuildValue::Bool(a || b),
+        else => null,
+    }
+}
+
+/// What reading one element of a list value came to.
+pub enum ElementRead {
+    Found(BuildValue),
+    /// **An index this list does not have**: understood and wrong, which is
+    /// not the same as a shape this evaluator does not read.
+    OutOfBounds { at: Integer, len: i64 },
+    /// A receiver that is not a list, or an index that is not a number.
+    Unreadable,
+}
+
+/// One element of a list value, by an index that is a value.
+pub fn element_at(on: ref BuildValue, at: ref BuildValue) -> ElementRead {
+    let items = match on {
+        BuildValue::List(items) => items,
+        else => return ElementRead::Unreadable,
+    }
+    let index = match at {
+        BuildValue::Int(index) => index.clone(),
+        else => return ElementRead::Unreadable,
+    }
+    let count = integer_as_count(index) ?? -1
+    if count < 0 || count >= items.len() {
+        return ElementRead::OutOfBounds { at: index, len: items.len() }
+    }
+    return ElementRead::Found(items[count].clone())
+}

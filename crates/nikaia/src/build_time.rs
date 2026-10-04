@@ -70,105 +70,12 @@ enum Flow {
     Continued,
 }
 
-/// What a build-time expression came to.
-///
-/// Four kinds, which is what the declaration can carry: Rust's `const` needs a
-/// type this compiler can spell
-/// ([ADR-287](../../../docs/specification/adr/adr-287.md) D6) — an integer, a
-/// `bool`, a **list** of them, and **text**.
-///
-/// **The array is the aggregate issue #174 was about**, and it is an
-/// array rather than a `Vec` for the reason that entry gives from the other
-/// side: a `Vec` allocates and a `const` cannot hold one, where `[T; N]` is
-/// exactly what one holds ([ADR-152](../../../docs/specification/adr/adr-152.md)).
-/// So a build-time table is written at its length and filled by index, which is
-/// the shape the type system already had — measured: `.push` on a list hands
-/// back a `Vec[?]`, and `NK1104` refuses it against an `Array[i64, 5]` before
-/// this evaluator is ever reached.
-/// **`PartialEq` and no longer `Eq`**, since a float joined. Equality over a
-/// float is not an equivalence — `NaN` is equal to nothing, itself included —
-/// and keeping the derive by pretending otherwise would be a lie this compiler
-/// then reasons with. Nothing here needs a total order or a hash.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// In an `i128`, so a sum that cannot fit an `i64` is a number the caller
-    /// can name rather than one that wrapped — [`fold`](crate::fold)'s reason,
-    /// one level up.
-    Int(Integer),
-    /// **A number with a point in it**, carried as the machine carries one.
-    ///
-    /// It arrives as a literal or out of a grammar, and it crosses as the
-    /// `f64` or `f32` a declaration asks for. What it does **not** do is take
-    /// part in [`fold`](crate::fold)'s arithmetic, which is integers and stays
-    /// integers: a build that folded `0.1 + 0.2` would have to answer for the
-    /// answer, and nothing has asked it to yet.
-    ///
-    /// **A value that is not finite is refused where it crosses**, not here:
-    /// there is no literal for an infinity or a `NaN` in either language, so a
-    /// `const` holding one cannot be written — and a compiler that wrote
-    /// `f64::INFINITY` would be putting a name into the program that the
-    /// `.nika` line never mentioned.
-    Float(f64),
-    Bool(bool),
-    /// A fixed-length list, every element already a value.
-    List(Vec<Value>),
-    /// Text, **decoded** — the value, not the spelling.
-    ///
-    /// 0.0.112 held the written form instead, escapes and all, because the
-    /// parser keeps them and the emitter hands them to `rustc` verbatim. That
-    /// agreed with the lowering and cost every question about the *value*:
-    /// `"\u{0041}"` and `"A"` are one value and two spellings, so `.len()` and
-    /// `==` were refused rather than answered wrongly.
-    ///
-    /// **The refusal was a representation showing through, and the fix is a
-    /// decoder.** Which escapes exist is not a question this language has left
-    /// open, though no page states it: the parser takes `\` and any character
-    /// and hands the literal to the backend unchanged, so `rustc` is what
-    /// accepts or rejects it — measured, `"a\qb"` is *unknown character
-    /// escape* on the `.nika` line. This language's escapes **are** that one's,
-    /// so [`decoded`] is a faithful reading rather than an invention, and
-    /// [`written`] puts it back.
-    Text(String),
-    /// **A variant of an `enum` this program declares**, with what it carries.
-    ///
-    /// `Shade::Odd` and `Json::Number(1.5)` are both this; the payload is empty
-    /// for the first. It lands as a `const` the way a struct does — `const C:
-    /// Shade = Shade::Odd;` is Rust — and the **payloads** are what decide
-    /// whether it can: a variant carrying a `Vec` has no `const` form for the
-    /// same reason a field that is one does not.
-    ///
-    /// **The name is carried and not resolved here.** Which `enum` a variant
-    /// belongs to is the checker's answer and the emitter writes what it is
-    /// told ([ADR-296](../../../docs/specification/adr/adr-296.md) D17), so this
-    /// holds the pair rather than a reference to a declaration.
-    Variant {
-        ty: String,
-        variant: String,
-        payload: Vec<Value>,
-    },
-    /// A tuple, which is what a **pair** is
-    /// ([ADR-311](../../../docs/specification/adr/adr-311.md) D8): a map the
-    /// build can see is written `[("get", 1), ("post", 2)]`, and that needed no
-    /// new literal — only a value for the one this language already has.
-    Tuple(Vec<Value>),
-    /// A value of a `struct` this program declares, by field name.
-    ///
-    /// **What it is for is the method.** A `sync` method of the program's own
-    /// looked exactly like something a `comptime` should be able to call — the
-    /// body is right there and `sync` says it may run
-    /// ([ADR-287](../../../docs/specification/adr/adr-287.md) D13) — and it
-    /// could not, because a method needs a **value** to be called on and this
-    /// evaluator had none to make.
-    ///
-    /// It lands as a `const` like anything else: `const P: Point = Point { x: 1, y: 2 };`
-    /// is Rust, and a struct whose fields own nothing is already its own view —
-    /// [ADR-311](../../../docs/specification/adr/adr-311.md) D1's *a number is
-    /// already its own view*, read one shape out.
-    Struct {
-        name: String,
-        fields: BTreeMap<String, Value>,
-    },
-}
+/// **What a build-time expression came to**, in Nikaia
+/// (`tools/build_values.nika`, ADR-294, #125): an integer as a magnitude and
+/// a sign, a float as the machine carries one, a truth value, decoded text, a
+/// fixed-length list, a pair, a variant or a struct of the program's own -
+/// each a kind a `const` can carry (ADR-287 D6).
+pub use nikaia_std::tools::build_values::BuildValue as Value;
 
 /// Why a build-time expression did not come to a value.
 #[derive(Debug, Clone)]
@@ -256,14 +163,12 @@ use nikaia_std::tools::integers as int;
 /// with two of them written in Nikaia (`tools/integers.nika`).
 pub use nikaia_std::tools::integers::Integer;
 
-impl Value {
-    /// An integer value from a number the checker keeps.
-    pub fn int(n: i128) -> Value {
-        Value::Int(int::integer(
-            u64::try_from(n.unsigned_abs()).unwrap_or(u64::MAX),
-            n < 0,
-        ))
-    }
+/// An integer value from a number the checker keeps.
+pub fn int(n: i128) -> Value {
+    Value::Int(int::integer(
+        u64::try_from(n.unsigned_abs()).unwrap_or(u64::MAX),
+        n < 0,
+    ))
 }
 
 /// The integer as the checker counts, in its `i128`.
@@ -463,7 +368,7 @@ impl<'a> BuildTime<'a> {
             Expr::Index { base, index } => {
                 let on = self.expr(base, frame)?;
                 let at = self.expr(index, frame)?;
-                element(&on, &at).cloned()
+                element(&on, &at)
             }
             // `xs.len()`, which is what a loop over a table is written with —
             // `for i in 0..<xs.len()`. One method and no others: the length of
@@ -642,76 +547,12 @@ impl<'a> BuildTime<'a> {
     /// name that is already bound: re-evaluating it as an expression would read
     /// it a second time, which is the same answer here and would stop being one
     /// the moment a left side can call anything.
+    /// **Two values and an operator**, in Nikaia
+    /// (`tools/build_values.nika`): integers as magnitudes and signs, floats as
+    /// the machine does, `+` and a comparison over text, the logic of truth
+    /// values - and nothing for a shape this evaluator does not read.
     fn operate(&self, op: BinaryOp, left: Value, right: Value) -> Result<Value, Refusal> {
-        match (left, right) {
-            // **In Nikaia** (`tools/integers.nika`): magnitudes and signs, and
-            // a step whose answer leaves the 65 bits a literal has is one this
-            // evaluator does not take. The bit operators work on the bits the
-            // value has ([ADR-285](../../docs/specification/adr/adr-285.md)
-            // D9), and a count outside the width is not evaluated (D5).
-            (Value::Int(a), Value::Int(b)) => match op {
-                BinaryOp::Add => int::integer_sum(&a, &b).map(Value::Int),
-                BinaryOp::Sub => int::integer_difference(&a, &b).map(Value::Int),
-                BinaryOp::Mul => int::integer_product(&a, &b).map(Value::Int),
-                BinaryOp::Div => int::integer_quotient(&a, &b, false).map(Value::Int),
-                BinaryOp::Rem => int::integer_quotient(&a, &b, true).map(Value::Int),
-                BinaryOp::Eq => Some(Value::Bool(int::integer_order(&a, &b) == 0)),
-                BinaryOp::Ne => Some(Value::Bool(int::integer_order(&a, &b) != 0)),
-                BinaryOp::Lt => Some(Value::Bool(int::integer_order(&a, &b) < 0)),
-                BinaryOp::Le => Some(Value::Bool(int::integer_order(&a, &b) <= 0)),
-                BinaryOp::Gt => Some(Value::Bool(int::integer_order(&a, &b) > 0)),
-                BinaryOp::Ge => Some(Value::Bool(int::integer_order(&a, &b) >= 0)),
-                BinaryOp::And | BinaryOp::Or => None,
-                BinaryOp::BitAnd => int::integer_bits(&a, &b, "&").map(Value::Int),
-                BinaryOp::BitOr => int::integer_bits(&a, &b, "|").map(Value::Int),
-                BinaryOp::BitXor => int::integer_bits(&a, &b, "^").map(Value::Int),
-                BinaryOp::Shl => int::integer_shifted(&a, &b, true).map(Value::Int),
-                BinaryOp::Shr => int::integer_shifted(&a, &b, false).map(Value::Int),
-            }
-            .ok_or(Refusal::Unevaluable),
-            // **Arithmetic over floats**, which has no `checked_` half: a
-            // float does not wrap, it reaches infinity or `NaN` — and what
-            // catches that is the spelling, because `float_literal` writes only
-            // a finite one. So `1.0 / 0.0` is not silently a `const` of
-            // something the source never named; it is a `comptime` this
-            // compiler says it cannot evaluate, and a `let` computes it while
-            // the program runs.
-            (Value::Float(a), Value::Float(b)) => match op {
-                BinaryOp::Add => Some(Value::Float(a + b)),
-                BinaryOp::Sub => Some(Value::Float(a - b)),
-                BinaryOp::Mul => Some(Value::Float(a * b)),
-                BinaryOp::Div => Some(Value::Float(a / b)),
-                BinaryOp::Rem => Some(Value::Float(a % b)),
-                BinaryOp::Eq => Some(Value::Bool(a == b)),
-                BinaryOp::Ne => Some(Value::Bool(a != b)),
-                BinaryOp::Lt => Some(Value::Bool(a < b)),
-                BinaryOp::Le => Some(Value::Bool(a <= b)),
-                BinaryOp::Gt => Some(Value::Bool(a > b)),
-                BinaryOp::Ge => Some(Value::Bool(a >= b)),
-                _ => None,
-            }
-            .ok_or(Refusal::Unevaluable),
-            // **Part I 4.7's `+` over text**, and only that one. A comparison
-            // would be a question about the *value* where this holds the
-            // written form — see [`Value::Text`].
-            (Value::Text(a), Value::Text(b)) => match op {
-                BinaryOp::Add => Ok(Value::Text(format!("{a}{b}"))),
-                // A comparison of **values**, which is what a decoded text
-                // makes answerable: `"\u{0041}" == "A"` is `true` here and at
-                // run time, and was refused while this held spellings.
-                BinaryOp::Eq => Ok(Value::Bool(a == b)),
-                BinaryOp::Ne => Ok(Value::Bool(a != b)),
-                _ => Err(Refusal::Unevaluable),
-            },
-            (Value::Bool(a), Value::Bool(b)) => match op {
-                BinaryOp::Eq => Ok(Value::Bool(a == b)),
-                BinaryOp::Ne => Ok(Value::Bool(a != b)),
-                BinaryOp::And => Ok(Value::Bool(a && b)),
-                BinaryOp::Or => Ok(Value::Bool(a || b)),
-                _ => Err(Refusal::Unevaluable),
-            },
-            _ => Err(Refusal::Unevaluable),
-        }
+        nikaia_std::tools::build_values::operated(&op, &left, &right).ok_or(Refusal::Unevaluable)
     }
 
     /// **`f"…"` while the program is built** (ADR-309, [ADR-309](../../../docs/specification/adr/adr-309.md)
@@ -1233,7 +1074,7 @@ impl<'a> BuildTime<'a> {
                     let next = match op {
                         None => given,
                         Some(op) => {
-                            let before = element(held, &at)?.clone();
+                            let before = element(held, &at)?;
                             self.operate(*op, before, given)?
                         }
                     };
@@ -1415,17 +1256,16 @@ impl<'a> BuildTime<'a> {
 /// `Unevaluable`** — see [`Refusal::OutOfBounds`]. A receiver that is not a
 /// list, or an index that is not a number, is a shape this evaluator does not
 /// read, which is the other thing entirely.
-fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
-    let (Value::List(items), Value::Int(at)) = (on, at) else {
-        return Err(Refusal::Unevaluable);
-    };
-    int::integer_as_count(at)
-        .and_then(|at| usize::try_from(at).ok())
-        .and_then(|index| items.get(index))
-        .ok_or(Refusal::OutOfBounds {
-            at: *at,
-            len: items.len(),
-        })
+fn element(on: &Value, at: &Value) -> Result<Value, Refusal> {
+    use nikaia_std::tools::build_values::{ElementRead, element_at};
+    match element_at(on, at) {
+        ElementRead::Found(value) => Ok(value),
+        ElementRead::OutOfBounds { at, len } => Err(Refusal::OutOfBounds {
+            at,
+            len: len as usize,
+        }),
+        ElementRead::Unreadable => Err(Refusal::Unevaluable),
+    }
 }
 
 /// An escape the set does not name, as it is written, and why.

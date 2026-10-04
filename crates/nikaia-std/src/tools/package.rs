@@ -509,7 +509,7 @@ pub enum Escape {
     Task,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Buffer { at: i64, name: String, ty: String, span: Span },
     Call { at: i64, callee: String, span: Span },
@@ -524,7 +524,7 @@ pub enum KeepAt {
     Element(i64),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferPlan {
     pub key: String,
     pub first: i64,
@@ -555,7 +555,7 @@ pub struct BufferAsk<'a> {
     pub context: &'a KeepContext,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Local {
     at: i64,
     path: Vec<(i64, bool)>,
@@ -567,7 +567,7 @@ struct Local {
     text: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Sourced {
     source: Source,
     path: Vec<(i64, bool)>,
@@ -578,7 +578,7 @@ struct PutsAt {
     by_arg: collections::BTreeMap<i64, collections::BTreeSet<(i64, String)>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct BufferWalk {
     target: Option<String>,
     locals: collections::BTreeMap<String, Vec<Local>>,
@@ -1629,6 +1629,128 @@ fn element_refusal(keeper: &str, why: &str, help: &str, plan: &BufferPlan) -> Fi
 }
 
 
+// --- build_values.nika ---
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuildValue {
+    Int(Integer),
+    Float(f64),
+    Bool(bool),
+    List(Vec<BuildValue>),
+    Text(String),
+    Variant { ty: String, variant: String, payload: Vec<BuildValue> },
+    Tuple(Vec<BuildValue>),
+    Struct { name: String, fields: collections::BTreeMap<String, BuildValue> },
+}
+
+pub fn operated(op: &BinaryOp, left: &BuildValue, right: &BuildValue) -> Option<BuildValue> {
+    match left {
+        BuildValue::Int(a) => match right {
+            BuildValue::Int(b) => integers_operated(op, a, b),
+            _ => None,
+        },
+        BuildValue::Float(a) => { let a = *a; match right {
+            BuildValue::Float(b) => { let b = *b; floats_operated(op, a, b) },
+            _ => None,
+        } },
+        BuildValue::Text(a) => match right {
+            BuildValue::Text(b) => texts_operated(op, a, b),
+            _ => None,
+        },
+        BuildValue::Bool(a) => { let a = *a; match right {
+            BuildValue::Bool(b) => { let b = *b; truths_operated(op, a, b) },
+            _ => None,
+        } },
+        _ => None,
+    }
+}
+
+fn integers_operated(op: &BinaryOp, a: &Integer, b: &Integer) -> Option<BuildValue> {
+    let order = integer_order(a, b);
+    match op {
+        BinaryOp::Add => an_integer(integer_sum(a, b)),
+        BinaryOp::Sub => an_integer(integer_difference(a, b)),
+        BinaryOp::Mul => an_integer(integer_product(a, b)),
+        BinaryOp::Div => an_integer(integer_quotient(a, b, false)),
+        BinaryOp::Rem => an_integer(integer_quotient(a, b, true)),
+        BinaryOp::Eq => Some(BuildValue::Bool(order == 0)),
+        BinaryOp::Ne => Some(BuildValue::Bool(order != 0)),
+        BinaryOp::Lt => Some(BuildValue::Bool(order < 0)),
+        BinaryOp::Le => Some(BuildValue::Bool(order <= 0)),
+        BinaryOp::Gt => Some(BuildValue::Bool(order > 0)),
+        BinaryOp::Ge => Some(BuildValue::Bool(order >= 0)),
+        BinaryOp::BitAnd => an_integer(integer_bits(a, b, "&")),
+        BinaryOp::BitOr => an_integer(integer_bits(a, b, "|")),
+        BinaryOp::BitXor => an_integer(integer_bits(a, b, "^")),
+        BinaryOp::Shl => an_integer(integer_shifted(a, b, true)),
+        BinaryOp::Shr => an_integer(integer_shifted(a, b, false)),
+        _ => None,
+    }
+}
+
+fn an_integer(n: Option<Integer>) -> Option<BuildValue> {
+    let found = match n { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(BuildValue::Int(found))
+}
+
+fn floats_operated(op: &BinaryOp, a: f64, b: f64) -> Option<BuildValue> {
+    match op {
+        BinaryOp::Add => Some(BuildValue::Float(a + b)),
+        BinaryOp::Sub => Some(BuildValue::Float(a - b)),
+        BinaryOp::Mul => Some(BuildValue::Float(a * b)),
+        BinaryOp::Div => Some(BuildValue::Float(a / b)),
+        BinaryOp::Rem => Some(BuildValue::Float(a % b)),
+        BinaryOp::Eq => Some(BuildValue::Bool(a == b)),
+        BinaryOp::Ne => Some(BuildValue::Bool(a != b)),
+        BinaryOp::Lt => Some(BuildValue::Bool(a < b)),
+        BinaryOp::Le => Some(BuildValue::Bool(a <= b)),
+        BinaryOp::Gt => Some(BuildValue::Bool(a > b)),
+        BinaryOp::Ge => Some(BuildValue::Bool(a >= b)),
+        _ => None,
+    }
+}
+
+fn texts_operated(op: &BinaryOp, a: &str, b: &str) -> Option<BuildValue> {
+    match op {
+        BinaryOp::Add => Some(BuildValue::Text(format!("{}{}", a, b))),
+        BinaryOp::Eq => Some(BuildValue::Bool(a == b)),
+        BinaryOp::Ne => Some(BuildValue::Bool(a != b)),
+        _ => None,
+    }
+}
+
+fn truths_operated(op: &BinaryOp, a: bool, b: bool) -> Option<BuildValue> {
+    match op {
+        BinaryOp::Eq => Some(BuildValue::Bool(a == b)),
+        BinaryOp::Ne => Some(BuildValue::Bool(a != b)),
+        BinaryOp::And => Some(BuildValue::Bool(a && b)),
+        BinaryOp::Or => Some(BuildValue::Bool(a || b)),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ElementRead {
+    Found(BuildValue),
+    OutOfBounds { at: Integer, len: i64 },
+    Unreadable,
+}
+
+pub fn element_at(on: &BuildValue, at: &BuildValue) -> ElementRead {
+    let items = match on {
+        BuildValue::List(items) => items,
+        _ => return ElementRead::Unreadable,
+    };
+    let index = match at {
+        BuildValue::Int(index) => index.clone(),
+        _ => return ElementRead::Unreadable,
+    };
+    let count = nikaia_std::index::or(integer_as_count(&index), || -1);
+    if count < 0 || count >= items.len() as i64 { return ElementRead::OutOfBounds { at: index, len: items.len() as i64 }; }
+    ElementRead::Found((*nikaia_std::index::get(&items, nikaia_std::index::at(count))).clone())
+}
+
+
 // --- calls.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2348,7 +2470,7 @@ pub fn type_entry(fields: &[String], derives: &collections::BTreeSet<String>) ->
 
 // --- declared.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredFn {
     pub key: String,
     pub contract: FnContract,
@@ -2536,7 +2658,7 @@ fn optional_ty(names: &winnow_grammar::InternerContext, aliases: &collections::B
 
 // --- describe.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Drafted {
     pub functions: collections::BTreeMap<String, FnContract>,
     pub types: collections::BTreeMap<String, TypeContract>,
@@ -3099,21 +3221,21 @@ fn parameter_list(names: &[String]) -> String {
 
 // --- dump.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VariantShape {
     pub name: String,
     pub carried: Vec<Ty>,
     pub named: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldShape {
     pub name: String,
     pub spelled: String,
     pub ty: Ty,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shapes {
     pub enums: collections::BTreeMap<String, Vec<VariantShape>>,
     pub structs: collections::BTreeMap<String, Vec<FieldShape>>,
@@ -3419,7 +3541,7 @@ fn not_an_escape(written: &str, why: &str) -> EscapeRead { EscapeRead::Nothing {
 
 // --- findings.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub code: String,
     pub span: Span,
@@ -3690,13 +3812,13 @@ pub fn wants_widening(folded: &Folded) -> bool {
 
 // --- foreign.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Walked {
     seen: Vec<Seen>,
     with_names: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Seen {
     Path { name: String, span: Span },
     Call { name: String, wrote: Option<Wrote>, span: Span },
@@ -4173,13 +4295,13 @@ pub fn integer_shifted(a: &Integer, b: &Integer, left: bool) -> Option<Integer> 
 
 // --- keep.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KeepContext {
     pub borrowing: collections::BTreeSet<String>,
     pub structs: collections::BTreeMap<String, DeclaredStruct>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeclaredStruct {
     pub generic: bool,
     pub fields: Vec<(String, Type)>,
@@ -4380,7 +4502,7 @@ pub fn capitalised(text: &str) -> String {
 
 // --- keeps.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeepsBody {
     pub parameters: collections::BTreeSet<String>,
     pub lent: collections::BTreeSet<String>,
@@ -4390,7 +4512,7 @@ pub struct KeepsBody {
     pub unresolved: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct KeepsWalk {
     uses: Uses,
     aliases: collections::BTreeMap<String, collections::BTreeSet<String>>,
@@ -5372,7 +5494,7 @@ pub fn signature_of(written: &str) -> Result<Signature, nikaia_std::error::Throw
     Ok(spelled.signature)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spelling {
     pub signature: Signature,
     pub borrows: Vec<String>,
@@ -7024,7 +7146,7 @@ fn words_of(text: &str, out: &mut collections::BTreeSet<String>) {
 
 // --- order.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Operation {
     pub binds: Option<String>,
     pub mentions: collections::BTreeSet<String>,
@@ -7032,7 +7154,7 @@ pub struct Operation {
     pub callee: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accounted {
     Operation(Operation),
     NotAnOperation,
@@ -7292,13 +7414,13 @@ fn takes_a_subject(signature: Option<&Signature>) -> bool {
     written.takes_a_receiver()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OneCall {
     pub key: String,
     pub arguments: Vec<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Reduced {
     calls: Vec<OneCall>,
     performs: bool,
@@ -7851,7 +7973,7 @@ fn stands_at(c: &[char], at: i64, w: &[char]) -> bool {
 
 // --- render.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Marked {
     pub span: Span,
     pub word: String,
@@ -7859,7 +7981,7 @@ pub struct Marked {
     pub main: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub warning: bool,
     pub code: String,
@@ -7870,7 +7992,7 @@ pub struct Shown {
     pub labels: Vec<Marked>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Placed {
     line: i64,
     column: i64,
@@ -8031,7 +8153,7 @@ fn right_aligned(text: &str, width: i64) -> String {
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pause {
     pub span: Span,
     pub caller: String,
@@ -8928,7 +9050,7 @@ impl Decision {
     pub fn undecided(&self) -> bool { self.fallback.is_some() }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sharing {
     pub decisions: Vec<Decision>,
     pub summaries: collections::BTreeMap<String, Vec<Class>>,
@@ -9148,7 +9270,7 @@ pub fn lock_name(count: Count) -> String {
 
 pub const FIELDS: &str = "<field>";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handle {
     pub function: String,
     pub value: String,
@@ -9164,7 +9286,7 @@ pub struct Forced {
     pub fallback: Option<Fallback>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slots {
     pub declared_here: collections::BTreeSet<String>,
     pub handles: collections::BTreeMap<String, Handle>,
@@ -9561,7 +9683,7 @@ pub fn call_path(func: &Expr, names: &winnow_grammar::InternerContext) -> Option
 
 const RESULT: &str = "<result>";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharingWalk {
     pub slots: Slots,
     pub parallel: collections::BTreeSet<String>,
@@ -9969,7 +10091,7 @@ fn unseen_kind(called: &SharingCall) -> Fallback {
     Fallback::UnseenCall
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Described {
     key: String,
     params: Vec<(String, Ty)>,
@@ -10005,13 +10127,13 @@ fn described_by(key: &str, ledger: &Ledger) -> Option<Described> {
 
 // --- signature.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Translated {
     pub ty: Ty,
     pub kept: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resulted {
     pub ty: Ty,
     pub fails: Option<String>,
@@ -10386,7 +10508,7 @@ pub struct Function {
     pub pauses: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
     pub functions: collections::BTreeMap<String, Function>,
     pub offers: collections::BTreeSet<String>,
@@ -10674,20 +10796,20 @@ fn reaches_one_that_pauses(calls: &collections::BTreeSet<String>, holds: &collec
     false
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Site {
     pub span: Span,
     pub what: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncNode {
     pub reach: SyncReach,
     pub site: Option<Site>,
     pub unit: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncGraph {
     pub methods: collections::BTreeMap<String, MethodsCalled>,
     pub nodes: collections::BTreeMap<String, SyncNode>,
@@ -10820,7 +10942,7 @@ fn never_pauses_in(library: &Ledger, callee: &str) -> bool {
     contract.sync_claim.is_sync()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     pub span: Span,
     pub caller: String,
@@ -11506,13 +11628,13 @@ pub struct TierAsk<'a> {
     pub library: &'a Ledger,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HoleWrap {
     pub value: Expr,
     pub hand: Hand,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextTiers {
     pub tiers: Vec<(TextPosition, Tier)>,
     pub lets: collections::BTreeSet<i64>,
@@ -11537,20 +11659,20 @@ pub fn unaliased_in(aliases: &collections::BTreeMap<String, String>, name: &str)
     format!("{}{}::{}", amp, package, *nikaia_std::index::get(&parts, 1))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct FieldDecl {
     ty: Type,
     published: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct FnDecl {
     params: Vec<Type>,
     result: Option<Type>,
     published: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TextDeclared {
     fields: collections::BTreeMap<(String, String), FieldDecl>,
     fns: collections::BTreeMap<String, FnDecl>,
@@ -11643,13 +11765,13 @@ fn string_type(declared: &TextDeclared, names: &winnow_grammar::InternerContext)
     None
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Declaring {
     owner: TextOwner,
     ty: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TierLocal {
     kinds: Kinds,
     of: Option<String>,
@@ -11657,7 +11779,7 @@ struct TierLocal {
     declared: Option<Declaring>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Flows {
     positions: collections::BTreeMap<String, Kinds>,
     known: collections::BTreeMap<String, TextPosition>,
@@ -11671,7 +11793,7 @@ struct Flows {
 
 fn no_flows() -> Flows { Flows { positions: collections::BTreeMap::new(), known: collections::BTreeMap::new(), literal_lets: collections::BTreeMap::new(), wraps: collections::BTreeMap::new(), param_into: collections::BTreeSet::new(), hole_wraps: collections::BTreeMap::new(), links: collections::BTreeSet::new(), unwrappable: collections::BTreeSet::new() } }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TierWalk {
     declared: TextDeclared,
     tiers: collections::BTreeMap<String, Tier>,
@@ -11798,7 +11920,7 @@ fn flow_value(going: &TierGoing, value: Option<&Expr>, kinds: &Kinds, node_of: &
     if a_container(ask.names, &ty) { flow_whole(going, given, node_of, ask, walk); }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TierGoing {
     owner: TextOwner,
     ty: Type,
@@ -12751,7 +12873,7 @@ pub fn crossing(ty: &Ty, walking: &Walking<'_>) -> Crossing {
     crossing_walk(ty, walking, &mut seen, CROSSING_DEPTH)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Walking<'a> {
     pub own: &'a Ledger,
     pub library: &'a Ledger,
@@ -13384,14 +13506,14 @@ pub fn touches_of(unknown: &collections::BTreeMap<String, bool>, outside: &colle
     settled
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reach {
     pub unknown: bool,
     pub outside: Vec<Touch>,
     pub calls: collections::BTreeSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TouchGraph {
     pub methods: collections::BTreeMap<String, MethodsCalled>,
     pub reaches: collections::BTreeMap<String, Reach>,
@@ -13553,7 +13675,7 @@ pub fn check_impls(names: &winnow_grammar::InternerContext, items: &[Spanned<Ite
     found
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Wanted {
     known: bool,
     receiver: Option<Receiver>,
@@ -15216,7 +15338,7 @@ fn std_module_of(name: &str, known: &collections::BTreeSet<String>) -> String {
 
 // --- views.nika ---
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Stored {
     pub span: Span,
     pub param: String,
@@ -15246,13 +15368,13 @@ pub struct Asked<'a> {
     pub library: &'a Ledger,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Unit {
     borrowing: collections::BTreeSet<String>,
     fields: collections::BTreeMap<String, Vec<(String, Type)>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Here {
     subject: Option<Type>,
     subject_fields: Vec<(String, Type)>,
@@ -16281,6 +16403,10 @@ pub mod boundaries {
 pub mod buffers {
     #[allow(unused_imports)]
     pub use super::{Escape, Source, KeepAt, BufferPlan, BufferAsk, buffer_plans};
+}
+pub mod build_values {
+    #[allow(unused_imports)]
+    pub use super::{BuildValue, operated, ElementRead, element_at};
 }
 pub mod calls {
     #[allow(unused_imports)]
