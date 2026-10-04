@@ -285,22 +285,34 @@ alone: reading every key of 4 to 16 bytes without a branch takes 0.30
 mispredictions a row off, and adds 27 instructions and a fifth to
 `k-nucleotide`, so they are not in.
 
+## The fold's step in place (0.0.432)
+
+The step `fn(acc, m) { acc.record(m) }` was lowered as `|mut acc, m| {
+acc.record(m); acc }`: the accumulator, a table, handed into the step and back
+for every row, a copy each way that the optimiser does not remove once
+`record` takes it by `&mut`. `winnow-grammar` 761bc1a runs a step written
+`|acc: &mut _, m| …` with a fold that never moves it (its ADR 24 §11), and the
+emitter now writes that form. Callgrind, 1 M rows, output the same:
+344.1 → **337.1** instructions a row, mispredictions 1.58 either way. What is
+left of the fold's loop per row is 8 instructions; the checkpoint
+winnow-grammar#22 suspected costs nothing, held in a register until a failure
+needs it.
+
 ## What is left to build
 
-Against `tuned`, as of 0.0.430: 344 against 313 instructions a row, 1.58
+Against `tuned`, as of 0.0.432: 337 against 313 instructions a row, 1.58
 against 3.61 mispredictions, taken as the tables above say. In the
 order they are to be done; the figures are what callgrind attributes today,
 not what a change has been measured to save.
 
 | | what | today | where | issue |
 |---|---|---|---|---|
-| 1 | the `par_fold` loop pays per item for what only a failure needs (checkpoint, two position reads) | ~21 instructions a row | `winnow-grammar` `rt.rs` | [winnow-grammar#22](https://github.com/keywan-ghadami/winnow-grammar/issues/22) |
-| 2 | a `&str` cut is checked for a character boundary the generator already knows; fewer cuts, and letting LLVM see the byte, without `unsafe` | ~27 instructions a row | `winnow-grammar` | [winnow-grammar#23](https://github.com/keywan-ghadami/winnow-grammar/issues/23) |
-| 3 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
-| 4 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
-| 5 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
+| 1 | a `&str` cut is checked for a character boundary the generator already knows; fewer cuts, and letting LLVM see the byte, without `unsafe` | ~27 instructions a row | `winnow-grammar` | [winnow-grammar#23](https://github.com/keywan-ghadami/winnow-grammar/issues/23) |
+| 2 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
+| 3 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
+| 4 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
 
-Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); finding the `;` and the
+Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); the fold's loop, done in 0.0.432 (winnow-grammar#22); finding the `;` and the
 line's end, where one `memchr2` a line already beats `tuned`'s search and walk
 back (ADR 24 §9); accumulating `dec`'s value inside the fixed-width match,
 which came out even with `dec` as it is (ADR 24 §8b); and the mispredictions

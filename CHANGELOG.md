@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.432] — 2026-10-04
+
+**A fold's step changes the accumulator in place** (winnow-grammar#22, its ADR
+24 §11). `fn(acc, m) { acc.record(m) }` was lowered as `|mut acc, m| {
+acc.record(m); acc }`, which moved the accumulator - 1BRC's table of stations
+- into the step and back once per row. `winnow-grammar` 761bc1a runs a step
+written `|acc: &mut _, m| …` with a fold that never moves it, and the emitter
+writes that form wherever it threaded the accumulator before. 1BRC, callgrind
+over 1 M rows: 344.1 → 337.1 instructions a row, the same output and
+mispredictions.
+
 ## [0.0.431] — 2026-10-04
 
 **What a loop's body does is Nikaia** (ADR-306 D4, D7, ADR-294, #125). The

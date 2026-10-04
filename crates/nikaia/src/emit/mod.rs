@@ -5099,7 +5099,7 @@ impl<'p> Emitter<'p> {
     /// right to: `acc.record(m)` and `acc.merged(m)` look identical. What
     /// changed is that `impl` blocks are lowered now, so this is a lookup in
     /// what the program declares - `record` takes `&mut self` and returns
-    /// nothing, so the accumulator is threaded; a method that returns a new
+    /// nothing, so the accumulator is changed in place; a method that returns a new
     /// accumulator is left exactly as written.
     fn fold_step(&self, out: &mut Out, step: &Expr) -> Result<()> {
         if let Expr::Closure { params, body, .. } = step
@@ -5115,14 +5115,20 @@ impl<'p> Emitter<'p> {
                 .and_then(|m| m.as_ref())
                 .is_some_and(Method::mutates_in_place);
 
+            // **Changed in place, not threaded** (`winnow-grammar` ADR 24
+            // §11): a step whose accumulator is written `&mut` is run by a
+            // fold that never moves it. Handed in and back by value, an
+            // accumulator that holds a table was copied in and out once per
+            // item - 7 instructions a row of 1BRC. `&mut _` is all the
+            // generator needs to pick that fold; the type is the init's.
             if on_accumulator && mutates {
                 let accumulator = self.text(*accumulator);
-                out.push(&format!("|mut {accumulator}, {}| {{ ", self.text(*item)));
+                out.push(&format!("|{accumulator}: &mut _, {}| {{ ", self.text(*item)));
                 for stmt in &body.stmts {
                     self.stmt(out, &stmt.node, &stmt.span, 0, Tail::Statement, Flow::PLAIN)?;
                     out.push(" ");
                 }
-                out.push(&format!("{accumulator} }}"));
+                out.push("}");
                 return Ok(());
             }
         }
