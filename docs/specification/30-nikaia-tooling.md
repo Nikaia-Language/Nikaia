@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.448 (Draft)
+**Version:** 0.0.449 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -421,6 +421,8 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 **A `test` block runs in the package's directory**, so it reads what the package holds, and writes under **`fs::scratch()`**: a fresh, empty directory handed back as an `fs::Root::Dir`, inside the test's own directory and removed with it.
 
 **`--asserts`** ([ADR-269](adr/adr-269.md) D7), beside `--overlaps`, `--sharing`, `--tethers`, `--trust` and `--comptime` on `nikaia build` and `nikaia lower`, prints every `assert` of the program by line and how it is held (14.2): proved while the program was built, a precondition its callers prove, checked at run time - with the reason the prover gave up -, or checked by a test when it runs; and how many are checked at run time. It is how a reader asks where the unproved claims are.
+
+**`--bounds`** ([#389](https://github.com/Nikaia-Language/Nikaia/issues/389)) is the same report for the checks the compiler writes itself: every index into a list and every `+`, `-` and `*` that `--optimization` may drop the check of ([ADR-306](adr/adr-306.md)), by line, *proved* or *checked*, and for a checked one the shape that stopped the walk - a field, a list of lists, a product of two unknowns, a call's result, or no fact on what it reads - with the issue that would supply it. It reports at the build's levels, or at `aggressive`, saying so, where the build asks for none. It names where the next fact pays off; it does not prove the fact would be enough.
 
 ### 14.2. Assertions: a contract the compiler proves where it can
 *[ADR-269](adr/adr-269.md) D2-D11. Built: `assert`, the MVP prover, the check at run time for a claim it does not prove, a precondition's check at the call, and `--asserts`. D8's refutation: built, for a claim ruled out every time it is reached and for one false for a value what is known shows reaches it, refused unless `refuted-claims = "warn"`.*

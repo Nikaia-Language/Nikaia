@@ -6,6 +6,7 @@
 pub mod assets;
 pub mod ast;
 pub mod bounds;
+pub mod bounds_report;
 pub mod build_time;
 pub mod check;
 pub mod contracts;

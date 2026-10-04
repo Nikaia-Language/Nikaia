@@ -1862,11 +1862,20 @@ pub struct Explain {
     /// [ADR-269](../../docs/specification/adr/adr-269.md) D7's report: every
     /// `assert`, and whether it was proved, refuted or left to run time.
     pub asserts: bool,
+    /// #389's report: every index and operation whose check the optimizations
+    /// may drop, and whether it was.
+    pub bounds: bool,
 }
 
 impl Explain {
     pub fn asked(&self) -> bool {
-        self.overlaps || self.sharing || self.tethers || self.trust || self.comptime || self.asserts
+        self.overlaps
+            || self.sharing
+            || self.tethers
+            || self.trust
+            || self.comptime
+            || self.asserts
+            || self.bounds
     }
 }
 
@@ -1955,6 +1964,20 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
                     &unit.path.display().to_string(),
                     &program.contracts,
                     library,
+                )
+            );
+        }
+        if want.bounds {
+            print!(
+                "{}",
+                crate::bounds_report::report(
+                    &unit.parsed,
+                    &unit.source,
+                    &unit.path.display().to_string(),
+                    &program.contracts,
+                    library,
+                    settings.build.bounds,
+                    settings.build.overflow,
                 )
             );
         }

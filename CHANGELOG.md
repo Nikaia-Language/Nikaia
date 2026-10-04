@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.449] — 2026-10-04
+
+**`--bounds`: every check the optimizations may drop, and what became of it**
+(#389, Part III). What `remove-bounds-checks` and `remove-overflow-checks`
+proved could be seen only in the lowered Rust. `nikaia build --bounds` and
+`nikaia lower --bounds` now list every index into a list and every `+`, `-` and
+`*` they may drop the check of, by line, *proved* or *checked*, and for a
+checked one the shape that stopped the walk - a field (#384), a list of lists
+(#385), a product of two unknowns (#386), a call's result (#382), or no fact on
+what it reads (#432, #383, #388). At the build's levels, or at `aggressive`,
+saying so, where it asks for none. On the solver kernels: 36 of 44 indexes
+and 23 of 45 operations proved.
+
 ## [0.0.448] — 2026-10-04
 
 **A number's common methods are in `std`'s ledger** (#443). Since 0.0.438 a

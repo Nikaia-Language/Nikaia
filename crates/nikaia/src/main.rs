@@ -145,6 +145,15 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub asserts: bool,
 
+    /// Print every index into a list and every `+`, `-` and `*` the
+    /// optimizations may drop the check of, and for each whether it was proved
+    /// or why it is still checked (#389). At the build's
+    /// `--optimization` levels, or at `aggressive` where it asks for none.
+    ///
+    /// Like `--asserts`, it explains a decision rather than changing one.
+    #[arg(long, global = true)]
+    pub bounds: bool,
+
     /// Print what a `T::fields` loop was unrolled to, for the types actually
     /// used ([ADR-304](../../../docs/specification/adr/adr-304.md) D9,
     /// [ADR-304](../../../docs/specification/adr/adr-304.md)).
@@ -388,6 +397,7 @@ fn lower_to_rust(
             trust: args.trust,
             comptime: args.comptime,
             asserts: args.asserts,
+            bounds: args.bounds,
         },
     )?;
 
@@ -623,6 +633,7 @@ fn drive(args: &Cli, project: &Project, subcommand: &str, program_args: &[String
             trust: args.trust,
             comptime: args.comptime,
             asserts: args.asserts,
+            bounds: args.bounds,
         },
         args.allow_read_from_list.as_deref(),
     )
