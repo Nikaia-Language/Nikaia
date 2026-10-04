@@ -419,6 +419,45 @@ fn nothing_declares(name: ref String, known: ref collections::BTreeSet[String], 
     return refusal("NK1135", span.clone(), f"There's no type called `{name}`.", ["A type is either built in, declared in your program with `struct` or `enum`, provided by `std`, or a type parameter."], f"Check the spelling, or declare `{name}` with `struct` or `enum`.")
 }
 
+/// **Whether nothing this compiler reads knows a type by this name**
+/// ([ADR-204](../../../../docs/specification/adr/adr-204.md) D1, #379): it is
+/// not built in, no ledger has an entry for it, and - written with a module in
+/// front - no ledger knows that module either. A type the program declares is
+/// the caller's to rule out first.
+///
+/// Such a name is already another refusal's business - `NK1135` for a bare one,
+/// `NK2504` or `rustc` for a module nobody declared - so a question asked
+/// about it, such as whether it compares, gets the answer an absent claim
+/// gets (Part III C.4) rather than a second refusal naming the wrong cause.
+/// A name some ledger knows is never this: there, an absent column is *no*.
+pub fn nobody_knows(name: ref String, own: ref Ledger, library: ref Ledger) -> bool {
+    if BUILT_IN.contains(name) || own.types.contains_key(name) || library.types.contains_key(name) {
+        return false
+    }
+    let c: Vec[char] = name.chars().collect()
+    let mut last = -1
+    for at in 0..<c.len() {
+        if at + 1 < c.len() && c[at] == ':' && c[at + 1] == ':' {
+            last = at
+        }
+    }
+    // A bare name: known where a ledger has it under a module.
+    let wanted = if last < 0 { f"::{name}" } else { f"{slice(c, 0, last)}::" }
+    for ledger in [own, library] {
+        for (key, _) in ledger.types {
+            if (last < 0 && key.ends_with(ref wanted)) || (last >= 0 && key.starts_with(ref wanted)) {
+                return false
+            }
+        }
+        for (key, _) in ledger.functions {
+            if last >= 0 && key.starts_with(ref wanted) {
+                return false
+            }
+        }
+    }
+    return true
+}
+
 // The module of the first known key ending in `::name`, where that module is
 // one of `std`'s; otherwise nothing.
 fn std_module_of(name: ref String, known: ref collections::BTreeSet[String]) -> String {

@@ -638,6 +638,54 @@ fn a_derive_says_whether_a_type_copies_and_compares() {
     assert!(!says("Plain").contains("compares"), "{}", says("Plain"));
 }
 
+/// **A trait implemented by hand says what a derive says** (#379): `impl
+/// PartialEq for Handle` is `compares` as `#[derive(PartialEq)]` would be, so
+/// `==` on it is not refused for a line the describer could not see. A trait
+/// given an argument compares the type with *something else* and says nothing.
+#[test]
+fn an_impl_by_hand_says_what_a_derive_says() {
+    let root = project(
+        "impls",
+        "pub struct Handle { id: i64 }\n\
+         impl PartialEq for Handle {\n\
+         \x20   fn eq(&self, other: &Self) -> bool { self.id == other.id }\n\
+         }\n\
+         impl Copy for Boxed {}\n\
+         #[derive(Clone)]\n\
+         pub struct Boxed { a: i64 }\n\
+         pub struct Other { id: i64 }\n\
+         impl PartialEq<i64> for Other {\n\
+         \x20   fn eq(&self, other: &i64) -> bool { self.id == *other }\n\
+         }\n\
+         pub fn a(x: Handle) -> i64 { 0 }\n\
+         pub fn b(x: Boxed) -> i64 { 0 }\n\
+         pub fn c(x: Other) -> i64 { 0 }\n",
+        "fn main() {\n\
+         \x20   fremd::a(1)\n\
+         \x20   fremd::b(1)\n\
+         \x20   fremd::c(1)\n\
+         }\n",
+    );
+    let text = entries(&root);
+    let says = |name: &str| {
+        let at = text
+            .find(&format!("[type.\"fremd::{name}\"]"))
+            .unwrap_or_else(|| panic!("no entry for {name}:\n{text}"));
+        let rest = &text[at..];
+        let end = rest[1..].find("\n[").map(|e| e + 1).unwrap_or(rest.len());
+        rest[..end].to_string()
+    };
+
+    assert!(
+        says("Handle").contains("compares = true"),
+        "{}",
+        says("Handle")
+    );
+    // Read before the type it is for.
+    assert!(says("Boxed").contains("copies = true"), "{}", says("Boxed"));
+    assert!(!says("Other").contains("compares"), "{}", says("Other"));
+}
+
 /// **An entry exists because a program asked for it** ([ADR-288](../../../docs/specification/adr/adr-288.md)
 /// D5), so the draft is proportional to use and not to the crate.
 #[test]

@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.445] — 2026-10-04
+
+**Which types compare when nobody knows them** (#379, ADR-204 D1). A known
+type is one with a declaration or a ledger entry, `std`'s or a described
+crate's, and without `compares = true` it does not compare; a described crate
+is `std` in this, its description being reviewed like code. A name nothing
+knows - `nowhere::Handle`, and a declared type holding one - is no longer
+`NK1188`: it is already `NK1135`'s, `NK2504`'s or `rustc`'s, and the second
+refusal named the wrong cause. `nikaia describe` now reads `impl PartialEq for
+T` (and `impl Copy`) as it reads the derive, for a trait written without an
+argument and a type in the same module.
+
 ## [0.0.444] — 2026-10-04
 
 **An `if` or a `match` of literals, kept, is declared `String`** (ADR-282

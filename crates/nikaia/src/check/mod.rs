@@ -23694,6 +23694,14 @@ impl Comparable<'_> {
                 if let Some(parts) = self.beside.get(name) {
                     return parts.iter().all(|ty| self.asking(ty, how, seen));
                 }
+                // **A name nothing here knows** is another refusal's -
+                // `NK1135`, `NK2504` or `rustc`'s - and answers as `Unknown`
+                // does rather than as a second refusal naming the wrong cause
+                // (ADR-204 D1, #379). Only a name no ledger knows: one that
+                // has an entry answers from its column below.
+                if nikaia_std::tools::types::nobody_knows(name, self.own, self.library) {
+                    return true;
+                }
                 // **A type whose parts are Rust**: the column, whose absence is
                 // no. And it answers the `==` question only — a library type is
                 // never taken for an *equivalence*, because whether it is one is

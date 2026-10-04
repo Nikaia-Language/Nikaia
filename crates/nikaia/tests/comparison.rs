@@ -190,6 +190,38 @@ fn an_unknown_type_is_left_alone() {
     assert!(found.is_empty(), "{found:#?}");
 }
 
+/// **A name nothing here knows is not asked whether it compares** (#379,
+/// ADR-204 D1): no declaration, no ledger entry, and a module no ledger knows.
+/// It is another refusal's business, and `NK1188` beside it would name the
+/// wrong cause - also for a declared type that holds one.
+#[test]
+fn a_name_nobody_knows_is_left_to_its_own_refusal() {
+    let found = refusals(
+        "struct P { h: nowhere::Handle }\n\
+         fn same(a: ref P, b: ref P) -> bool { return a == b }\n\
+         fn other(a: ref nowhere::Handle, b: ref nowhere::Handle) -> bool { return a == b }\n",
+    );
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+/// **A name a ledger knows answers from its column**, whose absence is *no*:
+/// `std`'s lock has no entry of its own and is still known, and a module `std`
+/// has refuses a type it does not offer rather than taking it for unknown.
+#[test]
+fn a_known_name_without_the_column_is_still_refused() {
+    let lock = refusals(
+        "struct Q { h: Locked[i64] }\n\
+         fn same(a: ref Q, b: ref Q) -> bool { return a == b }\n",
+    );
+    assert_eq!(lock.len(), 1, "{lock:#?}");
+
+    let mapped = refusals(
+        "use std::fs\n\
+         fn same(a: ref fs::Mapped, b: ref fs::Mapped) -> bool { return a == b }\n",
+    );
+    assert_eq!(mapped.len(), 1, "{mapped:#?}");
+}
+
 /// **And the whole of it runs**, which is what says the derives are the right
 /// ones rather than merely present.
 #[test]

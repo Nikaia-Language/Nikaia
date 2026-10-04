@@ -11800,7 +11800,8 @@ fn walk(surface: &mut Surface, items: &[RustItem], at: &str, imports: &collectio
                     for part in r.parts.iter() { types.push(part.ty.to_owned()); }
                     surface.fields.insert(path.to_owned(), types);
                 }
-                let mut derived: collections::BTreeSet<String> = collections::BTreeSet::new();
+                let none: collections::BTreeSet<String> = collections::BTreeSet::new();
+                let mut derived = nikaia_std::index::or(*nikaia_std::index::get(&surface.derives, &path), || &none).to_owned();
                 for list in r.derives.iter() {
                     let list = *list;
                     for written in list.split(",") {
@@ -11821,7 +11822,13 @@ fn walk(surface: &mut Surface, items: &[RustItem], at: &str, imports: &collectio
                     let path = joined(at, g.name);
                     surface.modules.insert(path.to_owned(), g.visible);
                     walk(surface, &g.items, &path, imports);
-                } else if g.what == "unsafe impl" && !g.via.is_empty() { surface.promises.push(format!("unsafe impl {} for {}", g.via, g.name)); }
+                } else if g.what == "unsafe impl" && !g.via.is_empty() { surface.promises.push(format!("unsafe impl {} for {}", g.via, g.name)); } else if g.what == "impl" && !g.via.is_empty() && !g.via.contains("<") {
+                    let path = joined(at, &last_segment(&before_generics(g.name)));
+                    let none: collections::BTreeSet<String> = collections::BTreeSet::new();
+                    let mut derived = nikaia_std::index::or(*nikaia_std::index::get(&surface.derives, &path), || &none).to_owned();
+                    derived.insert(last_segment(g.via.trim()));
+                    surface.derives.insert(path, derived);
+                }
             },
         }
     }
@@ -11860,6 +11867,15 @@ fn before_colon(written: &str) -> String {
     for at in 0..c.len() as i64 { if *nikaia_std::index::get(&c, (at) as usize) == ':' && end == c.len() as i64 { end = at; } }
     let head = between(&c, 0, end);
     head.trim().to_owned()
+}
+
+fn before_generics(written: &str) -> String {
+    let mut out: String = String::from("");
+    for c in written.chars() {
+        if c == '<' { break; }
+        out.push(c);
+    }
+    out
 }
 
 fn last_segment(written: &str) -> String {
@@ -16513,6 +16529,19 @@ fn nothing_declares(name: &str, known: &collections::BTreeSet<String>, span: &Sp
     refusal("NK1135", span.clone(), format!("There's no type called `{}`.", name), vec![String::from("A type is either built in, declared in your program with `struct` or `enum`, provided by `std`, or a type parameter.")], format!("Check the spelling, or declare `{}` with `struct` or `enum`.", name))
 }
 
+pub fn nobody_knows(name: &str, own: &Ledger, library: &Ledger) -> bool {
+    if nikaia_std::list::contains(&BUILT_IN, &name) || own.types.contains_key(name) || library.types.contains_key(name) { return false; }
+    let c: Vec<char> = nikaia_std::list::chars(name.chars());
+    let mut last: i64 = -1;
+    for at in 0..c.len() as i64 { if ((at + 1) as usize) < c.len() && *nikaia_std::index::get(&c, (at) as usize) == ':' && *nikaia_std::index::get(&c, (at + 1) as usize) == ':' { last = at; } }
+    let wanted = if last < 0 { format!("::{}", name) } else { format!("{}::", slice(&c, 0, last)) };
+    for ledger in [own, library] {
+        for (key, _) in ledger.types.iter() { if last < 0 && key.ends_with(&wanted) || last >= 0 && key.starts_with(&wanted) { return false; } }
+        for (key, _) in ledger.functions.iter() { if last >= 0 && key.starts_with(&wanted) { return false; } }
+    }
+    true
+}
+
 fn std_module_of(name: &str, known: &collections::BTreeSet<String>) -> String {
     let ending = format!("::{}", name);
     for key in known.iter() {
@@ -17821,7 +17850,7 @@ pub mod ty {
 }
 pub mod types {
     #[allow(unused_imports)]
-    pub use super::{types_checked};
+    pub use super::{types_checked, nobody_knows};
 }
 pub mod views {
     #[allow(unused_imports)]

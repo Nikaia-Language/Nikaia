@@ -264,7 +264,10 @@ fn walk(mut surface: Surface, items: ref Vec[RustItem], at: ref String, imports:
                     }
                     surface.fields.insert(path.clone(), types)
                 }
-                let mut derived: collections::BTreeSet[String] = collections::BTreeSet()
+                // Merged rather than set: an `impl PartialEq for` it may have
+                // been read first.
+                let none: collections::BTreeSet[String] = collections::BTreeSet()
+                let mut derived = (surface.derives[path] ?? none).clone()
                 for list in r.derives {
                     for written in list.split(",") {
                         let name = last_segment(written.trim())
@@ -294,6 +297,19 @@ fn walk(mut surface: Surface, items: ref Vec[RustItem], at: ref String, imports:
                     // check** (ADR-290 D10), and one syntactic pattern is all it
                     // takes to see that it was made.
                     surface.promises.push(f"unsafe impl {g.via} for {g.name}")
+                } else if g.what == "impl" && !g.via.is_empty() && !g.via.contains("<") {
+                    // **A trait implemented by hand says what a derive says**
+                    // (#379): `impl PartialEq for Handle` makes it compare as
+                    // `#[derive(PartialEq)]` would. Only a trait written
+                    // without arguments - `PartialEq<str>` compares a `Handle`
+                    // with something else - and only for a type in the same
+                    // module, which is where such an `impl` almost always is;
+                    // one elsewhere is a line for the reviewer (D5).
+                    let path = joined(at, last_segment(before_generics(g.name)))
+                    let none: collections::BTreeSet[String] = collections::BTreeSet()
+                    let mut derived = (surface.derives[path] ?? none).clone()
+                    derived.insert(last_segment(g.via.trim()))
+                    surface.derives.insert(path, derived)
                 }
                 // Every other `impl` and every `trait`: what a method is at a
                 // foreign boundary is ADR-290 D4's own question, not asked
@@ -368,6 +384,19 @@ fn before_colon(written: ref String) -> String {
 }
 
 // The last `::` segment of a path.
+// A type as an `impl` names it, without what it was given: `Handle<T>` is
+// `Handle`.
+fn before_generics(written: ref String) -> String {
+    let mut out: String = ""
+    for c in written.chars() {
+        if c == '<' {
+            break
+        }
+        out.push(c)
+    }
+    return out
+}
+
 fn last_segment(written: ref String) -> String {
     let mut last: String = ""
     for part in written.split("::") {

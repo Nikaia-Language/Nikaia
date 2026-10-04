@@ -332,14 +332,15 @@ fn a_tool_reads_the_names_of_the_tree_as_described() {
         "{tool}"
     );
 
-    // `std`'s own module sees `std` alone, and `==` on a type it cannot say
-    // compares is refused by this compiler rather than by `rustc`.
+    // `std`'s own module sees `std` alone, so `winnow_grammar::Symbol` is a
+    // name nothing there knows. It is refused by this compiler rather than by
+    // `rustc`, and not as a type that does not compare: whether a name nobody
+    // knows compares is not asked (ADR-204 D1, #379).
     let std_module = lowered_in("src").expect_err("std does not read the description");
     let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        format!("{std_module:#}").contains("NK1188"),
-        "{std_module:#}"
-    );
+    let said = format!("{std_module:#}");
+    assert!(said.contains("NK"), "{said}");
+    assert!(!said.contains("NK1188"), "{said}");
 }
 
 /// **The toolchain's files are one namespace, and say so** (ADR-286 D1, #125):
