@@ -1,0 +1,137 @@
+// crates/nikaia-std/src/tools/check_calls.nika
+//
+// **What the checker reads off a callee's signature** - the arguments a call
+// passes, what the receiver's and the arguments' types bind the signature's
+// variables to, and what a sequence a call hands back is as a whole - moved
+// from the compiler's checker (ADR-294, #125).
+
+use std::collections
+
+/// The arguments a *call* passes: the parameters after a receiver.
+pub fn call_arguments(signature: ref Signature) -> Vec[(String, Ty)] {
+    let mut out: Vec[(String, Ty)] = []
+    let mut first = true
+    for (name, ty) in signature.params {
+        if first && name == "self" {
+            first = false
+            continue
+        }
+        first = false
+        out.push((name.clone(), ty.clone()))
+    }
+    return out
+}
+
+/// The types a call's arguments are expected to be, in order.
+pub fn expected_arguments(contract: ref FnContract) -> Vec[Ty] {
+    let mut out: Vec[Ty] = []
+    let signature = contract.signature ?? return out
+    for (_, ty) in call_arguments(signature) {
+        out.push(ty.clone())
+    }
+    return out
+}
+
+/// **What the receiver's actual type binds the signature's variables to**:
+/// the receiver is the first parameter where there is one, so this is one
+/// `bind` against one pattern (ADR-288).
+pub fn receiver_bindings(contract: ref FnContract, receiver: ref Ty) -> collections::BTreeMap[String, Ty] {
+    let mut bound: collections::BTreeMap[String, Ty] = collections::BTreeMap()
+    let signature = contract.signature ?? return bound
+    if signature.params.len() > 0 && signature.params[0].0 == "self" {
+        bind(signature.params[0].1, receiver, bound)
+    }
+    return bound
+}
+
+/// What the arguments' actual types bind the signature's variables to.
+pub fn argument_bindings(contract: ref FnContract, found: ref Vec[Ty]) -> collections::BTreeMap[String, Ty] {
+    let mut bound: collections::BTreeMap[String, Ty] = collections::BTreeMap()
+    let signature = contract.signature ?? return bound
+    let arguments = call_arguments(signature)
+    let mut at = 0
+    while at < arguments.len() && at < found.len() {
+        bind(arguments[at].1, found[at], bound)
+        at += 1
+    }
+    return bound
+}
+
+/// Whether a call's receiver is a sequence it walks, and so consumes.
+pub fn walks_by_value(contract: ref FnContract) -> bool {
+    let signature = contract.signature ?? return false
+    if signature.params.len() == 0 {
+        return false
+    }
+    return match signature.params[0].1 {
+        Ty::Seq { .. } => true,
+        else => false,
+    }
+}
+
+/// **What a sequence a call hands back is as a whole** (ADR-293 D16): it
+/// ends from the back and knows its length only where every sequence it was
+/// made from does, and - for a callee that ends by length - only where they
+/// are all sized.
+pub fn shape_through(contract: ref FnContract, receiver: ref Ty, found: ref Vec[Ty], result: Ty) -> Ty {
+    let (item, is_sync, pauses, can_throw, parallel, written) = match result {
+        Ty::Seq { item, is_sync, pauses, can_throw, parallel, shape } => (item.clone(), is_sync, pauses, can_throw, parallel, shape.clone()),
+        else => return result,
+    }
+    let mut ends = true
+    let mut sized = true
+    if contract.signature != null {
+        let signature = contract.signature?.clone() ?? Signature::empty()
+        if signature.params.len() > 0 && signature.params[0].0 == "self" && a_sequence_type(signature.params[0].1) {
+            ends = ends && shape_ends(receiver)
+            sized = sized && shape_sized(receiver)
+        }
+        let arguments = call_arguments(signature)
+        let mut at = 0
+        while at < arguments.len() && at < found.len() {
+            if a_sequence_type(arguments[at].1) {
+                ends = ends && shape_ends(found[at])
+                sized = sized && shape_sized(found[at])
+            }
+            at += 1
+        }
+    }
+    ends = ends && (!contract.ends_by_length || sized)
+    return Ty::Seq { item: item, is_sync: is_sync, pauses: pauses, can_throw: can_throw, parallel: parallel, shape: Shape { ends: written.ends && ends, sized: written.sized && sized, replays: written.replays } }
+}
+
+fn shape_ends(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Seq { shape, .. } => shape.ends,
+        else => false,
+    }
+}
+
+fn shape_sized(ty: ref Ty) -> bool {
+    return match ty {
+        Ty::Seq { shape, .. } => shape.sized,
+        else => false,
+    }
+}
+
+/// A step of a chain over a sequence that pauses: what it makes pauses too.
+pub fn a_paused_chain(key: ref String, on: ref Ty) -> bool {
+    let a_step = key == "Seq::map" || key == "Seq::filter" || key == "Seq::take" || key == "Seq::skip" || key == "Seq::step_by" || key == "Seq::zip"
+    return a_step && match on {
+        Ty::Seq { pauses, .. } => pauses,
+        else => false,
+    }
+}
+
+/// **A sequence made over one that pauses pauses**, fails where it does, and
+/// neither ends from the back nor knows its length.
+pub fn a_pausing_sequence(result: Ty, on: ref Ty) -> Ty {
+    let fails = match on {
+        Ty::Seq { can_throw, .. } => can_throw,
+        else => false,
+    }
+    return match result {
+        Ty::Seq { item, can_throw, parallel, shape, .. } => Ty::Seq { item: item.clone(), is_sync: false, pauses: true, can_throw: can_throw || fails, parallel: parallel, shape: Shape { ends: false, sized: false, replays: shape.replays } },
+        else => result,
+    }
+}

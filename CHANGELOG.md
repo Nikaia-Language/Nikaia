@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.415] — 2026-10-04
+
+**What the checker reads off a callee's signature is Nikaia** (ADR-288,
+ADR-294, #125). The arguments a call passes, what the receiver's and the
+arguments' types bind a signature's variables to, what a sequence a call hands
+back is as a whole (ADR-293 D16) and when a chain over one that pauses pauses
+too move into `tools/check_calls.nika`; what the bindings of a `for` take
+(ADR-105, ADR-152 D4) joins `tools/check_types.nika`. 28.8 % of the toolchain
+is Nikaia.
+
 ## [0.0.414] — 2026-10-04
 
 **A nested choice beside a `null` is `Some(…)` where its values are made**
