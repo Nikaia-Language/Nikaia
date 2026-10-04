@@ -493,3 +493,23 @@ fn a_call_whose_paren_is_on_its_line_still_calls() {
     );
     assert!(emitted.contains(".contains("), "{emitted}");
 }
+
+/// **Text bound out of a value the `match` was lent is read where it is
+/// compared**: `wanted` in `Ask::Named(wanted)` over a `ref Ask` is a
+/// `&String` below, though it types as the view a `ref String` parameter is,
+/// and `(x ?? "") == wanted` compared a `String` with a `&String` (found moving
+/// `bounds`' body questions into Nikaia, #125).
+#[test]
+fn text_bound_through_a_lent_value_is_read_where_it_is_compared() {
+    let emitted = emit(
+        "enum Ask {\n    Named(String),\n    Other,\n}\n\
+         fn maybe(n: i64) -> String? {\n    return if n > 0 { \"a\" } else { null }\n}\n\
+         fn same(ask: ref Ask, n: i64) -> bool {\n\
+             return match ask {\n\
+                 Ask::Named(wanted) => (maybe(n) ?? \"\") == wanted,\n\
+                 else => false,\n\
+             }\n\
+         }\n",
+    );
+    assert!(emitted.contains("== *wanted"), "{emitted}");
+}

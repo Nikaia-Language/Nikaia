@@ -908,6 +908,322 @@ fn seek_select(arms: &[SelectArm], seek: &Seek, words: &winnow_grammar::Interner
 }
 
 
+// --- bounds_body.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ask {
+    Leaves,
+    Breaks,
+    Changes(String),
+    Pinned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Tally {
+    found: bool,
+    count: i64,
+    names: collections::BTreeSet<String>,
+}
+
+fn tally() -> Tally { Tally { found: false, count: 0, names: collections::BTreeSet::new() } }
+
+pub fn breaks(body: &Block, words: &winnow_grammar::InternerContext) -> bool {
+    let mut found = tally();
+    tally_block(body, &Ask::Breaks, false, words, &mut found);
+    found.found
+}
+
+pub fn pinned_in(body: &Block, words: &winnow_grammar::InternerContext) -> collections::BTreeSet<String> {
+    let mut found = tally();
+    tally_block(body, &Ask::Pinned, false, words, &mut found);
+    found.names
+}
+
+pub fn filled_once(body: &Block, pinned: &collections::BTreeSet<String>, words: &winnow_grammar::InternerContext) -> Vec<String> {
+    let mut leaving = tally();
+    tally_block(body, &Ask::Leaves, false, words, &mut leaving);
+    if leaving.found { return vec![]; }
+    let mut pushed: collections::BTreeMap<String, i64> = collections::BTreeMap::new();
+    for stmt in body.stmts.iter() {
+        let list = match pushed_onto(&stmt.node, words) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        let before = nikaia_std::index::or(pushed.get(&list), || 0);
+        pushed.insert(list, before + 1);
+    }
+    let mut once: Vec<String> = vec![];
+    for (list, count) in pushed.iter() {
+        let count = nikaia_std::num::value(count);
+        if count != 1 || pinned.contains(list) { continue; }
+        let mut changes = tally();
+        tally_block(body, &Ask::Changes(list.to_owned()), false, words, &mut changes);
+        if changes.count == 1 && !rebinds(body, list, words) { once.push(list.to_owned()); }
+    }
+    once
+}
+
+fn pushed_onto(stmt: &Stmt, words: &winnow_grammar::InternerContext) -> Option<String> {
+    let value = match stmt {
+        Stmt::Expr(value) => value,
+        _ => return None,
+    };
+    match value {
+        Expr::MethodCall { receiver, method, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            if words.resolve(method) != "push" || args.len() != 1 { return None; }
+            variable_text(receiver, words)
+        },
+        _ => None,
+    }
+}
+
+fn variable_text(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
+    match expr {
+        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        _ => None,
+    }
+}
+
+fn assigned_root(target: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
+    match target {
+        Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); assigned_root(base, words) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); assigned_root(base, words) },
+        Expr::Variable(name) => { let name = *name; Some(words.resolve(name).to_owned()) },
+        _ => None,
+    }
+}
+
+fn add_variables(exprs: &[Expr], words: &winnow_grammar::InternerContext, names: &mut collections::BTreeSet<String>) {
+    for e in exprs.iter() {
+        let name = match variable_text(e, words) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        names.insert(name);
+    }
+}
+
+fn add_variable(expr: &Expr, words: &winnow_grammar::InternerContext, names: &mut collections::BTreeSet<String>) {
+    let name = match variable_text(expr, words) { Some(__nikaia_value) => __nikaia_value, None => return };
+    names.insert(name);
+}
+
+fn names_the(exprs: &[Expr], list: &str, words: &winnow_grammar::InternerContext) -> bool {
+    for e in exprs.iter() { if nikaia_std::index::or(variable_text(e, words), || "".into()) == list { return true; } }
+    false
+}
+
+fn tally_block(block: &Block, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { for stmt in block.stmts.iter() { tally_statement(&stmt.node, ask, deferred, words, tally); } }
+
+fn tally_statement(stmt: &Stmt, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) {
+    match ask {
+        Ask::Leaves => match stmt {
+            Stmt::Break => { tally.found = true; },
+            Stmt::Continue => { tally.found = true; },
+            Stmt::Return(_) => { tally.found = true; },
+            _ => { },
+        },
+        Ask::Breaks => match stmt {
+            Stmt::Break => { tally.found = true; },
+            Stmt::For { .. } => return,
+            Stmt::While { .. } => return,
+            _ => { },
+        },
+        Ask::Pinned => {
+            if deferred {
+                match stmt {
+                    Stmt::Assign { target, .. } => {
+                        let root = assigned_root(target, words);
+                        if root.is_some() { tally.names.insert(nikaia_std::index::or(root, || "".into())); }
+                    },
+                    _ => { },
+                }
+            }
+        },
+        Ask::Changes(_) => { },
+    }
+    match stmt {
+        Stmt::For { iter, body, .. } => {
+            tally_expr(iter, ask, deferred, words, tally);
+            tally_block(body, ask, deferred, words, tally);
+        },
+        Stmt::While { cond, body } => {
+            tally_expr(cond, ask, deferred, words, tally);
+            tally_block(body, ask, deferred, words, tally);
+        },
+        Stmt::Let { value, .. } => tally_expr(value, ask, deferred, words, tally),
+        Stmt::Comptime { value, .. } => tally_expr(value, ask, deferred, words, tally),
+        Stmt::Expr(value) => tally_expr(value, ask, deferred, words, tally),
+        Stmt::Assign { target, value, .. } => {
+            tally_expr(target, ask, deferred, words, tally);
+            tally_expr(value, ask, deferred, words, tally);
+        },
+        Stmt::Return(value) => tally_maybe((value).as_ref(), ask, deferred, words, tally),
+        _ => { },
+    }
+}
+
+fn tally_maybe(expr: Option<&Expr>, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { tally_expr(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, ask, deferred, words, tally); }
+
+fn tally_maybe_block(block: Option<&Block>, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { tally_block(match block { Some(__nikaia_value) => __nikaia_value, None => return }, ask, deferred, words, tally); }
+
+fn tally_all(exprs: &[Expr], ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { for e in exprs.iter() { tally_expr(e, ask, deferred, words, tally); } }
+
+fn tally_config(config: &[ConfigArg], ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { for c in config.iter() { tally_expr(&c.value, ask, deferred, words, tally); } }
+
+fn tally_fields(fields: &[FieldInit], ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) { for field in fields.iter() { tally_maybe((field.value).as_ref(), ask, deferred, words, tally); } }
+
+fn tally_here(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) {
+    match ask {
+        Ask::Leaves => match expr {
+            Expr::Break => { tally.found = true; },
+            Expr::Continue => { tally.found = true; },
+            Expr::Return(_) => { tally.found = true; },
+            Expr::Throw(_) => { tally.found = true; },
+            Expr::Try(_) => { tally.found = true; },
+            _ => { },
+        },
+        Ask::Breaks => match expr {
+            Expr::Break => { tally.found = true; },
+            _ => { },
+        },
+        Ask::Changes(list) => match expr {
+            Expr::MethodCall { receiver, method, args, .. } => {
+                let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+                if nikaia_std::index::or(variable_text(receiver, words), || "".into()) == *list && !keeps_length(words.resolve(method)) { tally.count += 1; } else if names_the(args, list, words) { tally.count += 2; }
+            },
+            Expr::SafeMethod { receiver, method, args, .. } => {
+                let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+                if nikaia_std::index::or(variable_text(receiver, words), || "".into()) == *list && !keeps_length(words.resolve(method)) { tally.count += 1; } else if names_the(args, list, words) { tally.count += 2; }
+            },
+            Expr::Call { args, .. } if names_the(args, list, words) => { tally.count += 2; },
+            _ => { },
+        },
+        Ask::Pinned => {
+            if deferred {
+                match expr {
+                    Expr::MethodCall { receiver, args, .. } => {
+                        let receiver = nikaia_std::boxed::open(receiver);
+                        add_variable(receiver, words, &mut tally.names);
+                        add_variables(args, words, &mut tally.names);
+                    },
+                    Expr::SafeMethod { receiver, args, .. } => {
+                        let receiver = nikaia_std::boxed::open(receiver);
+                        add_variable(receiver, words, &mut tally.names);
+                        add_variables(args, words, &mut tally.names);
+                    },
+                    Expr::Call { args, .. } => add_variables(args, words, &mut tally.names),
+                    _ => { },
+                }
+            }
+        },
+    }
+}
+
+fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::InternerContext, tally: &mut Tally) {
+    tally_here(expr, ask, deferred, words, tally);
+    let mut stops = false;
+    match ask {
+        Ask::Breaks => match expr {
+            Expr::Closure { .. } => { stops = true; },
+            Expr::Spawn { .. } => { stops = true; },
+            _ => { },
+        },
+        _ => { },
+    }
+    if stops { return; }
+    match expr {
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            tally_expr(value, ask, deferred, words, tally);
+            for arm in arms.iter() {
+                tally_maybe((arm.guard).as_ref(), ask, deferred, words, tally);
+                tally_expr(&arm.body, ask, deferred, words, tally);
+            }
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            tally_expr(start, ask, deferred, words, tally);
+            tally_expr(end, ask, deferred, words, tally);
+        },
+        Expr::Tuple(items) => tally_all(items, ask, deferred, words, tally),
+        Expr::ListLit { items, .. } => tally_all(items, ask, deferred, words, tally),
+        Expr::LitInterpolated { parts } => {
+            for part in parts.iter() {
+                match part {
+                    FPart::Hole { expr, .. } => tally_expr(expr, ask, deferred, words, tally),
+                    _ => { },
+                }
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            tally_expr(cond, ask, deferred, words, tally);
+            tally_block(then_branch, ask, deferred, words, tally);
+            tally_maybe_block((else_branch).as_ref(), ask, deferred, words, tally);
+        },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            tally_expr(func, ask, deferred, words, tally);
+            tally_all(args, ask, deferred, words, tally);
+            tally_config(config, ask, deferred, words, tally);
+        },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); tally_expr(body, ask, true, words, tally) },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            tally_expr(receiver, ask, deferred, words, tally);
+            tally_all(args, ask, deferred, words, tally);
+            tally_config(config, ask, deferred, words, tally);
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            tally_expr(receiver, ask, deferred, words, tally);
+            tally_all(args, ask, deferred, words, tally);
+            tally_config(config, ask, deferred, words, tally);
+        },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); tally_expr(base, ask, deferred, words, tally) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); tally_expr(base, ask, deferred, words, tally) },
+        Expr::StructLit { fields, .. } => tally_fields(fields, ask, deferred, words, tally),
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            tally_expr(base, ask, deferred, words, tally);
+            tally_fields(fields, ask, deferred, words, tally);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tally_expr(expr, ask, deferred, words, tally) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); tally_expr(inner, ask, deferred, words, tally) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); tally_expr(expr, ask, deferred, words, tally) },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            tally_expr(expr, ask, deferred, words, tally);
+            tally_block(handler, ask, deferred, words, tally);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            tally_expr(lhs, ask, deferred, words, tally);
+            tally_expr(rhs, ask, deferred, words, tally);
+        },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); tally_maybe((value).as_ref(), ask, deferred, words, tally) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            tally_expr(base, ask, deferred, words, tally);
+            tally_expr(index, ask, deferred, words, tally);
+        },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            tally_expr(value, ask, deferred, words, tally);
+            tally_expr(fallback, ask, deferred, words, tally);
+        },
+        Expr::Select(arms) => {
+            for arm in arms.iter() {
+                tally_expr(&arm.value, ask, deferred, words, tally);
+                tally_block(&arm.body, ask, true, words, tally);
+            }
+        },
+        Expr::Block(b) => tally_block(b, ask, deferred, words, tally),
+        Expr::Overlap(b) => tally_block(b, ask, true, words, tally),
+        Expr::Unsafe(b) => tally_block(b, ask, deferred, words, tally),
+        Expr::Closure { body, .. } => tally_block(body, ask, true, words, tally),
+        _ => { },
+    }
+}
+
+
 // --- buffers.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16838,6 +17154,10 @@ pub mod boundaries {
 pub mod bounds_basic {
     #[allow(unused_imports)]
     pub use super::{basic_indices, keeps_length, length_stays, rebinds};
+}
+pub mod bounds_body {
+    #[allow(unused_imports)]
+    pub use super::{breaks, pinned_in, filled_once};
 }
 pub mod buffers {
     #[allow(unused_imports)]
