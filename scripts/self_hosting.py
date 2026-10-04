@@ -39,7 +39,7 @@ COMPILER_NIKA = {
     "ledger.nika": "contracts: reading a ledger back, whole, and writing a signature in its spelling (0.0.258, 0.0.292, 0.0.333)",
     "manifest.nika": "manifest: what nikaia.toml may say (0.0.260)",
     "ast.nika": "ast: the syntax tree (ADR-294, 0.0.275)",
-    "fold.nika": "fold: a constant's value (ADR-294 D11, 0.0.278)",
+    "fold.nika": "fold: a constant's value (ADR-294 D11, 0.0.278), on integers.nika's arithmetic (0.0.420)",
     "trust.nika": "contracts::trust: what --trust says (0.0.281)",
     "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-294, 0.0.285-295)",
     "sources.nika": "describe: the files a crate is read from (0.0.308)",
@@ -86,7 +86,7 @@ COMPILER_NIKA = {
     "check_words.nika": "check: the words its refusals are made of - an article, a count, a list of names, the nearest spelling, the note on a word another language reserves - and which lookups lend their key (0.0.411)",
     "check_types.nika": "check: what it asks of one type by itself - whether it moves or copies, a view of it and what a view is of, what a hull holds and what goes into one, lists, collections and text, and the way out of a mismatch (0.0.412), and what a `for` binds (0.0.415)",
     "check_calls.nika": "check: what it reads off a callee's signature - the arguments a call passes, what the receiver's and the arguments' types bind, and what a sequence a call hands back is as a whole (0.0.415)",
-    "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416)",
+    "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416), asked with `checked_` (ADR-315, 0.0.420)",
     "build_values.nika": "build_time: what a build-time expression comes to - a number, a truth value, text, a list, a tuple, a variant or a struct - and what an operator and an index make of them (0.0.417)",
 }
 

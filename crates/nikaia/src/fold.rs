@@ -100,16 +100,17 @@ pub fn wants_widening(folded: &Constant) -> bool {
 /// An `i128` as the fold counts: `None` past the 65 bits.
 fn to_nikaia(c: &Constant) -> Option<nika::Constant> {
     Some(nika::Constant {
-        magnitude: u64::try_from(c.value.unsigned_abs()).ok()?,
-        negative: c.value < 0,
+        value: nikaia_std::tools::integers::integer(
+            u64::try_from(c.value.unsigned_abs()).ok()?,
+            c.value < 0,
+        ),
         pinned: c.pinned.clone().unwrap_or_default(),
     })
 }
 
 fn from_nikaia(c: nika::Constant) -> Constant {
-    let magnitude = i128::from(c.magnitude);
     Constant {
-        value: if c.negative { -magnitude } else { magnitude },
+        value: crate::build_time::integer_value(&c.value),
         pinned: (!c.pinned.is_empty()).then_some(c.pinned),
     }
 }

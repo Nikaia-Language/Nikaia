@@ -28,21 +28,15 @@ pub fn integer_of_count(n: i64) -> Integer {
     return integer(n as u64, false)
 }
 
-/// The number as a count, where it is one an `i64` holds.
+/// The number as a count, where it is one an `i64` holds (ADR-315). A
+/// negative one is counted down from `-1`, so the most negative `i64`, whose
+/// magnitude no `i64` holds, is one too.
 pub fn integer_as_count(n: ref Integer) -> i64? {
     if !n.negative {
-        if n.magnitude > 9223372036854775807 {
-            return null
-        }
-        return n.magnitude as i64
+        return n.magnitude.checked_i64()
     }
-    if n.magnitude > 9223372036854775808 {
-        return null
-    }
-    if n.magnitude == 9223372036854775808 {
-        return -9223372036854775807 - 1
-    }
-    return 0 - (n.magnitude as i64)
+    let below = (n.magnitude - 1).checked_i64() ?? return null
+    return -1 - below
 }
 
 /// The number written out, `-` in front where it is negative.
@@ -62,10 +56,7 @@ pub fn integer_negated(n: ref Integer) -> Integer {
 /// the smaller from the larger and keep the larger's sign.
 pub fn integer_sum(a: ref Integer, b: ref Integer) -> Integer? {
     if a.negative == b.negative {
-        let sum = a.magnitude.wrapping_add(b.magnitude)
-        if sum < a.magnitude {
-            return null
-        }
+        let sum = a.magnitude.checked_add(b.magnitude) ?? return null
         return integer(sum, a.negative)
     }
     if a.magnitude >= b.magnitude {
@@ -81,26 +72,19 @@ pub fn integer_difference(a: ref Integer, b: ref Integer) -> Integer? {
 
 /// `a * b`: the magnitudes multiply, and the signs differ or agree.
 pub fn integer_product(a: ref Integer, b: ref Integer) -> Integer? {
-    if a.magnitude == 0 || b.magnitude == 0 {
-        return integer(0, false)
-    }
-    let product = a.magnitude.wrapping_mul(b.magnitude)
-    if product / a.magnitude != b.magnitude {
-        return null
-    }
+    let product = a.magnitude.checked_mul(b.magnitude) ?? return null
     return integer(product, a.negative != b.negative)
 }
 
 /// `a / b`, toward zero, and `a % b`, which takes the sign of `a`. Nothing
-/// for a division by zero.
+/// for a division by zero, which the magnitudes' own `checked_` names say.
 pub fn integer_quotient(a: ref Integer, b: ref Integer, remainder: bool) -> Integer? {
-    if b.magnitude == 0 {
-        return null
-    }
     if remainder {
-        return integer(a.magnitude % b.magnitude, a.negative)
+        let left = a.magnitude.checked_rem(b.magnitude) ?? return null
+        return integer(left, a.negative)
     }
-    return integer(a.magnitude / b.magnitude, a.negative != b.negative)
+    let quotient = a.magnitude.checked_div(b.magnitude) ?? return null
+    return integer(quotient, a.negative != b.negative)
 }
 
 /// `a` against `b`: -1 below, 0 equal, 1 above.
@@ -155,10 +139,7 @@ pub fn integer_shifted(a: ref Integer, b: ref Integer, left: bool) -> Integer? {
     if left {
         let mut magnitude = a.magnitude
         for _ in 0..<count {
-            if magnitude > 9223372036854775807 {
-                return null
-            }
-            magnitude *= 2
+            magnitude = magnitude.checked_mul(2) ?? return null
         }
         return integer(magnitude, a.negative)
     }

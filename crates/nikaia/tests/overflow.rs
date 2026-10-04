@@ -721,3 +721,82 @@ fn a_negative_count_says_what_it_is_rather_than_wrapping() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// **Asking whether it fits, run** ([ADR-315](../../../docs/specification/adr/adr-315.md)).
+///
+/// The fourth family beside aborting, wrapping and saturating: the answer, or
+/// `null` where there is none - an overflow, a division by zero (D2), the most
+/// negative number's sign (D1), and a conversion the destination does not hold
+/// (D4). Run, because the claim is about numbers, and with the checks on,
+/// because none of these may abort.
+#[test]
+fn checked_names_answer_null_where_the_operator_would_abort() {
+    let dir = common::scratch_dir("overflow-checked");
+    let rust = lower(
+        &dir,
+        "fn sum(a: i32, b: i32) -> i32? {\n    \
+             return a.checked_add(b)\n\
+         }\n\
+         \n\
+         fn half(a: u64, b: u64) -> u64? {\n    \
+             let q = a.checked_div(b) ?? return null\n    \
+             return q\n\
+         }\n\
+         \n\
+         fn small(n: i64) -> i32? {\n    \
+             return n.checked_i32()\n\
+         }\n\
+         \n\
+         fn count(n: u64) -> i64 {\n    \
+             return (n - 1).checked_i64() ?? -1\n\
+         }\n\
+         \n\
+         fn main() {\n    \
+             println(f\"{sum(2147483647, 1) ?? -1} {sum(1, 2) ?? -1} {half(7, 0) ?? 0} {half(7, 2) ?? 0}\")\n    \
+             println(f\"{small(5000000000) ?? -1} {small(-5) ?? 0} {count(18446744073709551615)} {count(4)}\")\n    \
+             let m: i64 = -9223372036854775807 - 1\n    \
+             println(f\"{m.checked_neg() ?? 0} {m.checked_abs() ?? 0} {m.checked_rem(0) ?? 9} {m.checked_div(-1) ?? 8}\")\n\
+         }\n",
+    );
+    // A conversion is a call around its argument, which needs no parentheses
+    // of its own (`unused_parens` would be a warning about the generated file).
+    assert!(
+        rust.contains("i64::try_from(n - 1"),
+        "a checked conversion is Rust's try_from:\n{rust}"
+    );
+
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-C",
+            "overflow-checks=on",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&compiled.stderr).contains("warning"),
+        "the emitted Rust compiled with a warning:\n{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = Command::new(&binary).output().expect("run the program");
+    assert!(
+        ran.status.success(),
+        "none of these may abort, and this one did:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "-1 3 0 3\n-1 -5 -1 3\n0 0 9 8",
+        "overflow, sum, division by zero, quotient; conversions; sign of the minimum"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

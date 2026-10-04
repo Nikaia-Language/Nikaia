@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.419 (Draft)
+**Version:** 0.0.420 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -376,6 +376,21 @@ let n = text.len().truncating_i32()               // a count that may not fit
 
 The names are `truncating_i32`, `truncating_i64`, `truncating_u32` and
 `truncating_u64`. Each converts out of a wider integer and out of an `f64`.
+
+**Where a program means to ask whether it fits, it says so by name too**
+([ADR-315](adr/adr-315.md)), and the answer is optional:
+
+```nika
+let sum = a.checked_add(b) ?? return null         // null where it does not fit
+let small = big.checked_i32() ?? 0                // null where an i32 does not hold it
+```
+
+The arithmetic names are `checked_add`, `checked_sub`, `checked_mul`,
+`checked_div`, `checked_rem`, `checked_neg` and `checked_abs`, for the four
+types the wrapping names have and without `_neg` and `_abs` on an unsigned one;
+a division by zero is `null` too. The conversions are `checked_i32`,
+`checked_i64`, `checked_u32` and `checked_u64`, out of an integer type that has
+values the destination lacks.
 
 Two conversions are checked or unchecked in a way the code does not show:
 

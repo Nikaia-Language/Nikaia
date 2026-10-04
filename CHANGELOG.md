@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.420] — 2026-10-04
+
+**Arithmetic and a conversion can be asked whether they fit** (ADR-315,
+Part I 2.4). Beside aborting, wrapping and stopping at the limit (ADR-285
+D6), `checked_add`, `_sub`, `_mul`, `_div`, `_rem`, `_neg` and `_abs` answer
+`T?` for `i32`, `i64`, `u32` and `u64` - the number, or `null` where there is
+none, a division by zero included - and `checked_i32()`, `checked_i64()`,
+`checked_u32()` and `checked_u64()` convert out of a type that has values the
+destination lacks, lowered as `<T>::try_from(n).ok()`. There is no
+`checked_shl` or `checked_shr`: Rust's check the count and not the bits.
+
+**The compiler's own integers ask instead of comparing** (#125):
+`tools/integers.nika` no longer wraps and compares to find out whether a sum
+or a product fitted, nor counts an `i64` out of a magnitude in fifteen lines,
+and `tools/fold.nika` folds with `integers.nika`'s arithmetic rather than its
+own copy of it - 41 lines fewer. A method called on a bare literal
+(`(-7).wrapping_add(2)`) still reaches `rustc` without a type: #417.
+
 ## [0.0.419] — 2026-10-04
 
 **A build has no debug assertions, `incremental` is a switch, and 1BRC reads
