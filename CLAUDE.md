@@ -2,6 +2,10 @@
 
 ## Trunk-based: everyone pushes to `develop`, `main` only gets what was tested (#437)
 
+* **`main` is the default branch, and what the outside sees: the last tested
+  state.** A session starts on `main` or on a branch made from it, so the first
+  thing to do is to switch to `develop`:
+  `git fetch origin develop && git checkout -B develop origin/develop`.
 * **`develop` is the trunk. Every session pushes to it directly, at once.**
   No pull requests, no waiting for CI, no full suite first: build,
   `cargo fmt`, and the tests the change touches are enough. Small commits,
