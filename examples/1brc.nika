@@ -10,8 +10,8 @@
 // Name the project `brc`, not `1brc`: a package name cannot start with a digit.
 //
 // Shows: a `grammar` that describes the whole file, a parallel `par_fold`,
-// names that are slices of a memory-mapped file rather than copies, `sync`
-// functions, and a format spec inside an f-string.
+// names that are slices of a memory-mapped file rather than copies, and a
+// format spec inside an f-string.
 //
 // To run it, copy this file to `src/main.nika` of a project (guide/getting-started.md).
 
@@ -74,7 +74,7 @@ grammar Measurements {
                  Summary::merge)
 }
 
-pub struct Reading {
+struct Reading {
     name: ref String,
     temp: i32,
 }
@@ -83,7 +83,7 @@ pub struct Reading {
 // 2. Aggregation
 // ---------------------------------------------------------------------------
 
-pub struct Stats {
+struct Stats {
     min: i32,
     max: i32,
     sum: i64,
@@ -91,50 +91,48 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn(first: i32) -> Stats sync {
+    fn(first: i32) -> Stats {
         return Stats { min: first, max: first, sum: first as i64, count: 1 }
     }
 
-    // `sync`: this function cannot pause. The compiler checks it, and refuses
-    // a call like `fs::read_to_string` in here.
-    fn add(ref mut self, temp: i32) sync {
+    fn add(ref mut self, temp: i32) {
         if temp < self.min { self.min = temp }
         if temp > self.max { self.max = temp }
         self.sum += temp as i64
         self.count += 1
     }
 
-    fn merge(ref mut self, other: ref Stats) sync {
+    fn merge(ref mut self, other: ref Stats) {
         if other.min < self.min { self.min = other.min }
         if other.max > self.max { self.max = other.max }
         self.sum += other.sum
         self.count += other.count
     }
 
-    fn mean(ref self) -> f64 sync {
+    fn mean(ref self) -> f64 {
         return ((self.sum as f64) / (self.count as f64)) / 10.0
     }
 }
 
 // The stations seen so far and their statistics. The keys are slices of the
 // input too.
-pub struct Summary {
+struct Summary {
     stations: collections::HashMap[ref String, Stats],
 }
 
 impl Summary {
-    pub fn() -> Summary sync {
+    fn() -> Summary {
         return Summary { stations: collections::HashMap() }
     }
 
-    fn record(ref mut self, m: Reading) sync {
+    fn record(ref mut self, m: Reading) {
         self.stations
             .entry(m.name)
             .and_modify fn (stats) { stats.add(m.temp) }
             .or_insert_with fn { Stats(m.temp) }
     }
 
-    fn merge(ref mut self, other: Summary) sync {
+    fn merge(ref mut self, other: Summary) {
         for (name, stats) in other.stations.drain() {
             self.stations
                 .entry(name)

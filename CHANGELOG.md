@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.421] — 2026-10-04
+
+**`examples/1brc.nika` writes only what 1BRC needs.** Seven `sync`s, the
+comment explaining the word and its place in the header's list are gone: the
+compiler infers that these functions never pause, and the word is a promise to
+other packages, which a one-file program has none of (Part II 12.1). So are
+`pub` on its structs and constructors, which a package's own code does not need
+(ADR-286 D2) and which made the build note that two `pub` functions do not
+promise `sync`. `pub rule file` stays: it is the grammar's entry point, the
+rule `main` calls from outside the `grammar` block. Same output, same 390
+instructions a row.
+
 ## [0.0.420] — 2026-10-04
 
 **Arithmetic and a conversion can be asked whether they fit** (ADR-315,
