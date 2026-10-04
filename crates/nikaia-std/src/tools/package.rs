@@ -6212,6 +6212,70 @@ fn alias_of(names: &winnow_grammar::InternerContext, item: &Item) -> String {
     }
 }
 
+pub fn could_promise(contracts: &Ledger, theirs: &collections::BTreeSet<String>, paused_by_code: &collections::BTreeMap<String, Vec<String>>) -> String {
+    let mut never: Vec<String> = vec![];
+    for (key, contract) in contracts.functions.iter() { if !of_a_dependency(key, theirs) && contract.public && inferred_sync(&contract.sync_claim) { never.push(format!("`{}`", key)); } }
+    let mut through: Vec<String> = vec![];
+    for (key, lambdas) in paused_by_code.iter() {
+        let contract = match *nikaia_std::index::get(&contracts.functions, key) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        if of_a_dependency(key, theirs) || !contract.public || !no_sync(&contract.sync_claim) { continue; }
+        let mut named: Vec<String> = vec![];
+        for lambda in lambdas.iter() { if !nikaia_std::list::contains(&contract.keeps, lambda) { named.push(lambda.to_owned()); } }
+        if (named.len() as i64) == lambdas.len() as i64 { through.push(format!("`{}` (`sync({})`)", key, named.join(", "))); }
+    }
+    let mut out: String = String::from("");
+    if !never.is_empty() {
+        let one = never.len() == 1;
+        let count = if one { String::from("") } else { format!("{} ", never.len() as i64) };
+        let functions = if one { "1 pub function" } else { "pub functions" };
+        let s = if one { "s" } else { "" };
+        let es = if one { "es" } else { "" };
+        out.push_str(&format!("note: {}{} never pause{} and do{} not promise it: {}\n  help: write `sync` after the result, and callers in other packages can rely on it\n", count, functions, s, es, never.join(", ")));
+    }
+    if !through.is_empty() {
+        let one = through.len() == 1;
+        let count = if one { String::from("") } else { format!("{} ", through.len() as i64) };
+        let functions = if one { "1 pub function" } else { "pub functions" };
+        let s = if one { "s" } else { "" };
+        let they = if one { "it is" } else { "they are" };
+        let es = if one { "es" } else { "" };
+        out.push_str(&format!("note: {}{} pause{} only where the lambdas {} given do, and do{} not promise it: {}\n  help: write `sync(f)` after the result, naming those lambdas, and callers in other packages can rely on it\n", count, functions, s, they, es, through.join(", ")));
+    }
+    out
+}
+
+fn of_a_dependency(key: &str, theirs: &collections::BTreeSet<String>) -> bool {
+    let parts: Vec<&str> = key.splitn(2, "::").collect::<Vec<_>>();
+    parts.len() == 2 && theirs.contains(*nikaia_std::index::get(&parts, 0))
+}
+
+fn inferred_sync(claim: &Sync) -> bool { matches!(claim, Sync::Inferred) }
+
+fn no_sync(claim: &Sync) -> bool { matches!(claim, Sync::No) }
+
+pub fn pause_path(chain: &[String]) -> String {
+    let mut steps: Vec<String> = vec![];
+    let mut k: i64 = 0;
+    while ((k + 1) as usize) < chain.len() {
+        steps.push(format!("`{}` calls `{}`", *nikaia_std::index::get(&chain, (k) as usize), *nikaia_std::index::get(&chain, (k + 1) as usize)));
+        k += 1;
+    }
+    steps.join(", which ")
+}
+
+pub fn lost_sync_unplaced(message: &str, help: &str) -> String { format!("warning[NK2211]: {}\n   = note: a method call it makes, or one of the calls it leads to, can pause.\n   = help: {}\n", message, help) }
+
+pub fn test_function(k: i64) -> String { format!("__nikaia_test_{}", k) }
+
+pub fn test_dispatcher(cli: &str, with_use: bool, count: i64, dispatch: &str) -> String {
+    let mut text: String = String::from("");
+    if with_use { text.push_str("use std::cli\n"); }
+    text.push_str(&format!("fn {}() throws {{\n    let which = {}::args().nth(1) ?? \"\"\n", dispatch, cli));
+    for k in 0..count { text.push_str(&format!("    if which == \"{}\" {{\n        {}()\n        return\n    }}\n", k, test_function(k))); }
+    text.push_str("    panic(f\"this build has no test numbered `{which}`\")\n}\n");
+    text
+}
+
 
 // --- names.nika ---
 
@@ -15588,7 +15652,7 @@ pub mod manifest {
 }
 pub mod modules {
     #[allow(unused_imports)]
-    pub use super::{declared_names, a_use_refused};
+    pub use super::{declared_names, a_use_refused, could_promise, pause_path, lost_sync_unplaced, test_function, test_dispatcher};
 }
 pub mod names {
     #[allow(unused_imports)]

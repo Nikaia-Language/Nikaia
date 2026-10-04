@@ -99,3 +99,121 @@ fn alias_of(names: ref winnow_grammar::InternerContext, item: ref Item) -> Strin
         else => "",
     }
 }
+
+// --- What a build says about its `pub` functions' pausing (ADR-288) ---
+
+/// **What the program's own `pub` functions could promise and do not**
+/// (ADR-288 D2, D29): those whose entry says `"inferred"` never pause, and
+/// `sync` would promise it; those that pause only where the lambdas they are
+/// given do would keep `sync(f)`, naming them - unless they keep one, which
+/// `sync(f)` cannot name (D4, `NK2210`). Empty where there is nothing to say.
+///
+/// `theirs` is the words of the packages this program depends on, whose
+/// entries are not the program's to promise.
+pub fn could_promise(contracts: ref Ledger, theirs: ref collections::BTreeSet[String], paused_by_code: ref collections::BTreeMap[String, Vec[String]]) -> String {
+    let mut never: Vec[String] = []
+    for (key, contract) in contracts.functions {
+        if !of_a_dependency(key, theirs) && contract.public && inferred_sync(contract.sync_claim) {
+            never.push(f"`{key}`")
+        }
+    }
+    let mut through: Vec[String] = []
+    for (key, lambdas) in paused_by_code {
+        let contract = contracts.functions[key] ?? continue
+        // A written `sync(f)` is the promise already made.
+        if of_a_dependency(key, theirs) || !contract.public || !no_sync(contract.sync_claim) {
+            continue
+        }
+        let mut named: Vec[String] = []
+        for lambda in lambdas {
+            if !contract.keeps.contains(lambda) {
+                named.push(lambda.clone())
+            }
+        }
+        if named.len() == lambdas.len() {
+            through.push(f"`{key}` (`sync({named.join(", ")})`)")
+        }
+    }
+    let mut out: String = ""
+    if never.len() > 0 {
+        let one = never.len() == 1
+        let count = if one { "" } else { f"{never.len()} " }
+        let functions = if one { "1 pub function" } else { "pub functions" }
+        let s = if one { "s" } else { "" }
+        let es = if one { "es" } else { "" }
+        out.push_str(f"note: {count}{functions} never pause{s} and do{es} not promise it: {never.join(", ")}\n  help: write `sync` after the result, and callers in other packages can rely on it\n")
+    }
+    if through.len() > 0 {
+        let one = through.len() == 1
+        let count = if one { "" } else { f"{through.len()} " }
+        let functions = if one { "1 pub function" } else { "pub functions" }
+        let s = if one { "s" } else { "" }
+        let they = if one { "it is" } else { "they are" }
+        let es = if one { "es" } else { "" }
+        out.push_str(f"note: {count}{functions} pause{s} only where the lambdas {they} given do, and do{es} not promise it: {through.join(", ")}\n  help: write `sync(f)` after the result, naming those lambdas, and callers in other packages can rely on it\n")
+    }
+    return out
+}
+
+fn of_a_dependency(key: ref String, theirs: ref collections::BTreeSet[String]) -> bool {
+    let parts: Vec[ref String] = key.splitn(2, "::").collect()
+    return parts.len() == 2 && theirs.contains(parts[0])
+}
+
+fn inferred_sync(claim: ref Sync) -> bool {
+    return match claim {
+        Sync::Inferred => true,
+        else => false,
+    }
+}
+
+fn no_sync(claim: ref Sync) -> bool {
+    return match claim {
+        Sync::No => true,
+        else => false,
+    }
+}
+
+/// **The way a function came to pause**, for ADR-288 D32's warning: each call
+/// on the way, `a` calls `b`, which `b` calls `c`.
+pub fn pause_path(chain: ref Vec[String]) -> String {
+    let mut steps: Vec[String] = []
+    let mut k = 0
+    while k + 1 < chain.len() {
+        steps.push(f"`{chain[k]}` calls `{chain[k + 1]}`")
+        k += 1
+    }
+    return steps.join(", which ")
+}
+
+/// ADR-288 D32's warning where there is no statement to point at - a method
+/// call only the type checker resolved - said without one rather than not at
+/// all.
+pub fn lost_sync_unplaced(message: ref String, help: ref String) -> String {
+    return f"warning[NK2211]: {message}\n   = note: a method call it makes, or one of the calls it leads to, can pause.\n   = help: {help}\n"
+}
+
+// --- A test build (ADR-269 D1) ---
+
+/// The name the `k`th test's function has in a test build.
+pub fn test_function(k: i64) -> String {
+    return f"__nikaia_test_{k}"
+}
+
+/// **The dispatcher a test build appends to its entry**, in Nikaia, so it goes
+/// through every check and the one lowering a program does: it runs the test
+/// its first argument numbers, and a number it has no test for is a panic.
+/// `cli` is the entry's word for `std::cli`, and `with_use` whether the entry
+/// has none and it is added here.
+pub fn test_dispatcher(cli: ref String, with_use: bool, count: i64, dispatch: ref String) -> String {
+    let mut text: String = ""
+    if with_use {
+        text.push_str("use std::cli\n")
+    }
+    text.push_str(f"fn {dispatch}() throws {{\n    let which = {cli}::args().nth(1) ?? \"\"\n")
+    for k in 0..<count {
+        text.push_str(f"    if which == \"{k}\" {{\n        {test_function(k)}()\n        return\n    }}\n")
+    }
+    text.push_str("    panic(f\"this build has no test numbered `{which}`\")\n}\n")
+    return text
+}
