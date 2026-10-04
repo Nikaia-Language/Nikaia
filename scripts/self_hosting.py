@@ -88,6 +88,7 @@ COMPILER_NIKA = {
     "check_calls.nika": "check: what it reads off a callee's signature - the arguments a call passes, what the receiver's and the arguments' types bind, and what a sequence a call hands back is as a whole (0.0.415)",
     "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416), asked with `checked_` (ADR-315, 0.0.420)",
     "build_values.nika": "build_time: what a build-time expression comes to - a number, a truth value, text, a list, a tuple, a variant or a struct - and what an operator and an index make of them (0.0.417)",
+    "check_numbers.nika": "check: a number and the type it has to fit - NK1116, said of an Integer and of a fold past the 65 bits (0.0.426)",
 }
 
 
