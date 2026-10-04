@@ -6591,6 +6591,37 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1210`: a method of a number that `std`'s ledger does not describe**
+    /// (#438).
+    ///
+    /// A number's methods are all `std`'s: a program cannot add one (`NK1209`),
+    /// so a call the ledger has no entry for is one nothing will ever describe.
+    /// Taken as *nothing is known*, `a.min(b)` made the function around it
+    /// `async` and reached `rustc` as written - accepted where the method
+    /// exists below, refused about generated code where it does not
+    /// (Part III C.1).
+    fn no_number_has_this_method(&mut self, name: &str, method: &str, span: &Span) {
+        if !is_number(name) {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: *span,
+            code: "NK1210",
+            message: format!("`{name}` has no method called `{method}`."),
+            notes: vec![format!(
+                "A number's methods are the ones `std` describes, and none of them is \
+                 called `{method}`."
+            )],
+            help: Some(
+                "Write the computation with the operators, or in a function of your own \
+                 that takes the number."
+                    .to_string(),
+            ),
+            labels: Vec::new(),
+        });
+    }
+
     /// **`NK1131`: a field of a borrowed subject, handed out by value.**
     ///
     /// ```nika
@@ -7968,6 +7999,7 @@ impl<'a> Checker<'a> {
             // Unless the type is a **parameter**, where nothing will ever
             // describe it and saying so now is the whole of `NK1126`.
             self.nothing_says_what_a_parameter_can_do(name, Reached::Method(entry), span);
+            self.no_number_has_this_method(name, entry, span);
             args.iter().for_each(|a| {
                 self.expr(a, span);
             });

@@ -632,6 +632,46 @@ sync = true
 touches = []
 signature = "(self) -> i32"
 
+# The number without its sign. The most negative `i32` has no positive
+# counterpart, so it aborts (Part I 2.2); `wrapping_abs` and `saturating_abs`
+# are the ways to say otherwise.
+[fn."i32::abs"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32"
+
+# The number without its sign. The most negative `i64` aborts, as for `i32`.
+[fn."i64::abs"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# The smaller of two `i64`s.
+[fn."i64::min"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64"
+
+# The larger of two `i64`s.
+[fn."i64::max"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64"
+
+# Division rounded **down** for a positive divisor, so that the remainder it
+# leaves is never negative: `-7.div_euclid(2)` is `-4`, where `/` gives `-3`.
+# A divisor of zero aborts, as `/` does, and so does the most negative `i64`
+# divided by `-1`, whose answer does not fit.
+[fn."i64::div_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64"
+
 # Addition that **wraps** at the ends of an `i64` instead of aborting.
 [fn."i64::wrapping_add"]
 pub = true

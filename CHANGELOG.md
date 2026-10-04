@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.438] — 2026-10-04
+
+**A method of a number that `std` does not describe is refused in this
+compiler's words** (Part III C.1, #438). `a.min(b)` on an `i64` had no entry in
+`std.contracts`, and the checker took the call as *nothing is known*: the
+function around it was lowered `async`, and the call went to `rustc` as written
+- accepted where the method exists below, refused about generated code where it
+does not. A number's methods are all `std`'s (a program cannot add one,
+`NK1209`), so a call the ledger does not describe is now `NK1210`.
+
+`i64::min`, `i64::max` and `i64::div_euclid` are in the ledger, as `#435`'s
+interval walk needs them, and so are `i32::abs` and `i64::abs`, which Part I 2.2
+already names. No program in the repository called a method of a number that
+the ledger lacks; `tests/number_methods.rs` holds the five entries and the
+refusal.
+
 ## [0.0.437] — 2026-10-04
 
 **An `impl` on a type the program does not declare is refused in this
