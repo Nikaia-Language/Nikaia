@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.451 (Draft)
+**Version:** 0.0.452 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -47,10 +47,10 @@ A grammar defined once runs at compile time and at runtime, **with the same
 syntax and the same meaning**. A grammar is entered by an **ordinary call**.
 Every `entry rule` in it is an entry named after the rule: `Json::value(x)`
 runs the rule `value` of the grammar `Json`. A rule without `entry` is the
-grammar's own, and a call to it is refused. A grammar is entered from the file
-that declares it; `pub grammar`, which offers all of a grammar's entries to
-other packages at once, is *decided, not built yet* - a rule is never `pub` on
-its own (ADR-296 D25). The word in front of the binding decides
+grammar's own, and a call to it is refused. Without `pub`, a grammar is
+entered only from the file that declares it; `pub grammar` offers all of its
+entries to other packages at once - a rule is never `pub` on its own (ADR-296
+D25). The word in front of the binding decides
 *when* the call runs.
 
 **The separator is `::`, as it is for every other qualified name.** The dot is
@@ -274,9 +274,7 @@ fn query_users(min_age: i32) {
 statement handed a connection opened for another schema is refused at the call
 ([ADR-299](adr/adr-299.md) D7-D11). A database driver writes no `execute` of its
 own: it implements `std::db`'s `Connection` trait, and the compiler turns each
-row into the row type it derived (D8). *Decided, not built yet:* the schema
-argument, `meta::column`, the derived row, the typed connection and the `sqlite`
-driver package.
+row into the row type it derived (D8).
 
 Every other DSL a library drives accepts its parameters with the **typed
 spread**:

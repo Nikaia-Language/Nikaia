@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.451 (Draft)
+**Version:** 0.0.452 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -23,7 +23,7 @@ Nikaia provides one command-line interface, `nikaia`. It builds and runs a proje
     * **Not in the lockfile:** the build options of Part I 1.2, `opt-level` and the backend. They are hashed into the cache key and never written.
     * **Incremental builds:** where the hashes on disk are unchanged, the compiler skips re-processing and reuses the artifact from the content-addressed store under `target/nikaia/cache/`. The store is git-ignored. The lockfile holds inputs and the store holds outputs. Keys are per translation unit, so one changed asset invalidates that unit and not the project.
 * `nikaia.contracts`: the **borrow contract ledger**. It is generated and committed like the lockfile. It records the borrow contracts the compiler inferred for the program's functions and the tether relationships of its structs. It is an incremental-build cache and the basis of the compiler's contract-change diagnostics (13.5).
-* `nikaia.proofs`: the **proof file** ([ADR-270](adr/adr-270.md) D4, D19-D23). It is generated and committed like the lockfile. It holds one entry per query the prover asks: the SHA-256 of the query in normal form and its answer - `proved` with its certificate, `refuted` with its model, or `unknown`. Every entry is checked when read, so a wrong entry is ignored, never believed. A build uses only what the file holds; the solver's search, which may be timed, parallel and cached, only adds to it. Long certificates live in `nikaia.proofs.d/`. *Decided, not built yet.*
+* `nikaia.proofs`: the **proof file** ([ADR-270](adr/adr-270.md) D4, D19-D23). It is generated and committed like the lockfile. It holds one entry per query the prover asks: the SHA-256 of the query in normal form and its answer - `proved` with its certificate, `refuted` with its model, or `unknown`. Every entry is checked when read, so a wrong entry is ignored, never believed. A build uses only what the file holds; the solver's search, which may be timed, parallel and cached, only adds to it. Long certificates live in `nikaia.proofs.d/`.
 * `src/`: the source. A source file is at most 4 GiB; a longer one is refused where it is read ([ADR-294](adr/adr-294.md) D7).
     * `main.nika`: the entry point.
 
@@ -388,7 +388,7 @@ A method with no entry is an unknown, and an unknown costs every function that c
 * There is exactly **one** ledger per project, valid at every value of every build option. Borrow contracts and tether relationships do not depend on a build option. A check that does, such as a thread-safety rule, is performed by the compiler directly and is never recorded in the ledger.
 * Ledger stability is **not** promised across toolchain upgrades. The recorded toolchain and the narration explain such a diff.
 
-**Verification mode (`--locked`).** `nikaia build --locked` verifies instead of updating: the compiler regenerates the contracts in memory, the program's and those of every path dependency it has sources for, and compares each byte for byte against its committed `nikaia.contracts` and `nikaia.derived`. Any difference fails the build with the narrated contract diff (`NK2401` above). This is the one place contracts are compared rather than hashes; a development build compares hashes and derives only what changed. A CI build with `--locked` is equivalent to `git diff --exit-code nikaia.contracts` after a regular build. `--locked` also searches no proof: every query the build asks must have a checking entry in `nikaia.proofs`, and every entry must be asked; a difference fails the build with the query's position and *run `nikaia build` and commit `nikaia.proofs`* ([ADR-270](adr/adr-270.md) D22; decided, not built yet).
+**Verification mode (`--locked`).** `nikaia build --locked` verifies instead of updating: the compiler regenerates the contracts in memory, the program's and those of every path dependency it has sources for, and compares each byte for byte against its committed `nikaia.contracts` and `nikaia.derived`. Any difference fails the build with the narrated contract diff (`NK2401` above). This is the one place contracts are compared rather than hashes; a development build compares hashes and derives only what changed. A CI build with `--locked` is equivalent to `git diff --exit-code nikaia.contracts` after a regular build. `--locked` also searches no proof: every query the build asks must have a checking entry in `nikaia.proofs`, and every entry must be asked; a difference fails the build with the query's position and *run `nikaia build` and commit `nikaia.proofs`* ([ADR-270](adr/adr-270.md) D22).
 
 ---
 
@@ -397,7 +397,6 @@ A method with no entry is an unknown, and an unknown costs every function that c
 Testing and verification are part of the language.
 
 ### 14.1. Unit Tests (`test`)
-*[ADR-269](adr/adr-269.md) D1 and D12. Built.*
 
 A `test "name" { … }` block checks specific inputs. It stands where a `fn` may, in any file of the package, and sees what the package sees, private names included. Only `nikaia test` compiles it: `nikaia build` and `nikaia run` leave it out, unchecked.
 
@@ -424,7 +423,6 @@ Each test runs under the `user_parallelism` the project names. `nikaia test --bo
 **`--bounds`** ([#389](https://github.com/Nikaia-Language/Nikaia/issues/389)) is the same report for the checks the compiler writes itself: every index into a list and every `+`, `-` and `*` that `--optimization` may drop the check of ([ADR-306](adr/adr-306.md)), by line, *proved* or *checked*, and for a checked one the shape that stopped the walk - a field, a list of lists, a product of two unknowns, a call's result, or no fact on what it reads - with the issue that would supply it. It reports what the build proves, whatever `optimization` says. It names where the next fact pays off; it does not prove the fact would be enough.
 
 ### 14.2. Assertions: a contract the compiler proves where it can
-*[ADR-269](adr/adr-269.md) D2-D11. Built: `assert`, the MVP prover, the check at run time for a claim it does not prove, a precondition's check at the call, and `--asserts`. D8's refutation: built, for a claim ruled out every time it is reached and for one false for a value what is known shows reaches it, refused unless `refuted-claims = "warn"`.*
 
 `assert(cond)` and `assert(cond; message: "…")` claim that `cond` holds whenever the line is reached. `assert` is a prelude function the compiler knows, not a statement: it needs no `use` and costs no reserved word, and a program that declares its own `fn assert` calls its own.
 
@@ -1157,9 +1155,9 @@ impl File {
 pub fn map(path: Path, root: Root) -> Mapped throws     // read-only memory map
 ```
 
-`Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other. The pages are the buffer, and nothing is copied. *Decided, not built yet:* today `Mapped` derefs to text ([ADR-283](adr/adr-283.md) D22).
+`Mapped` derefs to `Bytes`, so a mapped file is a tethered buffer like any other. The pages are the buffer, and nothing is copied ([ADR-283](adr/adr-283.md) D22).
 
-**Retention.** A slice that escapes the mapping's scope tethers to it, and a tether keeps the whole map alive. The compiler warns where a small extract outlives a large buffer and suggests `.clone()` (*decided, not built yet*: today `--tethers` names the cost, [ADR-283](adr/adr-283.md) D6). The mapping is released once the last tether is gone, which may be later than the end of the block that created it. Slices that never leave that scope cost nothing and hold nothing. At process exit a read-only mapping with nothing observable attached to it is left to the operating system rather than unmapped page by page.
+**Retention.** A slice that escapes the mapping's scope tethers to it, and a tether keeps the whole map alive. The compiler warns where a small extract outlives a large buffer and suggests `.clone()` ([ADR-283](adr/adr-283.md) D6). The mapping is released once the last tether is gone, which may be later than the end of the block that created it. Slices that never leave that scope cost nothing and hold nothing. At process exit a read-only mapping with nothing observable attached to it is left to the operating system rather than unmapped page by page.
 
 **Availability is a property of the target, and of nothing else.** `fs::map` is available at every value of every build option on any target whose platform provides memory mapping: a single-threaded program compiled for Linux, macOS or Windows maps files exactly like a parallel one. On `wasm32-*` `fs::map` is a **compile-time error**. What `std::fs` offers on `wasm32-*` in place of `fs::map` is decided with that target (17.2).
 
@@ -1197,7 +1195,7 @@ Every input carries a **provenance**, because the compiler knows where a buffer 
 
 A value inherits the provenance of the buffer it comes from, and a collection takes the most cautious provenance of everything put into it. Where the compiler cannot tell, across a dynamic call or from a foreign library, the answer is Untrusted.
 
-The hasher follows from the provenance: untrusted keys get a keyed hash with a per-process random seed, and trusted keys get a fast one. Within that, the keys' shape picks the function: a fixed-width type, text of a known length, or text of unknown length. A program may name its own with `hasher:` where it makes the map, and `--trust` lists the choice for every map ([ADR-316](adr/adr-316.md)). *Decided, not built yet.* Nothing else about the map changes: same table, same API, and keys are always compared in full.
+The hasher follows from the provenance: untrusted keys get a keyed hash with a per-process random seed, and trusted keys get a fast one. Within that, the keys' shape picks the function: a fixed-width type, text of a known length, or text of unknown length. A program may name its own with `hasher:` where it makes the map, and `--trust` lists the choice for every map ([ADR-316](adr/adr-316.md)). Nothing else about the map changes: same table, same API, and keys are always compared in full.
 
 **User code has the last word, at the place the data enters:**
 
@@ -1207,7 +1205,7 @@ The hasher follows from the provenance: untrusted keys get a keyed hash with a p
 let data = fs::map(path, fs::Root::Anywhere; trusted: false)
 ```
 
-The reverse, `trusted: true`, exists for the case where the program knows the peer. Both are recorded in the ledger. A grammar for a wire format can pin the floor for everyone who uses it, `@untrusted grammar HttpHeaders`, so that no application can lower it ([ADR-010](adr/adr-010.md) D3-D4). *Decided, not built yet:* the `trusted:` argument and `@untrusted grammar`.
+The reverse, `trusted: true`, exists for the case where the program knows the peer. Both are recorded in the ledger. A grammar for a wire format can pin the floor for everyone who uses it, `@untrusted grammar HttpHeaders`, so that no application can lower it ([ADR-010](adr/adr-010.md) D3-D4).
 
 `--trust` (on `nikaia build` and `nikaia lower`) prints where the program's bytes came from, which source said so, and which hasher its maps got:
 
@@ -1322,7 +1320,7 @@ A panic depends on **two** of the three build options (13.3), `user_parallelism`
 **One end that is not a panic and is not success either.** A `cleanup-deadline` that expires ends the program with **exit status 70** (`EX_SOFTWARE`) and a message naming every resource whose cleanup was cut off, delivered on the panic path: standard error and the panic hook. No build option and no runtime configuration turns that into a `0`. `cleanup-deadline = "0"` does not drain and therefore never expires.
 
 The `target` decides independently: on `wasm32-unknown` a panic is a **trap** and the
-module is done, whatever `user_parallelism` says. A build with `artifact = "c-library"` unwinds instead (15.1): every entry point catches the panic and returns `E_PANICKED`, and the library is poisoned until `shutdown` and `init` have run. *Decided, not built yet.*
+module is done, whatever `user_parallelism` says. A build with `artifact = "c-library"` unwinds instead (15.1): every entry point catches the panic and returns `E_PANICKED`, and the library is poisoned until `shutdown` and `init` have run.
 
 **The third build option changes nothing on this page.** `reentrancy-check` (13.3) decides whether a compiled program notices a lock taken while a lock is held. Taking one is refused at build time, so in a program the compiler accepted the check cannot fire; if it fires, the refusal has a hole. The re-entrancy panic Part II 12.2 describes at `user_parallelism = no` is that check, so the table above has no row for it. Poisoning happens only in the `yes` row: at `no` a panic is an abort, and no task survives to be poisoned.
 

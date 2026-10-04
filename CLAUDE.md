@@ -13,6 +13,11 @@
 * **Before pushing, rebase onto the latest `origin/develop`**
   (`git pull --rebase origin develop`). Other sessions push all the time.
   If the push is rejected, rebase again and push again.
+* **A change package raises the version by one**: the `**Version:**` line of
+  the three specification parts and a `CHANGELOG.md` heading, then
+  `python3 scripts/badges.py` redraws the README's badges from that line
+  (`scripts/pre-commit.sh` does it where it is installed). Never edit an SVG by
+  hand; CI checks the badges with `--check`.
 * **Nobody pushes to `main`.** CI runs everything on each push to `develop`.
   When every job passes, the `promote` job fast-forwards `main` to that commit
   (`.github/workflows/nikaia.yml`) - that commit, not `develop`'s tip, which

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.451 (Draft)
+**Version:** 0.0.452 (Draft)
 **Date:** 2026-10-04
 
 ---
@@ -223,8 +223,7 @@ Nikaia provides basic types to represent simple values.
       struct that has to be small, a wire format, a C header. An `i32` that
       meets an `i64` is widened where the program says so, with `as i64`.
     * `u8`: one byte. It has the same conversion and arithmetic names as the
-      other integer types (*decided, not built yet*: today the `wrapping_`,
-      `saturating_` and `truncating_` names exist for the other four). A file read whole is a `Bytes` (`fs::read`): one
+      other integer types. A file read whole is a `Bytes` (`fs::read`): one
       shared buffer of them, handed on by a count and not copied.
       `text.bytes()` is a text's UTF-8, one `u8` at a time.
     * `u64` and `u32`: unsigned, 64 and 32 bits. They are written where the

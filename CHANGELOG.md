@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.452] — 2026-10-04
+
+**The specification states rules, not their status; the README's version badge
+shows the version.** Twelve *decided, not built yet* and *Built* notes leave
+Parts I-III; what is not built is the ADR index's column, which gains ADR-296
+D25's `pub grammar`. The version badge's visible text had stayed at 0.0.437
+while its title moved: `scripts/badges.py` redraws it, and CI now runs it
+with `--check`.
+
 ## [0.0.451] — 2026-10-04
 
 **Proving and dropping checks are two settings, and a length is below 2^60, in

@@ -256,6 +256,13 @@ jobs:
       - name: Check the roadmap's numbers
         run: python3 scripts/check-roadmap-numbers.py
 
+      # The README's badges are drawn from the specification's version line and
+      # the self-hosting count. The pre-commit hook redraws them, but a session
+      # without the hook that edits the SVG by hand changes its title and not the
+      # text a reader sees: the README showed 0.0.437 at 0.0.451.
+      - name: Check the README's badges are current
+        run: python3 scripts/badges.py --check
+
       - name: Build the workspace
         run: cargo build --workspace --release
 
