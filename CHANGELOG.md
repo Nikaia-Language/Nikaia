@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.411] — 2026-10-04
+
+**The words the checker's refusals are made of are Nikaia** (ADR-294, #125).
+An article, a count, a list of names, the nearest spelling of a name, an
+indented block, the `{…}` groups of a literal, the note on a word another
+language reserves (`loop`, `const`, `macro`) and on another package's entry
+that never promised `sync` (ADR-288 D28), which `std` lookups lend their key,
+and how a boxed member is named (ADR-246) move into `tools/check_words.nika`.
+A clause made a sentence is `keep.nika`'s `capitalised`, which already said
+it. 28.2 % of the toolchain is Nikaia.
+
 ## [0.0.410] — 2026-10-04
 
 **An expression is written back in Nikaia** (ADR-269 D2, ADR-294, #125). The

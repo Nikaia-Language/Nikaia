@@ -22615,23 +22615,8 @@ fn walks_by_value(contract: &FnContract) -> bool {
 /// this adds a sentence where the word is one of the four and changes nothing
 /// anywhere else. Where the word **is** declared — a local, a parameter, a field
 /// — the caller never gets here, which is D2's *nothing is said*.
-fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
-    match name {
-        "loop" => Some(
-            "Nikaia has no `loop` keyword. Write `while true { … }`. (`loop` is an \
-             ordinary name, so `let loop = 3` is fine.)",
-        ),
-        "const" => Some(
-            "A value computed while the program is built is written `comptime X = …`. \
-             (`const` is an ordinary name in Nikaia.)",
-        ),
-        "macro" | "quote" => Some(
-            "Nikaia has no macros. To generate code from a type's shape, use `comptime` \
-             and a bound; to turn text into a program, use a grammar. (Both words are \
-             ordinary names.)",
-        ),
-        _ => None,
-    }
+fn a_word_that_was_reserved(name: &str) -> Option<String> {
+    nikaia_std::tools::check_words::reserved_elsewhere(name)
 }
 
 /// **Whether this file declares a type by this name**
@@ -23359,11 +23344,7 @@ impl Checker<'_> {
 /// that were parsed, which is the one place they mean anything. What this does
 /// is put it where the eye is already looking.
 fn indented(text: &str) -> String {
-    text.trim_end()
-        .lines()
-        .map(|line| format!("       {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    nikaia_std::tools::check_words::indented_text(text)
 }
 
 /// Whether a name is one of the types **Part I 2.2** offers, which no
@@ -23626,15 +23607,10 @@ const NOT_STD: &[(&str, &str)] = &[(
 /// an edit is a character put in, taken out or changed, and two neighbours
 /// that swapped count as one.
 fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
-    among
-        .iter()
-        .map(|candidate| {
-            let d = nikaia_std::tools::spelling::distance(name, candidate);
-            (usize::try_from(d).unwrap_or(usize::MAX), *candidate)
-        })
-        .filter(|(d, _)| *d * 3 <= name.len().max(1))
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, candidate)| candidate)
+    // In Nikaia (`tools/check_words.nika`).
+    let names: Vec<String> = among.iter().map(|n| n.to_string()).collect();
+    let found = nikaia_std::tools::check_words::nearest_name(name, &names)?;
+    among.iter().copied().find(|n| *n == found)
 }
 
 /// `a` or `an` in front of a word, which may be spelled in backticks.
@@ -23643,11 +23619,7 @@ fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
 /// jump may not cross are named in one place, and carrying the article beside
 /// each of them means the next one is added in two places or in one.
 fn an(what: &str) -> String {
-    let first = what.chars().find(|c| c.is_alphanumeric()).unwrap_or(' ');
-    match first.to_ascii_lowercase() {
-        'a' | 'e' | 'i' | 'o' | 'u' => format!("an {what}"),
-        _ => format!("a {what}"),
-    }
+    nikaia_std::tools::check_words::with_article(what)
 }
 
 /// **The two forms of a root**, where that is the argument a call left out
@@ -23677,33 +23649,16 @@ fn a_root_is_one_of_two(wanted: &[(String, Ty)]) -> String {
 
 /// A clause as the start of a sentence: its first letter upper case.
 fn sentence(clause: &str) -> String {
-    let mut chars = clause.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
+    nikaia_std::tools::keep::capitalised(clause)
 }
 
 fn plural(n: usize, what: &str) -> String {
-    if n == 1 {
-        format!("1 {what}")
-    } else {
-        format!("{n} {what}s")
-    }
+    nikaia_std::tools::check_words::counted(n as i64, what)
 }
 
 fn list(names: &[&str]) -> String {
-    match names {
-        [] => "no fields".to_string(),
-        [one] => format!("`{one}`"),
-        [rest @ .., last] => format!(
-            "{} and `{last}`",
-            rest.iter()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    nikaia_std::tools::check_words::names_listed(&names)
 }
 
 /// What the receiver's actual type binds this signature's variables to.
@@ -24122,35 +24077,18 @@ fn reaches(from: &str, to: &str, holds: &BTreeMap<String, BTreeSet<String>>) -> 
 /// field by its name, a variant's part as `Variant#0`, and a variant's named
 /// field as `Variant.name`.
 pub fn boxed_member(owner: &str, at: Option<usize>, field: Option<&str>) -> String {
-    match (at, field) {
-        (Some(at), _) => format!("{owner}#{at}"),
-        (None, Some(field)) => format!("{owner}.{field}"),
-        (None, None) => owner.to_string(),
-    }
+    nikaia_std::tools::check_words::boxed_member(
+        owner,
+        at.map_or(-1, |at| at as i64),
+        field.unwrap_or_default(),
+    )
 }
 
 /// **A `std` lookup whose key the language below takes by reference**
 /// (0.0.235): the map or set is asked about the key and keeps nothing, so the
 /// key is lent ([`Checker::a_lookup_key_lent`]) and not handed over.
 fn is_a_lookup(key: &str) -> bool {
-    const LOOKUPS: &[&str] = &[
-        "HashMap::get",
-        "HashMap::contains_key",
-        "HashSet::contains",
-        "HashSet::remove",
-        // **A removal is a lookup** that takes the entry along: the key is
-        // lent as `get`'s is - `kept.remove(root)` for an `i64` reached the
-        // language below with no `&` (found moving `sharing`'s classes into
-        // Nikaia, #125).
-        "HashMap::remove",
-        "BTreeMap::remove",
-        "BTreeSet::remove",
-        "BTreeMap::get",
-        "BTreeMap::contains_key",
-        "BTreeSet::contains",
-        "Vec::contains",
-    ];
-    LOOKUPS.contains(&key.strip_prefix("collections::").unwrap_or(key))
+    nikaia_std::tools::check_words::is_a_lookup(key)
 }
 
 /// A list: what `[…]` makes, and what `Vec()` builds.
@@ -24184,34 +24122,7 @@ fn is_text(ty: &Ty) -> bool {
 /// reason: a string keeps its escapes as written, so a scanner that does not
 /// know that reads `"\u{0041}"` as a hole named `0041`.
 fn brace_groups(text: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => {
-                if chars.next() == Some('u') && chars.peek() == Some(&'{') {
-                    for c in chars.by_ref() {
-                        if c == '}' {
-                            break;
-                        }
-                    }
-                }
-            }
-            '{' => {
-                let mut group = String::new();
-                for c in chars.by_ref() {
-                    if c == '}' {
-                        found.push(group);
-                        break;
-                    }
-                    group.push(c);
-                }
-            }
-            _ => {}
-        }
-    }
-    found.retain(|g| !g.trim().is_empty());
-    found
+    nikaia_std::tools::check_words::brace_groups(text)
 }
 
 /// A pause the checker was told of, in the words its refusals use: what
@@ -24226,12 +24137,7 @@ fn unpromised(contract: &FnContract) -> bool {
 /// What a refusal adds about such an entry: whose it is, and that the word is
 /// missing there rather than a pause here.
 fn not_promised_note(callee: &str) -> String {
-    let (package, function) = callee.split_once("::").unwrap_or(("its package", callee));
-    format!(
-        "`{callee}` is `{package}`'s, and its source doesn't say `sync`. That its body doesn't \
-         pause today is not a promise another package can rely on: write `sync` after the \
-         result of `{function}` in `{package}` to make it."
-    )
+    nikaia_std::tools::check_words::not_promised_note(callee)
 }
 
 struct Pause {
