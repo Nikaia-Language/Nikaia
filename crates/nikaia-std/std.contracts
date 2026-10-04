@@ -648,6 +648,414 @@ sync = true
 touches = []
 signature = "(self) -> i64"
 
+# ## A number's own methods (#443)
+#
+# What a program reaches for first on a number - its text, the smaller of two,
+# a power, the floor of a float. Each is pure: `sync = true`, `touches = []`,
+# for the reason the arithmetic entries give. Since 0.0.438 a method of a
+# number no entry describes is `NK1210`, so a method that exists below and is
+# missing here is a program refused; these are the ones Part I 2.2's types
+# have that a program writes.
+
+# The number written in decimal, as text.
+[fn."i32::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# The smaller of two `i32`s.
+[fn."i32::min"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32"
+
+# The larger of two `i32`s.
+[fn."i32::max"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32"
+
+# The number to the power `exp`; a result that does not fit aborts, as `*` does.
+[fn."i32::pow"]
+pub = true
+sync = true
+touches = []
+signature = "(self, exp: u32) -> i32"
+
+# How many bits are set.
+[fn."i32::count_ones"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear above the highest one set.
+[fn."i32::leading_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear below the lowest one set.
+[fn."i32::trailing_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# Division rounded so that the remainder is never negative; a divisor of zero aborts, as `/` does.
+[fn."i32::div_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32"
+
+# The remainder that is never negative; a divisor of zero aborts, as `%` does.
+[fn."i32::rem_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i32) -> i32"
+
+# The number written in decimal, as text.
+[fn."i64::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# The number to the power `exp`; a result that does not fit aborts, as `*` does.
+[fn."i64::pow"]
+pub = true
+sync = true
+touches = []
+signature = "(self, exp: u32) -> i64"
+
+# How many bits are set.
+[fn."i64::count_ones"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear above the highest one set.
+[fn."i64::leading_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear below the lowest one set.
+[fn."i64::trailing_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# The remainder that is never negative; a divisor of zero aborts, as `%` does.
+[fn."i64::rem_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, i64) -> i64"
+
+# The number written in decimal, as text.
+[fn."u32::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# The smaller of two `u32`s.
+[fn."u32::min"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32"
+
+# The larger of two `u32`s.
+[fn."u32::max"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32"
+
+# The number to the power `exp`; a result that does not fit aborts, as `*` does.
+[fn."u32::pow"]
+pub = true
+sync = true
+touches = []
+signature = "(self, exp: u32) -> u32"
+
+# How many bits are set.
+[fn."u32::count_ones"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear above the highest one set.
+[fn."u32::leading_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear below the lowest one set.
+[fn."u32::trailing_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# Division rounded so that the remainder is never negative; a divisor of zero aborts, as `/` does.
+[fn."u32::div_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32"
+
+# The remainder that is never negative; a divisor of zero aborts, as `%` does.
+[fn."u32::rem_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u32) -> u32"
+
+# The number written in decimal, as text.
+[fn."u64::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# The smaller of two `u64`s.
+[fn."u64::min"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64"
+
+# The larger of two `u64`s.
+[fn."u64::max"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64"
+
+# The number to the power `exp`; a result that does not fit aborts, as `*` does.
+[fn."u64::pow"]
+pub = true
+sync = true
+touches = []
+signature = "(self, exp: u32) -> u64"
+
+# How many bits are set.
+[fn."u64::count_ones"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear above the highest one set.
+[fn."u64::leading_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# How many bits are clear below the lowest one set.
+[fn."u64::trailing_zeros"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> u32"
+
+# Division rounded so that the remainder is never negative; a divisor of zero aborts, as `/` does.
+[fn."u64::div_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64"
+
+# The remainder that is never negative; a divisor of zero aborts, as `%` does.
+[fn."u64::rem_euclid"]
+pub = true
+sync = true
+touches = []
+signature = "(self, u64) -> u64"
+
+# `-1`, `0` or `1`, by the sign.
+[fn."i32::signum"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i32"
+
+# `-1`, `0` or `1`, by the sign.
+[fn."i64::signum"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> i64"
+
+# The largest whole number not above it.
+[fn."f64::floor"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The smallest whole number not below it.
+[fn."f64::ceil"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The nearest whole number, halves away from zero.
+[fn."f64::round"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The whole part, toward zero.
+[fn."f64::trunc"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# What is left after the whole part.
+[fn."f64::fract"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# `-1.0` or `1.0` by the sign, not-a-number for not-a-number.
+[fn."f64::signum"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# `e` to the power of it.
+[fn."f64::exp"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The natural logarithm; not-a-number below zero.
+[fn."f64::ln"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The logarithm to base 10.
+[fn."f64::log10"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The logarithm to base 2.
+[fn."f64::log2"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The sine, in radians.
+[fn."f64::sin"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The cosine, in radians.
+[fn."f64::cos"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The tangent, in radians.
+[fn."f64::tan"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> f64"
+
+# The number to a whole power.
+[fn."f64::powi"]
+pub = true
+sync = true
+touches = []
+signature = "(self, n: i32) -> f64"
+
+# The number to a power.
+[fn."f64::powf"]
+pub = true
+sync = true
+touches = []
+signature = "(self, n: f64) -> f64"
+
+# The smaller of two; a not-a-number loses to a number.
+[fn."f64::min"]
+pub = true
+sync = true
+touches = []
+signature = "(self, f64) -> f64"
+
+# The larger of two; a not-a-number loses to a number.
+[fn."f64::max"]
+pub = true
+sync = true
+touches = []
+signature = "(self, f64) -> f64"
+
+# Whether it is not-a-number.
+[fn."f64::is_nan"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> bool"
+
+# Whether it is neither infinite nor not-a-number.
+[fn."f64::is_finite"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> bool"
+
+# The number written as text, the shortest that reads back as the same number.
+[fn."f64::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# `true` or `false`, as text.
+[fn."bool::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
+# The character, as text of its own.
+[fn."char::to_string"]
+pub = true
+sync = true
+touches = []
+signature = "(self) -> String"
+
 # The smaller of two `i64`s.
 [fn."i64::min"]
 pub = true

@@ -97,3 +97,43 @@ fn a_method_of_a_number_nothing_describes_is_refused() {
     let float = "fn g(a: f64) -> f64 {\n    return a.frobnicate()\n}\n\nfn main() {}\n";
     assert_eq!(codes(float), vec!["NK1210".to_string()]);
 }
+
+/// **The methods a program reaches for first are described** (#443): since
+/// `NK1210`, a method missing from the ledger is a program refused, so text,
+/// powers, the smaller of two and a float's floor have entries - and the
+/// function that calls them stays a plain one, and runs.
+#[test]
+fn the_common_methods_of_a_number_are_described_and_run() {
+    let source = "fn calc(a: i64, c: i32, d: i32, u: u64, f: f64, g: f64) -> String {\n\
+         \x20   let parts = [a.to_string(), a.pow(2).to_string(), (-a).rem_euclid(3).to_string(), (-a).signum().to_string(), c.min(d).to_string(), u.count_ones().to_string(), f.floor().to_string(), f.round().to_string(), f.max(g).to_string(), f.powi(2).to_string(), f.is_nan().to_string()]\n\
+         \x20   return parts.join(\" \")\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(calc(7, 4, 2, 5, 1.5, 2.5))\n\
+         }\n";
+    assert!(codes(source).is_empty(), "{:?}", codes(source));
+    let rust = lowered(source);
+    assert!(
+        rust.contains("\nfn calc("),
+        "`calc` does not pause:\n{rust}"
+    );
+    let dir = common::scratch_dir("number-methods-common");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "the lowering compiles:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("run the program");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "7 49 2 -1 2 2 1 2 2.5 2.25 false"
+    );
+}

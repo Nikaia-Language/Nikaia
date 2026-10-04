@@ -4,6 +4,19 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.448] — 2026-10-04
+
+**A number's common methods are in `std`'s ledger** (#443). Since 0.0.438 a
+method of a number no entry describes is `NK1210`, and the ledger had the
+checked, wrapping and saturating arithmetic but not what a program reaches for
+first: `a.to_string()`, `a.pow(2)`, `c.min(d)` on an `i32`, `f.floor()`,
+`f.round()`, `f.max(g)`, `f.is_nan()` and the rest were refused where they had
+compiled before. The pure methods of Part I 2.2's number types - text, `min`,
+`max`, `pow`, `abs`, `signum`, `div_euclid`, `rem_euclid`, the bit counts, and
+a float's rounding, powers, logarithms and tests - have entries now, as do
+`bool::to_string` and `char::to_string`, so a function calling them stays a
+plain one.
+
 ## [0.0.447] — 2026-10-04
 
 **`return ref x` has one spelling left: none** (ADR-202 D2, #96). The compiler
