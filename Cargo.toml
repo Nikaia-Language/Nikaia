@@ -39,7 +39,12 @@ anyhow = "1.0"
 
 [profile.dev]
 opt-level = 0
-debug = true
+# No debug information: every integration test is a binary of its own with
+# the compiler and `std` linked in, and with full debug information the
+# suite's build filled a session's disk (27 GB). Panics still name their file
+# and line; a backtrace and a debugger lose them. Set
+# `CARGO_PROFILE_DEV_DEBUG=true` for a build that needs them.
+debug = 0
 
 [profile.release]
 opt-level = 3
