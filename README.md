@@ -3,14 +3,15 @@
   <h1>N I K A I A</h1>
   <p><strong>Good wins.</strong></p>
   <p>
-    Write it like a script. State what must hold with a plain <code>assert</code>, and the
-    compiler <b>proves</b> it. Where a proof removes a check, the program can run
-    <b>faster than the safe Rust you would have written by hand</b>.
+    Write it like a script. State what must hold with a plain <code>assert</code>: the
+    compiler <b>proves</b> what it can, <b>refuses to build</b> what it shows false, and
+    checks the rest when the program runs. Where a proof removes a check, the program can
+    run <b>faster than the safe Rust you would have written by hand</b>.
   </p>
 
   <p>
     <a href="#the-idea">The idea</a> •
-    <a href="#an-assert-is-a-proof">An assert is a proof</a> •
+    <a href="#an-assert-is-a-contract">An assert is a contract</a> •
     <a href="#faster-than-the-rust-you-would-write">Faster than hand-written Rust</a> •
     <a href="#hello-world">Hello, world</a> •
     <a href="#built-in-the-open-at-full-speed">Progress</a> •
@@ -55,11 +56,11 @@ That shows up in a few concrete ways:
 
 * **Formal verification that feels like writing `assert`.** There is no proof language, no
   annotation syntax, no `requires` clause. You write `assert(whole > 0)` where you would have
-  written it anyway; the compiler proves it while it builds, turns it into a contract every
+  written it anyway; the compiler proves what it can while it builds, turns it into a contract every
   caller must meet, and **refuses to build** a program it can show breaks it, with the values
   that do. What it cannot prove yet it checks when the program runs, so a claim that is merely
   hard to prove never stops your build.
-  [More below](#an-assert-is-a-proof).
+  [More below](#an-assert-is-a-contract).
 * **Safety that makes the program faster, not slower.** The same prover shows that an index
   stays inside its list or a sum inside its type, and then the check is not emitted. On the
   inner loops of an SMT solver, Nikaia's output runs **up to 34 % fewer instructions than the
@@ -88,7 +89,10 @@ technical case behind every claim above, is in the [**Manifesto**](manifesto.md)
 
 ---
 
-## An assert is a proof
+## An assert is a contract
+
+Proved where the compiler can, so it costs nothing; refused where the compiler shows it
+false, with the values that break it; checked when the program runs everywhere else.
 
 Formal verification usually means a second language: specification clauses, ghost code, loop
 invariants and a proof assistant beside the program. Nikaia's answer is the line you already
@@ -168,7 +172,10 @@ the check away in the code it can see. Removing the rest means `unsafe` and
 default, and with `--optimization=remove-bounds-checks:aggressive` and
 `remove-overflow-checks:aggressive` its prover removes each one it can **prove** cannot
 fail. Nothing is assumed: a check without a proof stays, at every level, so the program
-means exactly the same.
+means exactly the same. Removing is something a build asks for, not the default: a check
+removed on a wrong proof would turn a clean stop into a silently wrong result, so the
+compiler's proofs have to earn that trust first
+([ADR-306](docs/specification/adr/adr-306.md) D14).
 
 Measured on the inner loops of a CDCL(T) solver, against the same algorithms written by hand
 in safe Rust, with link-time optimisation on both sides and every program printing the same

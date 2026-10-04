@@ -4,6 +4,15 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.455] — 2026-10-04
+
+**An `assert` is a contract, on the README and the home page.** "An assert is a
+proof" read as *an unproved `assert` does not build*, which ADR-269 D4 rejects:
+proved where the compiler can, refused where it shows it false, checked when the
+program runs otherwise. The headings and the opening sentences now say all
+three. Both pages also say that removing index and overflow checks is something
+a build asks for, not the default (ADR-306 D14).
+
 ## [0.0.454] — 2026-10-04
 
 **The self-hosting count, recounted, on the README and the home page.** 30.6 %
