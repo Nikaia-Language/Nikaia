@@ -1990,6 +1990,16 @@ sync = true
 touches = []
 signature = "[T](mut self: ref Vec[T]) -> T?"
 
+# **Emptying a list** (0.0.428). Nothing described it, so a call was one no
+# ledger knew, and a function that emptied a list was taken to pause and
+# lowered `async` (found moving `bounds`' basic level into Nikaia).
+# Take every element off the list, keeping it.
+[fn."Vec::clear"]
+pub = true
+sync = true
+touches = []
+signature = "[T](mut self: ref Vec[T])"
+
 # **Joining a list of text** (0.0.355). Nothing described it, so a call was
 # one no ledger knew, and a function that joined a `Vec[String]` was taken to
 # pause and lowered `async` (found moving the compiler's `views` into Nikaia).

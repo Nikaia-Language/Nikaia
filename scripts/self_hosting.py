@@ -89,6 +89,7 @@ COMPILER_NIKA = {
     "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416), asked with `checked_` (ADR-315, 0.0.420)",
     "build_values.nika": "build_time: what a build-time expression comes to - a number, a truth value, text, a list, a tuple, a variant or a struct - and what an operator and an index make of them (0.0.417)",
     "check_numbers.nika": "check: a number and the type it has to fit - NK1116, said of an Integer and of a fold past the 65 bits (0.0.426)",
+    "bounds_basic.nika": "bounds: the loop over a list's own length that makes an index check unneeded (ADR-306 D3), which methods keep a list's length, and whether a body binds a name again (0.0.428)",
 }
 
 

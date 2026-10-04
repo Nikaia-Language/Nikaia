@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.428] — 2026-10-04
+
+**The basic bounds-check level is Nikaia** (ADR-306 D3, ADR-294, #125).
+`remove-bounds-checks:basic` - `xs[k]` inside `for k in lo..<xs.len()` whose
+body leaves `xs`'s length alone and does not bind `k` again - moves into
+`tools/bounds_basic.nika`, with which methods keep a list's length and whether
+a body binds a name again, both of which the aggressive level asks too. The
+walk recurses over the tree it is given, so each index it names is one the
+emitter finds again. 29.8 % of the toolchain is Nikaia.
+
+**An `if` ending a nested `match` arm is a statement**: a `match` that is the
+whole body of a statement-`match` arm had value arms, so `if a > b {
+out.insert(a) }` inside one lost its `;` and `rustc` refused the `if` for
+having a value without an `else`. **`Vec::clear` is in the ledger**: a call no
+ledger knew made a function that emptied a list pause and lower `async`.
+
+A line that starts with `(` continues the expression on the line before it -
+`return null if open` then `(x, 2)` is a call of `open` - which is a question
+for the language: #426.
+
 ## [0.0.427] — 2026-10-04
 
 **A map's hasher follows its keys' trust and shape** (ADR-316). There is no

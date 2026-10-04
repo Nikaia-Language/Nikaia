@@ -11463,8 +11463,20 @@ impl<'p> Emitter<'p> {
         {
             return self.block(out, block, depth, flow, Tail::Statement);
         }
+        // **A `match` that is an arm's whole body is that arm's statement**,
+        // so its own arms are statements too: an `if` without an `else` that
+        // ends one of them is a statement and not the arm's value, and
+        // `if a > b { out.insert(a) }` handed `rustc` the `bool` (found
+        // moving `bounds`' basic level into Nikaia).
+        let body_flow = match statements && matches!(body, Expr::Match { .. }) {
+            true => Flow {
+                arms_are_statements: true,
+                ..flow
+            },
+            false => flow,
+        };
         if opened.is_empty() && copied.is_empty() && nests.is_empty() {
-            return self.expr(out, body, depth, flow);
+            return self.expr(out, body, depth, body_flow);
         }
         // **A block arm opens with the names it binds**, inside its own
         // braces: a second pair around it was `unused_braces` in every
@@ -11498,7 +11510,7 @@ impl<'p> Emitter<'p> {
         for name in copied {
             out.push(&format!("let {name} = *{name}; "));
         }
-        self.expr(out, body, depth, flow)?;
+        self.expr(out, body, depth, body_flow)?;
         out.push(" }");
         Ok(())
     }

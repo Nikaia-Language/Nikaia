@@ -184,6 +184,34 @@ fn a_return_inside_an_if_statement_still_returns() {
     assert!(!value.contains("return 1"), "{value}");
 }
 
+/// **A `match` that is a statement-`match` arm's whole body has statement
+/// arms too**: the `if` that ends one of its arms is a statement, so a call
+/// that hands back a value (`out.insert(a)`, a `bool`) is written with its
+/// `;`. Lost where the arm also copied its binding out, and `rustc` refused
+/// the `if` for having a value without an `else` (found moving `bounds`' basic
+/// level into Nikaia).
+#[test]
+fn an_if_inside_a_nested_match_arm_is_a_statement() {
+    let emitted = emit(
+        "use std::collections\n\
+         enum E {\n    V(i64),\n    W,\n}\n\
+         fn add(mut out: collections::BTreeSet[i64], x: ref E, y: ref E) {\n\
+             match x {\n\
+                 E::V(a) => match y {\n\
+                     E::V(b) => {\n\
+                         if a > b {\n\
+                             out.insert(a)\n\
+                         }\n\
+                     },\n\
+                     else => {},\n\
+                 },\n\
+                 else => {},\n\
+             }\n\
+         }\n",
+    );
+    assert!(emitted.contains("out.insert(a);"), "{emitted}");
+}
+
 /// The same for an `if` whose branch ends in a `return` inside a `throws`
 /// function, where a bare tail would have been wrapped in `Ok` by the caller
 /// and a `return` must wrap itself.
