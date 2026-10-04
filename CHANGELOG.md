@@ -15,7 +15,7 @@ and the one way out a mismatch offers (Part III C.2) move into
 
 A gap found on the way, and written around rather than fixed here: an `if`
 used as a value inside a `match` arm whose function hands back a `T?` does
-not put a plain branch in the option.
+not put a plain branch in the option (#410).
 
 ## [0.0.411] — 2026-10-04
 
