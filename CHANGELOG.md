@@ -4,17 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
-## [0.0.435] — 2026-10-04
+## [0.0.436] — 2026-10-04
 
-**`nikaia describe` walks no directory in Rust** (ADR-290 D2, ADR-294, #124).
-The names a program writes of a crate were found by a `read_dir` recursion in
-`describe.rs`; `tools/sources.nika` now finds the program's `.nika` files with
-`fs::walk` and reads them (`program_sources`), leaving out `target/` and
-`contracts/` at any depth as before, and the compiler parses what it hands
-back. Both of the describer's walks - the crate's `.rs` and the program's
-`.nika` - are Nikaia. What stays Rust is the adapter work: reading
-`nikaia.toml` and `Cargo.toml`, driving the grammar into `surface::read_items`,
-hashing the sources and writing the file.
+**What the aggressive bounds walk reads off a body is Nikaia** (ADR-306 D4,
+D7, ADR-294, #435). `bounds.rs`' `Shape` moves into `tools/bounds_shape.nika`
+as `BodyShape`: the names bound once to a literal and their value, the names
+an unsigned type keeps from being negative, the lists whose every write the
+walk sees (the roots) and the names that stand for their elements (the
+aliases), with `writes_a_value`, `only_removes`, `key_root`, `root_name`,
+`elements_key` and `tracks`. One walk reads them, told which by a `Look`. What
+the program around a body says about a call - each function's `mut`
+parameters and the methods that take one - is an `Around`, built once.
+`--optimization=remove-bounds-checks:aggressive` drops the same checks: the
+benchmark programs and examples lower to the same Rust. 30.8 % of the
+toolchain is Nikaia.
 
 ## [0.0.434] — 2026-10-04
 

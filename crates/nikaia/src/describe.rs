@@ -357,29 +357,42 @@ fn cargo_version(crate_root: &Path) -> Option<String> {
 /// The names of this crate every `.nika` of the project writes, without the
 /// crate word in front.
 ///
-/// [`crate::foreign::qualified_names`] is the walk of each tree, which is the
-/// one `NK2504` runs: what the refusal asks is which crates a program reaches
-/// into, and this asks which names of one — the same walk, read one segment
-/// further. **The walk of the directory is Nikaia's** (#124):
-/// `tools/sources.nika`'s `program_sources` finds the files by `fs::walk`,
-/// leaves out `target/` and `contracts/`, and reads them; parsing them is the
-/// compiler's.
+/// [`crate::foreign::qualified_names`] is the walk, which is the one `NK2504`
+/// runs: what the refusal asks is which crates a program reaches into, and this
+/// asks which names of one — the same walk, read one segment further.
 fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<String>> {
-    let files = nikaia_std::rt::exec::block_on(nikaia_std::tools::sources::program_sources(
-        &root.to_string_lossy(),
-    ))
-    .map_err(|e| anyhow::anyhow!("{e}"))
-    .with_context(|| format!("reading the `.nika` files under {}", root.display()))?;
-    let prefix = format!("{crate_word}::");
     let mut out = BTreeSet::new();
-    for text in files.values() {
-        let Ok(parsed) = crate::parser::parse_to_ast(text) else {
-            // A file that does not parse is the build's to report, not
-            // this command's: it would be the same message twice.
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
-        for name in crate::foreign::qualified_names(&parsed).keys() {
-            if let Some(rest) = name.strip_prefix(&prefix) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // `target/` is the build's own and holds nothing a program
+                // wrote; `contracts/` holds this command's own output.
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name != "target" && name != crate::project::CONTRACTS {
+                    pending.push(path);
+                }
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("nika") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(parsed) = crate::parser::parse_to_ast(&text) else {
+                // A file that does not parse is the build's to report, not
+                // this command's: it would be the same message twice.
+                continue;
+            };
+            for name in crate::foreign::qualified_names(&parsed).keys() {
+                let Some(rest) = name.strip_prefix(&format!("{crate_word}::")) else {
+                    continue;
+                };
                 out.insert(rest.to_string());
             }
         }

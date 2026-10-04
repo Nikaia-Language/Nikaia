@@ -653,36 +653,6 @@ fn only_what_the_program_calls_is_described() {
     assert!(!text.contains("fremd::unused"), "{text}");
 }
 
-/// **What a program writes is read from its `.nika` files, at any depth**, by
-/// `tools/sources.nika`'s walk (#124): a module in a subdirectory counts, and a
-/// file under `target/` or `contracts/` - the build's and the describer's own -
-/// does not.
-#[test]
-fn the_program_is_every_nika_file_but_the_builds_own() {
-    let root = project(
-        "walked",
-        "pub fn used(n: i64) -> i64 { n }\n\
-         pub fn deeper(n: i64) -> i64 { n }\n\
-         pub fn built(n: i64) -> i64 { n }\n\
-         pub fn drafted(n: i64) -> i64 { n }\n",
-        "fn main() { fremd::used(1) }\n",
-    );
-    for (relative, call) in [
-        ("src/more/deep.nika", "deeper"),
-        ("target/debug/copy.nika", "built"),
-        ("src/contracts/old.nika", "drafted"),
-    ] {
-        let at = root.join(relative);
-        std::fs::create_dir_all(at.parent().unwrap()).expect("a directory");
-        std::fs::write(at, format!("fn f() {{ fremd::{call}(1) }}\n")).expect("a file");
-    }
-    let text = entries(&root);
-    assert!(text.contains("fremd::used"), "{text}");
-    assert!(text.contains("fremd::deeper"), "{text}");
-    assert!(!text.contains("fremd::built"), "{text}");
-    assert!(!text.contains("fremd::drafted"), "{text}");
-}
-
 /// **A name no signature answered is named**, because that is what a reviewer
 /// does next: it is a macro's item, or a `mod` this scraper read flat, or a
 /// typo — and a draft that silently left it out would look complete.

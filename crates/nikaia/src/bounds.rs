@@ -37,6 +37,7 @@ use crate::check::value_node;
 use crate::parser::Parsed;
 use nikaia_std::tools::bounds_basic as nika;
 use nikaia_std::tools::bounds_body as body_of;
+use nikaia_std::tools::bounds_shape::{self as shaped, Around, BodyShape};
 
 /// How hard the compiler works to drop an index check (ADR-306 D1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -128,10 +129,10 @@ pub fn proven(
     if level == BoundsChecks::Kept && overflow == OverflowChecks::Kept {
         return out;
     }
-    let mut functions: HashMap<String, Vec<bool>> = HashMap::new();
+    let mut functions: BTreeMap<String, Vec<bool>> = BTreeMap::new();
     // A method of this program that takes a parameter `mut` changes what it
     // is handed, whichever type it is called on.
-    let mut changing_methods: HashSet<String> = HashSet::new();
+    let mut changing_methods: BTreeSet<String> = BTreeSet::new();
     for item in &parsed.program.items {
         if let Item::Impl { methods, .. } = &item.node {
             for method in methods {
@@ -161,6 +162,10 @@ pub fn proven(
             );
         }
     }
+    let around = Around {
+        functions,
+        changing_methods,
+    };
     let mut bodies: Vec<&Spanned<Item>> = Vec::new();
     for item in &parsed.program.items {
         match &item.node {
@@ -184,12 +189,11 @@ pub fn proven(
             continue;
         }
         let pinned = body_of::pinned_in(body, &parsed.interner);
-        let shape = Shape::of(parsed, args, body, &pinned, &functions, &changing_methods);
+        let shape = shaped::shape_of(args, body, &pinned, &around, &parsed.interner);
         let mut walk = Walk {
             parsed,
             lengths,
-            functions: &functions,
-            changing_methods: &changing_methods,
+            around: &around,
             arena: Arena::new(),
             proven: Proven::default(),
             pinned,
@@ -260,10 +264,7 @@ fn length_of(name: &str) -> String {
 }
 
 fn is_whole_number(ty: &str) -> bool {
-    matches!(
-        ty,
-        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize"
-    )
+    shaped::is_whole_number(ty)
 }
 
 fn is_a_list(ty: &str) -> bool {
@@ -298,9 +299,9 @@ struct Walk<'a> {
     parsed: &'a Parsed,
     /// [`proven`]'s `lengths`.
     lengths: &'a BTreeSet<usize>,
-    functions: &'a HashMap<String, Vec<bool>>,
-    /// Methods of this program with a `mut` parameter.
-    changing_methods: &'a HashSet<String>,
+    /// The free functions' `mut` parameters and the methods of this program
+    /// with a `mut` parameter.
+    around: &'a Around,
     arena: Arena,
     proven: Proven,
     /// Names a lambda, a task or an `overlap` branch changes: they may change
@@ -312,7 +313,7 @@ struct Walk<'a> {
     /// [`proven`]'s `arithmetic`.
     arithmetic: &'a BTreeMap<usize, String>,
     /// What the body is, read once before any pass.
-    shape: Shape,
+    shape: BodyShape,
     /// The bounds on lists' values this pass may read (ADR-306 D7), by key:
     /// a list's name for its values, `name[]` for the values of the lists it
     /// holds.
@@ -493,7 +494,7 @@ impl Walk<'_> {
     /// (ADR-306 D7): a number joins the key's bound, a list's items join
     /// `key[]`'s, a list the walk knows joins its bound into `key[]`.
     fn write(&mut self, key: &str, value: &Expr, facts: &Facts) {
-        if !self.shape.tracks(key) {
+        if !shaped::tracks(&self.shape, key) {
             return;
         }
         let inner = format!("{key}[]");
@@ -507,7 +508,7 @@ impl Walk<'_> {
             self.join(key, range);
             return;
         }
-        if let Some(elements) = self.shape.elements_key(self.parsed, value) {
+        if let Some(elements) = shaped::elements_key(&self.shape, value, &self.parsed.interner) {
             match self.assumed.get(&elements).copied() {
                 Some(bound) => self.join(&inner, bound),
                 None => {
@@ -683,7 +684,7 @@ impl Walk<'_> {
                 })
             }
             Expr::Index { base, .. } => {
-                let key = self.shape.elements_key(self.parsed, base)?;
+                let key = shaped::elements_key(&self.shape, base, &self.parsed.interner)?;
                 self.assumed.get(&key).copied()
             }
             _ => None,
@@ -1079,7 +1080,8 @@ impl Walk<'_> {
                 self.place(target, facts);
                 if op.is_none()
                     && let Expr::Index { base, .. } = target
-                    && let Some(key) = self.shape.elements_key(self.parsed, base)
+                    && let Some(key) =
+                        shaped::elements_key(&self.shape, base, &self.parsed.interner)
                 {
                     self.write(&key, value, facts);
                 }
@@ -1121,7 +1123,8 @@ impl Walk<'_> {
                 // `for x in xs`, where what `xs` holds is bounded (ADR-306 D7).
                 if let [only] = bindings.as_slice()
                     && !matches!(iter, Expr::Range { .. })
-                    && let Some(key) = self.shape.elements_key(self.parsed, iter)
+                    && let Some(key) =
+                        shaped::elements_key(&self.shape, iter, &self.parsed.interner)
                     && let Some(bound) = self.assumed.get(&key).copied()
                 {
                     let name = self.text(*only).to_string();
@@ -1484,7 +1487,8 @@ impl Walk<'_> {
                 }
                 let method = self.text(*method).to_string();
                 if let Some(at) = writes_a_value(&method, args.len())
-                    && let Some(key) = self.shape.elements_key(self.parsed, receiver)
+                    && let Some(key) =
+                        shaped::elements_key(&self.shape, receiver, &self.parsed.interner)
                 {
                     self.write(&key, &args[at], facts);
                 }
@@ -1492,7 +1496,7 @@ impl Walk<'_> {
                     let name = self.text(*name).to_string();
                     self.method(facts, &name, &method, args);
                 }
-                let changes_its_arguments = self.changing_methods.contains(&method);
+                let changes_its_arguments = self.around.changing_methods.contains(&method);
                 for arg in args {
                     if let Expr::Variable(name) = arg {
                         let name = self.text(*name).to_string();
@@ -1513,7 +1517,7 @@ impl Walk<'_> {
                     self.expr(&c.value, facts);
                 }
                 let callee = match &**func {
-                    Expr::Variable(name) => self.functions.get(self.text(*name)).cloned(),
+                    Expr::Variable(name) => self.around.functions.get(self.text(*name)).cloned(),
                     _ => None,
                 };
                 for (at, arg) in args.iter().enumerate() {
@@ -1627,7 +1631,8 @@ impl Walk<'_> {
                 {
                     out.lengths.insert(self.text(*name).to_string());
                 }
-                let changes_its_arguments = self.changing_methods.contains(self.text(*method));
+                let changes_its_arguments =
+                    self.around.changing_methods.contains(self.text(*method));
                 for arg in args {
                     if let Expr::Variable(name) = arg {
                         let name = self.text(*name).to_string();
@@ -1640,7 +1645,7 @@ impl Walk<'_> {
             }
             Expr::Call { func, args, .. } => {
                 let callee = match &**func {
-                    Expr::Variable(name) => self.functions.get(self.text(*name)),
+                    Expr::Variable(name) => self.around.functions.get(self.text(*name)),
                     _ => None,
                 };
                 for (at, arg) in args.iter().enumerate() {
@@ -1829,299 +1834,13 @@ fn evaluate(form: &Form, known: &Known) -> Range {
 }
 
 // --- what a body is (ADR-306) ------------------------------------------------------
-
-/// **What the walk reads off a body once, before any pass.**
-#[derive(Default)]
-struct Shape {
-    /// Names bound once, to a literal, and never changed: their value.
-    constants: HashMap<String, i64>,
-    /// Names bound once with an unsigned type: never negative, whatever is
-    /// assigned to them, because an assignment that would make one negative
-    /// stops the program.
-    unsigned: HashSet<String>,
-    /// **Lists whose every write the walk sees** (ADR-306 D7): bound once in
-    /// the body to a literal, never assigned, handed on or captured, and
-    /// changed only by a method that writes what the walk can read
-    /// ([`writes_a_value`]) or that only keeps or removes values.
-    roots: HashSet<String>,
-    /// Names bound once, not `mut`, to a list of [`Self::roots`] or to an
-    /// element of one: the key of its elements.
-    aliases: HashMap<String, String>,
-}
+//
+// `tools/bounds_shape.nika`: the constants, the unsigned names, the lists
+// whose every write the walk sees (D7) and their aliases.
 
 /// Methods that put one value into a list, and which argument it is.
 fn writes_a_value(method: &str, args: usize) -> Option<usize> {
-    match (method, args) {
-        ("push", 1) | ("fill", 1) => Some(0),
-        ("insert", 2) | ("resize", 2) => Some(1),
-        _ => None,
-    }
-}
-
-/// Methods that change a list without putting anything new in it.
-fn only_removes(method: &str) -> bool {
-    matches!(
-        method,
-        "pop" | "remove" | "swap_remove" | "clear" | "truncate" | "retain" | "dedup"
-    )
-}
-
-impl Shape {
-    fn of(
-        parsed: &Parsed,
-        args: &[crate::ast::FnArg],
-        body: &Block,
-        pinned: &BTreeSet<String>,
-        functions: &HashMap<String, Vec<bool>>,
-        changing_methods: &HashSet<String>,
-    ) -> Shape {
-        let text = |s: winnow_grammar::Symbol| parsed.text(s).to_string();
-        // How often each name is bound anywhere in the body, lambdas and
-        // patterns included: a name bound twice is not one thing.
-        let mut bound: HashMap<String, usize> = HashMap::new();
-        let mut bind = |name: String| *bound.entry(name).or_default() += 1;
-        for arg in args {
-            bind(text(arg.name));
-        }
-        visit_stmts(body, &mut |stmt| match stmt {
-            Stmt::Let { names, .. } => names.iter().for_each(|n| bind(text(*n))),
-            Stmt::Comptime { name, .. } => bind(text(*name)),
-            Stmt::For { bindings, .. } => bindings.iter().for_each(|n| bind(text(*n))),
-            _ => {}
-        });
-        visit_exprs(body, &mut |expr| match expr {
-            Expr::Closure { params, .. } => params.iter().for_each(|n| bind(text(*n))),
-            Expr::Match { arms, .. } => {
-                for arm in arms {
-                    pattern_symbols(&arm.pattern, &mut |n| bind(text(n)));
-                }
-            }
-            Expr::Select(arms) => {
-                for arm in arms {
-                    if let Some(n) = arm.binding {
-                        bind(text(n));
-                    }
-                }
-            }
-            // A `catch` block names the failure `error`.
-            Expr::TryCatch { .. } => bind("error".to_string()),
-            _ => {}
-        });
-        let once = |name: &str| bound.get(name) == Some(&1);
-
-        let mut shape = Shape::default();
-        for arg in args {
-            let name = text(arg.name);
-            if once(&name) && arg.ty.generics.is_empty() && is_unsigned(parsed.text(arg.ty.name)) {
-                shape.unsigned.insert(name);
-            }
-        }
-        visit_stmts(body, &mut |stmt| {
-            if let Stmt::Let {
-                names,
-                mutable,
-                ty,
-                value,
-            } = stmt
-                && let [only] = names.as_slice()
-            {
-                let name = text(*only);
-                if !once(&name) {
-                    return;
-                }
-                let whole = ty
-                    .as_ref()
-                    .is_none_or(|t| t.generics.is_empty() && is_whole_number(parsed.text(t.name)));
-                if let Some(t) = ty
-                    && t.generics.is_empty()
-                    && is_unsigned(parsed.text(t.name))
-                {
-                    shape.unsigned.insert(name.clone());
-                }
-                if !mutable
-                    && whole
-                    && let Expr::LitInt { value, negative } = value
-                    && let Ok(n) = i64::try_from(crate::ast::int_value(*value, *negative))
-                {
-                    shape.constants.insert(name.clone(), n);
-                }
-                if matches!(value, Expr::ListLit { .. }) {
-                    shape.roots.insert(name);
-                }
-            }
-        });
-        // Aliases, in two rounds: one may name another.
-        for _ in 0..2 {
-            visit_stmts(body, &mut |stmt| {
-                if let Stmt::Let {
-                    names,
-                    mutable: false,
-                    value,
-                    ..
-                } = stmt
-                    && let [only] = names.as_slice()
-                    && once(&text(*only))
-                    && !shape.roots.contains(&text(*only))
-                    && let Some(key) = shape.elements_key(parsed, value)
-                {
-                    shape.aliases.insert(text(*only), key);
-                }
-            });
-        }
-
-        // **What takes a list out of the walk's sight.**
-        let mut lost: HashSet<String> = HashSet::new();
-        for name in pinned {
-            lost.insert(name.clone());
-        }
-        // Anything a lambda, a task, an `overlap` branch or a `select` arm
-        // names: it may run whenever.
-        visit_exprs(body, &mut |expr| {
-            let deferred: Vec<Block> = match expr {
-                Expr::Closure { body, .. } | Expr::Overlap(body) => vec![body.clone()],
-                Expr::Spawn { body, .. } => vec![Block {
-                    stmts: vec![Spanned::new(Stmt::Expr((**body).clone()), Span::nowhere())],
-                }],
-                Expr::Select(arms) => arms.iter().map(|a| a.body.clone()).collect(),
-                _ => Vec::new(),
-            };
-            for block in &deferred {
-                visit_exprs(block, &mut |e| {
-                    if let Expr::Variable(n) = e {
-                        lost.insert(text(*n));
-                    }
-                });
-            }
-        });
-        visit_stmts(body, &mut |stmt| match stmt {
-            Stmt::Assign { target, op, .. } => {
-                // `xs = …` replaces the list, `xs.f = …` changes it, and
-                // `xs[i] op= v` writes a value the walk does not compute.
-                if (op.is_some() || !matches!(target, Expr::Index { .. }))
-                    && let Some(root) = root_name(parsed, target)
-                {
-                    lost.insert(root);
-                }
-            }
-            // A `mut` binding of a list, or of a part of it, may be changed
-            // where the walk does not look for it.
-            Stmt::Let {
-                mutable: true,
-                value,
-                ..
-            } => {
-                if let Some(root) = root_name(parsed, value) {
-                    lost.insert(root);
-                }
-            }
-            _ => {}
-        });
-        visit_exprs(body, &mut |expr| match expr {
-            Expr::MethodCall {
-                receiver,
-                method,
-                args,
-                ..
-            }
-            | Expr::SafeMethod {
-                receiver,
-                method,
-                args,
-                ..
-            } => {
-                let method = parsed.text(*method);
-                if let Some(root) = root_name(parsed, receiver)
-                    && writes_a_value(method, args.len()).is_none()
-                    && !only_removes(method)
-                    && !keeps_length(method)
-                {
-                    lost.insert(root);
-                }
-                for arg in args {
-                    if let Some(root) = root_name(parsed, arg)
-                        && (changing_methods.contains(method) || !keeps_length(method))
-                        && writes_a_value(method, args.len()).is_none()
-                    {
-                        lost.insert(root);
-                    }
-                }
-            }
-            Expr::Call { func, args, .. } => {
-                let callee = match &**func {
-                    Expr::Variable(name) => functions.get(parsed.text(*name)),
-                    _ => None,
-                };
-                for (at, arg) in args.iter().enumerate() {
-                    if let Some(root) = root_name(parsed, arg)
-                        && callee.is_none_or(|params| params.get(at).copied().unwrap_or(true))
-                    {
-                        lost.insert(root);
-                    }
-                }
-            }
-            _ => {}
-        });
-        // A name lost through an alias loses the list it names.
-        let through_aliases: Vec<String> = lost
-            .iter()
-            .filter_map(|n| shape.aliases.get(n))
-            .map(|key| key_root(key).to_string())
-            .collect();
-        lost.extend(through_aliases);
-        shape.roots.retain(|r| !lost.contains(r));
-        shape
-    }
-
-    /// The key of the elements of `expr`, a list: a root's name, an alias's
-    /// key, and `key[]` for an element of a list of lists.
-    fn elements_key(&self, parsed: &Parsed, expr: &Expr) -> Option<String> {
-        match expr {
-            Expr::Variable(n) => {
-                let n = parsed.text(*n);
-                match self.roots.contains(n) {
-                    true => Some(n.to_string()),
-                    false => self.aliases.get(n).cloned(),
-                }
-            }
-            Expr::Index { base, .. } => self.elements_key(parsed, base).map(|k| format!("{k}[]")),
-            _ => None,
-        }
-    }
-
-    fn tracks(&self, key: &str) -> bool {
-        self.roots.contains(key_root(key))
-    }
-}
-
-/// `watched[][]` is about `watched`.
-fn key_root(key: &str) -> &str {
-    key.split('[').next().unwrap_or(key)
-}
-
-/// The variable an index, a field or a name is rooted in.
-fn root_name(parsed: &Parsed, expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Variable(n) => Some(parsed.text(*n).to_string()),
-        Expr::Index { base, .. } | Expr::Field { base, .. } => root_name(parsed, base),
-        _ => None,
-    }
-}
-
-/// Every symbol a pattern names, bound or not: counting too many makes a
-/// name look bound twice, which only costs a proof.
-fn pattern_symbols(pattern: &crate::ast::MatchPattern, f: &mut dyn FnMut(winnow_grammar::Symbol)) {
-    use crate::ast::MatchPattern;
-    match pattern {
-        MatchPattern::Path(segments) => segments.iter().for_each(|s| f(*s)),
-        MatchPattern::Tuple { parts, .. } => parts.iter().for_each(|p| pattern_symbols(p, f)),
-        MatchPattern::Named { bindings, .. } => bindings.iter().for_each(|s| f(*s)),
-        MatchPattern::Or(alternatives) => alternatives.iter().for_each(|p| pattern_symbols(p, f)),
-        _ => {}
-    }
-}
-
-fn is_unsigned(ty: &str) -> bool {
-    matches!(ty, "u8" | "u16" | "u32" | "u64" | "usize")
+    shaped::writes_a_value(method, args as i64).map(|at| at as usize)
 }
 
 // --- walking the tree ---------------------------------------------------------

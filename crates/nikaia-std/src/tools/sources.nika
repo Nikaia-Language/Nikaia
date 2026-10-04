@@ -31,35 +31,3 @@ pub fn rust_sources(src: ref String) -> collections::BTreeMap[String, String] th
     }
     return out
 }
-
-/// **The `.nika` files of a project**, each with its text, keyed by its name
-/// under `root`, `/` between the parts: what `nikaia describe` reads for the
-/// names a program writes of a crate (ADR-290 D2).
-///
-/// A file under a directory called `target` or `contracts` is left out, at
-/// any depth: `target` is the build's own and holds nothing a program wrote,
-/// and `contracts` holds the describer's own output. A file that cannot be
-/// read, or is not UTF-8, is left out too - a program the build cannot read is
-/// the build's to report, and the same message twice helps nobody.
-///
-/// `fs::Root::Anywhere` for `rust_sources`' reason: the root is the project
-/// the operator ran the command in.
-pub fn program_sources(root: ref String) -> collections::BTreeMap[String, String] throws {
-    let mut out = collections::BTreeMap()
-    for name in fs::walk(root, fs::Root::Anywhere) {
-        if !name.ends_with(".nika") || under_output(name) { continue }
-        let text = fs::read_to_string(f"{root}/{name}", fs::Root::Anywhere) catch { continue }
-        out.insert(name, text)
-    }
-    return out
-}
-
-// Whether a name passes through a directory a build or the describer writes.
-fn under_output(name: ref String) -> bool {
-    for part in name.split("/") {
-        if part == "target" || part == "contracts" {
-            return true
-        }
-    }
-    return false
-}

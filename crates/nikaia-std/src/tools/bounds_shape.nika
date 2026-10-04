@@ -1,0 +1,564 @@
+// crates/nikaia-std/src/tools/bounds_shape.nika
+//
+// **What the aggressive bounds and overflow walk reads off a body once,
+// before any pass** (ADR-306 D4, D7), moved from the compiler's `bounds`
+// (ADR-294, #125): the names bound once to a literal and their value, the
+// names that are never negative because their type is unsigned, the lists
+// whose every write the walk sees (the roots), and the names that stand for
+// a root's elements (the aliases).
+//
+// It reads the syntax tree and nothing the walk finds. Each question is asked
+// of every statement and every expression in the body and the blocks inside
+// it, lambdas included, by one walk told which by a `Look`.
+
+use std::collections
+
+/// **What a body is**, as the walk reads it.
+pub struct BodyShape {
+    /// Names bound once, to a literal, and never changed: their value.
+    pub constants: collections::BTreeMap[String, i64],
+    /// Names bound once with an unsigned type: never negative, whatever is
+    /// assigned to them, because an assignment that would make one negative
+    /// stops the program.
+    pub unsigned: collections::BTreeSet[String],
+    /// **Lists whose every write the walk sees** (ADR-306 D7): bound once in
+    /// the body to a literal, never assigned, handed on or captured, and
+    /// changed only by a method that writes what the walk can read
+    /// (`writes_a_value`) or that only keeps or removes values.
+    pub roots: collections::BTreeSet[String],
+    /// Names bound once, not `mut`, to a list of the roots or to an element
+    /// of one: the key of its elements.
+    pub aliases: collections::BTreeMap[String, String],
+}
+
+/// **What the program around a body says about a call**: each free
+/// function's parameters, `true` where one is `mut`, and the methods of this
+/// program that take a parameter `mut` - they change what they are handed,
+/// whichever type they are called on.
+pub struct Around {
+    pub functions: collections::BTreeMap[String, Vec[bool]],
+    pub changing_methods: collections::BTreeSet[String],
+}
+
+enum Look {
+    /// How often each name is bound: a name bound twice is not one thing.
+    Bound,
+    /// What a `let` of one name says: a constant, an unsigned name, a root.
+    Lets,
+    /// The names bound to a root's elements.
+    Aliases,
+    /// What takes a list out of the walk's sight.
+    Lost,
+}
+
+struct ShapeSeen {
+    bound: collections::BTreeMap[String, i64],
+    shape: BodyShape,
+    lost: collections::BTreeSet[String],
+}
+
+/// **The shape of `body`**, a function whose parameters are `args`, where
+/// `pinned` are the names a deferred body changes (`bounds_body.nika`).
+pub fn shape_of(args: ref Vec[FnArg], body: ref Block, pinned: ref collections::BTreeSet[String], around: ref Around, words: ref winnow_grammar::InternerContext) -> BodyShape {
+    let mut seen = ShapeSeen {
+        bound: collections::BTreeMap(),
+        shape: BodyShape {
+            constants: collections::BTreeMap(),
+            unsigned: collections::BTreeSet(),
+            roots: collections::BTreeSet(),
+            aliases: collections::BTreeMap(),
+        },
+        lost: collections::BTreeSet(),
+    }
+    for arg in args {
+        bind_name(words.resolve(arg.name), seen)
+    }
+    look_block(body, Look::Bound, false, around, words, seen)
+    for arg in args {
+        let name = words.resolve(arg.name).clone()
+        if once(name, seen) && is_unsigned(plain_name(arg.ty, words)) {
+            seen.shape.unsigned.insert(name)
+        }
+    }
+    look_block(body, Look::Lets, false, around, words, seen)
+    // Aliases, in two rounds: one may name another.
+    look_block(body, Look::Aliases, false, around, words, seen)
+    look_block(body, Look::Aliases, false, around, words, seen)
+    for name in pinned {
+        seen.lost.insert(name.clone())
+    }
+    look_block(body, Look::Lost, false, around, words, seen)
+    // A name lost through an alias loses the list it names.
+    let mut through: Vec[String] = []
+    for name in seen.lost {
+        let key = seen.shape.aliases.get(name) ?? continue
+        through.push(key_root(key))
+    }
+    for root in through {
+        seen.lost.insert(root.clone())
+    }
+    let mut kept: collections::BTreeSet[String] = collections::BTreeSet()
+    for root in seen.shape.roots {
+        if !seen.lost.contains(root) {
+            kept.insert(root.clone())
+        }
+    }
+    seen.shape.roots = kept
+    return seen.shape
+}
+
+/// **The key of the elements of `expr`, a list**: a root's name, an alias's
+/// key, and `key[]` for an element of a list of lists.
+pub fn elements_key(shape: ref BodyShape, expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
+    return match expr {
+        Expr::Variable(n) => {
+            let name = words.resolve(n)
+            if shape.roots.contains(name) {
+                return name.clone()
+            }
+            let key = shape.aliases.get(name) ?? return null
+            return key.clone()
+        },
+        Expr::Index { base, .. } => {
+            let key = elements_key(shape, base, words) ?? return null
+            f"{key}[]"
+        },
+        else => null,
+    }
+}
+
+/// Whether the walk sees every write of the list `key` is about.
+pub fn tracks(shape: ref BodyShape, key: ref String) -> bool {
+    return shape.roots.contains(key_root(key))
+}
+
+/// **Methods that put one value into a list**, and which argument it is.
+pub fn writes_a_value(method: ref String, args: i64) -> i64? {
+    return match method {
+        "push" => if args == 1 { 0 } else { null },
+        "fill" => if args == 1 { 0 } else { null },
+        "insert" => if args == 2 { 1 } else { null },
+        "resize" => if args == 2 { 1 } else { null },
+        else => null,
+    }
+}
+
+/// Methods that change a list without putting anything new in it.
+pub fn only_removes(method: ref String) -> bool {
+    return match method {
+        "pop" => true, "remove" => true, "swap_remove" => true, "clear" => true,
+        "truncate" => true, "retain" => true, "dedup" => true,
+        else => false,
+    }
+}
+
+/// `watched[][]` is about `watched`.
+pub fn key_root(key: ref String) -> String {
+    let parts: Vec[ref String] = key.split("[").collect()
+    return parts[0].clone()
+}
+
+/// The variable an index, a field or a name is rooted in.
+pub fn root_name(expr: ref Expr, words: ref winnow_grammar::InternerContext) -> String? {
+    return match expr {
+        Expr::Variable(n) => words.resolve(n).clone(),
+        Expr::Index { base, .. } => root_name(base, words),
+        Expr::Field { base, .. } => root_name(base, words),
+        else => null,
+    }
+}
+
+pub fn is_unsigned(ty: ref String) -> bool {
+    return match ty {
+        "u8" => true, "u16" => true, "u32" => true, "u64" => true, "usize" => true,
+        else => false,
+    }
+}
+
+pub fn is_whole_number(ty: ref String) -> bool {
+    return match ty {
+        "i8" => true, "i16" => true, "i32" => true, "i64" => true, "isize" => true,
+        else => is_unsigned(ty),
+    }
+}
+
+/// A type's name when it has no parameters, and `""` when it has.
+fn plain_name(ty: ref Type, words: ref winnow_grammar::InternerContext) -> String {
+    if !ty.generics.is_empty() {
+        return ""
+    }
+    return words.resolve(ty.name).clone()
+}
+
+fn bind_name(name: ref String, mut seen: ShapeSeen) {
+    let before = seen.bound.get(name) ?? 0
+    seen.bound.insert(name.clone(), before + 1)
+}
+
+fn bind_all(names: ref Vec[winnow_grammar::Symbol], words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    for n in names {
+        bind_name(words.resolve(n), seen)
+    }
+}
+
+fn once(name: ref String, seen: ref ShapeSeen) -> bool {
+    return (seen.bound.get(name) ?? 0) == 1
+}
+
+/// Every symbol a pattern names, bound or not: counting too many makes a
+/// name look bound twice, which only costs a proof.
+fn bind_pattern(pattern: ref MatchPattern, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    match pattern {
+        MatchPattern::Path(segments) => bind_all(segments, words, seen),
+        MatchPattern::Tuple { parts, .. } => {
+            for p in parts {
+                bind_pattern(p, words, seen)
+            }
+        },
+        MatchPattern::Named { bindings, .. } => bind_all(bindings, words, seen),
+        MatchPattern::Or(alternatives) => {
+            for p in alternatives {
+                bind_pattern(p, words, seen)
+            }
+        },
+        else => {},
+    }
+}
+
+/// The number a literal says, when it is a whole number an `i64` holds.
+fn literal_count(expr: ref Expr) -> i64? {
+    return match expr {
+        Expr::LitInt { value, negative } => integer_as_count(integer(value, negative)),
+        else => null,
+    }
+}
+
+fn is_list_literal(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::ListLit { .. } => true,
+        else => false,
+    }
+}
+
+fn is_index(expr: ref Expr) -> bool {
+    return match expr {
+        Expr::Index { .. } => true,
+        else => false,
+    }
+}
+
+/// The plain name a `let` declares its type with, `""` for a type with
+/// parameters, and nothing when it declares none.
+fn declared_name(ty: ref Type?, words: ref winnow_grammar::InternerContext) -> String? {
+    let t = ty ?? return null
+    return plain_name(t, words)
+}
+
+/// `let name: ty = value`, one name: a constant, an unsigned name, a root.
+fn read_let(name: ref String, mutable: bool, ty: ref Type?, value: ref Expr, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    if !once(name, seen) {
+        return
+    }
+    let declared = declared_name(ty, words)
+    let whole = declared == null || is_whole_number(declared ?? "")
+    if is_unsigned(declared ?? "") {
+        seen.shape.unsigned.insert(name.clone())
+    }
+    if !mutable && whole {
+        let n = literal_count(value)
+        if n != null {
+            seen.shape.constants.insert(name.clone(), n ?? 0)
+        }
+    }
+    if is_list_literal(value) {
+        seen.shape.roots.insert(name.clone())
+    }
+}
+
+fn read_alias(name: ref String, value: ref Expr, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    if !once(name, seen) || seen.shape.roots.contains(name) {
+        return
+    }
+    let key = elements_key(seen.shape, value, words) ?? return
+    seen.shape.aliases.insert(name.clone(), key)
+}
+
+fn lose(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    let root = root_name(expr, words) ?? return
+    seen.lost.insert(root)
+}
+
+/// A method called on a list or handed one.
+fn lose_by_method(receiver: ref Expr, method: ref String, args: ref Vec[Expr], around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    let writes = writes_a_value(method, args.len() as i64) != null
+    if !writes && !only_removes(method) && !keeps_length(method) {
+        lose(receiver, words, seen)
+    }
+    if !writes && (around.changing_methods.contains(method) || !keeps_length(method)) {
+        for arg in args {
+            lose(arg, words, seen)
+        }
+    }
+}
+
+/// A call handed a list: lost unless the callee is a function of this
+/// program whose parameter there is not `mut`.
+fn lose_by_call(func: ref Expr, args: ref Vec[Expr], around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    let params = callee_params(func, around, words)
+    let mut at = 0
+    for arg in args {
+        if hands_on(params, at) {
+            lose(arg, words, seen)
+        }
+        at += 1
+    }
+}
+
+/// A free function's parameters, `true` where one is `mut`, when `func`
+/// names one of this program.
+fn callee_params(func: ref Expr, around: ref Around, words: ref winnow_grammar::InternerContext) -> Vec[bool]? {
+    return match func {
+        Expr::Variable(name) => {
+            let params = around.functions.get(words.resolve(name)) ?? return null
+            params.clone()
+        },
+        else => null,
+    }
+}
+
+/// Whether the argument at `at` may be changed by the callee: unless it is a
+/// known function's parameter that is not `mut`.
+fn hands_on(params: ref Vec[bool]?, at: i64) -> bool {
+    let given = params ?? return true
+    if at < given.len() as i64 {
+        return given[at]
+    }
+    return true
+}
+
+fn look_statement_here(stmt: ref Stmt, look: ref Look, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    match look {
+        Look::Bound => match stmt {
+            Stmt::Let { names, .. } => bind_all(names, words, seen),
+            Stmt::Comptime { name, .. } => bind_name(words.resolve(name), seen),
+            Stmt::For { bindings, .. } => bind_all(bindings, words, seen),
+            else => {},
+        },
+        Look::Lets => match stmt {
+            Stmt::Let { names, mutable, ty, value } => {
+                if names.len() == 1 {
+                    read_let(words.resolve(names[0]), mutable, ty, value, words, seen)
+                }
+            },
+            else => {},
+        },
+        Look::Aliases => match stmt {
+            Stmt::Let { names, mutable, value, .. } => {
+                if names.len() == 1 && !mutable {
+                    read_alias(words.resolve(names[0]), value, words, seen)
+                }
+            },
+            else => {},
+        },
+        Look::Lost => match stmt {
+            // `xs = …` replaces the list, `xs.f = …` changes it, and
+            // `xs[i] op= v` writes a value the walk does not compute.
+            Stmt::Assign { target, op, .. } => {
+                if op != null || !is_index(target) {
+                    lose(target, words, seen)
+                }
+            },
+            // A `mut` binding of a list, or of a part of it, may be changed
+            // where the walk does not look for it.
+            Stmt::Let { mutable, value, .. } => {
+                if mutable {
+                    lose(value, words, seen)
+                }
+            },
+            else => {},
+        },
+    }
+}
+
+fn look_expr_here(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    match look {
+        Look::Bound => match expr {
+            Expr::Closure { params, .. } => bind_all(params, words, seen),
+            Expr::Match { arms, .. } => {
+                for arm in arms {
+                    bind_pattern(arm.pattern, words, seen)
+                }
+            },
+            Expr::Select(arms) => {
+                for arm in arms {
+                    let n = arm.binding ?? continue
+                    bind_name(words.resolve(n), seen)
+                }
+            },
+            // A `catch` block names the failure `error`.
+            Expr::TryCatch { .. } => bind_name("error", seen),
+            else => {},
+        },
+        Look::Lost => {
+            // Anything a lambda, a task, an `overlap` branch or a `select`
+            // arm names: it may run whenever.
+            if deferred {
+                match expr {
+                    Expr::Variable(n) => { seen.lost.insert(words.resolve(n).clone()) },
+                    else => {},
+                }
+            }
+            match expr {
+                Expr::MethodCall { receiver, method, args, .. } => lose_by_method(receiver, words.resolve(method), args, around, words, seen),
+                Expr::SafeMethod { receiver, method, args, .. } => lose_by_method(receiver, words.resolve(method), args, around, words, seen),
+                Expr::Call { func, args, .. } => lose_by_call(func, args, around, words, seen),
+                else => {},
+            }
+        },
+        else => {},
+    }
+}
+
+fn look_block(block: ref Block, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    for stmt in block.stmts {
+        look_statement(stmt.node, look, deferred, around, words, seen)
+    }
+}
+
+fn look_statement(stmt: ref Stmt, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    look_statement_here(stmt, look, words, seen)
+    match stmt {
+        Stmt::For { iter, body, .. } => {
+            look_expr(iter, look, deferred, around, words, seen)
+            look_block(body, look, deferred, around, words, seen)
+        },
+        Stmt::While { cond, body } => {
+            look_expr(cond, look, deferred, around, words, seen)
+            look_block(body, look, deferred, around, words, seen)
+        },
+        Stmt::Let { value, .. } => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Comptime { value, .. } => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Expr(value) => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Assign { target, value, .. } => {
+            look_expr(target, look, deferred, around, words, seen)
+            look_expr(value, look, deferred, around, words, seen)
+        },
+        Stmt::Return(value) => look_maybe(value, look, deferred, around, words, seen),
+        else => {},
+    }
+}
+
+fn look_maybe(expr: ref Expr?, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    look_expr(expr ?? return, look, deferred, around, words, seen)
+}
+
+fn look_all(exprs: ref Vec[Expr], look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    for e in exprs {
+        look_expr(e, look, deferred, around, words, seen)
+    }
+}
+
+fn look_config(config: ref Vec[ConfigArg], look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    for c in config {
+        look_expr(c.value, look, deferred, around, words, seen)
+    }
+}
+
+fn look_fields(fields: ref Vec[FieldInit], look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    for field in fields {
+        look_maybe(field.value, look, deferred, around, words, seen)
+    }
+}
+
+/// The expression, then each expression directly inside it, then each block:
+/// the order the aliases are read in. A lambda, a task, an `overlap` and a
+/// `select` arm's body are deferred.
+fn look_expr(expr: ref Expr, look: ref Look, deferred: bool, around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
+    look_expr_here(expr, look, deferred, around, words, seen)
+    match expr {
+        Expr::Match { value, arms } => {
+            look_expr(value, look, deferred, around, words, seen)
+            for arm in arms {
+                look_maybe(arm.guard, look, deferred, around, words, seen)
+                look_expr(arm.body, look, deferred, around, words, seen)
+            }
+        },
+        Expr::Range { start, end, .. } => {
+            look_expr(start, look, deferred, around, words, seen)
+            look_expr(end, look, deferred, around, words, seen)
+        },
+        Expr::Tuple(items) => look_all(items, look, deferred, around, words, seen),
+        Expr::ListLit { items, .. } => look_all(items, look, deferred, around, words, seen),
+        Expr::LitInterpolated { parts } => {
+            for part in parts {
+                match part {
+                    FPart::Hole { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
+                    else => {},
+                }
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            look_expr(cond, look, deferred, around, words, seen)
+            look_block(then_branch, look, deferred, around, words, seen)
+            let other = else_branch ?? return
+            look_block(other, look, deferred, around, words, seen)
+        },
+        Expr::Call { func, args, config } => {
+            look_expr(func, look, deferred, around, words, seen)
+            look_all(args, look, deferred, around, words, seen)
+            look_config(config, look, deferred, around, words, seen)
+        },
+        Expr::Spawn { body, .. } => look_expr(body, look, true, around, words, seen),
+        Expr::MethodCall { receiver, args, config, .. } => {
+            look_expr(receiver, look, deferred, around, words, seen)
+            look_all(args, look, deferred, around, words, seen)
+            look_config(config, look, deferred, around, words, seen)
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            look_expr(receiver, look, deferred, around, words, seen)
+            look_all(args, look, deferred, around, words, seen)
+            look_config(config, look, deferred, around, words, seen)
+        },
+        Expr::Field { base, .. } => look_expr(base, look, deferred, around, words, seen),
+        Expr::SafeField { base, .. } => look_expr(base, look, deferred, around, words, seen),
+        Expr::StructLit { fields, .. } => look_fields(fields, look, deferred, around, words, seen),
+        Expr::With { base, fields, .. } => {
+            look_expr(base, look, deferred, around, words, seen)
+            look_fields(fields, look, deferred, around, words, seen)
+        },
+        Expr::Unary { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
+        Expr::Try(inner) => look_expr(inner, look, deferred, around, words, seen),
+        Expr::Throw(inner) => look_expr(inner, look, deferred, around, words, seen),
+        Expr::Cast { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
+        Expr::TryCatch { expr, handler } => {
+            look_expr(expr, look, deferred, around, words, seen)
+            look_block(handler, look, deferred, around, words, seen)
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            look_expr(lhs, look, deferred, around, words, seen)
+            look_expr(rhs, look, deferred, around, words, seen)
+        },
+        Expr::Return(value) => look_maybe(value, look, deferred, around, words, seen),
+        Expr::Index { base, index } => {
+            look_expr(base, look, deferred, around, words, seen)
+            look_expr(index, look, deferred, around, words, seen)
+        },
+        Expr::Coalesce { value, fallback } => {
+            look_expr(value, look, deferred, around, words, seen)
+            look_expr(fallback, look, deferred, around, words, seen)
+        },
+        Expr::Select(arms) => {
+            for arm in arms {
+                look_expr(arm.value, look, deferred, around, words, seen)
+            }
+            for arm in arms {
+                look_block(arm.body, look, true, around, words, seen)
+            }
+        },
+        Expr::Block(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Overlap(b) => look_block(b, look, true, around, words, seen),
+        Expr::Unsafe(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Closure { body, .. } => look_block(body, look, true, around, words, seen),
+        else => {},
+    }
+}

@@ -1224,6 +1224,415 @@ fn tally_expr(expr: &Expr, ask: &Ask, deferred: bool, words: &winnow_grammar::In
 }
 
 
+// --- bounds_shape.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyShape {
+    pub constants: collections::BTreeMap<String, i64>,
+    pub unsigned: collections::BTreeSet<String>,
+    pub roots: collections::BTreeSet<String>,
+    pub aliases: collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Around {
+    pub functions: collections::BTreeMap<String, Vec<bool>>,
+    pub changing_methods: collections::BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Look {
+    Bound,
+    Lets,
+    Aliases,
+    Lost,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShapeSeen {
+    bound: collections::BTreeMap<String, i64>,
+    shape: BodyShape,
+    lost: collections::BTreeSet<String>,
+}
+
+pub fn shape_of(args: &[FnArg], body: &Block, pinned: &collections::BTreeSet<String>, around: &Around, words: &winnow_grammar::InternerContext) -> BodyShape {
+    let mut seen = ShapeSeen { bound: collections::BTreeMap::new(), shape: BodyShape { constants: collections::BTreeMap::new(), unsigned: collections::BTreeSet::new(), roots: collections::BTreeSet::new(), aliases: collections::BTreeMap::new() }, lost: collections::BTreeSet::new() };
+    for arg in args.iter() { bind_name(words.resolve(arg.name), &mut seen); }
+    look_block(body, &Look::Bound, false, around, words, &mut seen);
+    for arg in args.iter() {
+        let name = words.resolve(arg.name).to_owned();
+        if once(&name, &seen) && is_unsigned(&plain_name(&arg.ty, words)) { seen.shape.unsigned.insert(name); }
+    }
+    look_block(body, &Look::Lets, false, around, words, &mut seen);
+    look_block(body, &Look::Aliases, false, around, words, &mut seen);
+    look_block(body, &Look::Aliases, false, around, words, &mut seen);
+    for name in pinned.iter() { seen.lost.insert(name.to_owned()); }
+    look_block(body, &Look::Lost, false, around, words, &mut seen);
+    let mut through: Vec<String> = vec![];
+    for name in seen.lost.iter() {
+        let key = match seen.shape.aliases.get(name) { Some(__nikaia_value) => __nikaia_value, None => continue };
+        through.push(key_root(&key));
+    }
+    for root in through.iter() { seen.lost.insert(root.to_owned()); }
+    let mut kept: collections::BTreeSet<String> = collections::BTreeSet::new();
+    for root in seen.shape.roots.iter() { if !seen.lost.contains(root) { kept.insert(root.to_owned()); } }
+    seen.shape.roots = kept;
+    seen.shape
+}
+
+pub fn elements_key(shape: &BodyShape, expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
+    match expr {
+        Expr::Variable(n) => {
+            let n = *n;
+            let name = words.resolve(n);
+            if shape.roots.contains(name) { return Some(name.to_owned()); }
+            let key = match shape.aliases.get(name) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            return Some(key.to_owned());
+        },
+        Expr::Index { base, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            let key = match elements_key(shape, base, words) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(format!("{}[]", key))
+        },
+        _ => None,
+    }
+}
+
+pub fn tracks(shape: &BodyShape, key: &str) -> bool { shape.roots.contains(&key_root(key)) }
+
+pub fn writes_a_value(method: &str, args: i64) -> Option<i64> {
+    match method {
+        "push" => if args == 1 { Some(0) } else { None },
+        "fill" => if args == 1 { Some(0) } else { None },
+        "insert" => if args == 2 { Some(1) } else { None },
+        "resize" => if args == 2 { Some(1) } else { None },
+        _ => None,
+    }
+}
+
+pub fn only_removes(method: &str) -> bool { matches!(method, "pop" | "remove" | "swap_remove" | "clear" | "truncate" | "retain" | "dedup") }
+
+pub fn key_root(key: &str) -> String {
+    let parts: Vec<&str> = key.split("[").collect::<Vec<_>>();
+    (*nikaia_std::index::get(&parts, 0)).to_owned()
+}
+
+pub fn root_name(expr: &Expr, words: &winnow_grammar::InternerContext) -> Option<String> {
+    match expr {
+        Expr::Variable(n) => { let n = *n; Some(words.resolve(n).to_owned()) },
+        Expr::Index { base, .. } => { let base = nikaia_std::boxed::open(base); root_name(base, words) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); root_name(base, words) },
+        _ => None,
+    }
+}
+
+pub fn is_unsigned(ty: &str) -> bool { matches!(ty, "u8" | "u16" | "u32" | "u64" | "usize") }
+
+pub fn is_whole_number(ty: &str) -> bool {
+    match ty {
+        "i8" => true,
+        "i16" => true,
+        "i32" => true,
+        "i64" => true,
+        "isize" => true,
+        _ => is_unsigned(ty),
+    }
+}
+
+fn plain_name(ty: &Type, words: &winnow_grammar::InternerContext) -> String {
+    if !ty.generics.is_empty() { return String::from(""); }
+    words.resolve(ty.name).to_owned()
+}
+
+fn bind_name(name: &str, seen: &mut ShapeSeen) {
+    let before = nikaia_std::index::or(seen.bound.get(name), || 0);
+    seen.bound.insert(name.to_owned(), before + 1);
+}
+
+fn bind_all(names: &[winnow_grammar::Symbol], words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { for n in names.iter() { bind_name(words.resolve(*n), seen); } }
+
+fn once(name: &str, seen: &ShapeSeen) -> bool { nikaia_std::index::or(seen.bound.get(name), || 0) == 1 }
+
+fn bind_pattern(pattern: &MatchPattern, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    match pattern {
+        MatchPattern::Path(segments) => bind_all(segments, words, seen),
+        MatchPattern::Tuple { parts, .. } => { for p in parts.iter() { bind_pattern(p, words, seen); } },
+        MatchPattern::Named { bindings, .. } => bind_all(bindings, words, seen),
+        MatchPattern::Or(alternatives) => { for p in alternatives.iter() { bind_pattern(p, words, seen); } },
+        _ => { },
+    }
+}
+
+fn literal_count(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::LitInt { value, negative } => { let negative = *negative; let value = *value; integer_as_count(&integer(value, negative)) },
+        _ => None,
+    }
+}
+
+fn is_list_literal(expr: &Expr) -> bool { matches!(expr, Expr::ListLit { .. }) }
+
+fn is_index(expr: &Expr) -> bool { matches!(expr, Expr::Index { .. }) }
+
+fn declared_name(ty: Option<&Type>, words: &winnow_grammar::InternerContext) -> Option<String> {
+    let t = match ty { Some(__nikaia_value) => __nikaia_value, None => return None };
+    Some(plain_name(t, words))
+}
+
+fn read_let(name: &str, mutable: bool, ty: Option<&Type>, value: &Expr, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    if !once(name, &seen) { return; }
+    let declared = declared_name(ty, words);
+    let whole = declared.is_none() || is_whole_number(nikaia_std::index::or(declared.as_deref(), || ""));
+    if is_unsigned(nikaia_std::index::or(declared.as_deref(), || "")) { seen.shape.unsigned.insert(name.to_owned()); }
+    if !mutable && whole {
+        let n = literal_count(value);
+        if n.is_some() { seen.shape.constants.insert(name.to_owned(), nikaia_std::index::or(n, || 0)); }
+    }
+    if is_list_literal(value) { seen.shape.roots.insert(name.to_owned()); }
+}
+
+fn read_alias(name: &str, value: &Expr, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    if !once(name, &seen) || seen.shape.roots.contains(name) { return; }
+    let key = match elements_key(&seen.shape, value, words) { Some(__nikaia_value) => __nikaia_value, None => return };
+    seen.shape.aliases.insert(name.to_owned(), key);
+}
+
+fn lose(expr: &Expr, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    let root = match root_name(expr, words) { Some(__nikaia_value) => __nikaia_value, None => return };
+    seen.lost.insert(root);
+}
+
+fn lose_by_method(receiver: &Expr, method: &str, args: &[Expr], around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    let writes = writes_a_value(method, (args.len() as i64) as i64).is_some();
+    if !writes && !only_removes(method) && !keeps_length(method) { lose(receiver, words, seen); }
+    if !writes && (around.changing_methods.contains(method) || !keeps_length(method)) { for arg in args.iter() { lose(arg, words, seen); } }
+}
+
+fn lose_by_call(func: &Expr, args: &[Expr], around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    let params = callee_params(func, around, words);
+    let mut at: i64 = 0;
+    for arg in args.iter() {
+        if hands_on((params).as_ref(), at) { lose(arg, words, seen); }
+        at += 1;
+    }
+}
+
+fn callee_params(func: &Expr, around: &Around, words: &winnow_grammar::InternerContext) -> Option<Vec<bool>> {
+    match func {
+        Expr::Variable(name) => {
+            let name = *name;
+            let params = match around.functions.get(words.resolve(name)) { Some(__nikaia_value) => __nikaia_value, None => return None };
+            Some(params.to_owned())
+        },
+        _ => None,
+    }
+}
+
+fn hands_on(params: Option<&Vec<bool>>, at: i64) -> bool {
+    let given = match params { Some(__nikaia_value) => __nikaia_value, None => return true };
+    if at < (given.len() as i64) as i64 { return *nikaia_std::index::get(&given, nikaia_std::index::at(at)); }
+    true
+}
+
+fn look_statement_here(stmt: &Stmt, look: &Look, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    match look {
+        Look::Bound => match stmt {
+            Stmt::Let { names, .. } => bind_all(names, words, seen),
+            Stmt::Comptime { name, .. } => { let name = *name; bind_name(words.resolve(name), seen) },
+            Stmt::For { bindings, .. } => bind_all(bindings, words, seen),
+            _ => { },
+        },
+        Look::Lets => match stmt {
+            Stmt::Let { names, mutable, ty, value } => {
+                let mutable = *mutable;
+                if names.len() == 1 { read_let(words.resolve(*nikaia_std::index::get(&names, 0)), mutable, (ty).as_ref(), value, words, seen); }
+            },
+            _ => { },
+        },
+        Look::Aliases => match stmt {
+            Stmt::Let { names, mutable, value, .. } => {
+                let mutable = *mutable;
+                if names.len() == 1 && !mutable { read_alias(words.resolve(*nikaia_std::index::get(&names, 0)), value, words, seen); }
+            },
+            _ => { },
+        },
+        Look::Lost => match stmt {
+            Stmt::Assign { target, op, .. } => { if op.is_some() || !is_index(target) { lose(target, words, seen); } },
+            Stmt::Let { mutable, value, .. } => {
+                let mutable = *mutable;
+                if mutable { lose(value, words, seen); }
+            },
+            _ => { },
+        },
+    }
+}
+
+fn look_expr_here(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    match look {
+        Look::Bound => match expr {
+            Expr::Closure { params, .. } => bind_all(params, words, seen),
+            Expr::Match { arms, .. } => { for arm in arms.iter() { bind_pattern(&arm.pattern, words, seen); } },
+            Expr::Select(arms) => {
+                for arm in arms.iter() {
+                    let n = match arm.binding { Some(__nikaia_value) => __nikaia_value, None => continue };
+                    bind_name(words.resolve(n), seen);
+                }
+            },
+            Expr::TryCatch { .. } => bind_name("error", seen),
+            _ => { },
+        },
+        Look::Lost => {
+            if deferred {
+                match expr {
+                    Expr::Variable(n) => {
+                        let n = *n;
+                        seen.lost.insert(words.resolve(n).to_owned());
+                    },
+                    _ => { },
+                }
+            }
+            match expr {
+                Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; lose_by_method(receiver, words.resolve(method), args, around, words, seen) },
+                Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; lose_by_method(receiver, words.resolve(method), args, around, words, seen) },
+                Expr::Call { func, args, .. } => { let func = nikaia_std::boxed::open(func); lose_by_call(func, args, around, words, seen) },
+                _ => { },
+            }
+        },
+        _ => { },
+    }
+}
+
+fn look_block(block: &Block, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { for stmt in block.stmts.iter() { look_statement(&stmt.node, look, deferred, around, words, seen); } }
+
+fn look_statement(stmt: &Stmt, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    look_statement_here(stmt, look, words, seen);
+    match stmt {
+        Stmt::For { iter, body, .. } => {
+            look_expr(iter, look, deferred, around, words, seen);
+            look_block(body, look, deferred, around, words, seen);
+        },
+        Stmt::While { cond, body } => {
+            look_expr(cond, look, deferred, around, words, seen);
+            look_block(body, look, deferred, around, words, seen);
+        },
+        Stmt::Let { value, .. } => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Comptime { value, .. } => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Expr(value) => look_expr(value, look, deferred, around, words, seen),
+        Stmt::Assign { target, value, .. } => {
+            look_expr(target, look, deferred, around, words, seen);
+            look_expr(value, look, deferred, around, words, seen);
+        },
+        Stmt::Return(value) => look_maybe((value).as_ref(), look, deferred, around, words, seen),
+        _ => { },
+    }
+}
+
+fn look_maybe(expr: Option<&Expr>, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { look_expr(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, look, deferred, around, words, seen); }
+
+fn look_all(exprs: &[Expr], look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { for e in exprs.iter() { look_expr(e, look, deferred, around, words, seen); } }
+
+fn look_config(config: &[ConfigArg], look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { for c in config.iter() { look_expr(&c.value, look, deferred, around, words, seen); } }
+
+fn look_fields(fields: &[FieldInit], look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) { for field in fields.iter() { look_maybe((field.value).as_ref(), look, deferred, around, words, seen); } }
+
+fn look_expr(expr: &Expr, look: &Look, deferred: bool, around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
+    look_expr_here(expr, look, deferred, around, words, seen);
+    match expr {
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            look_expr(value, look, deferred, around, words, seen);
+            for arm in arms.iter() {
+                look_maybe((arm.guard).as_ref(), look, deferred, around, words, seen);
+                look_expr(&arm.body, look, deferred, around, words, seen);
+            }
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            look_expr(start, look, deferred, around, words, seen);
+            look_expr(end, look, deferred, around, words, seen);
+        },
+        Expr::Tuple(items) => look_all(items, look, deferred, around, words, seen),
+        Expr::ListLit { items, .. } => look_all(items, look, deferred, around, words, seen),
+        Expr::LitInterpolated { parts } => {
+            for part in parts.iter() {
+                match part {
+                    FPart::Hole { expr, .. } => look_expr(expr, look, deferred, around, words, seen),
+                    _ => { },
+                }
+            }
+        },
+        Expr::If { cond, then_branch, else_branch } => {
+            let cond = nikaia_std::boxed::open(cond);
+            look_expr(cond, look, deferred, around, words, seen);
+            look_block(then_branch, look, deferred, around, words, seen);
+            let other = match else_branch { Some(__nikaia_value) => __nikaia_value, None => return };
+            look_block(other, look, deferred, around, words, seen);
+        },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            look_expr(func, look, deferred, around, words, seen);
+            look_all(args, look, deferred, around, words, seen);
+            look_config(config, look, deferred, around, words, seen);
+        },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); look_expr(body, look, true, around, words, seen) },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            look_expr(receiver, look, deferred, around, words, seen);
+            look_all(args, look, deferred, around, words, seen);
+            look_config(config, look, deferred, around, words, seen);
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            look_expr(receiver, look, deferred, around, words, seen);
+            look_all(args, look, deferred, around, words, seen);
+            look_config(config, look, deferred, around, words, seen);
+        },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); look_expr(base, look, deferred, around, words, seen) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); look_expr(base, look, deferred, around, words, seen) },
+        Expr::StructLit { fields, .. } => look_fields(fields, look, deferred, around, words, seen),
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            look_expr(base, look, deferred, around, words, seen);
+            look_fields(fields, look, deferred, around, words, seen);
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); look_expr(expr, look, deferred, around, words, seen) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); look_expr(inner, look, deferred, around, words, seen) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); look_expr(expr, look, deferred, around, words, seen) },
+        Expr::TryCatch { expr, handler } => {
+            let expr = nikaia_std::boxed::open(expr);
+            look_expr(expr, look, deferred, around, words, seen);
+            look_block(handler, look, deferred, around, words, seen);
+        },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            look_expr(lhs, look, deferred, around, words, seen);
+            look_expr(rhs, look, deferred, around, words, seen);
+        },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); look_maybe((value).as_ref(), look, deferred, around, words, seen) },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            look_expr(base, look, deferred, around, words, seen);
+            look_expr(index, look, deferred, around, words, seen);
+        },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            look_expr(value, look, deferred, around, words, seen);
+            look_expr(fallback, look, deferred, around, words, seen);
+        },
+        Expr::Select(arms) => {
+            for arm in arms.iter() { look_expr(&arm.value, look, deferred, around, words, seen); }
+            for arm in arms.iter() { look_block(&arm.body, look, true, around, words, seen); }
+        },
+        Expr::Block(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Overlap(b) => look_block(b, look, true, around, words, seen),
+        Expr::Unsafe(b) => look_block(b, look, deferred, around, words, seen),
+        Expr::Closure { body, .. } => look_block(body, look, true, around, words, seen),
+        _ => { },
+    }
+}
+
+
 // --- buffers.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11037,24 +11446,6 @@ pub async fn rust_sources(src: &str) -> Result<collections::BTreeMap<String, Str
     Ok(out)
 }
 
-pub async fn program_sources(root: &str) -> Result<collections::BTreeMap<String, String>, nikaia_std::error::Thrown<io::IoError>> {
-    let mut out = collections::BTreeMap::new();
-    for name in fs::walk(root, &fs::Root::Anywhere).await? {
-        if !name.ends_with(".nika") || under_output(&name) { continue; }
-        let text = match fs::read_to_string(format!("{}/{}", root, name), &fs::Root::Anywhere).await {
-            Ok(value) => value,
-            Err(_error) => { continue; },
-        };
-        out.insert(name, text);
-    }
-    Ok(out)
-}
-
-fn under_output(name: &str) -> bool {
-    for part in name.split("/") { if part == "target" || part == "contracts" { return true; } }
-    false
-}
-
 
 // --- specbook.nika ---
 
@@ -17177,6 +17568,10 @@ pub mod bounds_body {
     #[allow(unused_imports)]
     pub use super::{breaks, pinned_in, filled_once};
 }
+pub mod bounds_shape {
+    #[allow(unused_imports)]
+    pub use super::{BodyShape, Around, shape_of, elements_key, tracks, writes_a_value, only_removes, key_root, root_name, is_unsigned, is_whole_number};
+}
 pub mod buffers {
     #[allow(unused_imports)]
     pub use super::{Escape, Source, KeepAt, BufferPlan, BufferAsk, buffer_plans};
@@ -17331,7 +17726,7 @@ pub mod signature {
 }
 pub mod sources {
     #[allow(unused_imports)]
-    pub use super::{rust_sources, program_sources};
+    pub use super::{rust_sources};
 }
 pub mod specbook {
     #[allow(unused_imports)]

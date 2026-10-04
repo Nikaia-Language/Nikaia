@@ -42,7 +42,7 @@ COMPILER_NIKA = {
     "fold.nika": "fold: a constant's value (ADR-294 D11, 0.0.278), on integers.nika's arithmetic (0.0.420)",
     "trust.nika": "contracts::trust: what --trust says (0.0.281)",
     "ty.nika": "contracts::ty, the ledger's records and what the checker asks of a type (ADR-294, 0.0.285-295)",
-    "sources.nika": "describe: the files a crate is read from (0.0.308), and the `.nika` files the program is read from (0.0.435)",
+    "sources.nika": "describe: the files a crate is read from (0.0.308)",
     "paths.nika": "describe: a crate's module paths and `pub use` (0.0.309)",
     "crossing.nika": "describe: what crosses a thread, and the notes (0.0.311, 0.0.316)",
     "signature.nika": "describe: a Rust signature in the ledger's words (0.0.314, 0.0.316)",
@@ -91,6 +91,7 @@ COMPILER_NIKA = {
     "check_numbers.nika": "check: a number and the type it has to fit - NK1116, said of an Integer and of a fold past the 65 bits (0.0.426)",
     "bounds_basic.nika": "bounds: the loop over a list's own length that makes an index check unneeded (ADR-306 D3), which methods keep a list's length, and whether a body binds a name again (0.0.428, 0.0.429)",
     "bounds_body.nika": "bounds: what a loop's body does - a break that leaves it, the lists a turn pushes onto once, and the names a deferred body changes (ADR-306 D4, 0.0.431)",
+    "bounds_shape.nika": "bounds: what the aggressive walk reads off a body once - its constants, unsigned names, the lists whose every write it sees and their aliases (ADR-306 D7, 0.0.436)",
 }
 
 
