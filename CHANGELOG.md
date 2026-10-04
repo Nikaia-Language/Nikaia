@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.425] — 2026-10-04
+
+**What is left between 1BRC and `tuned` is written down, and each item is an
+issue.** `benches/brc/README.md` lists, in the order they are to be done, the
+hash of a name branching on its length (#419), the `par_fold` loop's per-item
+work (winnow-grammar#22), boundary checks on cuts the generator already knows
+are safe (winnow-grammar#23), the stats update (#420), building ADR-314 (#421)
+and, last, a grammar over bytes with only text checked (#422) - with what
+callgrind attributes to each today, and what was measured out of the list.
+
 ## [0.0.424] — 2026-10-04
 
 **`fs::map` checks UTF-8 with SIMD** (ADR-016 D4). `checked-text` checks each
