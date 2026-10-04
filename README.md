@@ -286,23 +286,23 @@ The compiler is moving into Nikaia itself, a module at a time
 lifetimes of views, which statements may overlap and what a function throws are already
 Nikaia code that the Rust half of the compiler calls.
 
-| Self-hosted share of the toolchain | Sep 28 | Sep 29 | Sep 30 | Oct 1 | Oct 2 | Oct 3 |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-| lines of the toolchain written in Nikaia | 2.0 % | 2.4 % | 8.4 % | 10.2 % | 17.6 % | **19.7 %** |
+| Self-hosted share of the toolchain | Sep 28 | Sep 29 | Sep 30 | Oct 1 | Oct 2 | Oct 3 | Oct 4 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| lines of the toolchain written in Nikaia | 2.0 % | 2.4 % | 8.4 % | 10.2 % | 17.6 % | 19.7 % | **30.6 %** |
 
-From the first module on September 28 to 11 432 lines in 44 modules five days later: **about
-3.5 percentage points a day**. `scripts/self_hosting.py` recounts it from the sources.
+From the first module on September 28 to 18 625 lines in 61 modules six days later: **about
+4.8 percentage points a day**. `scripts/self_hosting.py` recounts it from the sources.
 
 Since Claude Opus started writing the compiler on **September 5, 2026**, with every design
 decision argued in an [ADR](docs/specification/adr/README.md) and accepted by a human:
 
-| in 29 days | in all | per day |
+| in 30 days | in all | per day |
 | :--- | ---: | ---: |
-| commits | 1 162 | **≈ 40** |
-| lines of toolchain code (no blanks, no comments) | 541 → 58 023 | **≈ 2 000** |
-| change packages, each a [CHANGELOG](CHANGELOG.md) entry, since numbering began on Sep 19 | 0.0.8 → 0.0.393 | **≈ 26** |
+| commits | 1 233 | **≈ 41** |
+| lines of toolchain code (no blanks, no comments) | 541 → 60 959 | **≈ 2 000** |
+| change packages, each a [CHANGELOG](CHANGELOG.md) entry, since numbering began on Sep 19 | 0.0.8 → 0.0.454 | **≈ 28** |
 
-*As of 0.0.393, October 3, 2026. Counted from `git log` and `scripts/self_hosting.py`.*
+*As of 0.0.454, October 4, 2026. Counted from `git log` and `scripts/self_hosting.py`.*
 
 ---
 

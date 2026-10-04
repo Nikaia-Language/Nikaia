@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.454] — 2026-10-04
+
+**The self-hosting count, recounted, on the README and the home page.** 30.6 %
+of the toolchain is Nikaia, 18 625 lines in 61 modules, about 4.8 percentage
+points a day since September 28. The home page's bars gain October 4 and run
+to 40 %; the README's table, its project figures (1 233 commits, 60 959 lines,
+0.0.454) and the roadmap's two mentions say the same.
+
 ## [0.0.453] — 2026-10-04
 
 **ADR-306 D12 and D13 are built: a length is below 2^60 where its elements take

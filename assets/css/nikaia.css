@@ -1465,7 +1465,7 @@ body {
    stated by every bar's own value. */
 .bar {
   display: block;
-  width: calc(var(--v) / 25 * 100%);
+  width: calc(var(--v) / 40 * 100%);
   min-width: 2px;
   height: 100%;
   border-radius: 0 4px 4px 0;
