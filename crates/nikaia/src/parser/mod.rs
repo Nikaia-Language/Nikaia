@@ -1825,7 +1825,7 @@ grammar! {
         rule bare_config_param_tail -> ConfigParam = "," p:bare_config_param -> { p }
 
         rule bare_config_param -> ConfigParam =
-            name:NAME ":" ty:type_ref "=" default:literal_expr -> {
+            name:NAME ":" ty:type_ref "=" default:expr -> {
                 ConfigParam { name, ty, default }
             }
 
@@ -1834,7 +1834,7 @@ grammar! {
         // what the value is. A parameter that must be passed belongs before the
         // `;`.
         rule config_param -> ConfigParam =
-            name:NAME ":" ty:type_ref "=" default:literal_expr -> {
+            name:NAME ":" ty:type_ref "=" default:expr -> {
                 ConfigParam { name, ty, default }
             }
           | name:NAME ":" ty:type_ref fail(
@@ -1845,10 +1845,9 @@ grammar! {
                 ConfigParam { name, ty, default: Expr::LitBool(false) }
             }
 
-        // A **literal**, and only a literal. An option's default is a constant
-        // in every program anyone writes, and an arbitrary expression would
-        // raise a question Stage 0 has no answer for: whether it is evaluated
-        // where the function is declared or where it is called.
+        // A literal, as an option's default once had to be. The default is an
+        // expression now (ADR-318 D1): evaluated once where the function is
+        // declared, and recorded in the ledger as the literal of its value.
         rule literal_expr -> Expr =
             b:bool_lit -> { b }
           | s:str_lit -> { s }

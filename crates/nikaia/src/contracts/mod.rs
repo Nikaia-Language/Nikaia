@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, anyhow};
 
-use crate::ast::Item;
+use crate::ast::{Expr, Item};
 use crate::contracts::ty::TyOps;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
@@ -385,6 +385,9 @@ impl LedgerOps for Ledger {
         // and a `Thing` declared in the file next door is a type.
         let declared: BTreeSet<String> = units.iter().flat_map(|u| declared_types(u)).collect();
 
+        // The options whose default is computed rather than written as a
+        // literal (ADR-318 D1), evaluated once the entries exist.
+        let mut defaults: Vec<Computed<'_>> = Vec::new();
         for parsed in units.iter().copied() {
             // Per unit, and it has to be: a `Symbol` is interned by the parse
             // of one file, so a set of them means nothing to another.
@@ -395,6 +398,7 @@ impl LedgerOps for Ledger {
                     Item::Fn { .. } => {
                         let (name, contract) =
                             ledger.function(parsed, &item.node, None, &BTreeSet::new());
+                        computed_defaults(&mut defaults, &name, parsed, &item.node);
                         ledger.functions.insert(name, contract);
                     }
                     Item::Impl {
@@ -423,6 +427,7 @@ impl LedgerOps for Ledger {
                         for method in methods {
                             let (name, contract) =
                                 ledger.function(parsed, &method.node, Some(&target), &outer);
+                            computed_defaults(&mut defaults, &name, parsed, &method.node);
                             ledger.functions.insert(name, contract);
                         }
                     }
@@ -757,6 +762,7 @@ impl LedgerOps for Ledger {
         // one that changes no lowering — the state it writes is a
         // representation and only one of the three is built.
         tether::infer(&mut ledger, units, library);
+        evaluate_defaults(&mut ledger, units, &defaults);
         (ledger, checked, noted)
     }
 
@@ -1083,4 +1089,97 @@ pub fn impl_parameters(
         .map(|g| parsed.text(g.name).to_string())
         .filter(|name| !OFFERED.contains(&name.as_str()) && !declared.contains(name))
         .collect()
+}
+
+/// **An option's default that is not a literal** (ADR-318 D1): the function's
+/// key, the option's place in its list, the unit and the expression.
+struct Computed<'a> {
+    key: String,
+    at: usize,
+    parsed: &'a Parsed,
+    default: &'a Expr,
+}
+
+/// The options of `item` whose default is an expression to evaluate.
+fn computed_defaults<'a>(
+    into: &mut Vec<Computed<'a>>,
+    key: &str,
+    parsed: &'a Parsed,
+    item: &'a Item,
+) {
+    let Item::Fn { config, .. } = item else {
+        return;
+    };
+    for (at, option) in config.iter().enumerate() {
+        if !a_literal(&option.default) {
+            into.push(Computed {
+                key: key.to_string(),
+                at,
+                parsed,
+                default: &option.default,
+            });
+        }
+    }
+}
+
+/// A literal, as the grammar once required a default to be: its text is the
+/// value, in this language and the one below.
+pub fn a_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitInt { .. }
+        | Expr::LitFloat(_)
+        | Expr::LitBool(_)
+        | Expr::LitStr { .. }
+        | Expr::LitChar(_)
+        | Expr::LitNull => true,
+        Expr::Unary {
+            op: crate::ast::UnaryOp::Neg,
+            expr,
+        } => matches!(**expr, Expr::LitInt { .. } | Expr::LitFloat(_)),
+        _ => false,
+    }
+}
+
+/// **A computed default is evaluated once, where the function is declared,
+/// and the ledger records its value** (ADR-318 D1-D3): a caller in this
+/// package or another reads a literal, as it always did, and needs no body.
+/// A value with no literal of its own here - a struct, a list - or one that
+/// cannot be computed keeps the empty text, and the checker refuses it at the
+/// default (D7).
+fn evaluate_defaults(ledger: &mut Ledger, units: &[&Parsed], defaults: &[Computed<'_>]) {
+    if defaults.is_empty() {
+        return;
+    }
+    let reads = crate::assets::Reads::none();
+    let own = ledger.clone();
+    let nothing = |_: &str| -> Option<crate::build_time::Value> { None };
+    for computed in defaults {
+        let value =
+            crate::build_time::BuildTime::new(computed.parsed, units, &own, &reads, &nothing)
+                .evaluate(computed.default);
+        let Some(text) = value.ok().and_then(|v| literal_of(&v)) else {
+            continue;
+        };
+        if let Some(option) = ledger
+            .functions
+            .get_mut(&computed.key)
+            .and_then(|c| c.signature.as_mut())
+            .and_then(|s| s.config.get_mut(computed.at))
+        {
+            option.default = text;
+        }
+    }
+}
+
+/// A value as the literal both languages spell it the same way, where it has
+/// one.
+pub fn literal_of(value: &crate::build_time::Value) -> Option<String> {
+    use crate::build_time::Value;
+    match value {
+        Value::Int(n) => Some(nikaia_std::tools::integers::integer_text(n)),
+        Value::Float(f) if f.is_finite() => Some(format!("{f:?}")),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Text(text) => Some(format!("\"{}\"", crate::build_time::written(text))),
+        _ => None,
+    }
 }

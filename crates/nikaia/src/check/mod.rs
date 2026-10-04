@@ -4867,6 +4867,15 @@ impl<'a> Checker<'a> {
         // missing from this frame, which nothing noticed while an undeclared
         // name was only refused in statement position: measured on
         // `examples/tally/src/main.nika`, whose `f"{lines}{separator}{blank}"` names one.
+        // **A default that is not a literal is computed where the function is
+        // declared** (ADR-318 D1, D7): refused here, with a `comptime`'s codes
+        // and the option's name, where it cannot be.
+        for option in config {
+            self.a_computed_default(
+                option,
+                body.stmts.first().map_or(Span::nowhere(), |s| s.span),
+            );
+        }
         for option in config {
             frame.push(Local::free(
                 self.parsed.text(option.name).to_string(),
@@ -6475,6 +6484,56 @@ impl<'a> Checker<'a> {
                  always has a value."
             )],
             help: Some(format!("Write `{plain}`.")),
+            labels: Vec::new(),
+        });
+    }
+
+    /// **An option's default that is computed rather than written** (ADR-318
+    /// D1, D7): evaluated as a `comptime` is, and refused as one is where it
+    /// cannot be. A value that is a number, text or a `bool` is what the
+    /// ledger records today; a struct or a list as a default is not built yet,
+    /// and is said to be rather than handed to the language below empty.
+    fn a_computed_default(&mut self, option: &ast::ConfigParam, span: Span) {
+        if crate::contracts::a_literal(&option.default) {
+            return;
+        }
+        let name = self.parsed.text(option.name).to_string();
+        let walked_from = self.checked.findings.len();
+        self.expr(&option.default, &span);
+        if self.checked.findings[walked_from..]
+            .iter()
+            .any(|f| f.severity == Severity::Error)
+        {
+            return;
+        }
+        let (value, said) = self.build_time_value(&option.default, &name, &span);
+        if said {
+            return;
+        }
+        let message = match &value {
+            None => {
+                format!("The default of `{name}` can't be computed while the program is built.")
+            }
+            Some(value) if crate::contracts::literal_of(value).is_none() => format!(
+                "The default of `{name}` is a value of its own type, and a default that is not \
+                 a number, text or a `bool` is not built yet."
+            ),
+            Some(_) => return,
+        };
+        self.checked.findings.push(Finding {
+            code: "NK1127",
+            severity: Severity::Error,
+            span,
+            message,
+            notes: vec![
+                "An option's default is computed once, where the function is declared, as a \
+                 `comptime` is."
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "Give `{name}` a default the build can compute, or make it a `T?` and decide \
+                 in the body."
+            )),
             labels: Vec::new(),
         });
     }

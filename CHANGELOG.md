@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.462] — 2026-10-04
+
+**An option's default may be computed** (ADR-318 D1-D3 and D7, #374, the first
+steps). The grammar took only a literal after the `=` of an option. It takes an
+expression now: `timeout: i64 = 30 * 1000`, `tries: i64 = twice(BASE)` over an
+item-level `comptime`, `name: ref String = "a" + "b"`. The default is
+evaluated once, by the build-time evaluator, where the function is declared,
+and the ledger records the literal of its value, so a call that leaves the
+option out, in this package or another, receives the value. A default that
+cannot be computed is refused with a `comptime`'s codes (`NK1152`, `NK1127`)
+and the option's name. A default whose value is a struct, a list or a
+`time::Duration` is not built yet: the crossing of such a value and the ledger's
+`constant` column are the next steps.
+
 ## [0.0.461] — 2026-10-04
 
 **1BRC is counted, not timed, and `tuned` is its own binary.** `brc.sh` now
