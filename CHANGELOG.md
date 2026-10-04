@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.441] — 2026-10-04
+
+**Four more of #381's records, made to say what is built.** ADR-283 D6 said the
+compiler warns where a small view keeps a large buffer alive; it reports it, in
+`--tethers`, and now says so. ADR-251 D4 says `ref self` and `ref mut self` are
+short for `self: ref T` and `mut self: ref T`, the form that can name type
+arguments (ADR-288 D17) - `std.contracts` writes both. ADR-282 D25 keeps its
+literal case as a backstop D17 leaves unreached, and says why. ADR-280's table
+gives the three fields' cost as ADR-211 measured it: a `Result` 96 bytes wide
+where the bare error is 16, the fields alone 88.
+
 ## [0.0.440] — 2026-10-04
 
 **What a fold's step calls directly is written `#[inline]`** (ADR-296 D41,
