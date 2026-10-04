@@ -99,3 +99,41 @@ fn a_literal_default_is_unchanged() {
          }\n";
     assert_eq!(ran(source), "-3x\n");
 }
+
+/// **A function with options is called at build time** (#374 step 2): what
+/// the caller names is used, and what it leaves out takes the default.
+#[test]
+fn a_function_with_options_runs_at_build_time() {
+    let source = "fn base(scale: i64 = 10) -> i64 {\n\
+         \x20   return scale * 3\n\
+         }\n\
+         \n\
+         comptime A = base()\n\
+         comptime B = base(scale: 2)\n\
+         \n\
+         fn f(x: i64; t: i64 = base()) -> i64 {\n\
+         \x20   return x + t\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{A} {B} {f(1)}\")\n\
+         }\n";
+    assert_eq!(ran(source).trim(), "30 6 31");
+}
+
+/// **A default that needs itself is a ring** (ADR-318, `NK1168`), said once,
+/// and not `NK1127`'s *it comes from a package* about a function of the
+/// program.
+#[test]
+fn a_default_that_needs_itself_is_a_ring() {
+    let source = "comptime X = f()\n\
+         \n\
+         fn f(t: i64 = X) -> i64 {\n\
+         \x20   return t + 1\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(f\"{f()}\")\n\
+         }\n";
+    assert_eq!(codes(source), vec!["NK1168".to_string()]);
+}

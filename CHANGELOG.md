@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.463] — 2026-10-04
+
+**A function with options runs at build time, and a default that needs itself
+is a ring** (ADR-318, #374 step 2). The build-time evaluator skipped every
+function that declared an option, and said of it that it *comes from a
+package*, which was not true. It now calls such a function: an option the call
+names takes that value, one it leaves out takes its default, evaluated in the
+callee's file with nothing of the call in scope. While a default is worked out
+its option stands in the chain of names being resolved, so `comptime X = f()`
+above `fn f(t: i64 = X)` is refused once with `NK1168`, *the chain is `t` of
+`f` → `X` → `t` of `f`*, rather than with two `NK1127`s.
+
 ## [0.0.462] — 2026-10-04
 
 **An option's default may be computed** (ADR-318 D1-D3 and D7, #374, the first

@@ -992,12 +992,8 @@ pub struct ConfigArg {
 pub struct ConfigParam {
     pub name: winnow_grammar::Symbol,
     pub ty: Type,
-    /// A **literal**, and only a literal.
-    ///
-    /// An option's default is a constant in every program anyone writes, and an
-    /// arbitrary expression would raise a question Stage 0 has no answer for -
-    /// whether it is evaluated where the function is declared or where it is
-    /// called. Deciding that is worth doing when something needs it.
+    /// Any expression a `comptime` may hold, evaluated once where the function
+    /// is declared (ADR-318); the ledger records its value.
     pub default: Expr,
 }
 

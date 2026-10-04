@@ -54,6 +54,13 @@ const DEEPEST: usize = 128;
 /// nothing.
 const EVALUATION_STACK: usize = 256 * 1024 * 1024;
 
+/// A function's parameters, its options with their defaults, and its body.
+struct Callee {
+    args: Vec<String>,
+    options: Vec<(String, Expr)>,
+    body: Block,
+}
+
 /// How a block ended.
 ///
 /// Four ways, and the evaluator needed all four the moment it gained a loop: a
@@ -418,7 +425,7 @@ impl<'a> BuildTime<'a> {
                 method,
                 args,
                 config,
-            } if config.is_empty() => {
+            } => {
                 let on = self.expr(receiver, frame)?;
                 let Value::Struct { name, .. } = &on else {
                     return Err(self.no_method_here(*method));
@@ -428,9 +435,9 @@ impl<'a> BuildTime<'a> {
                 for arg in args {
                     given.push(self.expr(arg, frame)?);
                 }
-                self.call(&key, &given)
+                let named = self.named(config, frame)?;
+                self.call(&key, &given, &named)
             }
-            Expr::MethodCall { method, .. } => Err(self.no_method_here(*method)),
             // **A grammar's entry, run by compiling the parser it generates**
             // (issue #178, Part II
             // 10.2 A). `Json::value(asset("config.json"))` says *when* with the
@@ -472,7 +479,7 @@ impl<'a> BuildTime<'a> {
                 };
                 self.grammar(&grammar, &rule, &input)
             }
-            Expr::Call { func, args, config } if config.is_empty() => {
+            Expr::Call { func, args, config } => {
                 let Expr::Variable(name) = func.as_ref() else {
                     return Err(Refusal::Unevaluable);
                 };
@@ -490,7 +497,8 @@ impl<'a> BuildTime<'a> {
                 for arg in args {
                     given.push(self.expr(arg, frame)?);
                 }
-                self.call(&name, &given)
+                let named = self.named(config, frame)?;
+                self.call(&name, &given, &named)
             }
             _ => Err(Refusal::Unevaluable),
         }
@@ -808,7 +816,12 @@ impl<'a> BuildTime<'a> {
     /// off a list kept here: `sync` says the body never pauses, and a touch set
     /// that is empty or exactly the build's own parameters says it reaches
     /// nothing else. Both are derived for every function already.
-    fn call(&mut self, name: &str, given: &[Value]) -> Result<Value, Refusal> {
+    fn call(
+        &mut self,
+        name: &str,
+        given: &[Value],
+        named: &[(String, Value)],
+    ) -> Result<Value, Refusal> {
         if self.depth >= DEEPEST {
             return Err(Refusal::TooDeep {
                 callee: name.to_string(),
@@ -849,7 +862,15 @@ impl<'a> BuildTime<'a> {
                 because: "It touches the world outside the program.",
             });
         }
-        let Some((args, body, owner)) = self.body_of(name) else {
+        let Some((
+            Callee {
+                args,
+                options,
+                body,
+            },
+            owner,
+        )) = self.body_of(name)
+        else {
             // **No file of this program declares it**, which for a name the
             // ledger describes means a `.contracts` a package shipped: its
             // body was compiled beside this build rather than parsed into it.
@@ -878,7 +899,9 @@ impl<'a> BuildTime<'a> {
         let elsewhere = self.foreign || !std::ptr::eq(owner, outer);
         let was_foreign = std::mem::replace(&mut self.foreign, elsewhere);
         self.depth += 1;
-        let out = self.block(&body, &mut frame);
+        let out = self
+            .options(name, &options, named, &mut frame)
+            .and_then(|()| self.block(&body, &mut frame));
         self.depth -= 1;
         self.parsed = outer;
         self.foreign = was_foreign;
@@ -907,19 +930,78 @@ impl<'a> BuildTime<'a> {
     /// package share one namespace (Part I 9.1) and the checker has already
     /// refused a duplicate, so the order settles nothing — it just means the
     /// common case never looks further.
-    fn body_of(&self, name: &str) -> Option<(Vec<String>, Block, &'a Parsed)> {
+    fn body_of(&self, name: &str) -> Option<(Callee, &'a Parsed)> {
         let here = self.parsed;
         self.in_file(here, name)
-            .map(|(args, body)| (args, body, here))
+            .map(|callee| (callee, here))
             .or_else(|| {
-                self.beside.iter().find_map(|parsed| {
-                    self.in_file(parsed, name)
-                        .map(|(args, body)| (args, body, *parsed))
-                })
+                self.beside
+                    .iter()
+                    .find_map(|parsed| self.in_file(parsed, name).map(|callee| (callee, *parsed)))
             })
     }
 
-    fn in_file(&self, parsed: &Parsed, name: &str) -> Option<(Vec<String>, Block)> {
+    /// **What the caller named after the `;`**, evaluated where it is written.
+    fn named(
+        &mut self,
+        config: &[crate::ast::ConfigArg],
+        frame: &BTreeMap<String, Value>,
+    ) -> Result<Vec<(String, Value)>, Refusal> {
+        let mut named = Vec::with_capacity(config.len());
+        for option in config {
+            let name = self.parsed.text(option.name).to_string();
+            named.push((name, self.expr(&option.value, frame)?));
+        }
+        Ok(named)
+    }
+
+    /// **The options of a call, into the callee's frame**
+    /// ([ADR-318](../../../docs/specification/adr/adr-318.md)): what the caller
+    /// named, and the default for what it left out.
+    ///
+    /// A default is evaluated as the declaration wrote it, with nothing of the
+    /// call in scope, and in the callee's file, which is the one `self.parsed`
+    /// is by the time this runs. **The option stands in the ring** while its
+    /// default is worked out: `comptime X = f()` above `fn f(; t: i64 = X)` is
+    /// `X` needing `t` needing `X`, and the reader is told so.
+    fn options(
+        &mut self,
+        callee: &str,
+        options: &[(String, Expr)],
+        named: &[(String, Value)],
+        frame: &mut BTreeMap<String, Value>,
+    ) -> Result<(), Refusal> {
+        if named
+            .iter()
+            .any(|(name, _)| options.iter().all(|(option, _)| option != name))
+        {
+            return Err(Refusal::Unevaluable);
+        }
+        for (option, default) in options {
+            let value = match named.iter().find(|(name, _)| name == option) {
+                Some((_, value)) => value.clone(),
+                None => {
+                    // **Named as the reader would say it**, `t` of `f`: the
+                    // ring is printed with each entry in backticks, and two
+                    // functions may both have a `t`.
+                    let held = format!("{option}` of `{callee}");
+                    if self.resolving.iter().any(|name| *name == held) {
+                        let mut ring = self.resolving.clone();
+                        ring.push(held);
+                        return Err(Refusal::Circular { ring });
+                    }
+                    self.resolving.push(held);
+                    let value = self.expr(default, &BTreeMap::new());
+                    self.resolving.pop();
+                    value?
+                }
+            };
+            frame.insert(option.clone(), value);
+        }
+        Ok(())
+    }
+
+    fn in_file(&self, parsed: &Parsed, name: &str) -> Option<Callee> {
         // `Tag::doubled` is a method's key, and it is the ledger's own — so the
         // split here is the same one `contracts` makes when it writes the
         // entry, and the two cannot drift about which name a call resolves to.
@@ -929,7 +1011,7 @@ impl<'a> BuildTime<'a> {
         }
     }
 
-    fn free_body_of(&self, parsed: &Parsed, name: &str) -> Option<(Vec<String>, Block)> {
+    fn free_body_of(&self, parsed: &Parsed, name: &str) -> Option<Callee> {
         parsed.program.items.iter().find_map(|item| {
             let Item::Fn {
                 name: declared,
@@ -942,13 +1024,14 @@ impl<'a> BuildTime<'a> {
             else {
                 return None;
             };
-            if receiver.is_some() || !config.is_empty() {
+            if receiver.is_some() || parsed.text((*declared)?) != name {
                 return None;
             }
-            if parsed.text((*declared)?) != name {
-                return None;
-            }
-            Some((self.parameters(parsed, args), body.clone()))
+            Some(Callee {
+                args: self.parameters(parsed, args),
+                options: self.options_of(parsed, config),
+                body: body.clone(),
+            })
         })
     }
 
@@ -962,12 +1045,7 @@ impl<'a> BuildTime<'a> {
     /// A method with **no receiver** is Kap 4.2's constructor and is reached by
     /// its own name (`Stats::new`), so it takes no `self` and is left as the
     /// declaration wrote it.
-    fn method_of(
-        &self,
-        parsed: &Parsed,
-        target: &str,
-        method: &str,
-    ) -> Option<(Vec<String>, Block)> {
+    fn method_of(&self, parsed: &Parsed, target: &str, method: &str) -> Option<Callee> {
         parsed.program.items.iter().find_map(|item| {
             let Item::Impl {
                 target: on,
@@ -992,7 +1070,7 @@ impl<'a> BuildTime<'a> {
                 else {
                     return None;
                 };
-                if !config.is_empty() || parsed.text((*name)?) != method {
+                if parsed.text((*name)?) != method {
                     return None;
                 }
                 let mut parameters = match receiver {
@@ -1000,9 +1078,24 @@ impl<'a> BuildTime<'a> {
                     None => Vec::new(),
                 };
                 parameters.extend(self.parameters(parsed, args));
-                Some((parameters, body.clone()))
+                Some(Callee {
+                    args: parameters,
+                    options: self.options_of(parsed, config),
+                    body: body.clone(),
+                })
             })
         })
+    }
+
+    fn options_of(
+        &self,
+        parsed: &Parsed,
+        config: &[crate::ast::ConfigParam],
+    ) -> Vec<(String, Expr)> {
+        config
+            .iter()
+            .map(|option| (parsed.text(option.name).to_string(), option.default.clone()))
+            .collect()
     }
 
     fn parameters(&self, parsed: &Parsed, args: &[crate::ast::FnArg]) -> Vec<String> {
