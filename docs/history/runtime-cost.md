@@ -364,7 +364,25 @@ About 900 instructions a read, a quarter of what a program that never overlaps p
 changing what any operation does. What is left is the ring, the executor and the copy out of the
 buffer - the hand-off itself, which is what D1 of that record is measured against.
 
-### 7.4 How to run it again
+### 7.4 A file operation on an idle runtime (ADR-263 D1)
+
+[ADR-263](../specification/adr/adr-263.md) D1 and D2 built, measured with the same harness, the
+tree before and after on the same machine (October 4, 2026; `io-method = auto` chose completion):
+
+| `user_parallelism` | reads | blocking | async (as lowered) | for being async, a read | before D1 |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `no` | 100 | 664,086 | 745,777 (+12.3 %) | **816** | 2,694 |
+| `no` | 1,000 | 2,393,961 | 3,164,958 (+32.2 %) | **770** | 2,626 |
+| `yes` | 100 | 740,266 | 841,439 (+13.7 %) | **1,011** | 20,033 |
+| `yes` | 1,000 | 2,708,154 | 3,642,892 (+34.5 %) | **934** | 2,545 |
+
+About **1,850 instructions a read**, seven tenths of what was left after §7.3, gone for a
+program that never overlaps. The 100-read row at `yes` before D1 is the pool's start-up
+interleaving with a short run, not the read; the 1,000-read row is the one to compare. What is
+left - about 770 a read at `no` - has not been taken apart function by function yet; the
+futures are 30 of it.
+
+### 7.5 How to run it again
 
 ```sh
 cargo test -p nikaia --release --test measure what_an_await -- --ignored --nocapture

@@ -245,6 +245,46 @@ impl<T: Send + 'static> TaskHandle<T> {
     }
 }
 
+thread_local! {
+    /// How many `overlap` and `select` blocks this thread is polling a branch
+    /// of right now.
+    static OPEN_BLOCKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// **A branch of an `overlap` or a `select` is being polled on this thread**
+/// ([ADR-263](../../../docs/specification/adr/adr-263.md) D2).
+///
+/// A block's branches are no tasks: they are polled one after another on the
+/// block's own thread (ADR-292 D4). Its first branch starts its read before the
+/// second branch has started anything, so the runtime has nothing in flight at
+/// that moment - and a read made on the calling thread there would run to its
+/// end before the second branch began, which is the sum ADR-292 D6 refuses.
+/// So a file operation asks this before it takes the calling thread.
+///
+/// **Counted per poll, not per block**, because a block in a task on the pool
+/// may be polled by one worker and then another: a count held across polls
+/// would be raised on one thread and lowered on a different one.
+pub(crate) fn inside_a_block() -> bool {
+    OPEN_BLOCKS.with(|open| open.get() > 0)
+}
+
+/// One poll of a block's branches, counted for [`inside_a_block`] while it
+/// lasts.
+struct OpenBlock;
+
+impl OpenBlock {
+    fn enter() -> OpenBlock {
+        OPEN_BLOCKS.with(|open| open.set(open.get() + 1));
+        OpenBlock
+    }
+}
+
+impl Drop for OpenBlock {
+    fn drop(&mut self) {
+        OPEN_BLOCKS.with(|open| open.set(open.get() - 1));
+    }
+}
+
 /// **Every branch of an `overlap { … }`, all of them in flight**
 /// (Part I 8.1.2, [ADR-292](../../../docs/specification/adr/adr-292.md) D2).
 ///
@@ -282,6 +322,7 @@ macro_rules! overlapping {
             $(let mut $result: Option<$result> = None;)+
 
             std::future::poll_fn(move |context| {
+                let _open = OpenBlock::enter();
                 $(
                     if $result.is_none() {
                         if let std::task::Poll::Ready(value) = $branch.as_mut().poll(context) {
@@ -403,6 +444,7 @@ macro_rules! racing {
             $(let mut $branch = Box::pin($branch);)+
 
             std::future::poll_fn(move |context| {
+                let _open = OpenBlock::enter();
                 // **In written order, and the first that is ready wins.** Two
                 // arms ready in the same pass is a tie, and the written order
                 // is what breaks it - which is the same rule
