@@ -667,8 +667,124 @@ pub mod io {
             if let InFlight::Ring(slot) = self {
                 let slot = *slot;
                 handle().with_ring(|ring| ring.abandon(slot));
+                InFlight::let_go();
             }
         }
+    }
+
+    /// **How many ring slots a future is holding**, for D2 of
+    /// [ADR-263](../../../../docs/specification/adr/adr-263.md): the ring's
+    /// own operations are outstanding work that [`super::Runtime::pending`]
+    /// does not count, because the ring is not a worker.
+    ///
+    /// Raised where a slot becomes an [`InFlight::Ring`], lowered where that
+    /// value gives it up - answered in [`poll`], or dropped unanswered. An
+    /// abandoned slot the kernel has not finished with leaves the count at the
+    /// drop: nobody is waiting for its answer, which is what D2 asks about.
+    static RING_HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    impl InFlight {
+        #[cfg(target_os = "linux")]
+        fn held(slot: usize) -> InFlight {
+            RING_HELD.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            InFlight::Ring(slot)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn let_go() {
+            RING_HELD.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+
+    /// **The runtime has nothing else in flight**
+    /// ([ADR-263](../../../../docs/specification/adr/adr-263.md) D2), asked by
+    /// the thread about to make a file operation.
+    ///
+    /// Every part answers *no* when in doubt, which costs a read the hand-off
+    /// and never costs an overlap anything:
+    ///
+    /// * **`main` is the one future being polled**, with no task of this
+    ///   thread's queue started ([`super::exec::main_alone`]). A task, and
+    ///   every thread of the pool, reads through the runtime.
+    /// * **No branch of an `overlap` or a `select`** is being polled
+    ///   ([`crate::task::inside_a_block`]). A block's branches are no tasks,
+    ///   and its first branch would otherwise read to the end before its second
+    ///   began.
+    /// * **No task lives on the pool** (`user_parallelism = yes`).
+    /// * **No operation is outstanding** on a worker, the readiness poller or
+    ///   the ring, and **no timer is armed**.
+    ///
+    /// **Nothing can make it false between this and the read.** A task is
+    /// started by `spawn`, which is code the program wrote, or by `block_on`
+    /// itself (`cleanup`'s orphans) - and with `main` alone and no task alive,
+    /// the only code of the program running is the caller, which is about to
+    /// block. The workers, the poller and the clock only answer operations
+    /// already counted here, and there are none. `block_on`'s own park makes
+    /// the same argument for taking the I/O itself when the pool is empty.
+    fn idle(runtime: &super::Runtime) -> bool {
+        super::exec::main_alone()
+            && !crate::task::inside_a_block()
+            && !super::timer::armed()
+            && RING_HELD.load(std::sync::atomic::Ordering::Acquire) == 0
+            && runtime.workers.pending() == 0
+            && super::readiness::outstanding_if_started() == 0
+            && runtime.user_pool().is_none_or(|pool| pool.live() == 0)
+    }
+
+    /// A whole **regular file**, read on this thread - or `None` for anything
+    /// else (a pipe, a device, a socket), which the runtime reads as before
+    /// (D1). A file whose `stat` size is only a hint, as in `/proc`, is read to
+    /// its end all the same: the size sets the first allocation and not where
+    /// the read stops.
+    ///
+    /// The `open` and the `stat` are the ring's own first two steps
+    /// (`file_ring::Ring::begin`), made on this thread there too, so a path
+    /// that does not open fails with the same error either way.
+    fn read_here(path: &Path) -> Option<Result<Vec<u8>>> {
+        use std::io::Read;
+
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) => return Some(Err(e)),
+        };
+        let size = match file.metadata() {
+            Ok(meta) if meta.is_file() => meta.len() as usize,
+            Ok(_) => return None,
+            Err(e) => return Some(Err(e)),
+        };
+        // One byte past the size, as the ring asks for: the read that finds the
+        // end costs a turn rather than a reallocation (ADR-263 D3).
+        let mut bytes = Vec::with_capacity(size + 1);
+        Some(file.read_to_end(&mut bytes).map(|_| bytes))
+    }
+
+    /// The same for a write: opened as the ring opens it, and written here if
+    /// what opened is a regular file.
+    #[cfg(target_os = "linux")]
+    fn write_here(
+        path: &Path,
+        bytes: &[u8],
+        append: bool,
+        create: bool,
+    ) -> Option<Result<Vec<u8>>> {
+        use std::io::Write;
+
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .create(create)
+            .open(path)
+        {
+            Ok(file) => file,
+            Err(e) => return Some(Err(e)),
+        };
+        match file.metadata() {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return None,
+            Err(e) => return Some(Err(e)),
+        }
+        Some(file.write_all(bytes).map(|()| Vec::new()))
     }
 
     /// Start reading `path` whole, and hand back the operation.
@@ -679,6 +795,12 @@ pub mod io {
     pub fn begin_read(path: &Path) -> InFlight {
         off_the_io_thread();
         let runtime = handle();
+        // **ADR-263 D1**: on an idle runtime a regular file is read here.
+        if idle(runtime)
+            && let Some(done) = read_here(path)
+        {
+            return InFlight::Done(Some(done));
+        }
         match runtime.files() {
             #[cfg(target_os = "linux")]
             Files::Completion => {
@@ -686,7 +808,7 @@ pub mod io {
                     .with_ring(|ring| ring.begin_read(path))
                     .expect("`Files::Completion` means there is a ring")
                 {
-                    Ok(slot) => InFlight::Ring(slot),
+                    Ok(slot) => InFlight::held(slot),
                     // The `open` or the `stat` failed, which is a path walk and
                     // not a transfer: there was never anything on the ring.
                     Err(e) => InFlight::Done(Some(Err(e))),
@@ -720,6 +842,15 @@ pub mod io {
     pub fn begin_write(path: &Path, bytes: &[u8], append: bool, create: bool) -> InFlight {
         off_the_io_thread();
         let runtime = handle();
+        // **ADR-263 D1**, on the path that has a ring to skip: the fallback
+        // below already writes on this thread.
+        #[cfg(target_os = "linux")]
+        if runtime.files() == Files::Completion
+            && idle(runtime)
+            && let Some(done) = write_here(path, bytes, append, create)
+        {
+            return InFlight::Done(Some(done));
+        }
         match runtime.files() {
             #[cfg(target_os = "linux")]
             Files::Completion => {
@@ -727,7 +858,7 @@ pub mod io {
                     .with_ring(|ring| ring.begin_write(path, bytes.to_vec(), append, create))
                     .expect("`Files::Completion` means there is a ring")
                 {
-                    Ok(slot) => InFlight::Ring(slot),
+                    Ok(slot) => InFlight::held(slot),
                     Err(e) => InFlight::Done(Some(Err(e))),
                 }
             }
@@ -770,6 +901,7 @@ pub mod io {
                     // The old value is an index and nothing else, so
                     // forgetting it leaks nothing.
                     std::mem::forget(std::mem::replace(operation, InFlight::Done(None)));
+                    InFlight::let_go();
                 }
                 done
             }

@@ -45,3 +45,10 @@ pub fn wake_at(when: Instant) {
 pub fn taken() -> Option<Instant> {
     EARLIEST.with(|earliest| earliest.take())
 }
+
+/// Whether anything on this thread has asked for a time since the executor
+/// last read it - an armed timer, for
+/// [ADR-263](../../../../docs/specification/adr/adr-263.md) D2.
+pub fn armed() -> bool {
+    EARLIEST.with(|earliest| earliest.get().is_some())
+}

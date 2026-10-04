@@ -99,6 +99,42 @@ thread_local! {
     static STARTED: RefCell<VecDeque<Queued>> = const { RefCell::new(VecDeque::new()) };
 }
 
+// Whether what this thread is polling right now is the future `block_on` was
+// handed - `main` - rather than one of the tasks queued beside it.
+thread_local! {
+    static POLLING_MAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// **`main` is running and nothing else on this thread is waiting**
+/// ([ADR-263](../../../../docs/specification/adr/adr-263.md) D2, its half that
+/// is about tasks).
+///
+/// `true` only inside `main`'s own poll, with no task of this thread's queue
+/// started and unfinished. A task's poll answers `false`, and so does every
+/// thread of the pool: neither is `main`. That is the conservative side by
+/// construction - a task on the pool reads through the runtime as before,
+/// which costs that read the hand-off and never costs anything its overlap.
+pub(crate) fn main_alone() -> bool {
+    POLLING_MAIN.with(std::cell::Cell::get)
+        && STARTED.with(|started| started.try_borrow().is_ok_and(|queue| queue.is_empty()))
+}
+
+/// Sets [`POLLING_MAIN`] for one poll of `main`, and puts back what was there,
+/// on the way out and on an unwind alike.
+struct PollingMain(bool);
+
+impl PollingMain {
+    fn enter() -> PollingMain {
+        PollingMain(POLLING_MAIN.with(|polling| polling.replace(true)))
+    }
+}
+
+impl Drop for PollingMain {
+    fn drop(&mut self) {
+        POLLING_MAIN.with(|polling| polling.set(self.0));
+    }
+}
+
 /// Start a task on **this** thread's queue. It runs whether or not anybody
 /// joins it (D5).
 ///
@@ -221,11 +257,14 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             });
         }
 
-        if outcome.is_none()
-            && alarm.take()
-            && let Poll::Ready(value) = main.as_mut().poll(&mut context)
-        {
-            outcome = Some(value);
+        if outcome.is_none() && alarm.take() {
+            let polled = {
+                let _main = PollingMain::enter();
+                main.as_mut().poll(&mut context)
+            };
+            if let Poll::Ready(value) = polled {
+                outcome = Some(value);
+            }
         }
 
         // **Every task that says it is ready, once round.** Taking the queue

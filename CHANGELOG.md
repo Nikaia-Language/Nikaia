@@ -4,6 +4,22 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.412] — 2026-10-04
+
+**A file operation on an idle runtime runs on the calling thread** (ADR-263
+D1, D2, D4, #378, #320). When `main` is the one future being polled - no task
+alive on this thread's queue or on the pool, no branch of an `overlap` or a
+`select` being polled, nothing outstanding on the ring, a worker or the
+readiness poller, no timer armed - a read of a regular file, and on the
+completion path a write, is made on the calling thread and its future is ready
+when first polled. Anything else goes through the runtime as before. D2 now
+names the case it missed: an `overlap`'s first branch finds nothing in flight
+because its second has not started, and would have read to the end before it
+did. Over 1,000 reads, what a read costs for being `async` falls from about
+2,600 to about 770 instructions at `user_parallelism = no` and from about
+2,550 to about 930 at `yes` (runtime-cost §7.4). Two test binaries of their
+own, one per setting, hold every case D2 names.
+
 ## [0.0.411] — 2026-10-04
 
 **The words the checker's refusals are made of are Nikaia** (ADR-294, #125).

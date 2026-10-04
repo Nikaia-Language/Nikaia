@@ -77,6 +77,13 @@ struct Slot {
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
+/// How many registrations are waiting, **without starting the registry** for a
+/// program that never waited on a socket: the question ADR-263 D2 asks on every
+/// file operation must not open a poller as its side effect.
+pub(crate) fn outstanding_if_started() -> usize {
+    REGISTRY.get().map_or(0, Registry::outstanding)
+}
+
 /// The registry, starting its thread the first time anything waits.
 ///
 /// Lazily and not in [`super::Runtime::build`], because a readiness wait is not

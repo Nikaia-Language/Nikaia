@@ -124,7 +124,7 @@ implementation.
 | [172](adr-172.md) | A `for` may iterate a sequence whose step pauses; `Seq[T] pauses` is a third state beside `sync` and nothing said, and the step is awaited. | Accepted | yes |
 | [177](adr-177.md) | A grammar that runs while the program is built is run by compiling the parser it generates, not by interpreting the grammar. | Accepted | yes |
 | [260](adr-260.md) | A file belongs to its project, and the single-file commands are the verbs `lower`, `interpret`, `explain` and `run f.nika`. | Accepted | yes |
-| [263](adr-263.md) | A file operation with nothing else in flight runs on the calling thread once a measurement shows it pays, and the normal path does no work it does not need. | Accepted | partly: the calling-thread path (D1-D2) |
+| [263](adr-263.md) | A file operation with nothing else in flight runs on the calling thread once a measurement shows it pays, and the normal path does no work it does not need. | Accepted | yes |
 | [188](adr-188.md) | The escape set is the language below's, written down once in Part I 2.5, and an escape outside it is refused with `NK1184`. | Accepted | yes |
 | [186](adr-186.md) | A parse keeps its input exactly when its declared result may hold a view into it. | Accepted | yes |
 | [185](adr-185.md) | A `let` declaring a struct type over a lent binding is refused with `NK1183`, and a grammar entry in tail position binds its value before the `Ok`. | Accepted | yes |
