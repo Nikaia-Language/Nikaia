@@ -290,7 +290,7 @@ fn lose(expr: ref Expr, words: ref winnow_grammar::InternerContext, mut seen: Sh
 
 /// A method called on a list or handed one.
 fn lose_by_method(receiver: ref Expr, method: ref String, args: ref Vec[Expr], around: ref Around, words: ref winnow_grammar::InternerContext, mut seen: ShapeSeen) {
-    let writes = writes_a_value(method, args.len() as i64) != null
+    let writes = writes_a_value(method, args.len()) != null
     if !writes && !only_removes(method) && !keeps_length(method) {
         lose(receiver, words, seen)
     }
@@ -330,7 +330,7 @@ fn callee_params(func: ref Expr, around: ref Around, words: ref winnow_grammar::
 /// known function's parameter that is not `mut`.
 fn hands_on(params: ref Vec[bool]?, at: i64) -> bool {
     let given = params ?? return true
-    if at < given.len() as i64 {
+    if at < given.len() {
         return given[at]
     }
     return true

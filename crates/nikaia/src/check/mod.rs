@@ -10322,9 +10322,7 @@ impl<'a> Checker<'a> {
                         // `let t = if c { name } else { return }` is the other
                         // arm's type, as a `match` arm that returns is.
                         let leaves = |block: &Block| block_exits(block) || block_leaves(block);
-                        if then == other {
-                            then
-                        } else if leaves(otherwise) && !leaves(then_branch) {
+                        if then == other || (leaves(otherwise) && !leaves(then_branch)) {
                             then
                         } else if leaves(then_branch) && !leaves(otherwise) {
                             other

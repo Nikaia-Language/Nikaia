@@ -1403,7 +1403,7 @@ fn lose(expr: &Expr, words: &winnow_grammar::InternerContext, seen: &mut ShapeSe
 }
 
 fn lose_by_method(receiver: &Expr, method: &str, args: &[Expr], around: &Around, words: &winnow_grammar::InternerContext, seen: &mut ShapeSeen) {
-    let writes = writes_a_value(method, (args.len() as i64) as i64).is_some();
+    let writes = writes_a_value(method, args.len() as i64).is_some();
     if !writes && !only_removes(method) && !keeps_length(method) { lose(receiver, words, seen); }
     if !writes && (around.changing_methods.contains(method) || !keeps_length(method)) { for arg in args.iter() { lose(arg, words, seen); } }
 }
@@ -1430,7 +1430,7 @@ fn callee_params(func: &Expr, around: &Around, words: &winnow_grammar::InternerC
 
 fn hands_on(params: Option<&Vec<bool>>, at: i64) -> bool {
     let given = match params { Some(__nikaia_value) => __nikaia_value, None => return true };
-    if at < (given.len() as i64) as i64 { return *nikaia_std::index::get(&given, nikaia_std::index::at(at)); }
+    if at < given.len() as i64 { return *nikaia_std::index::get(&given, nikaia_std::index::at(at)); }
     true
 }
 
