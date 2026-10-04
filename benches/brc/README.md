@@ -298,21 +298,48 @@ left of the fold's loop per row is 8 instructions; the checkpoint
 winnow-grammar#22 suspected costs nothing, held in a register until a failure
 needs it.
 
+## Fewer cuts of the text (0.0.433)
+
+Every cut of the input as `&str` is checked for a character boundary, and on
+1BRC those checks were about 34 instructions a row. `winnow-grammar` 3ca83d3
+(its ADR 24 §12) makes fewer cuts and lets LLVM see the rest hold, without
+`unsafe`. Callgrind, 1 M rows, each step against the last, output the same and
+mispredictions 1.58 throughout:
+
+| step | instructions a row |
+|---|---:|
+| before (0.0.432) | 337.1 |
+| `"."` in `TENTHS`, bound to nothing, matched and not sliced | 335.1 |
+| `until(";" \| frame_end)` takes its hit as the end, without two cuts to look back for a `\r` | 326.1 |
+| the cut at the hit follows a compare of its byte, and LLVM drops the boundary check | **319.1** |
+
+Measured and not kept: the same compare after `TENTHS`'s indexed run (no
+change), and `dec[i32](digit{1,2})` matched inside the run (385.9, 2.07
+mispredictions). What is left of the checks is about 15 instructions a row.
+`nikaia lower ty.nika`, the same main against the previous `winnow-grammar`,
+three runs each: the same Rust, and the same instructions in every function
+(384.7-384.9 M in all). Its mispredictions read 3.18 → 3.23 M, but they move
+between functions that run the same instructions as before and have nothing to
+do with a scan (`parse_catch_expr_inner` +8 k, `String::clone` −9 k, `memcmp`
+−13 k): callgrind's predictor is a table indexed by code address, and a change
+to the crate moves the compiler's code. **A misprediction count that moves
+where the instructions do not is layout, not work**, and is not read as an
+effect here.
+
 ## What is left to build
 
-Against `tuned`, as of 0.0.432: 337 against 313 instructions a row, 1.58
+Against `tuned`, as of 0.0.433: 319 against 313 instructions a row, 1.58
 against 3.61 mispredictions, taken as the tables above say. In the
 order they are to be done; the figures are what callgrind attributes today,
 not what a change has been measured to save.
 
 | | what | today | where | issue |
 |---|---|---|---|---|
-| 1 | a `&str` cut is checked for a character boundary the generator already knows; fewer cuts, and letting LLVM see the byte, without `unsafe` | ~27 instructions a row | `winnow-grammar` | [winnow-grammar#23](https://github.com/keywan-ghadami/winnow-grammar/issues/23) |
-| 2 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
-| 3 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
-| 4 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
+| 1 | updating the stats: the `and_modify` / `or_insert_with` chain, beside overflow checks that are the language's | 23 against 11 | the lowering | [#420](https://github.com/Nikaia-Language/Nikaia/issues/420) |
+| 2 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
+| 3 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
 
-Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); the fold's loop, done in 0.0.432 (winnow-grammar#22); finding the `;` and the
+Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); the fold's loop, done in 0.0.432 (winnow-grammar#22); boundary checks on cuts, done in 0.0.433 (winnow-grammar#23); finding the `;` and the
 line's end, where one `memchr2` a line already beats `tuned`'s search and walk
 back (ADR 24 §9); accumulating `dec`'s value inside the fixed-width match,
 which came out even with `dec` as it is (ADR 24 §8b); and the mispredictions

@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.433] — 2026-10-04
+
+**Fewer cuts of the text, and the rest seen to be safe** (winnow-grammar#23,
+its ADR 24 §12). `winnow-grammar` 3ca83d3 no longer slices an unbound element
+of an indexed run, no longer cuts twice after a scan's hit to look back for a
+`\r` where the scan has no `line_ending`, and compares the hit's byte before
+the cut so that LLVM removes the character-boundary check. No `unsafe`. 1BRC,
+callgrind over 1 M rows: 337.1 → 319.1 instructions a row, the same output and
+mispredictions; 6 instructions a row from `tuned`.
+
 ## [0.0.432] — 2026-10-04
 
 **A fold's step changes the accumulator in place** (winnow-grammar#22, its ADR
