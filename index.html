@@ -3,7 +3,7 @@ layout: home
 title: Nikaia
 description: >-
   A programming language where you write what should happen and the compiler
-  decides how: an assert is a contract, safe code is as lean as tuned Rust,
+  decides how: an assert is a contract, safe code comes within a tenth of tuned Rust,
   no async/await, no garbage collector, data races refused before the
   program runs.
 ---
@@ -24,8 +24,8 @@ description: >-
         Nikaia reads like a scripting language and compiles like a systems language.
         Formal verification is a plain <code>assert</code>: the compiler proves what it can
         while it builds, refuses what it shows false, and checks the rest when the program
-        runs. On the One Billion Row Challenge, safe Nikaia runs fewer instructions than
-        tuned <code>unsafe</code> Rust. No <code>async</code>/<code>await</code>, no garbage
+        runs. On the One Billion Row Challenge, safe Nikaia comes within a tenth of the
+        instructions of tuned <code>unsafe</code> Rust. No <code>async</code>/<code>await</code>, no garbage
         collector, and data races are refused before the program runs.
       </p>
       <div class="hero-actions">
@@ -95,7 +95,7 @@ fn main() {
 <section class="home-section home-section-alt" id="performance">
   <div class="home-inner">
     <p class="home-eyebrow home-eyebrow-center">Safety that need not cost speed</p>
-    <h2 class="home-heading">As lean as tuned Rust, without writing it</h2>
+    <h2 class="home-heading">Within a tenth of tuned Rust, without writing it</h2>
     <p class="home-intro">
       Measured against the Rust a specialist tunes, <code>unsafe</code> included: a
       One Billion Row Challenge entry that maps the file, skips UTF-8 validation and hashes a
@@ -104,12 +104,12 @@ fn main() {
     </p>
     <div class="stats">
       <div class="stat">
-        <p class="stat-value">300&nbsp;/&nbsp;313</p>
+        <p class="stat-value">300&nbsp;/&nbsp;272</p>
         <p class="stat-label">instructions per row, Nikaia against tuned Rust</p>
         <p class="stat-detail">with UTF-8 and every overflow checked</p>
       </div>
       <div class="stat">
-        <p class="stat-value">1.58&nbsp;/&nbsp;3.61</p>
+        <p class="stat-value">1.58&nbsp;/&nbsp;3.70</p>
         <p class="stat-label">mispredicted branches per row</p>
         <p class="stat-detail">less than half</p>
       </div>

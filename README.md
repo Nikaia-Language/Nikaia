@@ -5,14 +5,14 @@
   <p>
     Write it like a script. State what must hold with a plain <code>assert</code>: the
     compiler <b>proves</b> what it can, <b>refuses to build</b> what it shows false, and
-    checks the rest when the program runs. The result is <b>as lean as tuned Rust</b>,
+    checks the rest when the program runs. The result comes <b>within a tenth of tuned Rust</b>,
     without a line of <code>unsafe</code>.
   </p>
 
   <p>
     <a href="#the-idea">The idea</a> •
     <a href="#an-assert-is-a-contract">An assert is a contract</a> •
-    <a href="#as-lean-as-tuned-rust-without-writing-it">As lean as tuned Rust</a> •
+    <a href="#within-a-tenth-of-tuned-rust-without-writing-it">Within a tenth of tuned Rust</a> •
     <a href="#hello-world">Hello, world</a> •
     <a href="#built-in-the-open-at-full-speed">Progress</a> •
     <a href="guide/getting-started.md">Getting started</a> •
@@ -63,9 +63,9 @@ That shows up in a few concrete ways:
   [More below](#an-assert-is-a-contract).
 * **Safety that need not cost speed.** The same prover shows that an index stays inside
   its list or a sum inside its type, and a build that asks for it drops that check. On the
-  One Billion Row Challenge, Nikaia runs fewer instructions and half the mispredicted
-  branches of tuned `unsafe` Rust, from a quarter less source.
-  [The numbers](#as-lean-as-tuned-rust-without-writing-it).
+  One Billion Row Challenge, Nikaia runs within a tenth of the instructions of tuned
+  `unsafe` Rust and less than half its mispredicted branches, from a quarter less source.
+  [The numbers](#within-a-tenth-of-tuned-rust-without-writing-it).
 * **Waiting is not your problem.** A program that reads files or talks to the network is
   written like any other program. There are no special keywords for "this might wait", and
   the program still never sits idle while it waits.
@@ -165,7 +165,7 @@ The rules are [ADR-269](docs/specification/adr/adr-269.md); the solver is
 
 ---
 
-## As lean as tuned Rust, without writing it
+## Within a tenth of tuned Rust, without writing it
 
 The fair comparison is not the loop a beginner writes but the Rust a specialist tunes,
 `unsafe` included. On the [One Billion Row Challenge](benches/brc/README.md), against a
@@ -173,8 +173,8 @@ single-core entry that maps the file, skips UTF-8 validation and hashes a word a
 
 | 1BRC, per row | Nikaia, [`examples/1brc.nika`](examples/1brc.nika) | Rust, tuned |
 | :--- | ---: | ---: |
-| instructions | **300** | 313 |
-| mispredicted branches | **1.58** | 3.61 |
+| instructions | 300 | **272** |
+| mispredicted branches | **1.58** | 3.70 |
 | tokens of source, `use` included | **618** | 809 |
 | `unsafe` | **0** | 1 |
 | UTF-8 checked | **yes** | no |

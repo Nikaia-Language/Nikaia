@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.461] — 2026-10-04
+
+**1BRC is counted, not timed, and `tuned` is its own binary.** `brc.sh` now
+builds, checks every output against `naive`'s, counts instructions and
+mispredictions with callgrind and prints each program's length in tokens
+(`scripts/tokens.py`, new). The Rust programs are three binaries
+(`naive`, `tuned`, `gen`) instead of one: inside one binary LLVM had not
+inlined `tuned`'s hash-table entry, which cost it 40 instructions a row. The
+honest table: Nikaia 300.1 instructions and 1.58 mispredictions a row against
+`tuned`'s 272.2 and 3.70, 618 tokens against 809; the overflow checks cost
+1.9. The README and the home page say *within a tenth of tuned Rust*, which
+corrects 0.0.458's *fewer instructions*. The benchmark page keeps the method,
+the table and where the instructions go, and no longer a diary. CLAUDE.md says
+how to measure.
+
 ## [0.0.460] — 2026-10-04
 
 **What is proved no longer depends on whether a check is dropped** (ADR-306
