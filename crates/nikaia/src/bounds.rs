@@ -36,6 +36,7 @@ use crate::ast::{BinaryOp, Block, Expr, FPart, Item, Span, Spanned, Stmt, UnaryO
 use crate::check::value_node;
 use crate::parser::Parsed;
 use nikaia_std::tools::bounds_basic as nika;
+use nikaia_std::tools::bounds_body as body_of;
 
 /// How hard the compiler works to drop an index check (ADR-306 D1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -182,7 +183,7 @@ pub fn proven(
         if level < BoundsChecks::Aggressive && overflow == OverflowChecks::Kept {
             continue;
         }
-        let pinned = pinned_in(parsed, body);
+        let pinned = body_of::pinned_in(body, &parsed.interner);
         let shape = Shape::of(parsed, args, body, &pinned, &functions, &changing_methods);
         let mut walk = Walk {
             parsed,
@@ -274,11 +275,6 @@ fn keeps_length(method: &str) -> bool {
     nika::keeps_length(method)
 }
 
-/// Whether `body` binds `name` again anywhere (`tools/bounds_basic.nika`).
-fn rebinds(parsed: &Parsed, body: &Block, name: &str) -> bool {
-    nika::rebinds(body, name, &parsed.interner)
-}
-
 // --- basic (D3) ---------------------------------------------------------------
 //
 // The loop over a list's own length is `tools/bounds_basic.nika`'s
@@ -309,7 +305,7 @@ struct Walk<'a> {
     proven: Proven,
     /// Names a lambda, a task or an `overlap` branch changes: they may change
     /// whenever one runs, so no fact is kept about them anywhere.
-    pinned: HashSet<String>,
+    pinned: BTreeSet<String>,
     /// Whole numbers that are never negative anywhere in the body
     /// (`crate::emit::nonnegative_names`).
     nonnegative: HashSet<String>,
@@ -1177,7 +1173,7 @@ impl Walk<'_> {
                                     && !self.arena.mentions(*high, &length_of(c))
                             });
                         let lists = match stable {
-                            true => filled_once(self.parsed, body, &self.pinned),
+                            true => body_of::filled_once(body, &self.pinned, &self.parsed.interner),
                             false => Vec::new(),
                         };
                         let not_empty = self.arena.le(*low, *high);
@@ -1214,7 +1210,7 @@ impl Walk<'_> {
                 let mut inner = facts.clone();
                 self.assume(&mut inner, cond);
                 self.block(body, &mut inner);
-                if !breaks(body) {
+                if !breaks(self.parsed, body) {
                     self.assume_not(facts, cond);
                 }
                 false
@@ -1676,155 +1672,14 @@ impl Changed {
     }
 }
 
-/// **The lists a loop's body pushes onto exactly once per turn** (ADR-306
-/// D4): one `xs.push(v)` among the body's own statements, nothing else that
-/// changes `xs`'s length or hands it on, and no way out of a turn before its
-/// end - no `break`, `continue`, `return`, `throw` or `?` anywhere in it.
-fn filled_once(parsed: &Parsed, body: &Block, pinned: &HashSet<String>) -> Vec<String> {
-    let mut leaves = false;
-    visit_stmts(body, &mut |stmt| {
-        if matches!(stmt, Stmt::Break | Stmt::Continue | Stmt::Return(_)) {
-            leaves = true;
-        }
-    });
-    visit_exprs(body, &mut |expr| {
-        if matches!(
-            expr,
-            Expr::Break | Expr::Continue | Expr::Return(_) | Expr::Throw(_) | Expr::Try(_)
-        ) {
-            leaves = true;
-        }
-    });
-    if leaves {
-        return Vec::new();
-    }
-    let mut pushed: HashMap<String, usize> = HashMap::new();
-    for stmt in &body.stmts {
-        if let Stmt::Expr(Expr::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        }) = &stmt.node
-            && let (Expr::Variable(list), "push", [_]) =
-                (&**receiver, parsed.text(*method), args.as_slice())
-        {
-            *pushed.entry(parsed.text(*list).to_string()).or_default() += 1;
-        }
-    }
-    pushed
-        .into_iter()
-        .filter(|(list, count)| {
-            *count == 1 && !pinned.contains(list) && {
-                let mut changes = 0;
-                visit_exprs(body, &mut |expr| match expr {
-                    Expr::MethodCall {
-                        receiver, method, ..
-                    }
-                    | Expr::SafeMethod {
-                        receiver, method, ..
-                    } if matches!(&**receiver, Expr::Variable(n) if parsed.text(*n) == list)
-                        && !keeps_length(parsed.text(*method)) =>
-                    {
-                        changes += 1
-                    }
-                    Expr::Call { args, .. }
-                    | Expr::MethodCall { args, .. }
-                    | Expr::SafeMethod { args, .. }
-                        if args
-                            .iter()
-                            .any(|a| matches!(a, Expr::Variable(n) if parsed.text(*n) == list)) =>
-                    {
-                        changes += 2
-                    }
-                    _ => {}
-                });
-                changes == 1 && !rebinds(parsed, body, list)
-            }
-        })
-        .map(|(list, _)| list)
-        .collect()
-}
-
 /// `xs.len()` is about `xs`.
 fn base_of(name: &str) -> &str {
     name.strip_suffix(".len()").unwrap_or(name)
 }
 
-/// Whether a `break` leaves this loop from its body (not from a loop inside it).
-fn breaks(body: &Block) -> bool {
-    fn block(b: &Block) -> bool {
-        b.stmts.iter().any(|s| match &s.node {
-            Stmt::Break => true,
-            Stmt::For { .. } | Stmt::While { .. } => false,
-            Stmt::Expr(e) | Stmt::Return(Some(e)) => expr(e),
-            Stmt::Let { value, .. } | Stmt::Comptime { value, .. } => expr(value),
-            Stmt::Assign { value, .. } => expr(value),
-            _ => false,
-        })
-    }
-    fn expr(e: &Expr) -> bool {
-        if matches!(e, Expr::Break) {
-            return true;
-        }
-        if matches!(e, Expr::Closure { .. } | Expr::Spawn { .. }) {
-            return false;
-        }
-        let mut found = false;
-        for_each_child(e, &mut |c| found |= expr(c));
-        for_each_block(e, &mut |b| found |= block(b));
-        found
-    }
-    block(body)
-}
-
-/// The names a lambda, a task, an `overlap` branch or a `select` arm in
-/// `body` changes or hands on.
-fn pinned_in(parsed: &Parsed, body: &Block) -> HashSet<String> {
-    let mut out = HashSet::new();
-    let mut deferred: Vec<Block> = Vec::new();
-    visit_exprs(body, &mut |expr| match expr {
-        Expr::Closure { body, .. } | Expr::Overlap(body) => deferred.push(body.clone()),
-        Expr::Spawn { body, .. } => deferred.push(Block {
-            stmts: vec![Spanned::new(Stmt::Expr((**body).clone()), Span::nowhere())],
-        }),
-        Expr::Select(arms) => deferred.extend(arms.iter().map(|a| a.body.clone())),
-        _ => {}
-    });
-    for block in &deferred {
-        visit_stmts(block, &mut |stmt| {
-            if let Stmt::Assign { target, .. } = stmt {
-                let mut root = target;
-                while let Expr::Index { base, .. } | Expr::Field { base, .. } = root {
-                    root = base;
-                }
-                if let Expr::Variable(name) = root {
-                    out.insert(parsed.text(*name).to_string());
-                }
-            }
-        });
-        visit_exprs(block, &mut |expr| match expr {
-            Expr::MethodCall { receiver, args, .. } | Expr::SafeMethod { receiver, args, .. } => {
-                if let Expr::Variable(name) = &**receiver {
-                    out.insert(parsed.text(*name).to_string());
-                }
-                for arg in args {
-                    if let Expr::Variable(name) = arg {
-                        out.insert(parsed.text(*name).to_string());
-                    }
-                }
-            }
-            Expr::Call { args, .. } => {
-                for arg in args {
-                    if let Expr::Variable(name) = arg {
-                        out.insert(parsed.text(*name).to_string());
-                    }
-                }
-            }
-            _ => {}
-        });
-    }
-    out
+/// Whether a `break` leaves this loop from its body (`tools/bounds_body.nika`).
+fn breaks(parsed: &Parsed, body: &Block) -> bool {
+    body_of::breaks(body, &parsed.interner)
 }
 
 // --- interval propagation (ADR-306) ---------------------------------------------
@@ -2016,7 +1871,7 @@ impl Shape {
         parsed: &Parsed,
         args: &[crate::ast::FnArg],
         body: &Block,
-        pinned: &HashSet<String>,
+        pinned: &BTreeSet<String>,
         functions: &HashMap<String, Vec<bool>>,
         changing_methods: &HashSet<String>,
     ) -> Shape {

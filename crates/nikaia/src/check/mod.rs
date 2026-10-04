@@ -10414,13 +10414,33 @@ impl<'a> Checker<'a> {
                     // that hands the first to the second needs the option
                     // opened (found moving `Ty` into Nikaia, ADR-294).
                     let lent_parts = !lendable && typed.is_a_view();
+                    // **Owned text bound through a lent value is a `&String`
+                    // below**, though it types as the view of text a `ref
+                    // String` parameter is (a `&str` there): so it is lent,
+                    // and a comparison with a value reads it - `(x ?? "") ==
+                    // wanted` for `Ask::Changes(wanted)` over a `ref Ask`
+                    // compared a `String` with a `&String` (found moving
+                    // `bounds`' body questions into Nikaia, #125).
+                    let owned_text: BTreeSet<String> = match lent_parts {
+                        true => self
+                            .pattern_parts(&arm.pattern, &typed)
+                            .into_iter()
+                            .filter(|(_, ty)| {
+                                matches!(ty, Ty::Named { name, view: false, .. }
+                                    if ty::base(name) == "String")
+                            })
+                            .map(|(name, _)| name)
+                            .collect(),
+                        false => BTreeSet::new(),
+                    };
                     let frame = self
                         .pattern_bindings(&arm.pattern)
                         .into_iter()
                         .map(|local| match parts.get(&local.name) {
                             Some(ty) => {
+                                let text = owned_text.contains(&local.name);
                                 let mut bound = Local::free(local.name, ty.clone());
-                                bound.lent = lent_parts && !self.copied(ty);
+                                bound.lent = lent_parts && (!self.copied(ty) || text);
                                 bound
                             }
                             None => local,

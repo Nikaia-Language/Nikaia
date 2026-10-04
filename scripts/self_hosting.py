@@ -90,6 +90,7 @@ COMPILER_NIKA = {
     "build_values.nika": "build_time: what a build-time expression comes to - a number, a truth value, text, a list, a tuple, a variant or a struct - and what an operator and an index make of them (0.0.417)",
     "check_numbers.nika": "check: a number and the type it has to fit - NK1116, said of an Integer and of a fold past the 65 bits (0.0.426)",
     "bounds_basic.nika": "bounds: the loop over a list's own length that makes an index check unneeded (ADR-306 D3), which methods keep a list's length, and whether a body binds a name again (0.0.428, 0.0.429)",
+    "bounds_body.nika": "bounds: what a loop's body does - a break that leaves it, the lists a turn pushes onto once, and the names a deferred body changes (ADR-306 D4, 0.0.431)",
 }
 
 
