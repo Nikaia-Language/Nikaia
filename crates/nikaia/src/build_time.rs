@@ -94,7 +94,7 @@ pub enum Value {
     /// In an `i128`, so a sum that cannot fit an `i64` is a number the caller
     /// can name rather than one that wrapped — [`fold`](crate::fold)'s reason,
     /// one level up.
-    Int(i128),
+    Int(Integer),
     /// **A number with a point in it**, carried as the machine carries one.
     ///
     /// It arrives as a literal or out of a grammar, and it crosses as the
@@ -245,11 +245,35 @@ pub enum Refusal {
     /// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
     /// Running it would abort at run time ([ADR-285](../../../docs/specification/adr/adr-285.md)
     /// D1); at build time there is no run to abort.
-    OutOfBounds { at: i128, len: usize },
+    OutOfBounds { at: Integer, len: usize },
 }
 
+use nikaia_std::tools::integers as int;
 /// What a name outside a build-time body is worth: a `comptime` already
 /// evaluated, or a `let` whose value folded.
+/// **An integer while the program is built**: a magnitude and a sign, the
+/// shape the tree gives a literal (ADR-294 D11), with what the evaluator does
+/// with two of them written in Nikaia (`tools/integers.nika`).
+pub use nikaia_std::tools::integers::Integer;
+
+impl Value {
+    /// An integer value from a number the checker keeps.
+    pub fn int(n: i128) -> Value {
+        Value::Int(int::integer(
+            u64::try_from(n.unsigned_abs()).unwrap_or(u64::MAX),
+            n < 0,
+        ))
+    }
+}
+
+/// The integer as the checker counts, in its `i128`.
+pub fn integer_value(n: &Integer) -> i128 {
+    match n.negative {
+        true => -i128::from(n.magnitude),
+        false => i128::from(n.magnitude),
+    }
+}
+
 pub type Known<'a> = &'a (dyn Fn(&str) -> Option<Value> + Sync);
 
 /// The evaluator, over one unit's items.
@@ -333,9 +357,7 @@ impl<'a> BuildTime<'a> {
 
     fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {
         match expr {
-            Expr::LitInt { value, negative } => {
-                Ok(Value::Int(crate::ast::int_value(*value, *negative)))
-            }
+            Expr::LitInt { value, negative } => Ok(Value::Int(int::integer(*value, *negative))),
             Expr::LitFloat(written) => written
                 .parse()
                 .map(Value::Float)
@@ -394,9 +416,7 @@ impl<'a> BuildTime<'a> {
             Expr::Unary { op, expr } => {
                 let inner = self.expr(expr, frame)?;
                 match (op, inner) {
-                    (UnaryOp::Neg, Value::Int(v)) => {
-                        Ok(Value::Int(v.checked_neg().ok_or(Refusal::Unevaluable)?))
-                    }
+                    (UnaryOp::Neg, Value::Int(v)) => Ok(Value::Int(int::integer_negated(&v))),
                     (UnaryOp::Not, Value::Bool(v)) => Ok(Value::Bool(!v)),
                     _ => Err(Refusal::Unevaluable),
                 }
@@ -456,13 +476,13 @@ impl<'a> BuildTime<'a> {
                 config,
             } if args.is_empty() && config.is_empty() && self.parsed.text(*method) == "len" => {
                 match self.expr(receiver, frame)? {
-                    Value::List(items) => Ok(Value::Int(items.len() as i128)),
+                    Value::List(items) => Ok(Value::Int(int::integer_of_count(items.len() as i64))),
                     // **Bytes, which is what `String::len` says it is.** Text
                     // is UTF-8 and a character outside ASCII is more than one
                     // byte; `chars().count()` is the other question and `std`
                     // spells it out. The value is decoded, so this is the
                     // number the program would have counted itself.
-                    Value::Text(text) => Ok(Value::Int(text.len() as i128)),
+                    Value::Text(text) => Ok(Value::Int(int::integer_of_count(text.len() as i64))),
                     _ => Err(Refusal::Unevaluable),
                 }
             }
@@ -624,36 +644,29 @@ impl<'a> BuildTime<'a> {
     /// the moment a left side can call anything.
     fn operate(&self, op: BinaryOp, left: Value, right: Value) -> Result<Value, Refusal> {
         match (left, right) {
+            // **In Nikaia** (`tools/integers.nika`): magnitudes and signs, and
+            // a step whose answer leaves the 65 bits a literal has is one this
+            // evaluator does not take. The bit operators work on the bits the
+            // value has ([ADR-285](../../docs/specification/adr/adr-285.md)
+            // D9), and a count outside the width is not evaluated (D5).
             (Value::Int(a), Value::Int(b)) => match op {
-                BinaryOp::Add => a.checked_add(b).map(Value::Int),
-                BinaryOp::Sub => a.checked_sub(b).map(Value::Int),
-                BinaryOp::Mul => a.checked_mul(b).map(Value::Int),
-                BinaryOp::Div => a.checked_div(b).map(Value::Int),
-                BinaryOp::Rem => a.checked_rem(b).map(Value::Int),
-                BinaryOp::Eq => Some(Value::Bool(a == b)),
-                BinaryOp::Ne => Some(Value::Bool(a != b)),
-                BinaryOp::Lt => Some(Value::Bool(a < b)),
-                BinaryOp::Le => Some(Value::Bool(a <= b)),
-                BinaryOp::Gt => Some(Value::Bool(a > b)),
-                BinaryOp::Ge => Some(Value::Bool(a >= b)),
+                BinaryOp::Add => int::integer_sum(&a, &b).map(Value::Int),
+                BinaryOp::Sub => int::integer_difference(&a, &b).map(Value::Int),
+                BinaryOp::Mul => int::integer_product(&a, &b).map(Value::Int),
+                BinaryOp::Div => int::integer_quotient(&a, &b, false).map(Value::Int),
+                BinaryOp::Rem => int::integer_quotient(&a, &b, true).map(Value::Int),
+                BinaryOp::Eq => Some(Value::Bool(int::integer_order(&a, &b) == 0)),
+                BinaryOp::Ne => Some(Value::Bool(int::integer_order(&a, &b) != 0)),
+                BinaryOp::Lt => Some(Value::Bool(int::integer_order(&a, &b) < 0)),
+                BinaryOp::Le => Some(Value::Bool(int::integer_order(&a, &b) <= 0)),
+                BinaryOp::Gt => Some(Value::Bool(int::integer_order(&a, &b) > 0)),
+                BinaryOp::Ge => Some(Value::Bool(int::integer_order(&a, &b) >= 0)),
                 BinaryOp::And | BinaryOp::Or => None,
-                // **The bit operators, on the value as it is held**
-                // ([ADR-285](../../docs/specification/adr/adr-285.md) D9): an
-                // `i128` holds every `u64` and `i64` with the bits they have,
-                // and whether the result fits the type it goes into is
-                // `NK1116`'s, as for a sum. A count outside the width is not
-                // evaluated (D5).
-                BinaryOp::BitAnd => Some(Value::Int(a & b)),
-                BinaryOp::BitOr => Some(Value::Int(a | b)),
-                BinaryOp::BitXor => Some(Value::Int(a ^ b)),
-                BinaryOp::Shl => u32::try_from(b)
-                    .ok()
-                    .and_then(|b| a.checked_shl(b))
-                    .map(Value::Int),
-                BinaryOp::Shr => u32::try_from(b)
-                    .ok()
-                    .and_then(|b| a.checked_shr(b))
-                    .map(Value::Int),
+                BinaryOp::BitAnd => int::integer_bits(&a, &b, "&").map(Value::Int),
+                BinaryOp::BitOr => int::integer_bits(&a, &b, "|").map(Value::Int),
+                BinaryOp::BitXor => int::integer_bits(&a, &b, "^").map(Value::Int),
+                BinaryOp::Shl => int::integer_shifted(&a, &b, true).map(Value::Int),
+                BinaryOp::Shr => int::integer_shifted(&a, &b, false).map(Value::Int),
             }
             .ok_or(Refusal::Unevaluable),
             // **Arithmetic over floats**, which has no `checked_` half: a
@@ -786,7 +799,7 @@ impl<'a> BuildTime<'a> {
                     }
                     flush(&mut chunk, &mut out)?;
                     match taken.next() {
-                        Some(Value::Int(n)) => out.push_str(&n.to_string()),
+                        Some(Value::Int(n)) => out.push_str(&int::integer_text(&n)),
                         Some(Value::Bool(yes)) => out.push_str(&yes.to_string()),
                         Some(Value::Text(text)) => out.push_str(&text),
                         _ => return Err(Refusal::Unevaluable),
@@ -1232,8 +1245,8 @@ impl<'a> BuildTime<'a> {
                         return Err(Refusal::Unevaluable);
                     };
                     let len = items.len();
-                    let slot = usize::try_from(at)
-                        .ok()
+                    let slot = int::integer_as_count(&at)
+                        .and_then(|at| usize::try_from(at).ok())
                         .and_then(|at| items.get_mut(at))
                         .ok_or(Refusal::OutOfBounds { at, len })?;
                     *slot = next;
@@ -1372,10 +1385,15 @@ impl<'a> BuildTime<'a> {
         else {
             return Err(Refusal::Unevaluable);
         };
+        // A range walks counts an `i64` holds.
+        let (Some(start), Some(end)) = (int::integer_as_count(&start), int::integer_as_count(&end))
+        else {
+            return Err(Refusal::Unevaluable);
+        };
         let name = self.parsed.text(*binding).to_string();
         let mut at = start;
         while if *inclusive { at <= end } else { at < end } {
-            frame.insert(name.clone(), Value::Int(at));
+            frame.insert(name.clone(), Value::Int(int::integer_of_count(at)));
             match self.block(body, frame)? {
                 Flow::Value(value) => return Ok(Flow::Value(value)),
                 Flow::Broke => break,
@@ -1401,8 +1419,8 @@ fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
     let (Value::List(items), Value::Int(at)) = (on, at) else {
         return Err(Refusal::Unevaluable);
     };
-    usize::try_from(*at)
-        .ok()
+    int::integer_as_count(at)
+        .and_then(|at| usize::try_from(at).ok())
         .and_then(|index| items.get(index))
         .ok_or(Refusal::OutOfBounds {
             at: *at,
