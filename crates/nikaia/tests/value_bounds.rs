@@ -345,3 +345,90 @@ fn the_overflow_option_is_read_and_a_wrong_level_is_refused() {
         "{basic}"
     );
 }
+
+/// **A compound assignment is proved as the operation it is** (#387,
+/// ADR-306 D5a): `other += 7` after `other = v`, with `v < 2000`, and then
+/// `other *= 2`; one that may overflow keeps its check.
+#[test]
+fn a_compound_assignment_proved_inside_its_type_is_written_without_its_check() {
+    let source = "\
+fn main() {
+    let n: u32 = 2000
+    let mut other: u32 = 0
+    for v in 0..<n {
+        other = v
+        other += 7
+        other *= 2
+    }
+    println(f\"{other}\")
+}
+";
+    assert_eq!(unchecked_arithmetic(&lowered(source, Level::Off)), 0);
+    let rust = lowered(source, Level::Aggressive);
+    assert!(
+        rust.contains("other = <u32>::wrapping_add(other, 7)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("other = <u32>::wrapping_mul(other, 2)"),
+        "{rust}"
+    );
+    prints("proved-compound", source, "4012\n");
+
+    let wide = "\
+fn main() {
+    let n: u32 = 4000000000
+    let mut other: u32 = 0
+    for v in 0..<n {
+        other = v
+        other += 400000000
+        if v == 3 {
+            break
+        }
+    }
+    println(f\"{other}\")
+}
+";
+    let rust = lowered(wide, Level::Aggressive);
+    assert_eq!(unchecked_arithmetic(&rust), 0, "{rust}");
+    assert!(rust.contains("other += 400000000"), "{rust}");
+}
+
+/// **`xs[i] += d` at a proved position reads the slot once and writes it
+/// back** (#387, ADR-306 D5a); a list of text keeps its checked index.
+#[test]
+fn a_compound_assignment_at_a_proved_position_is_read_and_written_unchecked() {
+    let source = "\
+fn bump(mut xs: Vec[i64]) {
+    for i in 0..<xs.len() {
+        xs[i] *= 3
+    }
+}
+
+fn main() {
+    let mut xs: Vec[i64] = [1, 2, 3]
+    let mut names: Vec[String] = [\"a\", \"b\", \"c\"]
+    for i in 0..<xs.len() {
+        xs[i] += 10
+        names[i] += \"!\"
+    }
+    bump(xs)
+    println(f\"{xs[0]} {xs[2]} {names[1]}\")
+}
+";
+    assert_eq!(unchecked_indexes(&lowered(source, Level::Off)), 0);
+    let rust = lowered(source, Level::Aggressive);
+    assert!(
+        rust.contains("let __nikaia_stored = *unsafe { nikaia_std::proven::read(&xs, __nikaia_at) } + __nikaia_stored"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("nikaia_std::proven::write(&mut *xs, __nikaia_at, __nikaia_stored)"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("names[nikaia_std::index::at(i)] += "),
+        "{rust}"
+    );
+    prints("proved-compound-index", source, "33 39 b!\n");
+}

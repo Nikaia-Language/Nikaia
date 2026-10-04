@@ -481,6 +481,10 @@ pub struct Checked {
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D10) - the type is
     /// named in what is written, so the proof and the operation agree on it.
     pub arithmetic: BTreeMap<usize, String>,
+    /// **`xs[i] op= v` on a list of numbers**, by the statement's first byte
+    /// (#387): the element is a copy, so where the index is proved the slot
+    /// is read once and written back without either check.
+    pub copied_slots: BTreeSet<usize>,
     /// `clone` calls that went to a `std` entry, by statement and receiver
     /// shape: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-293 D24).
@@ -1776,6 +1780,8 @@ pub struct Propagation {
     pub std_lengths: BTreeSet<usize>,
     /// [`Checked::arithmetic`].
     pub arithmetic: BTreeMap<usize, String>,
+    /// [`Checked::copied_slots`].
+    pub copied_slots: BTreeSet<usize>,
     /// [`Checked::owned_copies`].
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
@@ -2073,6 +2079,7 @@ pub fn propagation_against(
         list_indices: checked.list_indices,
         std_lengths: checked.std_lengths,
         arithmetic: checked.arithmetic,
+        copied_slots: checked.copied_slots,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
         lent_coalesces: checked.lent_coalesces,
@@ -9786,6 +9793,54 @@ impl<'a> Checker<'a> {
                 // ([ADR-293](../../docs/specification/adr/adr-293.md) D2).
                 if op.is_some() {
                     self.a_compound_write_to_a_map_slot(target, span);
+                }
+                // **`x += d` is `x = x + d`, and may be proved as one** (#387):
+                // a name of one whole-number type and a value of it, or a
+                // literal, recorded by the statement's first byte - where no
+                // operator of an expression can stand - for
+                // `remove-overflow-checks` (ADR-306 D10).
+                if let (
+                    Some(BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul),
+                    Expr::Variable(_),
+                    Ty::Named {
+                        name,
+                        args,
+                        view: false,
+                    },
+                ) = (op, target, into.unseen())
+                    && args.is_empty()
+                    && is_a_whole_number(&name)
+                    && (matches!(value, Expr::LitInt { .. })
+                        || value_of_a_copy(found.unseen()) == into.unseen())
+                {
+                    self.checked.arithmetic.insert(span.at(), name);
+                }
+                // **`xs[i] += d` on a list of numbers** (#387): the slot is a
+                // copy, so it can be read once and written back.
+                if let (
+                    Some(
+                        BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Rem
+                        | BinaryOp::BitAnd
+                        | BinaryOp::BitOr
+                        | BinaryOp::BitXor
+                        | BinaryOp::Shl
+                        | BinaryOp::Shr,
+                    ),
+                    Expr::Index { .. },
+                    Ty::Named {
+                        name,
+                        args,
+                        view: false,
+                    },
+                ) = (op, target, into.unseen())
+                    && args.is_empty()
+                    && (is_number(&name) || name == "bool")
+                {
+                    self.checked.copied_slots.insert(span.at());
                 }
                 // **`NK1191` for `-=` as for `-`**: `a -= 30` on an
                 // `Account` reached `rustc` as E0368, and `xs += [3]` on a list

@@ -1279,6 +1279,8 @@ struct Emitter<'p> {
     /// proved the operation stays inside its type: written `<T>::wrapping_*`
     /// ([ADR-306](../../docs/specification/adr/adr-306.md) D10).
     proven_arithmetic: std::collections::HashMap<usize, String>,
+    /// `xs[i] op= v` on a list of numbers (`check::Checked::copied_slots`).
+    copied_slots: std::collections::BTreeSet<usize>,
     /// `std` copies, written `to_owned` (ADR-293 D24).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// Whether the `?.` being written copies the view it reached, which is
@@ -2572,6 +2574,7 @@ impl<'p> Emitter<'p> {
                 .filter(|(at, _)| proven.arithmetic.contains(at))
                 .map(|(at, ty)| (*at, ty.clone()))
                 .collect(),
+            copied_slots: propagation.copied_slots,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
             lent_coalesces: propagation.lent_coalesces,
@@ -6856,6 +6859,82 @@ impl<'p> Emitter<'p> {
                     ".with_mut(|held, {keeps}| held.{} {assign} {stored}); }}",
                     self.name(*field)
                 ));
+            }
+            // **`xs[i] += d` at a position proved inside** (#387): the slot
+            // is a number, so it is read once and written back, neither
+            // without its check - the value first, then the position, as the
+            // plain write runs them (ADR-293 D2). Where the operation is
+            // proved too it is the operation alone.
+            Stmt::Assign {
+                target: Expr::Index { base, index },
+                op: Some(op),
+                value,
+            } if self.copied_slots.contains(&span.at())
+                && self
+                    .proven_indices
+                    .contains(&crate::check::value_node(base))
+                && self.map_key(span.at(), index, true).is_none() =>
+            {
+                let lent_on = matches!(&**base, Expr::Variable(name)
+                    if self.changes_in_place(flow, self.text(*name)));
+                out.push(&format!("{{ let {STORED} = "));
+                self.expr(out, value, depth, flow)?;
+                out.push("; let __nikaia_at = (");
+                match only_literals(index) {
+                    true => self.index_expr(out, index, depth, flow.inferred())?,
+                    false => self.index_expr(out, index, depth, flow)?,
+                }
+                out.push(") as usize; ");
+                let read = |emitter: &Self, out: &mut Out| -> Result<()> {
+                    out.push("*unsafe { nikaia_std::proven::read(&");
+                    emitter.expr(out, base, depth, flow.place())?;
+                    out.push(", __nikaia_at) }");
+                    Ok(())
+                };
+                out.push(&format!("let {STORED} = "));
+                match (self.proven_arithmetic.get(&span.at()), op) {
+                    (Some(ty), BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) => {
+                        let name = match op {
+                            BinaryOp::Add => "wrapping_add",
+                            BinaryOp::Sub => "wrapping_sub",
+                            _ => "wrapping_mul",
+                        };
+                        out.push(&format!("<{ty}>::{name}("));
+                        read(self, out)?;
+                        out.push(&format!(", {STORED})"));
+                    }
+                    _ => {
+                        read(self, out)?;
+                        out.push(&format!(" {} {STORED}", binary_op(*op)));
+                    }
+                }
+                out.push(match lent_on {
+                    true => "; unsafe { nikaia_std::proven::write(&mut *",
+                    false => "; unsafe { nikaia_std::proven::write(&mut ",
+                });
+                self.expr(out, base, depth, flow.place())?;
+                out.push(&format!(", __nikaia_at, {STORED}) }}; }}"));
+            }
+            // **`x += d` proved to stay inside its type** (#387) is written as
+            // the operation it is, without its check, as `x = x + d` would be
+            // (ADR-306 D10).
+            Stmt::Assign {
+                target: target @ Expr::Variable(_),
+                op: Some(op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul)),
+                value,
+            } if self.proven_arithmetic.contains_key(&span.at()) => {
+                let ty = &self.proven_arithmetic[&span.at()];
+                let name = match op {
+                    BinaryOp::Add => "wrapping_add",
+                    BinaryOp::Sub => "wrapping_sub",
+                    _ => "wrapping_mul",
+                };
+                self.expr(out, target, depth, flow.place())?;
+                out.push(&format!(" = <{ty}>::{name}("));
+                self.expr(out, target, depth, flow)?;
+                out.push(", ");
+                self.expr(out, value, depth, flow)?;
+                out.push(");");
             }
             Stmt::Assign { target, op, value } => {
                 let (before, after) =

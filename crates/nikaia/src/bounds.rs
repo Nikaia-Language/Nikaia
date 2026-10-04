@@ -207,6 +207,7 @@ pub fn proven(
             written: HashMap::new(),
             poisoned: HashSet::new(),
             collecting: false,
+            at: 0,
         };
         // **A bound on a list's values is an invariant, found and then
         // checked** (ADR-306 D7): each pass reads the bounds the last one
@@ -324,6 +325,9 @@ struct Walk<'a> {
     poisoned: HashSet<String>,
     /// A pass that only finds bounds and proves nothing.
     collecting: bool,
+    /// The first byte of the statement being walked: the key a compound
+    /// assignment's operation is recorded by (#387).
+    at: usize,
 }
 
 /// **A closed interval of whole numbers**, either end open where nothing is
@@ -993,6 +997,7 @@ impl Walk<'_> {
             if let Stmt::Comptime { name, .. } = &stmt.node {
                 bound.push(self.text(*name).to_string());
             }
+            self.at = stmt.span.at();
             if self.stmt(&stmt.node, facts) {
                 leaves = true;
                 break;
@@ -1076,8 +1081,32 @@ impl Walk<'_> {
             // lowering runs them (ADR-293 D2): a value that shrinks the list
             // is reached before the index it is written at.
             Stmt::Assign { target, op, value } => {
+                let at = self.at;
                 self.expr(value, facts);
                 self.place(target, facts);
+                // **`x += d` proved as `x + d`** (#387), before the name moves:
+                // what is known of `x` is what the operation reads.
+                if let (
+                    Some(op @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul)),
+                    Expr::Variable(_),
+                ) = (op, target)
+                    && !self.collecting
+                    && let Some(ty) = self.arithmetic.get(&at)
+                {
+                    let sum = Expr::Binary {
+                        op: *op,
+                        lhs: Box::new(target.clone()),
+                        rhs: Box::new(value.clone()),
+                        span: Span {
+                            start: at as u32,
+                            end: at as u32,
+                        },
+                        grouped: false,
+                    };
+                    if self.fits(&sum, ty, facts) {
+                        self.proven.arithmetic.insert(at);
+                    }
+                }
                 if op.is_none()
                     && let Expr::Index { base, .. } = target
                     && let Some(key) =

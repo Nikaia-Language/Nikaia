@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.446] — 2026-10-04
+
+**A compound assignment is proved as the operation it is** (ADR-306 D5a,
+#387). `x += d` and `x = x + d` mean the same, but only the second could lose
+its overflow check: the first is a statement, not a `+`. It is now recorded by
+the statement's first byte and proved as `x + d` with what is known of `x`
+before it, and a proved one is written `x = <T>::wrapping_add(x, d)`. And
+`xs[i] += d` on a list of numbers at a proved position is the value, the
+position, one `proven::read`, the operation and one `proven::write` - the
+element read once, as `+=` reads it; a list of text keeps its checked index.
+
+What it changes on the workloads: nothing yet. The solver kernels'
+`checksum += …` and `i += 1` are counters with no bound the walk knows (#432),
+and 1BRC's `Stats::add` writes fields, of which the walk keeps no facts (#384).
+
 ## [0.0.445] — 2026-10-04
 
 **Which types compare when nobody knows them** (#379, ADR-204 D1). A known
