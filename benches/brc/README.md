@@ -326,9 +326,18 @@ to the crate moves the compiler's code. **A misprediction count that moves
 where the instructions do not is layout, not work**, and is not read as an
 effect here.
 
+## What the step calls, inlined (0.0.440)
+
+`Summary::record` stayed out of line, called once a row from the fold's loop:
+hashbrown's insert path makes it too big for LLVM's heuristic, and no profile
+setting changed that (#433: 16 or 1 codegen unit and thin LTO 319.1, fat LTO
+317.0). The emitter now writes what a fold's step calls `#[inline]` (ADR-296
+D41). Callgrind, 1 M rows, the project built as `brc.sh` builds it, the same
+output: 319.1 → **300.1** instructions a row.
+
 ## What is left to build
 
-Against `tuned`, as of 0.0.433: 319 against 313 instructions a row, 1.58
+Against `tuned`, as of 0.0.440: 300 against 313 instructions a row, 1.58
 against 3.61 mispredictions, taken as the tables above say. In the
 order they are to be done; the figures are what callgrind attributes today,
 not what a change has been measured to save.
@@ -339,7 +348,7 @@ not what a change has been measured to save.
 | 2 | ADR-314, decided and not built: what a grammar matched and what a callee promises prove `TENTHS`'s overflow checks away at `aggressive` | a few instructions a row | the prover | [#421](https://github.com/Nikaia-Language/Nikaia/issues/421) |
 | 3 | last: a grammar over bytes, with only what becomes text checked as UTF-8 (ADR-016 §4) | ~10 instructions a row | language, `winnow-grammar`, `std` | [#422](https://github.com/Nikaia-Language/Nikaia/issues/422) |
 
-Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); the fold's loop, done in 0.0.432 (winnow-grammar#22); boundary checks on cuts, done in 0.0.433 (winnow-grammar#23); finding the `;` and the
+Not on the list, because measured or reasoned out of it: the hash of a name, done in 0.0.430 (#419); the fold's loop, done in 0.0.432 (winnow-grammar#22); boundary checks on cuts, done in 0.0.433 (winnow-grammar#23); the call of `record`, inlined in 0.0.440 (#433); finding the `;` and the
 line's end, where one `memchr2` a line already beats `tuned`'s search and walk
 back (ADR 24 §9); accumulating `dec`'s value inside the fixed-width match,
 which came out even with `dec` as it is (ADR 24 §8b); and the mispredictions

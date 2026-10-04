@@ -1235,6 +1235,10 @@ struct Emitter<'p> {
     /// program instead (`NK2302`), so this set is never a guess.
     carries_input: HashMap<usize, HashSet<Symbol>>,
     grammars: HashMap<Symbol, &'p GrammarDef>,
+    /// **What a `fold`'s or a `par_fold`'s step calls directly**, by name
+    /// (#433): the step is the loop body over the input, so what it calls runs
+    /// once per item, and is written `#[inline]`.
+    fold_callees: HashSet<String>,
     /// Declared struct names: `Stats(x)` is a call to a constructor, and only
     /// the declarations say which names are types.
     structs: HashSet<Symbol>,
@@ -2536,6 +2540,7 @@ impl<'p> Emitter<'p> {
                 .flat_map(declared_errors)
                 .collect(),
             carries_input: crate::views::carried(parsed, &own_contracts, library),
+            fold_callees: fold_callees(parsed, &grammars),
             grammars,
             structs,
             methods,
@@ -4554,6 +4559,15 @@ impl<'p> Emitter<'p> {
         // they wrote as `describe`.
         if self.specialising.borrow().is_some() {
             out.push("#[allow(non_snake_case)]\n");
+            out.push(&pad);
+        }
+        // **What a fold's step calls runs once per item** (#433): LLVM left
+        // 1BRC's `Summary::record` out of line - hashbrown's insert path makes
+        // it too big for its heuristic - at 319 instructions a row, and 300
+        // with the hint. Only a hint, and only here: every function `#[inline]`
+        // would bloat the code and the build.
+        if self.fold_callees.contains(&name) {
+            out.push("#[inline]\n");
             out.push(&pad);
         }
         // **A function with a precondition has two entries**
@@ -13400,6 +13414,54 @@ fn binary_op(op: BinaryOp) -> &'static str {
         BinaryOp::Shl => "<<",
         BinaryOp::Shr => ">>",
     }
+}
+
+/// **The names a `fold`'s or a `par_fold`'s step calls directly** (#433): a
+/// function it calls and a method it calls, by name, in any rule of any
+/// grammar this unit declares. By name, because the step's receiver is the
+/// accumulator, whose type this emitter does not know (ADR-296 D17) - and a
+/// method of another type with the same name gains a hint, nothing more.
+fn fold_callees(parsed: &Parsed, grammars: &HashMap<Symbol, &GrammarDef>) -> HashSet<String> {
+    fn steps<'a>(pattern: &'a Pattern, found: &mut Vec<&'a Expr>) {
+        match pattern {
+            Pattern::Fold(spec) => found.push(&spec.step),
+            Pattern::Seq(all) | Pattern::Choice(all) => {
+                all.iter().for_each(|p| steps(&p.node, found));
+            }
+            Pattern::Bind { pat, .. } | Pattern::Repeat { pat, .. } => steps(&pat.node, found),
+            Pattern::Group(inner) => steps(&inner.node, found),
+            Pattern::Ref { args, .. } => args.iter().for_each(|p| steps(&p.node, found)),
+            Pattern::Literal(_) | Pattern::Cut => {}
+        }
+    }
+    let mut found = Vec::new();
+    for def in grammars.values() {
+        for rule in &def.rules {
+            for alt in &rule.alts {
+                steps(&alt.pattern.node, &mut found);
+            }
+        }
+    }
+    let mut names = HashSet::new();
+    for step in found {
+        let Expr::Closure { body, .. } = step else {
+            continue;
+        };
+        for stmt in &body.stmts {
+            crate::contracts::sync::visit_stmt(parsed, &stmt.node, &mut |e| match e {
+                Expr::MethodCall { method, .. } => {
+                    names.insert(parsed.text(*method).to_string());
+                }
+                Expr::Call { func, .. } => {
+                    if let Expr::Variable(name) = &**func {
+                        names.insert(parsed.text(*name).to_string());
+                    }
+                }
+                _ => {}
+            });
+        }
+    }
+    names
 }
 
 /// The `par_fold` a rule *is*, if it is one. A fold with a merge is the only

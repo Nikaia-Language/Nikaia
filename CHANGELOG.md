@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.440] — 2026-10-04
+
+**What a fold's step calls directly is written `#[inline]`** (ADR-296 D41,
+#433). The step is the loop body over the input and runs once per item, but
+LLVM left 1BRC's `Summary::record` out of line - hashbrown's insert path makes
+it too big for its heuristic, and no profile setting changed that. The emitter
+now finds the functions and methods a `fold`'s or a `par_fold`'s step calls, by
+name, and writes them `#[inline]`; nothing else gains the hint. 1BRC, callgrind
+over 1 M rows, the same output: 319.1 → 300.1 instructions a row, below
+`tuned`'s 313.
+
 ## [0.0.439] — 2026-10-04
 
 **Five of #381's smaller inconsistencies, settled.** `RESERVED_BELOW`'s comment
