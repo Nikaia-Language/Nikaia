@@ -87,6 +87,7 @@ COMPILER_NIKA = {
     "check_types.nika": "check: what it asks of one type by itself - whether it moves or copies, a view of it and what a view is of, what a hull holds and what goes into one, lists, collections and text, and the way out of a mismatch (0.0.412), and what a `for` binds (0.0.415)",
     "check_calls.nika": "check: what it reads off a callee's signature - the arguments a call passes, what the receiver's and the arguments' types bind, and what a sequence a call hands back is as a whole (0.0.415)",
     "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416)",
+    "build_values.nika": "build_time: what a build-time expression comes to - a number, a truth value, text, a list, a tuple, a variant or a struct - and what an operator and an index make of them (0.0.417)",
 }
 
 

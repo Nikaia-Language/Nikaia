@@ -3701,6 +3701,49 @@ impl<'a> Checker<'a> {
                         || self.library.types.get(name).is_some_and(|contract| contract.copies)))
     }
 
+    /// **What each type another file of the package declares is made of**
+    /// (ADR-286 D1), read off its declaration: the fields of a struct, every
+    /// payload of an enum's variants.
+    fn parts_beside(&self) -> BTreeMap<String, Vec<Ty>> {
+        let mut beside_parts: BTreeMap<String, Vec<Ty>> = BTreeMap::new();
+        for other in self.beside {
+            if std::ptr::eq(*other, self.parsed) {
+                continue;
+            }
+            for item in &other.program.items {
+                let (name, parts): (String, Vec<Ty>) = match &item.node {
+                    Item::Struct {
+                        name,
+                        generics,
+                        fields,
+                        ..
+                    } if generics.is_empty() => (
+                        other.text(*name).to_string(),
+                        fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect(),
+                    ),
+                    Item::Enum { name, variants, .. } => (
+                        other.text(*name).to_string(),
+                        variants
+                            .iter()
+                            .flat_map(|v| match &v.fields {
+                                ast::VariantFields::Unit => Vec::new(),
+                                ast::VariantFields::Tuple(types) => {
+                                    types.iter().map(|ty| Ty::from_ast(other, ty)).collect()
+                                }
+                                ast::VariantFields::Named(fields) => {
+                                    fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect()
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => continue,
+                };
+                beside_parts.entry(name).or_insert(parts);
+            }
+        }
+        beside_parts
+    }
+
     /// **Which declared types derive `Copy`**
     /// ([ADR-294](../../docs/specification/adr/adr-294.md) D9.1,
     /// [`Checked::copies`]).
@@ -3751,42 +3794,7 @@ impl<'a> Checker<'a> {
         let package: Vec<String> = declared.iter().chain(&beside).cloned().collect();
         // What each type beside is made of, read off its declaration: the
         // fields of a struct, every payload of an enum's variants.
-        let mut beside_parts: BTreeMap<String, Vec<Ty>> = BTreeMap::new();
-        for other in self.beside {
-            if std::ptr::eq(*other, self.parsed) {
-                continue;
-            }
-            for item in &other.program.items {
-                let (name, parts): (String, Vec<Ty>) = match &item.node {
-                    Item::Struct {
-                        name,
-                        generics,
-                        fields,
-                        ..
-                    } if generics.is_empty() => (
-                        other.text(*name).to_string(),
-                        fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect(),
-                    ),
-                    Item::Enum { name, variants, .. } => (
-                        other.text(*name).to_string(),
-                        variants
-                            .iter()
-                            .flat_map(|v| match &v.fields {
-                                ast::VariantFields::Unit => Vec::new(),
-                                ast::VariantFields::Tuple(types) => {
-                                    types.iter().map(|ty| Ty::from_ast(other, ty)).collect()
-                                }
-                                ast::VariantFields::Named(fields) => {
-                                    fields.iter().map(|f| Ty::from_ast(other, &f.ty)).collect()
-                                }
-                            })
-                            .collect(),
-                    ),
-                    _ => continue,
-                };
-                beside_parts.entry(name).or_insert(parts);
-            }
-        }
+        let beside_parts = self.parts_beside();
         // **A type the program writes a `Drop` for** is not one either, for
         // the reason a cleanup is not: Part I's `FileHandle { fd: i32 }` is a
         // struct of one number with `impl Drop`, and `rustc` refuses `Copy`
@@ -3880,7 +3888,13 @@ impl<'a> Checker<'a> {
     /// `struct` compares when its fields do, and a field may name a type
     /// declared further down the file.
     fn collect_comparisons(&mut self) {
+        // **And what another file of the package declares** (ADR-286 D1):
+        // `Integer` from `integers.nika` compares in `build_values.nika` as it
+        // does at home, and a type holding one derives `PartialEq` (found
+        // moving the build-time values into Nikaia, #125).
+        let beside = self.parts_beside();
         let asking = Comparable {
+            beside: &beside,
             structs: &self.structs,
             enums: &self.enums,
             payloads: &self.enum_payloads,
@@ -7661,7 +7675,9 @@ impl<'a> Checker<'a> {
     /// C.4](../../docs/specification/30-nikaia-tooling.md)); and the two sides
     /// disagreeing is `NK1102`'s business, one refusal over.
     fn a_type_that_does_not_compare(&mut self, left: &Ty, right: &Ty, span: &Span) {
+        let beside = self.parts_beside();
         let asking = Comparable {
+            beside: &beside,
             structs: &self.structs,
             enums: &self.enums,
             payloads: &self.enum_payloads,
@@ -17707,7 +17723,7 @@ impl<'a> Checker<'a> {
                 let value = local
                     .built
                     .clone()
-                    .or_else(|| local.constant.map(build_time::Value::int));
+                    .or_else(|| local.constant.map(build_time::int));
                 match value {
                     Some(value) => held.insert(local.name.as_str(), value),
                     None => held.remove(local.name.as_str()),
@@ -21699,7 +21715,7 @@ impl<'a> Checker<'a> {
         // integer type a *declaration* pinned — a question the interpreter does
         // not ask and does not need to.
         let (evaluated, said) = match &folded {
-            Some(folded) => (Some(build_time::Value::int(folded.value)), false),
+            Some(folded) => (Some(build_time::int(folded.value)), false),
             None => self.build_time_value(value, &bound, span),
         };
         // Counted rather than returned, so that every refusal below - the
@@ -23434,6 +23450,8 @@ fn holds_an_array(ty: &Ty) -> bool {
 /// III C.4](../../docs/specification/30-nikaia-tooling.md)'s direction, and the
 /// same answer every other question here gives an absent claim.
 struct Comparable<'a> {
+    /// What each type another file of the package declares is made of.
+    beside: &'a BTreeMap<String, Vec<Ty>>,
     structs: &'a BTreeMap<String, Vec<FieldContract>>,
     enums: &'a BTreeMap<String, BTreeSet<String>>,
     /// What a declared `enum`'s variants hold ([`Checker::enum_payloads`]).
@@ -23553,6 +23571,9 @@ impl Comparable<'_> {
                 }
                 if self.enums.contains_key(name) {
                     return self.payloads(name).all(|ty| self.asking(ty, how, seen));
+                }
+                if let Some(parts) = self.beside.get(name) {
+                    return parts.iter().all(|ty| self.asking(ty, how, seen));
                 }
                 // **A type whose parts are Rust**: the column, whose absence is
                 // no. And it answers the `==` question only — a library type is

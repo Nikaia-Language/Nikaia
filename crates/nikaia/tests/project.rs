@@ -3308,3 +3308,30 @@ fn a_build_warns_when_a_pub_function_loses_its_sync() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A type holding one another file declares compares as it does there**
+/// (ADR-204 D1, ADR-286 D1): `Point` from `shapes.nika` derives `PartialEq`,
+/// and a struct of `main.nika` holding one did not - its `==` reached `rustc`
+/// with no derive behind it (found moving the build-time values into Nikaia,
+/// #125).
+#[test]
+fn a_type_holding_one_from_another_file_compares() {
+    let dir = a_project(
+        "project-compares-across-files",
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n",
+        "struct Placed {\n    at: Point,\n    label: String,\n}\n\n\
+         fn main() {\n    let a = Placed { at: Point { x: 1, y: 2 }, label: \"a\" }\n    \
+         let b = Placed { at: Point { x: 1, y: 2 }, label: \"a\" }\n    \
+         let c = Placed { at: Point { x: 3, y: 2 }, label: \"a\" }\n    \
+         println(f\"{a == b} {a == c}\")\n}\n",
+    );
+    std::fs::write(
+        dir.join("src/shapes.nika"),
+        "struct Point {\n    x: i64,\n    y: i64,\n}\n",
+    )
+    .expect("the second file");
+    let run = nikaia(&["run"], &dir);
+    assert!(run.status.success(), "{}", said(&run));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "true false\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
