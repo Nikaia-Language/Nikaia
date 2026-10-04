@@ -1264,6 +1264,7 @@ fn walked<'a>(
             .collect(),
         scope: Vec::new(),
         inside_a_comptime: false,
+        literal_receivers: Vec::new(),
         at_a_write_door: false,
         set_receiver: None,
         stamped_condition: None,
@@ -2729,6 +2730,11 @@ struct Checker<'a> {
     /// belongs; this says where the ordinary walk must keep quiet, so that two
     /// walks over one expression do not both have an opinion about one call.
     inside_a_comptime: bool,
+    /// **Numbers written as a method's receiver in this statement** whose
+    /// call hands back the receiver's own type (#417): the first integer type
+    /// a use asks of the call is theirs, as it would be of `7 + 1`, and they
+    /// keep the first type that holds them where nothing asks.
+    literal_receivers: Vec<(usize, i128)>,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
     /// The function being checked hands back text **both kinds** of which
@@ -9340,6 +9346,7 @@ impl<'a> Checker<'a> {
     }
 
     fn stmt(&mut self, stmt: &Stmt, span: &Span) -> Ty {
+        self.literal_receivers.clear();
         match stmt {
             Stmt::Let {
                 names,
@@ -9932,6 +9939,35 @@ impl<'a> Checker<'a> {
 
     fn expr(&mut self, expr: &Expr, span: &Span) -> Ty {
         let ty = self.value_of(expr, span);
+        // **A call on a number written as its receiver is as open as the
+        // number** (#417): `7.wrapping_add(1)` is whatever integer its use
+        // asks for, as `7 + 1` is, so its type is not claimed here and the
+        // first use that asks decides the literal's.
+        let ty = match expr {
+            Expr::MethodCall { receiver, .. } if matches!(**receiver, Expr::LitInt { .. }) => {
+                let Expr::LitInt { value, negative } = **receiver else {
+                    unreachable!("matched above")
+                };
+                let key = (value_node(receiver), crate::ast::int_value(value, negative));
+                let own = self.checked.unsigned_literals.get(&key).cloned();
+                let its_own = |ty: &Ty| {
+                    own.as_deref()
+                        .is_some_and(|own| matches!(ty, Ty::Named { name, args, view: false } if name == own && args.is_empty()))
+                };
+                let open = match &ty {
+                    Ty::Nullable(inner) => its_own(inner),
+                    other => its_own(other),
+                };
+                match open {
+                    true => {
+                        self.literal_receivers.push(key);
+                        Ty::Unknown
+                    }
+                    false => ty,
+                }
+            }
+            _ => ty,
+        };
         // **`get` on a map of `T?` is one `T?`, as the brackets are**
         // ([ADR-293](../../docs/specification/adr/adr-293.md) D12): the
         // signature hands back `V?`, and a `V` that is a `T?` would make it a
@@ -10592,6 +10628,32 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **A number written as a receiver takes the first type that
+                // holds it** (Part I 2.4, #417): nothing stands beside it to
+                // ask for another, and a literal has no type of its own here,
+                // so `(-7).wrapping_add(2)` was a method on nothing known - the
+                // function was taken to pause, and the language below could
+                // not tell which integer it was. The type is written on the
+                // literal ([`Checked::unsigned_literals`]).
+                let on = match (&**receiver, &on) {
+                    (Expr::LitInt { value, negative }, Ty::Unknown) => {
+                        let number =
+                            Constant::of(nikaia_std::tools::integers::integer(*value, *negative));
+                        let ty = match number.fits("i64") {
+                            true => number.first_type(),
+                            false => "u64",
+                        };
+                        self.checked.unsigned_literals.insert(
+                            (
+                                value_node(receiver),
+                                crate::ast::int_value(*value, *negative),
+                            ),
+                            ty.to_string(),
+                        );
+                        Ty::named(ty)
+                    }
+                    _ => on,
+                };
                 // **A length `std` counts**: of a list, a run, text or a map,
                 // whose `len()` reads the value and changes nothing - what
                 // `crate::bounds` may take as a number of a proof (ADR-306 D4).
@@ -14198,6 +14260,24 @@ impl<'a> Checker<'a> {
             // gives a *method* call the answer earlier).
             if let Some(given) = given.get(at) {
                 self.constant_fits(given, Some(want), span);
+                // A free call walks its arguments first, so a call on a
+                // number written as its receiver is told its parameter here.
+                if let Expr::MethodCall { receiver, .. } = given
+                    && let Expr::LitInt { value, negative } = **receiver
+                {
+                    let key = (value_node(receiver), crate::ast::int_value(value, negative));
+                    if let Some(at) = self.literal_receivers.iter().position(|k| *k == key) {
+                        let pending = std::mem::take(&mut self.literal_receivers);
+                        self.literal_receivers = vec![pending[at]];
+                        self.literal_receivers_take(want);
+                        self.literal_receivers = pending
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i != at)
+                            .map(|(_, k)| k)
+                            .collect();
+                    }
+                }
             }
             self.a_cleanup_that_moved(key, name, want, given.get(at), span);
             // **A parameter is a use** (ADR-152 D4), and a literal handed to one
@@ -14830,6 +14910,27 @@ impl<'a> Checker<'a> {
         ))
     }
 
+    /// **The integer type a use asks of a call on a number written as its
+    /// receiver is the number's** (#417), where the number is one of it.
+    fn literal_receivers_take(&mut self, want: &Ty) {
+        let want = match want {
+            Ty::Nullable(inner) => inner.as_ref(),
+            other => other,
+        };
+        let Some(ty) = integer_named(want) else {
+            return;
+        };
+        for key in std::mem::take(&mut self.literal_receivers) {
+            let number = Constant::of(nikaia_std::tools::integers::integer(
+                u64::try_from(key.1.unsigned_abs()).unwrap_or(u64::MAX),
+                key.1 < 0,
+            ));
+            if number.fits(&ty) {
+                self.checked.unsigned_literals.insert(key, ty.clone());
+            }
+        }
+    }
+
     /// Report only when both sides are known and they disagree.
     fn expect(
         &mut self,
@@ -14839,6 +14940,9 @@ impl<'a> Checker<'a> {
         what: &str,
         message: impl FnOnce(&str, &str) -> String,
     ) {
+        if found.is_unknown() {
+            self.literal_receivers_take(want);
+        }
         if self.fits_through_deref(found, want) {
             return;
         }

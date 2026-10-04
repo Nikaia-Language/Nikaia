@@ -800,3 +800,46 @@ fn checked_names_answer_null_where_the_operator_would_abort() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A named method on a number written as its receiver** (#417): the number
+/// takes the integer type its use asks for - a `let`'s, a parameter's, a
+/// `return`'s - as `7 + 1` would, and the first type that holds it where
+/// nothing asks; a negative one keeps its sign. `(-7).wrapping_add(2)` came out
+/// as `-7.wrapping_add(2)`, which is `-(7.wrapping_add(2))` below, and the
+/// function was taken to pause on a method of nothing known.
+#[test]
+fn a_named_method_on_a_written_number_takes_the_type_its_use_asks() {
+    let dir = common::scratch_dir("overflow-literal-receiver");
+    let rust = lower(
+        &dir,
+        "fn f() -> i32 {\n    return (-7).wrapping_add(2)\n}\n\
+         fn g() -> i64 {\n    return 7.wrapping_mul(3)\n}\n\
+         fn h(n: u64) -> u64 {\n    return n + 1\n}\n\
+         fn main() {\n    \
+             let x: i64 = 7.wrapping_add(1)\n    \
+             println(f\"{f()} {g()} {x} {h(5.saturating_add(1))} {7.checked_mul(3) ?? 0}\")\n\
+         }\n",
+    );
+    assert!(rust.contains("(-7i32).wrapping_add(2)"), "{rust}");
+    assert!(!rust.contains("async fn f"), "{rust}");
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &dir.join("main.rs"),
+        &[
+            "--crate-type",
+            "bin",
+            "-C",
+            "overflow-checks=on",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    assert!(
+        compiled.status.success(),
+        "the emitted Rust did not compile:\n{}\n--- emitted ---\n{rust}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let ran = Command::new(&binary).output().expect("run the program");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "-5 21 8 7 21");
+    let _ = std::fs::remove_dir_all(&dir);
+}

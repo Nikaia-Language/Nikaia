@@ -5123,7 +5123,10 @@ impl<'p> Emitter<'p> {
             // generator needs to pick that fold; the type is the init's.
             if on_accumulator && mutates {
                 let accumulator = self.text(*accumulator);
-                out.push(&format!("|{accumulator}: &mut _, {}| {{ ", self.text(*item)));
+                out.push(&format!(
+                    "|{accumulator}: &mut _, {}| {{ ",
+                    self.text(*item)
+                ));
                 for stmt in &body.stmts {
                     self.stmt(out, &stmt.node, &stmt.span, 0, Tail::Statement, Flow::PLAIN)?;
                     out.push(" ");
@@ -12407,6 +12410,10 @@ impl<'p> Emitter<'p> {
                     | Expr::TryCatch { .. }
                     | Expr::Dsl { .. }
                     | Expr::Asm { .. }
+                    // **A negative number before a `.`** (#417): `-7.abs()`
+                    // is `-(7.abs())` below, so `(-7).wrapping_add(2)` came out
+                    // as a different number.
+                    | Expr::LitInt { negative: true, .. }
             );
 
         if parenthesise {
