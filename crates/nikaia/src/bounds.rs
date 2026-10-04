@@ -35,6 +35,7 @@ use nikaia_logic::{Answer, Arena, Budget, FourierMotzkin, Query, Solver, TermId,
 use crate::ast::{BinaryOp, Block, Expr, FPart, Item, Span, Spanned, Stmt, UnaryOp};
 use crate::check::value_node;
 use crate::parser::Parsed;
+use nikaia_std::tools::bounds_basic as nika;
 
 /// How hard the compiler works to drop an index check (ADR-306 D1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -172,7 +173,11 @@ pub fn proven(
             continue;
         };
         if level >= BoundsChecks::Basic {
-            basic_block(parsed, body, &mut Vec::new(), &mut out.indices);
+            out.indices.extend(
+                nika::basic_indices(body, &parsed.interner, &|e: &Expr| value_node(e) as i64)
+                    .into_iter()
+                    .map(|n| n as usize),
+            );
         }
         if level < BoundsChecks::Aggressive && overflow == OverflowChecks::Kept {
             continue;
@@ -264,287 +269,20 @@ fn is_a_list(ty: &str) -> bool {
     matches!(ty, "Vec" | "List" | "Array")
 }
 
-/// **Methods that leave a list's length as it was.** A method not on this list
-/// and not on [`changes_length`]'s is taken to change it, so a method the list
-/// does not know costs a proof and never makes a wrong one.
+/// **Methods that leave a list's length as it was** (`tools/bounds_basic.nika`).
 fn keeps_length(method: &str) -> bool {
-    matches!(
-        method,
-        "len"
-            | "is_empty"
-            | "contains"
-            | "iter"
-            | "first"
-            | "last"
-            | "get"
-            | "clone"
-            | "to_vec"
-            | "index_of"
-            | "starts_with"
-            | "ends_with"
-            | "join"
-            | "sum"
-            | "min"
-            | "max"
-            | "sort"
-            | "sort_by"
-            | "sort_by_key"
-            | "reverse"
-            | "swap"
-            | "fill"
-            | "map"
-            | "filter"
-            | "any"
-            | "all"
-            | "count"
-            | "find"
-            | "position"
-            | "enumerate"
-            | "zip"
-            | "windows"
-            | "chunks"
-            | "rev"
-            | "fold"
-            | "binary_search"
-            | "to_string"
-    )
+    nika::keeps_length(method)
+}
+
+/// Whether `body` binds `name` again anywhere (`tools/bounds_basic.nika`).
+fn rebinds(parsed: &Parsed, body: &Block, name: &str) -> bool {
+    nika::rebinds(body, name, &parsed.interner)
 }
 
 // --- basic (D3) ---------------------------------------------------------------
-
-/// A loop `for k in lo..<xs.len()` whose body leaves `xs`'s length alone.
-struct Over {
-    binding: String,
-    list: String,
-}
-
-fn basic_block(parsed: &Parsed, block: &Block, over: &mut Vec<Over>, out: &mut HashSet<usize>) {
-    for stmt in &block.stmts {
-        basic_stmt(parsed, &stmt.node, over, out);
-    }
-}
-
-fn basic_stmt(parsed: &Parsed, stmt: &Stmt, over: &mut Vec<Over>, out: &mut HashSet<usize>) {
-    match stmt {
-        Stmt::For {
-            bindings,
-            iter,
-            body,
-        } => {
-            basic_expr(parsed, iter, over, out);
-            let loop_over = match (bindings.as_slice(), iter) {
-                (
-                    [binding],
-                    Expr::Range {
-                        start,
-                        end,
-                        inclusive: false,
-                    },
-                ) => match &**end {
-                    Expr::MethodCall {
-                        receiver,
-                        method,
-                        args,
-                        ..
-                    } if args.is_empty() && parsed.text(*method) == "len" => match &**receiver {
-                        Expr::Variable(list)
-                            if not_negative_start(parsed, start, over)
-                                && length_stays(parsed, body, parsed.text(*list))
-                                && !rebinds(parsed, body, parsed.text(*binding)) =>
-                        {
-                            Some(Over {
-                                binding: parsed.text(*binding).to_string(),
-                                list: parsed.text(*list).to_string(),
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => None,
-            };
-            // A binding of this loop hides an outer loop's of the same name.
-            let hidden: Vec<usize> = bindings
-                .iter()
-                .flat_map(|b| {
-                    let b = parsed.text(*b);
-                    over.iter()
-                        .enumerate()
-                        .filter(move |(_, o)| o.binding == b || o.list == b)
-                        .map(|(at, _)| at)
-                })
-                .collect();
-            let mut inner: Vec<Over> = over
-                .iter()
-                .enumerate()
-                .filter(|(at, _)| !hidden.contains(at))
-                .map(|(_, o)| Over {
-                    binding: o.binding.clone(),
-                    list: o.list.clone(),
-                })
-                .collect();
-            inner.extend(loop_over);
-            basic_block(parsed, body, &mut inner, out);
-        }
-        Stmt::Let { names, value, .. } => {
-            basic_expr(parsed, value, over, out);
-            // From here on in this block the name is another binding.
-            for name in names {
-                let name = parsed.text(*name);
-                over.retain(|o| o.binding != name && o.list != name);
-            }
-        }
-        Stmt::Comptime { name, value, .. } => {
-            basic_expr(parsed, value, over, out);
-            let name = parsed.text(*name);
-            over.retain(|o| o.binding != name && o.list != name);
-        }
-        Stmt::Assign { target, value, .. } => {
-            basic_expr(parsed, target, over, out);
-            basic_expr(parsed, value, over, out);
-        }
-        Stmt::While { cond, body } => {
-            basic_expr(parsed, cond, over, out);
-            let mut inner = clone_over(over);
-            basic_block(parsed, body, &mut inner, out);
-        }
-        Stmt::Return(Some(value)) | Stmt::Expr(value) => basic_expr(parsed, value, over, out),
-        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
-    }
-}
-
-fn clone_over(over: &[Over]) -> Vec<Over> {
-    over.iter()
-        .map(|o| Over {
-            binding: o.binding.clone(),
-            list: o.list.clone(),
-        })
-        .collect()
-}
-
-fn basic_expr(parsed: &Parsed, expr: &Expr, over: &mut Vec<Over>, out: &mut HashSet<usize>) {
-    if let Expr::Index { base, index } = expr
-        && let (Expr::Variable(list), Expr::Variable(at)) = (&**base, &**index)
-    {
-        let (list, at) = (parsed.text(*list), parsed.text(*at));
-        if over.iter().any(|o| o.list == list && o.binding == at) {
-            out.insert(value_node(base));
-        }
-    }
-    match expr {
-        // A lambda may run after the loop, when the list is another length.
-        Expr::Closure { .. } | Expr::Spawn { .. } => {}
-        _ => {
-            for_each_child(expr, &mut |child| basic_expr(parsed, child, over, out));
-            for_each_block(expr, &mut |block| {
-                let mut inner = clone_over(over);
-                basic_block(parsed, block, &mut inner, out);
-            });
-        }
-    }
-}
-
-/// A literal that is not negative, or the binding of a loop D3 already holds.
-fn not_negative_start(parsed: &Parsed, start: &Expr, over: &[Over]) -> bool {
-    match start {
-        Expr::LitInt { negative, .. } => !negative,
-        Expr::Variable(name) => over.iter().any(|o| o.binding == parsed.text(*name)),
-        _ => false,
-    }
-}
-
-/// **Nothing in `body` can change `list`'s length**: it is not assigned, not
-/// bound again, not handed to a call, not captured by a lambda, and every
-/// method called on it is one [`keeps_length`] knows.
-fn length_stays(parsed: &Parsed, body: &Block, list: &str) -> bool {
-    let mut stays = true;
-    visit_stmts(body, &mut |stmt| match stmt {
-        Stmt::Assign {
-            target: Expr::Variable(name),
-            ..
-        } if parsed.text(*name) == list => stays = false,
-        Stmt::Let { names, .. } if names.iter().any(|n| parsed.text(*n) == list) => stays = false,
-        Stmt::For { bindings, .. } if bindings.iter().any(|n| parsed.text(*n) == list) => {
-            stays = false
-        }
-        _ => {}
-    });
-    visit_exprs(body, &mut |expr| match expr {
-        Expr::MethodCall {
-            receiver, method, ..
-        }
-        | Expr::SafeMethod {
-            receiver, method, ..
-        } if matches!(&**receiver, Expr::Variable(n) if parsed.text(*n) == list)
-            && !keeps_length(parsed.text(*method)) =>
-        {
-            stays = false
-        }
-        Expr::Call { args, .. } | Expr::MethodCall { args, .. } | Expr::SafeMethod { args, .. }
-            if args
-                .iter()
-                .any(|a| matches!(a, Expr::Variable(n) if parsed.text(*n) == list)) =>
-        {
-            stays = false
-        }
-        Expr::Closure { body, .. } if mentions(parsed, body, list) => stays = false,
-        Expr::Spawn { body, .. } if mentions_expr(parsed, body, list) => stays = false,
-        _ => {}
-    });
-    stays
-}
-
-/// Whether `body` binds `name` again anywhere.
-fn rebinds(parsed: &Parsed, body: &Block, name: &str) -> bool {
-    let mut found = false;
-    visit_stmts(body, &mut |stmt| match stmt {
-        Stmt::Let { names, .. } if names.iter().any(|n| parsed.text(*n) == name) => found = true,
-        Stmt::Comptime { name: n, .. } if parsed.text(*n) == name => found = true,
-        Stmt::For { bindings, .. } if bindings.iter().any(|n| parsed.text(*n) == name) => {
-            found = true
-        }
-        Stmt::Assign {
-            target: Expr::Variable(n),
-            ..
-        } if parsed.text(*n) == name => found = true,
-        _ => {}
-    });
-    visit_exprs(body, &mut |expr| {
-        if let Expr::Closure { params, .. } = expr
-            && params.iter().any(|p| parsed.text(*p) == name)
-        {
-            found = true;
-        }
-    });
-    found
-}
-
-fn mentions(parsed: &Parsed, block: &Block, name: &str) -> bool {
-    let mut found = false;
-    visit_exprs(block, &mut |e| {
-        if matches!(e, Expr::Variable(n) if parsed.text(*n) == name) {
-            found = true;
-        }
-    });
-    visit_stmts(block, &mut |s| {
-        if let Stmt::Assign {
-            target: Expr::Variable(n),
-            ..
-        } = s
-            && parsed.text(*n) == name
-        {
-            found = true;
-        }
-    });
-    found
-}
-
-fn mentions_expr(parsed: &Parsed, expr: &Expr, name: &str) -> bool {
-    let block = Block {
-        stmts: vec![Spanned::new(Stmt::Expr(expr.clone()), Span::nowhere())],
-    };
-    mentions(parsed, &block, name)
-}
+//
+// The loop over a list's own length is `tools/bounds_basic.nika`'s
+// `basic_indices`.
 
 // --- aggressive (D4) ------------------------------------------------------------
 

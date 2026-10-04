@@ -499,6 +499,415 @@ fn the_boundary(on_the_line: Option<&str>, source: &str, boundaries: &[Boundary]
 }
 
 
+// --- bounds_basic.nika ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CountedLoop {
+    binding: String,
+    list: String,
+}
+
+pub fn basic_indices(body: &Block, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64) -> collections::BTreeSet<i64> {
+    let mut out: collections::BTreeSet<i64> = collections::BTreeSet::new();
+    counted_block(body, &mut vec![], words, node_of, &mut out);
+    out
+}
+
+fn counted_block(block: &Block, over: &mut Vec<CountedLoop>, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) { for stmt in block.stmts.iter() { counted_statement(&stmt.node, over, words, node_of, out); } }
+
+fn without(over: &[CountedLoop], name: &str) -> Vec<CountedLoop> {
+    let mut kept: Vec<CountedLoop> = vec![];
+    for o in over.iter() { if o.binding != name && o.list != name { kept.push(CountedLoop { binding: o.binding.to_owned(), list: o.list.to_owned() }); } }
+    kept
+}
+
+fn copied(over: &[CountedLoop]) -> Vec<CountedLoop> {
+    let mut kept: Vec<CountedLoop> = vec![];
+    for o in over.iter() { kept.push(CountedLoop { binding: o.binding.to_owned(), list: o.list.to_owned() }); }
+    kept
+}
+
+fn counted_statement(stmt: &Stmt, over: &mut Vec<CountedLoop>, words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
+    match stmt {
+        Stmt::For { bindings, iter, body } => {
+            counted_expr(iter, &over, words, node_of, out);
+            let mut inner = copied(&over);
+            for b in bindings.iter() { inner = without(&inner, words.resolve(*b)); }
+            if bindings.len() == 1 {
+                let found = loop_over_length(*nikaia_std::index::get(&bindings, 0), iter, body, &over, words);
+                if found.is_some() { inner.push(nikaia_std::index::or(found, || CountedLoop { binding: String::from(""), list: String::from("") })); }
+            }
+            counted_block(body, &mut inner, words, node_of, out);
+        },
+        Stmt::Let { names, value, .. } => {
+            counted_expr(value, &over, words, node_of, out);
+            for name in names.iter() {
+                let kept = without(&over, words.resolve(*name));
+                over.clear();
+                over.extend(kept);
+            }
+        },
+        Stmt::Comptime { name, value, .. } => {
+            let name = *name;
+            counted_expr(value, &over, words, node_of, out);
+            let kept = without(&over, words.resolve(name));
+            over.clear();
+            over.extend(kept);
+        },
+        Stmt::Assign { target, value, .. } => {
+            counted_expr(target, &over, words, node_of, out);
+            counted_expr(value, &over, words, node_of, out);
+        },
+        Stmt::While { cond, body } => {
+            counted_expr(cond, &over, words, node_of, out);
+            counted_block(body, &mut copied(&over), words, node_of, out);
+        },
+        Stmt::Return(value) => { counted_maybe((value).as_ref(), &over, words, node_of, out); },
+        Stmt::Expr(value) => counted_expr(value, &over, words, node_of, out),
+        Stmt::Break => { },
+        Stmt::Continue => { },
+    }
+}
+
+fn loop_over_length(binding: winnow_grammar::Symbol, iter: &Expr, body: &Block, over: &[CountedLoop], words: &winnow_grammar::InternerContext) -> Option<CountedLoop> {
+    let (start, end) = match iter {
+        Expr::Range { start, end, inclusive } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); let inclusive = *inclusive;
+            if inclusive { return None; }
+            (start, end)
+        },
+        _ => return None,
+    };
+    let list = match end {
+        Expr::MethodCall { receiver, method, args, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver); let method = *method;
+            if !args.is_empty() || words.resolve(method) != "len" { return None; }
+            match receiver {
+                Expr::Variable(list) => { let list = *list; words.resolve(list).to_owned() },
+                _ => return None,
+            }
+        },
+        _ => return None,
+    };
+    let counter = words.resolve(binding).to_owned();
+    if !starts_not_negative(start, over, words) || !length_stays(body, &list, words) || rebinds(body, &counter, words) { return None; }
+    Some(CountedLoop { binding: counter, list })
+}
+
+fn starts_not_negative(start: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext) -> bool {
+    match start {
+        Expr::LitInt { negative, .. } => { let negative = *negative; !negative },
+        Expr::Variable(name) => { let name = *name; counts(over, words.resolve(name)) },
+        _ => false,
+    }
+}
+
+fn counts(over: &[CountedLoop], binding: &str) -> bool {
+    for o in over.iter() { if o.binding == binding { return true; } }
+    false
+}
+
+fn indexes_its_loop(over: &[CountedLoop], list: &str, at: &str) -> bool {
+    for o in over.iter() { if o.list == list && o.binding == at { return true; } }
+    false
+}
+
+fn counted_expr(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
+    match expr {
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            match base {
+                Expr::Variable(list) => { let list = *list; match index {
+                    Expr::Variable(at) => {
+                        let at = *at;
+                        if indexes_its_loop(over, words.resolve(list), words.resolve(at)) { out.insert(node_of(base)); }
+                    },
+                    _ => { },
+                } },
+                _ => { },
+            }
+        },
+        _ => { },
+    }
+    match expr {
+        Expr::Closure { .. } => { },
+        Expr::Spawn { .. } => { },
+        _ => {
+            counted_children(expr, over, words, node_of, out);
+            counted_blocks(expr, over, words, node_of, out);
+        },
+    }
+}
+
+fn counted_all(exprs: &[Expr], over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) { for e in exprs.iter() { counted_expr(e, over, words, node_of, out); } }
+
+fn counted_maybe(expr: Option<&Expr>, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) { counted_expr(match expr { Some(__nikaia_value) => __nikaia_value, None => return }, over, words, node_of, out); }
+
+fn counted_maybe_block(block: Option<&Block>, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) { counted_block(match block { Some(__nikaia_value) => __nikaia_value, None => return }, &mut copied(over), words, node_of, out); }
+
+fn counted_children(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
+    match expr {
+        Expr::Match { value, arms } => {
+            let value = nikaia_std::boxed::open(value);
+            counted_expr(value, over, words, node_of, out);
+            for arm in arms.iter() {
+                counted_maybe((arm.guard).as_ref(), over, words, node_of, out);
+                counted_expr(&arm.body, over, words, node_of, out);
+            }
+        },
+        Expr::Range { start, end, .. } => {
+            let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end);
+            counted_expr(start, over, words, node_of, out);
+            counted_expr(end, over, words, node_of, out);
+        },
+        Expr::Tuple(items) => counted_all(items, over, words, node_of, out),
+        Expr::ListLit { items, .. } => counted_all(items, over, words, node_of, out),
+        Expr::LitInterpolated { parts } => {
+            for part in parts.iter() {
+                match part {
+                    FPart::Hole { expr, .. } => counted_expr(expr, over, words, node_of, out),
+                    _ => { },
+                }
+            }
+        },
+        Expr::If { cond, .. } => { let cond = nikaia_std::boxed::open(cond); counted_expr(cond, over, words, node_of, out) },
+        Expr::Call { func, args, config } => {
+            let func = nikaia_std::boxed::open(func);
+            counted_expr(func, over, words, node_of, out);
+            counted_all(args, over, words, node_of, out);
+            for c in config.iter() { counted_expr(&c.value, over, words, node_of, out); }
+        },
+        Expr::MethodCall { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            counted_expr(receiver, over, words, node_of, out);
+            counted_all(args, over, words, node_of, out);
+            for c in config.iter() { counted_expr(&c.value, over, words, node_of, out); }
+        },
+        Expr::SafeMethod { receiver, args, config, .. } => {
+            let receiver = nikaia_std::boxed::open(receiver);
+            counted_expr(receiver, over, words, node_of, out);
+            counted_all(args, over, words, node_of, out);
+            for c in config.iter() { counted_expr(&c.value, over, words, node_of, out); }
+        },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); counted_expr(base, over, words, node_of, out) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); counted_expr(base, over, words, node_of, out) },
+        Expr::StructLit { fields, .. } => { for field in fields.iter() { counted_maybe((field.value).as_ref(), over, words, node_of, out); } },
+        Expr::With { base, fields, .. } => {
+            let base = nikaia_std::boxed::open(base);
+            counted_expr(base, over, words, node_of, out);
+            for field in fields.iter() { counted_maybe((field.value).as_ref(), over, words, node_of, out); }
+        },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); counted_expr(inner, over, words, node_of, out) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
+        Expr::TryCatch { expr, .. } => { let expr = nikaia_std::boxed::open(expr); counted_expr(expr, over, words, node_of, out) },
+        Expr::Binary { lhs, rhs, .. } => {
+            let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs);
+            counted_expr(lhs, over, words, node_of, out);
+            counted_expr(rhs, over, words, node_of, out);
+        },
+        Expr::Return(value) => {
+            let value = nikaia_std::boxed::open(value);
+            counted_maybe((value).as_ref(), over, words, node_of, out);
+        },
+        Expr::Index { base, index } => {
+            let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index);
+            counted_expr(base, over, words, node_of, out);
+            counted_expr(index, over, words, node_of, out);
+        },
+        Expr::Coalesce { value, fallback } => {
+            let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback);
+            counted_expr(value, over, words, node_of, out);
+            counted_expr(fallback, over, words, node_of, out);
+        },
+        Expr::Select(arms) => { for arm in arms.iter() { counted_expr(&arm.value, over, words, node_of, out); } },
+        _ => { },
+    }
+}
+
+fn counted_blocks(expr: &Expr, over: &[CountedLoop], words: &winnow_grammar::InternerContext, node_of: &impl Fn(&Expr) -> i64, out: &mut collections::BTreeSet<i64>) {
+    match expr {
+        Expr::Block(b) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::Overlap(b) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::Unsafe(b) => counted_block(b, &mut copied(over), words, node_of, out),
+        Expr::If { then_branch, else_branch, .. } => {
+            counted_block(then_branch, &mut copied(over), words, node_of, out);
+            counted_maybe_block((else_branch).as_ref(), over, words, node_of, out);
+        },
+        Expr::TryCatch { handler, .. } => counted_block(handler, &mut copied(over), words, node_of, out),
+        Expr::Select(arms) => { for arm in arms.iter() { counted_block(&arm.body, &mut copied(over), words, node_of, out); } },
+        _ => { },
+    }
+}
+
+pub fn keeps_length(method: &str) -> bool { matches!(method, "len" | "is_empty" | "contains" | "iter" | "first" | "last" | "get" | "clone" | "to_vec" | "index_of" | "starts_with" | "ends_with" | "join" | "sum" | "min" | "max" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "swap" | "fill" | "map" | "filter" | "any" | "all" | "count" | "find" | "position" | "enumerate" | "zip" | "windows" | "chunks" | "rev" | "fold" | "binary_search" | "to_string") }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Seek {
+    LengthChanged(String),
+    Rebound(String),
+    Mentioned(String),
+}
+
+pub fn length_stays(body: &Block, list: &str, words: &winnow_grammar::InternerContext) -> bool { !seek_block(body, &Seek::LengthChanged(list.to_owned()), words) }
+
+pub fn rebinds(body: &Block, name: &str, words: &winnow_grammar::InternerContext) -> bool { seek_block(body, &Seek::Rebound(name.to_owned()), words) }
+
+fn is_variable(expr: &Expr, name: &str, words: &winnow_grammar::InternerContext) -> bool {
+    match expr {
+        Expr::Variable(n) => { let n = *n; words.resolve(n) == name },
+        _ => false,
+    }
+}
+
+fn any_is_variable(exprs: &[Expr], name: &str, words: &winnow_grammar::InternerContext) -> bool {
+    for e in exprs.iter() { if is_variable(e, name, words) { return true; } }
+    false
+}
+
+fn any_symbol(symbols: &[winnow_grammar::Symbol], name: &str, words: &winnow_grammar::InternerContext) -> bool {
+    for s in symbols.iter() { if words.resolve(*s) == name { return true; } }
+    false
+}
+
+fn statement_says(stmt: &Stmt, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    match seek {
+        Seek::LengthChanged(list) => match stmt {
+            Stmt::Assign { target, .. } => is_variable(target, list, words),
+            Stmt::Let { names, .. } => any_symbol(names, list, words),
+            Stmt::For { bindings, .. } => any_symbol(bindings, list, words),
+            _ => false,
+        },
+        Seek::Rebound(wanted) => match stmt {
+            Stmt::Let { names, .. } => any_symbol(names, wanted, words),
+            Stmt::Comptime { name, .. } => { let name = *name; words.resolve(name) == wanted },
+            Stmt::For { bindings, .. } => any_symbol(bindings, wanted, words),
+            Stmt::Assign { target, .. } => is_variable(target, wanted, words),
+            _ => false,
+        },
+        Seek::Mentioned(name) => match stmt {
+            Stmt::Assign { target, .. } => is_variable(target, name, words),
+            _ => false,
+        },
+    }
+}
+
+fn expression_says(expr: &Expr, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    match seek {
+        Seek::LengthChanged(list) => match expr {
+            Expr::MethodCall { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; is_variable(receiver, list, words) && !keeps_length(words.resolve(method)) || any_is_variable(args, list, words) },
+            Expr::SafeMethod { receiver, method, args, .. } => { let receiver = nikaia_std::boxed::open(receiver); let method = *method; is_variable(receiver, list, words) && !keeps_length(words.resolve(method)) || any_is_variable(args, list, words) },
+            Expr::Call { args, .. } => any_is_variable(args, list, words),
+            Expr::Closure { body, .. } => seek_block(body, &Seek::Mentioned(list.to_owned()), words),
+            Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); seek_expr(body, &Seek::Mentioned(list.to_owned()), words) },
+            _ => false,
+        },
+        Seek::Rebound(name) => match expr {
+            Expr::Closure { params, .. } => any_symbol(params, name, words),
+            _ => false,
+        },
+        Seek::Mentioned(name) => is_variable(expr, name, words),
+    }
+}
+
+fn seek_block(block: &Block, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for stmt in block.stmts.iter() { if seek_statement(&stmt.node, seek, words) { return true; } }
+    false
+}
+
+fn seek_statement(stmt: &Stmt, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    if statement_says(stmt, seek, words) { return true; }
+    match stmt {
+        Stmt::For { iter, body, .. } => seek_expr(iter, seek, words) || seek_block(body, seek, words),
+        Stmt::While { cond, body } => seek_expr(cond, seek, words) || seek_block(body, seek, words),
+        Stmt::Let { value, .. } => seek_expr(value, seek, words),
+        Stmt::Comptime { value, .. } => seek_expr(value, seek, words),
+        Stmt::Expr(value) => seek_expr(value, seek, words),
+        Stmt::Assign { target, value, .. } => seek_expr(target, seek, words) || seek_expr(value, seek, words),
+        Stmt::Return(value) => seek_maybe((value).as_ref(), seek, words),
+        _ => false,
+    }
+}
+
+fn seek_all(exprs: &[Expr], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for e in exprs.iter() { if seek_expr(e, seek, words) { return true; } }
+    false
+}
+
+fn seek_config(config: &[ConfigArg], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for c in config.iter() { if seek_expr(&c.value, seek, words) { return true; } }
+    false
+}
+
+fn seek_fields(fields: &[FieldInit], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for field in fields.iter() { if seek_maybe((field.value).as_ref(), seek, words) { return true; } }
+    false
+}
+
+fn seek_maybe_block(block: Option<&Block>, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool { seek_block(match block { Some(__nikaia_value) => __nikaia_value, None => return false }, seek, words) }
+
+fn seek_maybe(expr: Option<&Expr>, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool { seek_expr(match expr { Some(__nikaia_value) => __nikaia_value, None => return false }, seek, words) }
+
+fn seek_expr(expr: &Expr, seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    if expression_says(expr, seek, words) { return true; }
+    match expr {
+        Expr::Match { value, arms } => { let value = nikaia_std::boxed::open(value); seek_expr(value, seek, words) || seek_arms(arms, seek, words) },
+        Expr::Range { start, end, .. } => { let start = nikaia_std::boxed::open(start); let end = nikaia_std::boxed::open(end); seek_expr(start, seek, words) || seek_expr(end, seek, words) },
+        Expr::Tuple(items) => seek_all(items, seek, words),
+        Expr::ListLit { items, .. } => seek_all(items, seek, words),
+        Expr::LitInterpolated { parts } => seek_holes(parts, seek, words),
+        Expr::If { cond, then_branch, else_branch } => { let cond = nikaia_std::boxed::open(cond); seek_expr(cond, seek, words) || seek_block(then_branch, seek, words) || seek_maybe_block((else_branch).as_ref(), seek, words) },
+        Expr::Call { func, args, config } => { let func = nikaia_std::boxed::open(func); seek_expr(func, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
+        Expr::Spawn { body, .. } => { let body = nikaia_std::boxed::open(body); seek_expr(body, seek, words) },
+        Expr::MethodCall { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); seek_expr(receiver, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
+        Expr::SafeMethod { receiver, args, config, .. } => { let receiver = nikaia_std::boxed::open(receiver); seek_expr(receiver, seek, words) || seek_all(args, seek, words) || seek_config(config, seek, words) },
+        Expr::Field { base, .. } => { let base = nikaia_std::boxed::open(base); seek_expr(base, seek, words) },
+        Expr::SafeField { base, .. } => { let base = nikaia_std::boxed::open(base); seek_expr(base, seek, words) },
+        Expr::StructLit { fields, .. } => seek_fields(fields, seek, words),
+        Expr::With { base, fields, .. } => { let base = nikaia_std::boxed::open(base); seek_expr(base, seek, words) || seek_fields(fields, seek, words) },
+        Expr::Unary { expr, .. } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) },
+        Expr::Try(inner) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
+        Expr::Throw(inner) => { let inner = nikaia_std::boxed::open(inner); seek_expr(inner, seek, words) },
+        Expr::Cast { expr, .. } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) },
+        Expr::TryCatch { expr, handler } => { let expr = nikaia_std::boxed::open(expr); seek_expr(expr, seek, words) || seek_block(handler, seek, words) },
+        Expr::Binary { lhs, rhs, .. } => { let lhs = nikaia_std::boxed::open(lhs); let rhs = nikaia_std::boxed::open(rhs); seek_expr(lhs, seek, words) || seek_expr(rhs, seek, words) },
+        Expr::Return(value) => { let value = nikaia_std::boxed::open(value); seek_maybe((value).as_ref(), seek, words) },
+        Expr::Index { base, index } => { let base = nikaia_std::boxed::open(base); let index = nikaia_std::boxed::open(index); seek_expr(base, seek, words) || seek_expr(index, seek, words) },
+        Expr::Coalesce { value, fallback } => { let value = nikaia_std::boxed::open(value); let fallback = nikaia_std::boxed::open(fallback); seek_expr(value, seek, words) || seek_expr(fallback, seek, words) },
+        Expr::Select(arms) => seek_select(arms, seek, words),
+        Expr::Block(b) => seek_block(b, seek, words),
+        Expr::Overlap(b) => seek_block(b, seek, words),
+        Expr::Unsafe(b) => seek_block(b, seek, words),
+        Expr::Closure { body, .. } => seek_block(body, seek, words),
+        _ => false,
+    }
+}
+
+fn seek_arms(arms: &[MatchArm], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for arm in arms.iter() {
+        if seek_maybe((arm.guard).as_ref(), seek, words) { return true; }
+        if seek_expr(&arm.body, seek, words) { return true; }
+    }
+    false
+}
+
+fn seek_holes(parts: &[FPart], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for part in parts.iter() {
+        match part {
+            FPart::Hole { expr, .. } if seek_expr(expr, seek, words) => return true,
+            _ => { },
+        }
+    }
+    false
+}
+
+fn seek_select(arms: &[SelectArm], seek: &Seek, words: &winnow_grammar::InternerContext) -> bool {
+    for arm in arms.iter() { if seek_expr(&arm.value, seek, words) || seek_block(&arm.body, seek, words) { return true; } }
+    false
+}
+
+
 // --- buffers.nika ---
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16425,6 +16834,10 @@ pub mod ast {
 pub mod boundaries {
     #[allow(unused_imports)]
     pub use super::{Boundary, Reported, restated};
+}
+pub mod bounds_basic {
+    #[allow(unused_imports)]
+    pub use super::{basic_indices, keeps_length, length_stays, rebinds};
 }
 pub mod buffers {
     #[allow(unused_imports)]
