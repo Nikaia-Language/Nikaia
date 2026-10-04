@@ -564,7 +564,7 @@ pub struct TestCase {
 
 /// The name the `k`th test's function has in a test build.
 fn test_function(k: usize) -> String {
-    format!("__nikaia_test_{k}")
+    nikaia_std::tools::modules::test_function(k as i64)
 }
 
 /// Whether a function is a `test` block a test build turned into one
@@ -731,85 +731,9 @@ impl Program {
     /// out, because `sync(f)` cannot name one (D4, `NK2210`). Since D1 a caller
     /// in another package counts on neither until it is written.
     pub fn could_promise(&self) -> String {
-        let mine = |key: &str| {
-            !key.split_once("::")
-                .is_some_and(|(package, _)| self.as_its_own.contains_key(package))
-        };
-        let never: Vec<String> = self
-            .contracts
-            .functions
-            .iter()
-            .filter(|(key, contract)| {
-                mine(key)
-                    && contract.public
-                    && contract.sync_claim == crate::contracts::Sync::Inferred
-            })
-            .map(|(key, _)| format!("`{key}`"))
-            .collect();
-        let through: Vec<String> = self
-            .paused_by_code
-            .iter()
-            .filter_map(|(key, lambdas)| {
-                let contract = self.contracts.functions.get(key)?;
-                // A written `sync(f)` is the promise already made.
-                if !mine(key)
-                    || !contract.public
-                    || contract.sync_claim != crate::contracts::Sync::No
-                {
-                    return None;
-                }
-                let named: Vec<&str> = lambdas
-                    .iter()
-                    .filter(|lambda| !contract.keeps.contains(*lambda))
-                    .map(String::as_str)
-                    .collect();
-                (named.len() == lambdas.len())
-                    .then(|| format!("`{key}` (`sync({})`)", named.join(", ")))
-            })
-            .collect();
-
-        let mut out = String::new();
-        let functions = |n: usize| match n {
-            1 => "1 pub function",
-            _ => "pub functions",
-        };
-        if !never.is_empty() {
-            out.push_str(&format!(
-                "note: {}{} never pause{} and do{} not promise it: {}\n  \
-                 help: write `sync` after the result, and callers in other packages can \
-                 rely on it\n",
-                match never.len() {
-                    1 => String::new(),
-                    n => format!("{n} "),
-                },
-                functions(never.len()),
-                if never.len() == 1 { "s" } else { "" },
-                if never.len() == 1 { "es" } else { "" },
-                never.join(", ")
-            ));
-        }
-        if !through.is_empty() {
-            out.push_str(&format!(
-                "note: {}{} pause{} only where the lambdas {} given do{}, and do{} not promise \
-                 it: {}\n  help: write `sync(f)` after the result, naming those lambdas, \
-                 and callers in other packages can rely on it\n",
-                match through.len() {
-                    1 => String::new(),
-                    n => format!("{n} "),
-                },
-                functions(through.len()),
-                if through.len() == 1 { "s" } else { "" },
-                if through.len() == 1 {
-                    "it is"
-                } else {
-                    "they are"
-                },
-                "",
-                if through.len() == 1 { "es" } else { "" },
-                through.join(", ")
-            ));
-        }
-        out
+        // In Nikaia (`tools/modules.nika`, ADR-294, #125).
+        let theirs: BTreeSet<String> = self.as_its_own.keys().cloned().collect();
+        nikaia_std::tools::modules::could_promise(&self.contracts, &theirs, &self.paused_by_code)
     }
 
     /// **[ADR-288](../../../docs/specification/adr/adr-288.md) D32's warning**:
@@ -837,13 +761,7 @@ impl Program {
                 continue;
             }
             let pause = self.pauses.get(key);
-            let path = |chain: &[String]| -> String {
-                chain
-                    .windows(2)
-                    .map(|pair| format!("`{}` calls `{}`", pair[0], pair[1]))
-                    .collect::<Vec<_>>()
-                    .join(", which ")
-            };
+            let path = nikaia_std::tools::modules::pause_path;
             let mut notes = Vec::new();
             if let Some(pause) = pause
                 && pause.chain.len() > 1
@@ -880,11 +798,9 @@ impl Program {
                 // statement this walk can point at, and the warning says so
                 // without one rather than not at all.
                 None => {
-                    out.push_str(&format!(
-                        "warning[NK2211]: {}\n   = note: a method call it makes, or one of \
-                         the calls it leads to, can pause.\n   = help: {}\n",
-                        finding.message,
-                        finding.help.as_deref().unwrap_or_default()
+                    out.push_str(&nikaia_std::tools::modules::lost_sync_unplaced(
+                        &finding.message,
+                        finding.help.as_deref().unwrap_or_default(),
                     ));
                 }
             }
@@ -1105,20 +1021,13 @@ fn with_tests_as_functions(mut units: Vec<Unit>) -> Result<(Vec<Unit>, Vec<TestC
         });
     let mut text = entry.source.clone();
     text.push('\n');
-    if cli.is_none() {
-        text.push_str("use std::cli\n");
-    }
-    let cli = cli.unwrap_or_else(|| "cli".to_string());
-    text.push_str(&format!(
-        "fn {DISPATCH}() throws {{\n    let which = {cli}::args().nth(1) ?? \"\"\n"
+    // The dispatcher's own text is Nikaia's (`tools/modules.nika`).
+    text.push_str(&nikaia_std::tools::modules::test_dispatcher(
+        cli.as_deref().unwrap_or("cli"),
+        cli.is_none(),
+        count as i64,
+        DISPATCH,
     ));
-    for k in 0..count {
-        text.push_str(&format!(
-            "    if which == \"{k}\" {{\n        {}()\n        return\n    }}\n",
-            test_function(k)
-        ));
-    }
-    text.push_str("    panic(f\"this build has no test numbered `{which}`\")\n}\n");
     let mut parsed = parser::parse_to_ast(&text)
         .with_context(|| format!("{} with its tests", entry.path.display()))?;
     // `main` gives its name to the dispatcher and goes.
