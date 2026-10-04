@@ -1,0 +1,184 @@
+// crates/nikaia-std/src/tools/ledger_ops.nika
+//
+// **What a build does with a package's ledger as a whole** - the entries it
+// publishes, whether it may be believed against the sources it was derived
+// from, and taking it into the program's one ledger under the name a caller
+// writes - moved from the compiler's `contracts` module (ADR-294, #125).
+
+use std::collections
+
+/// This package's **own** entries: what it publishes, with everything that
+/// belongs to a package *it* depends on left out (ADR-286 D21). A transitive
+/// package is deliberately invisible, so absorbing `c::Id` under this
+/// package's name would make a type nothing declares and nobody can write.
+///
+/// `foreign` is the depending build's record of what words this package uses
+/// for packages of its own.
+pub fn published_entries(ledger: ref Ledger, foreign: ref collections::BTreeSet[String]) -> Ledger {
+    let mut out = ledger.clone()
+    out.functions = collections::BTreeMap()
+    for (key, contract) in ledger.functions {
+        if !of_another(key, foreign) {
+            out.functions.insert(key.clone(), contract.clone())
+        }
+    }
+    out.types = collections::BTreeMap()
+    for (key, contract) in ledger.types {
+        if !of_another(key, foreign) {
+            out.types.insert(key.clone(), contract.clone())
+        }
+    }
+    out.traits = collections::BTreeMap()
+    for (key, methods) in ledger.traits {
+        if !of_another(key, foreign) {
+            out.traits.insert(key.clone(), methods.clone())
+        }
+    }
+    return out
+}
+
+fn of_another(key: ref String, foreign: ref collections::BTreeSet[String]) -> bool {
+    let parts: Vec[ref String] = key.splitn(2, "::").collect()
+    return parts.len() == 2 && foreign.contains(parts[0])
+}
+
+/// Whether a ledger may be **believed** for the sources given, and which units
+/// say otherwise (ADR-100 D3): empty means believe it. **A ledger with no
+/// `[sources]` at all is never believed against sources that exist** - reading
+/// *nothing was recorded* as *nothing changed* is the one polarity this must
+/// not get wrong (ADR-010 D1).
+pub fn stale_units(ledger: ref Ledger, sources: ref collections::BTreeMap[String, String]) -> Vec[String] {
+    let mut moved: collections::BTreeSet[String] = collections::BTreeSet()
+    for (unit, hash) in sources {
+        let recorded = ledger.sources[unit] ?? ""
+        if !ledger.sources.contains_key(unit) || recorded != hash {
+            moved.insert(unit.clone())
+        }
+    }
+    // A unit the ledger names and the package no longer has: what left took
+    // its entries with it.
+    for (unit, _) in ledger.sources {
+        if !sources.contains_key(unit) {
+            moved.insert(unit.clone())
+        }
+    }
+    let mut out: Vec[String] = []
+    for unit in moved {
+        out.push(unit.clone())
+    }
+    return out
+}
+
+/// **Every entry of `other`, under `module::`** - the keys qualified exactly
+/// the way a caller writes them, and the types inside each entry too: a
+/// module's own signature says `-> Conn` while its type is keyed `pool::Conn`,
+/// and they are one type with two spellings.
+///
+/// `renames` is a package's own word for a package this build has a word for
+/// too (ADR-286 D20), applied **after** qualifying: a name the package declares
+/// itself is its own and is never renamed.
+pub fn absorb_into(mut ledger: Ledger, module: ref String?, renames: ref collections::BTreeMap[String, String], other: ref Ledger) {
+    let mut declared: collections::BTreeSet[String] = collections::BTreeSet()
+    for (name, _) in other.types {
+        declared.insert(name.clone())
+    }
+    let prefix = module?.clone() ?? ""
+    let qualified = module != null
+    // **What a function field's stored code reaches** (ADR-230 D1), under the
+    // name a caller writes the type with.
+    for (field, holds) in other.code_locks {
+        let parts: Vec[ref String] = field.splitn(2, ".").collect()
+        if qualified && declared.contains(parts[0]) {
+            ledger.code_locks.insert(f"{prefix}::{field}", holds.clone())
+        } else {
+            ledger.code_locks.insert(field.clone(), holds.clone())
+        }
+    }
+    // **This package's own word for itself is never renamed.**
+    let mut kept: collections::BTreeMap[String, String] = collections::BTreeMap()
+    for (from, to) in renames {
+        if !qualified || from != prefix {
+            kept.insert(from.clone(), to.clone())
+        }
+    }
+    for (name, contract) in other.functions {
+        let mut entry = contract.clone()
+        if entry.signature != null {
+            let mut signature = entry.signature?.clone() ?? Signature::empty()
+            let mut params: Vec[(String, Ty)] = []
+            for (param, ty) in signature.params {
+                params.push((param.clone(), qualified_ty(ty, prefix, qualified, declared, kept)))
+            }
+            signature.params = params
+            let mut options: Vec[ConfigContract] = []
+            for option in signature.config {
+                let mut changed = option.clone()
+                changed.ty = qualified_ty(option.ty, prefix, qualified, declared, kept)
+                options.push(changed)
+            }
+            signature.config = options
+            if signature.result != null {
+                let result = signature.result?.clone() ?? Ty::Unknown
+                signature.result = qualified_ty(result, prefix, qualified, declared, kept)
+            }
+            entry.signature = signature
+        }
+        ledger.functions.insert(key_under(name, prefix, qualified), entry)
+    }
+    for (name, contract) in other.types {
+        let mut entry = contract.clone()
+        let mut fields: Vec[FieldContract] = []
+        for field in contract.fields {
+            let mut changed = field.clone()
+            changed.ty = qualified_ty(field.ty, prefix, qualified, declared, kept)
+            fields.push(changed)
+        }
+        entry.fields = fields
+        ledger.types.insert(key_under(name, prefix, qualified), entry)
+    }
+    // A trait's implementations, under **both spellings, on both sides**:
+    // inside the package the `impl` is `Handler for Dog`, and to a consumer it
+    // is `pets::Handler for pets::Dog` (ADR-295 D1). An extra spelling can
+    // only make the check fail *open* (Part III C.4).
+    for (trait_name, types) in other.implementations {
+        let mut widened = types.clone()
+        if qualified {
+            for ty in types {
+                widened.insert(f"{prefix}::{ty}")
+            }
+        }
+        if qualified {
+            widen(ledger, f"{prefix}::{trait_name}", widened)
+        }
+        widen(ledger, trait_name.clone(), widened)
+    }
+    for (name, methods) in other.traits {
+        ledger.traits.insert(key_under(name, prefix, qualified), methods.clone())
+    }
+}
+
+fn widen(mut ledger: Ledger, name: String, types: ref collections::BTreeSet[String]) {
+    let mut all: collections::BTreeSet[String] = ledger.implementations[name]?.clone() ?? collections::BTreeSet()
+    for ty in types {
+        all.insert(ty.clone())
+    }
+    ledger.implementations.insert(name, all)
+}
+
+fn key_under(name: ref String, prefix: ref String, qualified: bool) -> String {
+    if qualified {
+        return f"{prefix}::{name}"
+    }
+    return name.clone()
+}
+
+fn qualified_ty(ty: ref Ty, prefix: ref String, qualified: bool, declared: ref collections::BTreeSet[String], renames: ref collections::BTreeMap[String, String]) -> Ty {
+    let mut out = ty.clone()
+    if qualified {
+        out = qualify(ty, prefix, declared)
+    }
+    if renames.len() > 0 {
+        out = renamed(out, renames)
+    }
+    return out
+}

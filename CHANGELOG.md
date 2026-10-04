@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.408] — 2026-10-04
+
+**A package's ledger is taken in and published in Nikaia** (ADR-100,
+ADR-286, ADR-294, #125). What a build does with a package's ledger as a
+whole moves into `tools/ledger_ops.nika`:
+
+* the entries it publishes, without its own dependencies' (ADR-286 D21);
+* whether it may be believed against the sources it was derived from
+  (ADR-100 D3), where *nothing recorded* never reads as *nothing changed*;
+* taking it into the program's one ledger under the names a caller writes,
+  its types qualified and renamed to this build's words (ADR-286 D20).
+
+A trait method's declared entry joins `tools/declared.nika` (ADR-295 D9).
+27.6 % of the toolchain is Nikaia.
+
 ## [0.0.407] — 2026-10-03
 
 **What a declaration says is read in Nikaia** (ADR-294, #125). The type a
