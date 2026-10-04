@@ -1975,3 +1975,34 @@ fn main() {
         "a none b x own\nx own\n"
     );
 }
+
+/// **A nested choice beside a `null` is `Some(…)` where its values are
+/// made** (#410): an inner `if` was written below as one, and the wrap put
+/// around it never reached its branches, so both went to `rustc` as `String`
+/// where the choice is a `String?`.
+#[test]
+fn a_nested_choice_beside_a_null_wraps_its_inner_branches() {
+    let source = r#"enum Shape {
+    Named(String, Vec[String]),
+    Other,
+}
+
+fn first(shape: ref Shape) -> String? {
+    return match shape {
+        Shape::Named(name, args) => if name == "Vec" { if args.len() > 0 { args[0].clone() } else { "?" } } else { null },
+        else => null,
+    }
+}
+
+fn main() {
+    let args: Vec[String] = ["i64"]
+    let none: Vec[String] = []
+    println(first(Shape::Named("Vec", args)) ?? "none")
+    println(first(Shape::Named("Vec", none)) ?? "none")
+    println(first(Shape::Named("Map", [])) ?? "none")
+    println(first(Shape::Other) ?? "none")
+}
+"#;
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    assert_eq!(ran("nested-choice-null", source), "i64\n?\nnone\nnone\n");
+}

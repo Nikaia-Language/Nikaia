@@ -18810,10 +18810,51 @@ impl<'a> Checker<'a> {
                 if literals && a_text_literal(&Some(*arm)) {
                     self.text_literal(&text, arm, true);
                 }
-                self.checked.some_tails.insert(*arm as *const Expr as usize);
+                self.some_at_the_tails(arm);
             }
         }
         Some(Ty::Nullable(Box::new(plain.unwrap_or(Ty::Unknown))))
+    }
+
+    /// **A plain arm is `Some(…)` where its value is made** (#410): an arm
+    /// that is itself an `if`, a `match` or a block is written below as one,
+    /// and a wrap around it never reached the values its branches hand back -
+    /// `if c { if d { a } else { b } } else { null }` lowered its inner
+    /// branches as `String` where the choice is a `String?`. So the wrap goes
+    /// to each branch's last value, and to the arm itself only where it is
+    /// none of the three.
+    fn some_at_the_tails(&mut self, arm: &Expr) {
+        match arm {
+            Expr::If {
+                then_branch,
+                else_branch: Some(otherwise),
+                ..
+            } => {
+                for block in [then_branch, otherwise] {
+                    match tail_of(block) {
+                        Some(tail) => self.some_at_the_tails(tail),
+                        None => {
+                            self.checked.some_tails.insert(arm as *const Expr as usize);
+                            return;
+                        }
+                    }
+                }
+            }
+            Expr::Block(block) if tail_of(block).is_some() => {
+                if let Some(tail) = tail_of(block) {
+                    self.some_at_the_tails(tail);
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for each in arms {
+                    self.some_at_the_tails(&each.body);
+                }
+            }
+            Expr::LitNull => {}
+            _ => {
+                self.checked.some_tails.insert(arm as *const Expr as usize);
+            }
+        }
     }
 
     fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {

@@ -4,6 +4,16 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.414] — 2026-10-04
+
+**A nested choice beside a `null` is `Some(…)` where its values are made**
+(Part I 2.3, #410). An arm that meets a `null` arm is wrapped below; where that
+arm was itself an `if`, a `match` or a block, the wrap was put around the
+whole, and the lowering writes such an arm as one - so `if c { if d { a } else
+{ b } } else { null }` handed its inner branches to `rustc` as `String` where
+the choice is a `String?`. The wrap now goes to each branch's last value. Found
+moving the checker's type helpers into Nikaia (0.0.412), which wrote around it.
+
 ## [0.0.413] — 2026-10-04
 
 **A file operation on an idle runtime runs on the calling thread** (ADR-263
