@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.423] — 2026-10-04
+
+**ADR-314 is decided: what a grammar matched and what a callee promises are
+facts of the walk** (Option B, not built). At `remove-overflow-checks:aggressive`
+the walk will enter a grammar's actions knowing what each binding matched - a
+`digit{1,2}` is one or two digits, and a `dec[T]` over `n` digits is below
+`10^n`, which is how 1BRC's `whole * 10` will be proved now that its action
+reads `dec[i32]` (0.0.419); a `char`'s code is a number; a callee's `ensures`
+holds at the call, and a `sync` function that is one `return e` publishes
+`result == e`. Walking a short loop turn by turn, the proposal's third fact, is
+left open: its one site was the loop `dec` replaced.
+
 ## [0.0.422] — 2026-10-04
 
 **A grammar's entries are `entry rule`, and `pub` belongs to the grammar**
