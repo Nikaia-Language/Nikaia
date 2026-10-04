@@ -300,7 +300,12 @@ mod tests {
             }
         }
         let ascii = |n: usize| vec![b'a'; n];
-        for case in &cases {
+        // Miri runs every case some thousand times slower: about 150 000 of
+        // them, four times each, held the CI job past its 90 minutes. Under
+        // Miri a spread of them is checked - what it adds is the memory model,
+        // and the whole set runs on every `cargo test`.
+        let stride = if cfg!(miri) { 211 } else { 1 };
+        for case in cases.iter().step_by(stride) {
             for (head, tail) in [(0, 0), (100, 0), (61, 70), (127, 3)] {
                 let mut bytes = ascii(head);
                 bytes.extend_from_slice(case);
