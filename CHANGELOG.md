@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.417] — 2026-10-04
+
+**What a build-time expression comes to is Nikaia** (ADR-287, ADR-294, #125).
+The value the evaluator computes - a number, a truth value, text, a list, a
+tuple, a variant or a struct of the program's own - is
+`tools/build_values.nika`'s `BuildValue`, and what an operator makes of two
+of them and what an index reads out of a list move with it. 29.1 % of the
+toolchain is Nikaia.
+
+**A type holding one declared in another file compares**: whether a type has
+`==` was asked of the types of its own file, so a struct or enum carrying one
+from a file beside it lost its `PartialEq` below and refused a comparison.
+The types of the files beside it are now asked too.
+
 ## [0.0.416] — 2026-10-04
 
 **A build-time integer is a magnitude and a sign** (ADR-287, ADR-294 D11,
