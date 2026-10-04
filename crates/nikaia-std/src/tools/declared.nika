@@ -232,3 +232,47 @@ pub fn default_text(expr: ref Expr) -> String {
         else => "",
     }
 }
+
+/// **A trait's method, as its declaration makes it** (ADR-295 D9, ADR-288
+/// D24): the word `sync` asserts it, and its absence is the claim that it may
+/// pause. A described foreign function's bounds are Rust's, and a Nikaia
+/// caller picks no type for one, so nothing in the signature is generic.
+pub fn declared_trait_method(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], trait_name: ref String, method: ref TraitMethod, public: bool) -> DeclaredFn {
+    let mut params: Vec[(String, Ty)] = []
+    if method.receiver != null {
+        let subject = method.receiver?.clone() ?? Receiver { is_ref: false, is_mut: false }
+        // An extern block's declarations are keyed under an empty name, and
+        // their receiver is named by it as well.
+        let owner = trait_name.clone()
+        let self_name: String = "self"
+        params.push((self_name, Ty::Named { name: owner, args: [], view: subject.is_ref }))
+    }
+    let mut mutable: Vec[String] = []
+    for arg in method.args {
+        let arg_name = names.resolve(arg.name).clone()
+        params.push((arg_name.clone(), written_ty(names, aliases, arg.ty)))
+        if arg.mutable {
+            mutable.push(arg_name)
+        }
+    }
+    let mut options: Vec[ConfigContract] = []
+    for option in method.config {
+        options.push(ConfigContract { name: names.resolve(option.name).clone(), ty: written_ty(names, aliases, option.ty), default: default_text(option.default) })
+    }
+    let result = optional_ty(names, aliases, method.ret_type)
+    let mut contract = FnContract::empty()
+    contract.public = public
+    if method.is_sync {
+        contract.sync_claim = Sync::Asserted
+    }
+    if method.can_throw {
+        contract.fails_with = ["?"]
+    }
+    contract.signature = Signature { bounds: [], params: params, mutable: mutable, config: options, result: result }
+    return DeclaredFn { key: f"{trait_name}::{names.resolve(method.name)}", contract: contract }
+}
+
+fn optional_ty(names: ref winnow_grammar::InternerContext, aliases: ref collections::BTreeMap[String, String], ty: ref Type?) -> Ty? {
+    let written = ty ?? return null
+    return written_ty(names, aliases, written)
+}

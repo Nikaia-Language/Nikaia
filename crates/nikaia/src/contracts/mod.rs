@@ -254,31 +254,8 @@ impl LedgerOps for Ledger {
     /// `foreign` is the depending build's record of what words this package
     /// uses for packages of its own (`modules::Dependency::reachable`).
     fn published(&self, foreign: &BTreeSet<String>) -> Ledger {
-        let theirs = |key: &str| {
-            key.split_once("::")
-                .is_some_and(|(first, _)| foreign.contains(first))
-        };
-        Ledger {
-            functions: self
-                .functions
-                .iter()
-                .filter(|(key, _)| !theirs(key))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            types: self
-                .types
-                .iter()
-                .filter(|(key, _)| !theirs(key))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            traits: self
-                .traits
-                .iter()
-                .filter(|(key, _)| !theirs(key))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            ..self.clone()
-        }
+        // In Nikaia (`tools/ledger_ops.nika`, ADR-294, #125).
+        nikaia_std::tools::ledger_ops::published_entries(self, foreign)
     }
 
     /// Whether this ledger may be **believed** for the sources given, and which
@@ -297,21 +274,8 @@ impl LedgerOps for Ledger {
     /// with a ledger and **no sources** is the third row of D3's table and is
     /// not this function's question: nothing calls it with an empty `sources`.
     fn stale_against(&self, sources: &BTreeMap<String, String>) -> Vec<String> {
-        let mut moved: BTreeSet<String> = BTreeSet::new();
-        for (unit, hash) in sources {
-            if self.sources.get(unit) != Some(hash) {
-                moved.insert(unit.clone());
-            }
-        }
-        // A unit the ledger names and the package no longer has is as much a
-        // reason to derive again as one that changed: what left took its
-        // entries with it.
-        for unit in self.sources.keys() {
-            if !sources.contains_key(unit) {
-                moved.insert(unit.clone());
-            }
-        }
-        moved.into_iter().collect()
+        // In Nikaia (`tools/ledger_ops.nika`).
+        nikaia_std::tools::ledger_ops::stale_units(self, sources)
     }
 
     /// Every entry of `other`, under `module::`.
@@ -358,108 +322,8 @@ impl LedgerOps for Ledger {
         renames: &std::collections::BTreeMap<String, String>,
         other: Ledger,
     ) {
-        let declared: std::collections::BTreeSet<String> = other.types.keys().cloned().collect();
-        // **What a function field's stored code reaches** (ADR-230 D1), under
-        // the name a caller writes the type with.
-        for (field, holds) in &other.code_locks {
-            let key = match module {
-                Some(module) if declared.contains(field.split('.').next().unwrap_or("")) => {
-                    format!("{module}::{field}")
-                }
-                _ => field.clone(),
-            };
-            self.code_locks.insert(key, *holds);
-        }
-        // **This package's own word for itself is never renamed.** Qualifying has
-        // just put `module::` in front of every type this package declares, and a
-        // package may perfectly well key one of its dependencies with the word a
-        // consumer happens to use for the package itself. Dropping that key here
-        // is cheaper than asking every call site to know about it, and it costs
-        // nothing: a name this package declares is this package's whatever
-        // anybody else calls that word.
-        let renames: std::collections::BTreeMap<String, String> = renames
-            .iter()
-            .filter(|(from, _)| Some(from.as_str()) != module)
-            .map(|(from, to)| (from.clone(), to.clone()))
-            .collect();
-        let qualify = |ty: &ty::Ty| {
-            let ty = match module {
-                Some(module) => ty::qualify(ty, module, &declared),
-                None => ty.clone(),
-            };
-            match renames.is_empty() {
-                true => ty,
-                false => ty::renamed(&ty, &renames),
-            }
-        };
-        for (name, mut contract) in other.functions {
-            if let Some(signature) = contract.signature.as_mut() {
-                for (_, ty) in signature.params.iter_mut() {
-                    *ty = qualify(ty);
-                }
-                for option in signature.config.iter_mut() {
-                    option.ty = qualify(&option.ty);
-                }
-                if let Some(result) = signature.result.as_mut() {
-                    *result = qualify(result);
-                }
-            }
-            let key = match module {
-                Some(module) => format!("{module}::{name}"),
-                None => name,
-            };
-            self.functions.insert(key, contract);
-        }
-        for (name, mut contract) in other.types {
-            for field in contract.fields.iter_mut() {
-                field.ty = qualify(&field.ty);
-            }
-            let key = match module {
-                Some(module) => format!("{module}::{name}"),
-                None => name,
-            };
-            self.types.insert(key, contract);
-        }
-        // Kap 4.7: a trait's methods went into `functions` above, under
-        // `Summarize::summary`, and were qualified with the rest. This carries
-        // the **names**, which is what says `Summarize` is a trait at all
-        // ([ADR-295](../../../docs/specification/adr/adr-295.md) D8).
-        //
-        // Measured the hard way: without it a one-file program's bound resolved
-        // twice and failed the third time, because the program's ledger is
-        // absorbed from the unit's and this map was the one thing left behind.
-        for (trait_name, types) in other.implementations {
-            // **Both spellings, on both sides**, because the question is asked
-            // from both: inside the package the `impl` is `Handler for Dog`, and
-            // to a consumer it is `pets::Handler for pets::Dog`. A bound may name
-            // a path since [ADR-295](../../../docs/specification/adr/adr-295.md)
-            // D1, so the qualified half is what a consumer's bound looks the
-            // answer up under — and an extra spelling can only make the check
-            // fail *open*, which is the side [Part III
-            // C.4](../../../docs/specification/30-nikaia-tooling.md) puts the
-            // benefit of the doubt on.
-            let mut widened: BTreeSet<String> = types.clone();
-            if let Some(module) = module {
-                widened.extend(types.iter().map(|ty| format!("{module}::{ty}")));
-            }
-            let names = match module {
-                Some(module) => vec![format!("{module}::{trait_name}"), trait_name],
-                None => vec![trait_name],
-            };
-            for name in names {
-                self.implementations
-                    .entry(name)
-                    .or_default()
-                    .extend(widened.iter().cloned());
-            }
-        }
-        for (name, methods) in other.traits {
-            let key = match module {
-                Some(module) => format!("{module}::{name}"),
-                None => name,
-            };
-            self.traits.insert(key, methods);
-        }
+        // In Nikaia (`tools/ledger_ops.nika`, ADR-294, #125).
+        nikaia_std::tools::ledger_ops::absorb_into(self, module, renames, &other);
     }
 
     /// The contracts, and the type checker's pass that helped produce them.
@@ -1103,73 +967,15 @@ fn trait_method(
     method: &crate::ast::TraitMethod,
     public: bool,
 ) -> (String, FnContract) {
-    let mut params: Vec<(String, ty::Ty)> = Vec::new();
-    if let Some(receiver) = &method.receiver {
-        params.push((
-            "self".to_string(),
-            receiver_type(parsed, receiver, Some(trait_name)),
-        ));
-    }
-    params.extend(method.args.iter().map(|a| {
-        (
-            parsed.text(a.name).to_string(),
-            ty::Ty::from_ast(parsed, &a.ty),
-        )
-    }));
-    (
-        format!("{trait_name}::{}", parsed.text(method.name)),
-        FnContract {
-            public,
-            // ADR-288 D24: the declaration's own word, and its absence is the
-            // claim that it may pause.
-            sync_claim: match method.is_sync {
-                true => Sync::Asserted,
-                false => Sync::No,
-            },
-            fails_with: if method.can_throw {
-                vec![UNNAMED_ERROR.to_string()]
-            } else {
-                Vec::new()
-            },
-            signature: Some(Signature {
-                // A described foreign function's bounds are Rust's, and a Nikaia
-                // caller picks no type for one: the describer writes the
-                // signature and nothing in it is generic.
-                bounds: Vec::new(),
-                params,
-                mutable: method
-                    .args
-                    .iter()
-                    .filter(|a| a.mutable)
-                    .map(|a| parsed.text(a.name).to_string())
-                    .collect(),
-                config: method
-                    .config
-                    .iter()
-                    .map(|c| ConfigContract {
-                        name: parsed.text(c.name).to_string(),
-                        ty: ty::Ty::from_ast(parsed, &c.ty),
-                        default: literal_text(parsed, &c.default),
-                    })
-                    .collect(),
-                result: method
-                    .ret_type
-                    .as_ref()
-                    .map(|t| ty::Ty::from_ast(parsed, t)),
-            }),
-            ..FnContract::empty()
-        },
-    )
-}
-
-fn receiver_type(parsed: &Parsed, receiver: &crate::ast::Receiver, target: Option<&str>) -> ty::Ty {
-    let _ = parsed;
-    let name = target.unwrap_or("Self");
-    if receiver.is_ref {
-        ty::Ty::view(name)
-    } else {
-        ty::Ty::named(name)
-    }
+    // In Nikaia (`tools/declared.nika`, ADR-294, #125).
+    let declared = nikaia_std::tools::declared::declared_trait_method(
+        &parsed.interner,
+        &parsed.aliases,
+        trait_name,
+        method,
+        public,
+    );
+    (declared.key, declared.contract)
 }
 
 /// What produced the contracts: this compiler, not the one it emits Rust for.
@@ -1184,17 +990,6 @@ pub fn derived_path(path: &std::path::Path) -> std::path::PathBuf {
 
 fn toolchain() -> String {
     format!("nikaia {}", env!("CARGO_PKG_VERSION"))
-}
-
-/// A literal, written back the way the source wrote it.
-///
-/// Only a literal reaches here - the grammar allows nothing else as a default -
-/// and Nikaia spells every one of them the way the language below does
-/// (ADR-296 D17), which is what lets a ledger record the text and an emitter
-/// print it.
-fn literal_text(parsed: &Parsed, expr: &crate::ast::Expr) -> String {
-    let _ = parsed;
-    nikaia_std::tools::declared::default_text(expr)
 }
 
 /// A value that may itself hold a quote - which a signature does, the moment an
