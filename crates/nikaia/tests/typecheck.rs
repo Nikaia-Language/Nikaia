@@ -1313,6 +1313,31 @@ fn a_constant_that_no_type_holds_is_refused_in_this_language_s_words() {
     );
 }
 
+/// **An operation a declared operand pins, past the 65 bits** - in an `f"…"`
+/// hole, where no `let` stands beside it (issue #176) - is said as what it is
+/// past, heading the way its sign goes: the checker counts in
+/// `integers.nika`'s magnitude and sign, and a step that leaves them has no
+/// number to name ([ADR-294](../../../docs/specification/adr/adr-294.md) D11).
+#[test]
+fn an_operation_past_every_type_is_said_with_its_sign() {
+    let up = findings(
+        "fn main() {\n    let a: u64 = 18446744073709551615\n    println(f\"{a * 2}\")\n}\n",
+    );
+    assert!(
+        up.iter()
+            .any(|f| f.code == "NK1116" && f.message.contains("more than 18446744073709551615")),
+        "{up:#?}"
+    );
+    let down = findings(
+        "fn main() {\n    let a: i64 = -9223372036854775807\n    println(f\"{a * 9223372036854775807}\")\n}\n",
+    );
+    assert!(
+        down.iter()
+            .any(|f| f.code == "NK1116" && f.message.contains("less than -18446744073709551615")),
+        "{down:#?}"
+    );
+}
+
 /// **A declared operand holds every step to its type**
 /// ([ADR-294](../../../docs/specification/adr/adr-294.md) D11, the refinement):
 /// `a + a - a` ends inside an `i32`, and its first step does not - which the

@@ -163,22 +163,6 @@ use nikaia_std::tools::integers as int;
 /// with two of them written in Nikaia (`tools/integers.nika`).
 pub use nikaia_std::tools::integers::Integer;
 
-/// An integer value from a number the checker keeps.
-pub fn int(n: i128) -> Value {
-    Value::Int(int::integer(
-        u64::try_from(n.unsigned_abs()).unwrap_or(u64::MAX),
-        n < 0,
-    ))
-}
-
-/// The integer as the checker counts, in its `i128`.
-pub fn integer_value(n: &Integer) -> i128 {
-    match n.negative {
-        true => -i128::from(n.magnitude),
-        false => i128::from(n.magnitude),
-    }
-}
-
 pub type Known<'a> = &'a (dyn Fn(&str) -> Option<Value> + Sync);
 
 /// The evaluator, over one unit's items.

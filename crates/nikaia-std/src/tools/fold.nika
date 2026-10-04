@@ -59,7 +59,11 @@ comptime U16_HIGH: u64 = 65535
 /// Whether `c` is a number of the integer type `ty`. A name this does not
 /// know is not claimed to hold anything.
 pub fn fits(c: ref Constant, ty: ref String) -> bool sync {
-    let n = c.value
+    return integer_fits(c.value, ty)
+}
+
+/// Whether `n` is a number of the integer type `ty`, as `fits` asks it.
+pub fn integer_fits(n: ref Integer, ty: ref String) -> bool sync {
     return match ty {
         "i64" => integer_as_count(n) != null,
         "i32" => fits_an_i32(n),

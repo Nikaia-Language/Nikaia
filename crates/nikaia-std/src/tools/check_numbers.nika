@@ -1,0 +1,82 @@
+// crates/nikaia-std/src/tools/check_numbers.nika
+//
+// **A number and the type it has to fit** (ADR-285, Part III C.3's `NK1116`),
+// moved from the checker (ADR-294, #125). The number is `integers.nika`'s
+// `Integer`; a fold that left the 65 bits every literal fits in has no number
+// to name (ADR-294 D11), and is said as what it is past, which is the widest
+// there is.
+
+// The widest number there is, which a fold past the 65 bits is said against.
+comptime U64_HIGHEST: u64 = 18446744073709551615
+
+/// The lowest number of each integer type `NK1116` measures against, as its
+/// note writes it.
+fn the_low_end_of(ty: ref String) -> String {
+    return match ty {
+        "i32" => "-2147483648",
+        "u8" => "0",
+        "u32" => "0",
+        "u64" => "0",
+        else => "-9223372036854775808",
+    }
+}
+
+/// The highest, likewise.
+fn the_high_end_of(ty: ref String) -> String {
+    return match ty {
+        "i32" => "2147483647",
+        "u8" => "255",
+        "u32" => "4294967295",
+        "u64" => "18446744073709551615",
+        else => "9223372036854775807",
+    }
+}
+
+/// **`NK1116`** for a number and the type it has to fit, where it does not;
+/// nothing where it does, and nothing for a type this does not measure.
+/// `beyond` is a fold that left the 65 bits, heading the way `value`'s sign
+/// says; `bare` a literal standing alone, which says its own digits; `why` a
+/// note saying where the type came from, for one the uses decided (ADR-285).
+pub fn a_number_that_does_not_fit(value: ref Integer, beyond: bool, bare: bool, ty: ref String, span: Span, why: String?) -> Finding? {
+    if ty != "i32" && ty != "i64" && ty != "u8" && ty != "u32" && ty != "u64" {
+        return null
+    }
+    if !beyond && integer_fits(value, ty) {
+        return null
+    }
+    let article = an_or_a(ty)
+    // A bare literal says its own digits; anything folded says what it came
+    // to, because the expression is on the line the caret is under and the
+    // number is the part the reader cannot see.
+    let written = integer_text(value)
+    let mut comes_to = written.clone()
+    if beyond && value.negative {
+        comes_to = f"less than -{U64_HIGHEST}"
+    } else if beyond {
+        comes_to = f"more than {U64_HIGHEST}"
+    }
+    let mut message = f"This comes to {comes_to}, which doesn't fit in {article} `{ty}`."
+    if bare {
+        message = f"`{written}` doesn't fit in {article} `{ty}`."
+    }
+    let low = the_low_end_of(ty)
+    let high = the_high_end_of(ty)
+    // **`a u8` and `an i32`**, because the article is read off how the name
+    // is *said*: a reader says "you-eight" and "eye-thirty-two".
+    let mut notes: Vec[String] = [f"{article} `{ty}` holds {low} to {high}."]
+    if why != null {
+        notes.push(why ?? "")
+    }
+    let help: String = match ty {
+        "i32" => "Use `i64` where the number needs more room.",
+        "u8" => "A `u8` is one byte. Use `i32` or `i64` where the number is a count rather than a byte.",
+        "u32" => "Use `u64` where the number needs more room.",
+        "u64" => "A `u64` is the widest number Nikaia has, so the computation has to stay inside it.",
+        else => if !beyond && !value.negative && value.magnitude > 0 {
+            "A number this big only fits a `u64`. Write the type: `let x: u64 = …`."
+        } else {
+            "An `i64` is the widest signed number Nikaia has, so the computation has to stay inside it."
+        },
+    }
+    return refusal("NK1116", span, message, notes, help)
+}
