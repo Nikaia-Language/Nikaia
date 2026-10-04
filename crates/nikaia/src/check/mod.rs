@@ -22064,9 +22064,12 @@ impl<'a> Checker<'a> {
         // `comptime D = C + 1` above `comptime C = 1` in a body is `NK1117`,
         // because a body is read top to bottom. `NK1127` beside it - *can't be
         // computed while the program is built* - named the wrong cause.
+        // A **name**, and not a module without its `use`: `io::read_to_string()`
+        // is `NK1117` for the missing line and still `NK1127`, because a call
+        // into `std` cannot be computed while the program is built either way.
         let said_a_name = self.checked.findings[walked_from..]
             .iter()
-            .any(|f| f.code == "NK1117");
+            .any(|f| f.code == "NK1117" && f.message.ends_with("` isn't declared anywhere."));
         let bound = self.parsed.text(name).to_string();
         self.nameable(&bound, span, "a `comptime`");
         let want = ty.as_ref().map(|ty| self.declared(ty, span));
