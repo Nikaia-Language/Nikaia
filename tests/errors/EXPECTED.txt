@@ -59,7 +59,7 @@ Expected `}` here, but found `{`. (line 2, column 32)
 (parses)
 
 === E3
-`par_fold` takes four arguments. (line 2, column 41)
+`par_fold` takes four arguments. (line 2, column 43)
 
 === F1
 This string is never closed. (line 2, column 13)

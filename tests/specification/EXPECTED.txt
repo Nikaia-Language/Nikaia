@@ -92,7 +92,7 @@
 20-nikaia-advance.md #8 fragment (as written)  rule expr -> Expr # "expression" =
 20-nikaia-advance.md #9 fragment (as written)  // If parsing fails inside the block, skip ahead to the…
 20-nikaia-advance.md #10 fragment (as written)  // Up to ";" - or to the end of the frame, whichever co…
-20-nikaia-advance.md #11 fragment (as written)  pub rule file -> Summary =
+20-nikaia-advance.md #11 fragment (as written)  entry rule file -> Summary =
 20-nikaia-advance.md #12 refused (a body) [NK1117,NK2605]  let data = fs::map(path, fs::Root::Anywhere)
 20-nikaia-advance.md #13 fragment (as written) [about-a-refusal sketch]  fn process_image(path: String) -> Image { ... }
 20-nikaia-advance.md #14 refused (items, then a body) [about-a-refusal NK1117,NK1135]  use std::fs

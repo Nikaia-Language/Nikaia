@@ -777,7 +777,7 @@ fn the_old_from_form_is_refused_with_the_call_in_the_message() {
 
 /// **A rule is not `pub` on its own** (ADR-296 D25): `entry` says the program
 /// may call it, and offering a grammar to other packages is `pub grammar`'s,
-/// for all its entries at once. Every grammar written before 0.0.421 said
+/// for all its entries at once. Every grammar written before 0.0.422 said
 /// `pub rule`, so the refusal names both words rather than failing at `rule`.
 #[test]
 fn pub_rule_is_refused_and_the_message_says_entry() {
