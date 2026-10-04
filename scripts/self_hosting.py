@@ -86,6 +86,7 @@ COMPILER_NIKA = {
     "check_words.nika": "check: the words its refusals are made of - an article, a count, a list of names, the nearest spelling, the note on a word another language reserves - and which lookups lend their key (0.0.411)",
     "check_types.nika": "check: what it asks of one type by itself - whether it moves or copies, a view of it and what a view is of, what a hull holds and what goes into one, lists, collections and text, and the way out of a mismatch (0.0.412), and what a `for` binds (0.0.415)",
     "check_calls.nika": "check: what it reads off a callee's signature - the arguments a call passes, what the receiver's and the arguments' types bind, and what a sequence a call hands back is as a whole (0.0.415)",
+    "integers.nika": "build_time: an integer while the program is built - a magnitude and a sign - and what the evaluator does with two of them (0.0.416)",
 }
 
 
