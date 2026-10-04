@@ -1,0 +1,174 @@
+// crates/nikaia-std/src/tools/written.nika
+//
+// **An expression written back the way the source wrote it** - the parser
+// keeps no text, and an `assert`'s failure names its condition (ADR-269 D2),
+// a refusal quotes the call it is about - moved from the compiler's checker
+// (ADR-294, #125). What this does not spell out it writes as `…`, which a
+// reader recognises and nothing parses.
+
+/// An expression, as the source wrote it: parentheses where the tree needs
+/// them and nowhere else.
+pub fn written_expression(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> String {
+    return match expr {
+        Expr::LitInt { value, negative } => if negative && value > 0 { f"-{value}" } else { f"{value}" },
+        Expr::LitFloat(text) => text.clone(),
+        Expr::LitBool(value) => if value { "true" } else { "false" },
+        Expr::LitChar(text) => f"'{text}'",
+        Expr::LitStr { text, .. } => f"\"{text}\"",
+        Expr::LitInterpolated { parts } => {
+            let mut body: String = ""
+            for part in parts {
+                match part {
+                    FPart::Text(text) => body.push_str(text),
+                    FPart::Hole { expr, spec, .. } => body.push_str(hole_written(names, expr, spec)),
+                }
+            }
+            f"f\"{body}\""
+        }
+        Expr::LitNull => "null",
+        Expr::Variable(name) => names.resolve(name).clone(),
+        Expr::Path(segments) => path_written(names, segments),
+        Expr::Field { base, name } => f"{operand(names, base)}.{names.resolve(name)}",
+        Expr::SafeField { base, name } => f"{operand(names, base)}?.{names.resolve(name)}",
+        Expr::Index { base, index } => f"{operand(names, base)}[{written_expression(names, index)}]",
+        Expr::Call { func, args, config } => f"{written_expression(names, func)}{call_written(names, args, config)}",
+        Expr::MethodCall { receiver, method, args, config } => f"{operand(names, receiver)}.{names.resolve(method)}{call_written(names, args, config)}",
+        Expr::SafeMethod { receiver, method, args, config } => f"{operand(names, receiver)}?.{names.resolve(method)}{call_written(names, args, config)}",
+        Expr::Unary { op, expr } => f"{unary_word(op)}{operand(names, expr)}",
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let here = binds(op)
+            f"{side(names, lhs, here, false)} {binary_word(op)} {side(names, rhs, here, true)}"
+        }
+        Expr::Coalesce { value, fallback } => f"{operand(names, value)} ?? {operand(names, fallback)}",
+        Expr::Tuple(items) => f"({all_written(names, items)})",
+        Expr::ListLit { items, .. } => f"[{all_written(names, items)}]",
+        Expr::Range { start, end, inclusive } => {
+            let dots = if inclusive { ".." } else { "..<" }
+            f"{operand(names, start)}{dots}{operand(names, end)}"
+        }
+        else => "…",
+    }
+}
+
+fn hole_written(names: ref winnow_grammar::InternerContext, expr: ref Expr, spec: ref String?) -> String {
+    let format = spec ?? return f"{{{written_expression(names, expr)}}}"
+    return f"{{{written_expression(names, expr)}:{format}}}"
+}
+
+fn path_written(names: ref winnow_grammar::InternerContext, segments: ref Vec[winnow_grammar::Symbol]) -> String {
+    let mut parts: Vec[String] = []
+    for segment in segments {
+        parts.push(names.resolve(segment).clone())
+    }
+    return parts.join("::")
+}
+
+fn all_written(names: ref winnow_grammar::InternerContext, items: ref Vec[Expr]) -> String {
+    let mut parts: Vec[String] = []
+    for item in items {
+        parts.push(written_expression(names, item))
+    }
+    return parts.join(", ")
+}
+
+fn call_written(names: ref winnow_grammar::InternerContext, args: ref Vec[Expr], config: ref Vec[ConfigArg]) -> String {
+    if config.len() == 0 {
+        return f"({all_written(names, args)})"
+    }
+    let mut options: Vec[String] = []
+    for option in config {
+        options.push(f"{names.resolve(option.name)}: {written_expression(names, option.value)}")
+    }
+    if args.len() == 0 {
+        return f"(; {options.join(", ")})"
+    }
+    return f"({all_written(names, args)}; {options.join(", ")})"
+}
+
+/// A side that binds looser than the operator it stands under, written in
+/// the parentheses it needed.
+fn operand(names: ref winnow_grammar::InternerContext, expr: ref Expr) -> String {
+    return match expr {
+        Expr::Binary { .. } => f"({written_expression(names, expr)})",
+        Expr::Coalesce { .. } => f"({written_expression(names, expr)})",
+        Expr::Cast { .. } => f"({written_expression(names, expr)})",
+        else => written_expression(names, expr),
+    }
+}
+
+/// A side of a binary operator: parenthesised where it binds looser than this
+/// one, or as loosely on the right.
+fn side(names: ref winnow_grammar::InternerContext, expr: ref Expr, here: i64, right: bool) -> String {
+    return match expr {
+        Expr::Binary { op, .. } => {
+            let inner = binds(op)
+            if inner < here || (right && inner == here) { f"({written_expression(names, expr)})" } else { written_expression(names, expr) }
+        }
+        else => operand(names, expr),
+    }
+}
+
+fn binds(op: ref BinaryOp) -> i64 {
+    return match op {
+        BinaryOp::Or => 1,
+        BinaryOp::And => 2,
+        BinaryOp::Eq => 3,
+        BinaryOp::Ne => 3,
+        BinaryOp::Lt => 3,
+        BinaryOp::Le => 3,
+        BinaryOp::Gt => 3,
+        BinaryOp::Ge => 3,
+        BinaryOp::BitOr => 4,
+        BinaryOp::BitXor => 5,
+        BinaryOp::BitAnd => 6,
+        BinaryOp::Shl => 7,
+        BinaryOp::Shr => 7,
+        BinaryOp::Add => 8,
+        BinaryOp::Sub => 8,
+        BinaryOp::Mul => 9,
+        BinaryOp::Div => 9,
+        BinaryOp::Rem => 9,
+    }
+}
+
+fn binary_word(op: ref BinaryOp) -> String {
+    return match op {
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Le => "<=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Ge => ">=",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+    }
+}
+
+fn unary_word(op: ref UnaryOp) -> String {
+    return match op {
+        UnaryOp::Neg => "-",
+        UnaryOp::Not => "!",
+        UnaryOp::Ref => "&",
+    }
+}
+
+/// A pattern's path as the source wrote it, with `(…)` or `{ … }` where it
+/// takes a variant apart.
+pub fn written_pattern(names: ref winnow_grammar::InternerContext, pattern: ref MatchPattern) -> String {
+    return match pattern {
+        MatchPattern::Path(path) => path_written(names, path),
+        MatchPattern::Tuple { path, .. } => f"{path_written(names, path)}(…)",
+        MatchPattern::Named { path, .. } => f"{path_written(names, path)} {{ … }}",
+        else => "this pattern",
+    }
+}
