@@ -67,6 +67,9 @@ fn output(purpose: &str, source: &str) -> (String, std::time::Duration) {
 /// **D2: five names, and they are methods on the integer** — which is the
 /// spelling Part II 12.4 already wrote, chosen by whoever wrote the sentence
 /// rather than by this record.
+///
+/// The number is written with the type it takes (#417): `5.seconds()` has an
+/// `i32` and an `i64` method below, so the number alone was ambiguous there.
 #[test]
 fn the_five_names_are_methods_on_an_integer() {
     for name in ["seconds", "millis", "micros", "minutes", "hours"] {
@@ -84,7 +87,7 @@ fn the_five_names_are_methods_on_an_integer() {
             findings(&source)
         );
         assert!(
-            lowered(&source).contains(&format!("let span = 5.{name}();")),
+            lowered(&source).contains(&format!("let span = 5i32.{name}();")),
             "{name}\n{}",
             lowered(&source)
         );
@@ -115,7 +118,7 @@ fn a_suffix_is_not_a_duration() {
 fn a_span_is_not_lent() {
     let rust = lowered("use std::time\n\nfn main() { time::sleep(50.millis()) }\n");
     assert!(
-        rust.contains("time::sleep(50.millis())"),
+        rust.contains("time::sleep(50i32.millis())"),
         "a duration copies, so nothing lends it\n{rust}"
     );
     assert!(!rust.contains("time::sleep(&"), "{rust}");
@@ -133,7 +136,7 @@ fn a_span_is_not_lent() {
 #[test]
 fn a_sleep_carries_an_await() {
     let rust = lowered("use std::time\n\nfn main() { time::sleep(1.millis()) }\n");
-    assert!(rust.contains("time::sleep(1.millis()).await;"), "{rust}");
+    assert!(rust.contains("time::sleep(1i32.millis()).await;"), "{rust}");
     assert!(rust.contains("async fn __nikaia_main()"), "{rust}");
 }
 

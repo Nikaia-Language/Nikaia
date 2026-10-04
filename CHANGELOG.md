@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.434] — 2026-10-04
+
+**A method on a written number takes the type its use asks for** (Part I 2.4,
+ADR-285, #417). A number written as a method's receiver had no type here, so
+`(-7).wrapping_add(2)` was a method on nothing known: the function around it
+was taken to pause and lowered `async`, the language below could not tell
+which integer it was, and the negative literal lost its parentheses -
+`-7.wrapping_add(2)` is `-(7.wrapping_add(2))` below, a different number. The
+receiver now takes the integer type the first use of the call asks for - a
+`let`'s, a `return`'s, a parameter's, an assignment's - as `7 + 1` does, and the
+first type that holds it where nothing asks; the type is written on the
+literal, and a negative one stands in parentheses. `5.seconds()` is written
+`5i32.seconds()` below, where both integer types have the method.
+
 ## [0.0.433] — 2026-10-04
 
 **Fewer cuts of the text, and the rest seen to be safe** (winnow-grammar#23,
