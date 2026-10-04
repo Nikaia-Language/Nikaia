@@ -11037,6 +11037,24 @@ pub async fn rust_sources(src: &str) -> Result<collections::BTreeMap<String, Str
     Ok(out)
 }
 
+pub async fn program_sources(root: &str) -> Result<collections::BTreeMap<String, String>, nikaia_std::error::Thrown<io::IoError>> {
+    let mut out = collections::BTreeMap::new();
+    for name in fs::walk(root, &fs::Root::Anywhere).await? {
+        if !name.ends_with(".nika") || under_output(&name) { continue; }
+        let text = match fs::read_to_string(format!("{}/{}", root, name), &fs::Root::Anywhere).await {
+            Ok(value) => value,
+            Err(_error) => { continue; },
+        };
+        out.insert(name, text);
+    }
+    Ok(out)
+}
+
+fn under_output(name: &str) -> bool {
+    for part in name.split("/") { if part == "target" || part == "contracts" { return true; } }
+    false
+}
+
 
 // --- specbook.nika ---
 
@@ -17313,7 +17331,7 @@ pub mod signature {
 }
 pub mod sources {
     #[allow(unused_imports)]
-    pub use super::{rust_sources};
+    pub use super::{rust_sources, program_sources};
 }
 pub mod specbook {
     #[allow(unused_imports)]
