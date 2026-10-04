@@ -11,7 +11,8 @@
   If the push is rejected, rebase again and push again.
 * **Nobody pushes to `main`.** CI runs everything on each push to `develop`.
   When every job passes, the `promote` job fast-forwards `main` to that commit
-  (`.github/workflows/nikaia.yml`). `main` is always a commit that passed.
+  (`.github/workflows/nikaia.yml`) - that commit, not `develop`'s tip, which
+  may have moved on during the run. `main` is always a commit that passed.
 * **A red `develop` is fixed forward.** Whoever finds it red fixes it with the
   next commit, or reverts the commit that broke it. Until then `main` stays
   where it was, and work on `develop` goes on.
