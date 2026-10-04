@@ -61,6 +61,7 @@ pub fn report(
         bounds,
         overflow,
         &checked.std_lengths,
+        &checked.sized_lengths,
         &checked.arithmetic,
     );
     let mut walk = Walk {

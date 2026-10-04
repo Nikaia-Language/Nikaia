@@ -123,6 +123,7 @@ pub fn proven(
     level: BoundsChecks,
     overflow: OverflowChecks,
     lengths: &BTreeSet<usize>,
+    sized: &BTreeSet<usize>,
     arithmetic: &BTreeMap<usize, String>,
 ) -> Proven {
     let mut out = Proven::default();
@@ -193,6 +194,9 @@ pub fn proven(
         let mut walk = Walk {
             parsed,
             lengths,
+            sized,
+            axioms: BTreeMap::new(),
+            unsized_names: BTreeSet::new(),
             around: &around,
             arena: Arena::new(),
             proven: Proven::default(),
@@ -260,6 +264,20 @@ pub fn proven(
 }
 
 /// The variable of the proof that stands for `name.len()`.
+/// **No length of a container whose elements take space reaches this**
+/// (#383): each element takes a byte, and no target this compiler builds for
+/// addresses more than 2^57 bytes (x86-64 with five-level paging; aarch64 2^52,
+/// wasm32 2^32). One number for every target, with a margin of 8, because the
+/// target decides nothing about what a program means (ADR-037 D1). Were it
+/// ever false, a proved operation is `wrapping_*`: a wrong number, never
+/// undefined behaviour (ADR-306 D10).
+pub const LENGTH_BELOW: i64 = 1 << 60;
+
+/// The widest bound a proof of a whole number states (#444): far enough from
+/// `i64`'s ends that the solver, which counts in `i64`, can combine it with a
+/// length's bound without overflowing.
+const SOLVABLE: i64 = 1 << 62;
+
 fn length_of(name: &str) -> String {
     format!("{name}.len()")
 }
@@ -300,6 +318,16 @@ struct Walk<'a> {
     parsed: &'a Parsed,
     /// [`proven`]'s `lengths`.
     lengths: &'a BTreeSet<usize>,
+    /// [`proven`]'s `sized`: the lengths below 2^60 (#383).
+    sized: &'a BTreeSet<usize>,
+    /// **What every length the walk read of a container whose elements take
+    /// space is**, by the length's name: `0 <= len(x) <= 2^60` (#383). A fact
+    /// of every list, so it holds whatever the program did to it, and every
+    /// proof is handed it.
+    axioms: BTreeMap<String, [TermId; 2]>,
+    /// Names a length was read of where the elements may take no space: a
+    /// name read both ways - one `xs` shadowing another - gets no axiom.
+    unsized_names: BTreeSet<String>,
     /// The free functions' `mut` parameters and the methods of this program
     /// with a `mut` parameter.
     around: &'a Around,
@@ -539,9 +567,15 @@ impl Walk<'_> {
     /// Whether `goal` follows from what holds, on a certificate the checker
     /// accepts.
     fn proves(&self, facts: &Facts, goal: TermId) -> bool {
+        let mut all = facts.facts.clone();
+        for (name, axiom) in &self.axioms {
+            if !self.unsized_names.contains(name) {
+                all.extend(axiom.iter().copied());
+            }
+        }
         let query = Query {
             arena: &self.arena,
-            facts: &facts.facts,
+            facts: &all,
             goal,
         };
         match FourierMotzkin.check(&query, &Budget::default()) {
@@ -703,6 +737,13 @@ impl Walk<'_> {
         let (Some(lo), Some(hi)) = (bounds.lo, bounds.hi) else {
             return false;
         };
+        // **A goal the solver can state** (#444): the solver counts in `i64`
+        // and refuses on overflow, so `term <= i64::MAX` - negated, `term >=
+        // 2^63` - was never decided, and no `i64` or `u64` operation was ever
+        // proved. Inside `±2^62` is inside the type, and leaves the solver room
+        // to add facts as large as a length (`LENGTH_BELOW`) without
+        // overflowing; a value it does not cover keeps its check.
+        let (lo, hi) = (lo.max(-SOLVABLE), hi.min(SOLVABLE));
         if let Some(term) = self.lin(expr, facts) {
             let (low, high) = (self.arena.int(lo), self.arena.int(hi));
             let above = self.arena.ge(term, low);
@@ -809,7 +850,20 @@ impl Walk<'_> {
             } if args.is_empty() && self.text(*method) == "len" => match &**receiver {
                 Expr::Variable(name) if self.lengths.contains(&value_node(receiver)) => {
                     let length = length_of(self.text(*name));
-                    Some(self.arena.var(&length))
+                    let n = self.arena.var(&length);
+                    match self.sized.contains(&value_node(receiver)) {
+                        true if !self.axioms.contains_key(&length) => {
+                            let (zero, most) = (self.arena.int(0), self.arena.int(LENGTH_BELOW));
+                            let low = self.arena.ge(n, zero);
+                            let high = self.arena.le(n, most);
+                            self.axioms.insert(length, [low, high]);
+                        }
+                        true => {}
+                        false => {
+                            self.unsized_names.insert(length);
+                        }
+                    }
+                    Some(n)
                 }
                 _ => None,
             },
@@ -1606,6 +1660,33 @@ impl Walk<'_> {
                 if let Some(to) = to {
                     let len = self.arena.var(&length);
                     let fact = self.arena.eq(len, to);
+                    self.push(facts, fact);
+                }
+            }
+            // **`extend(other)` adds `other`'s length** (#383): a name only,
+            // whose length is whatever the walk knows of it - nothing, where
+            // it is not a list, which leaves this length unbounded.
+            //
+            // As intervals, read before either length is forgotten: `other`
+            // is handed over, and what is known of it goes with it.
+            ("extend", [Expr::Variable(other)]) if self.text(*other) != name => {
+                let mine = self.arena.var(&length);
+                let theirs = self.arena.var(&length_of(self.text(*other)));
+                let (mine, theirs) = (self.bounds_of(mine, facts), self.bounds_of(theirs, facts));
+                self.forget_length(facts, name);
+                let len = self.arena.var(&length);
+                if let (Some(a), Some(b)) = (mine.lo, theirs.lo)
+                    && let Some(lo) = a.checked_add(b)
+                {
+                    let lo = self.arena.int(lo);
+                    let fact = self.arena.ge(len, lo);
+                    self.push(facts, fact);
+                }
+                if let (Some(a), Some(b)) = (mine.hi, theirs.hi)
+                    && let Some(hi) = a.checked_add(b)
+                {
+                    let hi = self.arena.int(hi);
+                    let fact = self.arena.le(len, hi);
                     self.push(facts, fact);
                 }
             }

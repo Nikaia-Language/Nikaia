@@ -410,6 +410,23 @@ Rust, callgrind over a million rows of `benches/brc`'s generator: 481.3 M
 instructions to 476.5 M, **4.8 a row (1.0 %)**. `examples/calc`'s actions
 compute on numbers read from the input and can overflow; no proof applies.
 
+### 8.5 Counted again, with `--bounds` (0.0.450)
+
+`nikaia lower --bounds` (#389) over every `.nika` file of the repository that
+lowers alone (`tests/errors` aside), at `aggressive`, counted rather than read
+by hand. Before #383's length fact and #444's goal: 551 checks left standing.
+After: **442**. Of 479 indexes, 207 are proved; of 290 operations, 120.
+
+| what stopped the walk (`--bounds`) | sites |
+| :--- | ---: |
+| no fact bounds what it reads: a counter, a loop, a length, one list as long as another | 313 |
+| a field (#384) | 96 |
+| a list of lists (#385) | 25 |
+| a product of two unknowns (#386) | 8 |
+
+The first row is the report's catch-all. It holds #432's counters, #388's
+paired lists and every value read from outside, and is not one fact.
+
 ## 9. What this does not measure
 
 * **SMT-LIB.** The QF_LIA and QF_LRA benchmark sets are on Zenodo, which the

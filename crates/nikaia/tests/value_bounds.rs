@@ -432,3 +432,81 @@ fn main() {
     );
     prints("proved-compound-index", source, "33 39 b!\n");
 }
+
+/// **A length whose elements take space is below 2^60** (#383, ADR-306 D12),
+/// and an `i64` goal is stated inside ±2^62 so the solver can decide it
+/// (#444): `x.len() + 1`, a sum and a difference of lengths are proved; a
+/// product of two is not, and neither is the length of a list of a zero-sized
+/// type.
+#[test]
+fn a_length_is_below_two_to_the_sixty_where_its_elements_take_space() {
+    let source = "\
+enum One {
+    Only,
+}
+
+fn after(xs: ref Vec[i64]) -> i64 {
+    return xs.len() + 1
+}
+
+fn both(a: ref Vec[i64], b: ref String) -> i64 {
+    return a.len() + b.len()
+}
+
+fn inner(c: ref Vec[i64], w: ref Vec[i64]) -> i64 {
+    return c.len() - w.len() - 1
+}
+
+fn grid(a: ref Vec[i64], b: ref Vec[i64]) -> i64 {
+    return (a.len() + 1) * (b.len() + 1)
+}
+
+fn ones(xs: ref Vec[One]) -> i64 {
+    return xs.len() + 1
+}
+
+fn main() {
+    let xs: Vec[i64] = [1, 2]
+    let os: Vec[One] = [One::Only]
+    println(f\"{after(xs)} {both(xs, \"ab\")} {inner(xs, xs)} {grid(xs, xs)} {ones(os)}\")
+}
+";
+    let rust = lowered(source, Level::Aggressive);
+    let body = |name: &str| {
+        let at = rust
+            .find(&format!("fn {name}("))
+            .expect("the function is lowered");
+        rust[at..].lines().next().unwrap_or_default().to_string()
+    };
+    assert!(body("after").contains("<i64>::wrapping_add("), "{rust}");
+    assert!(body("both").contains("<i64>::wrapping_add("), "{rust}");
+    assert!(body("inner").contains("<i64>::wrapping_sub("), "{rust}");
+    assert!(!body("grid").contains("wrapping_mul"), "{rust}");
+    assert!(!body("ones").contains("wrapping_"), "{rust}");
+    prints("lengths", source, "3 4 -1 9 2\n");
+}
+
+/// **A list of a zero-sized type is bounded by how it was built** (#383):
+/// `resize(n, v)` with a bounded `n`, and `extend` adding another's length.
+#[test]
+fn a_zero_sized_list_is_bounded_by_how_it_was_built() {
+    let source = "\
+enum One {
+    Only,
+}
+
+fn main() {
+    let n: i64 = 1000
+    let mut c: Vec[One] = []
+    c.resize(n, One::Only)
+    let z = c.len() + 1
+    let mut d: Vec[One] = []
+    d.extend(c)
+    let w = d.len() + 1
+    println(f\"{z} {w}\")
+}
+";
+    let rust = lowered(source, Level::Aggressive);
+    assert_eq!(unchecked_arithmetic(&rust), 2, "{rust}");
+    prints("zero-sized", source, "1001 1001\n");
+}

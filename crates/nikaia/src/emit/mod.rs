@@ -2509,6 +2509,7 @@ impl<'p> Emitter<'p> {
             build.bounds,
             build.overflow,
             &propagation.std_lengths,
+            &propagation.sized_lengths,
             &propagation.arithmetic,
         );
 

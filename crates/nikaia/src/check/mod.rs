@@ -474,6 +474,12 @@ pub struct Checked {
     /// a map or a set, whose length is a count that reading changes nothing
     /// of - what [`crate::bounds`] reads as a number of a proof (ADR-306 D4).
     pub std_lengths: BTreeSet<usize>,
+    /// **The `len()`s of [`Checked::std_lengths`] whose container holds
+    /// elements that take space** (#383): such a length is below 2^60 on
+    /// every target, a fact the walk starts from. A list of a zero-sized type,
+    /// such as `Vec[One]` with `enum One { Only }`, is bounded only by how it
+    /// was built, and is not here.
+    pub sized_lengths: BTreeSet<usize>,
     /// **Every `+`, `-` and `*` of one whole-number type**, by the byte its
     /// operator starts at, with that type: both sides that type, or one a
     /// literal. What `--optimization=remove-overflow-checks` may write without
@@ -1778,6 +1784,8 @@ pub struct Propagation {
     pub list_indices: BTreeSet<usize>,
     /// [`Checked::std_lengths`].
     pub std_lengths: BTreeSet<usize>,
+    /// [`Checked::sized_lengths`].
+    pub sized_lengths: BTreeSet<usize>,
     /// [`Checked::arithmetic`].
     pub arithmetic: BTreeMap<usize, String>,
     /// [`Checked::copied_slots`].
@@ -2078,6 +2086,7 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         list_indices: checked.list_indices,
         std_lengths: checked.std_lengths,
+        sized_lengths: checked.sized_lengths,
         arithmetic: checked.arithmetic,
         copied_slots: checked.copied_slots,
         owned_copies: checked.owned_copies,
@@ -6598,6 +6607,98 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **Whether what a counted container holds takes space** (#383): text,
+    /// `Bytes` and a map's entries always do in the first case; a list, an
+    /// array or a set does where its element does
+    /// ([`Checker::takes_space`]).
+    fn elements_take_space(&self, on: &Ty) -> bool {
+        match on {
+            Ty::Pointed { item, .. } => self.takes_space(item, &mut BTreeSet::new()),
+            Ty::Named { name, args, .. } => match crate::contracts::ty::base(name) {
+                "String" | "str" | "Bytes" => true,
+                "Array" => match args.as_slice() {
+                    [element, Ty::Count(n)] => {
+                        *n > 0 && self.takes_space(element, &mut BTreeSet::new())
+                    }
+                    [element] => self.takes_space(element, &mut BTreeSet::new()),
+                    _ => false,
+                },
+                "HashMap" | "Map" | "BTreeMap" => args
+                    .iter()
+                    .any(|a| self.takes_space(a, &mut BTreeSet::new())),
+                _ => args
+                    .first()
+                    .is_some_and(|a| self.takes_space(a, &mut BTreeSet::new())),
+            },
+            _ => false,
+        }
+    }
+
+    /// **A value of this type takes at least a byte** (#383): the structural
+    /// walk `compares` makes, asked another question. A number, a `bool`, a
+    /// `char`, text, a view, an optional (its tag) and every container value
+    /// do; a tuple or a struct where a part does; an `enum` with two variants
+    /// or more (its tag), or one whose one variant holds something that does.
+    /// **Anything not known is answered *no***: a type variable, a function, a
+    /// type nothing here declares - so a length is bounded only where it is
+    /// certain, and an answer missed costs a check, never a wrong proof.
+    fn takes_space(&self, ty: &Ty, seen: &mut BTreeSet<String>) -> bool {
+        match ty {
+            Ty::Named { view: true, .. } | Ty::Pointed { .. } | Ty::Nullable(_) => true,
+            Ty::Tuple(parts) => parts.iter().any(|p| self.takes_space(p, seen)),
+            Ty::Named { name, args, .. } => {
+                let base = crate::contracts::ty::base(name);
+                if is_number(base) || matches!(base, "bool" | "char") {
+                    return true;
+                }
+                if matches!(
+                    base,
+                    "String"
+                        | "str"
+                        | "Bytes"
+                        | "Vec"
+                        | "List"
+                        | "HashMap"
+                        | "Map"
+                        | "BTreeMap"
+                        | "HashSet"
+                        | "Set"
+                        | "BTreeSet"
+                        | "Box"
+                        | "Shared"
+                        | "SharedMut"
+                ) {
+                    return true;
+                }
+                if base == "Array" {
+                    return match args.as_slice() {
+                        [element, Ty::Count(n)] => *n > 0 && self.takes_space(element, seen),
+                        _ => false,
+                    };
+                }
+                if !seen.insert(name.clone()) {
+                    // Holding itself, it holds itself through a container.
+                    return true;
+                }
+                if let Some(fields) = self.structs.get(name) {
+                    return fields.iter().any(|f| self.takes_space(&f.ty, seen));
+                }
+                if let Some(variants) = self.enums.get(name) {
+                    return match variants.len() {
+                        0 => false,
+                        1 => self
+                            .enum_payloads
+                            .get(name)
+                            .is_some_and(|held| held.iter().any(|h| self.takes_space(h, seen))),
+                        _ => true,
+                    };
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// **`NK1210`: a method of a number that `std`'s ledger does not describe**
     /// (#438).
     ///
@@ -10783,6 +10884,9 @@ impl<'a> Checker<'a> {
                     };
                     if counted {
                         self.checked.std_lengths.insert(value_node(receiver));
+                        if self.elements_take_space(&on) {
+                            self.checked.sized_lengths.insert(value_node(receiver));
+                        }
                     }
                 }
                 // **`m.get(k)` reads the map as `m[k]` does** (#297): what it
