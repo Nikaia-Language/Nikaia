@@ -2315,10 +2315,12 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
     for item in items {
         let ty = match item {
             build_time::Value::Bool(_) => "bool".to_string(),
-            build_time::Value::Int(value) => match i32::try_from(*value) {
-                Ok(_) => "i32".to_string(),
-                Err(_) => "i64".to_string(),
-            },
+            build_time::Value::Int(value) => {
+                match i32::try_from(build_time::integer_value(value)) {
+                    Ok(_) => "i32".to_string(),
+                    Err(_) => "i64".to_string(),
+                }
+            }
             // **A float is an `f64` where nothing declared otherwise**, which
             // is Part I 2.4's widest-holder rule read over the one shape it
             // has two of: `f32` is a *declaration*, never an inference.
@@ -2374,7 +2376,7 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
 /// struct is only as writable as its fields.
 fn rust_value(value: &build_time::Value) -> Option<String> {
     match value {
-        build_time::Value::Int(n) => Some(n.to_string()),
+        build_time::Value::Int(n) => Some(nikaia_std::tools::integers::integer_text(n)),
         build_time::Value::Float(n) => float_literal(*n),
         build_time::Value::Bool(yes) => Some(yes.to_string()),
         build_time::Value::Text(text) => Some(format!("\"{}\"", build_time::written(text))),
@@ -17705,7 +17707,7 @@ impl<'a> Checker<'a> {
                 let value = local
                     .built
                     .clone()
-                    .or_else(|| local.constant.map(build_time::Value::Int));
+                    .or_else(|| local.constant.map(build_time::Value::int));
                 match value {
                     Some(value) => held.insert(local.name.as_str(), value),
                     None => held.remove(local.name.as_str()),
@@ -17727,7 +17729,7 @@ impl<'a> Checker<'a> {
                 (None, true)
             }
             Err(build_time::Refusal::OutOfBounds { at, len }) => {
-                self.a_build_time_index_is_not_there(at, len, span);
+                self.a_build_time_index_is_not_there(build_time::integer_value(&at), len, span);
                 (None, true)
             }
             Err(build_time::Refusal::Circular { ring }) => {
@@ -21697,7 +21699,7 @@ impl<'a> Checker<'a> {
         // integer type a *declaration* pinned — a question the interpreter does
         // not ask and does not need to.
         let (evaluated, said) = match &folded {
-            Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
+            Some(folded) => (Some(build_time::Value::int(folded.value)), false),
             None => self.build_time_value(value, &bound, span),
         };
         // Counted rather than returned, so that every refusal below - the
@@ -21826,10 +21828,12 @@ impl<'a> Checker<'a> {
                 // A `bool` from the interpreter is a `bool` below, whether it
                 // was written `true` or came out of a call.
                 Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
-                Some(build_time::Value::Int(value)) => Some(match i32::try_from(*value) {
-                    Ok(_) => "i32".to_string(),
-                    Err(_) => "i64".to_string(),
-                }),
+                Some(build_time::Value::Int(value)) => {
+                    Some(match i32::try_from(build_time::integer_value(value)) {
+                        Ok(_) => "i32".to_string(),
+                        Err(_) => "i64".to_string(),
+                    })
+                }
                 // **An array with nothing declaring its type.** The element
                 // type is the **checker's** where it has one - a body declared
                 // `-> Vec[i64]` says `i64`, and reading it off the values
@@ -21963,7 +21967,7 @@ impl<'a> Checker<'a> {
             // The fold's number, which is what `constant_of` reads one
             // `comptime` later and what `ADR-285 D29's overflow check needs.
             constant: match &evaluated {
-                Some(build_time::Value::Int(value)) => Some(*value),
+                Some(build_time::Value::Int(value)) => Some(build_time::integer_value(value)),
                 _ => None,
             },
             // …and the whole value, which is what a *call* one `comptime`

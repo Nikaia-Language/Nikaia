@@ -1121,3 +1121,54 @@ fn a_variant_field_of_the_wrong_type_is_refused() {
         found[0].message
     );
 }
+
+/// **An integer while the program is built is a magnitude and a sign**
+/// (`tools/integers.nika`), the shape a literal already has: the smallest
+/// `i64` is one, the bit operators read the two's complement of a negative
+/// number, a right shift of one rounds down, and a remainder takes the sign of
+/// what is divided - each the value the running program would have printed.
+#[test]
+fn build_time_integers_are_a_magnitude_and_a_sign() {
+    let source = "comptime LOWEST: i64 = -9223372036854775807 - 1\n\
+                  comptime HIGHEST: u64 = 18446744073709551615\n\
+                  comptime MASKED: i64 = -6 & 7\n\
+                  comptime HALVED: i64 = -7 >> 1\n\
+                  comptime SHIFTED: i64 = 3 << 4\n\
+                  comptime LEFT: i64 = -7 % 3\n\
+                  comptime ORDER: bool = -2 < 1\n\
+                  fn main() {\n\
+                  println(f\"{LOWEST} {HIGHEST} {MASKED} {HALVED} {SHIFTED} {LEFT} {ORDER}\")\n\
+                  }\n";
+    assert_eq!(
+        ran("build-time-integers", source),
+        "-9223372036854775808 18446744073709551615 2 -4 48 -1 true\n"
+    );
+}
+
+/// The same operations through a call, so the evaluator answers and not the
+/// fold in front of it.
+#[test]
+fn build_time_integers_through_a_call() {
+    let source = "fn mask(a: i64, b: i64) -> i64 { return a & b }\n\
+                  fn halve(a: i64) -> i64 { return a >> 1 }\n\
+                  fn left(a: i64, b: i64) -> i64 { return a % b }\n\
+                  fn below(a: i64, b: i64) -> bool { return a < b }\n\
+                  fn lowest() -> i64 { return 0 - 9223372036854775807 - 1 }\n\
+                  comptime MASKED: i64 = mask(-6, 7)\n\
+                  comptime HALVED: i64 = halve(-7)\n\
+                  comptime LEFT: i64 = left(-7, 3)\n\
+                  comptime ORDER: bool = below(-2, 1)\n\
+                  comptime LOWEST: i64 = lowest()\n\
+                  fn main() {\n\
+                  println(f\"{MASKED} {HALVED} {LEFT} {ORDER} {LOWEST}\")\n\
+                  }\n";
+    assert!(
+        lowered(source).contains("const MASKED"),
+        "{}",
+        lowered(source)
+    );
+    assert_eq!(
+        ran("build-time-integers-call", source),
+        "2 -4 -1 true -9223372036854775808\n"
+    );
+}

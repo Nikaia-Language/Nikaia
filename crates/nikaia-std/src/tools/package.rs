@@ -4069,6 +4069,108 @@ pub fn read_head<'a>(written: &Written<'a>) -> Read<'a> {
 fn refused(why: &str) -> Read<'_> { Read { refused: why, method: "", target: "", length: 0, keep_alive: false, headers: vec![] } }
 
 
+// --- integers.nika ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Integer {
+    pub magnitude: u64,
+    pub negative: bool,
+}
+
+pub fn integer(magnitude: u64, negative: bool) -> Integer { Integer { magnitude, negative: negative && magnitude != 0u64 } }
+
+pub fn integer_of_count(n: i64) -> Integer {
+    if n < 0 { return integer(u64::try_from(0 - (n + 1)).unwrap_or_else(|_| panic!("the value does not fit in an `u64`")) + 1u64, true); }
+    integer(u64::try_from(n).unwrap_or_else(|_| panic!("the value does not fit in an `u64`")), false)
+}
+
+pub fn integer_as_count(n: &Integer) -> Option<i64> {
+    if !n.negative {
+        if n.magnitude > 9223372036854775807u64 { return None; }
+        return Some(i64::try_from(n.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`")));
+    }
+    if n.magnitude > 9223372036854775808u64 { return None; }
+    if n.magnitude == 9223372036854775808u64 { return (-9223372036854775807i64 - 1i64).into(); }
+    Some(0 - i64::try_from(n.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`")))
+}
+
+pub fn integer_text(n: &Integer) -> String {
+    if n.negative { return format!("-{}", n.magnitude); }
+    format!("{}", n.magnitude)
+}
+
+pub fn integer_negated(n: &Integer) -> Integer { integer(n.magnitude, !n.negative) }
+
+pub fn integer_sum(a: &Integer, b: &Integer) -> Option<Integer> {
+    if a.negative == b.negative {
+        let sum = a.magnitude.wrapping_add(b.magnitude);
+        if sum < a.magnitude { return None; }
+        return Some(integer(sum, a.negative));
+    }
+    if a.magnitude >= b.magnitude { return Some(integer(a.magnitude - b.magnitude, a.negative)); }
+    Some(integer(b.magnitude - a.magnitude, b.negative))
+}
+
+pub fn integer_difference(a: &Integer, b: &Integer) -> Option<Integer> { integer_sum(a, &integer_negated(b)) }
+
+pub fn integer_product(a: &Integer, b: &Integer) -> Option<Integer> {
+    if a.magnitude == 0u64 || b.magnitude == 0u64 { return Some(integer(0u64, false)); }
+    let product = a.magnitude.wrapping_mul(b.magnitude);
+    if product / a.magnitude != b.magnitude { return None; }
+    Some(integer(product, a.negative != b.negative))
+}
+
+pub fn integer_quotient(a: &Integer, b: &Integer, remainder: bool) -> Option<Integer> {
+    if b.magnitude == 0u64 { return None; }
+    if remainder { return Some(integer(a.magnitude % b.magnitude, a.negative)); }
+    Some(integer(a.magnitude / b.magnitude, a.negative != b.negative))
+}
+
+pub fn integer_order(a: &Integer, b: &Integer) -> i64 {
+    if a.negative != b.negative { return if a.negative { -1 } else { 1 }; }
+    if a.magnitude == b.magnitude { return 0; }
+    let larger = a.magnitude > b.magnitude;
+    if larger != a.negative { return 1; }
+    -1
+}
+
+pub fn integer_bits(a: &Integer, b: &Integer, op: &str) -> Option<Integer> {
+    if !a.negative && !b.negative {
+        let x = a.magnitude;
+        let y = b.magnitude;
+        if op == "&" { return Some(integer(x & y, false)); }
+        if op == "|" { return Some(integer(x | y, false)); }
+        return Some(integer(x ^ y, false));
+    }
+    let x = match integer_as_count(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    let y = match integer_as_count(b) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    if op == "&" { return Some(integer_of_count(x & y)); }
+    if op == "|" { return Some(integer_of_count(x | y)); }
+    Some(integer_of_count(x ^ y))
+}
+
+pub fn integer_shifted(a: &Integer, b: &Integer, left: bool) -> Option<Integer> {
+    if b.negative || b.magnitude >= 64u64 { return None; }
+    let count = i64::try_from(b.magnitude).unwrap_or_else(|_| panic!("the value does not fit in an `i64`"));
+    if left {
+        let mut magnitude = a.magnitude;
+        for _ in 0..count {
+            if magnitude > 9223372036854775807u64 { return None; }
+            magnitude *= 2;
+        }
+        return Some(integer(magnitude, a.negative));
+    }
+    if !a.negative {
+        let mut magnitude = a.magnitude;
+        for _ in 0..count { magnitude /= 2; }
+        return Some(integer(magnitude, false));
+    }
+    let mut value = match integer_as_count(a) { Some(__nikaia_value) => __nikaia_value, None => return None };
+    for _ in 0..count { if value % 2 != 0 { value = (value - 1) / 2; } else { value /= 2; } }
+    Some(integer_of_count(value))
+}
+
+
 // --- keep.nika ---
 
 #[derive(Debug, Clone)]
@@ -16243,6 +16345,10 @@ pub mod foreign {
 pub mod http1 {
     #[allow(unused_imports)]
     pub use super::{Field, Line, Written, Header, Read, Http1, read_head, written};
+}
+pub mod integers {
+    #[allow(unused_imports)]
+    pub use super::{Integer, integer, integer_of_count, integer_as_count, integer_text, integer_negated, integer_sum, integer_difference, integer_product, integer_quotient, integer_order, integer_bits, integer_shifted};
 }
 pub mod keep {
     #[allow(unused_imports)]

@@ -6523,7 +6523,7 @@ impl<'p> Emitter<'p> {
                         .collect();
                     out.push(&format!("let {mutable}({}) = ", bound.join(", ")));
                     let (before, after) =
-                        Self::around(self.nullable_sites.get(&span.at()).copied());
+                        Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                     out.push(before);
                     self.expr(out, value, depth, flow)?;
                     out.push(after);
@@ -6619,7 +6619,8 @@ impl<'p> Emitter<'p> {
                 // Part I 2.3: a plain value standing in a nullable slot. That hull
                 // stays the compiler's, because it is one a program cannot observe
                 // - the same value, possibly absent (ADR-281 D2's own line).
-                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
+                let (before, after) =
+                    Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                 out.push(&format!("let {mutable}{}{annotation} = ", escaped(bound)));
                 out.push(before);
                 // **A `let` over a place is a view of it**
@@ -6698,7 +6699,8 @@ impl<'p> Emitter<'p> {
                 let Expr::Index { base, index } = box_index else {
                     unreachable!("matched as an index")
                 };
-                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
+                let (before, after) =
+                    Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                 // **The value first, and then the write**
                 // ([ADR-293](../../../docs/specification/adr/adr-293.md) D2).
                 // Since D1 a read is `index::get(&m, …)`, so the written-out
@@ -6788,7 +6790,8 @@ impl<'p> Emitter<'p> {
                 let (keeper, index) = self
                     .held_element(flow, element)
                     .expect("matched as a held element");
-                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
+                let (before, after) =
+                    Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                 out.push(&format!("{{ let {STORED} = "));
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
@@ -6824,7 +6827,8 @@ impl<'p> Emitter<'p> {
                 ));
             }
             Stmt::Assign { target, op, value } => {
-                let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
+                let (before, after) =
+                    Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
                 self.expr(out, target, depth, flow.place())?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
@@ -7234,6 +7238,25 @@ impl<'p> Emitter<'p> {
     /// annotation, an assignment's left side, a field's or a parameter's
     /// declared type — so the conversion has something to resolve against and
     /// never has to be inferred from the value alone.
+    /// The same, around a value written out: a conversion is a method call, so
+    /// a value an operator makes is held in parentheses - `a - 1` into an
+    /// `i64?` went below as `a - 1.into()`, the conversion taking the `1` alone
+    /// (found moving the build-time integers into Nikaia, #125).
+    fn around_value(how: Option<crate::check::Wrap>, value: &Expr) -> (&'static str, &'static str) {
+        let compound = matches!(
+            value,
+            Expr::Binary { .. }
+                | Expr::Unary { .. }
+                | Expr::Cast { .. }
+                | Expr::Range { .. }
+                | Expr::Coalesce { .. }
+        );
+        match (how, compound) {
+            (Some(crate::check::Wrap::Conversion), true) => ("(", ").into()"),
+            _ => Self::around(how),
+        }
+    }
+
     fn around(how: Option<crate::check::Wrap>) -> (&'static str, &'static str) {
         match how {
             Some(crate::check::Wrap::Constructor) => ("Some(", ")"),
@@ -7258,7 +7281,8 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
-        let (before, after) = Self::around(self.nullable_sites.get(&span.at()).copied());
+        let (before, after) =
+            Self::around_value(self.nullable_sites.get(&span.at()).copied(), value);
         out.push(before);
         // `null` is no text of either kind (ADR-282 D5), and goes as `None`.
         let either = self.returns_either(flow.function) && !matches!(value, Expr::LitNull);
@@ -7447,7 +7471,7 @@ impl<'p> Emitter<'p> {
         }
         // **And a plain value in a nullable slot** (`check::Checked::wrapped`).
         if let Some(how) = self.wrapped.get(&(expr as *const Expr as usize)) {
-            let (before, after) = Self::around(Some(*how));
+            let (before, after) = Self::around_value(Some(*how), expr);
             out.push(before);
             self.expr_as_written(out, expr, depth, flow)?;
             out.push(after);
@@ -12541,11 +12565,12 @@ impl<'p> Emitter<'p> {
             // shape is built only where something was recorded for this
             // statement, callee and position, so the common argument pays a
             // lookup and no allocation beyond the one this key already made.
-            let (before, after) = Self::around(
+            let (before, after) = Self::around_value(
                 self.nullable_args
                     .get(&(flow.statement, callee.to_string(), i))
                     .and_then(|by_shape| by_shape.get(&crate::check::argument_shape(arg)))
                     .copied(),
+                arg,
             );
             // **A count the language below wants in `usize`**
             // ([ADR-285](../../../docs/specification/adr/adr-285.md) D15), which

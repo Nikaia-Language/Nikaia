@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.416] — 2026-10-04
+
+**A build-time integer is a magnitude and a sign** (ADR-287, ADR-294 D11,
+#125). The build-time evaluator kept an integer in an `i128`, which no
+Nikaia number is - and which was the reason its move kept being put off.
+It is now the shape the tree gives a literal and the fold counts in:
+`tools/integers.nika`'s `Integer`, with the sum, difference, product,
+quotient and remainder, the order, the bit operators on the bits the value
+has (ADR-285 D9) and the shifts written in Nikaia. A literal holds no more
+than 65 bits, and a step whose answer leaves them is one the evaluator does
+not take rather than a number it invents.
+
+**A conversion after a value an operator makes keeps the whole value**: a
+`return a - 1` into an `i64?` whose operands' type was open went below as
+`a - 1.into()`, the conversion taking the `1` alone. Such a value is now held
+in parentheses.
+
 ## [0.0.415] — 2026-10-04
 
 **What the checker reads off a callee's signature is Nikaia** (ADR-288,

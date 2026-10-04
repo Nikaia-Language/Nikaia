@@ -435,9 +435,16 @@ fn read(text: &str, at: &mut Cursor<'_>) -> Result<crate::build_time::Value, Wal
     let value = match tag.as_str() {
         "i" => {
             let digits = word(text, at);
-            crate::build_time::Value::Int(digits.parse().map_err(|_| Wall::Unreadable {
+            // A magnitude and a sign, as the build keeps every integer
+            // (`tools/integers.nika`).
+            let (negative, magnitude) = match digits.strip_prefix('-') {
+                Some(rest) => (true, rest),
+                None => (false, digits.as_str()),
+            };
+            let magnitude: u64 = magnitude.parse().map_err(|_| Wall::Unreadable {
                 detail: format!("`{digits}` is not a whole number"),
-            })?)
+            })?;
+            crate::build_time::Value::Int(nikaia_std::tools::integers::integer(magnitude, negative))
         }
         "f" => {
             let written = word(text, at);
